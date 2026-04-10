@@ -181,7 +181,7 @@ These are gaps that remain for full production use:
 ### Current (dotnet run)
 ```bash
 # Run a single .al file
-dotnet run --project AlRunner -- samples/hello.al
+dotnet run --project AlRunner -- tests/01-pure-function/src
 
 # Run all .al files in a directory (test mode auto-detected)
 dotnet run --project AlRunner -- ./src ./test
@@ -190,10 +190,10 @@ dotnet run --project AlRunner -- ./src ./test
 dotnet run --project AlRunner -- --packages ./packages MyApp.app MyApp.Tests.app
 
 # Dump generated C# (before rewriting)
-dotnet run --project AlRunner -- --dump-csharp samples/hello.al
+dotnet run --project AlRunner -- --dump-csharp tests/01-pure-function/src
 
 # Dump rewritten C# (after RoslynRewriter)
-dotnet run --project AlRunner -- --dump-rewritten samples/hello.al
+dotnet run --project AlRunner -- --dump-rewritten tests/01-pure-function/src
 
 # Run inline AL code
 dotnet run --project AlRunner -- -e 'codeunit 99 X { trigger OnRun() begin Message('"'"'hi'"'"'); end; }'
@@ -303,14 +303,12 @@ Follows the `BusinessCentral.AL.*` pattern:
 | `AlRunner/Runtime/MockInterfaceHandle.cs` | AL Interface dispatch stub |
 | `AlRunner/Runtime/MockAssert.cs` | Assert codeunit mock (AreEqual, ExpectedError, etc.) |
 | `AlRunner/stubs/LibraryAssert.al` | AL stub for codeunit 130 (auto-loaded for compilation) |
-| `samples/hello.al` | Minimal sample: table + codeunit + Message |
-| `samples/calc.al` | Minimal sample: arithmetic in OnRun |
-| `samples/01-pure-function/` | Pure calculation tests with Assert.AreEqual |
-| `samples/02-record-operations/` | Record CRUD, filtering, composite PKs |
-| `samples/03-interface-injection/` | AL interface dependency injection |
-| `samples/04-asserterror/` | asserterror + Assert.ExpectedError |
-| `samples/05-known-limitation/` | Silent false positive documentation |
-| `samples/06-intentional-failure/` | Deliberately broken tests for error output demo |
+| `tests/01-pure-function/` | Pure calculation tests with Assert.AreEqual |
+| `tests/02-record-operations/` | Record CRUD, filtering, composite PKs |
+| `tests/03-interface-injection/` | AL interface dependency injection |
+| `tests/04-asserterror/` | asserterror + Assert.ExpectedError |
+| `tests/05-known-limitation/` | Silent false positive documentation |
+| `tests/06-intentional-failure/` | Deliberately broken tests for error output demo |
 | `.github/workflows/samples-pass.yml` | CI: runs samples 01-05 (should pass) |
 | `.github/workflows/samples-fail.yml` | CI: runs sample 06 (expected to fail) |
 | `al-runner.json` | Sample config file (not yet wired into CLI) |

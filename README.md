@@ -124,15 +124,12 @@ al-runner ./src ./test
 # Run with coverage report
 al-runner --coverage ./src ./test
 
-# Run a single .al file (OnRun mode)
-al-runner samples/hello.al
-
 # Load from .app packages with dependency resolution
 al-runner --packages ./packages MyApp.app MyApp.Tests.app
 
 # Debug: dump generated C# before and after rewriting
-al-runner --dump-csharp samples/hello.al
-al-runner --dump-rewritten samples/hello.al
+al-runner --dump-csharp ./src
+al-runner --dump-rewritten ./src
 ```
 
 ### Build from source
@@ -169,26 +166,50 @@ Full BC pipeline (MsDyn365Bc.On.Linux, 45+ min) — full fidelity test execution
 The full BC service tier pipeline:
 - https://github.com/StefanMaron/MsDyn365Bc.On.Linux
 
-## Samples
+## How It Works
 
-Each sample is a self-contained AL project with source, tests, and config:
+AL Runner has a 4-stage pipeline:
 
-| Sample | What it demonstrates |
+```
+AL source (.al files)
+  ↓  BC Compilation.Emit()        Transpiles AL to C# using the BC compiler's public API
+  ↓  RoslynRewriter               Rewrites BC runtime types to in-memory mocks (AST-level)
+  ↓  Roslyn in-memory compile     Compiles the rewritten C# against BC Service Tier DLLs
+  ↓  Executor                     Discovers [NavTest] methods, runs them, reports results
+```
+
+**Stage 1 — AL Transpiler**: Uses `Microsoft.Dynamics.Nav.CodeAnalysis.Compilation.Emit()` to convert each AL object (table, codeunit) into a C# class. The AL compiler is downloaded from NuGet automatically on first build.
+
+**Stage 2 — RoslynRewriter**: A `CSharpSyntaxRewriter` that transforms the generated C# for standalone execution. Replaces `NavRecordHandle` → `MockRecordHandle`, `NavCodeunitHandle` → `MockCodeunitHandle`, strips BC attributes, rewrites `NavDialog.ALMessage` → `AlDialog.Message`, etc. This is where the BC runtime dependency is severed.
+
+**Stage 3 — RoslynCompiler**: Compiles the rewritten C# in-memory with Roslyn. References the BC Service Tier DLLs (auto-downloaded from the BC artifact CDN via HTTP range requests — ~11 MB instead of the full 1.2 GB artifact). No files written to disk.
+
+**Stage 4 — Executor**: Discovers test codeunits (classes with `[NavTest]` methods), resets the in-memory table store between tests, invokes each test via reflection, and reports pass/fail/error with coverage.
+
+All dependencies are auto-downloaded and cached. The only prerequisite is .NET 8 SDK.
+
+## Test Cases
+
+The `tests/` directory contains an ever-growing set of test cases. Each is a self-contained AL project (`src/` + `test/`) that exercises a specific runner capability. Every push runs all test cases against a [matrix of BC versions](https://github.com/StefanMaron/BusinessCentral.AL.Runner/actions/workflows/test-matrix.yml) (26.0 through 27.5).
+
+| Test case | What it covers |
 |---|---|
-| `samples/hello.al` | Minimal: table + codeunit + Message |
-| `samples/calc.al` | Minimal: decimal arithmetic in OnRun |
-| `samples/01-pure-function/` | Pure calculation logic, Assert.AreEqual |
-| `samples/02-record-operations/` | Record CRUD, SETRANGE filtering, composite PKs |
-| `samples/03-interface-injection/` | AL interface for dependency injection |
-| `samples/04-asserterror/` | Error validation with asserterror + Assert.ExpectedError |
-| `samples/05-known-limitation/` | Silent false positive from missing event subscriber |
-| `samples/06-intentional-failure/` | Deliberately broken tests for error output demo |
+| `01-pure-function` | Pure calculation logic, Assert.AreEqual |
+| `02-record-operations` | Record CRUD, SETRANGE filtering, composite PKs |
+| `03-interface-injection` | AL interface for dependency injection |
+| `04-asserterror` | Error validation with asserterror + Assert.ExpectedError |
+| `05-known-limitation` | Silent false positive from missing event subscriber |
+| `06-intentional-failure` | Deliberately broken tests for error output demo |
+
+When a new scenario is encountered that should work but doesn't, it gets triaged:
+- **In scope** → add a test case, fix the runner, verify it passes across all BC versions
+- **Out of scope** → document as a known limitation (like sample 05)
+
+To add a test case: create `tests/NN-name/src/*.al` and `tests/NN-name/test/*.al`, then add the directory name to the `for` loop in `test-matrix.yml`.
 
 ## CI
 
-Every push runs the test suite against a matrix of BC versions (26.0 through 27.5) to ensure compatibility. The publish workflow pushes to NuGet when all versions pass.
-
-See the [Test Matrix](https://github.com/StefanMaron/BusinessCentral.AL.Runner/actions/workflows/test-matrix.yml) for current results.
+The [Test Matrix](https://github.com/StefanMaron/BusinessCentral.AL.Runner/actions/workflows/test-matrix.yml) runs on every push — resolving the latest patch version for each BC major.minor, building and testing in parallel. The [Publish](https://github.com/StefanMaron/BusinessCentral.AL.Runner/actions/workflows/publish.yml) workflow pushes to NuGet only when all versions pass (triggered by `git tag v*`).
 
 ## Naming
 

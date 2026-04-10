@@ -53,14 +53,11 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Download BC ${{ matrix.bc-version }} Service Tier DLLs
+      - name: Build (auto-downloads BC ${{ matrix.bc-version }} DLLs)
         run: |
-          TARGET_DIR="${HOME}/.local/share/al-runner/artifacts/${BC_VERSION}"
-          dotnet run --project tools/DownloadArtifacts -- service-tier "$BC_VERSION" "$TARGET_DIR"
-          echo "BC_SERVICE_TIER_PATH=${TARGET_DIR}" >> "$GITHUB_ENV"
-
-      - name: Build
-        run: dotnet build AlRunner/ -p:_BCVersion=${{ matrix.bc-version }} -p:ServiceTierPath="${BC_SERVICE_TIER_PATH}"
+          dotnet build AlRunner/ -p:_BCVersion=${{ matrix.bc-version }}
+          # Tell the runtime where the MSBuild target cached the DLLs
+          echo "BC_SERVICE_TIER_PATH=${HOME}/.local/share/al-runner/artifacts/${{ matrix.bc-version }}" >> "$GITHUB_ENV"
 
       - name: Run tests with coverage
         run: |
@@ -72,7 +69,7 @@ jobs:
           EXIT=0
           for sample in 01-pure-function 02-record-operations 03-interface-injection 04-asserterror 05-known-limitation; do
             echo "::group::Sample ${sample}"
-            OUTPUT=$(dotnet run --no-build --project AlRunner -- --coverage "samples/${sample}/src" "samples/${sample}/test" 2>&1) || EXIT=1
+            OUTPUT=$(dotnet run --no-build --project AlRunner -- --coverage "tests/${sample}/src" "tests/${sample}/test" 2>&1) || EXIT=1
             echo "$OUTPUT"
             echo "::endgroup::"
 

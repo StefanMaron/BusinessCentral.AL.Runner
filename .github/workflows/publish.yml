@@ -49,15 +49,15 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Download and build
+      - name: Build (auto-downloads BC ${{ matrix.bc-version }} DLLs)
         run: |
-          dotnet run --project tools/DownloadArtifacts -- service-tier "${{ matrix.bc-version }}" "${HOME}/.local/share/al-runner/artifacts/${{ matrix.bc-version }}"
           dotnet build AlRunner/ -p:_BCVersion=${{ matrix.bc-version }}
+          echo "BC_SERVICE_TIER_PATH=${HOME}/.local/share/al-runner/artifacts/${{ matrix.bc-version }}" >> "$GITHUB_ENV"
 
       - name: Run tests
         run: |
           for sample in 01-pure-function 02-record-operations 03-interface-injection 04-asserterror 05-known-limitation; do
-            dotnet run --no-build --project AlRunner -- "samples/${sample}/src" "samples/${sample}/test"
+            dotnet run --no-build --project AlRunner -- "tests/${sample}/src" "tests/${sample}/test"
           done
 
   publish:
