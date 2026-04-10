@@ -59,30 +59,19 @@ jobs:
           # Tell the runtime where the MSBuild target cached the DLLs
           echo "BC_SERVICE_TIER_PATH=${HOME}/.local/share/al-runner/artifacts/${{ matrix.bc-version }}" >> "$GITHUB_ENV"
 
-      - name: Run tests with coverage
+      - name: Run all tests
         run: |
+          # Single invocation — all test cases compile and run together (~1s vs ~75s)
+          DIRS=$(ls -d tests/*/src tests/*/test 2>/dev/null | grep -v '06-' | sort)
+          OUTPUT=$(dotnet run --no-build --project AlRunner -- $DIRS 2>&1)
+          EXIT=$?
+          echo "$OUTPUT"
+
+          RESULTS=$(echo "$OUTPUT" | grep "^Results:")
           echo "## BC ${{ matrix.bc-version }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| | Sample | Tests | Coverage |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|---|--------|-------|----------|" >> "$GITHUB_STEP_SUMMARY"
-
-          EXIT=0
-          for sample in $(ls -d tests/*/src 2>/dev/null | sed 's|tests/||;s|/src||' | grep -v '06-' | sort); do
-            echo "::group::Sample ${sample}"
-            OUTPUT=$(dotnet run --no-build --project AlRunner -- --coverage "tests/${sample}/src" "tests/${sample}/test" 2>&1) || EXIT=1
-            echo "$OUTPUT"
-            echo "::endgroup::"
-
-            RESULTS=$(echo "$OUTPUT" | grep "^Results:")
-            PASSED=$(echo "$RESULTS" | grep -oP '\d+ passed' | grep -oP '\d+')
-            FAILED=$(echo "$RESULTS" | grep -oP '\d+ failed' | grep -oP '\d+')
-            COVERAGE=$(echo "$OUTPUT" | grep "^  TOTAL" | grep -oP '\d+%' | head -1)
-            COVERAGE=${COVERAGE:-"n/a"}
-
-            if [ "${FAILED:-0}" = "0" ]; then
-              echo "| :white_check_mark: | ${sample} | ${PASSED:-0} passed | ${COVERAGE} |" >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo "| :x: | ${sample} | ${PASSED:-0}/${FAILED:-0} failed | ${COVERAGE} |" >> "$GITHUB_STEP_SUMMARY"
-            fi
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "$RESULTS" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          exit $EXIT
           done
           exit $EXIT
