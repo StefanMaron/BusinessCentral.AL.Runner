@@ -6,8 +6,7 @@ Run Business Central AL unit tests in milliseconds, with no BC service tier, no
 Docker, no SQL Server, and no license. The goal is a fast feedback loop for
 pure-logic codeunits that don't depend on UI, HTTP, or external services.
 
-This is a proof of concept that works for simple cases. Real-world use requires
-the missing pieces described below to be implemented first.
+This works for pure-logic codeunits. See Known Limitations for the remaining gaps.
 
 ---
 
@@ -38,8 +37,7 @@ becomes a separate C# class. The transpiler supports:
 ### Stage 2 — RoslynRewriter (`RoslynRewriter.cs`)
 
 A `CSharpSyntaxRewriter` that transforms BC-generated C# into standalone code.
-Replaces the old regex-based approach (`RegexRewriter` — dead code, kept for
-reference). Key transformations:
+Key transformations:
 - Remove BC-specific attributes (`[NavCodeunitOptions]`, etc.)
 - Replace BC runtime type references with mock types (see mock surface below)
 - Strip ITreeObject arguments from method calls
@@ -78,6 +76,8 @@ These are the BC runtime types replaced in standalone mode:
 | `MockRecordArray` | `NavArray<NavRecordHandle>` | Array of MockRecordHandle (Record[] in AL). |
 | `MockInterfaceHandle` | `NavInterfaceHandle` | AL interface dispatch stub. |
 | `MockAssert` | Codeunit 130 "Library Assert" | Assert.AreEqual, AreNotEqual, IsTrue, IsFalse, ExpectedError. |
+| `MockIsolatedStorage` | `ALIsolatedStorage` | In-memory key-value store (Set, Get, Delete, Contains). |
+| `MockTextBuilder` | `NavTextBuilder` | In-memory StringBuilder (Append, AppendLine, ToText). |
 | `AlScope.AssertError()` | `asserterror` keyword | Catches expected errors, stores message. |
 | `AlDialog` | `NavDialog` static methods | Message() prints to console; Error() throws Exception. |
 | `MockDialog` | `NavDialog` instance | No-op progress dialog (ALOpen/ALUpdate/ALClose). |
@@ -87,10 +87,14 @@ These are the BC runtime types replaced in standalone mode:
 
 - Init, Insert, Modify, Get, Delete, DeleteAll
 - FindFirst, FindLast, FindSet, Next iteration
+- Composite primary keys (RegisterPrimaryKey)
+- SetCurrentKey / SetAscending sort ordering
 - SetRange, SetFilter with simple comparisons (=, <>, <, <=, >, >=)
 - Filter expressions with wildcards (\*) and OR separators (|)
+- OnValidate triggers on field assignment
 - Count, IsEmpty
 - Field read/write by field ID (GetFieldValueSafe / SetFieldValueSafe)
+- ALFieldNo(fieldName) lookups (RegisterFieldName)
 - Cross-record table reset via `ResetAll()` between tests
 
 ### Removed out-of-scope files
@@ -128,7 +132,6 @@ Without it, nobody can trust the tool.
 Each test case is a directory under `tests/NN-name/` with:
 - `src/*.al` — AL source code exercising the feature
 - `test/*.al` — Test codeunit (`Subtype = Test`) using `Assert: Codeunit Assert`
-- `al-runner.json` — config file
 
 ### Positive AND negative tests
 Every test case must prove BOTH that correct input succeeds AND that incorrect
@@ -209,7 +212,7 @@ end
 
 ## Implemented Features (previously listed as missing)
 
-These have been implemented and are tested by the samples:
+These have been implemented and are tested by the test suite:
 
 1. **Assert codeunit mock** (`Runtime/MockAssert.cs`) — `Assert.AreEqual`,
    `Assert.AreNotEqual`, `Assert.IsTrue`, `Assert.IsFalse`, `Assert.ExpectedError`,
@@ -233,29 +236,36 @@ These have been implemented and are tested by the samples:
 
 These are gaps that remain for full production use:
 
+1. **Wire al-runner.json config into the CLI** — config file exists but is not
+   read by the CLI.
+2. **Filter groups** (FilterGroup) — not tracked.
+3. **ALGetFilter** — returns empty string even when filters are active.
+4. **More Assert methods** — AreNearlyEqual, Fail, etc.
+5. **RecordRef / FieldRef** — stubs compile but do not function at runtime.
+6. **BLOB / InStream / OutStream** — not supported.
+
 ---
 
 ## CLI Usage
 
-### Current (dotnet run)
+### Global tool (al-runner)
 ```bash
-# Run a single .al file
-dotnet run --project AlRunner -- tests/01-pure-function/src
+al-runner ./src ./test                        # run tests (auto-detected)
+al-runner --coverage ./src ./test             # run with coverage report
+al-runner --packages ./packages ./src ./test  # with dependency symbols
+al-runner --stubs ./stubs ./src ./test        # with stub AL files
+al-runner -v ./src ./test                     # verbose output
+al-runner --dump-csharp ./src                 # dump generated C# (before rewriting)
+al-runner --dump-rewritten ./src              # dump rewritten C# (after rewriting)
+al-runner -e 'codeunit 99 X { trigger OnRun() begin Message('"'"'hi'"'"'); end; }'
+al-runner --guide                             # print test-writing guide for AI agents
+al-runner -h                                  # help
+```
 
-# Run all .al files in a directory (test mode auto-detected)
+### Development (dotnet run)
+```bash
 dotnet run --project AlRunner -- ./src ./test
-
-# Run from .app packages with dependency resolution
-dotnet run --project AlRunner -- --packages ./packages MyApp.app MyApp.Tests.app
-
-# Dump generated C# (before rewriting)
-dotnet run --project AlRunner -- --dump-csharp tests/01-pure-function/src
-
-# Dump rewritten C# (after RoslynRewriter)
-dotnet run --project AlRunner -- --dump-rewritten tests/01-pure-function/src
-
-# Run inline AL code
-dotnet run --project AlRunner -- -e 'codeunit 99 X { trigger OnRun() begin Message('"'"'hi'"'"'); end; }'
+dotnet run --project AlRunner -- --coverage ./src ./test
 ```
 
 ### Config file (al-runner.json)
@@ -268,21 +278,16 @@ Place in the project root. Not yet wired into the CLI (future work):
 }
 ```
 
-### Future CLI surface (proposed)
-```bash
-al-runner test --source ./src --tests ./test --codeunits 50200,50201
-```
-
 ---
 
 ## Build & Bootstrap
 
 **Prerequisites:**
 - .NET 8 SDK
-- AL compiler (installed as dotnet tool):
-  `dotnet tool install microsoft.dynamics.businesscentral.development.tools.linux`
-- BC Service Tier artifacts at `artifacts/onprem/27.5.46862.0/` (relative to
-  `AlRunner/` project file). See alDirectCompile CLAUDE.md for download instructions.
+
+Both the AL compiler (~57 MB from NuGet) and BC Service Tier DLLs (~11 MB via
+HTTP range requests) are downloaded automatically on first build. No manual setup.
+Works on Windows, Linux, and macOS.
 
 **Build:**
 ```bash
@@ -292,6 +297,12 @@ dotnet build AlRunner/
 **Run tests:**
 ```bash
 dotnet run --project AlRunner -- ./src ./test
+```
+
+**Install as global tool:**
+```bash
+dotnet tool install --global MSDyn365BC.AL.Runner
+al-runner ./src ./test
 ```
 
 ---
@@ -351,25 +362,45 @@ Follows the `BusinessCentral.AL.*` pattern:
 
 | File | Role |
 |---|---|
-| `AlRunner/Program.cs` | Main CLI + AlTranspiler + RoslynCompiler + Executor + AppPackageReader + Kernel32Shim |
-| `AlRunner/RoslynRewriter.cs` | BC→mock type transformations (AST-level, replaces RegexRewriter) |
+| `AlRunner/Program.cs` | Main CLI + AlTranspiler + RoslynCompiler + Executor + AppPackageReader + Kernel32Shim + PrintGuide |
+| `AlRunner/RoslynRewriter.cs` | BC→mock type transformations (AST-level) |
 | `AlRunner/Runtime/AlScope.cs` | Base scope, AlDialog, AlCompat, MockDialog |
-| `AlRunner/Runtime/MockRecordHandle.cs` | In-memory record store with filtering |
+| `AlRunner/Runtime/MockRecordHandle.cs` | In-memory record store with filtering, composite PKs, sort ordering |
 | `AlRunner/Runtime/MockCodeunitHandle.cs` | Cross-codeunit dispatch via reflection |
 | `AlRunner/Runtime/MockVariant.cs` | AL Variant type replacement |
 | `AlRunner/Runtime/MockArray.cs` | AL Array type replacement |
 | `AlRunner/Runtime/MockRecordArray.cs` | AL Record array replacement |
 | `AlRunner/Runtime/MockInterfaceHandle.cs` | AL Interface dispatch stub |
 | `AlRunner/Runtime/MockAssert.cs` | Assert codeunit mock (AreEqual, ExpectedError, etc.) |
+| `AlRunner/Runtime/MockIsolatedStorage.cs` | In-memory IsolatedStorage mock |
+| `AlRunner/Runtime/MockTextBuilder.cs` | In-memory TextBuilder mock |
 | `AlRunner/stubs/LibraryAssert.al` | AL stub for codeunit 130 (auto-loaded for compilation) |
 | `tests/01-pure-function/` | Pure calculation tests with Assert.AreEqual |
-| `tests/02-record-operations/` | Record CRUD, filtering, composite PKs |
+| `tests/02-record-operations/` | Record CRUD, filtering |
 | `tests/03-interface-injection/` | AL interface dependency injection |
 | `tests/04-asserterror/` | asserterror + Assert.ExpectedError |
 | `tests/05-known-limitation/` | Silent false positive documentation |
 | `tests/06-intentional-failure/` | Deliberately broken tests for error output demo |
-| `.github/workflows/samples-pass.yml` | CI: runs samples 01-05 (should pass) |
-| `.github/workflows/samples-fail.yml` | CI: runs sample 06 (expected to fail) |
+| `tests/07-composite-pk/` | Composite (multi-field) primary keys |
+| `tests/08-sort-ordering/` | SetCurrentKey / SetAscending sort ordering |
+| `tests/09-setfilter-expressions/` | Complex SETFILTER expressions |
+| `tests/10-cross-codeunit/` | Cross-codeunit dispatch |
+| `tests/11-variant-type/` | AL Variant type |
+| `tests/12-format-string/` | Format() and Evaluate() |
+| `tests/13-partial-compile/` | Partial compilation (skips unsupported types) |
+| `tests/14-assert-130000/` | Assert codeunit with alternate ID |
+| `tests/15-codeunit-assign/` | Codeunit variable assignment |
+| `tests/16-isolated-storage/` | IsolatedStorage operations |
+| `tests/17-text-builder/` | TextBuilder operations |
+| `tests/18-validate-trigger/` | OnValidate triggers |
+| `tests/19-table-procedures/` | Table procedures |
+| `tests/20-option-fields/` | Option/Enum fields |
+| `tests/21-expected-error-substring/` | ExpectedError substring matching |
+| `tests/22-record-persistence/` | Record persistence across calls |
+| `tests/23-error-line-mapping/` | Error line mapping in test output |
+| `.github/workflows/test-matrix.yml` | CI: runs all tests across BC version matrix |
+| `.github/workflows/publish.yml` | CI: publish to NuGet on tag |
+| `.github/workflows/coverage-demo.yml` | CI: coverage report demo |
 | `al-runner.json` | Sample config file (not yet wired into CLI) |
 
 ---
@@ -381,7 +412,7 @@ alDirectCompile repo. Everything needed is in this CLAUDE.md and the source file
 
 Priority order for next work:
 1. Wire al-runner.json config into the CLI
-2. Implement filter groups (FilterGroup)
-3. Implement ALGetFilter to return actual filter expressions
+2. Implement ALGetFilter to return actual filter expressions
+3. Implement filter groups (FilterGroup)
 4. Add more Assert methods (AreNearlyEqual, Fail, etc.)
-5. Improve PK auto-detection from generated C# metadata
+5. Implement RecordRef / FieldRef runtime support

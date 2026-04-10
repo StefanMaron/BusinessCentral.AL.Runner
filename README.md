@@ -1,7 +1,7 @@
 # BusinessCentral.AL.Runner
 
 [![Test Matrix](https://github.com/StefanMaron/BusinessCentral.AL.Runner/actions/workflows/test-matrix.yml/badge.svg)](https://github.com/StefanMaron/BusinessCentral.AL.Runner/actions/workflows/test-matrix.yml)
-[![NuGet](https://img.shields.io/nuget/v/BusinessCentral.AL.Runner)](https://www.nuget.org/packages/BusinessCentral.AL.Runner)
+[![NuGet](https://img.shields.io/nuget/v/MSDyn365BC.AL.Runner)](https://www.nuget.org/packages/MSDyn365BC.AL.Runner)
 
 Run Business Central AL unit tests in **milliseconds** — no BC service tier, no Docker, no SQL Server, no license required.
 
@@ -21,7 +21,7 @@ Rewritten C#
 Results in milliseconds
 ```
 
-This is a proof of concept. It works well for pure-logic codeunits. For real-world test suites, see [What's Missing](#whats-missing) below.
+It works well for pure-logic codeunits. For the remaining gaps, see [What's Missing](#whats-missing) below.
 
 ## Why
 
@@ -32,16 +32,26 @@ AL Runner is designed to run **before** the full BC service tier pipeline as a f
 ## What It Supports
 
 **Supported:**
-- Codeunit logic (fields, variables, arithmetic, string ops)
+- Codeunit logic (fields, variables, arithmetic, string ops, enums/options)
 - In-memory record store: Init, Insert, Modify, Get, Delete, DeleteAll, FindFirst, FindLast, FindSet, Next
+- Composite primary keys, sort ordering (SetCurrentKey/SetAscending)
 - SETRANGE and SETFILTER filtering (=, <>, <, <=, >, >=, wildcards, OR separators)
 - Cross-codeunit dispatch via MockCodeunitHandle
-- `asserterror` keyword (catches expected errors)
+- Assert codeunit (ID 130): AreEqual, AreNotEqual, IsTrue, IsFalse, ExpectedError, RecordIsEmpty, etc.
+- `asserterror` keyword (catches expected errors) + `GetLastErrorText()`
 - `Error()` / `Message()` — Error throws an exception; Message writes to console
+- OnValidate triggers on table fields
+- Table procedures (custom procedures on table objects)
+- IsolatedStorage (in-memory key-value store)
+- TextBuilder (in-memory string builder)
+- Format/Evaluate type conversions
 - AL interfaces injected by test code
 - AL arrays (MockArray, MockRecordArray)
 - AL Variant (MockVariant)
 - Input from .al files, directories, or .app packages
+- Partial compilation (skips unsupported object types like XMLport)
+- Stub files (`--stubs <dir>`) for replacing unsupported dependencies
+- Statement-level coverage reporting (`--coverage`, outputs cobertura.xml)
 
 **Not supported (by design):**
 - Page, Report, XMLPort — inject via AL interface or exclude from runner
@@ -75,9 +85,13 @@ The codeunit's direct logic is correct. Note: if the test implicitly depends on 
 
 Known gaps for real-world use:
 
-1. **Implicit event publishers on DB operations** — `OnAfterModify`, `OnAfterInsert`, etc. do NOT fire. Tests that depend on event subscribers will produce silent false positives (see sample 05).
-2. **Page, Report, XMLPort** — not supported. Inject via AL interface or exclude from runner.
+1. **Implicit event publishers on DB operations** — `OnAfterModify`, `OnAfterInsert`, etc. do NOT fire. Tests that depend on event subscribers will produce silent false positives (see test 05).
+2. **Page, Report, XMLPort** — not supported. Inject via AL interface, use `--stubs`, or exclude from runner.
 3. **HTTP** — not supported. Inject via AL interface.
+4. **Filter groups** (FilterGroup) — not tracked.
+5. **ALGetFilter** — returns empty string even when filters are active.
+6. **RecordRef / FieldRef** — stubs compile but do not function.
+7. **BLOB / InStream / OutStream** — not supported.
 
 ## Developer Contract
 
@@ -110,7 +124,7 @@ Anything you can't inject cannot be unit-tested by this runner — and that's th
 ### Install
 
 ```bash
-dotnet tool install --global BusinessCentral.AL.Runner
+dotnet tool install --global MSDyn365BC.AL.Runner
 ```
 
 That's it. On first build/run, the AL compiler (~57 MB from NuGet) and BC Service Tier DLLs (~11 MB via HTTP range requests) are downloaded automatically and cached. No manual setup, works on Windows, Linux, and macOS.
@@ -126,6 +140,18 @@ al-runner --coverage ./src ./test
 
 # Load from .app packages with dependency resolution
 al-runner --packages ./packages MyApp.app MyApp.Tests.app
+
+# Provide stub AL files for unsupported dependencies
+al-runner --stubs ./stubs ./src ./test
+
+# Verbose output (show transpilation/compilation details)
+al-runner -v ./src ./test
+
+# Run inline AL code
+al-runner -e 'codeunit 99 X { trigger OnRun() begin Message('"'"'hi'"'"'); end; }'
+
+# Print test-writing guide for AI agents
+al-runner --guide
 
 # Debug: dump generated C# before and after rewriting
 al-runner --dump-csharp ./src
@@ -190,22 +216,39 @@ All dependencies are auto-downloaded and cached. The only prerequisite is .NET 8
 
 ## Test Cases
 
-The `tests/` directory contains an ever-growing set of test cases. Each is a self-contained AL project (`src/` + `test/`) that exercises a specific runner capability. Every push runs all test cases against a [matrix of BC versions](https://github.com/StefanMaron/BusinessCentral.AL.Runner/actions/workflows/test-matrix.yml) (26.0 through 27.5).
+The `tests/` directory contains 23 test cases. Each is a self-contained AL project (`src/` + `test/`) that exercises a specific runner capability. Every push runs all test cases against a [matrix of BC versions](https://github.com/StefanMaron/BusinessCentral.AL.Runner/actions/workflows/test-matrix.yml) (26.0 through 27.5).
 
 | Test case | What it covers |
 |---|---|
 | `01-pure-function` | Pure calculation logic, Assert.AreEqual |
-| `02-record-operations` | Record CRUD, SETRANGE filtering, composite PKs |
+| `02-record-operations` | Record CRUD, SETRANGE filtering |
 | `03-interface-injection` | AL interface for dependency injection |
 | `04-asserterror` | Error validation with asserterror + Assert.ExpectedError |
 | `05-known-limitation` | Silent false positive from missing event subscriber |
 | `06-intentional-failure` | Deliberately broken tests for error output demo |
+| `07-composite-pk` | Composite (multi-field) primary keys |
+| `08-sort-ordering` | SetCurrentKey / SetAscending sort ordering |
+| `09-setfilter-expressions` | Complex SETFILTER expressions (wildcards, OR) |
+| `10-cross-codeunit` | Cross-codeunit dispatch via Codeunit.Run |
+| `11-variant-type` | AL Variant type boxing/unboxing |
+| `12-format-string` | Format() and Evaluate() type conversions |
+| `13-partial-compile` | Partial compilation (skips unsupported object types) |
+| `14-assert-130000` | Assert codeunit with ID 130000 (alternate ID) |
+| `15-codeunit-assign` | Codeunit variable assignment |
+| `16-isolated-storage` | IsolatedStorage key-value operations |
+| `17-text-builder` | TextBuilder Append/AppendLine/ToText |
+| `18-validate-trigger` | OnValidate triggers on table fields |
+| `19-table-procedures` | Custom procedures on table objects |
+| `20-option-fields` | Option/Enum fields on tables |
+| `21-expected-error-substring` | ExpectedError substring matching |
+| `22-record-persistence` | Record persistence across procedure calls |
+| `23-error-line-mapping` | Error line mapping in test output |
 
 When a new scenario is encountered that should work but doesn't, it gets triaged:
 - **In scope** → add a test case, fix the runner, verify it passes across all BC versions
-- **Out of scope** → document as a known limitation (like sample 05)
+- **Out of scope** → document as a known limitation (like test 05)
 
-To add a test case: create `tests/NN-name/src/*.al` and `tests/NN-name/test/*.al`, then add the directory name to the `for` loop in `test-matrix.yml`.
+To add a test case: create `tests/NN-name/src/*.al` and `tests/NN-name/test/*.al`. The CI workflow auto-discovers all test directories (except `06-intentional-failure`).
 
 ## CI
 

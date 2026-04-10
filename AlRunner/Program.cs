@@ -499,8 +499,9 @@ if (dumpRewritten)
 }
 
 // ---------------------------------------------------------------------------
-// Step 3: Compile rewritten C# with Roslyn
+// Step 3: Build AL source line mapping and compile rewritten C# with Roslyn
 // ---------------------------------------------------------------------------
+SourceLineMapper.Build(generatedCSharpList, rewrittenList);
 var assembly = RoslynCompiler.Compile(rewrittenList);
 if (assembly == null)
 {
@@ -573,13 +574,20 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 
 ### What al-runner supports
 
-- Pure-logic codeunits (arithmetic, string ops, record CRUD, enums)
+- Pure-logic codeunits (arithmetic, string ops, record CRUD, enums, options)
 - In-memory table store: Insert, Modify, Get, Delete, FindSet, FindFirst, FindLast, Next
+- Composite primary keys, sort ordering (SetCurrentKey / SetAscending)
 - SETRANGE / SETFILTER filtering (=, <>, <, <=, >, >=, wildcards, OR via |)
 - Cross-codeunit dispatch (Codeunit.Run, direct codeunit variable calls)
 - AL interfaces for dependency injection
 - `asserterror` blocks + `GetLastErrorText()`
 - Assert codeunit: AreEqual, AreNotEqual, IsTrue, IsFalse, ExpectedError, RecordIsEmpty, etc.
+- OnValidate triggers on table fields
+- Table procedures (custom procedures on table objects)
+- IsolatedStorage (in-memory key-value store: Set, Get, Delete, Contains)
+- TextBuilder (Append, AppendLine, ToText)
+- Format() / Evaluate() type conversions
+- Partial compilation (skips unsupported object types like XMLport)
 - Coverage reporting via `--coverage` (statement-level, outputs cobertura.xml)
 
 ### What al-runner does NOT support
@@ -1419,6 +1427,139 @@ public static class AlTranspiler
 }
 
 // ===========================================================================
+// SourceLineMapper: maps Roslyn C# line numbers back to AL source lines
+// ===========================================================================
+
+/// <summary>
+/// Builds a mapping from (C# file name, C# line number) to AL source line number
+/// by correlating StmtHit(N)/CStmtHit(N) calls in rewritten C# with SourceSpans
+/// from the pre-rewrite generated C#. Used to translate Roslyn compilation errors
+/// into meaningful AL line references.
+/// </summary>
+public static class SourceLineMapper
+{
+    /// <summary>
+    /// Per-file sorted list of (C# line number, AL source line number).
+    /// File key is the base name (e.g. "PayrollImportMgtRSABG") matching the
+    /// Roslyn file path stem (before ".cs").
+    /// </summary>
+    public static Dictionary<string, List<(int CSharpLine, int AlLine)>> Mappings { get; } = new();
+
+    /// <summary>
+    /// Build the mapping from pre-rewrite C# (for SourceSpans) and post-rewrite C#
+    /// (for StmtHit line positions). Both lists must use the same Name keys.
+    /// </summary>
+    public static void Build(
+        List<(string Name, string Code)> preRewriteCSharp,
+        List<(string Name, string Code)> postRewriteCSharp)
+    {
+        Mappings.Clear();
+
+        // Step 1: Parse SourceSpans from pre-rewrite code to get (scope, stmtIndex) -> AL line
+        var sourceSpans = CoverageReport.ParseSourceSpans(preRewriteCSharp);
+
+        // Step 2: For each post-rewrite file, scan for StmtHit(N) / CStmtHit(N) calls
+        // and map the C# line to the AL line via the sourceSpans
+        var stmtPattern = new System.Text.RegularExpressions.Regex(
+            @"\b(?:StmtHit|CStmtHit)\((\d+)\)");
+        var classPattern = new System.Text.RegularExpressions.Regex(
+            @"class\s+(\w+_Scope_\w+)");
+
+        foreach (var (name, code) in postRewriteCSharp)
+        {
+            var entries = new List<(int CSharpLine, int AlLine)>();
+            string? currentScope = null;
+            var lines = code.Split('\n');
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                var classMatch = classPattern.Match(lines[i]);
+                if (classMatch.Success)
+                {
+                    currentScope = classMatch.Groups[1].Value;
+                    continue;
+                }
+
+                if (currentScope != null)
+                {
+                    var stmtMatch = stmtPattern.Match(lines[i]);
+                    if (stmtMatch.Success)
+                    {
+                        int stmtIndex = int.Parse(stmtMatch.Groups[1].Value);
+                        if (sourceSpans.TryGetValue((currentScope, stmtIndex), out int alLine))
+                        {
+                            entries.Add((i + 1, alLine)); // C# lines are 1-based
+                        }
+                    }
+                }
+            }
+
+            if (entries.Count > 0)
+            {
+                entries.Sort((a, b) => a.CSharpLine.CompareTo(b.CSharpLine));
+                Mappings[name] = entries;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Look up the nearest AL source line for a given C# file and line number.
+    /// Returns null if no mapping exists for this file.
+    /// </summary>
+    public static int? GetAlLine(string csharpFilePath, int csharpLine)
+    {
+        // Extract base name from path (e.g. "PayrollImportMgtRSABG.cs" -> "PayrollImportMgtRSABG")
+        var baseName = Path.GetFileNameWithoutExtension(csharpFilePath);
+
+        if (!Mappings.TryGetValue(baseName, out var entries) || entries.Count == 0)
+            return null;
+
+        // Binary search for the nearest entry
+        int lo = 0, hi = entries.Count - 1;
+        while (lo < hi)
+        {
+            int mid = (lo + hi) / 2;
+            if (entries[mid].CSharpLine < csharpLine)
+                lo = mid + 1;
+            else
+                hi = mid;
+        }
+
+        // Check neighbors to find closest
+        int bestIdx = lo;
+        if (bestIdx > 0)
+        {
+            int distCurrent = Math.Abs(entries[bestIdx].CSharpLine - csharpLine);
+            int distPrev = Math.Abs(entries[bestIdx - 1].CSharpLine - csharpLine);
+            if (distPrev < distCurrent)
+                bestIdx = bestIdx - 1;
+        }
+
+        return entries[bestIdx].AlLine;
+    }
+
+    /// <summary>
+    /// Format a Roslyn diagnostic with AL source line context.
+    /// Returns the original diagnostic string with AL line info appended.
+    /// </summary>
+    public static string FormatDiagnostic(Microsoft.CodeAnalysis.Diagnostic diagnostic)
+    {
+        var original = diagnostic.ToString();
+        var filePath = diagnostic.Location.SourceTree?.FilePath;
+        if (filePath == null) return original;
+
+        var lineSpan = diagnostic.Location.GetLineSpan();
+        int csharpLine = lineSpan.StartLinePosition.Line + 1; // 0-based to 1-based
+
+        var alLine = GetAlLine(filePath, csharpLine);
+        if (alLine == null) return original;
+
+        var baseName = Path.GetFileNameWithoutExtension(filePath);
+        return $"{original}  [AL line ~{alLine} in {baseName}]";
+    }
+}
+
+// ===========================================================================
 // Roslyn In-Memory Compiler (supports multiple C# source strings)
 // ===========================================================================
 public static class RoslynCompiler
@@ -1570,7 +1711,7 @@ public static class RoslynCompiler
                 .ToList();
             Log.Info($"Roslyn compilation failed ({errors.Count} errors):");
             foreach (var d in errors.Take(30))
-                Log.Info($"  {d}");
+                Log.Info($"  {SourceLineMapper.FormatDiagnostic(d)}");
 
             // Iteratively remove error-producing source files and recompile.
             // Each round only removes files with DIRECT errors, preserving files
@@ -1598,7 +1739,7 @@ public static class RoslynCompiler
                         ExcludedFiles[p!] = errors
                             .Where(d => d.Location.SourceTree?.FilePath == p)
                             .Take(3)
-                            .Select(d => d.ToString())
+                            .Select(d => SourceLineMapper.FormatDiagnostic(d))
                             .ToList();
                     }
                 }
