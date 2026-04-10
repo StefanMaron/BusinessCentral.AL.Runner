@@ -578,6 +578,15 @@ public class MockRecordHandle
     }
 
     /// <summary>
+    /// AL's VALIDATE(FieldNo) — re-validates the current field value (no new value provided).
+    /// Fires OnValidate trigger with the existing value.
+    /// </summary>
+    public void ALValidateSafe(int fieldNo, NavType expectedType)
+    {
+        FireOnValidate(fieldNo);
+    }
+
+    /// <summary>
     /// ALValidate overload matching transpiler output pattern: ALValidate(DataError, fieldNo, NavType, value)
     /// </summary>
     public void ALValidate(DataError errorLevel, int fieldNo, NavType expectedType, NavValue value)

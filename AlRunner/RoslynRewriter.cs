@@ -480,8 +480,15 @@ public NavValue ALGetRangeMaxSafe(int fieldNo, NavType expectedType) => Rec.ALGe
                 return true;
 
             // private new NavRecord ParentObject => ...;
+            // For table extensions, keep ParentObject — it's rewritten to return Rec
+            // in VisitPropertyDeclaration. For other types (pages, etc.), remove it.
             if (name == "ParentObject")
-                return true;
+            {
+                var className = parentClass.Identifier.Text;
+                if (className.StartsWith("TableExtension") || className.StartsWith("Record"))
+                    return false; // keep — will be rewritten
+                return true; // remove for pages, etc.
+            }
             // protected override uint[] IndirectPermissionList => ...;
             if (name == "IndirectPermissionList")
                 return true;
@@ -580,6 +587,22 @@ public NavValue ALGetRangeMaxSafe(int fieldNo, NavType expectedType) => Rec.ALGe
                             .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.SemicolonToken)))))
                 .WithInitializer(SyntaxFactory.EqualsValueClause(
                     SyntaxFactory.ParseExpression($"new MockRecordHandle({tableId})")))
+                .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.SemicolonToken));
+            return stubProp;
+        }
+
+        // Rewrite ParentObject to return Rec for table extensions and records.
+        // Original: private new NavRecord ParentObject => (NavRecord)base.ParentObject;
+        // Rewritten: public MockRecordHandle ParentObject => Rec;
+        if (name == "ParentObject")
+        {
+            var stubProp = SyntaxFactory.PropertyDeclaration(
+                    SyntaxFactory.ParseTypeName("MockRecordHandle"),
+                    SyntaxFactory.Identifier("ParentObject"))
+                .WithModifiers(SyntaxFactory.TokenList(
+                    SyntaxFactory.Token(SyntaxKind.PublicKeyword)))
+                .WithExpressionBody(SyntaxFactory.ArrowExpressionClause(
+                    SyntaxFactory.IdentifierName("Rec")))
                 .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.SemicolonToken));
             return stubProp;
         }
