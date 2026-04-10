@@ -69,6 +69,29 @@ public static class MockIsolatedStorage
         return false;
     }
 
+    // ALGet with DataScope + ByRef (actual transpiler output)
+    public static bool ALGet(DataError errorLevel, string key, object dataScope, ByRef<NavSecretText> value)
+    {
+        if (_store.TryGetValue(key, out var v))
+        {
+            value.Value = NavSecretText.Create(v);
+            return true;
+        }
+        value.Value = NavSecretText.Create("");
+        return false;
+    }
+
+    public static bool ALGet(DataError errorLevel, string key, object dataScope, ByRef<NavText> value)
+    {
+        if (_store.TryGetValue(key, out var v))
+        {
+            value.Value = new NavText(v);
+            return true;
+        }
+        value.Value = new NavText("");
+        return false;
+    }
+
     // ALGet overloads (without DataScope — transpiler output for simple IsolatedStorage.Get)
     // Transpiler uses ByRef<NavText> instead of out parameter
     public static bool ALGet(DataError errorLevel, string key, ByRef<NavText> value)
