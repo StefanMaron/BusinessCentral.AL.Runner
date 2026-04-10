@@ -43,4 +43,22 @@ jobs:
         run: dotnet build AlRunner/
 
       - name: "Sample 06: Intentional failure (EXPECTED TO FAIL)"
-        run: dotnet run --project AlRunner --no-build -- samples/06-intentional-failure/src samples/06-intentional-failure/test
+        run: |
+          set +e
+          OUTPUT=$(dotnet run --no-build --project AlRunner -- --coverage samples/06-intentional-failure/src samples/06-intentional-failure/test 2>&1)
+          RUNNER_EXIT=$?
+          echo "$OUTPUT"
+
+          # Write summary showing the failure output — this is the whole point of this workflow
+          {
+            echo "## Expected Failure Output"
+            echo ""
+            echo "This workflow intentionally runs broken tests to demonstrate error reporting."
+            echo ""
+            echo '```'
+            echo "$OUTPUT" | grep -E "^(FAIL|PASS|ERROR|      |Results:)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Fail the step (expected)
+          exit $RUNNER_EXIT
