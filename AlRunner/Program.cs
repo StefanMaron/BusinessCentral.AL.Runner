@@ -43,9 +43,12 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("  -h, --help            Show this help");
     Console.Error.WriteLine();
     Console.Error.WriteLine("Examples:");
-    Console.Error.WriteLine("  al-runner ./src ./test                     Run tests");
-    Console.Error.WriteLine("  al-runner --coverage ./src ./test          Run tests with coverage");
-    Console.Error.WriteLine("  al-runner --packages .alpackages ./src     Run with dependencies");
+    Console.Error.WriteLine("  al-runner ./src ./test                        Run tests");
+    Console.Error.WriteLine("  al-runner --coverage ./src ./test             Run tests with coverage");
+    Console.Error.WriteLine("  al-runner --packages .alpackages ./src        Run with dependencies");
+    Console.Error.WriteLine("  al-runner --output-json ./src ./test          Get JSON results for tooling");
+    Console.Error.WriteLine("  al-runner --run TestMyThing ./src ./test      Run a single test procedure");
+    Console.Error.WriteLine("  al-runner --server                            Start JSON-RPC daemon");
     Console.Error.WriteLine();
     Console.Error.WriteLine("Test codeunits (Subtype = Test) are auto-detected.");
     Console.Error.WriteLine("BC Service Tier DLLs are auto-downloaded on first run.");
@@ -261,7 +264,33 @@ al-runner --packages .alpackages ./src ./test             # with dependency symb
 al-runner --packages .alpackages --stubs ./stubs ./src ./test  # with stubs
 al-runner -v ./src ./test                                 # verbose output
 al-runner --dump-rewritten ./src ./test                   # inspect generated C#
+al-runner --output-json ./src ./test                      # machine-readable JSON output
+al-runner --run TestMyProcedure ./src ./test              # run a single test by name
+al-runner --capture-values ./src ./test                   # capture variable values after each test
+al-runner --server                                         # long-running JSON-RPC daemon (stdin/stdout)
 ```
+
+### Machine-readable output (--output-json)
+
+Produces a JSON object with per-test results including `name`, `status`
+(pass/fail/error), `durationMs`, `message`, `stackTrace`, and `alSourceLine`
+(AL source line where an error occurred). Also includes summary counts:
+`passed`, `failed`, `errors`, `total`, `exitCode`. Suitable for integrating
+al-runner into editors, CI systems, or other tooling.
+
+### Server mode (--server)
+
+Starts a long-running process that reads JSON-RPC requests from stdin and
+writes responses to stdout, one JSON object per line. The server keeps the
+transpiler warm and caches compiled assemblies by source file hash, so
+subsequent runs of the same files reuse the cached assembly (`cached:true`
+in the response).
+
+Commands:
+- `{"command":"runTests","sourcePaths":["./src","./test"]}` — run tests
+- `{"command":"shutdown"}` — exit cleanly
+
+Optional fields: `packagePaths`, `stubPaths`.
 
 ### Tips for AI agents
 
