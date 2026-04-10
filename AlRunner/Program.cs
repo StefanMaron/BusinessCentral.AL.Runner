@@ -19,17 +19,30 @@ using AlRunner;
 // Supports single files, multiple files, and project directories.
 // ---------------------------------------------------------------------------
 
-if (args.Length == 0)
+if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
 {
-    Console.Error.WriteLine("Usage: dotnet run --project AlRunner -- <file.al> [file2.al ...]");
-    Console.Error.WriteLine("       dotnet run --project AlRunner -- <directory-with-al-files>");
-    Console.Error.WriteLine("       dotnet run --project AlRunner -- <package.app> [<directory>]");
-    Console.Error.WriteLine("       dotnet run --project AlRunner -- -e '<al code>'");
-    Console.Error.WriteLine("       dotnet run --project AlRunner -- --dump-csharp <file.al>");
-    Console.Error.WriteLine("       dotnet run --project AlRunner -- --dump-rewritten <file.al>");
-    Console.Error.WriteLine("       dotnet run --project AlRunner -- --packages <dir> [--packages <dir2>] <inputs...>");
-    Console.Error.WriteLine("       dotnet run --project AlRunner -- --coverage <src-dir> <test-dir>");
-    return 1;
+    Console.Error.WriteLine("AL Runner — run BC AL unit tests in milliseconds");
+    Console.Error.WriteLine();
+    Console.Error.WriteLine("Usage: al-runner [options] <src-dir> [test-dir]");
+    Console.Error.WriteLine("       al-runner [options] <file.al> [file2.al ...]");
+    Console.Error.WriteLine("       al-runner [options] <package.app> [package2.app ...]");
+    Console.Error.WriteLine();
+    Console.Error.WriteLine("Options:");
+    Console.Error.WriteLine("  --coverage            Show statement-level coverage report and write cobertura.xml");
+    Console.Error.WriteLine("  --packages <dir>      Add symbol references from .app files in directory");
+    Console.Error.WriteLine("  --dump-csharp         Print generated C# (before rewriting) and exit");
+    Console.Error.WriteLine("  --dump-rewritten      Print rewritten C# (after rewriting) and exit");
+    Console.Error.WriteLine("  -e '<al code>'        Run inline AL code");
+    Console.Error.WriteLine("  -h, --help            Show this help");
+    Console.Error.WriteLine();
+    Console.Error.WriteLine("Examples:");
+    Console.Error.WriteLine("  al-runner ./src ./test                     Run tests");
+    Console.Error.WriteLine("  al-runner --coverage ./src ./test          Run tests with coverage");
+    Console.Error.WriteLine("  al-runner --packages .alpackages ./src     Run with dependencies");
+    Console.Error.WriteLine();
+    Console.Error.WriteLine("Test codeunits (Subtype = Test) are auto-detected.");
+    Console.Error.WriteLine("BC Service Tier DLLs are auto-downloaded on first run.");
+    return args.Length == 0 ? 1 : 0;
 }
 
 // Parse arguments
