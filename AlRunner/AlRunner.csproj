@@ -21,58 +21,54 @@
     <PackageTags>business-central;al;unit-test;runner</PackageTags>
   </PropertyGroup>
 
-  <!-- AL Compiler path: resolved from dotnet tool store, cross-platform.
-       On Linux:   microsoft.dynamics.businesscentral.development.tools.linux
-       On Windows: microsoft.dynamics.businesscentral.development.tools (no suffix)
-       Override: set ALCompilerPath property explicitly or via environment variable. -->
-  <PropertyGroup Condition="'$(ALCompilerPath)' == ''">
+  <PropertyGroup>
     <_ALToolVersion>16.2.28.57946</_ALToolVersion>
-    <!-- Linux -->
-    <ALCompilerPath Condition="$([MSBuild]::IsOSPlatform('Linux'))">$(HOME)/.dotnet/tools/.store/microsoft.dynamics.businesscentral.development.tools.linux/$(_ALToolVersion)/microsoft.dynamics.businesscentral.development.tools.linux/$(_ALToolVersion)/tools/net8.0/any</ALCompilerPath>
-    <!-- macOS -->
-    <ALCompilerPath Condition="$([MSBuild]::IsOSPlatform('OSX'))">$(HOME)/.dotnet/tools/.store/microsoft.dynamics.businesscentral.development.tools.linux/$(_ALToolVersion)/microsoft.dynamics.businesscentral.development.tools.linux/$(_ALToolVersion)/tools/net8.0/any</ALCompilerPath>
-    <!-- Windows -->
-    <ALCompilerPath Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(USERPROFILE)/.dotnet/tools/.store/microsoft.dynamics.businesscentral.development.tools/$(_ALToolVersion)/microsoft.dynamics.businesscentral.development.tools/$(_ALToolVersion)/tools/net8.0/any</ALCompilerPath>
-  </PropertyGroup>
-
-  <!-- Service Tier DLLs: auto-downloaded at runtime if not found locally.
-       Override: set ServiceTierPath property or BC_SERVICE_TIER_PATH env var. -->
-  <PropertyGroup Condition="'$(ServiceTierPath)' == ''">
     <_BCVersion>27.5.46862.0</_BCVersion>
-    <ServiceTierPath Condition="Exists('../artifacts/onprem/$(_BCVersion)/platform/ServiceTier/PFiles64/Microsoft Dynamics NAV/270/Service')">../artifacts/onprem/$(_BCVersion)/platform/ServiceTier/PFiles64/Microsoft Dynamics NAV/270/Service</ServiceTierPath>
-    <!-- Fallback: cross-platform cache directory -->
-    <ServiceTierPath Condition="'$(ServiceTierPath)' == '' And $([MSBuild]::IsOSPlatform('Windows'))">$(LOCALAPPDATA)/al-runner/artifacts/$(_BCVersion)</ServiceTierPath>
-    <ServiceTierPath Condition="'$(ServiceTierPath)' == '' And !$([MSBuild]::IsOSPlatform('Windows'))">$(HOME)/.local/share/al-runner/artifacts/$(_BCVersion)</ServiceTierPath>
+    <!-- Cross-platform cache directory for auto-downloaded dependencies -->
+    <_CacheBase Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(LOCALAPPDATA)/al-runner</_CacheBase>
+    <_CacheBase Condition="!$([MSBuild]::IsOSPlatform('Windows'))">$(HOME)/.local/share/al-runner</_CacheBase>
   </PropertyGroup>
 
-  <!-- Copy stubs directory to output so they're found at runtime -->
+  <!-- AL Compiler: resolve from dotnet tool store, then cache, then auto-download -->
+  <PropertyGroup Condition="'$(ALCompilerPath)' == ''">
+    <!-- 1. dotnet tool store (if installed manually) -->
+    <ALCompilerPath Condition="$([MSBuild]::IsOSPlatform('Linux')) And Exists('$(HOME)/.dotnet/tools/.store/microsoft.dynamics.businesscentral.development.tools.linux/$(_ALToolVersion)/microsoft.dynamics.businesscentral.development.tools.linux/$(_ALToolVersion)/tools/net8.0/any/Microsoft.Dynamics.Nav.CodeAnalysis.dll')">$(HOME)/.dotnet/tools/.store/microsoft.dynamics.businesscentral.development.tools.linux/$(_ALToolVersion)/microsoft.dynamics.businesscentral.development.tools.linux/$(_ALToolVersion)/tools/net8.0/any</ALCompilerPath>
+    <ALCompilerPath Condition="$([MSBuild]::IsOSPlatform('OSX')) And Exists('$(HOME)/.dotnet/tools/.store/microsoft.dynamics.businesscentral.development.tools.linux/$(_ALToolVersion)/microsoft.dynamics.businesscentral.development.tools.linux/$(_ALToolVersion)/tools/net8.0/any/Microsoft.Dynamics.Nav.CodeAnalysis.dll')">$(HOME)/.dotnet/tools/.store/microsoft.dynamics.businesscentral.development.tools.linux/$(_ALToolVersion)/microsoft.dynamics.businesscentral.development.tools.linux/$(_ALToolVersion)/tools/net8.0/any</ALCompilerPath>
+    <ALCompilerPath Condition="$([MSBuild]::IsOSPlatform('Windows')) And Exists('$(USERPROFILE)/.dotnet/tools/.store/microsoft.dynamics.businesscentral.development.tools/$(_ALToolVersion)/microsoft.dynamics.businesscentral.development.tools/$(_ALToolVersion)/tools/net8.0/any/Microsoft.Dynamics.Nav.CodeAnalysis.dll')">$(USERPROFILE)/.dotnet/tools/.store/microsoft.dynamics.businesscentral.development.tools/$(_ALToolVersion)/microsoft.dynamics.businesscentral.development.tools/$(_ALToolVersion)/tools/net8.0/any</ALCompilerPath>
+    <!-- 2. Cache directory (auto-downloaded) -->
+    <ALCompilerPath Condition="'$(ALCompilerPath)' == ''">$(_CacheBase)/alcompiler/$(_ALToolVersion)</ALCompilerPath>
+  </PropertyGroup>
+
+  <!-- Service Tier: resolve from local artifacts, then cache -->
+  <PropertyGroup Condition="'$(ServiceTierPath)' == ''">
+    <ServiceTierPath Condition="Exists('../artifacts/onprem/$(_BCVersion)/platform/ServiceTier/PFiles64/Microsoft Dynamics NAV/270/Service')">../artifacts/onprem/$(_BCVersion)/platform/ServiceTier/PFiles64/Microsoft Dynamics NAV/270/Service</ServiceTierPath>
+    <ServiceTierPath Condition="'$(ServiceTierPath)' == ''">$(_CacheBase)/artifacts/$(_BCVersion)</ServiceTierPath>
+  </PropertyGroup>
+
+  <!-- Copy stubs to output for runtime discovery -->
   <ItemGroup>
     <None Include="stubs/**" CopyToOutputDirectory="PreserveNewest" LinkBase="stubs" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- AL Compiler (for transpiling AL -> C#) -->
+    <!-- AL Compiler -->
     <Reference Include="Microsoft.Dynamics.Nav.CodeAnalysis">
       <HintPath>$(ALCompilerPath)/Microsoft.Dynamics.Nav.CodeAnalysis.dll</HintPath>
     </Reference>
     <Reference Include="Microsoft.Dynamics.Nav.CodeAnalysis.Workspaces">
       <HintPath>$(ALCompilerPath)/Microsoft.Dynamics.Nav.CodeAnalysis.Workspaces.dll</HintPath>
     </Reference>
-
-    <!-- Roslyn (for compiling rewritten C# in-memory) -->
     <Reference Include="Microsoft.CodeAnalysis">
       <HintPath>$(ALCompilerPath)/Microsoft.CodeAnalysis.dll</HintPath>
     </Reference>
     <Reference Include="Microsoft.CodeAnalysis.CSharp">
       <HintPath>$(ALCompilerPath)/Microsoft.CodeAnalysis.CSharp.dll</HintPath>
     </Reference>
-
-    <!-- System.IO.Packaging (needed by CodeAnalysis) -->
     <Reference Include="System.IO.Packaging">
       <HintPath>$(ALCompilerPath)/System.IO.Packaging.dll</HintPath>
     </Reference>
 
-    <!-- BC Service Tier DLLs (referenced at compile time, auto-downloaded at runtime if missing) -->
+    <!-- BC Service Tier -->
     <Reference Include="Microsoft.Dynamics.Nav.Ncl">
       <HintPath>$(ServiceTierPath)/Microsoft.Dynamics.Nav.Ncl.dll</HintPath>
     </Reference>
@@ -99,12 +95,19 @@
     </Reference>
   </ItemGroup>
 
-  <!-- Auto-download BC Service Tier DLLs before build if not present.
-       Uses dotnet-script (C# scripting) to run ArtifactDownloader logic. -->
+  <!-- Auto-download AL compiler if not present -->
+  <Target Name="EnsureALCompiler" BeforeTargets="ResolveAssemblyReferences"
+          Condition="!Exists('$(ALCompilerPath)/Microsoft.Dynamics.Nav.CodeAnalysis.dll')">
+    <Message Importance="high" Text="AL compiler not found. Downloading from NuGet..." />
+    <Exec Command="dotnet run --project &quot;$(MSBuildProjectDirectory)/../tools/DownloadArtifacts&quot; -- al-compiler $(_ALToolVersion) &quot;$(ALCompilerPath)&quot;" />
+  </Target>
+
+  <!-- Auto-download BC Service Tier DLLs if not present -->
   <Target Name="EnsureBCServiceTierDlls" BeforeTargets="ResolveAssemblyReferences"
+          DependsOnTargets="EnsureALCompiler"
           Condition="!Exists('$(ServiceTierPath)/Microsoft.Dynamics.Nav.Types.dll')">
-    <Message Importance="high" Text="BC Service Tier DLLs not found at $(ServiceTierPath). Downloading..." />
-    <Exec Command="dotnet run --project $(MSBuildProjectDirectory)/../tools/DownloadArtifacts -- $(_BCVersion) $(ServiceTierPath)" />
+    <Message Importance="high" Text="BC Service Tier DLLs not found. Downloading via range request..." />
+    <Exec Command="dotnet run --project &quot;$(MSBuildProjectDirectory)/../tools/DownloadArtifacts&quot; -- service-tier $(_BCVersion) &quot;$(ServiceTierPath)&quot;" />
   </Target>
 
 </Project>

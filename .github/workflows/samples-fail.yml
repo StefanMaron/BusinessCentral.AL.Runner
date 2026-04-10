@@ -26,9 +26,7 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Install AL compiler
-        run: dotnet tool install --global microsoft.dynamics.businesscentral.development.tools.linux --version 16.2.28.57946
-
+      # AL compiler and BC Service Tier DLLs are auto-downloaded during build.
       - name: Build
         run: dotnet build AlRunner/
 

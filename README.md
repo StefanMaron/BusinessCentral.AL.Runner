@@ -107,20 +107,13 @@ Anything you can't inject cannot be unit-tested by this runner — and that's th
 
 ## Quick Start
 
-### Install as dotnet tool
+### Install
 
 ```bash
-# Install the AL compiler (prerequisite)
-# Linux/macOS:
-dotnet tool install --global microsoft.dynamics.businesscentral.development.tools.linux
-# Windows:
-dotnet tool install --global microsoft.dynamics.businesscentral.development.tools
-
-# Install AL Runner
 dotnet tool install --global BusinessCentral.AL.Runner
 ```
 
-BC Service Tier DLLs are **auto-downloaded** on first run via HTTP range requests (~11 MB instead of the full 1.2 GB artifact). No manual artifact setup needed.
+That's it. On first build/run, the AL compiler (~57 MB from NuGet) and BC Service Tier DLLs (~11 MB via HTTP range requests) are downloaded automatically and cached. No manual setup, works on Windows, Linux, and macOS.
 
 ### Run
 
