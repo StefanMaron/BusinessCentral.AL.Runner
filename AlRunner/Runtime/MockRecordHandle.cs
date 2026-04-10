@@ -227,6 +227,34 @@ public class MockRecordHandle
         return false;
     }
 
+    /// <summary>
+    /// ModifyAll — sets a single field to a value on all records matching current filters.
+    /// </summary>
+    public void ALModifyAllSafe(int fieldNo, NavType expectedType, NavValue value)
+    {
+        ALModifyAllSafe(fieldNo, expectedType, value, false);
+    }
+
+    public void ALModifyAllSafe(int fieldNo, NavType expectedType, NavValue value, bool runTrigger)
+    {
+        if (!_tables.TryGetValue(_tableId, out var table))
+            return;
+        var filtered = GetFilteredRecords();
+        var pkFields = GetPrimaryKeyFields();
+        foreach (var filteredRow in filtered)
+        {
+            // Find the matching row in the actual table and update it
+            for (int i = 0; i < table.Count; i++)
+            {
+                if (RowMatchesPrimaryKey(table[i], filteredRow, pkFields))
+                {
+                    table[i][fieldNo] = value;
+                    break;
+                }
+            }
+        }
+    }
+
     public bool ALGet(DataError errorLevel, params NavValue[] keyValues)
     {
         var table = _tables[_tableId];
