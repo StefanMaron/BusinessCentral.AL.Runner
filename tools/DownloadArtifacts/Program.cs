@@ -12,21 +12,23 @@ using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Text;
 
-if (args.Length < 3)
+if (args.Length < 2)
 {
     Console.Error.WriteLine("Usage: DownloadArtifacts service-tier <bc-version> <output-dir>");
     Console.Error.WriteLine("       DownloadArtifacts al-compiler <tool-version> <output-dir>");
+    Console.Error.WriteLine("       DownloadArtifacts resolve-version <bc-prefix>");
     return 1;
 }
 
 var mode = args[0];
 var version = args[1];
-var outputDir = args[2];
+var outputDir = args.Length >= 3 ? args[2] : "";
 
 return mode switch
 {
     "service-tier" => DownloadServiceTier(version, outputDir),
     "al-compiler" => DownloadAlCompiler(version, outputDir),
+    "resolve-version" => ResolveVersion(version),
     _ => Error($"Unknown mode: {mode}")
 };
 
@@ -92,7 +94,7 @@ static int DownloadAlCompiler(string version, string outputDir)
 // ---------------------------------------------------------------------------
 static int DownloadServiceTier(string version, string outputDir)
 {
-    var artifactUrl = $"https://bcartifacts-exdbf9fwegejdqak.b02.azurefd.net/onprem/{version}/platform";
+    var artifactUrl = $"https://bcartifacts-exdbf9fwegejdqak.b02.azurefd.net/sandbox/{version}/platform";
     Directory.CreateDirectory(outputDir);
 
     using var handler = new HttpClientHandler();
@@ -195,6 +197,72 @@ static int DownloadServiceTier(string version, string outputDir)
 
     Console.Error.WriteLine($"Downloaded {extracted} DLLs to {outputDir}");
     return extracted > 0 ? 0 : 1;
+}
+
+// ---------------------------------------------------------------------------
+// Resolve version: query Microsoft's index to find latest full version
+// ---------------------------------------------------------------------------
+static int ResolveVersion(string prefix)
+{
+    // Microsoft's index file: https://bcartifacts-exdbf9fwegejdqak.b02.azurefd.net/sandbox/indexes/w1.json
+    // Returns array of {Version: "27.5.46862.0", ...}
+    using var http = new HttpClient();
+    var indexUrl = "https://bcartifacts-exdbf9fwegejdqak.b02.azurefd.net/sandbox/indexes/w1.json";
+    Console.Error.WriteLine($"Resolving BC version prefix '{prefix}'...");
+
+    string json;
+    try
+    {
+        json = http.GetStringAsync(indexUrl).Result;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Error fetching index: {ex.Message}");
+        return 1;
+    }
+
+    // Simple JSON parsing — find all "Version":"X.Y.Z.W" values matching prefix
+    var searchPrefix = prefix + ".";
+    var versions = new List<string>();
+    int idx = 0;
+    while ((idx = json.IndexOf("\"Version\"", idx, StringComparison.OrdinalIgnoreCase)) >= 0)
+    {
+        idx = json.IndexOf(':', idx);
+        if (idx < 0) break;
+        idx = json.IndexOf('"', idx + 1);
+        if (idx < 0) break;
+        int end = json.IndexOf('"', idx + 1);
+        if (end < 0) break;
+        var ver = json.Substring(idx + 1, end - idx - 1);
+        if (ver.StartsWith(searchPrefix))
+            versions.Add(ver);
+        idx = end + 1;
+    }
+
+    if (versions.Count == 0)
+    {
+        Console.Error.WriteLine($"No versions found for prefix '{prefix}'");
+        return 1;
+    }
+
+    // Sort by version components and pick the latest
+    versions.Sort((a, b) =>
+    {
+        var pa = a.Split('.').Select(int.Parse).ToArray();
+        var pb = b.Split('.').Select(int.Parse).ToArray();
+        for (int i = 0; i < Math.Min(pa.Length, pb.Length); i++)
+        {
+            var cmp = pa[i].CompareTo(pb[i]);
+            if (cmp != 0) return cmp;
+        }
+        return pa.Length.CompareTo(pb.Length);
+    });
+
+    var resolved = versions.Last();
+    // Output to stdout (for script consumption), status to stderr
+    Console.Error.WriteLine($"Resolved: {prefix} -> {resolved}");
+    Console.WriteLine(resolved);
+    return 0;
 }
 
 static byte[] DownloadRange(HttpClient http, string url, long from, long to)

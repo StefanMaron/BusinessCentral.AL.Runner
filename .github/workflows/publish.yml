@@ -1,0 +1,100 @@
+name: Publish to NuGet
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Package version (e.g. 0.2.0)'
+        required: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  resolve-versions:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Resolve BC versions
+        id: resolve
+        run: |
+          BC_PREFIXES="26.0 26.3 26.5 27.0 27.3 27.5"
+          VERSIONS="[]"
+          for prefix in $BC_PREFIXES; do
+            FULL=$(dotnet run --project tools/DownloadArtifacts -- resolve-version "$prefix" dummy 2>/dev/null)
+            if [ -n "$FULL" ]; then
+              VERSIONS=$(echo "$VERSIONS" | python3 -c "import json,sys; v=json.load(sys.stdin); v.append('$FULL'); print(json.dumps(v))")
+            fi
+          done
+          echo "matrix={\"bc-version\":$VERSIONS}" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: resolve-versions
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix: ${{ fromJson(needs.resolve-versions.outputs.matrix) }}
+    name: Test BC ${{ matrix.bc-version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Download and build
+        run: |
+          dotnet run --project tools/DownloadArtifacts -- service-tier "${{ matrix.bc-version }}" "${HOME}/.local/share/al-runner/artifacts/${{ matrix.bc-version }}"
+          dotnet build AlRunner/ -p:_BCVersion=${{ matrix.bc-version }}
+
+      - name: Run tests
+        run: |
+          for sample in 01-pure-function 02-record-operations 03-interface-injection 04-asserterror 05-known-limitation; do
+            dotnet run --no-build --project AlRunner -- "samples/${sample}/src" "samples/${sample}/test"
+          done
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            # Extract from tag: v0.2.0 -> 0.2.0
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and pack
+        run: |
+          dotnet build AlRunner/
+          dotnet pack AlRunner/ -p:Version=${{ steps.version.outputs.version }} -o ./nupkg
+
+      - name: Push to NuGet
+        run: dotnet nuget push ./nupkg/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+      - name: Summary
+        run: |
+          echo "## Published to NuGet" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Version:** ${{ steps.version.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Package:** [BusinessCentral.AL.Runner](https://www.nuget.org/packages/BusinessCentral.AL.Runner/${{ steps.version.outputs.version }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Tested against BC versions:" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ needs.resolve-versions.outputs.matrix }}" | python3 -c "import json,sys; [print(f'  {v}') for v in json.load(sys.stdin)['bc-version']]" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

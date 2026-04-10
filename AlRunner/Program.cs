@@ -1124,7 +1124,7 @@ public static class RoslynCompiler
     }
 
     private const string BcArtifactVersion = "27.5.46862.0";
-    private const string BcArtifactUrl = "https://bcartifacts-exdbf9fwegejdqak.b02.azurefd.net/onprem/" + BcArtifactVersion + "/platform";
+    private const string BcArtifactUrl = "https://bcartifacts-exdbf9fwegejdqak.b02.azurefd.net/sandbox/" + BcArtifactVersion + "/platform";
 
     private static string? FindServiceTierPath()
     {
@@ -1134,7 +1134,7 @@ public static class RoslynCompiler
             return envPath;
 
         // 2. Local artifacts directory (relative to CWD or binary)
-        const string relPath = "artifacts/onprem/" + BcArtifactVersion + "/platform/ServiceTier/PFiles64/Microsoft Dynamics NAV/270/Service";
+        const string relPath = "artifacts/sandbox/" + BcArtifactVersion + "/platform/ServiceTier/PFiles64/Microsoft Dynamics NAV/270/Service";
         var candidates = new[]
         {
             Path.GetFullPath(relPath),

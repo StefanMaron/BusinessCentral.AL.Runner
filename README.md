@@ -1,7 +1,7 @@
 # BusinessCentral.AL.Runner
 
-[![Samples (passing)](https://github.com/StefanMaron/BusinessCentral.AL.Runner/actions/workflows/samples-pass.yml/badge.svg)](https://github.com/StefanMaron/BusinessCentral.AL.Runner/actions/workflows/samples-pass.yml)
-[![Samples (expected failure)](https://github.com/StefanMaron/BusinessCentral.AL.Runner/actions/workflows/samples-fail.yml/badge.svg)](https://github.com/StefanMaron/BusinessCentral.AL.Runner/actions/workflows/samples-fail.yml)
+[![Test Matrix](https://github.com/StefanMaron/BusinessCentral.AL.Runner/actions/workflows/test-matrix.yml/badge.svg)](https://github.com/StefanMaron/BusinessCentral.AL.Runner/actions/workflows/test-matrix.yml)
+[![NuGet](https://img.shields.io/nuget/v/BusinessCentral.AL.Runner)](https://www.nuget.org/packages/BusinessCentral.AL.Runner)
 
 Run Business Central AL unit tests in **milliseconds** — no BC service tier, no Docker, no SQL Server, no license required.
 
@@ -184,12 +184,11 @@ Each sample is a self-contained AL project with source, tests, and config:
 | `samples/05-known-limitation/` | Silent false positive from missing event subscriber |
 | `samples/06-intentional-failure/` | Deliberately broken tests for error output demo |
 
-## CI Pipelines
+## CI
 
-Two GitHub Actions workflows run on every push:
+Every push runs the test suite against a matrix of BC versions (26.0 through 27.5) to ensure compatibility. The publish workflow pushes to NuGet when all versions pass.
 
-- **Samples (passing)** — runs samples 01–05, expected to pass. Green badge means the runner works.
-- **Samples (expected failure)** — runs sample 06, expected to fail. This is intentional. Click the red badge to see exactly what test failure output looks like before deciding to adopt the tool. The failing tests demonstrate `Assert.AreEqual` and `Assert.ExpectedError` error formatting.
+See the [Test Matrix](https://github.com/StefanMaron/BusinessCentral.AL.Runner/actions/workflows/test-matrix.yml) for current results.
 
 ## Naming
 

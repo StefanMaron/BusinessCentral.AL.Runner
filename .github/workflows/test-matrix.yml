@@ -1,0 +1,90 @@
+name: Test Matrix
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  resolve-versions:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Resolve BC versions
+        id: resolve
+        run: |
+          # Resolve short version prefixes to full versions via Microsoft's index
+          BC_PREFIXES="26.0 26.3 26.5 27.0 27.3 27.5"
+          VERSIONS="[]"
+          for prefix in $BC_PREFIXES; do
+            FULL=$(dotnet run --project tools/DownloadArtifacts -- resolve-version "$prefix" dummy 2>/dev/null)
+            if [ -n "$FULL" ]; then
+              echo "  $prefix -> $FULL"
+              VERSIONS=$(echo "$VERSIONS" | python3 -c "import json,sys; v=json.load(sys.stdin); v.append('$FULL'); print(json.dumps(v))")
+            else
+              echo "  $prefix -> FAILED (skipping)"
+            fi
+          done
+          echo "matrix={\"bc-version\":$VERSIONS}" >> "$GITHUB_OUTPUT"
+          echo "Matrix: $VERSIONS"
+
+  test:
+    needs: resolve-versions
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.resolve-versions.outputs.matrix) }}
+    name: BC ${{ matrix.bc-version }}
+    env:
+      BC_VERSION: ${{ matrix.bc-version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Download BC ${{ matrix.bc-version }} Service Tier DLLs
+        run: |
+          TARGET_DIR="${HOME}/.local/share/al-runner/artifacts/${BC_VERSION}"
+          dotnet run --project tools/DownloadArtifacts -- service-tier "$BC_VERSION" "$TARGET_DIR"
+
+      - name: Build
+        run: dotnet build AlRunner/ -p:_BCVersion=${{ matrix.bc-version }}
+
+      - name: Run tests with coverage
+        run: |
+          echo "## BC ${{ matrix.bc-version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| | Sample | Tests | Coverage |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|--------|-------|----------|" >> "$GITHUB_STEP_SUMMARY"
+
+          EXIT=0
+          for sample in 01-pure-function 02-record-operations 03-interface-injection 04-asserterror 05-known-limitation; do
+            echo "::group::Sample ${sample}"
+            OUTPUT=$(dotnet run --no-build --project AlRunner -- --coverage "samples/${sample}/src" "samples/${sample}/test" 2>&1) || EXIT=1
+            echo "$OUTPUT"
+            echo "::endgroup::"
+
+            RESULTS=$(echo "$OUTPUT" | grep "^Results:")
+            PASSED=$(echo "$RESULTS" | grep -oP '\d+ passed' | grep -oP '\d+')
+            FAILED=$(echo "$RESULTS" | grep -oP '\d+ failed' | grep -oP '\d+')
+            COVERAGE=$(echo "$OUTPUT" | grep "^  TOTAL" | grep -oP '\d+%' | head -1)
+            COVERAGE=${COVERAGE:-"n/a"}
+
+            if [ "${FAILED:-0}" = "0" ]; then
+              echo "| :white_check_mark: | ${sample} | ${PASSED:-0} passed | ${COVERAGE} |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "| :x: | ${sample} | ${PASSED:-0}/${FAILED:-0} failed | ${COVERAGE} |" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+          exit $EXIT

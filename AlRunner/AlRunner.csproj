@@ -41,7 +41,7 @@
 
   <!-- Service Tier: resolve from local artifacts, then cache -->
   <PropertyGroup Condition="'$(ServiceTierPath)' == ''">
-    <ServiceTierPath Condition="Exists('../artifacts/onprem/$(_BCVersion)/platform/ServiceTier/PFiles64/Microsoft Dynamics NAV/270/Service')">../artifacts/onprem/$(_BCVersion)/platform/ServiceTier/PFiles64/Microsoft Dynamics NAV/270/Service</ServiceTierPath>
+    <ServiceTierPath Condition="Exists('../artifacts/sandbox/$(_BCVersion)/platform/ServiceTier/PFiles64/Microsoft Dynamics NAV/270/Service')">../artifacts/sandbox/$(_BCVersion)/platform/ServiceTier/PFiles64/Microsoft Dynamics NAV/270/Service</ServiceTierPath>
     <ServiceTierPath Condition="'$(ServiceTierPath)' == ''">$(_CacheBase)/artifacts/$(_BCVersion)</ServiceTierPath>
   </PropertyGroup>
 
