@@ -33,5 +33,9 @@ TestResults/
 artifacts/
 *.app
 
+# Coverage reports
+cobertura.xml
+lcov.info
+
 # Logs
 *.log

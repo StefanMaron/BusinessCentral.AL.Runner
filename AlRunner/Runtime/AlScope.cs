@@ -71,6 +71,12 @@ public class AlScope : IDisposable
         return result;
     }
 
+    /// <summary>Get raw coverage sets for report generation.</summary>
+    public static (HashSet<(string Type, int Id)> Hit, HashSet<(string Type, int Id)> Total) GetCoverageSets()
+    {
+        return (_hitStatements, _totalStatements);
+    }
+
     /// <summary>Get overall coverage: (hit, total).</summary>
     public static (int Hit, int Total) GetOverallCoverage()
     {

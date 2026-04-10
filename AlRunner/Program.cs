@@ -411,7 +411,27 @@ if (hasTests)
 {
     exitCode = Executor.RunTests(assembly);
     if (showCoverage)
+    {
         Executor.PrintCoverageReport();
+
+        // Write Cobertura XML for editor/CI integration
+        var sourceSpans = CoverageReport.ParseSourceSpans(generatedCSharpList!);
+        var (hitStmts, totalStmts) = AlRunner.Runtime.AlScope.GetCoverageSets();
+
+        // Collect AL source file paths for file mapping
+        var alFilePaths = new List<string>();
+        foreach (var inputPath in inputPaths)
+        {
+            if (Directory.Exists(inputPath))
+                alFilePaths.AddRange(Directory.GetFiles(inputPath, "*.al", SearchOption.TopDirectoryOnly));
+            else if (File.Exists(inputPath))
+                alFilePaths.Add(inputPath);
+        }
+
+        var objectToFile = CoverageReport.MapObjectsToFiles(generatedCSharpList!, alFilePaths);
+        CoverageReport.WriteCobertura("cobertura.xml", sourceSpans, hitStmts, totalStmts, objectToFile);
+        Console.Error.WriteLine("Coverage report: cobertura.xml");
+    }
 }
 else
 {
