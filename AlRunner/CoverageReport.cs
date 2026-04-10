@@ -92,7 +92,7 @@ public static class CoverageReport
                     // Match codeunit/table name in quotes
                     if (content.Contains($"\"{name}\"", StringComparison.OrdinalIgnoreCase))
                     {
-                        result[name] = Path.GetFullPath(path);
+                        result[name] = Path.GetRelativePath(Directory.GetCurrentDirectory(), path);
                         break;
                     }
                 }
@@ -178,6 +178,12 @@ public static class CoverageReport
         writer.WriteAttributeString("lines-valid", totalLines.ToString());
         writer.WriteAttributeString("version", "1.0");
         writer.WriteAttributeString("timestamp", DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString());
+
+        writer.WriteStartElement("sources");
+        writer.WriteStartElement("source");
+        writer.WriteString(".");
+        writer.WriteEndElement();
+        writer.WriteEndElement();
 
         writer.WriteStartElement("packages");
         writer.WriteStartElement("package");
