@@ -23,7 +23,7 @@ public static class ArtifactDownloader
         http.Timeout = TimeSpan.FromMinutes(5);
 
         // Step 1: Get total size via HEAD request
-        Console.Error.WriteLine($"Resolving artifact size...");
+        Log.Info($"Resolving artifact size...");
         long totalSize;
         try
         {
@@ -43,12 +43,12 @@ public static class ArtifactDownloader
             return null;
         }
 
-        Console.Error.WriteLine($"Platform artifact: {totalSize / 1048576} MB");
+        Log.Info($"Platform artifact: {totalSize / 1048576} MB");
 
         // Step 2: Download last 64 KB to find EOCD (End of Central Directory)
         int tailSize = 65536;
         long tailStart = totalSize - tailSize;
-        Console.Error.WriteLine("Downloading ZIP directory index...");
+        Log.Info("Downloading ZIP directory index...");
         var tail = DownloadRange(http, artifactUrl, tailStart, totalSize - 1);
         if (tail == null) return null;
 
@@ -75,7 +75,7 @@ public static class ArtifactDownloader
         }
         else
         {
-            Console.Error.WriteLine("Downloading central directory...");
+            Log.Info("Downloading central directory...");
             cdData = DownloadRange(http, artifactUrl, cdOffset, totalSize - 1)!;
             if (cdData == null) return null;
             cdStartInData = 0;
@@ -83,7 +83,7 @@ public static class ArtifactDownloader
 
         // Step 4: Parse central directory entries
         var entries = ParseCentralDirectory(cdData, cdStartInData, entryCount);
-        Console.Error.WriteLine($"Parsed {entries.Count} entries in archive");
+        Log.Info($"Parsed {entries.Count} entries in archive");
 
         // Step 5: Find matching Nav DLLs
         var matching = entries.Where(e =>
@@ -105,7 +105,7 @@ public static class ArtifactDownloader
             return null;
         }
 
-        Console.Error.WriteLine($"Found {matching.Count} Nav DLLs");
+        Log.Info($"Found {matching.Count} Nav DLLs");
 
         // Step 6: Download all matching DLLs in a single range request
         long firstOffset = matching.Min(e => e.LocalOffset);
@@ -115,7 +115,7 @@ public static class ArtifactDownloader
         long downloadSize = rangeEnd - firstOffset;
         int savings = (int)((1.0 - (double)downloadSize / totalSize) * 100);
 
-        Console.Error.WriteLine($"Downloading {downloadSize / 1048576} MB ({savings}% savings vs full artifact)...");
+        Log.Info($"Downloading {downloadSize / 1048576} MB ({savings}% savings vs full artifact)...");
         var rangeData = DownloadRange(http, artifactUrl, firstOffset, rangeEnd);
         if (rangeData == null) return null;
 
@@ -172,7 +172,7 @@ public static class ArtifactDownloader
             totalBytes += fileData.Length;
         }
 
-        Console.Error.WriteLine($"Extracted {extracted} DLLs ({totalBytes / 1024} KB) to {outputDir}");
+        Log.Info($"Extracted {extracted} DLLs ({totalBytes / 1024} KB) to {outputDir}");
         return extracted > 0 ? outputDir : null;
     }
 

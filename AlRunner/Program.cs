@@ -33,6 +33,7 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("  --dump-csharp         Print generated C# (before rewriting) and exit");
     Console.Error.WriteLine("  --dump-rewritten      Print rewritten C# (after rewriting) and exit");
     Console.Error.WriteLine("  -e '<al code>'        Run inline AL code");
+    Console.Error.WriteLine("  -v, --verbose         Show detailed transpilation and compilation output");
     Console.Error.WriteLine("  -h, --help            Show this help");
     Console.Error.WriteLine();
     Console.Error.WriteLine("Examples:");
@@ -49,6 +50,7 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
 bool dumpCSharp = false;
 bool dumpRewritten = false;
 bool showCoverage = false;
+bool verbose = false;
 var alSources = new List<string>();
 var packagePaths = new List<string>();
 var inputPaths = new List<string>(); // track input dirs/files for auto-discovery
@@ -70,6 +72,12 @@ while (argIdx < args.Length)
             break;
         case "--coverage":
             showCoverage = true;
+            argIdx++;
+            break;
+        case "--verbose":
+        case "-v":
+            verbose = true;
+            Log.Verbose = true;
             argIdx++;
             break;
         case "--packages":
@@ -97,11 +105,11 @@ while (argIdx < args.Length)
                     Console.Error.WriteLine($"Error: no .al files found in app package {path}");
                     return 1;
                 }
-                Console.Error.WriteLine($"Loading {extracted.Count} AL files from {Path.GetFileName(path)}");
+                Log.Info($"Loading {extracted.Count} AL files from {Path.GetFileName(path)}");
                 var groupSources = new List<string>();
                 foreach (var (name, source) in extracted)
                 {
-                    Console.Error.WriteLine($"  {name}");
+                    Log.Info($"  {name}");
                     alSources.Add(source);
                     groupSources.Add(source);
                 }
@@ -120,11 +128,11 @@ while (argIdx < args.Length)
                     Console.Error.WriteLine($"Error: no .al files found in directory {path}");
                     return 1;
                 }
-                Console.Error.WriteLine($"Loading {alFiles.Count} AL files from {path}");
+                Log.Info($"Loading {alFiles.Count} AL files from {path}");
                 var groupSources = new List<string>();
                 foreach (var f in alFiles)
                 {
-                    Console.Error.WriteLine($"  {Path.GetFileName(f)}");
+                    Log.Info($"  {Path.GetFileName(f)}");
                     var src = File.ReadAllText(f);
                     alSources.Add(src);
                     groupSources.Add(src);
@@ -240,11 +248,11 @@ if (packagePaths.Count > 0 && inputGroups.Any(g => g.Path.EndsWith(".app", Strin
     // Add discovered deps as input groups
     if (autoDiscovered.Count > 0)
     {
-        Console.Error.WriteLine($"\nAuto-discovered {autoDiscovered.Count} dependency app(s) for transpilation:");
+        Log.Info($"\nAuto-discovered {autoDiscovered.Count} dependency app(s) for transpilation:");
         foreach (var (id, depPath) in autoDiscovered)
         {
             var fileName = Path.GetFileName(depPath);
-            Console.Error.WriteLine($"  {fileName}");
+            Log.Info($"  {fileName}");
 
             var extracted = AppPackageReader.ExtractAlSources(depPath);
             if (extracted.Count == 0) continue;
@@ -304,7 +312,7 @@ if (hasExplicitPackages && inputGroups.Count > 1)
     for (int gi = 0; gi < inputGroups.Count; gi++)
     {
         var group = inputGroups[gi];
-        Console.Error.WriteLine($"\n--- Transpiling group {gi + 1}/{inputGroups.Count}: {Path.GetFileName(group.Path)} ---");
+        Log.Info($"\n--- Transpiling group {gi + 1}/{inputGroups.Count}: {Path.GetFileName(group.Path)} ---");
 
         // Other input groups' .app files act as additional package paths for this group
         var groupPackagePaths = new List<string>(packagePaths);
@@ -331,7 +339,7 @@ if (hasExplicitPackages && inputGroups.Count > 1)
         var groupResult = AlTranspiler.TranspileMulti(group.Sources, groupPackagePaths, groupInputPaths);
         if (groupResult != null && groupResult.Count > 0)
         {
-            Console.Error.WriteLine($"  Transpiled {groupResult.Count} AL objects");
+            Log.Info($"  Transpiled {groupResult.Count} AL objects");
             generatedCSharpList.AddRange(groupResult);
         }
         else
@@ -354,7 +362,7 @@ else
         return 1;
 }
 
-Console.Error.WriteLine($"\nTranspiled {generatedCSharpList.Count} AL objects to C#");
+Log.Info($"\nTranspiled {generatedCSharpList.Count} AL objects to C#");
 
 if (dumpCSharp)
 {
@@ -392,8 +400,8 @@ if (dumpRewritten)
 var assembly = RoslynCompiler.Compile(rewrittenList);
 if (assembly == null)
 {
-    // Dump rewritten C# for debugging if not already dumped
-    if (!dumpRewritten)
+    // Dump rewritten C# for debugging if verbose
+    if (!dumpRewritten && verbose)
     {
         Console.Error.WriteLine("\n--- Rewritten C# (for debugging compilation failure) ---");
         foreach (var (name, code) in rewrittenList)
@@ -441,7 +449,7 @@ if (hasTests)
 
         var objectToFile = CoverageReport.MapObjectsToFiles(generatedCSharpList!, alFilePaths);
         CoverageReport.WriteCobertura("cobertura.xml", sourceSpans, hitStmts, totalStmts, objectToFile);
-        Console.Error.WriteLine("Coverage report: cobertura.xml");
+        Log.Info("Coverage report: cobertura.xml");
     }
 }
 else
@@ -450,6 +458,17 @@ else
 }
 
 return exitCode;
+
+// ===========================================================================
+// Log helper: info is verbose-only, warn/error always shown
+// ===========================================================================
+public static class Log
+{
+    public static bool Verbose { get; set; }
+    public static void Info(string msg) { if (Verbose) Console.Error.WriteLine(msg); }
+    public static void Warn(string msg) => Console.Error.WriteLine($"Warning: {msg}");
+    public static void Error(string msg) => Console.Error.WriteLine($"Error: {msg}");
+}
 
 // ===========================================================================
 // AL Transpiler: AL source -> C# source string (supports multi-object)
@@ -488,9 +507,9 @@ public static class AlTranspiler
             var parseDiags = tree.GetDiagnostics().ToList();
             if (parseDiags.Any(d => d.Severity == DiagnosticSeverity.Error))
             {
-                Console.Error.WriteLine("AL parse errors:");
+                Log.Info("AL parse errors:");
                 foreach (var d in parseDiags.Where(d => d.Severity == DiagnosticSeverity.Error))
-                    Console.Error.WriteLine($"  {d}");
+                    Log.Info($"  {d}");
                 hasErrors = true;
             }
             syntaxTrees.Add(tree);
@@ -528,17 +547,17 @@ public static class AlTranspiler
 
             if (allPackagePaths.Count > 0)
             {
-                Console.Error.WriteLine($"Symbol references: scanning {allPackagePaths.Count} package directories");
+                Log.Info($"Symbol references: scanning {allPackagePaths.Count} package directories");
                 foreach (var p in allPackagePaths)
-                    Console.Error.WriteLine($"  {p}");
+                    Log.Info($"  {p}");
 
                 var refLoader = ReferenceLoaderFactory.CreateReferenceLoader(allPackagePaths);
 
                 if (depSpecs.Count > 0)
                 {
-                    Console.Error.WriteLine($"Adding {depSpecs.Count} symbol reference specifications:");
+                    Log.Info($"Adding {depSpecs.Count} symbol reference specifications:");
                     foreach (var spec in depSpecs)
-                        Console.Error.WriteLine($"  {FormatSpec(spec)}");
+                        Log.Info($"  {FormatSpec(spec)}");
 
                     compilation = compilation
                         .WithReferenceLoader(refLoader)
@@ -550,7 +569,7 @@ public static class AlTranspiler
                     // the packages directory as symbol references. This handles the BC
                     // convention where Application/System dependencies are implicit.
                     // Deduplicates by app GUID, keeping the highest version.
-                    Console.Error.WriteLine("No explicit dependencies found. Loading all .app packages as symbols...");
+                    Log.Info("No explicit dependencies found. Loading all .app packages as symbols...");
                     // Exclude the app being compiled (its source is already in the syntax trees)
                     var selfName = appIdentity.Name.ToLowerInvariant();
                     var selfGuid = appIdentity.AppId;
@@ -589,7 +608,7 @@ public static class AlTranspiler
                                 kv.Value.Publisher, kv.Value.Name, kv.Value.Version,
                                 false, kv.Key, false, ImmutableArray<Guid>.Empty))
                             .ToArray();
-                        Console.Error.WriteLine($"  Loaded {allAppSpecs.Length} symbol packages (deduplicated by app ID, latest version)");
+                        Log.Info($"  Loaded {allAppSpecs.Length} symbol packages (deduplicated by app ID, latest version)");
                         compilation = compilation
                             .WithReferenceLoader(refLoader)
                             .AddReferences(allAppSpecs);
@@ -611,11 +630,23 @@ public static class AlTranspiler
         var declErrors = declDiags.Where(d => d.Severity == DiagnosticSeverity.Error).ToList();
         if (declErrors.Count > 0)
         {
-            Console.Error.WriteLine($"AL declaration errors ({declErrors.Count}):");
-            foreach (var d in declErrors.Take(20))
-                Console.Error.WriteLine($"  {d.Id}: {d.GetMessage()}");
-            if (declErrors.Count > 20)
-                Console.Error.WriteLine($"  ... and {declErrors.Count - 20} more");
+            // Summarize missing codeunits (actionable) vs other errors (verbose)
+            var missingObjects = declErrors
+                .Where(d => d.Id == "AL0185")
+                .Select(d => d.GetMessage())
+                .Distinct()
+                .ToList();
+            var otherErrors = declErrors.Where(d => d.Id != "AL0185").ToList();
+
+            if (missingObjects.Count > 0)
+                Console.Error.WriteLine($"Missing dependencies: {string.Join(", ", missingObjects)}");
+
+            if (otherErrors.Count > 0)
+                Log.Info($"AL declaration errors ({otherErrors.Count} non-missing):");
+            foreach (var d in otherErrors.Take(10))
+                Log.Info($"  {d.Id}: {d.GetMessage()}");
+            if (otherErrors.Count > 10)
+                Log.Info($"  ... and {otherErrors.Count - 10} more");
         }
 
         var outputter = new CSharpCaptureOutputter();
@@ -642,21 +673,21 @@ public static class AlTranspiler
                     failedMethods.Add(inner.Message);
                 }
             }
-            Console.Error.WriteLine($"Warning: {failedMethods.Count} method(s) failed during emit (partial transpilation):");
+            Log.Info($"Partial transpilation: {failedMethods.Count} method(s) skipped");
             foreach (var msg in failedMethods.Take(10))
-                Console.Error.WriteLine($"  {msg}");
+                Log.Info($"  {msg}");
             if (failedMethods.Count > 10)
-                Console.Error.WriteLine($"  ... and {failedMethods.Count - 10} more");
+                Log.Info($"  ... and {failedMethods.Count - 10} more");
         }
 
         if (outputter.CapturedObjects.Count == 0)
         {
-            Console.Error.WriteLine("No C# code was generated.");
+            Log.Info("No C# code was generated.");
             if (emitResult != null)
             {
-                Console.Error.WriteLine("Emit diagnostics:");
+                Log.Info("Emit diagnostics:");
                 foreach (var d in emitResult.Diagnostics.Take(30))
-                    Console.Error.WriteLine($"  [{d.Severity}] {d.Id}: {d.GetMessage()}");
+                    Log.Info($"  [{d.Severity}] {d.Id}: {d.GetMessage()}");
             }
             return null;
         }
@@ -667,7 +698,7 @@ public static class AlTranspiler
             var warnings = emitResult.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Warning).ToList();
             if (warnings.Count > 0)
             {
-                Console.Error.WriteLine($"AL compiler warnings ({warnings.Count}):");
+                Log.Info($"AL compiler warnings ({warnings.Count}):");
                 foreach (var d in warnings.Take(10))
                     Console.Error.WriteLine($"  {d.Id}: {d.GetMessage()}");
             }
@@ -1150,9 +1181,9 @@ public static class RoslynCompiler
             var errors = result.Diagnostics
                 .Where(d => d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error)
                 .ToList();
-            Console.Error.WriteLine($"Roslyn compilation failed ({errors.Count} errors):");
+            Log.Info($"Roslyn compilation failed ({errors.Count} errors):");
             foreach (var d in errors.Take(30))
-                Console.Error.WriteLine($"  {d}");
+                Log.Info($"  {d}");
 
             // Fallback: try removing syntax trees that contain errors and recompile.
             // This allows non-test code (Pages, export codeunits) to fail without blocking tests.
@@ -1167,8 +1198,7 @@ public static class RoslynCompiler
                 var cleanTrees = syntaxTrees
                     .Where(t => !errorTreePaths.Contains(t.FilePath))
                     .ToList();
-                Console.Error.WriteLine(
-                    $"Retrying compilation without {syntaxTrees.Count - cleanTrees.Count} error-producing source(s) ({cleanTrees.Count} remaining)...");
+                Log.Info($"Retrying compilation without {syntaxTrees.Count - cleanTrees.Count} error-producing source(s) ({cleanTrees.Count} remaining)...");
 
                 var retryCompilation = Microsoft.CodeAnalysis.CSharp.CSharpCompilation.Create(
                     "AlRunnerGenerated",
@@ -1183,7 +1213,7 @@ public static class RoslynCompiler
 
                 if (retryResult.Success)
                 {
-                    Console.Error.WriteLine("Retry succeeded.");
+                    Log.Info("Retry succeeded.");
                     retryMs.Seek(0, SeekOrigin.Begin);
                     return Assembly.Load(retryMs.ToArray());
                 }
@@ -1192,9 +1222,9 @@ public static class RoslynCompiler
                     var retryErrors = retryResult.Diagnostics
                         .Where(d => d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error)
                         .ToList();
-                    Console.Error.WriteLine($"Retry also failed ({retryErrors.Count} errors):");
+                    Log.Info($"Retry also failed ({retryErrors.Count} errors):");
                     foreach (var d in retryErrors.Take(10))
-                        Console.Error.WriteLine($"  {d}");
+                        Log.Info($"  {d}");
                 }
             }
 
@@ -1236,7 +1266,7 @@ public static class RoslynCompiler
             return cacheDir;
 
         // 4. Auto-download via HTTP range requests
-        Console.Error.WriteLine("BC Service Tier DLLs not found locally. Downloading...");
+        Log.Info("BC Service Tier DLLs not found locally. Downloading...");
         var downloaded = ArtifactDownloader.DownloadServiceTierDlls(BcArtifactUrl, cacheDir);
         if (downloaded != null)
             return downloaded;
@@ -1365,12 +1395,12 @@ public static class Executor
         if (testScopes.Count == 0)
         {
             Console.Error.WriteLine("Error: No test methods found in the generated code.");
-            Console.Error.WriteLine("Available types:");
+            Log.Info("Available types:");
             foreach (var t in assembly.GetTypes())
             {
-                Console.Error.WriteLine($"  {t.FullName}");
+                Log.Info($"  {t.FullName}");
                 foreach (var n in t.GetNestedTypes(BindingFlags.NonPublic | BindingFlags.Public))
-                    Console.Error.WriteLine($"    {n.Name}");
+                    Log.Info($"    {n.Name}");
             }
             return 1;
         }
@@ -1505,12 +1535,12 @@ public static class Executor
         if (scopeType == null)
         {
             Console.Error.WriteLine("Error: No OnRun trigger found in the generated code.");
-            Console.Error.WriteLine("Available types:");
+            Log.Info("Available types:");
             foreach (var t in assembly.GetTypes())
             {
-                Console.Error.WriteLine($"  {t.FullName}");
+                Log.Info($"  {t.FullName}");
                 foreach (var n in t.GetNestedTypes(BindingFlags.NonPublic | BindingFlags.Public))
-                    Console.Error.WriteLine($"    {n.Name}");
+                    Log.Info($"    {n.Name}");
             }
             return 1;
         }
