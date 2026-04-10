@@ -48,6 +48,7 @@ public class PipelineResult
     public int ExitCode { get; init; }
     public List<TestResult> Tests { get; init; } = new();
     public List<CapturedValue> CapturedValues { get; init; } = new();
+    public List<string> Messages { get; init; } = new();
     public int Passed => Tests.Count(t => t.Status == TestStatus.Pass);
     public int Failed => Tests.Count(t => t.Status == TestStatus.Fail);
     public int Errors => Tests.Count(t => t.Status == TestStatus.Error);
@@ -89,10 +90,13 @@ public class AlRunnerPipeline
             }
         }
 
+        // Collect messages
+        var messages = Runtime.MessageCapture.GetMessages();
+
         var stdoutStr = stdout.ToString();
-        if (options.OutputJson && testResults.Count > 0)
+        if (options.OutputJson && (testResults.Count > 0 || messages.Count > 0))
         {
-            stdoutStr = SerializeJsonOutput(testResults, exitCode, capturedValues: capturedValues);
+            stdoutStr = SerializeJsonOutput(testResults, exitCode, capturedValues: capturedValues, messages: messages);
         }
 
         return new PipelineResult
@@ -100,12 +104,13 @@ public class AlRunnerPipeline
             ExitCode = exitCode,
             Tests = testResults,
             CapturedValues = capturedValues,
+            Messages = messages,
             StdOut = stdoutStr,
             StdErr = stderr.ToString()
         };
     }
 
-    public static string SerializeJsonOutput(List<TestResult> tests, int exitCode, bool indented = true, List<CapturedValue>? capturedValues = null)
+    public static string SerializeJsonOutput(List<TestResult> tests, int exitCode, bool indented = true, List<CapturedValue>? capturedValues = null, List<string>? messages = null)
     {
         object? capturedValuesObj = capturedValues?.Count > 0
             ? capturedValues.Select(c => new
@@ -133,7 +138,8 @@ public class AlRunnerPipeline
             errors = tests.Count(t => t.Status == TestStatus.Error),
             total = tests.Count,
             exitCode,
-            capturedValues = capturedValuesObj
+            capturedValues = capturedValuesObj,
+            messages = messages?.Count > 0 ? messages : null
         };
 
         return JsonSerializer.Serialize(output, new JsonSerializerOptions
@@ -372,6 +378,9 @@ public class AlRunnerPipeline
         int exitCode;
         if (hasTests)
         {
+            Runtime.MessageCapture.Reset();
+            Runtime.MessageCapture.Enable();
+
             if (options.CaptureValues)
             {
                 Runtime.ValueCapture.Reset();
@@ -388,6 +397,7 @@ public class AlRunnerPipeline
 
             if (options.CaptureValues)
                 Runtime.ValueCapture.Disable();
+            Runtime.MessageCapture.Disable();
             if (options.ShowCoverage)
             {
                 Executor.PrintCoverageReport();
@@ -411,7 +421,17 @@ public class AlRunnerPipeline
         }
         else
         {
-            exitCode = Executor.RunOnRun(assembly);
+            Runtime.MessageCapture.Reset();
+            Runtime.MessageCapture.Enable();
+            if (options.CaptureValues)
+            {
+                Runtime.ValueCapture.Reset();
+                Runtime.ValueCapture.Enable();
+            }
+            exitCode = Executor.RunOnRun(assembly, captureValues: options.CaptureValues);
+            if (options.CaptureValues)
+                Runtime.ValueCapture.Disable();
+            Runtime.MessageCapture.Disable();
         }
         Timer.EndStage("Test execution");
         Timer.Print();

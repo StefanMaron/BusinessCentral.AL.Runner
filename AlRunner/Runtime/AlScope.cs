@@ -186,10 +186,13 @@ public static class AlDialog
     {
         var netFormat = ConvertAlFormat(format);
         var stringArgs = args.Select(a => AlCompat.Format(a)).ToArray();
+        string formatted;
         if (stringArgs.Length > 0)
-            Console.WriteLine(string.Format(netFormat, stringArgs));
+            formatted = string.Format(netFormat, stringArgs);
         else
-            Console.WriteLine(format);
+            formatted = format;
+        Console.WriteLine(formatted);
+        MessageCapture.Capture(formatted);
     }
 
     public static void Error(string format, params object?[] args)
