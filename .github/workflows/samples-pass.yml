@@ -39,7 +39,7 @@ jobs:
           python3 .github/scripts/download-bc-dlls.py "${ARTIFACT_URL}" "${TOTAL_SIZE}" "${TARGET_DIR}"
 
       - name: Build
-        run: dotnet build AlRunner/ --no-restore
+        run: dotnet build AlRunner/
 
       - name: "Sample 01: Pure function tests"
         run: dotnet run --project AlRunner --no-build -- samples/01-pure-function/src samples/01-pure-function/test

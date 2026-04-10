@@ -122,6 +122,10 @@ def main():
             name_lower = e['name'].lower()
             if 'servicetier/' not in name_lower or '/service/' not in name_lower:
                 continue
+            # Only take DLLs directly in Service/, not in subdirectories
+            after_service = name_lower.split('/service/')[-1]
+            if '/' in after_service:
+                continue  # skip management/, sideservices/, etc.
             basename = os.path.basename(name_lower)
             if basename in NEEDED_DLLS and e['comp_size'] > 0:
                 matching.append(e)
