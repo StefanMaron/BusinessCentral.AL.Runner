@@ -29,6 +29,12 @@ public class MockRecordHandle
     private int[]? _currentKeyFields;
     private readonly Dictionary<int, bool> _ascending = new();
 
+    // Primary key field numbers per table (registered via RegisterPrimaryKey)
+    private static readonly Dictionary<int, int[]> _primaryKeys = new();
+
+    // Field name -> field number mapping per table (registered via RegisterFieldName)
+    private static readonly Dictionary<int, Dictionary<string, int>> _fieldNames = new();
+
     public MockRecordHandle(int tableId)
     {
         _tableId = tableId;
@@ -37,7 +43,42 @@ public class MockRecordHandle
     }
 
     /// <summary>Reset all tables between test runs.</summary>
-    public static void ResetAll() => _tables.Clear();
+    public static void ResetAll()
+    {
+        _tables.Clear();
+        // Keep PK and field name registrations — they are structural, not data
+    }
+
+    /// <summary>
+    /// Register the primary key field numbers for a table.
+    /// Call this before inserting/getting records for tables with composite PKs.
+    /// </summary>
+    public static void RegisterPrimaryKey(int tableId, params int[] fieldNos)
+    {
+        _primaryKeys[tableId] = fieldNos;
+    }
+
+    /// <summary>
+    /// Register a field name -> field number mapping for a table.
+    /// Enables ALFieldNo(fieldName) lookups.
+    /// </summary>
+    public static void RegisterFieldName(int tableId, string fieldName, int fieldNo)
+    {
+        if (!_fieldNames.TryGetValue(tableId, out var dict))
+        {
+            dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            _fieldNames[tableId] = dict;
+        }
+        dict[fieldName] = fieldNo;
+    }
+
+    /// <summary>Get the PK field numbers for this table. Falls back to [1] if not registered.</summary>
+    private int[] GetPrimaryKeyFields()
+    {
+        if (_primaryKeys.TryGetValue(_tableId, out var pk))
+            return pk;
+        return new[] { 1 };
+    }
 
     public void ALInit()
     {
@@ -119,11 +160,10 @@ public class MockRecordHandle
     public bool ALModify(DataError errorLevel, bool runTrigger)
     {
         var table = _tables[_tableId];
-        if (!_fields.ContainsKey(1)) return false;
-        var pk = _fields[1].ToString();
+        var pkFields = GetPrimaryKeyFields();
         for (int i = 0; i < table.Count; i++)
         {
-            if (table[i].ContainsKey(1) && table[i][1].ToString() == pk)
+            if (RowMatchesPrimaryKey(table[i], _fields, pkFields))
             {
                 table[i] = new Dictionary<int, NavValue>(_fields);
                 return true;
@@ -137,17 +177,28 @@ public class MockRecordHandle
     public bool ALGet(DataError errorLevel, params NavValue[] keyValues)
     {
         var table = _tables[_tableId];
-        var keyStr = keyValues.Length > 0 ? keyValues[0].ToString() : "";
+        var pkFields = GetPrimaryKeyFields();
         foreach (var row in table)
         {
-            if (row.ContainsKey(1) && row[1].ToString() == keyStr)
+            bool match = true;
+            for (int i = 0; i < keyValues.Length && i < pkFields.Length; i++)
+            {
+                var fieldNo = pkFields[i];
+                var rowVal = row.TryGetValue(fieldNo, out var rv) ? NavValueToString(rv) : "";
+                var keyVal = NavValueToString(keyValues[i]);
+                if (rowVal != keyVal) { match = false; break; }
+            }
+            if (match)
             {
                 _fields = new Dictionary<int, NavValue>(row);
                 return true;
             }
         }
         if (errorLevel == DataError.ThrowError)
-            throw new Exception($"Record not found in table {_tableId} for key '{keyStr}'");
+        {
+            var keyStr = string.Join(", ", keyValues.Select(v => NavValueToString(v)));
+            throw new Exception($"Record not found in table {_tableId} for key ({keyStr})");
+        }
         return false;
     }
 
@@ -220,11 +271,10 @@ public class MockRecordHandle
     public bool ALDelete(DataError errorLevel, bool runTrigger = false)
     {
         var table = _tables[_tableId];
-        if (!_fields.ContainsKey(1)) return false;
-        var pk = _fields[1].ToString();
+        var pkFields = GetPrimaryKeyFields();
         for (int i = 0; i < table.Count; i++)
         {
-            if (table[i].ContainsKey(1) && table[i][1].ToString() == pk)
+            if (RowMatchesPrimaryKey(table[i], _fields, pkFields))
             {
                 table.RemoveAt(i);
                 return true;
@@ -418,7 +468,9 @@ public class MockRecordHandle
 
     public int ALFieldNo(string fieldName)
     {
-        // Simplified: return 0 (unknown) -- real impl would look up field metadata
+        if (_fieldNames.TryGetValue(_tableId, out var dict) &&
+            dict.TryGetValue(fieldName, out var fieldNo))
+            return fieldNo;
         return 0;
     }
 
@@ -678,9 +730,9 @@ public class MockRecordHandle
 
     public bool ALRename(DataError errorLevel, params NavValue[] newKeyValues)
     {
-        // Stub: just update field 1 with new key
-        if (newKeyValues.Length > 0)
-            _fields[1] = newKeyValues[0];
+        var pkFields = GetPrimaryKeyFields();
+        for (int i = 0; i < newKeyValues.Length && i < pkFields.Length; i++)
+            _fields[pkFields[i]] = newKeyValues[i];
         return true;
     }
 
@@ -701,21 +753,48 @@ public class MockRecordHandle
     }
 
     /// <summary>
-    /// Returns the subset of table rows matching all active filters.
-    /// When no filters are set, returns all rows (preserving existing behavior).
+    /// Returns the subset of table rows matching all active filters,
+    /// sorted by the current key fields and ascending/descending direction.
+    /// When no filters are set, returns all rows. When no sort key is set,
+    /// returns in insertion order.
     /// </summary>
     private List<Dictionary<int, NavValue>> GetFilteredRecords()
     {
         var table = _tables[_tableId];
-        if (_filters.Count == 0)
-            return table;
+        List<Dictionary<int, NavValue>> result;
 
-        var result = new List<Dictionary<int, NavValue>>();
-        foreach (var row in table)
+        if (_filters.Count == 0)
+            result = new List<Dictionary<int, NavValue>>(table);
+        else
         {
-            if (RowMatchesAllFilters(row))
-                result.Add(row);
+            result = new List<Dictionary<int, NavValue>>();
+            foreach (var row in table)
+            {
+                if (RowMatchesAllFilters(row))
+                    result.Add(row);
+            }
         }
+
+        // Apply sort ordering if a current key is set
+        if (_currentKeyFields != null && _currentKeyFields.Length > 0)
+        {
+            result.Sort((a, b) =>
+            {
+                foreach (var fieldNo in _currentKeyFields)
+                {
+                    var aVal = a.TryGetValue(fieldNo, out var av) ? NavValueToString(av) : "";
+                    var bVal = b.TryGetValue(fieldNo, out var bv) ? NavValueToString(bv) : "";
+                    var cmp = StringCompareOp(aVal, bVal, false);
+                    if (cmp != 0)
+                    {
+                        bool asc = !_ascending.TryGetValue(fieldNo, out var isAsc) || isAsc;
+                        return asc ? cmp : -cmp;
+                    }
+                }
+                return 0;
+            });
+        }
+
         return result;
     }
 
@@ -1000,6 +1079,20 @@ public class MockRecordHandle
         var parts = row.OrderBy(kv => kv.Key)
             .Select(kv => $"{kv.Key}={NavValueToString(kv.Value)}");
         return string.Join("|", parts);
+    }
+
+    /// <summary>
+    /// Check if two rows match on all primary key fields.
+    /// </summary>
+    private static bool RowMatchesPrimaryKey(Dictionary<int, NavValue> row, Dictionary<int, NavValue> current, int[] pkFields)
+    {
+        foreach (var fieldNo in pkFields)
+        {
+            var rowVal = row.TryGetValue(fieldNo, out var rv) ? NavValueToString(rv) : "";
+            var curVal = current.TryGetValue(fieldNo, out var cv) ? NavValueToString(cv) : "";
+            if (rowVal != curVal) return false;
+        }
+        return true;
     }
 
     private static NavValue DefaultForType(NavType navType)
