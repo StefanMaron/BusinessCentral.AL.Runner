@@ -11,6 +11,10 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 /// </summary>
 public class RoslynRewriter : CSharpSyntaxRewriter
 {
+    // Track the current top-level class name during visitation so that
+    // VisitPropertyDeclaration can extract the table ID for Rec/xRec properties.
+    private string? _currentClassName;
+
     private static readonly HashSet<string> BcAttributeNames = new(StringComparer.Ordinal)
     {
         "NavCodeunitOptions",
@@ -220,6 +224,12 @@ public class RoslynRewriter : CSharpSyntaxRewriter
             }
         }
 
+        // Track the current class name for Rec/xRec table ID extraction.
+        // Only set for top-level (non-nested) classes that are record types.
+        var previousClassName = _currentClassName;
+        if (isRecordClass)
+            _currentClassName = node.Identifier.Text;
+
         // First, visit children recursively
         var visited = (ClassDeclarationSyntax)base.VisitClassDeclaration(node)!;
 
@@ -366,6 +376,9 @@ public NavValue ALGetRangeMaxSafe(int fieldNo, NavType expectedType) => Rec.ALGe
 
             visited = visited.WithMembers(visited.Members.AddRange(delegatingMembers));
         }
+
+        // Restore previous class name context
+        _currentClassName = previousClassName;
 
         return visited;
     }
@@ -530,12 +543,20 @@ public NavValue ALGetRangeMaxSafe(int fieldNo, NavType expectedType) => Rec.ALGe
     {
         var name = node.Identifier.Text;
 
-        // Rewrite Rec/xRec properties to return a MockRecordHandle(0) stub.
+        // Rewrite Rec/xRec properties to return a MockRecordHandle with the correct table ID.
         // Original: private NavRecord Rec => (NavRecord)this.SourceTable;
         // Original: private RecordXXX Rec => (RecordXXX)this;
-        // Rewritten: public MockRecordHandle Rec { get; } = new MockRecordHandle(0);
+        // Rewritten: public MockRecordHandle Rec { get; } = new MockRecordHandle(tableId);
+        // The table ID is extracted from the enclosing class name (e.g. Record74320 -> 74320).
         if (name == "Rec" || name == "xRec")
         {
+            // Extract table ID from enclosing class name (Record74320 -> 74320)
+            int tableId = 0;
+            if (_currentClassName != null && _currentClassName.StartsWith("Record"))
+            {
+                int.TryParse(_currentClassName.Substring("Record".Length), out tableId);
+            }
+
             // Parse a simple auto-property with a default value
             var stubProp = SyntaxFactory.PropertyDeclaration(
                     SyntaxFactory.ParseTypeName("MockRecordHandle"),
@@ -547,7 +568,7 @@ public NavValue ALGetRangeMaxSafe(int fieldNo, NavType expectedType) => Rec.ALGe
                         SyntaxFactory.AccessorDeclaration(SyntaxKind.GetAccessorDeclaration)
                             .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.SemicolonToken)))))
                 .WithInitializer(SyntaxFactory.EqualsValueClause(
-                    SyntaxFactory.ParseExpression("new MockRecordHandle(0)")))
+                    SyntaxFactory.ParseExpression($"new MockRecordHandle({tableId})")))
                 .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.SemicolonToken));
             return stubProp;
         }
@@ -669,6 +690,10 @@ public NavValue ALGetRangeMaxSafe(int fieldNo, NavType expectedType) => Rec.ALGe
             }
             return node.WithIdentifier(SyntaxFactory.Identifier("MockDialog"));
         }
+
+        // NavTextBuilder -> MockTextBuilder (avoids NavEnvironment/TrappableOperationExecutor crashes)
+        if (text == "NavTextBuilder")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockTextBuilder"));
 
         // NavEventScope -> object (event scope type used for static fields)
         if (text == "NavEventScope")

@@ -493,6 +493,7 @@ public class MockRecordHandle
     public void ALValidateSafe(int fieldNo, NavType expectedType, NavValue value)
     {
         _fields[fieldNo] = value;
+        FireOnValidate(fieldNo);
     }
 
     /// <summary>
@@ -501,6 +502,57 @@ public class MockRecordHandle
     public void ALValidate(DataError errorLevel, int fieldNo, NavType expectedType, NavValue value)
     {
         _fields[fieldNo] = value;
+        FireOnValidate(fieldNo);
+    }
+
+    /// <summary>
+    /// Fire the OnValidate trigger for a field. Looks up the generated Record type via reflection,
+    /// finds the method with [FieldTriggerHandler(FieldTriggerType.OnValidate, fieldNo)], and invokes it.
+    /// The record instance's Rec property is wired to this MockRecordHandle so field reads/writes
+    /// during the trigger operate on the correct data.
+    /// </summary>
+    private void FireOnValidate(int fieldNo)
+    {
+        var assembly = MockCodeunitHandle.CurrentAssembly;
+        if (assembly == null) return;
+
+        var recordTypeName = $"Record{_tableId}";
+        var recordType = assembly.GetTypes().FirstOrDefault(t => t.Name == recordTypeName);
+        if (recordType == null) return;
+
+        // Find the method with [FieldTriggerHandler(FieldTriggerType.OnValidate, fieldNo)]
+        foreach (var method in recordType.GetMethods(
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.Instance))
+        {
+            var attr = method.GetCustomAttributes(false)
+                .FirstOrDefault(a => a.GetType().Name == "FieldTriggerHandlerAttribute");
+            if (attr == null) continue;
+
+            var triggerType = attr.GetType().GetProperty("TriggerType")?.GetValue(attr);
+            var triggerFieldNo = attr.GetType().GetProperty("FieldNo")?.GetValue(attr);
+
+            // FieldTriggerType.OnValidate == 0
+            if (triggerType?.ToString() == "OnValidate" && triggerFieldNo is int fno && fno == fieldNo)
+            {
+                // Create record instance and wire Rec to this MockRecordHandle
+                var instance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(recordType);
+                var backingField = recordType.GetField("<Rec>k__BackingField",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                backingField?.SetValue(instance, this);
+
+                try
+                {
+                    method.Invoke(instance, null);
+                }
+                catch (System.Reflection.TargetInvocationException tie)
+                {
+                    if (tie.InnerException != null) throw tie.InnerException;
+                    throw;
+                }
+                return;
+            }
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -1119,10 +1171,61 @@ public class MockRecordHandle
             NavType.Text => NavText.Default(0),
             NavType.Code => new NavCode(20, ""),
             NavType.Boolean => NavBoolean.Default,
+            NavType.Option => CreateDefaultNavOption(),
+            NavType.BigInteger => NavBigInteger.Default,
+            NavType.Date => NavDate.Default,
+            NavType.Time => NavTime.Default,
+            NavType.DateTime => NavDateTime.Default,
+            NavType.GUID => new NavGuid(Guid.Empty),
+            NavType.Duration => NavDuration.Default,
             NavType.Media => NavMedia.Default,
             NavType.MediaSet => NavMediaSet.Default,
             _ => NavText.Default(0)
         };
+    }
+
+    /// <summary>
+    /// Creates a default NavOption(0) with valid metadata so that CreateInstance() works.
+    /// NavOption requires NCLOptionMetadata in its constructor, which we create with a
+    /// generic option string. This enables the common pattern:
+    ///   ((NavOption)record.GetFieldValueSafe(fieldNo, NavType.Option)).CreateInstance(value)
+    /// </summary>
+    private static NavOption? _cachedDefaultOption;
+    private static NavOption CreateDefaultNavOption()
+    {
+        if (_cachedDefaultOption != null)
+            return _cachedDefaultOption;
+
+        try
+        {
+            // NavOption has internal ctor: NavOption(NCLOptionMetadata metadata, int value)
+            var navOptionType = typeof(NavOption);
+            var ctor = navOptionType.GetConstructors(
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public |
+                System.Reflection.BindingFlags.Instance)
+                .FirstOrDefault(c => c.GetParameters().Length == 2);
+            if (ctor != null)
+            {
+                var metadataType = ctor.GetParameters()[0].ParameterType;
+                var metaCtor = metadataType.GetConstructor(
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public |
+                    System.Reflection.BindingFlags.Instance,
+                    null, new[] { typeof(string) }, null);
+                if (metaCtor != null)
+                {
+                    // Create generic option metadata with 20 option values
+                    var meta = metaCtor.Invoke(new object[] { " ,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19" });
+                    _cachedDefaultOption = (NavOption)ctor.Invoke(new object[] { meta, 0 });
+                    return _cachedDefaultOption;
+                }
+            }
+        }
+        catch { }
+
+        // Fallback: uninitialized object (CreateInstance will fail but field storage works)
+        _cachedDefaultOption = (NavOption)System.Runtime.CompilerServices.RuntimeHelpers
+            .GetUninitializedObject(typeof(NavOption));
+        return _cachedDefaultOption;
     }
 
     /// <summary>
@@ -1257,6 +1360,20 @@ public class MockRecordHandle
                 if (method == null) continue;
 
                 var instance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(recordType);
+                // Wire the Rec property to point to this MockRecordHandle instance.
+                // The generated Record class has: public MockRecordHandle Rec { get; } = new MockRecordHandle(tableId);
+                // Since GetUninitializedObject doesn't run initializers, Rec is null.
+                // We use reflection to set the backing field so that the record method
+                // operates on the same data as the calling MockRecordHandle.
+                var recProp = recordType.GetProperty("Rec",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                if (recProp != null)
+                {
+                    // Auto-property backing field is named <Rec>k__BackingField
+                    var backingField = recordType.GetField("<Rec>k__BackingField",
+                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                    backingField?.SetValue(instance, this);
+                }
                 var parameters = method.GetParameters();
                 var convertedArgs = new object?[parameters.Length];
                 for (int i = 0; i < parameters.Length && i < args.Length; i++)

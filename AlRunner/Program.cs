@@ -57,6 +57,7 @@ bool showCoverage = false;
 bool verbose = false;
 var stubPaths = new List<string>();
 var alSources = new List<string>();
+var assertStubSources = new List<string>(); // Assert stub AL sources to transpile separately when Assert.app is in packages
 var packagePaths = new List<string>();
 var inputPaths = new List<string>(); // track input dirs/files for auto-discovery
 // Each input group = one .app or directory that should be compiled as a separate AL compilation
@@ -357,7 +358,22 @@ Kernel32Shim.EnsureRegistered();
     }
     else
     {
-        Log.Info("Skipping Assert stubs (real Assert.app found in packages)");
+        // When Assert.app is in packages, we still need the stub's transpiled C# in
+        // the Roslyn compilation so that Codeunit130 exists in the final assembly.
+        // FindAssertMethodName() relies on inspecting the Codeunit130 nested scope
+        // classes to distinguish IsTrue from IsFalse, AreEqual from AreNotEqual, etc.
+        // We load the stub AL code into a separate list that gets transpiled and added
+        // to the C# compilation, but NOT to the AL sources (which would conflict with
+        // the Assert.app symbols).
+        var stubsDir = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "stubs");
+        if (!Directory.Exists(stubsDir))
+            stubsDir = Path.Combine(AppContext.BaseDirectory, "stubs");
+        if (Directory.Exists(stubsDir))
+        {
+            foreach (var stubFile in Directory.GetFiles(stubsDir, "*.al", SearchOption.TopDirectoryOnly).OrderBy(f => f))
+                assertStubSources.Add(File.ReadAllText(stubFile));
+        }
+        Log.Info("Skipping Assert stubs for AL compilation (real Assert.app found in packages)");
     }
 }
 
@@ -428,6 +444,19 @@ else
     generatedCSharpList = AlTranspiler.TranspileMulti(alSources, packagePaths, inputPaths);
     if (generatedCSharpList == null || generatedCSharpList.Count == 0)
         return 1;
+}
+
+// If Assert stubs were loaded separately (Assert.app found in packages), transpile
+// them now and add to the C# list. The stub provides Codeunit130 type so that
+// FindAssertMethodName() can resolve method names (IsTrue vs IsFalse, etc.) at runtime.
+if (assertStubSources.Count > 0)
+{
+    var stubCSharp = AlTranspiler.TranspileMulti(assertStubSources, packagePaths, inputPaths);
+    if (stubCSharp != null)
+    {
+        generatedCSharpList.AddRange(stubCSharp);
+        Log.Info($"Added {stubCSharp.Count} Assert stub(s) for runtime dispatch");
+    }
 }
 
 Log.Info($"\nTranspiled {generatedCSharpList.Count} AL objects to C#");

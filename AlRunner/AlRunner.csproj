@@ -50,6 +50,12 @@
     <ServiceTierPath Condition="'$(ServiceTierPath)' == ''">$(_CacheBase)/artifacts/$(_BCVersion)</ServiceTierPath>
   </PropertyGroup>
 
+  <!-- BC service tier runtime dependencies not included in the default .NET runtime -->
+  <ItemGroup>
+    <PackageReference Include="System.Diagnostics.EventLog" Version="8.0.1" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="8.0.1" />
+  </ItemGroup>
+
   <!-- Copy stubs to output for runtime discovery -->
   <ItemGroup>
     <None Include="stubs/**" CopyToOutputDirectory="PreserveNewest" LinkBase="stubs" />
