@@ -22,23 +22,28 @@ jobs:
 
       - name: Run tests with coverage
         run: |
+          echo "## AL Runner Coverage" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
           for test in 01-pure-function 02-record-operations 03-interface-injection 04-asserterror; do
-            dotnet run --no-build --project AlRunner -- --coverage "tests/${test}/src" "tests/${test}/test"
-            # Each run overwrites cobertura.xml — merge by appending
+            echo "::group::${test}"
+            OUTPUT=$(dotnet run --no-build --project AlRunner -- --coverage "tests/${test}/src" "tests/${test}/test" 2>&1)
+            echo "$OUTPUT"
+            echo "::endgroup::"
+
+            # Extract console coverage table for the summary
+            COVERAGE_LINES=$(echo "$OUTPUT" | grep -E "^  (TOTAL|[A-Z])" | head -20)
+            RESULTS=$(echo "$OUTPUT" | grep "^Results:")
+
+            echo "### ${test}" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "$RESULTS" >> "$GITHUB_STEP_SUMMARY"
+            echo "$COVERAGE_LINES" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+
             mv cobertura.xml "cobertura-${test}.xml" 2>/dev/null || true
           done
-          # Use the last one for the report (04-asserterror has 100% coverage)
-          cp cobertura-04-asserterror.xml cobertura.xml
-
-      - name: Coverage summary
-        uses: irongut/CodeCoverageSummary@v1.3.0
-        with:
-          filename: 'cobertura-*.xml'
-          format: markdown
-          output: both
-
-      - name: Add to job summary
-        run: cat code-coverage-results.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage artifacts
         uses: actions/upload-artifact@v4
