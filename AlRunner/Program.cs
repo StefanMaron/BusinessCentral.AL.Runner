@@ -1900,7 +1900,9 @@ public static class RoslynCompiler
 
         var serviceTierPath = FindServiceTierPath();
         var bcDlls = serviceTierPath != null
-            ? Directory.GetFiles(serviceTierPath, "Microsoft.Dynamics.Nav.*.dll").ToList()
+            ? Directory.GetFiles(serviceTierPath, "Microsoft.Dynamics.Nav.*.dll")
+                .Concat(Directory.GetFiles(serviceTierPath, "Microsoft.BusinessCentral.*.dll"))
+                .ToList()
             : new List<string>();
 
         // Load all references in parallel

@@ -10,6 +10,7 @@ using System.Text;
 public static class ArtifactDownloader
 {
     private const string NavDllPrefix = "microsoft.dynamics.nav.";
+    private static readonly string[] AdditionalPrefixes = { "microsoft.businesscentral." };
 
     /// <summary>
     /// Downloads BC Service Tier DLLs to the specified directory.
@@ -96,7 +97,10 @@ public static class ArtifactDownloader
             if (afterService.Contains('/'))
                 return false;
             var basename = Path.GetFileName(nameLower);
-            return basename.StartsWith(NavDllPrefix) && basename.EndsWith(".dll") && e.CompressedSize > 0;
+            if (!basename.EndsWith(".dll") || e.CompressedSize == 0)
+                return false;
+            return basename.StartsWith(NavDllPrefix)
+                || AdditionalPrefixes.Any(p => basename.StartsWith(p));
         }).OrderBy(e => e.LocalOffset).ToList();
 
         if (matching.Count == 0)
