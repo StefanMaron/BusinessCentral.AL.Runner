@@ -1741,20 +1741,90 @@ public static class RoslynCompiler
     /// (e.g. in parallel with rewriting) since reference loading is independent
     /// of the source code being compiled.
     /// </summary>
+    /// <summary>
+    /// Curated set of .NET runtime assemblies needed by BC-generated C# code.
+    /// Using a curated set instead of all 160+ System.*.dll reduces both reference
+    /// loading time and Roslyn semantic analysis overhead.
+    /// </summary>
+    private static readonly HashSet<string> RequiredRuntimeAssemblies = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // Core type system
+        "System.Runtime.dll",
+        "System.Runtime.Extensions.dll",
+        "System.Runtime.InteropServices.dll",
+        "System.Runtime.InteropServices.RuntimeInformation.dll",
+        // Collections (used in generated code via System.Collections + System.Collections.Generic)
+        "System.Collections.dll",
+        "System.Collections.Concurrent.dll",
+        "System.Collections.Immutable.dll",
+        "System.Collections.NonGeneric.dll",
+        "System.Collections.Specialized.dll",
+        // String/text
+        "System.Text.RegularExpressions.dll",
+        "System.Text.Encoding.dll",
+        "System.Text.Encoding.Extensions.dll",
+        // Threading (used in generated code via System.Threading.Tasks)
+        "System.Threading.dll",
+        "System.Threading.Tasks.dll",
+        "System.Threading.Tasks.Extensions.dll",
+        "System.Threading.Thread.dll",
+        // LINQ and expressions (used by BC runtime types)
+        "System.Linq.dll",
+        "System.Linq.Expressions.dll",
+        // I/O (used by BC types like InStream/OutStream)
+        "System.IO.dll",
+        "System.IO.Compression.dll",
+        // Component model (used by BC runtime)
+        "System.ComponentModel.dll",
+        "System.ComponentModel.Primitives.dll",
+        "System.ComponentModel.TypeConverter.dll",
+        // Object model (BC runtime uses dynamic/DLR)
+        "System.ObjectModel.dll",
+        // Console (used by AlDialog.Message)
+        "System.Console.dll",
+        // XML (used by XmlPort types)
+        "System.Xml.dll",
+        "System.Xml.Linq.dll",
+        "System.Xml.ReaderWriter.dll",
+        "System.Xml.XDocument.dll",
+        // Globalization (used by format helpers)
+        "System.Globalization.dll",
+        // Memory (may be needed by BC types)
+        "System.Memory.dll",
+        "System.Buffers.dll",
+        // Diagnostics (used by some BC types)
+        "System.Diagnostics.Debug.dll",
+        "System.Diagnostics.Tracing.dll",
+        // Facades
+        "netstandard.dll",
+        "mscorlib.dll",
+        "System.dll",
+        "System.Core.dll",
+        "Microsoft.CSharp.dll",
+        // Data (BC types reference System.Data internally)
+        "System.Data.Common.dll",
+        // Net (BC types reference System.Net)
+        "System.Net.Primitives.dll",
+        "System.Net.Http.dll",
+        // Security
+        "System.Security.Cryptography.dll",
+        "System.Security.Cryptography.Algorithms.dll",
+        "System.Security.Cryptography.Primitives.dll",
+    };
+
     public static List<Microsoft.CodeAnalysis.MetadataReference> LoadReferences()
     {
         var references = new System.Collections.Concurrent.ConcurrentBag<Microsoft.CodeAnalysis.MetadataReference>();
 
-        // Collect all DLL paths to load
+        // Collect curated .NET runtime DLLs
         var runtimeDir = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
-        var runtimeDlls = Directory.GetFiles(runtimeDir, "*.dll")
-            .Where(dllPath =>
-            {
-                var fileName = Path.GetFileName(dllPath);
-                return fileName.StartsWith("System.", StringComparison.Ordinal) ||
-                       fileName is "netstandard.dll" or "mscorlib.dll" or "Microsoft.CSharp.dll";
-            })
-            .ToList();
+        var runtimeDlls = new List<string>();
+        foreach (var name in RequiredRuntimeAssemblies)
+        {
+            var path = Path.Combine(runtimeDir, name);
+            if (File.Exists(path))
+                runtimeDlls.Add(path);
+        }
 
         var serviceTierPath = FindServiceTierPath();
         var bcDlls = serviceTierPath != null
