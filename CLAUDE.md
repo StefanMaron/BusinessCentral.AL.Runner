@@ -118,6 +118,51 @@ automatically when they run `al-runner -h`.
 
 ---
 
+## Testing Requirements
+
+**Every feature, fix, or mock addition MUST have a corresponding test case in
+`tests/`. No exceptions.** The test suite is the proof that the runner works.
+Without it, nobody can trust the tool.
+
+### Test structure
+Each test case is a directory under `tests/NN-name/` with:
+- `src/*.al` — AL source code exercising the feature
+- `test/*.al` — Test codeunit (`Subtype = Test`) using `Assert: Codeunit Assert`
+- `al-runner.json` — config file
+
+### Positive AND negative tests
+Every test case must prove BOTH that correct input succeeds AND that incorrect
+input fails as expected:
+
+- **Positive**: Call the logic with valid input, `Assert.AreEqual` on the result
+- **Negative**: Call with invalid input, use `asserterror` + `Assert.ExpectedError`
+  to verify the runner catches errors correctly
+
+If a test only proves the happy path, it doesn't prove the runner works — a mock
+that always returns a default value would also pass. Negative tests prove that
+the runner actually executes the logic and catches failures.
+
+### When to add tests
+- **New mock method** (e.g., `MockRecordHandle.ALRecordId`) → test that calls it
+- **New rewriter rule** (e.g., `ALIsolatedStorage → MockIsolatedStorage`) → test
+  with AL code that uses the feature
+- **Bug fix** → RED test first (fails without fix), then GREEN (passes with fix)
+- **New CLI flag** → test that exercises it
+
+### Running tests
+```bash
+# All tests (auto-discovered, excludes 06-intentional-failure)
+for s in $(ls -d tests/*/src | sed 's|tests/||;s|/src||' | grep -v '06-' | sort); do
+  al-runner "tests/$s/src" "tests/$s/test"
+done
+```
+
+### CI
+Tests run against a matrix of BC versions (26.0–27.5) on every push. The publish
+workflow gates NuGet release on all tests passing across all versions.
+
+---
+
 ## Developer Contract
 
 **What you can unit-test with al-runner:**
