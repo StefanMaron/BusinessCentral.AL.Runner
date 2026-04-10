@@ -319,6 +319,26 @@ public static class AlCompat
             }
             catch { }
         }
+        // Handle NavTime — ToString() triggers NavTimeFormatter which requires NavSession
+        if (typeName == "NavTime")
+        {
+            return FormatNavTime(value);
+        }
+        // Handle NavDate — ToString() triggers NavDateFormatter which may require NavSession
+        if (typeName == "NavDate")
+        {
+            try
+            {
+                var valProp = value.GetType().GetProperty("Value");
+                if (valProp != null)
+                {
+                    var inner = valProp.GetValue(value);
+                    if (inner is DateTime dt)
+                        return dt.ToString("yyyy-MM-dd");
+                }
+            }
+            catch { }
+        }
         // Handle NavOption — ToString() triggers NavSession via NavOptionFormatter
         if (typeName == "NavOption")
         {
@@ -341,6 +361,28 @@ public static class AlCompat
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavInteger ni) return ((int)ni).ToString();
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavBigInteger nbi) return ((long)nbi).ToString();
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavGuid ng) return ((Guid)ng).ToString();
+                // NavTime/NavDate/NavOption inside NavValue: use reflection to extract raw value
+                // These types' ToString() calls NavSession-dependent formatters.
+                if (typeName == "NavTime")
+                    return FormatNavTime(value);
+                if (typeName == "NavDate")
+                {
+                    var dateProp = value.GetType().GetProperty("Value");
+                    if (dateProp != null)
+                    {
+                        var innerDate = dateProp.GetValue(value);
+                        if (innerDate is DateTime dt2)
+                            return dt2.ToString("yyyy-MM-dd");
+                    }
+                    return "";
+                }
+                if (typeName == "NavOption")
+                {
+                    var optProp = value.GetType().GetProperty("Value");
+                    if (optProp != null)
+                        return optProp.GetValue(value)?.ToString() ?? "";
+                    return "";
+                }
                 // For NavDecimal, extract the underlying Decimal18
                 var decProp = value.GetType().GetProperty("Value");
                 if (decProp != null)
@@ -350,6 +392,10 @@ public static class AlCompat
                 }
             }
             catch { }
+            // For NavValue subtypes that weren't handled above, try ToString()
+            // but catch any NavSession-related crashes.
+            try { return nv.ToString() ?? ""; }
+            catch { return ""; }
         }
         return value.ToString() ?? "";
     }
@@ -496,6 +542,42 @@ public static class AlCompat
     {
         // AL Format() shows whole numbers without decimals
         return d == Math.Truncate(d) ? d.ToString("0") : d.ToString("0.##########");
+    }
+
+    /// <summary>
+    /// Extracts and formats a NavTime value without using NavSession-dependent formatters.
+    /// NavTime stores the time as a DateTime internally (date part is meaningless).
+    /// We extract the time-of-day via the Value property.
+    /// </summary>
+    private static string FormatNavTime(object value)
+    {
+        try
+        {
+            var valProp = value.GetType().GetProperty("Value");
+            if (valProp != null)
+            {
+                var raw = valProp.GetValue(value);
+                if (raw is DateTime dt)
+                    return dt.ToString("HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
+            }
+        }
+        catch { }
+
+        // Fallback: try the internal 'value' field
+        try
+        {
+            var field = value.GetType().GetField("value",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            if (field != null)
+            {
+                var raw = field.GetValue(value);
+                if (raw is DateTime dt)
+                    return dt.ToString("HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
+            }
+        }
+        catch { }
+
+        return "00:00:00";
     }
 
     // NavVariant type-check properties (rewritten from value.ALIsXxx to AlCompat.ALIsXxx(value))
