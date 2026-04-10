@@ -1,0 +1,66 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NoWarn>MSB3277</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <ALCompilerPath>$(HOME)/.dotnet/tools/.store/microsoft.dynamics.businesscentral.development.tools.linux/16.2.28.57946/microsoft.dynamics.businesscentral.development.tools.linux/16.2.28.57946/tools/net8.0/any</ALCompilerPath>
+    <ServiceTierPath>../artifacts/onprem/27.5.46862.0/platform/ServiceTier/PFiles64/Microsoft Dynamics NAV/270/Service</ServiceTierPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- AL Compiler (for transpiling AL -> C#) -->
+    <Reference Include="Microsoft.Dynamics.Nav.CodeAnalysis">
+      <HintPath>$(ALCompilerPath)/Microsoft.Dynamics.Nav.CodeAnalysis.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Dynamics.Nav.CodeAnalysis.Workspaces">
+      <HintPath>$(ALCompilerPath)/Microsoft.Dynamics.Nav.CodeAnalysis.Workspaces.dll</HintPath>
+    </Reference>
+
+    <!-- Roslyn (for compiling rewritten C# in-memory) -->
+    <Reference Include="Microsoft.CodeAnalysis">
+      <HintPath>$(ALCompilerPath)/Microsoft.CodeAnalysis.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.CodeAnalysis.CSharp">
+      <HintPath>$(ALCompilerPath)/Microsoft.CodeAnalysis.CSharp.dll</HintPath>
+    </Reference>
+
+    <!-- System.IO.Packaging (needed by CodeAnalysis) -->
+    <Reference Include="System.IO.Packaging">
+      <HintPath>$(ALCompilerPath)/System.IO.Packaging.dll</HintPath>
+    </Reference>
+
+    <!-- BC Service Tier DLLs (referenced by the generated C# at compile time) -->
+    <Reference Include="Microsoft.Dynamics.Nav.Ncl">
+      <HintPath>$(ServiceTierPath)/Microsoft.Dynamics.Nav.Ncl.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Dynamics.Nav.Types">
+      <HintPath>$(ServiceTierPath)/Microsoft.Dynamics.Nav.Types.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Dynamics.Nav.Common">
+      <HintPath>$(ServiceTierPath)/Microsoft.Dynamics.Nav.Common.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Dynamics.Nav.Language">
+      <HintPath>$(ServiceTierPath)/Microsoft.Dynamics.Nav.Language.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Dynamics.Nav.Core">
+      <HintPath>$(ServiceTierPath)/Microsoft.Dynamics.Nav.Core.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Dynamics.Nav.Types.Report">
+      <HintPath>$(ServiceTierPath)/Microsoft.Dynamics.Nav.Types.Report.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Dynamics.Nav.Types.Report.Base">
+      <HintPath>$(ServiceTierPath)/Microsoft.Dynamics.Nav.Types.Report.Base.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Dynamics.Nav.Types.Report.Runtime">
+      <HintPath>$(ServiceTierPath)/Microsoft.Dynamics.Nav.Types.Report.Runtime.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>

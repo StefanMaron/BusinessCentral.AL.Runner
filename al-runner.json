@@ -1,0 +1,5 @@
+{
+  "sourcePath": "./src",
+  "testPath": "./test",
+  "testCodeunits": [50200, 50201]
+}
