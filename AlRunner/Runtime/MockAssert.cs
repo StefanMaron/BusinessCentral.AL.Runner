@@ -52,9 +52,10 @@ public static class MockAssert
             throw new AssertException(
                 $"Assert.ExpectedError failed. Expected an error with message: <{expectedMessage}>, but no error occurred.");
 
-        if (!string.Equals(actual, expectedMessage, StringComparison.Ordinal))
+        // BC's ExpectedError uses substring containment, not exact match
+        if (!actual.Contains(expectedMessage, StringComparison.Ordinal))
             throw new AssertException(
-                $"Assert.ExpectedError failed. Expected: <{expectedMessage}>, Actual: <{actual}>.");
+                $"Assert.ExpectedError failed. Expected substring: <{expectedMessage}>, Actual: <{actual}>.");
     }
 
     /// <summary>
