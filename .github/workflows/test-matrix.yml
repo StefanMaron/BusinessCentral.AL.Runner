@@ -63,5 +63,3 @@ jobs:
         run: |
           DIRS=$(ls -d tests/*/src tests/*/test 2>/dev/null | grep -v '06-' | sort)
           dotnet run --no-build --project AlRunner -- $DIRS
-          done
-          exit $EXIT
