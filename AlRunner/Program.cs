@@ -485,7 +485,11 @@ Timer.EndStage("AL transpilation");
 Timer.StartStage("Roslyn rewriting");
 // ---------------------------------------------------------------------------
 // Step 2: Rewrite C# for standalone execution (parallel, returning SyntaxTrees)
+//         Also start loading MetadataReferences in parallel since they are
+//         independent of the rewritten source code.
 // ---------------------------------------------------------------------------
+var refsTask = System.Threading.Tasks.Task.Run(() => RoslynCompiler.LoadReferences());
+
 var rewrittenTrees = new (string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)[generatedCSharpList.Count];
 System.Threading.Tasks.Parallel.For(0, generatedCSharpList.Count, i =>
 {
@@ -523,7 +527,8 @@ Timer.StartStage("Roslyn compilation");
 // Step 3: Build AL source line mapping and compile rewritten C# with Roslyn
 // ---------------------------------------------------------------------------
 SourceLineMapper.Build(generatedCSharpList, GetRewrittenStrings());
-var assembly = RoslynCompiler.Compile(rewrittenTreeList);
+var preloadedRefs = refsTask.Result;
+var assembly = RoslynCompiler.Compile(rewrittenTreeList, preloadedRefs);
 if (assembly == null)
 {
     // Dump rewritten C# for debugging if verbose
@@ -1705,8 +1710,10 @@ public static class RoslynCompiler
     /// <summary>
     /// Compile from pre-built SyntaxTrees (avoids re-parsing rewritten C#).
     /// Trees are re-rooted with deduplicated file paths for readable diagnostics.
+    /// Optionally accepts pre-loaded MetadataReferences to skip redundant loading.
     /// </summary>
-    public static Assembly? Compile(List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)> namedTrees)
+    public static Assembly? Compile(List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)> namedTrees,
+        List<Microsoft.CodeAnalysis.MetadataReference>? preloadedReferences = null)
     {
         // Assign deduplicated file paths to trees for readable Roslyn diagnostics
         var nameCount = new Dictionary<string, int>();
@@ -1726,51 +1733,62 @@ public static class RoslynCompiler
             return t.Tree.WithFilePath($"{baseName}.cs");
         }).ToList();
 
-        return CompileFromTrees(syntaxTrees);
+        return CompileFromTrees(syntaxTrees, preloadedReferences);
+    }
+
+    /// <summary>
+    /// Prepare MetadataReferences for Roslyn compilation. Can be called early
+    /// (e.g. in parallel with rewriting) since reference loading is independent
+    /// of the source code being compiled.
+    /// </summary>
+    public static List<Microsoft.CodeAnalysis.MetadataReference> LoadReferences()
+    {
+        var references = new System.Collections.Concurrent.ConcurrentBag<Microsoft.CodeAnalysis.MetadataReference>();
+
+        // Collect all DLL paths to load
+        var runtimeDir = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
+        var runtimeDlls = Directory.GetFiles(runtimeDir, "*.dll")
+            .Where(dllPath =>
+            {
+                var fileName = Path.GetFileName(dllPath);
+                return fileName.StartsWith("System.", StringComparison.Ordinal) ||
+                       fileName is "netstandard.dll" or "mscorlib.dll" or "Microsoft.CSharp.dll";
+            })
+            .ToList();
+
+        var serviceTierPath = FindServiceTierPath();
+        var bcDlls = serviceTierPath != null
+            ? Directory.GetFiles(serviceTierPath, "Microsoft.Dynamics.Nav.*.dll").ToList()
+            : new List<string>();
+
+        // Load all references in parallel
+        var allDlls = runtimeDlls.Concat(bcDlls).ToList();
+        System.Threading.Tasks.Parallel.ForEach(allDlls, dllPath =>
+        {
+            try { references.Add(Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(dllPath)); }
+            catch { /* Skip DLLs that can't be loaded as metadata */ }
+        });
+
+        // These two are small, add sequentially
+        references.Add(Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
+        references.Add(Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(
+            typeof(AlRunner.Runtime.AlScope).Assembly.Location));
+
+        return references.ToList();
     }
 
     private static Assembly? CompileFromTrees(List<Microsoft.CodeAnalysis.SyntaxTree> syntaxTrees)
     {
+        return CompileFromTrees(syntaxTrees, null);
+    }
+
+    internal static Assembly? CompileFromTrees(List<Microsoft.CodeAnalysis.SyntaxTree> syntaxTrees,
+        List<Microsoft.CodeAnalysis.MetadataReference>? preloadedReferences)
+    {
         // Clear any exclusion info from previous compilations
         ExcludedFiles.Clear();
 
-        var references = new List<Microsoft.CodeAnalysis.MetadataReference>();
-
-        // .NET runtime assemblies — reference all System.*.dll, netstandard.dll, mscorlib.dll,
-        // and Microsoft.CSharp.dll so that generated code can resolve types like string.ToLowerInvariant()
-        // without accidentally binding to MemoryExtensions overloads from System.Memory.
-        var runtimeDir = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
-        foreach (var dllPath in Directory.GetFiles(runtimeDir, "*.dll"))
-        {
-            var fileName = Path.GetFileName(dllPath);
-            if (fileName.StartsWith("System.", StringComparison.Ordinal) ||
-                fileName is "netstandard.dll" or "mscorlib.dll" or "Microsoft.CSharp.dll")
-            {
-                try { references.Add(Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(dllPath)); }
-                catch { /* Skip DLLs that can't be loaded as metadata */ }
-            }
-        }
-        references.Add(Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
-
-        // BC service tier DLLs (for Decimal18, NavText, NavRecordRef, ALCompiler, etc.)
-        // Reference all Microsoft.Dynamics.Nav.*.dll files so that BC types in generated
-        // code resolve at compile time, even if not all methods work at runtime.
-        var serviceTierPath = FindServiceTierPath();
-        if (serviceTierPath != null)
-        {
-            foreach (var dllFile in Directory.GetFiles(serviceTierPath, "Microsoft.Dynamics.Nav.*.dll"))
-            {
-                try
-                {
-                    references.Add(Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(dllFile));
-                }
-                catch { /* Skip DLLs that can't be loaded as metadata */ }
-            }
-        }
-
-        // AlRunner.Runtime assembly (for AlScope, AlDialog)
-        references.Add(Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(
-            typeof(AlRunner.Runtime.AlScope).Assembly.Location));
+        var references = preloadedReferences ?? LoadReferences();
 
         var compilation = Microsoft.CodeAnalysis.CSharp.CSharpCompilation.Create(
             "AlRunnerGenerated",
