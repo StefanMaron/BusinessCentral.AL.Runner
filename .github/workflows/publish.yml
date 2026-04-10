@@ -93,8 +93,3 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "**Version:** ${{ steps.version.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
           echo "**Package:** [BusinessCentral.AL.Runner](https://www.nuget.org/packages/BusinessCentral.AL.Runner/${{ steps.version.outputs.version }})" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Tested against BC versions:" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo "${{ needs.resolve-versions.outputs.matrix }}" | python3 -c "import json,sys; [print(f'  {v}') for v in json.load(sys.stdin)['bc-version']]" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
