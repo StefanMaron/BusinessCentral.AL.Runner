@@ -1123,19 +1123,21 @@ public static class RoslynCompiler
         return Assembly.Load(ms.ToArray());
     }
 
+    private const string BcArtifactVersion = "27.5.46862.0";
+    private const string BcArtifactUrl = "https://bcartifacts-exdbf9fwegejdqak.b02.azurefd.net/onprem/" + BcArtifactVersion + "/platform";
+
     private static string? FindServiceTierPath()
     {
-        // Allow explicit override via environment variable
+        // 1. Explicit override via environment variable
         var envPath = Environment.GetEnvironmentVariable("BC_SERVICE_TIER_PATH");
         if (!string.IsNullOrEmpty(envPath) && Directory.Exists(envPath))
             return envPath;
 
-        const string relPath = "artifacts/onprem/27.5.46862.0/platform/ServiceTier/PFiles64/Microsoft Dynamics NAV/270/Service";
+        // 2. Local artifacts directory (relative to CWD or binary)
+        const string relPath = "artifacts/onprem/" + BcArtifactVersion + "/platform/ServiceTier/PFiles64/Microsoft Dynamics NAV/270/Service";
         var candidates = new[]
         {
-            // Relative to CWD
             Path.GetFullPath(relPath),
-            // Relative to binary output directory (various nesting levels)
             Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../..", relPath)),
             Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../..", relPath)),
         };
@@ -1146,10 +1148,19 @@ public static class RoslynCompiler
                 return c;
         }
 
-        Console.Error.WriteLine("Warning: Could not find BC service tier DLLs. Tried:");
-        foreach (var c in candidates)
-            Console.Error.WriteLine($"  {c}");
-        Console.Error.WriteLine("  Set BC_SERVICE_TIER_PATH environment variable to override.");
+        // 3. Cross-platform cache directory
+        var cacheDir = ArtifactDownloader.GetDefaultCacheDir(BcArtifactVersion);
+        if (Directory.Exists(cacheDir) && Directory.GetFiles(cacheDir, "Microsoft.Dynamics.Nav.Types.dll").Length > 0)
+            return cacheDir;
+
+        // 4. Auto-download via HTTP range requests
+        Console.Error.WriteLine("BC Service Tier DLLs not found locally. Downloading...");
+        var downloaded = ArtifactDownloader.DownloadServiceTierDlls(BcArtifactUrl, cacheDir);
+        if (downloaded != null)
+            return downloaded;
+
+        Console.Error.WriteLine("Error: Could not obtain BC service tier DLLs.");
+        Console.Error.WriteLine("  Set BC_SERVICE_TIER_PATH environment variable to provide them manually.");
         return null;
     }
 }

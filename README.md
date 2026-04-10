@@ -107,36 +107,46 @@ Anything you can't inject cannot be unit-tested by this runner — and that's th
 
 ## Quick Start
 
-### Prerequisites
-
-- .NET 8 SDK
-- AL compiler dotnet tool:
-  ```bash
-  dotnet tool install microsoft.dynamics.businesscentral.development.tools.linux
-  ```
-- BC Service Tier artifacts at `artifacts/onprem/27.5.46862.0/` (relative to the `AlRunner/` project). See [alDirectCompile](https://github.com/StefanMaron/MsDyn365Bc.On.Linux) for artifact download instructions.
-
-### Build
+### Install as dotnet tool
 
 ```bash
-dotnet build AlRunner/
+# Install the AL compiler (prerequisite)
+# Linux/macOS:
+dotnet tool install --global microsoft.dynamics.businesscentral.development.tools.linux
+# Windows:
+dotnet tool install --global microsoft.dynamics.businesscentral.development.tools
+
+# Install AL Runner
+dotnet tool install --global BusinessCentral.AL.Runner
 ```
+
+BC Service Tier DLLs are **auto-downloaded** on first run via HTTP range requests (~11 MB instead of the full 1.2 GB artifact). No manual artifact setup needed.
 
 ### Run
 
 ```bash
-# Run a single .al file (OnRun mode)
-dotnet run --project AlRunner -- samples/hello.al
-
 # Run test codeunits (test mode auto-detected when Subtype = Test is present)
-dotnet run --project AlRunner -- ./src ./test
+al-runner ./src ./test
+
+# Run with coverage report
+al-runner --coverage ./src ./test
+
+# Run a single .al file (OnRun mode)
+al-runner samples/hello.al
 
 # Load from .app packages with dependency resolution
-dotnet run --project AlRunner -- --packages ./packages MyApp.app MyApp.Tests.app
+al-runner --packages ./packages MyApp.app MyApp.Tests.app
 
 # Debug: dump generated C# before and after rewriting
-dotnet run --project AlRunner -- --dump-csharp samples/hello.al
-dotnet run --project AlRunner -- --dump-rewritten samples/hello.al
+al-runner --dump-csharp samples/hello.al
+al-runner --dump-rewritten samples/hello.al
+```
+
+### Build from source
+
+```bash
+dotnet build AlRunner/
+dotnet run --project AlRunner -- ./src ./test
 ```
 
 ### Config file (al-runner.json)

@@ -14,7 +14,6 @@ on:
 env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
-  BC_ARTIFACT_VERSION: "27.5.46862.0"
 
 jobs:
   expected-failure:
@@ -30,17 +29,10 @@ jobs:
       - name: Install AL compiler
         run: dotnet tool install --global microsoft.dynamics.businesscentral.development.tools.linux --version 16.2.28.57946
 
-      - name: Download BC Service Tier DLLs (range request)
-        run: |
-          ARTIFACT_URL="https://bcartifacts-exdbf9fwegejdqak.b02.azurefd.net/onprem/${BC_ARTIFACT_VERSION}/platform"
-          TARGET_DIR="artifacts/onprem/${BC_ARTIFACT_VERSION}/platform/ServiceTier/PFiles64/Microsoft Dynamics NAV/270/Service"
-          mkdir -p "${TARGET_DIR}"
-
-          TOTAL_SIZE=$(curl -sI "${ARTIFACT_URL}" | grep -i content-length | awk '{print $2}' | tr -d '\r')
-          python3 .github/scripts/download-bc-dlls.py "${ARTIFACT_URL}" "${TOTAL_SIZE}" "${TARGET_DIR}"
-
       - name: Build
         run: dotnet build AlRunner/
+
+      # BC Service Tier DLLs are auto-downloaded on first run via HTTP range requests.
 
       - name: "Sample 06: Intentional failure (EXPECTED TO FAIL)"
         run: |
@@ -49,7 +41,6 @@ jobs:
           RUNNER_EXIT=$?
           echo "$OUTPUT"
 
-          # Write summary showing the failure output — this is the whole point of this workflow
           {
             echo "## Expected Failure Output"
             echo ""
@@ -60,5 +51,4 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-          # Fail the step (expected)
           exit $RUNNER_EXIT

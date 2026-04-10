@@ -7,12 +7,48 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <NoWarn>MSB3277</NoWarn>
+
+    <!-- dotnet tool packaging -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>al-runner</ToolCommandName>
+    <PackageId>BusinessCentral.AL.Runner</PackageId>
+    <Version>0.1.0</Version>
+    <Description>Run Business Central AL unit tests in milliseconds — no BC service tier, no Docker, no SQL Server, no license.</Description>
+    <Authors>Stefan Maron</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/StefanMaron/BusinessCentral.AL.Runner</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/StefanMaron/BusinessCentral.AL.Runner</RepositoryUrl>
+    <PackageTags>business-central;al;unit-test;runner</PackageTags>
   </PropertyGroup>
 
-  <PropertyGroup>
-    <ALCompilerPath>$(HOME)/.dotnet/tools/.store/microsoft.dynamics.businesscentral.development.tools.linux/16.2.28.57946/microsoft.dynamics.businesscentral.development.tools.linux/16.2.28.57946/tools/net8.0/any</ALCompilerPath>
-    <ServiceTierPath>../artifacts/onprem/27.5.46862.0/platform/ServiceTier/PFiles64/Microsoft Dynamics NAV/270/Service</ServiceTierPath>
+  <!-- AL Compiler path: resolved from dotnet tool store, cross-platform.
+       On Linux:   microsoft.dynamics.businesscentral.development.tools.linux
+       On Windows: microsoft.dynamics.businesscentral.development.tools (no suffix)
+       Override: set ALCompilerPath property explicitly or via environment variable. -->
+  <PropertyGroup Condition="'$(ALCompilerPath)' == ''">
+    <_ALToolVersion>16.2.28.57946</_ALToolVersion>
+    <!-- Linux -->
+    <ALCompilerPath Condition="$([MSBuild]::IsOSPlatform('Linux'))">$(HOME)/.dotnet/tools/.store/microsoft.dynamics.businesscentral.development.tools.linux/$(_ALToolVersion)/microsoft.dynamics.businesscentral.development.tools.linux/$(_ALToolVersion)/tools/net8.0/any</ALCompilerPath>
+    <!-- macOS -->
+    <ALCompilerPath Condition="$([MSBuild]::IsOSPlatform('OSX'))">$(HOME)/.dotnet/tools/.store/microsoft.dynamics.businesscentral.development.tools.linux/$(_ALToolVersion)/microsoft.dynamics.businesscentral.development.tools.linux/$(_ALToolVersion)/tools/net8.0/any</ALCompilerPath>
+    <!-- Windows -->
+    <ALCompilerPath Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(USERPROFILE)/.dotnet/tools/.store/microsoft.dynamics.businesscentral.development.tools/$(_ALToolVersion)/microsoft.dynamics.businesscentral.development.tools/$(_ALToolVersion)/tools/net8.0/any</ALCompilerPath>
   </PropertyGroup>
+
+  <!-- Service Tier DLLs: auto-downloaded at runtime if not found locally.
+       Override: set ServiceTierPath property or BC_SERVICE_TIER_PATH env var. -->
+  <PropertyGroup Condition="'$(ServiceTierPath)' == ''">
+    <_BCVersion>27.5.46862.0</_BCVersion>
+    <ServiceTierPath Condition="Exists('../artifacts/onprem/$(_BCVersion)/platform/ServiceTier/PFiles64/Microsoft Dynamics NAV/270/Service')">../artifacts/onprem/$(_BCVersion)/platform/ServiceTier/PFiles64/Microsoft Dynamics NAV/270/Service</ServiceTierPath>
+    <!-- Fallback: cross-platform cache directory -->
+    <ServiceTierPath Condition="'$(ServiceTierPath)' == '' And $([MSBuild]::IsOSPlatform('Windows'))">$(LOCALAPPDATA)/al-runner/artifacts/$(_BCVersion)</ServiceTierPath>
+    <ServiceTierPath Condition="'$(ServiceTierPath)' == '' And !$([MSBuild]::IsOSPlatform('Windows'))">$(HOME)/.local/share/al-runner/artifacts/$(_BCVersion)</ServiceTierPath>
+  </PropertyGroup>
+
+  <!-- Copy stubs directory to output so they're found at runtime -->
+  <ItemGroup>
+    <None Include="stubs/**" CopyToOutputDirectory="PreserveNewest" LinkBase="stubs" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- AL Compiler (for transpiling AL -> C#) -->
