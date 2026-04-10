@@ -762,8 +762,10 @@ public MockRecordHandle ParentObject => Rec;
             return node.WithIdentifier(SyntaxFactory.Identifier("MockTextBuilder"));
 
         // NavEventScope -> object (event scope type used for static fields)
+        // Use PredefinedType to emit the C# keyword "object" properly, avoiding
+        // namespace resolution issues where "object" as an IdentifierName fails.
         if (text == "NavEventScope")
-            return node.WithIdentifier(SyntaxFactory.Identifier("object"));
+            return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.ObjectKeyword));
 
         return base.VisitIdentifierName(node);
     }
