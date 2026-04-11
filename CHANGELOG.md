@@ -4,6 +4,34 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `CHANGELOG.md` shipped inside the NuGet package; `<PackageReleaseNotes>`
+  points nuget.org at it.
+- Publish workflow now creates a GitHub Release on tag push, seeded with
+  the matching `CHANGELOG.md` section and the `.nupkg` attached.
+- Missing-dependency diagnostic now enriches with a namespace-mismatch
+  hint when a stub with the matching type+name was loaded under a
+  different namespace. ([#9](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/9))
+- Server mode: multi-slot LRU cache (8 slots) keyed by a per-file
+  fingerprint, and the `runTests` response now includes a `changedFiles`
+  array on cache miss so IDE integrations can show change-aware
+  feedback. Bouncing between projects in one session no longer
+  invalidates the previous entry.
+  ([#10](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/10) — MVP; full dep-graph partial recompile still open)
+
+### Fixed
+- `AL0791 namespace unknown` on an unused `using` directive no longer
+  blocks compilation; added to the ignored-error set alongside
+  `AL0432` / `AL0433`. Genuine unresolved uses still surface as
+  separate errors. ([#8](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/8))
+- Regression test for single-arg `Record.Validate("Field")` covering
+  Decimal, DateFormula, and error propagation paths. The underlying
+  2-arg `ALValidateSafe` overload was added before the report was
+  filed; this commit just locks the behavior in.
+  ([#7](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/7))
+
 ## [1.0.2] — 2026-04-11
 
 ### Fixed

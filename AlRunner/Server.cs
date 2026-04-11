@@ -70,9 +70,9 @@ public class AlRunnerServer
         if (request.SourcePaths == null || request.SourcePaths.Length == 0)
             return JsonSerializer.Serialize(new { error = "sourcePaths is required" });
 
-        // Compute hash of all source files to check cache
-        var sourceHash = _cache.ComputeHash(request.SourcePaths);
-        var cachedAssembly = _cache.TryGet(sourceHash);
+        // Fingerprint the request — also updates per-file hashes used for the diff.
+        var fingerprint = _cache.ComputeFingerprint(request.SourcePaths);
+        var cachedAssembly = _cache.TryGet(fingerprint);
 
         if (cachedAssembly != null)
         {
@@ -82,7 +82,10 @@ public class AlRunnerServer
             return SerializeServerResponse(results, Executor.ExitCode(results), cached: true);
         }
 
-        // Cache miss — full pipeline
+        // Cache miss — diff BEFORE storing the new entry so the report
+        // reflects "what changed since the closest previous run".
+        var changedFiles = _cache.DiffAgainstClosest();
+
         var options = new PipelineOptions { OutputJson = true };
         options.InputPaths.AddRange(request.SourcePaths);
         if (request.PackagePaths != null)
@@ -98,13 +101,13 @@ public class AlRunnerServer
         {
             var assembly = Runtime.MockCodeunitHandle.CurrentAssembly;
             if (assembly != null)
-                _cache.Store(sourceHash, assembly);
+                _cache.Store(fingerprint, assembly);
         }
 
-        return SerializeServerResponse(result.Tests, result.ExitCode, cached: false);
+        return SerializeServerResponse(result.Tests, result.ExitCode, cached: false, changedFiles: changedFiles);
     }
 
-    private static string SerializeServerResponse(List<TestResult> tests, int exitCode, bool cached)
+    private static string SerializeServerResponse(List<TestResult> tests, int exitCode, bool cached, List<string>? changedFiles = null)
     {
         var output = new
         {
@@ -121,7 +124,9 @@ public class AlRunnerServer
             errors = tests.Count(t => t.Status == TestStatus.Error),
             total = tests.Count,
             exitCode,
-            cached
+            cached,
+            // Only emit changedFiles on cache miss — cache hits have no diff.
+            changedFiles = cached ? null : changedFiles
         };
 
         return JsonSerializer.Serialize(output, new JsonSerializerOptions
@@ -137,47 +142,160 @@ public class AlRunnerServer
 }
 
 /// <summary>
-/// Caches compiled assemblies keyed by a hash of all source file contents.
+/// Multi-slot LRU cache of compiled assemblies keyed by a per-file-content
+/// fingerprint. Also tracks the per-file hashes of the most recently served
+/// request so callers can diff a new request and learn which files changed.
 /// </summary>
 public class CompilationCache
 {
-    private string? _lastHash;
-    private Assembly? _lastAssembly;
+    // Small LRU — enough to cover "bounce between a handful of projects" usage
+    // from IDE integrations without pinning large amounts of memory.
+    private const int MaxSlots = 8;
+    private readonly LinkedList<CacheEntry> _lru = new();
 
-    public string ComputeHash(string[] sourcePaths)
+    /// <summary>Per-file hashes captured by the most recent ComputeFingerprint call.</summary>
+    public IReadOnlyDictionary<string, string> LastFileHashes { get; private set; } =
+        new Dictionary<string, string>();
+
+    private sealed class CacheEntry
     {
-        using var sha = SHA256.Create();
-        var allFiles = new List<string>();
-        foreach (var path in sourcePaths)
-        {
-            if (Directory.Exists(path))
-                allFiles.AddRange(Directory.GetFiles(path, "*.al", SearchOption.AllDirectories).OrderBy(f => f));
-            else if (File.Exists(path))
-                allFiles.Add(path);
-        }
-
-        foreach (var file in allFiles)
-        {
-            var bytes = File.ReadAllBytes(file);
-            sha.TransformBlock(bytes, 0, bytes.Length, bytes, 0);
-        }
-        sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
-
-        return Convert.ToHexString(sha.Hash!);
+        public required string Fingerprint { get; init; }
+        public required Dictionary<string, string> FileHashes { get; init; }
+        public required Assembly Assembly { get; init; }
     }
 
-    public Assembly? TryGet(string hash)
+    /// <summary>
+    /// Compute a stable fingerprint for the set of .al files reachable from
+    /// the given paths, and update <see cref="LastFileHashes"/> as a side
+    /// effect so the caller can diff against the previously served request.
+    /// </summary>
+    public string ComputeFingerprint(string[] sourcePaths)
     {
-        if (_lastHash == hash && _lastAssembly != null)
-            return _lastAssembly;
+        var fileHashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in EnumerateFiles(sourcePaths))
+        {
+            using var sha = SHA256.Create();
+            var bytes = File.ReadAllBytes(path);
+            fileHashes[path] = Convert.ToHexString(sha.ComputeHash(bytes));
+        }
+
+        LastFileHashes = fileHashes;
+
+        // Fingerprint is a hash of the sorted (path, file-hash) pairs so two
+        // runs with the same files in the same state produce the same key.
+        using var agg = SHA256.Create();
+        foreach (var kv in fileHashes.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            var line = System.Text.Encoding.UTF8.GetBytes(kv.Key + "|" + kv.Value + "\n");
+            agg.TransformBlock(line, 0, line.Length, line, 0);
+        }
+        agg.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+        return Convert.ToHexString(agg.Hash!);
+    }
+
+    /// <summary>
+    /// Return a cached assembly for the given fingerprint, promoting it to
+    /// the front of the LRU, or null on miss.
+    /// </summary>
+    public Assembly? TryGet(string fingerprint)
+    {
+        var node = _lru.First;
+        while (node != null)
+        {
+            if (node.Value.Fingerprint == fingerprint)
+            {
+                _lru.Remove(node);
+                _lru.AddFirst(node);
+                return node.Value.Assembly;
+            }
+            node = node.Next;
+        }
         return null;
     }
 
-    public void Store(string hash, Assembly assembly)
+    /// <summary>Store an assembly under its fingerprint, evicting the LRU tail if full.</summary>
+    public void Store(string fingerprint, Assembly assembly)
     {
-        _lastHash = hash;
-        _lastAssembly = assembly;
+        var entry = new CacheEntry
+        {
+            Fingerprint = fingerprint,
+            FileHashes = new Dictionary<string, string>(LastFileHashes, StringComparer.OrdinalIgnoreCase),
+            Assembly = assembly
+        };
+        _lru.AddFirst(entry);
+        while (_lru.Count > MaxSlots)
+            _lru.RemoveLast();
     }
+
+    /// <summary>
+    /// Compare the currently-captured file hashes against the closest cached
+    /// entry (by largest overlap) and return the list of files that differ
+    /// — added, removed, or modified. Used to populate the response
+    /// <c>changedFiles</c> field on a cache miss.
+    /// </summary>
+    public List<string> DiffAgainstClosest()
+    {
+        if (_lru.Count == 0 || LastFileHashes.Count == 0)
+            return LastFileHashes.Keys.Select(Path.GetFileName).OfType<string>().ToList();
+
+        CacheEntry? best = null;
+        int bestOverlap = -1;
+        foreach (var entry in _lru)
+        {
+            int overlap = 0;
+            foreach (var kv in LastFileHashes)
+            {
+                if (entry.FileHashes.TryGetValue(kv.Key, out var prev) && prev == kv.Value)
+                    overlap++;
+            }
+            if (overlap > bestOverlap)
+            {
+                best = entry;
+                bestOverlap = overlap;
+            }
+        }
+
+        var changed = new List<string>();
+        if (best is null)
+        {
+            foreach (var path in LastFileHashes.Keys)
+                changed.Add(Path.GetFileName(path) ?? path);
+            return changed;
+        }
+
+        // Added or modified
+        foreach (var kv in LastFileHashes)
+        {
+            if (!best.FileHashes.TryGetValue(kv.Key, out var prev) || prev != kv.Value)
+                changed.Add(Path.GetFileName(kv.Key) ?? kv.Key);
+        }
+        // Removed
+        foreach (var kv in best.FileHashes)
+        {
+            if (!LastFileHashes.ContainsKey(kv.Key))
+                changed.Add(Path.GetFileName(kv.Key) ?? kv.Key);
+        }
+        return changed;
+    }
+
+    private static IEnumerable<string> EnumerateFiles(string[] sourcePaths)
+    {
+        foreach (var path in sourcePaths)
+        {
+            if (Directory.Exists(path))
+            {
+                foreach (var f in Directory.GetFiles(path, "*.al", SearchOption.AllDirectories).OrderBy(f => f))
+                    yield return f;
+            }
+            else if (File.Exists(path))
+            {
+                yield return path;
+            }
+        }
+    }
+
+    // Back-compat for callers still using the old name.
+    public string ComputeHash(string[] sourcePaths) => ComputeFingerprint(sourcePaths);
 }
 
 public class ServerRequest
