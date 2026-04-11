@@ -4,6 +4,36 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.7] — 2026-04-11
+
+### Added
+- **`RecordRef` row-presence operations now read the in-memory store.**
+  `Rec.Open(TableId[, Temporary[, CompanyName]])` followed by
+  `IsEmpty` / `FindSet` / `Find` / `Next` / `Count` / `Close` consults
+  the same shared table store typed `Record X` variables write to, so
+  seeding a row via a typed variable is visible through a subsequent
+  `RecRef.Open` on the same table id. Field-level access
+  (`RecRef.Field(n).Value`) remains out of scope.
+  ([#30](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/30))
+- **Plain helper procedures on pages can now be called from tests.**
+  `MockFormHandle` remembers the page id (the rewriter's constructor
+  handling now keeps it instead of stripping) and exposes
+  `Invoke(memberId, args)` that reflects over the generated `Page<N>`
+  class using the same scope-name encoding MockCodeunitHandle uses.
+  Page triggers, layout, actions, and factboxes remain skipped.
+  ([#31](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/31))
+- **`[EventSubscriber]` procedures fire when their
+  `[IntegrationEvent]` / `[BusinessEvent]` is raised in the same
+  compilation unit.** Rewriter replaces `βscope.RunEvent()` with
+  `AlCompat.FireEvent(publisherCuId, eventName)` and strips the
+  `if (γeventScope == null && …) return;` guard BC emits at the top
+  of event methods. `EventSubscriberRegistry` scans the assembly for
+  `NavEventSubscriberAttribute` via `CustomAttributeData` (reading
+  `targetObjectNo` from the second int positional arg — the first
+  is the `ObjectType` enum). Sender / Rec parameters pass `null`,
+  matching BC's best-effort contract for standalone dispatch.
+  ([#32](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/32))
+
 ## [1.0.6] — 2026-04-11
 
 ### Added
@@ -281,6 +311,7 @@ for pure-logic codeunits. No BC service tier, no Docker, no SQL, no
 license. Test runner with `Subtype = Test` discovery and `Assert`
 codeunit mock.
 
+[1.0.7]: https://github.com/StefanMaron/BusinessCentral.AL.Runner/releases/tag/v1.0.7
 [1.0.6]: https://github.com/StefanMaron/BusinessCentral.AL.Runner/releases/tag/v1.0.6
 [1.0.5]: https://github.com/StefanMaron/BusinessCentral.AL.Runner/releases/tag/v1.0.5
 [1.0.4]: https://github.com/StefanMaron/BusinessCentral.AL.Runner/releases/tag/v1.0.4
