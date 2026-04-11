@@ -348,7 +348,14 @@ public class AlRunnerPipeline
         Parallel.For(0, generatedCSharpList.Count, i =>
         {
             var (name, code) = generatedCSharpList[i];
-            rewrittenTrees[i] = (name, RoslynRewriter.RewriteToTree(code));
+            var tree = RoslynRewriter.RewriteToTree(code);
+            // Second pass: inject per-statement ValueCapture.Capture calls.
+            // The capture function no-ops when ValueCapture.Enabled is false,
+            // so we can run this unconditionally and avoid a separate code
+            // path for capture vs non-capture runs.
+            var injectedRoot = ValueCaptureInjector.Inject(tree.GetRoot());
+            tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.Create((Microsoft.CodeAnalysis.CSharp.CSharpSyntaxNode)injectedRoot);
+            rewrittenTrees[i] = (name, tree);
         });
         var rewrittenTreeList = rewrittenTrees.ToList();
 
