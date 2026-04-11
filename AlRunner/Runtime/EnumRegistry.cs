@@ -30,6 +30,11 @@ public static class EnumRegistry
         @"\bImplementation\s*=\s*(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))\s*=\s*(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    // Inline Option field members: `OptionMembers = A,B,C;`
+    private static readonly Regex OptionMembersLine = new(
+        @"\bOptionMembers\s*=\s*([^;]+);",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     private static readonly Dictionary<int, List<(int Ordinal, string Name)>> _byId = new();
     // Enum AL name (e.g. "IV Mode" or "Simple Enum") -> list of members.
     // Populated alongside _byId so callers that only know the type name
@@ -58,6 +63,7 @@ public static class EnumRegistry
         _byName.Clear();
         _implsById.Clear();
         _implsByName.Clear();
+        _inlineOptionMembers.Clear();
     }
 
     /// <summary>
@@ -116,9 +122,51 @@ public static class EnumRegistry
         return null;
     }
 
+    // Inline Option fields: register member names into a synthetic
+    // "option member pool" keyed by member name so filter normalization
+    // can resolve `<>Red` to `<>0` regardless of which field declares it.
+    // Multiple Option fields with the same member name at different
+    // ordinals is a degenerate case we don't try to disambiguate; the
+    // first-parsed wins. Filters on fields that share a namespace still
+    // work because BC forbids re-using Option member names within a
+    // single field.
+    private static readonly Dictionary<string, int> _inlineOptionMembers =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Resolve an AL Option member name (e.g. "Red") to its ordinal.
+    /// Searches both the <c>enum</c> object registry and the inline
+    /// <c>OptionMembers = ...</c> pool populated from table fields.
+    /// </summary>
+    public static int? FindOrdinalByMemberName(string memberName)
+    {
+        foreach (var members in _byId.Values)
+            foreach (var (ord, name) in members)
+                if (string.Equals(name, memberName, StringComparison.OrdinalIgnoreCase))
+                    return ord;
+        if (_inlineOptionMembers.TryGetValue(memberName, out var inlineOrd))
+            return inlineOrd;
+        return null;
+    }
+
     /// <summary>Parse a single AL source string and register any enum declarations inside it.</summary>
     public static void ParseAndRegister(string alSource)
     {
+        // First harvest inline `OptionMembers = A,B,C;` definitions from
+        // field blocks — they aren't enum objects but AL treats them the
+        // same way for filter comparisons.
+        foreach (Match om in OptionMembersLine.Matches(alSource))
+        {
+            var list = om.Groups[1].Value;
+            var parts = list.Split(',');
+            for (int i = 0; i < parts.Length; i++)
+            {
+                var name = parts[i].Trim().Trim('"');
+                if (name.Length == 0) continue;
+                _inlineOptionMembers[name] = i;
+            }
+        }
+
         var text = alSource;
         var headerMatch = EnumHeader.Match(text);
         while (headerMatch.Success)

@@ -155,6 +155,23 @@ codeunit 50521 "RWK Filter Tests"
     end;
 
     [Test]
+    procedure SetFilterAndWithOptionMemberNameLiterals()
+    var
+        R: Record "RWK Row";
+    begin
+        // #19 regression: AL filter literals like `<>Red&<>Blue` must
+        // resolve option member names to ordinals, not compare against the
+        // stored NavOption string form (which is the ordinal).
+        R.Id := 1; R.Kind := R.Kind::Red; R.Insert();
+        R.Init(); R.Id := 2; R.Kind := R.Kind::Green; R.Insert();
+        R.Init(); R.Id := 3; R.Kind := R.Kind::Blue; R.Insert();
+        R.Init(); R.Id := 4; R.Kind := R.Kind::Yellow; R.Insert();
+
+        R.SetFilter(Kind, '<>Red&<>Blue');
+        Assert.AreEqual(2, R.Count(), 'Option member name literals in AND filter — Green and Yellow should remain');
+    end;
+
+    [Test]
     procedure SetFilterPlaceholderInOrWithAnd()
     var
         R: Record "RWK Row";

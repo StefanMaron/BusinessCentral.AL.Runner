@@ -1177,10 +1177,17 @@ public class MockRecordHandle
         // Strip surrounding single quotes if present
         working = StripQuotes(working);
 
+        // Option-field filter normalisation: BC stores options as ordinals,
+        // but AL filter literals often use member names ("Red" vs "0"). If
+        // the field is a NavOption and the literal isn't numeric, resolve it
+        // to an ordinal via EnumRegistry before string comparison.
+        working = NormalizeOptionLiteral(fieldValue, working);
+
         // Check for not-equal: <>VALUE
         if (working.StartsWith("<>"))
         {
             var notVal = working.Substring(2);
+            notVal = NormalizeOptionLiteral(fieldValue, notVal);
             return !StringEquals(fieldStr, notVal, caseInsensitive);
         }
 
@@ -1225,6 +1232,26 @@ public class MockRecordHandle
 
         // Plain equality
         return StringEquals(fieldStr, working, caseInsensitive);
+    }
+
+    /// <summary>
+    /// If the filter's target field value is a NavOption and the literal
+    /// string isn't a number, try to resolve it to an enum ordinal via
+    /// <see cref="EnumRegistry"/>. Falls back to returning the literal
+    /// unchanged so callers can still do plain-text comparisons.
+    /// </summary>
+    private static string NormalizeOptionLiteral(NavValue? fieldValue, string literal)
+    {
+        if (fieldValue is not NavOption) return literal;
+        if (string.IsNullOrEmpty(literal)) return literal;
+        if (int.TryParse(literal, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out _))
+            return literal;
+        var stripped = literal.Trim('"', '\'');
+        var ordinal = EnumRegistry.FindOrdinalByMemberName(stripped);
+        if (ordinal.HasValue)
+            return ordinal.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return literal;
     }
 
     // -----------------------------------------------------------------------
@@ -1325,22 +1352,55 @@ public class MockRecordHandle
     /// Convert a NavValue to its string representation for comparison.
     /// Uses explicit casts to avoid any NavSession dependency from ToString().
     /// </summary>
+    // Cached PropertyInfo for slow reflection paths — reading these on
+    // every NavValueToString call was adding measurable cost in filter-heavy
+    // loops (issue #23). They're resolved once at type-init and reused.
+    private static readonly System.Reflection.PropertyInfo? _navDecimalValueProp =
+        typeof(NavDecimal).GetProperty("Value");
+
+    /// <summary>
+    /// Produce a canonical string form of a <see cref="NavValue"/> for
+    /// filter comparison and PK hashing. **Do not fall back to
+    /// <c>value.ToString()</c>**: BC's NavValue.ToString traps into
+    /// <c>NavFormatEvaluateHelper</c> which triggers a Roslyn
+    /// <c>Microsoft.CodeAnalysis</c> JIT load on first use — ~200 ms
+    /// sitting inside a single filter-matching call. Every supported
+    /// AL value type must have an explicit branch here. Unknown types
+    /// return empty string so the caller still gets a comparable value
+    /// without reaching the slow path.
+    /// </summary>
     private static string NavValueToString(NavValue value)
     {
-        if (value is NavText nt) return (string)nt;
-        if (value is NavCode nc) return (string)nc;
-        if (value is NavInteger ni) return ((int)ni).ToString();
+        switch (value)
+        {
+            case NavText nt: return (string)nt;
+            case NavCode nc: return (string)nc;
+            case NavInteger ni: return ((int)ni).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            case NavBoolean nb: return ((bool)nb).ToString();
+            case NavBigInteger nbi: return ((long)nbi).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            case NavGuid ng: return ((Guid)ng).ToString();
+            case NavDate nd2: try { return ((DateTime)nd2).ToString("o", System.Globalization.CultureInfo.InvariantCulture); } catch { return ""; }
+            case NavDateTime ndt: try { return ((DateTime)ndt).ToString("o", System.Globalization.CultureInfo.InvariantCulture); } catch { return ""; }
+            case NavOption nopt: return nopt.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        // NavDecimal: use the cached PropertyInfo instead of reflecting per call.
         if (value is NavDecimal nd)
         {
-            try { return Convert.ToDecimal(nd.GetType().GetProperty("Value")?.GetValue(nd)).ToString(System.Globalization.CultureInfo.InvariantCulture); }
+            try
+            {
+                var raw = _navDecimalValueProp?.GetValue(nd);
+                if (raw != null)
+                    return Convert.ToDecimal(raw).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
             catch { }
+            return "";
         }
-        if (value is NavBoolean nb) return ((bool)nb).ToString();
-        if (value is NavBigInteger nbi) return ((long)nbi).ToString();
-        if (value is NavGuid ng) return ((Guid)ng).ToString();
-        // Fallback
-        try { return value.ToString() ?? ""; }
-        catch { return ""; }
+
+        // Unknown type — return empty string rather than calling
+        // value.ToString(), which triggers BC's formatter and blows
+        // through Roslyn compilation on first use.
+        return "";
     }
 
     /// <summary>
