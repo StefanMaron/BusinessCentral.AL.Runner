@@ -68,8 +68,7 @@ jobs:
           # 39- = stubs scenario — run separately with --stubs
           # 46- = missing-dep namespace-mismatch fixture — intentionally
           #        fails without --stubs; covered by C# MissingDepHintTests
-          # 53- = enum-implements-interface fixture — WIP fix (#20)
-          DIRS=$(ls -d tests/*/src tests/*/test 2>/dev/null | grep -v '06-' | grep -v '39-' | grep -v '46-' | grep -v '53-' | sort)
+          DIRS=$(ls -d tests/*/src tests/*/test 2>/dev/null | grep -v '06-' | grep -v '39-' | grep -v '46-' | sort)
           dotnet run --no-build --project AlRunner -- $DIRS
 
       - name: Run stubs test

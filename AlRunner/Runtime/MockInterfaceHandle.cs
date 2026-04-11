@@ -98,8 +98,71 @@ public class MockInterfaceHandle : ITreeObject, IALAssignable<MockInterfaceHandl
         if (_implementation is MockInterfaceHandle innerHandle)
             return innerHandle.InvokeInterfaceMethod(memberId, args);
 
+        // AL pattern: `Flag := Strategy;` where Strategy is an enum with
+        // `Implementation = "Iface" = "Codeunit"`. BC assigns the NavOption
+        // to the interface handle; we resolve the implementation by looking
+        // up EnumRegistry with (enum metadata id / name, ordinal) and
+        // forwarding to the matching codeunit.
+        if (_implementation is Microsoft.Dynamics.Nav.Runtime.NavOption navOpt)
+        {
+            var resolved = ResolveEnumImplementation(navOpt);
+            if (resolved != null)
+            {
+                // Cache so future calls skip the resolution.
+                _implementation = resolved;
+                return resolved.Invoke(memberId, args);
+            }
+        }
+
         throw new NotSupportedException(
             $"Interface dispatch not supported for implementation type {_implementation.GetType().Name}");
+    }
+
+    private static MockCodeunitHandle? ResolveEnumImplementation(Microsoft.Dynamics.Nav.Runtime.NavOption navOpt)
+    {
+        var ordinal = navOpt.Value;
+        int? enumId = null;
+        string? enumName = null;
+
+        try
+        {
+            var meta = navOpt.NavOptionMetadata;
+            if (meta != null)
+            {
+                // NCLOptionMetadata exposes Id + Name; neither is guaranteed
+                // to be set when we rewrote the underlying Create call, so
+                // try both lookup paths.
+                var idProp = meta.GetType().GetProperty("Id");
+                if (idProp?.GetValue(meta) is int id) enumId = id;
+                var nameProp = meta.GetType().GetProperty("Name");
+                if (nameProp?.GetValue(meta) is string name) enumName = name;
+            }
+        }
+        catch { /* metadata inspection is best-effort */ }
+
+        string? codeunitName = null;
+        if (enumId.HasValue)
+            codeunitName = EnumRegistry.GetImplementationCodeunitName(enumId.Value, ordinal);
+        if (codeunitName == null && !string.IsNullOrEmpty(enumName))
+            codeunitName = EnumRegistry.GetImplementationCodeunitNameByEnumName(enumName, ordinal);
+
+        // Last resort: scan every registered implementation row for one whose
+        // ordinal matches. In a BC test this is unambiguous when the scope has
+        // a single enum→interface assignment in flight.
+        if (codeunitName == null)
+            codeunitName = EnumRegistry.FindAnyImplementationCodeunit(ordinal);
+
+        if (codeunitName == null) return null;
+
+        // Resolve via the transpile-time codeunit name → id registry, which
+        // is populated by Pipeline.Run from the raw AL source. Much more
+        // reliable than trying to reflect over uninitialized generated
+        // codeunit classes.
+        var cuId = CodeunitNameRegistry.GetIdByName(codeunitName);
+        if (cuId.HasValue)
+            return MockCodeunitHandle.Create(cuId.Value);
+
+        return null;
     }
 
     /// <summary>

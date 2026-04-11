@@ -13,14 +13,21 @@ namespace AlRunner.Runtime;
 /// </summary>
 public static class EnumRegistry
 {
-    // enum <objectId> [Extensible]? "<name>" or enum <objectId> <name>
+    // enum <objectId> <quoted-or-bare-name> [implements <iface-list>]? {
+    // Non-greedy `[^{]*?` swallows any `implements "Iface"` / extensible modifier
+    // or attributes between the enum name and the opening brace.
     private static readonly Regex EnumHeader = new(
-        @"\benum\s+(\d+)\s+(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))\s*\{",
+        @"\benum\s+(\d+)\s+(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))[^{]*?\{",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     // value(<ordinal>; [quotedName | barename])
     private static readonly Regex ValueMember = new(
         @"\bvalue\s*\(\s*(\d+)\s*;\s*(?:""([^""]+)""|([^\s)]+))",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    // Implementation = "IfaceName" = "CodeunitName"  (quotes optional around each)
+    private static readonly Regex ImplementationLine = new(
+        @"\bImplementation\s*=\s*(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))\s*=\s*(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly Dictionary<int, List<(int Ordinal, string Name)>> _byId = new();
@@ -30,10 +37,71 @@ public static class EnumRegistry
     private static readonly Dictionary<string, List<(int Ordinal, string Name)>> _byName =
         new(StringComparer.OrdinalIgnoreCase);
 
+    // (enumId, ordinal) -> (interfaceName, codeunitName) from
+    // `Implementation = "Iface" = "Codeunit"` blocks inside enum value bodies.
+    private static readonly Dictionary<(int EnumId, int Ordinal), List<(string IfaceName, string CodeunitName)>> _implsById = new();
+    // Parallel lookup keyed by enum name for callers that only know the name.
+    private static readonly Dictionary<(string EnumName, int Ordinal), List<(string IfaceName, string CodeunitName)>> _implsByName =
+        new(new EnumNameOrdinalComparer());
+
+    private sealed class EnumNameOrdinalComparer : IEqualityComparer<(string EnumName, int Ordinal)>
+    {
+        public bool Equals((string EnumName, int Ordinal) a, (string EnumName, int Ordinal) b)
+            => string.Equals(a.EnumName, b.EnumName, StringComparison.OrdinalIgnoreCase) && a.Ordinal == b.Ordinal;
+        public int GetHashCode((string EnumName, int Ordinal) x)
+            => HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(x.EnumName ?? ""), x.Ordinal);
+    }
+
     public static void Clear()
     {
         _byId.Clear();
         _byName.Clear();
+        _implsById.Clear();
+        _implsByName.Clear();
+    }
+
+    /// <summary>
+    /// Resolve an <c>Implementation = "Iface" = "Codeunit"</c> mapping for a
+    /// given enum object+ordinal. Used by <see cref="MockInterfaceHandle"/>
+    /// to turn a NavOption into a callable codeunit when the AL code
+    /// assigns an enum value to an interface variable.
+    /// </summary>
+    public static string? GetImplementationCodeunitName(int enumObjectId, int ordinal, string? interfaceName = null)
+    {
+        if (!_implsById.TryGetValue((enumObjectId, ordinal), out var list)) return null;
+        if (interfaceName is null) return list.FirstOrDefault().CodeunitName;
+        foreach (var e in list)
+            if (string.Equals(e.IfaceName, interfaceName, StringComparison.OrdinalIgnoreCase))
+                return e.CodeunitName;
+        return list.FirstOrDefault().CodeunitName;
+    }
+
+    /// <summary>
+    /// Last-resort lookup used when we only know the ordinal and can't
+    /// recover the enum identity — returns the first registered
+    /// implementation that matches the ordinal across all enums. This
+    /// fires when the rewriter stripped <c>NCLEnumMetadata.Create(N)</c>
+    /// and the NavOption's metadata no longer carries the enum object id.
+    /// </summary>
+    public static string? FindAnyImplementationCodeunit(int ordinal)
+    {
+        foreach (var kv in _implsById)
+        {
+            if (kv.Key.Ordinal == ordinal)
+                return kv.Value.FirstOrDefault().CodeunitName;
+        }
+        return null;
+    }
+
+    /// <summary>Same as <see cref="GetImplementationCodeunitName"/> keyed by enum name.</summary>
+    public static string? GetImplementationCodeunitNameByEnumName(string enumName, int ordinal, string? interfaceName = null)
+    {
+        if (!_implsByName.TryGetValue((enumName, ordinal), out var list)) return null;
+        if (interfaceName is null) return list.FirstOrDefault().CodeunitName;
+        foreach (var e in list)
+            if (string.Equals(e.IfaceName, interfaceName, StringComparison.OrdinalIgnoreCase))
+                return e.CodeunitName;
+        return list.FirstOrDefault().CodeunitName;
     }
 
     /// <summary>Resolve a specific member's ordinal by (enum name, member name).</summary>
@@ -64,34 +132,74 @@ public static class EnumRegistry
                 ? headerMatch.Groups[2].Value
                 : headerMatch.Groups[3].Value;
 
-            // Scan forward from the opening brace for `value(...)` members
-            // until the matching close-brace. A full AST parse would be
-            // cleaner, but brace-counting is enough for the declaration
-            // headers AL uses.
+            // Parse the enum body. We need both the list of (ordinal, name)
+            // members and, for each value block, any `Implementation = ...`
+            // attributes. Use a depth-tracking walk so nested `{}` in value
+            // bodies don't throw off the end-of-enum detection.
             int depth = 1;
             int i = headerMatch.Index + headerMatch.Length;
-            var members = new List<(int, string)>();
+            int enumBodyStart = i;
             while (i < text.Length && depth > 0)
             {
-                char c = text[i];
-                if (c == '{') depth++;
-                else if (c == '}') { depth--; if (depth == 0) break; }
-                else if (c == 'v' || c == 'V')
-                {
-                    var slice = text.Substring(i, Math.Min(text.Length - i, 256));
-                    var m = ValueMember.Match(slice);
-                    if (m.Success && m.Index == 0)
-                    {
-                        if (int.TryParse(m.Groups[1].Value, out var ord))
-                        {
-                            var name = m.Groups[2].Success ? m.Groups[2].Value : m.Groups[3].Value;
-                            members.Add((ord, name));
-                        }
-                        i += m.Length;
-                        continue;
-                    }
-                }
+                if (text[i] == '{') depth++;
+                else if (text[i] == '}') { depth--; if (depth == 0) break; }
                 i++;
+            }
+            if (depth != 0) { headerMatch = headerMatch.NextMatch(); continue; }
+            var enumBody = text.Substring(enumBodyStart, i - enumBodyStart);
+
+            var members = new List<(int, string)>();
+            // Iterate value headers explicitly so we can pair each with the
+            // body that immediately follows it.
+            foreach (Match m in ValueMember.Matches(enumBody))
+            {
+                if (!int.TryParse(m.Groups[1].Value, out var ord)) continue;
+                var memberName = m.Groups[2].Success ? m.Groups[2].Value : m.Groups[3].Value;
+                members.Add((ord, memberName));
+
+                // Walk forward from the match end to find the value's body
+                // `{ ... }`. The regex stops at the member-name capture
+                // (before the closing `)` of the value(...) header), so
+                // skip any whitespace/closing-paren/comma etc. until either
+                // the body brace or the next `value(` header.
+                int j = m.Index + m.Length;
+                while (j < enumBody.Length)
+                {
+                    if (enumBody[j] == '{') break;
+                    // Stop if we run into the next value(...) header so we
+                    // don't misattribute attributes to the wrong enum value.
+                    if (j + 6 <= enumBody.Length &&
+                        string.Equals(enumBody.Substring(j, 6), "value(",
+                            StringComparison.OrdinalIgnoreCase))
+                        break;
+                    j++;
+                }
+                if (j >= enumBody.Length || enumBody[j] != '{') continue;
+                int bd = 1;
+                int bs = j + 1;
+                j++;
+                while (j < enumBody.Length && bd > 0)
+                {
+                    if (enumBody[j] == '{') bd++;
+                    else if (enumBody[j] == '}') { bd--; if (bd == 0) break; }
+                    j++;
+                }
+                if (bd != 0) break;
+                var valueBody = enumBody.Substring(bs, j - bs);
+
+                foreach (Match impl in ImplementationLine.Matches(valueBody))
+                {
+                    var ifaceName = impl.Groups[1].Success ? impl.Groups[1].Value : impl.Groups[2].Value;
+                    var cuName = impl.Groups[3].Success ? impl.Groups[3].Value : impl.Groups[4].Value;
+
+                    if (!_implsById.TryGetValue((id, ord), out var listById))
+                        _implsById[(id, ord)] = listById = new List<(string, string)>();
+                    listById.Add((ifaceName, cuName));
+
+                    if (!_implsByName.TryGetValue((enumName, ord), out var listByName))
+                        _implsByName[(enumName, ord)] = listByName = new List<(string, string)>();
+                    listByName.Add((ifaceName, cuName));
+                }
             }
 
             if (members.Count > 0)
