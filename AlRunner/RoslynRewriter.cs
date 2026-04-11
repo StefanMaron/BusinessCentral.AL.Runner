@@ -728,6 +728,12 @@ public MockCurrPage CurrPage { get; } = new MockCurrPage();
         if (text == "NavInterfaceHandle")
             return node.WithIdentifier(SyntaxFactory.Identifier("MockInterfaceHandle"));
 
+        // NavRecordRef -> MockRecordRef
+        // NavRecordRef's real ctor wants ITreeObject; MockRecordRef has a
+        // parameterless ctor and stub methods so the AL declaration compiles.
+        if (text == "NavRecordRef")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockRecordRef"));
+
         // NavVariant -> MockVariant (Variant in AL needs Default/ALAssign methods)
         if (text == "NavVariant")
             return node.WithIdentifier(SyntaxFactory.Identifier("MockVariant"));
@@ -859,6 +865,15 @@ public MockCurrPage CurrPage { get; } = new MockCurrPage();
             {
                 return visited.WithArgumentList(SyntaxFactory.ArgumentList());
             }
+        }
+
+        // new MockRecordRef(this, ...) -> new MockRecordRef()
+        // BC emits `new NavRecordRef(this, SecurityFiltering.Validated)` (or
+        // variants with table id / company / temp flag) at scope-class init time.
+        // The stub has no ITreeObject dependency — strip all constructor args.
+        if (typeText == "MockRecordRef")
+        {
+            return visited.WithArgumentList(SyntaxFactory.ArgumentList());
         }
 
         // new MockObjectList<T>(this) -> new MockObjectList<T>()
