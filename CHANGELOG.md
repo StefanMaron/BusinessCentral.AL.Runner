@@ -4,6 +4,65 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.6] — 2026-04-11
+
+### Added
+- **Table `trigger OnInsert()` bodies now run** on `Rec.Insert(true)`.
+  Trigger firing uses reflection to instantiate the generated
+  `Record<N>` class via `GetUninitializedObject` and overwrite its
+  compiler-generated `<Rec>k__BackingField` (and xRec) so the
+  trigger's `Rec.SetFieldValueSafe` calls mutate the caller's
+  MockRecordHandle field bag in place. Falls back to a no-op for
+  tables without a declared trigger. Only fires when `runTrigger=true`
+  so `Insert(false)` still skips as before.
+  ([#27](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/27))
+- **`NumberSequence`** stub, **`NavApp.GetModuleInfo`** stub, and
+  **`Hyperlink()`** stub — all no-op runtime calls that used to
+  trap into BC's service-tier-dependent code paths and throw
+  `NullReferenceException` or assembly-load errors.
+  ([#14](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/14),
+   [#22](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/22),
+   [#24](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/24))
+- **`Enum::X.Names()` via an enum instance** (`E := E::Draft; E.Names();`)
+  now returns the declared member names. Tracked alongside the #17
+  static `Enum::"X".Ordinals()` fix. NavOption instances are tagged
+  at construction with their source enum id via a
+  `ConditionalWeakTable`; rewriter rewrites `.ALNames` / `.ALOrdinals`
+  getters to `AlCompat.GetNamesForOption` / `GetOrdinalsForOption`
+  which look up the tag. Reassignments via
+  `NavOption.Create(existing.NavOptionMetadata, V)` inherit the tag
+  through `AlCompat.CloneTaggedOption`.
+  ([#28](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/28))
+- **Primary-key uniqueness on `Rec.Insert`** — duplicate inserts now
+  throw a BC-style "already exists" error so `asserterror` catches
+  them. Only enforced when the PK is registered, which is now
+  automatic: `TableFieldRegistry` parses the first declared
+  `key(...)` block and calls `MockRecordHandle.RegisterPrimaryKey`
+  at pipeline start, so synthetic test fixtures don't need to wire
+  the registration themselves.
+  ([#29](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/29))
+
+### Fixed
+- **Multi-field FlowField `exist(...)`** — follow-up to #15 that the
+  reporter hit on 1.0.3. Parser now paren-walks the `exist(...)` body
+  manually and splits top-level commas in the `where(...)` list.
+  Field IDs resolve through a new transpile-time
+  `TableFieldRegistry` instead of depending on the runtime
+  `RegisterFieldName` path.
+  ([#15](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/15) follow-up)
+- **`Rec.Validate("DateFormula field")` after `Evaluate`** —
+  `DefaultForType` wasn't initialising DateFormula fields to
+  `NavDateFormula.Default`, so the first read from a ByRef<T>
+  inside `ALSystemVariable.ALEvaluate` hit a `NavText → NavDateFormula`
+  cast error. Added the missing branch.
+  ([#25](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/25))
+- **`Rec.Get(textFromGuidField)`** — Guid values stored as
+  `Text[100]` round-tripped to different string forms (braces,
+  case, hyphens) than the raw Guid stored in the PK, so `Get` missed
+  the match. Added `PkValuesEqual` helper in `ALGet` that tries
+  Guid/decimal parse fallbacks before giving up.
+  ([#26](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/26))
+
 ## [1.0.5] — 2026-04-11
 
 ### Fixed
@@ -222,6 +281,7 @@ for pure-logic codeunits. No BC service tier, no Docker, no SQL, no
 license. Test runner with `Subtype = Test` discovery and `Assert`
 codeunit mock.
 
+[1.0.6]: https://github.com/StefanMaron/BusinessCentral.AL.Runner/releases/tag/v1.0.6
 [1.0.5]: https://github.com/StefanMaron/BusinessCentral.AL.Runner/releases/tag/v1.0.5
 [1.0.4]: https://github.com/StefanMaron/BusinessCentral.AL.Runner/releases/tag/v1.0.4
 [1.0.3]: https://github.com/StefanMaron/BusinessCentral.AL.Runner/releases/tag/v1.0.3
