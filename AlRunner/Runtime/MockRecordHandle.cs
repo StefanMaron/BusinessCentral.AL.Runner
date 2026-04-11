@@ -760,23 +760,29 @@ public class MockRecordHandle
         var targetId = CalcFormulaRegistry.GetTableIdByName(formula.TargetTableName);
         if (targetId is null || !_tables.TryGetValue(targetId.Value, out var rows)) return false;
 
-        var targetFieldNames = _fieldNames.TryGetValue(targetId.Value, out var names)
-            ? names : new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        var selfFieldNames = _fieldNames.TryGetValue(_tableId, out var selfNames)
-            ? selfNames : new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        // Field name -> field id lookups. Prefer the transpile-time
+        // TableFieldRegistry (populated from AL source at pipeline start)
+        // since runtime RegisterFieldName is only called for tables whose
+        // generated code actually references ALFieldNo(name) somewhere.
+        int? ResolveField(int tableId, string fieldName)
+        {
+            var fromRegistry = TableFieldRegistry.GetFieldId(tableId, fieldName);
+            if (fromRegistry.HasValue) return fromRegistry;
+            if (_fieldNames.TryGetValue(tableId, out var dict) &&
+                dict.TryGetValue(fieldName, out var id))
+                return id;
+            return null;
+        }
 
         foreach (var row in rows)
         {
             bool allMatch = true;
             foreach (var clause in formula.Conditions)
             {
-                if (!targetFieldNames.TryGetValue(clause.ChildField, out var childFieldId))
-                {
-                    allMatch = false;
-                    break;
-                }
+                var childFieldId = ResolveField(targetId.Value, clause.ChildField);
+                if (childFieldId is null) { allMatch = false; break; }
 
-                if (!row.TryGetValue(childFieldId, out var childValue))
+                if (!row.TryGetValue(childFieldId.Value, out var childValue))
                 {
                     allMatch = false;
                     break;
@@ -786,12 +792,9 @@ public class MockRecordHandle
                 string expected;
                 if (clause.OpKind == "field")
                 {
-                    if (!selfFieldNames.TryGetValue(clause.Value, out var selfFieldId))
-                    {
-                        allMatch = false;
-                        break;
-                    }
-                    if (!_fields.TryGetValue(selfFieldId, out var selfValue))
+                    var selfFieldId = ResolveField(_tableId, clause.Value);
+                    if (selfFieldId is null) { allMatch = false; break; }
+                    if (!_fields.TryGetValue(selfFieldId.Value, out var selfValue))
                     {
                         allMatch = false;
                         break;

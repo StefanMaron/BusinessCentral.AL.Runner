@@ -203,6 +203,7 @@ public class AlRunnerPipeline
         Runtime.TableInitValueRegistry.Clear();
         Runtime.CodeunitNameRegistry.Clear();
         Runtime.CalcFormulaRegistry.Clear();
+        Runtime.TableFieldRegistry.Clear();
         Runtime.MockNumberSequence.Reset();
 
         // Load stubs
@@ -225,6 +226,7 @@ public class AlRunnerPipeline
                 Runtime.TableInitValueRegistry.ParseAndRegister(text);
                 Runtime.CodeunitNameRegistry.ParseAndRegister(text);
                 Runtime.CalcFormulaRegistry.ParseAndRegister(text);
+                Runtime.TableFieldRegistry.ParseAndRegister(text);
             }
         }
 
@@ -304,6 +306,7 @@ public class AlRunnerPipeline
             Runtime.TableInitValueRegistry.ParseAndRegister(src);
             Runtime.CodeunitNameRegistry.ParseAndRegister(src);
             Runtime.CalcFormulaRegistry.ParseAndRegister(src);
+            Runtime.TableFieldRegistry.ParseAndRegister(src);
         }
         if (options.InlineCode != null)
         {
@@ -311,6 +314,7 @@ public class AlRunnerPipeline
             Runtime.TableInitValueRegistry.ParseAndRegister(options.InlineCode);
             Runtime.CodeunitNameRegistry.ParseAndRegister(options.InlineCode);
             Runtime.CalcFormulaRegistry.ParseAndRegister(options.InlineCode);
+            Runtime.TableFieldRegistry.ParseAndRegister(options.InlineCode);
         }
 
         // Auto-discover dependency .app files from --packages directories

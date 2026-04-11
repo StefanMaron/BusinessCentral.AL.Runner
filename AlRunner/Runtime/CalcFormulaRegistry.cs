@@ -25,9 +25,19 @@ public static class CalcFormulaRegistry
         @"\bfield\s*\(\s*(\d+)\s*;\s*(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))\s*;\s*([^)]+?)\)\s*\{([^}]*)\}",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-    // CalcFormula = exist("Target" where(...))
-    private static readonly Regex ExistFormula = new(
-        @"\bCalcFormula\s*=\s*exist\s*\(\s*(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))\s*(?:where\s*\((.*?)\))?\s*\)",
+    // `CalcFormula = exist(...)` — the argument list can contain nested
+    // parens (e.g. `where(C1 = field(Code1), C2 = field(Code2))`), so regex
+    // alone can't capture the full body. We locate the `exist(` keyword
+    // and then walk parens manually.
+    private static readonly Regex ExistKeyword = new(
+        @"\bCalcFormula\s*=\s*exist\s*\(",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    // Inner head of the exist body: target table name, optionally followed
+    // by `where(...)`. `([\s\S]*)` is a catch-all — we hand-carve the
+    // where body off the end so this only needs to match the target name.
+    private static readonly Regex ExistBodyHead = new(
+        @"^\s*(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))\s*(?:where\s*\(([\s\S]*)\))?\s*$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     // Single condition: ChildField = field(SelfField)  | ChildField = const(Value)
@@ -84,23 +94,107 @@ public static class CalcFormulaRegistry
             {
                 if (!int.TryParse(fm.Groups[1].Value, out var fieldId)) continue;
                 var fieldBody = fm.Groups[5].Value;
-                var ef = ExistFormula.Match(fieldBody);
-                if (!ef.Success) continue;
-                var targetTable = ef.Groups[1].Success ? ef.Groups[1].Value : ef.Groups[2].Value;
-                var whereText = ef.Groups[3].Success ? ef.Groups[3].Value : "";
-                var clauses = new List<WhereClause>();
-                foreach (Match wm in WhereCondition.Matches(whereText))
+                var ek = ExistKeyword.Match(fieldBody);
+                if (!ek.Success) continue;
+
+                // Walk parens from the `(` of `exist(` to the matching `)`.
+                int openParen = ek.Index + ek.Length - 1; // points at the `(`
+                int close = FindMatchingParen(fieldBody, openParen);
+                if (close < 0) continue;
+                var existBody = fieldBody.Substring(openParen + 1, close - openParen - 1);
+
+                // Split off a trailing `where(...)` clause if present.
+                string targetTable;
+                string whereText = "";
+                var whereIdx = FindTopLevelKeyword(existBody, "where");
+                if (whereIdx >= 0)
                 {
+                    targetTable = existBody.Substring(0, whereIdx).Trim().Trim('"');
+                    // `where(` then match parens.
+                    int whereOpen = existBody.IndexOf('(', whereIdx);
+                    if (whereOpen < 0) continue;
+                    int whereClose = FindMatchingParen(existBody, whereOpen);
+                    if (whereClose < 0) continue;
+                    whereText = existBody.Substring(whereOpen + 1, whereClose - whereOpen - 1);
+                }
+                else
+                {
+                    targetTable = existBody.Trim().Trim('"');
+                }
+
+                var clauses = new List<WhereClause>();
+                foreach (var cond in SplitTopLevelCommas(whereText))
+                {
+                    var wm = WhereCondition.Match(cond);
+                    if (!wm.Success) continue;
                     var childField = wm.Groups[1].Success ? wm.Groups[1].Value : wm.Groups[2].Value;
                     var opKind = wm.Groups[3].Value.ToLowerInvariant();
                     var val = wm.Groups[4].Success ? wm.Groups[4].Value : wm.Groups[5].Value;
                     clauses.Add(new WhereClause(childField, opKind, val.Trim()));
                 }
+
                 var formula = new Formula(tableId, fieldId, FormulaKind.Exist, targetTable, null, clauses);
                 if (!_byTable.TryGetValue(tableId, out var list))
                     _byTable[tableId] = list = new List<Formula>();
                 list.Add(formula);
             }
+        }
+    }
+
+    private static int FindMatchingParen(string text, int openIdx)
+    {
+        int depth = 0;
+        for (int i = openIdx; i < text.Length; i++)
+        {
+            if (text[i] == '(') depth++;
+            else if (text[i] == ')')
+            {
+                depth--;
+                if (depth == 0) return i;
+            }
+        }
+        return -1;
+    }
+
+    private static int FindTopLevelKeyword(string text, string keyword)
+    {
+        int depth = 0;
+        for (int i = 0; i <= text.Length - keyword.Length; i++)
+        {
+            if (text[i] == '(') { depth++; continue; }
+            if (text[i] == ')') { depth--; continue; }
+            if (depth != 0) continue;
+            if (string.Compare(text, i, keyword, 0, keyword.Length,
+                    StringComparison.OrdinalIgnoreCase) == 0)
+            {
+                // Word boundary check — previous char must not be alpha.
+                if (i > 0 && char.IsLetterOrDigit(text[i - 1])) continue;
+                int after = i + keyword.Length;
+                if (after < text.Length && char.IsLetterOrDigit(text[after])) continue;
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static IEnumerable<string> SplitTopLevelCommas(string text)
+    {
+        int depth = 0;
+        int start = 0;
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (text[i] == '(') depth++;
+            else if (text[i] == ')') depth--;
+            else if (text[i] == ',' && depth == 0)
+            {
+                yield return text.Substring(start, i - start).Trim();
+                start = i + 1;
+            }
+        }
+        if (start < text.Length)
+        {
+            var tail = text.Substring(start).Trim();
+            if (tail.Length > 0) yield return tail;
         }
     }
 
