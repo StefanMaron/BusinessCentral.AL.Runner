@@ -735,12 +735,89 @@ public class MockRecordHandle
     // -----------------------------------------------------------------------
 
     /// <summary>
-    /// AL's CALCFIELDS — calculates FlowFields. No-op in standalone mode since we don't
-    /// have the underlying SQL/CalcFormula infrastructure. The field retains its current value.
+    /// AL's CALCFIELDS — calculates FlowFields by consulting the
+    /// transpile-time <see cref="CalcFormulaRegistry"/> and evaluating
+    /// <c>exist(...)</c> formulas against the in-memory tables.
+    /// Other formula kinds (count/sum/lookup/...) remain no-ops.
     /// </summary>
     public void ALCalcFields(DataError errorLevel, params int[] fieldNos)
     {
-        // No-op: FlowFields not supported in standalone mode
+        foreach (var fieldNo in fieldNos)
+        {
+            var formula = CalcFormulaRegistry.Find(_tableId, fieldNo);
+            if (formula is null) continue;
+
+            if (formula.Kind == CalcFormulaRegistry.FormulaKind.Exist)
+            {
+                bool exists = EvaluateExistFormula(formula);
+                _fields[fieldNo] = NavBoolean.Create(exists);
+            }
+        }
+    }
+
+    private bool EvaluateExistFormula(CalcFormulaRegistry.Formula formula)
+    {
+        var targetId = CalcFormulaRegistry.GetTableIdByName(formula.TargetTableName);
+        if (targetId is null || !_tables.TryGetValue(targetId.Value, out var rows)) return false;
+
+        var targetFieldNames = _fieldNames.TryGetValue(targetId.Value, out var names)
+            ? names : new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var selfFieldNames = _fieldNames.TryGetValue(_tableId, out var selfNames)
+            ? selfNames : new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var row in rows)
+        {
+            bool allMatch = true;
+            foreach (var clause in formula.Conditions)
+            {
+                if (!targetFieldNames.TryGetValue(clause.ChildField, out var childFieldId))
+                {
+                    allMatch = false;
+                    break;
+                }
+
+                if (!row.TryGetValue(childFieldId, out var childValue))
+                {
+                    allMatch = false;
+                    break;
+                }
+
+                string childStr = NavValueToString(childValue);
+                string expected;
+                if (clause.OpKind == "field")
+                {
+                    if (!selfFieldNames.TryGetValue(clause.Value, out var selfFieldId))
+                    {
+                        allMatch = false;
+                        break;
+                    }
+                    if (!_fields.TryGetValue(selfFieldId, out var selfValue))
+                    {
+                        allMatch = false;
+                        break;
+                    }
+                    expected = NavValueToString(selfValue);
+                }
+                else if (clause.OpKind == "const")
+                {
+                    expected = clause.Value;
+                }
+                else
+                {
+                    // filter(...) not supported yet — treat as non-matching.
+                    allMatch = false;
+                    break;
+                }
+
+                if (!string.Equals(childStr, expected, StringComparison.OrdinalIgnoreCase))
+                {
+                    allMatch = false;
+                    break;
+                }
+            }
+            if (allMatch) return true;
+        }
+        return false;
     }
 
     /// <summary>

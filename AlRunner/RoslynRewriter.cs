@@ -728,6 +728,12 @@ public MockCurrPage CurrPage { get; } = new MockCurrPage();
         if (text == "NavInterfaceHandle")
             return node.WithIdentifier(SyntaxFactory.Identifier("MockInterfaceHandle"));
 
+        // ALNumberSequence -> MockNumberSequence
+        // The real type's ALExists/ALNext/ALRestart go through NavSession,
+        // which is null under standalone mode and throws NullReferenceException.
+        if (text == "ALNumberSequence")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockNumberSequence"));
+
         // NavFormHandle -> MockFormHandle
         // BC emits `Page "X"` AL variables as `NavFormHandle p` fields with
         // `new NavFormHandle(this, pageId)` initializers — both args would

@@ -202,6 +202,8 @@ public class AlRunnerPipeline
         Runtime.EnumRegistry.Clear();
         Runtime.TableInitValueRegistry.Clear();
         Runtime.CodeunitNameRegistry.Clear();
+        Runtime.CalcFormulaRegistry.Clear();
+        Runtime.MockNumberSequence.Reset();
 
         // Load stubs
         foreach (var stubPath in options.StubPaths)
@@ -222,6 +224,7 @@ public class AlRunnerPipeline
                 Runtime.EnumRegistry.ParseAndRegister(text);
                 Runtime.TableInitValueRegistry.ParseAndRegister(text);
                 Runtime.CodeunitNameRegistry.ParseAndRegister(text);
+                Runtime.CalcFormulaRegistry.ParseAndRegister(text);
             }
         }
 
@@ -300,12 +303,14 @@ public class AlRunnerPipeline
             Runtime.EnumRegistry.ParseAndRegister(src);
             Runtime.TableInitValueRegistry.ParseAndRegister(src);
             Runtime.CodeunitNameRegistry.ParseAndRegister(src);
+            Runtime.CalcFormulaRegistry.ParseAndRegister(src);
         }
         if (options.InlineCode != null)
         {
             Runtime.EnumRegistry.ParseAndRegister(options.InlineCode);
             Runtime.TableInitValueRegistry.ParseAndRegister(options.InlineCode);
             Runtime.CodeunitNameRegistry.ParseAndRegister(options.InlineCode);
+            Runtime.CalcFormulaRegistry.ParseAndRegister(options.InlineCode);
         }
 
         // Auto-discover dependency .app files from --packages directories
