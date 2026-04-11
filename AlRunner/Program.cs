@@ -585,7 +585,36 @@ public static class AlTranspiler
             var otherErrors = declErrors.Where(d => d.Id != "AL0185").ToList();
 
             if (missingObjects.Count > 0)
+            {
                 Console.Error.WriteLine($"Missing dependencies: {string.Join(", ", missingObjects)}");
+
+                // If a stub with the same type+name exists under a different
+                // namespace, tell the user — a namespace mismatch on a stub
+                // presents identically to a missing dependency and is a
+                // common setup mistake.
+                if (AlRunner.StubIndex.HasAny)
+                {
+                    // AL0185 messages look like: Codeunit 'Type Helper' is missing
+                    // Extract (type, name) heuristically and cross-check StubIndex.
+                    var msgRegex = new System.Text.RegularExpressions.Regex(
+                        @"^(?<type>Codeunit|Table|Enum|Interface|Page|Report|XmlPort|Query)\s+'(?<name>[^']+)'");
+                    foreach (var msg in missingObjects)
+                    {
+                        var m = msgRegex.Match(msg);
+                        if (!m.Success) continue;
+                        var hits = AlRunner.StubIndex.Find(m.Groups["type"].Value, m.Groups["name"].Value);
+                        foreach (var hit in hits)
+                        {
+                            var where = hit.Namespace is null
+                                ? $"in stub '{Path.GetFileName(hit.SourcePath)}' (no namespace declared)"
+                                : $"in stub '{Path.GetFileName(hit.SourcePath)}' under namespace '{hit.Namespace}'";
+                            Console.Error.WriteLine(
+                                $"  hint: a {hit.ObjectType} '{hit.ObjectName}' was found {where}; " +
+                                "check that the namespace matches what the consumer imports.");
+                        }
+                    }
+                }
+            }
 
             if (otherErrors.Count > 0)
                 Log.Info($"AL declaration errors ({otherErrors.Count} non-missing):");

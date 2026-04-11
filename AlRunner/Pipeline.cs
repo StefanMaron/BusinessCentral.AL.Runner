@@ -72,7 +72,22 @@ public class AlRunnerPipeline
         var stderr = new StringWriter();
         var testResults = new List<TestResult>();
 
-        var exitCode = RunCore(options, stdout, stderr, testResults);
+        // Capture Console.Error too — parts of the pipeline (AlTranspiler,
+        // diagnostics emission) still write directly to it. Routing it into
+        // the same StringWriter keeps tests deterministic when asserting on
+        // error output.
+        var originalConsoleError = Console.Error;
+        var teeStderr = new TeeTextWriter(stderr, originalConsoleError);
+        Console.SetError(teeStderr);
+        int exitCode;
+        try
+        {
+            exitCode = RunCore(options, stdout, stderr, testResults);
+        }
+        finally
+        {
+            Console.SetError(originalConsoleError);
+        }
 
         // Collect captured values
         var capturedValues = new List<CapturedValue>();
@@ -184,7 +199,11 @@ public class AlRunnerPipeline
             var stubFiles = Directory.GetFiles(stubPath, "*.al", SearchOption.AllDirectories).OrderBy(f => f).ToList();
             Log.Info($"Loading {stubFiles.Count} stub files from {stubPath}");
             foreach (var sf in stubFiles)
-                stubSources.Add(File.ReadAllText(sf));
+            {
+                var text = File.ReadAllText(sf);
+                stubSources.Add(text);
+                StubIndex.Record(sf, text);
+            }
         }
 
         // Load input paths
