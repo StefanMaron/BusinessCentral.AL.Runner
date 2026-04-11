@@ -1,11 +1,15 @@
-// AlRunner/Runtime/IterationTracker.cs
 namespace AlRunner.Runtime;
 
 /// <summary>
 /// Static collector for per-iteration data during loop execution.
-/// When enabled, injected code calls EnterLoop/EnterIteration/EndIteration/ExitLoop
+/// When enabled, injected code calls EnterLoop/EnterIteration/ExitLoop
 /// to capture variable values, messages, and executed lines per iteration.
-/// Mirrors the ValueCapture and MessageCapture patterns.
+///
+/// Design: EnterIteration finalizes the previous iteration's data before
+/// starting the new one. ExitLoop finalizes the last iteration. This means
+/// only ONE injection point is needed in the loop body (EnterIteration at
+/// the start) — no EndIteration call needed, which avoids issues with
+/// break/continue/early-exit skipping the finalization.
 /// </summary>
 public static class IterationTracker
 {
@@ -66,25 +70,56 @@ public static class IterationTracker
         return loopId;
     }
 
+    /// <summary>
+    /// Called at the top of each iteration. Finalizes the previous iteration's
+    /// captured data (if any) before starting a new snapshot.
+    /// </summary>
     public static void EnterIteration(int loopId)
     {
         if (!_enabled) return;
         if (_loopStack.Count == 0 || _loopStack.Peek().LoopId != loopId) return;
 
         var active = _loopStack.Peek();
+
+        // Finalize the previous iteration (if this isn't the first)
+        if (active.CurrentIteration > 0)
+        {
+            FinalizeIteration(active);
+        }
+
+        // Start new iteration
         active.CurrentIteration++;
         active.ValueSnapshotBefore = ValueCapture.GetCaptures().Count;
         active.MessageSnapshotBefore = MessageCapture.GetMessages().Count;
         _currentIterationHits.Clear();
     }
 
-    public static void EndIteration(int loopId)
+    /// <summary>
+    /// Called after the loop exits (in a finally block, so always runs).
+    /// Finalizes the last iteration's data.
+    /// </summary>
+    public static void ExitLoop(int loopId)
     {
         if (!_enabled) return;
         if (_loopStack.Count == 0 || _loopStack.Peek().LoopId != loopId) return;
 
-        var active = _loopStack.Peek();
+        var active = _loopStack.Pop();
 
+        // Finalize the last iteration
+        if (active.CurrentIteration > 0)
+        {
+            FinalizeIteration(active);
+        }
+
+        active.Record.IterationCount = active.CurrentIteration;
+    }
+
+    /// <summary>
+    /// Captures the delta of values, messages, and hit lines since the
+    /// iteration started and records them as an IterationStep.
+    /// </summary>
+    private static void FinalizeIteration(ActiveLoop active)
+    {
         // Captured values added during this iteration
         var allValues = ValueCapture.GetCaptures();
         var iterValues = new List<CapturedValueSnapshot>();
@@ -100,7 +135,7 @@ public static class IterationTracker
         for (int i = active.MessageSnapshotBefore; i < allMessages.Count; i++)
             iterMessages.Add(allMessages[i]);
 
-        // Lines hit during this iteration (collected via RecordHit from StmtHit/CStmtHit)
+        // Lines hit during this iteration
         var iterLines = _currentIterationHits.Distinct().ToList();
 
         active.Record.Steps.Add(new IterationStep
@@ -110,15 +145,6 @@ public static class IterationTracker
             Messages = iterMessages,
             LinesExecuted = iterLines,
         });
-    }
-
-    public static void ExitLoop(int loopId)
-    {
-        if (!_enabled) return;
-        if (_loopStack.Count == 0 || _loopStack.Peek().LoopId != loopId) return;
-
-        var active = _loopStack.Pop();
-        active.Record.IterationCount = active.CurrentIteration;
     }
 
     public static List<LoopRecord> GetLoops() => new(_loops);
