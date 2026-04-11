@@ -1089,6 +1089,40 @@ public MockCurrPage CurrPage { get; } = new MockCurrPage();
             return base.VisitInvocationExpression(node);
         }
 
+        // Special-case: `NCLEnumMetadata.Create(N).GetOrdinals()` / `.Names()`
+        // must be intercepted BEFORE recursing into children, because the
+        // inner NCLEnumMetadata.Create rewrite would otherwise erase the
+        // enum object ID N. Handle the original (pre-visit) pattern here.
+        if (node.ArgumentList.Arguments.Count == 0 &&
+            node.Expression is MemberAccessExpressionSyntax outerMa &&
+            outerMa.Expression is InvocationExpressionSyntax innerInv &&
+            innerInv.Expression is MemberAccessExpressionSyntax innerMa &&
+            innerMa.Expression is IdentifierNameSyntax innerIdent &&
+            innerIdent.Identifier.Text == "NCLEnumMetadata" &&
+            innerMa.Name.Identifier.Text == "Create" &&
+            innerInv.ArgumentList.Arguments.Count == 1)
+        {
+            var enumIdArg = innerInv.ArgumentList.Arguments[0].Expression;
+            var outerMethod = outerMa.Name.Identifier.Text;
+            string? helper = outerMethod switch
+            {
+                "GetOrdinals" => "GetEnumOrdinals",
+                "GetNames" => "GetEnumNames",
+                _ => null
+            };
+            if (helper is not null)
+            {
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName(helper)),
+                    SyntaxFactory.ArgumentList(
+                        SyntaxFactory.SingletonSeparatedList(
+                            SyntaxFactory.Argument(enumIdArg))));
+            }
+        }
+
         // Now recurse into children first
         var visited = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
 

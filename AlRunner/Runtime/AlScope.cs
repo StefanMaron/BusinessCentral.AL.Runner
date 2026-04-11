@@ -271,6 +271,35 @@ public static class AlDialog
 public static class AlCompat
 {
     /// <summary>
+    /// Return the declared ordinals for an AL enum by inspecting the
+    /// generated <c>Enum{id}</c> class at runtime. Used by the rewriter
+    /// rule that intercepts <c>Enum::X.Ordinals()</c>, which BC lowers to
+    /// <c>NCLEnumMetadata.Create(id).GetOrdinals()</c> — a native runtime
+    /// call that throws "not supported" under standalone mode.
+    /// </summary>
+    /// <summary>
+    /// Registry of AL enum ordinals and names, populated at transpile time
+    /// (see <see cref="EnumRegistry.ParseAndRegister"/>). BC doesn't emit
+    /// a C# class for pure enums — values are inlined at call sites — so
+    /// reflection isn't an option; we parse the AL source headers instead.
+    /// </summary>
+    public static NavList<int> GetEnumOrdinals(int enumObjectId)
+    {
+        var list = NavList<int>.Default;
+        foreach (var (ord, _) in EnumRegistry.GetMembers(enumObjectId))
+            list.ALAdd(ord);
+        return list;
+    }
+
+    public static NavList<NavText> GetEnumNames(int enumObjectId)
+    {
+        var list = NavList<NavText>.Default;
+        foreach (var (_, name) in EnumRegistry.GetMembers(enumObjectId))
+            list.ALAdd(new NavText(name));
+        return list;
+    }
+
+    /// <summary>
     /// Replacement for ALCompiler.ToNavValue - wraps a value as NavValue.
     /// NavValue is abstract; we create the appropriate concrete subtype.
     /// The original goes through NavValueFormatter/NavSession; we construct directly.
