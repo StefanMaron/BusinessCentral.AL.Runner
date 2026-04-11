@@ -18,6 +18,7 @@ public class PipelineOptions
     public bool Verbose { get; set; }
     public bool OutputJson { get; set; }
     public bool CaptureValues { get; set; }
+    public bool IterationTracking { get; set; }
     /// <summary>Run only this specific procedure by name (e.g. "TestCalculateVAT").</summary>
     public string? RunProcedure { get; set; }
 }
@@ -58,6 +59,7 @@ public class PipelineResult
     public int Failed => Tests.Count(t => t.Status == TestStatus.Fail);
     public int Errors => Tests.Count(t => t.Status == TestStatus.Error);
     public string? ErrorMessage { get; init; }
+    public List<Runtime.IterationTracker.LoopRecord>? Iterations { get; init; }
 
     /// <summary>Captured stdout lines from the pipeline.</summary>
     public string StdOut { get; init; } = "";
@@ -118,10 +120,17 @@ public class AlRunnerPipeline
         // Collect messages
         var messages = Runtime.MessageCapture.GetMessages();
 
+        // Collect iteration data
+        List<Runtime.IterationTracker.LoopRecord>? iterationLoops = null;
+        if (options.IterationTracking)
+        {
+            iterationLoops = Runtime.IterationTracker.GetLoops();
+        }
+
         var stdoutStr = stdout.ToString();
         if (options.OutputJson && (testResults.Count > 0 || messages.Count > 0))
         {
-            stdoutStr = SerializeJsonOutput(testResults, exitCode, capturedValues: capturedValues, messages: messages);
+            stdoutStr = SerializeJsonOutput(testResults, exitCode, capturedValues: capturedValues, messages: messages, iterations: iterationLoops);
         }
 
         return new PipelineResult
@@ -130,12 +139,16 @@ public class AlRunnerPipeline
             Tests = testResults,
             CapturedValues = capturedValues,
             Messages = messages,
+            Iterations = iterationLoops,
             StdOut = stdoutStr,
             StdErr = stderr.ToString()
         };
     }
 
-    public static string SerializeJsonOutput(List<TestResult> tests, int exitCode, bool indented = true, List<CapturedValue>? capturedValues = null, List<string>? messages = null)
+    public static string SerializeJsonOutput(
+        List<TestResult> tests, int exitCode, bool indented = true,
+        List<CapturedValue>? capturedValues = null, List<string>? messages = null,
+        List<Runtime.IterationTracker.LoopRecord>? iterations = null)
     {
         object? capturedValuesObj = capturedValues?.Count > 0
             ? capturedValues.Select(c => new
@@ -165,7 +178,29 @@ public class AlRunnerPipeline
             total = tests.Count,
             exitCode,
             capturedValues = capturedValuesObj,
-            messages = messages?.Count > 0 ? messages : null
+            messages = messages?.Count > 0 ? messages : null,
+            iterations = iterations?.Count > 0
+                ? iterations.Select(loop => new
+                {
+                    loopId = $"L{loop.LoopId}",
+                    loopLine = loop.SourceStartLine,
+                    loopEndLine = loop.SourceEndLine,
+                    parentLoopId = loop.ParentLoopId.HasValue ? $"L{loop.ParentLoopId}" : (string?)null,
+                    parentIteration = loop.ParentIteration,
+                    iterationCount = loop.IterationCount,
+                    steps = loop.Steps.Select(step => new
+                    {
+                        iteration = step.Iteration,
+                        capturedValues = step.CapturedValues.Select(cv => new
+                        {
+                            variableName = cv.VariableName,
+                            value = cv.Value
+                        }),
+                        messages = step.Messages.Count > 0 ? step.Messages : null,
+                        linesExecuted = step.LinesExecuted
+                    })
+                })
+                : null
         };
 
         return JsonSerializer.Serialize(output, new JsonSerializerOptions
@@ -388,6 +423,8 @@ public class AlRunnerPipeline
             // so we can run this unconditionally and avoid a separate code
             // path for capture vs non-capture runs.
             var injectedRoot = ValueCaptureInjector.Inject(tree.GetRoot());
+            if (options.IterationTracking)
+                injectedRoot = IterationInjector.Inject(injectedRoot);
             tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.Create((Microsoft.CodeAnalysis.CSharp.CSharpSyntaxNode)injectedRoot);
             rewrittenTrees[i] = (name, tree);
         });
@@ -458,6 +495,12 @@ public class AlRunnerPipeline
                 Runtime.ValueCapture.Enable();
             }
 
+            if (options.IterationTracking)
+            {
+                Runtime.IterationTracker.Reset();
+                Runtime.IterationTracker.Enable();
+            }
+
             var results = Executor.RunTests(assembly, captureValues: options.CaptureValues, runProcedure: options.RunProcedure);
             testResults.AddRange(results);
             if (results.Count == 0 && options.RunProcedure != null)
@@ -468,6 +511,8 @@ public class AlRunnerPipeline
 
             if (options.CaptureValues)
                 Runtime.ValueCapture.Disable();
+            if (options.IterationTracking)
+                Runtime.IterationTracker.Disable();
             Runtime.MessageCapture.Disable();
             if (options.ShowCoverage)
             {
@@ -499,9 +544,16 @@ public class AlRunnerPipeline
                 Runtime.ValueCapture.Reset();
                 Runtime.ValueCapture.Enable();
             }
+            if (options.IterationTracking)
+            {
+                Runtime.IterationTracker.Reset();
+                Runtime.IterationTracker.Enable();
+            }
             exitCode = Executor.RunOnRun(assembly, captureValues: options.CaptureValues);
             if (options.CaptureValues)
                 Runtime.ValueCapture.Disable();
+            if (options.IterationTracking)
+                Runtime.IterationTracker.Disable();
             Runtime.MessageCapture.Disable();
         }
         Timer.EndStage("Test execution");
