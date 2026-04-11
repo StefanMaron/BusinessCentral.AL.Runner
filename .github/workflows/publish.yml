@@ -69,6 +69,8 @@ jobs:
   publish:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # required by softprops/action-gh-release
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -85,6 +87,25 @@ jobs:
             echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Extract release notes from CHANGELOG.md
+        id: notes
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          # Grab the section starting at `## [VERSION]` up to (but not including) the next `## ` heading.
+          NOTES=$(awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { printing=1; next }
+            printing && $0 ~ "^## \\[" { exit }
+            printing { print }
+          ' CHANGELOG.md)
+          if [ -z "$NOTES" ]; then
+            NOTES="See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details."
+          fi
+          {
+            echo "notes<<EOF_NOTES"
+            echo "$NOTES"
+            echo "EOF_NOTES"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and pack
         run: |
           dotnet build AlRunner/
@@ -93,9 +114,21 @@ jobs:
       - name: Push to NuGet
         run: dotnet nuget push ./nupkg/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
 
+      - name: Create GitHub Release
+        if: github.event_name == 'push'  # only on tag pushes, not workflow_dispatch
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body: ${{ steps.notes.outputs.notes }}
+          files: ./nupkg/*.nupkg
+          draft: false
+          prerelease: false
+
       - name: Summary
         run: |
           echo "## Published to NuGet" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "**Version:** ${{ steps.version.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "**Package:** [BusinessCentral.AL.Runner](https://www.nuget.org/packages/BusinessCentral.AL.Runner/${{ steps.version.outputs.version }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Package:** [MSDyn365BC.AL.Runner](https://www.nuget.org/packages/MSDyn365BC.AL.Runner/${{ steps.version.outputs.version }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Release:** [${{ github.ref_name }}](https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }})" >> "$GITHUB_STEP_SUMMARY"
