@@ -252,6 +252,34 @@ public class MockRecordRef
     // -- IsTemporary --
     public bool ALIsTemporary => false;
 
+    // -- ReadIsolation (no-op in standalone mode) --
+    /// <summary>
+    /// AL's RecordRef.ReadIsolation — sets read isolation level.
+    /// No-op in standalone mode since there's no SQL transaction.
+    /// </summary>
+    public object ALReadIsolation
+    {
+        get => 0;
+        set { /* No-op */ }
+    }
+
+    // -- Duplicate --
+    /// <summary>
+    /// ALDuplicate — AL: RecRef.Duplicate() — returns a copy of this RecordRef
+    /// pointing to the same table with copied field data and filters.
+    /// </summary>
+    public MockRecordRef ALDuplicate(object? parent = null)
+    {
+        var dup = new MockRecordRef();
+        dup.Number = Number;
+        if (_handle != null)
+        {
+            dup._handle = new MockRecordHandle(Number);
+            dup._handle.ALCopy(_handle);
+        }
+        return dup;
+    }
+
     // -- Assign (`:=` operator in AL, lowered to ALAssign by BC compiler) --
     public void ALAssign(MockRecordRef other)
     {

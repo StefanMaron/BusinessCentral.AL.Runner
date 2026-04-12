@@ -40,6 +40,21 @@ All notable changes to this project are documented here. Format based on
   `MockRecordHandle` where the BC runtime expected `NavRecord`.
   Tested by `tests/79-startsession/` (6 test cases).
   (fixes [#50](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/50))
+### Added
+- **`RecordRef.Duplicate()`** — `MockRecordRef.ALDuplicate()` returns a copy of
+  the RecordRef pointing to the same table with copied field data and filters.
+  ([#53](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/53))
+- **`RecordRef.ReadIsolation` (no-op)** — `MockRecordRef.ALReadIsolation` setter
+  accepts isolation level assignments without crashing. Getter returns default.
+  ([#53](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/53))
+- **`InStream` assignment (`InStr2 := InStr1`)** — `MockInStream.ALAssign()`
+  copies the source stream's buffer and position into the target.
+  ([#53](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/53))
+- **`Record.ReadIsolation` already supported** — `MockRecordHandle.ALReadIsolation`
+  was already implemented; confirmed working with test coverage.
+  ([#49](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/49))
+
+  Tested by `tests/80-recref-isolation/` (5 test cases).
 
 ## [1.0.8] — 2026-04-12
 

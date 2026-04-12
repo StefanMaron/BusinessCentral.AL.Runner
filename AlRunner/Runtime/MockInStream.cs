@@ -36,6 +36,16 @@ public class MockInStream
     /// <summary>Check if at end of stream.</summary>
     public bool EOS => _pos >= _data.Length;
 
+    /// <summary>
+    /// ALAssign — AL: InStr2 := InStr1 — copies the other stream's buffer and position.
+    /// BC compiler emits <c>inStream.ALAssign(otherInStream)</c> for assignment.
+    /// </summary>
+    public void ALAssign(MockInStream other)
+    {
+        _data = other._data;
+        _pos = other._pos;
+    }
+
     /// <summary>Read raw bytes into a buffer.</summary>
     public int Read(byte[] buffer, int offset, int count)
     {
