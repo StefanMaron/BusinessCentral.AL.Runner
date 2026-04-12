@@ -96,6 +96,7 @@ These are the BC runtime types replaced in standalone mode:
 | `MockStream` | `ALStream` | Static stream helper. ALReadText/ALWriteText routing to MockInStream/MockOutStream. |
 | `HandlerRegistry` | BC test framework | Dispatches ConfirmHandler/MessageHandler/ModalPageHandler from [NavTest].Handlers to registered handler methods. |
 | `MockJsonHelper` | `NavJsonToken.ALWriteTo/ALReadFrom/ALSelectToken/ALSelectTokens` | Bypasses TrappableOperationExecutor for JSON serialization/deserialization. Real BC types used for all other JSON operations. |
+| `MockSession` | `ALSession.ALStartSession/ALStopSession/ALIsSessionActive`, `NavSession.Sleep` | StartSession dispatches codeunit synchronously via MockCodeunitHandle, returns true. StopSession/Sleep are no-ops. IsSessionActive returns false. |
 
 ### MockRecordHandle capabilities
 
@@ -522,6 +523,7 @@ Follows the `BusinessCentral.AL.*` pattern:
 | `AlRunner/Runtime/MockInStream.cs` | In-memory InStream replacement for NavInStream |
 | `AlRunner/Runtime/MockOutStream.cs` | In-memory OutStream replacement for NavOutStream |
 | `AlRunner/Runtime/MockStream.cs` | Static ALStream replacement routing to MockInStream/MockOutStream |
+| `AlRunner/Runtime/MockSession.cs` | Session API stubs: StartSession (synchronous dispatch), StopSession, IsSessionActive, Sleep |
 | `AlRunner/stubs/LibraryAssert.al` | AL stub for codeunit 130 (auto-loaded for compilation) |
 | `AlRunner/stubs/LibraryVariableStorage.al` | AL stub for codeunit 131004 (auto-loaded for compilation) |
 | `tests/NN-name/` | Test suites (self-documenting: `src/*.al` + `test/*.al`). Run `ls tests/` to discover. |

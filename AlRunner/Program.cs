@@ -228,6 +228,8 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   DequeueDecimal, DequeueBoolean, DequeueDate, DequeueVariant, AssertEmpty, Clear, IsEmpty
 - TestPage navigation — Caption, First(), GoToKey(), Filter.SetFilter() (stubs; return true/no-op)
 - Format() / Evaluate() type conversions
+- Session API: StartSession (dispatches codeunit synchronously, returns true), StopSession (no-op),
+  IsSessionActive (returns false), Sleep (no-op)
 - Built-in session functions: CompanyName, UserId, TenantId, SerialNumber (return empty string)
 - Partial compilation (skips unsupported object types like XMLport)
 - Coverage reporting via `--coverage` (statement-level, outputs cobertura.xml)
@@ -1876,6 +1878,7 @@ public static class Executor
             AlRunner.Runtime.MockVariableStorage.Reset();
             AlRunner.Runtime.AlScope.ResetLastStatement();
             AlRunner.Runtime.HandlerRegistry.Reset();
+            AlRunner.Runtime.MockSession.Reset();
 
             try
             {

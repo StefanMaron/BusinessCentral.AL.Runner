@@ -28,6 +28,18 @@ All notable changes to this project are documented here. Format based on
   runs without crashing. Previously caused CS1061 because only `GetBuiltInAction`
   (for OK/Cancel) existed. Tested by `tests/79-form-handle-stubs/`.
   ([#52](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/52))
+### Added
+- **Session API support (`StartSession`, `StopSession`, `IsSessionActive`, `Sleep`).**
+  `StartSession` dispatches the target codeunit synchronously via
+  `MockCodeunitHandle` (same pattern as `Codeunit.Run`) and returns `true`.
+  `StopSession` and `Sleep` are no-ops. `IsSessionActive` returns `false`
+  (session already completed synchronously). All four session functions are
+  intercepted by the rewriter and redirected to `MockSession`. Previously,
+  `StartSession` with a record parameter caused a compilation failure because
+  the rewriter stripped `.Target` from the record argument, leaving a
+  `MockRecordHandle` where the BC runtime expected `NavRecord`.
+  Tested by `tests/79-startsession/` (6 test cases).
+  (fixes [#50](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/50))
 
 ## [1.0.8] — 2026-04-12
 

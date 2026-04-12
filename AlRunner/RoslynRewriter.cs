@@ -1493,6 +1493,32 @@ protected bool CallGetFormatExtensionMethod(int fieldNo, ref string result) { re
                     SyntaxFactory.IdentifierName("Default"));
             }
 
+            // ALSession.ALStartSession(...) -> MockSession.ALStartSession(...)
+            // ALSession.ALIsSessionActive(...) -> MockSession.ALIsSessionActive(...)
+            // ALSession.ALStopSession(...) -> MockSession.ALStopSession(...)
+            // Session management APIs require a live BC service tier. MockSession dispatches
+            // StartSession synchronously via MockCodeunitHandle (same pattern as Codeunit.Run).
+            if (exprText == "ALSession" &&
+                (methodName == "ALStartSession" || methodName == "ALIsSessionActive" || methodName == "ALStopSession"))
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("MockSession"),
+                        SyntaxFactory.IdentifierName(methodName)));
+            }
+
+            // NavSession.Sleep(ms) -> MockSession.Sleep(ms)
+            // Sleep requires NavSession which doesn't exist in standalone mode.
+            if (exprText == "NavSession" && methodName == "Sleep")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("MockSession"),
+                        SyntaxFactory.IdentifierName("Sleep")));
+            }
+
             // ALCompiler.ToSecretText(navText) -> AlCompat.ToSecretText(navText)
             // ToSecretText wraps a text value as NavSecretText; requires NavSession in BC.
             if (exprText == "ALCompiler" && methodName == "ToSecretText")
