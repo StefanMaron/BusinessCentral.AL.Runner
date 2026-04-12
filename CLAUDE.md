@@ -82,6 +82,8 @@ These are the BC runtime types replaced in standalone mode:
 | `AlDialog` | `NavDialog` static methods | Message() prints to console; Error() throws Exception. |
 | `MockDialog` | `NavDialog` instance | No-op progress dialog (ALOpen/ALUpdate/ALClose). |
 | `AlCompat` | `ALCompiler`, `NavFormatEvaluateHelper` | Type conversion helpers; ALRandomize/ALRandom. |
+| `MockRecordRef` | `NavRecordRef` | RecordRef backed by MockRecordHandle. Open/Close, Field, Insert/Modify/Delete, FindSet/Next, GetTable/SetTable. |
+| `MockFieldRef` | `NavFieldRef` | FieldRef with ALValue get/set, ALNumber, ALSetRange, ALSetFilter, ALValidate. |
 
 ### MockRecordHandle capabilities
 
@@ -103,7 +105,6 @@ The following have been removed (they were stubs for unsupported features):
 
 - `MockFormHandle.cs` — Page mocking (not supported in standalone mode)
 - `NavTestPageHandle.cs` — TestPage mocking (not supported)
-- `MockRecordRef.cs` — RecordRef mocking (not supported)
 - `RegexRewriter` class — dead code superseded by `RoslynRewriter`
 
 ---
@@ -288,6 +289,21 @@ These have been implemented and are tested by the test suite:
    `NullReferenceException` in `NavIntegerFormatter.FormatWithFormatNumber` that occurs
    when `NavSession` is null in the runner context. Tested by `tests/67-strsubstno-integer/`.
 
+10. **RecordRef / FieldRef runtime support** (`Runtime/MockRecordRef.cs`,
+    `Runtime/MockFieldRef.cs`) — `MockRecordRef` delegates all data operations to
+    `MockRecordHandle`, sharing the same in-memory table store as typed Record
+    variables. `MockFieldRef` wraps field slots with value get/set. The rewriter
+    maps `NavFieldRef` -> `MockFieldRef`. Supported operations:
+    - `RecRef.Open(tableId)` / `Close()` / `Number()` / `Clear()`
+    - `RecRef.Field(n)` returning `MockFieldRef` with `ALValue` get/set
+    - `RecRef.FindSet()` / `FindFirst()` / `FindLast()` / `Next()` iteration
+    - `RecRef.Insert()` / `Modify()` / `Delete()` / `DeleteAll()`
+    - `RecRef.GetTable(Rec)` / `SetTable(Rec)` for bidirectional data copy
+    - `FieldRef.SetRange()` / `FieldRef.SetFilter()` for filtering
+    - `RecRef.Count()` / `IsEmpty()` / `Reset()` respecting active filters
+    - `FieldRef.Number()` / `FieldRef.Validate()`
+    Tested by `tests/69-recref-fieldref/` (23 test cases).
+
 ## Remaining Gaps
 
 These are gaps that remain for full production use:
@@ -297,8 +313,12 @@ These are gaps that remain for full production use:
 2. **Filter groups** (FilterGroup) — not tracked.
 3. **ALGetFilter** — returns empty string even when filters are active.
 4. **More Assert methods** — AreNearlyEqual, Fail, etc.
-5. **RecordRef / FieldRef** — stubs compile but do not function at runtime.
-6. **BLOB / InStream / OutStream** — not supported.
+5. **BLOB / InStream / OutStream** — not supported.
+6. **RecordRef/FieldRef metadata** — `FieldRef.Name`, `FieldRef.Caption`,
+   `FieldRef.Type`, `FieldRef.Length`, `FieldRef.Class` return stub defaults
+   (no field metadata infrastructure). `FieldCount` returns the number of
+   fields that have been set on the current record, not the table schema count.
+7. **KeyRef** — not implemented.
 
 ---
 
@@ -434,6 +454,8 @@ Follows the `BusinessCentral.AL.*` pattern:
 | `AlRunner/Runtime/MockAssert.cs` | Assert codeunit mock (AreEqual, ExpectedError, etc.) |
 | `AlRunner/Runtime/MockIsolatedStorage.cs` | In-memory IsolatedStorage mock |
 | `AlRunner/Runtime/MockTextBuilder.cs` | In-memory TextBuilder mock |
+| `AlRunner/Runtime/MockRecordRef.cs` | RecordRef backed by MockRecordHandle (Open, Field, Insert, FindSet, GetTable/SetTable) |
+| `AlRunner/Runtime/MockFieldRef.cs` | FieldRef with ALValue get/set, ALNumber, ALSetRange, ALSetFilter |
 | `AlRunner/stubs/LibraryAssert.al` | AL stub for codeunit 130 (auto-loaded for compilation) |
 | `tests/NN-name/` | Test suites (self-documenting: `src/*.al` + `test/*.al`). Run `ls tests/` to discover. |
 | `.github/workflows/test-matrix.yml` | CI: runs all tests across BC version matrix |

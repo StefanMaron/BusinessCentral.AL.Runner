@@ -168,6 +168,8 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - Table procedures (custom procedures on table objects)
 - IsolatedStorage (in-memory key-value store: Set, Get, Delete, Contains)
 - TextBuilder (Append, AppendLine, ToText)
+- RecordRef / FieldRef — Open, Close, Field(n).Value get/set, Insert, Modify,
+  Delete, DeleteAll, FindSet+Next iteration, GetTable/SetTable, SetRange/SetFilter
 - Format() / Evaluate() type conversions
 - Partial compilation (skips unsupported object types like XMLport)
 - Coverage reporting via `--coverage` (statement-level, outputs cobertura.xml)
@@ -178,7 +180,6 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - HTTP / REST calls — inject via AL interface
 - Event subscribers — OnAfterModify, OnAfterInsert, etc. do not fire
 - Confirm() returns true always; StrMenu is not supported
-- RecordRef / FieldRef — stubs compile but do not function
 - BLOB / InStream / OutStream operations
 - Filter groups (FilterGroup)
 

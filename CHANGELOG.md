@@ -6,6 +6,25 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+- **RecordRef + FieldRef runtime support.** `MockRecordRef` now delegates all data
+  operations (Insert, Modify, Delete, DeleteAll, FindSet, FindFirst, FindLast,
+  Next, Count, IsEmpty, SetRange, SetFilter, Reset) to `MockRecordHandle`,
+  sharing the same in-memory table store as typed Record variables.
+  `MockFieldRef` provides `ALValue` get/set, `ALNumber`, `ALSetRange`,
+  `ALSetFilter`, and `ALValidate`.
+  Key operations:
+  - `RecRef.Open(tableId)` / `RecRef.Close()`
+  - `RecRef.Field(n)` returning a `MockFieldRef` with value read/write
+  - `RecRef.FindSet()` + `RecRef.Next()` iteration
+  - `RecRef.Insert()` / `Modify()` / `Delete()` / `DeleteAll()`
+  - `RecRef.GetTable(Rec)` / `RecRef.SetTable(Rec)` for data copy
+  - `FieldRef.SetRange()` / `FieldRef.SetFilter()` for filtering
+  - `RecRef.Count()` / `RecRef.IsEmpty()` respecting active filters
+- **Rewriter: `NavFieldRef` -> `MockFieldRef`.** The rewriter now replaces
+  `NavFieldRef` with `MockFieldRef` (previously passed through to the real BC
+  type with `null!` parent, which crashed on any property access).
+
 ### Fixed
 - **`StrSubstNo` with `Integer` (and other `NavValue`) arguments no longer crashes.**
   `ALSystemString.ALStrSubstNo` is now intercepted by `RoslynRewriter` and
