@@ -213,6 +213,7 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - RecordRef / FieldRef — Open, Close, Field(n).Value get/set, Insert, Modify,
   Delete, DeleteAll, FindSet+Next iteration, GetTable/SetTable, SetRange/SetFilter
 - Format() / Evaluate() type conversions
+- Built-in session functions: CompanyName, UserId, TenantId, SerialNumber (return empty string)
 - Partial compilation (skips unsupported object types like XMLport)
 - Coverage reporting via `--coverage` (statement-level, outputs cobertura.xml)
 

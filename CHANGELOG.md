@@ -6,6 +6,13 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Fixed
+- **`CompanyName` / `UserId` crash** (#35). AL built-in functions `CompanyName`,
+  `UserId`, `TenantId`, and `SerialNumber` caused `NullReferenceException` at
+  `ALDatabase.get_ALCompanyName()` because the BC session is not initialized in
+  standalone mode. The rewriter now replaces these `ALDatabase` property accesses
+  with empty-string literals.
+
 ### Added
 - **`--generate-stubs` source filtering.** When source directories are provided
   (`--generate-stubs <packages-dir> <output-dir> <src-dir> ...`), only codeunits

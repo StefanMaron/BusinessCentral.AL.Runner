@@ -1850,6 +1850,19 @@ public MockCurrPage CurrPage { get; } = new MockCurrPage();
             }
         }
 
+        // Pattern: ALDatabase.ALCompanyName / ALDatabase.ALUserID / ALDatabase.ALTenantID / ALDatabase.ALSerialNumber
+        // These static property accesses crash because ALDatabase requires a live BC session.
+        // Rewrite to empty-string literals — standalone mode has no company/user/tenant context.
+        if (visited.Expression is IdentifierNameSyntax dbId &&
+            dbId.Identifier.Text == "ALDatabase" &&
+            ALDatabaseStringProps.Contains(visited.Name.Identifier.Text))
+        {
+            return SyntaxFactory.LiteralExpression(
+                SyntaxKind.StringLiteralExpression,
+                SyntaxFactory.Literal(""))
+                .WithTriviaFrom(visited);
+        }
+
         // Pattern: value.ALIsBoolean, value.ALIsText, etc. (NavVariant type-check properties)
         // Rewrite to: AlCompat.ALIsBoolean(value) invocation
         var memberName = visited.Name.Identifier.Text;
@@ -1911,6 +1924,18 @@ public MockCurrPage CurrPage { get; } = new MockCurrPage();
         var text = expr.ToString();
         return text == "NavForm" || text.EndsWith(".NavForm", StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// ALDatabase static property names that return strings and crash without a BC session.
+    /// Rewritten to empty-string literals in standalone mode.
+    /// </summary>
+    private static readonly HashSet<string> ALDatabaseStringProps = new(StringComparer.Ordinal)
+    {
+        "ALCompanyName",    // CompanyName built-in
+        "ALUserID",         // UserId built-in
+        "ALTenantID",       // TenantId built-in (added for completeness)
+        "ALSerialNumber",   // SerialNumber built-in (added for completeness)
+    };
 
     private static readonly HashSet<string> NavVariantTypeCheckProps = new(StringComparer.Ordinal)
     {
