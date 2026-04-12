@@ -29,6 +29,13 @@ All notable changes to this project are documented here. Format based on
 
   Tested by `tests/74-mock-stubs/` (8 test cases covering all 3 additions plus
   the existing `Page.Update()` no-op (#41)).
+- **Built-in Library - Variable Storage stub** (codeunit 131004). An AL stub
+  (`stubs/LibraryVariableStorage.al`) is auto-loaded alongside the Assert stub,
+  and `MockVariableStorage` provides an in-memory FIFO queue at runtime.
+  Supports `Enqueue`, `DequeueText`, `DequeueInteger`, `DequeueDecimal`,
+  `DequeueBoolean`, `DequeueDate`, `DequeueVariant`, `AssertEmpty`, `Clear`,
+  and `IsEmpty`. Tested by `tests/75-library-variable-storage/` (9 test cases).
+  (fixes #43)
 
 ### Fixed
 - **`Codeunit.Run()` bool return value.** `MockCodeunitHandle.RunCodeunit` now

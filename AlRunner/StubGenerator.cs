@@ -11,7 +11,7 @@ namespace AlRunner;
 public static class StubGenerator
 {
     /// <summary>Codeunit IDs that al-runner already mocks natively — skip these.</summary>
-    private static readonly HashSet<int> SkipIds = new() { 130 };
+    private static readonly HashSet<int> SkipIds = new() { 130, 131004 };
 
     public record GenerateResult(
         int Generated,

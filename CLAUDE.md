@@ -89,6 +89,7 @@ These are the BC runtime types replaced in standalone mode:
 | `MockTestPageAction` | TestPage action | ALInvoke for OK/Cancel/Close built-in actions. Sets parent handle's ModalResult (OK→LookupOK, Cancel→LookupCancel). |
 | `MockTestPageFilter` | TestPage filter | ALSetFilter(fieldNo, filterExpression) no-op for TestPage.Filter.SetFilter() calls. |
 | `MockFormHandle` | `NavFormHandle` | Page variable mock. RunModal() dispatches to ModalPageHandler via HandlerRegistry, returns FormResult. |
+| `MockVariableStorage` | Codeunit 131004 "Library - Variable Storage" | In-memory FIFO queue: Enqueue, DequeueText/Integer/Decimal/Boolean/Date/Variant, AssertEmpty, Clear, IsEmpty. |
 | `HandlerRegistry` | BC test framework | Dispatches ConfirmHandler/MessageHandler/ModalPageHandler from [NavTest].Handlers to registered handler methods. |
 
 ### MockRecordHandle capabilities
@@ -336,6 +337,14 @@ These have been implemented and are tested by the test suite:
     Tested by `tests/71-testpage/` (13 test cases), `tests/73-modal-handler/` (3 test cases),
     and `tests/74-testpage-navigation/` (6 test cases).
 
+12. **Library - Variable Storage mock** (`Runtime/MockVariableStorage.cs`) —
+    Built-in stub for codeunit 131004 "Library - Variable Storage". Provides an
+    in-memory FIFO queue for passing values between test setup and handler
+    functions. Supports `Enqueue`, `DequeueText`, `DequeueInteger`,
+    `DequeueDecimal`, `DequeueBoolean`, `DequeueDate`, `DequeueVariant`,
+    `AssertEmpty`, `Clear`, and `IsEmpty`. AL stub auto-loaded alongside Assert.
+    Tested by `tests/75-library-variable-storage/` (9 test cases).
+
 ## Remaining Gaps
 
 These are gaps that remain for full production use:
@@ -493,7 +502,9 @@ Follows the `BusinessCentral.AL.*` pattern:
 | `AlRunner/Runtime/MockTestPageHandle.cs` | TestPage mock: lifecycle, field access, built-in actions |
 | `AlRunner/Runtime/HandlerRegistry.cs` | ConfirmHandler/MessageHandler/ModalPageHandler dispatch for test codeunits |
 | `AlRunner/StubGenerator.cs` | `--generate-stubs` command: scaffold AL stubs from .app symbol packages |
+| `AlRunner/Runtime/MockVariableStorage.cs` | In-memory FIFO queue mock for Library - Variable Storage (codeunit 131004) |
 | `AlRunner/stubs/LibraryAssert.al` | AL stub for codeunit 130 (auto-loaded for compilation) |
+| `AlRunner/stubs/LibraryVariableStorage.al` | AL stub for codeunit 131004 (auto-loaded for compilation) |
 | `tests/NN-name/` | Test suites (self-documenting: `src/*.al` + `test/*.al`). Run `ls tests/` to discover. |
 | `.github/workflows/test-matrix.yml` | CI: runs all tests across BC version matrix |
 | `.github/workflows/publish.yml` | CI: publish to NuGet on tag |

@@ -70,6 +70,10 @@ public class MockCodeunitHandle
         if (_codeunitId is 130 or 130000)
             return InvokeAssert(memberId, args);
 
+        // Route codeunit 131004 (Library - Variable Storage) to MockVariableStorage
+        if (_codeunitId is 131004)
+            return InvokeVariableStorage(memberId, args);
+
         var assembly = CurrentAssembly ?? Assembly.GetExecutingAssembly();
         var codeunitType = FindCodeunitType(assembly);
         if (codeunitType == null)
@@ -368,6 +372,137 @@ public class MockCodeunitHandle
             }
         }
         return null;
+    }
+
+    /// <summary>
+    /// Routes Library - Variable Storage (131004) method calls to MockVariableStorage.
+    /// Uses method name lookup from the generated Codeunit131004 type.
+    /// </summary>
+    private object? InvokeVariableStorage(int memberId, object[] args)
+    {
+        var methodName = FindMethodName(memberId, "Codeunit131004");
+
+        if (methodName != null)
+        {
+            if (methodName.Contains("Enqueue", StringComparison.OrdinalIgnoreCase))
+            {
+                if (args.Length >= 1)
+                {
+                    var val = args[0];
+                    if (val is MockVariant mv) val = mv.Value;
+                    MockVariableStorage.Enqueue(val);
+                }
+                return null;
+            }
+            if (methodName.Contains("DequeueText", StringComparison.OrdinalIgnoreCase))
+            {
+                var val = MockVariableStorage.Dequeue();
+                return new NavText(val?.ToString() ?? "");
+            }
+            if (methodName.Contains("DequeueInteger", StringComparison.OrdinalIgnoreCase))
+            {
+                var val = MockVariableStorage.Dequeue();
+                return ToInt(val);
+            }
+            if (methodName.Contains("DequeueDecimal", StringComparison.OrdinalIgnoreCase))
+            {
+                var val = MockVariableStorage.Dequeue();
+                return ToDecimal(val);
+            }
+            if (methodName.Contains("DequeueBoolean", StringComparison.OrdinalIgnoreCase))
+            {
+                var val = MockVariableStorage.Dequeue();
+                return ToBool(val);
+            }
+            if (methodName.Contains("DequeueDate", StringComparison.OrdinalIgnoreCase))
+            {
+                var val = MockVariableStorage.Dequeue();
+                if (val is NavDate nd) return nd;
+                return val ?? NavDate.Default;
+            }
+            if (methodName.Contains("DequeueVariant", StringComparison.OrdinalIgnoreCase))
+            {
+                var val = MockVariableStorage.Dequeue();
+                return new MockVariant(val);
+            }
+            if (methodName.Contains("AssertEmpty", StringComparison.OrdinalIgnoreCase))
+            {
+                MockVariableStorage.AssertEmpty();
+                return null;
+            }
+            if (methodName.Contains("IsEmpty", StringComparison.OrdinalIgnoreCase))
+            {
+                return MockVariableStorage.IsEmpty();
+            }
+            if (methodName.Equals("Clear", StringComparison.OrdinalIgnoreCase))
+            {
+                MockVariableStorage.Clear();
+                return null;
+            }
+        }
+
+        // Fallback: try by arg count
+        if (args.Length == 1)
+        {
+            var val = args[0];
+            if (val is MockVariant mv) val = mv.Value;
+            MockVariableStorage.Enqueue(val);
+            return null;
+        }
+        if (args.Length == 0)
+        {
+            // Could be Clear, AssertEmpty, IsEmpty, or a Dequeue — ambiguous without method name
+            throw new InvalidOperationException(
+                $"Cannot determine which Library - Variable Storage method to call for member {memberId} with 0 args");
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Tries to find a method name by looking up the scope class
+    /// with the given member ID in the specified codeunit type.
+    /// </summary>
+    private static string? FindMethodName(int memberId, string codeunitTypeName)
+    {
+        var assembly = CurrentAssembly;
+        if (assembly == null) return null;
+
+        var codeunitType = assembly.GetTypes().FirstOrDefault(t => t.Name == codeunitTypeName);
+        if (codeunitType == null) return null;
+
+        var memberIdStr = memberId.ToString();
+        var absMemberId = Math.Abs(memberId).ToString();
+
+        foreach (var nested in codeunitType.GetNestedTypes(BindingFlags.NonPublic | BindingFlags.Public))
+        {
+            if (nested.Name.Contains($"_Scope_{memberIdStr}") ||
+                nested.Name.Contains($"_Scope__{absMemberId}"))
+            {
+                var scopeIdx = nested.Name.IndexOf("_Scope_");
+                if (scopeIdx >= 0)
+                    return nested.Name.Substring(0, scopeIdx);
+            }
+        }
+        return null;
+    }
+
+    private static int ToInt(object? value)
+    {
+        if (value is int i) return i;
+        if (value is Decimal18 d18) return (int)(decimal)d18;
+        if (value is MockVariant mv) return ToInt(mv.Value);
+        try { return Convert.ToInt32(value); }
+        catch { return 0; }
+    }
+
+    private static Decimal18 ToDecimal(object? value)
+    {
+        if (value is Decimal18 d18) return d18;
+        if (value is decimal d) return new Decimal18(d);
+        if (value is MockVariant mv) return ToDecimal(mv.Value);
+        try { return new Decimal18(Convert.ToDecimal(value)); }
+        catch { return new Decimal18(0m); }
     }
 
     private static bool ToBool(object? value)

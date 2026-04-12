@@ -243,10 +243,12 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 
 1. Use `Subtype = Test` on the codeunit
 2. Reference `Assert` as `Codeunit Assert` (not `Library Assert`)
-3. Mark each test procedure with `[Test]`
-4. Tests must be self-contained: insert test data, call logic, assert results
-5. Use `asserterror` + `Assert.ExpectedError` for error path testing
-6. For external dependencies (mail, HTTP, pages), define an AL interface and
+3. Reference `Library - Variable Storage` as `Codeunit ""Library - Variable Storage""` for
+   passing values between test setup and handler functions (Enqueue/DequeueText/etc.)
+4. Mark each test procedure with `[Test]`
+5. Tests must be self-contained: insert test data, call logic, assert results
+6. Use `asserterror` + `Assert.ExpectedError` for error path testing
+7. For external dependencies (mail, HTTP, pages), define an AL interface and
    inject a mock implementation in the test
 
 ### Handling unsupported dependencies
@@ -1864,6 +1866,7 @@ public static class Executor
             // Reset in-memory state before each test
             AlRunner.Runtime.MockRecordHandle.ResetAll();
             AlRunner.Runtime.MockIsolatedStorage.ResetAll();
+            AlRunner.Runtime.MockVariableStorage.Reset();
             AlRunner.Runtime.AlScope.ResetLastStatement();
             AlRunner.Runtime.HandlerRegistry.Reset();
 
