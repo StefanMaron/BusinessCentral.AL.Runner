@@ -47,16 +47,27 @@ pure-logic tests pass, but any test that exercises the parallel contract itself 
 enforcement, transaction isolation between workers, async completion detection — cannot
 pass here.
 
-### No event subscribers
+### Event subscribers — partial support
 
-Integration events and business events are stripped. Subscribers never fire.
+The runner does dispatch event subscribers. `RunEvent()` calls are rewritten to
+`AlCompat.FireEvent(publisherCodeunitId, eventName)`, which scans the compiled assembly
+for `[NavEventSubscriber]` methods at startup and calls matching subscribers.
 
-A test that calls `Rec.Modify()` and then asserts on state that is normally set by an
-`[EventSubscriber]` on `OnAfterModify` will pass silently, because the subscriber
-never ran. This is a **silent false positive** — al-runner says PASS, the full BC
-pipeline would say FAIL.
+**What works:** custom `[IntegrationEvent]` / `[BusinessEvent]` publishers with
+zero-argument subscribers.
 
-Always run the full pipeline after al-runner for code that relies on event subscribers.
+**What does not work:** subscribers that receive event arguments (e.g. `var Rec: Record X`,
+`Sender: Codeunit X`). The parameters are passed as `null` because the BC-generated
+event method does not expose them to the dispatch call. A subscriber that reads or
+modifies its `Rec` parameter will see a null reference and either crash or silently do
+nothing.
+
+The practical effect: a test that calls `Rec.Modify()` and then asserts on state that is
+normally set by an `[EventSubscriber]` on `OnAfterModify` will see the subscriber called
+but unable to modify any record — producing a **silent false positive**.
+
+Always run the full pipeline after al-runner for code whose correctness depends on
+event subscriber side-effects.
 
 ### No UI rendering
 
@@ -104,7 +115,7 @@ asserted in a test.
 If the correctness of the code depends on any of the following, test it in the
 full BC service tier pipeline instead:
 
-- Event subscribers firing in response to record operations
+- Event subscribers that pass data via `var Rec` or `Sender` parameters
 - Real company or setup data being present
 - Parallel sessions running concurrently
 - Transaction boundaries (commit / rollback)
