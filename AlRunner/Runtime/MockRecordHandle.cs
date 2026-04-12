@@ -13,6 +13,8 @@ using Microsoft.Dynamics.Nav.Types;     // NavType, DataError
 public class MockRecordHandle
 {
     private readonly int _tableId;
+    /// <summary>The table ID this handle is bound to.</summary>
+    public int TableId => _tableId;
     private Dictionary<int, NavValue> _fields = new();
 
     // Global in-memory table store: tableId -> list of rows (each row = dict of fieldNo -> NavValue)
@@ -684,6 +686,9 @@ public class MockRecordHandle
     public int ALCount => GetFilteredRecords().Count;
 
     public bool ALIsEmpty => GetFilteredRecords().Count == 0;
+
+    /// <summary>Number of fields that have been set on this record handle.</summary>
+    public int FieldCount => _fields.Count;
 
     public int ALFieldNo(string fieldName)
     {

@@ -45,10 +45,7 @@ public class RoslynRewriter : CSharpSyntaxRewriter
     // statement-level rewriter so we can dispatch to registered event subscribers (#32).
     private static readonly HashSet<string> StripEntireCallMethods = new(StringComparer.Ordinal)
     {
-        "ALGetTable", // NavRecordRef.ALGetTable(NavRecord) — record assertion methods only
-        "ALClose",    // NavRecordRef.ALClose()
         "ALCommit",   // ALDatabase.ALCommit() — SQL transaction commit, no-op standalone
-        "ALCommit",   // ALDatabase.ALCommit() — transaction commit, no-op standalone
         "ALSelectLatestVersion", // ALDatabase.ALSelectLatestVersion() — no-op standalone
         "ALBindSubscription",   // ALSession.ALBindSubscription() — event binding, no-op standalone
         "ALUnbindSubscription", // ALSession.ALUnbindSubscription() — event unbinding, no-op standalone
@@ -763,6 +760,12 @@ public MockCurrPage CurrPage { get; } = new MockCurrPage();
         if (text == "NavRecordRef")
             return node.WithIdentifier(SyntaxFactory.Identifier("MockRecordRef"));
 
+        // NavFieldRef -> MockFieldRef
+        // NavFieldRef's real ctor wants ITreeObject; MockFieldRef has a
+        // parameterless ctor with ALValue/ALNumber/ALAssign/ALField support.
+        if (text == "NavFieldRef")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockFieldRef"));
+
         // NavVariant -> MockVariant (Variant in AL needs Default/ALAssign methods)
         if (text == "NavVariant")
             return node.WithIdentifier(SyntaxFactory.Identifier("MockVariant"));
@@ -992,21 +995,13 @@ public MockCurrPage CurrPage { get; } = new MockCurrPage();
             }
         }
 
-        // new NavFieldRef(this) -> new NavFieldRef(null!)
-        // NavFieldRef constructor takes ITreeObject; replace 'this' with null! for standalone mode.
-        if (typeText == "NavFieldRef" && visited.ArgumentList != null &&
+        // new MockFieldRef(this) -> new MockFieldRef()
+        // After VisitIdentifierName, NavFieldRef is now MockFieldRef.
+        // Strip the ITreeObject 'this' argument.
+        if (typeText == "MockFieldRef" && visited.ArgumentList != null &&
             visited.ArgumentList.Arguments.Count == 1)
         {
-            var firstArgText = visited.ArgumentList.Arguments[0].Expression.ToString();
-            if (firstArgText == "this")
-            {
-                var nullBang = SyntaxFactory.PostfixUnaryExpression(
-                    SyntaxKind.SuppressNullableWarningExpression,
-                    SyntaxFactory.LiteralExpression(SyntaxKind.NullLiteralExpression));
-                return visited.WithArgumentList(SyntaxFactory.ArgumentList(
-                    SyntaxFactory.SingletonSeparatedList(
-                        SyntaxFactory.Argument(nullBang))));
-            }
+            return visited.WithArgumentList(SyntaxFactory.ArgumentList());
         }
 
         // new NavArray<MockRecordHandle>(new MockRecordHandle.Factory2(this, tableId, false, SecurityFiltering.X), N)
@@ -1536,7 +1531,22 @@ public MockCurrPage CurrPage { get; } = new MockCurrPage();
             // NavOutStream.Default(this) -> NavOutStream.Default(null!)
             // NavFieldRef.Default(this) -> NavFieldRef.Default(null!)
             // These BC types require ITreeObject but work with null in standalone mode.
-            if ((exprText == "NavInStream" || exprText == "NavOutStream" || exprText == "NavFieldRef")
+            // MockFieldRef.Default(this) -> MockFieldRef.Default()
+            // After VisitIdentifierName, NavFieldRef is now MockFieldRef.
+            // MockFieldRef.Default() takes no args — strip entirely.
+            if (exprText == "MockFieldRef" && methodName == "Default")
+            {
+                var args = visited.ArgumentList.Arguments;
+                if (args.Count == 1 && args[0].Expression.ToString() == "this")
+                {
+                    return visited.WithArgumentList(SyntaxFactory.ArgumentList());
+                }
+            }
+
+            // NavInStream.Default(this) -> NavInStream.Default(null!)
+            // NavOutStream.Default(this) -> NavOutStream.Default(null!)
+            // These BC types require ITreeObject but work with null in standalone mode.
+            if ((exprText == "NavInStream" || exprText == "NavOutStream")
                 && methodName == "Default")
             {
                 var args = visited.ArgumentList.Arguments;
