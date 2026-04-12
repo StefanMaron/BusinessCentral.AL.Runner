@@ -294,6 +294,10 @@ public class AlRunnerPipeline
                     Log.Info($"  {name}");
                     alSources.Add(source);
                     groupSources.Add(source);
+
+                    // Register extracted objects with SourceFileMapper using the .app-relative name
+                    foreach (var objName in SourceFileMapper.ParseObjectDeclarations(source))
+                        SourceFileMapper.Register(objName, name);
                 }
                 var fullPath = Path.GetFullPath(path);
                 inputPaths.Add(fullPath);
