@@ -17,6 +17,7 @@ namespace AlRunner;
 public sealed class ValueCaptureInjector : CSharpSyntaxRewriter
 {
     private string? _currentScopeClass;
+    private HashSet<string> _runtimeTypeFields = new();
 
     public static SyntaxNode Inject(SyntaxNode root)
     {
@@ -27,13 +28,41 @@ public sealed class ValueCaptureInjector : CSharpSyntaxRewriter
     public override SyntaxNode? VisitClassDeclaration(ClassDeclarationSyntax node)
     {
         var previous = _currentScopeClass;
+        var previousFields = _runtimeTypeFields;
         // Only instrument scope classes (they carry the user-facing locals);
         // the outer codeunit/record wrappers hold only plumbing.
         if (node.Identifier.Text.Contains("_Scope"))
+        {
             _currentScopeClass = node.Identifier.Text;
+            _runtimeTypeFields = CollectRuntimeTypeFields(node);
+        }
         var result = base.VisitClassDeclaration(node);
         _currentScopeClass = previous;
+        _runtimeTypeFields = previousFields;
         return result;
+    }
+
+    /// <summary>
+    /// Collect field names whose declared type is an internal runtime type
+    /// (MockCodeunitHandle, MockRecordHandle, etc.). These hold AL object
+    /// references whose .ToString() returns implementation details, not
+    /// user-meaningful values.
+    /// </summary>
+    private static HashSet<string> CollectRuntimeTypeFields(ClassDeclarationSyntax classNode)
+    {
+        var fields = new HashSet<string>();
+        foreach (var member in classNode.Members.OfType<FieldDeclarationSyntax>())
+        {
+            var typeName = member.Declaration.Type.ToString();
+            if (typeName.StartsWith("Mock", StringComparison.Ordinal) ||
+                typeName.StartsWith("Nav", StringComparison.Ordinal) ||
+                typeName == "ITreeObject")
+            {
+                foreach (var variable in member.Declaration.Variables)
+                    fields.Add(variable.Identifier.ValueText);
+            }
+        }
+        return fields;
     }
 
     public override SyntaxNode? VisitBlock(BlockSyntax node)
@@ -61,9 +90,9 @@ public sealed class ValueCaptureInjector : CSharpSyntaxRewriter
             var fieldName = TryExtractAssignedFieldName(stmt);
             if (fieldName is null) continue;
 
-            // Skip BC plumbing fields — BC uses `β`-prefixed for scope vars
-            // and `γ` for return values; we only surface user locals.
+            // Skip BC plumbing fields and internal runtime type fields
             if (IsPlumbingField(fieldName)) continue;
+            if (_runtimeTypeFields.Contains(fieldName)) continue;
 
             newStatements.Add(BuildCaptureCall(fieldName, currentStmtId));
         }

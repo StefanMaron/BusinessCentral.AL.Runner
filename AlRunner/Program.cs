@@ -2051,9 +2051,13 @@ public static class Executor
             if (field.Name.StartsWith("__") || field.Name == "me") continue;
             // Skip parent codeunit reference
             if (field.Name == "_parent") continue;
-            // Skip ITreeObject and NavMethodScope internals
+            // Skip internal runtime types — codeunit/record handles, variants, etc.
+            // Their .ToString() returns implementation details, not user-meaningful values.
             var typeName = field.FieldType.Name;
             if (typeName == "ITreeObject" || typeName.StartsWith("NavMethodScope")) continue;
+            if (typeName.StartsWith("Mock")) continue;
+            // Skip BC plumbing fields (β/γ prefixed)
+            if (field.Name.Length > 0 && (field.Name[0] == '\u03b2' || field.Name[0] == '\u03b3')) continue;
 
             try
             {
