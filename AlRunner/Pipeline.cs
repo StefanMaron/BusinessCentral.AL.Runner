@@ -69,6 +69,8 @@ public class PipelineResult
 
 public class AlRunnerPipeline
 {
+    private Dictionary<string, string>? _scopeToObject;
+
     /// <summary>
     /// Run the full AL Runner pipeline: transpile → rewrite → compile → execute.
     /// Returns a structured result instead of writing to stdout/stderr directly.
@@ -130,7 +132,7 @@ public class AlRunnerPipeline
         var stdoutStr = stdout.ToString();
         if (options.OutputJson && (testResults.Count > 0 || messages.Count > 0))
         {
-            stdoutStr = SerializeJsonOutput(testResults, exitCode, capturedValues: capturedValues, messages: messages, iterations: iterationLoops);
+            stdoutStr = SerializeJsonOutput(testResults, exitCode, capturedValues: capturedValues, messages: messages, iterations: iterationLoops, scopeToObject: _scopeToObject);
         }
 
         return new PipelineResult
@@ -148,7 +150,8 @@ public class AlRunnerPipeline
     public static string SerializeJsonOutput(
         List<TestResult> tests, int exitCode, bool indented = true,
         List<CapturedValue>? capturedValues = null, List<string>? messages = null,
-        List<Runtime.IterationTracker.LoopRecord>? iterations = null)
+        List<Runtime.IterationTracker.LoopRecord>? iterations = null,
+        Dictionary<string, string>? scopeToObject = null)
     {
         object? capturedValuesObj = capturedValues?.Count > 0
             ? capturedValues.Select(c => new
@@ -183,6 +186,9 @@ public class AlRunnerPipeline
                 ? iterations.Select(loop => new
                 {
                     loopId = $"L{loop.LoopId}",
+                    sourceFile = scopeToObject != null
+                        ? SourceFileMapper.GetFileForScope(loop.ScopeName, scopeToObject)
+                        : null,
                     loopLine = SourceLineMapper.GetAlLineFromStatement(loop.ScopeName, loop.SourceStartLine) ?? loop.SourceStartLine,
                     loopEndLine = SourceLineMapper.GetAlLineFromStatement(loop.ScopeName, loop.SourceEndLine) ?? loop.SourceEndLine,
                     parentLoopId = loop.ParentLoopId.HasValue ? $"L{loop.ParentLoopId}" : (string?)null,
@@ -527,6 +533,15 @@ public class AlRunnerPipeline
             if (options.IterationTracking)
                 Runtime.IterationTracker.Disable();
             Runtime.MessageCapture.Disable();
+
+            Dictionary<string, string>? scopeToObject = null;
+            if (options.IterationTracking || options.ShowCoverage)
+            {
+                scopeToObject = CoverageReport.BuildScopeToObjectMap(generatedCSharpList!);
+            }
+
+            _scopeToObject = scopeToObject;
+
             if (options.ShowCoverage)
             {
                 Executor.PrintCoverageReport();
@@ -534,18 +549,7 @@ public class AlRunnerPipeline
                 var sourceSpans = CoverageReport.ParseSourceSpans(generatedCSharpList!);
                 var (hitStmts, totalStmts) = Runtime.AlScope.GetCoverageSets();
 
-                var alFilePaths = new List<string>();
-                foreach (var inputPath in inputPaths)
-                {
-                    if (Directory.Exists(inputPath))
-                        alFilePaths.AddRange(Directory.GetFiles(inputPath, "*.al", SearchOption.AllDirectories));
-                    else if (File.Exists(inputPath))
-                        alFilePaths.Add(inputPath);
-                }
-
-                var objectToFile = CoverageReport.MapObjectsToFiles(generatedCSharpList!, alFilePaths);
-                var scopeToObject = CoverageReport.BuildScopeToObjectMap(generatedCSharpList!);
-                CoverageReport.WriteCobertura("cobertura.xml", sourceSpans, hitStmts, totalStmts, objectToFile, scopeToObject);
+                CoverageReport.WriteCobertura("cobertura.xml", sourceSpans, hitStmts, totalStmts, scopeToObject!);
                 Log.Info("Coverage report: cobertura.xml");
             }
         }

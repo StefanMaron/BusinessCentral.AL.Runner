@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml;
+using AlRunner;
 
 /// <summary>
 /// Generates Cobertura XML coverage reports from AL Runner's statement-level
@@ -88,40 +89,6 @@ public static class CoverageReport
     }
 
     /// <summary>
-    /// Determine which AL source file a scope class belongs to, using the
-    /// object name from the generated C# (e.g., "Discount Calculator" ->
-    /// find the .al file containing that codeunit/table).
-    /// </summary>
-    public static Dictionary<string, string> MapObjectsToFiles(
-        List<(string Name, string Code)> generatedCSharp,
-        List<string> alSourcePaths)
-    {
-        // Map generated object name -> AL source file path
-        var result = new Dictionary<string, string>();
-        foreach (var (name, _) in generatedCSharp)
-        {
-            // Try to find a source file whose content declares this object
-            foreach (var path in alSourcePaths)
-            {
-                if (File.Exists(path))
-                {
-                    var content = File.ReadAllText(path);
-                    // Match codeunit/table name in quotes
-                    if (content.Contains($"\"{name}\"", StringComparison.OrdinalIgnoreCase))
-                    {
-                        result[name] = Path.GetRelativePath(Directory.GetCurrentDirectory(), path);
-                        break;
-                    }
-                }
-            }
-            // Fallback: use the object name as a synthetic path
-            if (!result.ContainsKey(name))
-                result[name] = name + ".al";
-        }
-        return result;
-    }
-
-    /// <summary>
     /// Build a mapping from scope class name to AL object name.
     /// Each (Name, Code) pair in generatedCSharp has Name = AL object name.
     /// We find all scope classes in each Code block and map them to that Name.
@@ -150,7 +117,6 @@ public static class CoverageReport
         Dictionary<(string Scope, int StmtIndex), int> sourceSpans,
         HashSet<(string Type, int Id)> hitStatements,
         HashSet<(string Type, int Id)> totalStatements,
-        Dictionary<string, string> objectToFile,
         Dictionary<string, string>? scopeToObject = null)
     {
         // Group coverage data by source file
@@ -165,23 +131,11 @@ public static class CoverageReport
             if (!totalStatements.Contains((scope, stmtIdx)))
                 continue;
 
-            // Find which file this scope belongs to using the scope→object→file chain
+            // Find which file this scope belongs to using SourceFileMapper
             string? filePath = null;
             if (scopeToObject != null && scopeToObject.TryGetValue(scope, out var objectName))
             {
-                objectToFile.TryGetValue(objectName, out filePath);
-            }
-            if (filePath == null)
-            {
-                // Fallback: try legacy string matching
-                foreach (var (objName, path) in objectToFile)
-                {
-                    if (scope.Contains(objName.Replace(" ", ""), StringComparison.OrdinalIgnoreCase))
-                    {
-                        filePath = path;
-                        break;
-                    }
-                }
+                filePath = SourceFileMapper.GetFile(objectName);
             }
             // If scope doesn't match any user file, skip it entirely.
             // This prevents library/stub scopes (Assert, etc.) from
