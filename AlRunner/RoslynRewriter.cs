@@ -754,6 +754,13 @@ public MockCurrPage CurrPage { get; } = new MockCurrPage();
         if (text == "NavFormHandle")
             return node.WithIdentifier(SyntaxFactory.Identifier("MockFormHandle"));
 
+        // NavTestPageHandle -> MockTestPageHandle
+        // BC emits `TestPage "X"` AL variables as `NavTestPageHandle tP` fields with
+        // `new NavTestPageHandle(this, pageId)` initializers. The real ctor wants
+        // ITreeObject which standalone mode lacks.
+        if (text == "NavTestPageHandle")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockTestPageHandle"));
+
         // NavRecordRef -> MockRecordRef
         // NavRecordRef's real ctor wants ITreeObject; MockRecordRef has a
         // parameterless ctor and stub methods so the AL declaration compiles.
@@ -914,6 +921,22 @@ public MockCurrPage CurrPage { get; } = new MockCurrPage();
             {
                 // Single-arg `new MockFormHandle(this)` (no page id known).
                 // Fall back to parameterless ctor.
+                return visited.WithArgumentList(SyntaxFactory.ArgumentList());
+            }
+        }
+
+        // new MockTestPageHandle(this, pageId) -> new MockTestPageHandle(pageId)
+        // Same pattern as MockFormHandle: strip ITreeObject 'this', keep page ID.
+        if (typeText == "MockTestPageHandle" && visited.ArgumentList != null)
+        {
+            if (visited.ArgumentList.Arguments.Count == 2)
+            {
+                return visited.WithArgumentList(
+                    SyntaxFactory.ArgumentList(
+                        SyntaxFactory.SingletonSeparatedList(visited.ArgumentList.Arguments[1])));
+            }
+            if (visited.ArgumentList.Arguments.Count == 1)
+            {
                 return visited.WithArgumentList(SyntaxFactory.ArgumentList());
             }
         }
