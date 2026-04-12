@@ -7,6 +7,16 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **JSON types (`JsonObject`, `JsonArray`, `JsonToken`, `JsonValue`) now work.**
+  The real BC JSON types (`NavJsonObject`, `NavJsonArray`, `NavJsonToken`,
+  `NavJsonValue`) from `Microsoft.Dynamics.Nav.Ncl.dll` are used directly for
+  most operations (Add, Get, Contains, Remove, Replace, AsValue, AsText,
+  AsInteger, AsBoolean, Count, etc.). Only `WriteTo`, `ReadFrom`, `SelectToken`,
+  and `SelectTokens` are intercepted by the rewriter and redirected to
+  `MockJsonHelper`, which performs the same Newtonsoft.Json operations without
+  going through BC's `TrappableOperationExecutor` / `NavEnvironment` (which
+  crash in standalone mode). Tested by `tests/77-json-types/` (15 test cases).
+  ([#47](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/47))
 - **`TestPage.Caption`, `.First()`, `.GoToKey()`, `.Filter.SetFilter()` stubs.**
   `MockTestPageHandle` now supports `ALCaption` (returns `"TestPage"`), `ALFirst()`
   (returns `true`), `ALGoToKey(DataError, params NavValue[])` (returns `true`), and

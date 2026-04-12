@@ -220,6 +220,8 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - RecordRef / FieldRef — Open, Close, Field(n).Value get/set, Insert, Modify,
   Delete, DeleteAll, FindSet+Next iteration, GetTable/SetTable, SetRange/SetFilter,
   RecRef := OtherRecRef assignment
+- JSON types: JsonObject, JsonArray, JsonToken, JsonValue — Add, Get, Contains,
+  Remove, Replace, Count, WriteTo, ReadFrom, SelectToken, AsValue, AsText, AsInteger, etc.
 - Format() / Evaluate() type conversions
 - Built-in session functions: CompanyName, UserId, TenantId, SerialNumber (return empty string)
 - Partial compilation (skips unsupported object types like XMLport)

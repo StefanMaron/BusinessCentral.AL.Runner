@@ -1382,6 +1382,39 @@ public MockCurrPage CurrPage { get; } = new MockCurrPage();
                         SyntaxFactory.IdentifierName(methodName)));
             }
 
+            // NavJsonToken/NavJsonObject/NavJsonArray/NavJsonValue: ALWriteTo, ALReadFrom,
+            // ALSelectToken, ALSelectTokens -> MockJsonHelper static methods.
+            // These BC methods go through TrappableOperationExecutor -> NavEnvironment
+            // which crashes in standalone mode. MockJsonHelper does the same work
+            // using Newtonsoft.Json directly.
+            if (methodName is "ALWriteTo" or "ALReadFrom" or "ALSelectToken" or "ALSelectTokens")
+            {
+                var helperMethod = methodName switch
+                {
+                    "ALWriteTo" => "WriteTo",
+                    "ALReadFrom" => "ReadFrom",
+                    "ALSelectToken" => "SelectToken",
+                    "ALSelectTokens" => "SelectTokens",
+                    _ => null
+                };
+                if (helperMethod is not null)
+                {
+                    // Rewrite: x.ALWriteTo(args) -> MockJsonHelper.WriteTo(x, args)
+                    var args = visited.ArgumentList.Arguments;
+                    var newArgs = new SeparatedSyntaxList<ArgumentSyntax>();
+                    newArgs = newArgs.Add(SyntaxFactory.Argument(memberAccess.Expression));
+                    foreach (var arg in args)
+                        newArgs = newArgs.Add(arg);
+
+                    return SyntaxFactory.InvocationExpression(
+                        SyntaxFactory.MemberAccessExpression(
+                            SyntaxKind.SimpleMemberAccessExpression,
+                            SyntaxFactory.IdentifierName("MockJsonHelper"),
+                            SyntaxFactory.IdentifierName(helperMethod)),
+                        SyntaxFactory.ArgumentList(newArgs));
+                }
+            }
+
             // NavForm.Run(pageId, record) -> no-op (page navigation not supported standalone)
             // NavForm.RunModal(bool, bool, pageId, record) -> FormResult.LookupOK
             // Accept the fully-qualified form too — older BC versions emit

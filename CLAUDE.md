@@ -91,6 +91,7 @@ These are the BC runtime types replaced in standalone mode:
 | `MockFormHandle` | `NavFormHandle` | Page variable mock. RunModal() dispatches to ModalPageHandler via HandlerRegistry, returns FormResult. |
 | `MockVariableStorage` | Codeunit 131004 "Library - Variable Storage" | In-memory FIFO queue: Enqueue, DequeueText/Integer/Decimal/Boolean/Date/Variant, AssertEmpty, Clear, IsEmpty. |
 | `HandlerRegistry` | BC test framework | Dispatches ConfirmHandler/MessageHandler/ModalPageHandler from [NavTest].Handlers to registered handler methods. |
+| `MockJsonHelper` | `NavJsonToken.ALWriteTo/ALReadFrom/ALSelectToken/ALSelectTokens` | Bypasses TrappableOperationExecutor for JSON serialization/deserialization. Real BC types used for all other JSON operations. |
 
 ### MockRecordHandle capabilities
 
@@ -497,6 +498,7 @@ Follows the `BusinessCentral.AL.*` pattern:
 | `AlRunner/Runtime/MockAssert.cs` | Assert codeunit mock (AreEqual, ExpectedError, etc.) |
 | `AlRunner/Runtime/MockIsolatedStorage.cs` | In-memory IsolatedStorage mock |
 | `AlRunner/Runtime/MockTextBuilder.cs` | In-memory TextBuilder mock |
+| `AlRunner/Runtime/MockJsonHelper.cs` | JSON WriteTo/ReadFrom/SelectToken bypass for TrappableOperationExecutor |
 | `AlRunner/Runtime/MockRecordRef.cs` | RecordRef backed by MockRecordHandle (Open, Field, Insert, FindSet, GetTable/SetTable) |
 | `AlRunner/Runtime/MockFieldRef.cs` | FieldRef with ALValue get/set, ALNumber, ALSetRange, ALSetFilter |
 | `AlRunner/Runtime/MockTestPageHandle.cs` | TestPage mock: lifecycle, field access, built-in actions |
