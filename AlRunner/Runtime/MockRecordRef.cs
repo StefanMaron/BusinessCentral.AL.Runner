@@ -176,12 +176,22 @@ public class MockRecordRef
     //   recRef.ALSetTable(record)  — where record is a Record<N> instance
 
     /// <summary>
-    /// ALSetTable — copy the field bag from a Record variable into this RecordRef.
-    /// The BC compiler passes either:
-    /// - A MockRecordHandle directly (when the Record is a `var` parameter)
-    /// - A Record class (e.g., Record56680) with a Rec property
+    /// ALSetTable — AL: RecRef.SetTable(Rec) — copies RecRef's current record INTO the Record variable.
+    /// Direction: RecRef → Rec
     /// </summary>
     public void ALSetTable(object record)
+    {
+        if (record == null || _handle == null) return;
+        var targetHandle = ResolveHandle(record);
+        if (targetHandle == null) return;
+        targetHandle.ALCopy(_handle);
+    }
+
+    /// <summary>
+    /// ALGetTable — AL: RecRef.GetTable(Rec) — makes the RecRef refer to Rec's table and copies Rec's record.
+    /// Direction: Rec → RecRef
+    /// </summary>
+    public void ALGetTable(object record)
     {
         if (record == null) return;
         var sourceHandle = ResolveHandle(record);
@@ -191,17 +201,6 @@ public class MockRecordRef
         if (tableId != 0) Number = tableId;
         _handle = new MockRecordHandle(Number);
         _handle.ALCopy(sourceHandle);
-    }
-
-    /// <summary>
-    /// ALGetTable — copy the field bag from this RecordRef into a Record variable.
-    /// </summary>
-    public void ALGetTable(object record)
-    {
-        if (record == null || _handle == null) return;
-        var targetHandle = ResolveHandle(record);
-        if (targetHandle == null) return;
-        targetHandle.ALCopy(_handle);
     }
 
     /// <summary>

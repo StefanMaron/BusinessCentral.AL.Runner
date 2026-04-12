@@ -226,4 +226,50 @@ codeunit 56681 "RF Tests"
         asserterror Probe.SetFieldAndInsert(56680, 1, 1, 2, 'Duplicate');
         Assert.ExpectedError('already exists');
     end;
+
+    // --- GetTable / SetTable ---
+
+    [Test]
+    procedure GetTableCopiesTypedRecordToRecRef()
+    var
+        Probe: Codeunit "RF Probe";
+        R: Record "RF Test Item";
+    begin
+        // [GIVEN] A typed record with known fields
+        R.Id := 77;
+        R.Name := 'Copied';
+        R.Insert();
+        R.Get(77);
+
+        // [WHEN] GetTable copies R into a RecRef
+        // [THEN] FieldRef.Value on the RecRef returns the same name
+        Assert.AreEqual('Copied', Probe.CopyRecordToRecRef(R), 'GetTable must copy field values');
+    end;
+
+    [Test]
+    procedure SetTableCopiesRecRefToTypedRecord()
+    var
+        Probe: Codeunit "RF Probe";
+        R: Record "RF Test Item";
+    begin
+        // [GIVEN] A RecRef inserts a row and copies it to R via SetTable
+        Probe.CopyRecRefToRecord(88, 'FromRecRef', R);
+
+        // [THEN] Typed record has the values set via RecRef
+        Assert.AreEqual(88, R.Id, 'SetTable must copy Id field');
+        Assert.AreEqual('FromRecRef', R.Name, 'SetTable must copy Name field');
+    end;
+
+    // --- Negative: FindFirst on empty table does not throw ---
+
+    [Test]
+    procedure FindFirstOnEmptyTableReturnsFalse()
+    var
+        RecRef: RecordRef;
+    begin
+        // RecRef.FindFirst() must return false on empty table (no error)
+        RecRef.Open(56680);
+        Assert.IsFalse(RecRef.FindFirst(), 'FindFirst on empty table must return false');
+        RecRef.Close();
+    end;
 }
