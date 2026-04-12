@@ -40,6 +40,8 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("  --iteration-tracking  Track per-iteration data for loops (requires --output-json)");
     Console.Error.WriteLine("  --run <procedure>     Run only the specified procedure by name");
     Console.Error.WriteLine("  --server              Start in server mode (JSON-RPC over stdin/stdout)");
+    Console.Error.WriteLine("  --generate-stubs <packages-dir> <output-dir>");
+    Console.Error.WriteLine("                        Generate empty AL stub files from .app symbol packages");
     Console.Error.WriteLine("  --guide               Print test-writing guide for AI coding agents");
     Console.Error.WriteLine("  -h, --help            Show this help");
     Console.Error.WriteLine();
@@ -77,6 +79,32 @@ while (argIdx < args.Length)
         case "--guide":
             PrintGuide();
             return 0;
+        case "--generate-stubs":
+        {
+            argIdx++;
+            if (argIdx >= args.Length) { Console.Error.WriteLine("Error: --generate-stubs requires <packages-dir> <output-dir>"); return 1; }
+            var pkgDir = Path.GetFullPath(args[argIdx]);
+            argIdx++;
+            if (argIdx >= args.Length) { Console.Error.WriteLine("Error: --generate-stubs requires <packages-dir> <output-dir>"); return 1; }
+            var outDir = Path.GetFullPath(args[argIdx]);
+            try
+            {
+                var genResult = AlRunner.StubGenerator.Generate(pkgDir, outDir);
+                Console.Error.WriteLine($"Generated {genResult.Generated} stub files in {outDir}");
+                if (genResult.SkippedExisting.Count > 0)
+                    Console.Error.WriteLine($"  Skipped {genResult.SkippedExisting.Count} (already exist): {string.Join(", ", genResult.SkippedExisting)}");
+                if (genResult.SkippedNativeMock > 0)
+                    Console.Error.WriteLine($"  Skipped {genResult.SkippedNativeMock} (natively mocked)");
+                if (genResult.SkippedNonCodeunit > 0)
+                    Console.Error.WriteLine($"  Skipped {genResult.SkippedNonCodeunit} (non-codeunit objects)");
+            }
+            catch (DirectoryNotFoundException ex)
+            {
+                Console.Error.WriteLine($"Error: {ex.Message}");
+                return 1;
+            }
+            return 0;
+        }
         case "--server":
         {
             var server = new AlRunner.AlRunnerServer();
@@ -275,7 +303,19 @@ al-runner --run TestMyProcedure ./src ./test              # run a single test by
 al-runner --capture-values ./src ./test                   # capture variable values after each test
 al-runner --iteration-tracking ./src ./test                   # track loop iterations
 al-runner --server                                         # long-running JSON-RPC daemon (stdin/stdout)
+al-runner --generate-stubs .alpackages ./stubs             # scaffold stubs from .app packages
 ```
+
+### Generating stubs from .app packages
+
+Use `--generate-stubs <packages-dir> <output-dir>` to scaffold empty AL stub files
+from .app symbol packages. This reads SymbolReference.json from each .app file and
+emits one `.al` file per codeunit with correct procedure signatures, parameter types,
+and return types. Generated stubs have empty bodies — fill in implementations as needed.
+
+Codeunits that al-runner already mocks natively (e.g. codeunit 130 "Library Assert")
+are skipped automatically. Existing files in the output directory are never overwritten,
+so hand-edited stubs are preserved across regeneration.
 
 ### Machine-readable output (--output-json)
 

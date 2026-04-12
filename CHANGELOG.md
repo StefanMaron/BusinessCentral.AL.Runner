@@ -7,6 +7,14 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **`--generate-stubs` CLI command.** Scaffolds empty AL stub files from `.app`
+  symbol packages. Reads `SymbolReference.json` from each `.app` file in the
+  packages directory and emits one `.al` file per codeunit with correct procedure
+  signatures, parameter types (including `var`, `Record "X"`, `Enum "X"`, etc.),
+  and return types with default `exit(...)` values. Existing files are never
+  overwritten, and natively mocked codeunits (e.g. codeunit 130) are skipped
+  automatically. Non-codeunit objects (tables, pages, etc.) are counted and
+  reported but not emitted.
 - **RecordRef + FieldRef runtime support.** `MockRecordRef` now delegates all data
   operations (Insert, Modify, Delete, DeleteAll, FindSet, FindFirst, FindLast,
   Next, Count, IsEmpty, SetRange, SetFilter, Reset) to `MockRecordHandle`,

@@ -338,6 +338,7 @@ al-runner --run TestMyThing ./src ./test      # run a single test procedure by n
 al-runner --capture-values ./src ./test       # capture variable values after each test
 al-runner --server                            # long-running JSON-RPC daemon (stdin/stdout)
 al-runner -e 'codeunit 99 X { trigger OnRun() begin Message('"'"'hi'"'"'); end; }'
+al-runner --generate-stubs .alpackages ./stubs # scaffold stubs from .app packages
 al-runner --guide                             # print test-writing guide for AI agents
 al-runner -h                                  # help
 ```
@@ -456,6 +457,7 @@ Follows the `BusinessCentral.AL.*` pattern:
 | `AlRunner/Runtime/MockTextBuilder.cs` | In-memory TextBuilder mock |
 | `AlRunner/Runtime/MockRecordRef.cs` | RecordRef backed by MockRecordHandle (Open, Field, Insert, FindSet, GetTable/SetTable) |
 | `AlRunner/Runtime/MockFieldRef.cs` | FieldRef with ALValue get/set, ALNumber, ALSetRange, ALSetFilter |
+| `AlRunner/StubGenerator.cs` | `--generate-stubs` command: scaffold AL stubs from .app symbol packages |
 | `AlRunner/stubs/LibraryAssert.al` | AL stub for codeunit 130 (auto-loaded for compilation) |
 | `tests/NN-name/` | Test suites (self-documenting: `src/*.al` + `test/*.al`). Run `ls tests/` to discover. |
 | `.github/workflows/test-matrix.yml` | CI: runs all tests across BC version matrix |
