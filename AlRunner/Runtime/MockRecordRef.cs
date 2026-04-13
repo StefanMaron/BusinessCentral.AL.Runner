@@ -140,7 +140,9 @@ public class MockRecordRef
     public bool ALFindSet(DataError errorLevel, bool forUpdate) => _handle != null && _handle.ALFindSet(errorLevel, forUpdate);
 
     public bool Find(string which) => TryFind(() => _handle?.ALFind(DataError.ThrowError, which) ?? false);
+    public bool Find() => Find("=");
     public bool ALFind(string which) => Find(which);
+    public bool ALFind(DataError errorLevel) => Find("=");
     public bool ALFind(DataError errorLevel, string which) => _handle != null && _handle.ALFind(errorLevel, which);
 
     /// <summary>
