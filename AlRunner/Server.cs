@@ -15,6 +15,7 @@ public class AlRunnerServer
 {
     private readonly CompilationCache _cache = new();
     private readonly RewriteCache _rewriteCache = new();
+    private readonly SyntaxTreeCache _syntaxTreeCache = new();
 
     public async Task RunAsync(TextReader input, TextWriter output, CancellationToken ct = default)
     {
@@ -99,6 +100,7 @@ public class AlRunnerServer
 
         var pipeline = new AlRunnerPipeline();
         pipeline.RewriteCache = _rewriteCache;
+        pipeline.SyntaxTreeCache = _syntaxTreeCache;
         var result = pipeline.Run(options);
 
         // Compilation errors (file-level exclusion was removed in #80; always empty now).
@@ -136,6 +138,7 @@ public class AlRunnerServer
             options.CaptureValues = true;
 
         var pipeline = new AlRunnerPipeline();
+        pipeline.SyntaxTreeCache = _syntaxTreeCache;
         var result = pipeline.Run(options);
 
         return SerializeExecuteResponse(result);

@@ -618,7 +618,9 @@ public static class AlTranspiler
     public static List<(string Name, string Code)>? TranspileMulti(
         List<string> alSources,
         List<string>? packagePaths = null,
-        List<string>? inputPaths = null)
+        List<string>? inputPaths = null,
+        SyntaxTreeCache? treeCache = null,
+        List<string?>? sourceFilePaths = null)
     {
         // Parse all sources into syntax trees
         var syntaxTrees = new List<SyntaxTree>();
@@ -627,7 +629,11 @@ public static class AlTranspiler
         var parsedResults = new (SyntaxTree tree, List<Diagnostic> diags)[alSources.Count];
         Parallel.For(0, alSources.Count, i =>
         {
-            var tree = SyntaxTree.ParseObjectText(alSources[i]);
+            SyntaxTree tree;
+            if (treeCache != null && sourceFilePaths != null && i < sourceFilePaths.Count && sourceFilePaths[i] != null)
+                tree = treeCache.GetOrParse(sourceFilePaths[i]!, alSources[i]);
+            else
+                tree = SyntaxTree.ParseObjectText(alSources[i]);
             var diags = tree.GetDiagnostics().ToList();
             parsedResults[i] = (tree, diags);
         });
