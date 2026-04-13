@@ -4,6 +4,22 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Picture-string tokens in `Format()`** — `Format(value, 0, formatString)` now
+  handles AL decimal and time picture strings:
+  - `<Precision,min:max>` — rounds a decimal to at most `max` decimal places and
+    shows at least `min` (e.g. `Format(1.567, 0, '<Precision,1:2>')` → `'1.57'`).
+  - `<Standard Format,N>` — N=0 uses default AL decimal formatting; N=1 rounds to
+    the nearest integer (e.g. `Format(1.567, 0, '<Standard Format,1>')` → `'2'`).
+  - Time picture strings (`<Hours24,N>:<Minutes,N>`) applied to `Time` variables
+    (e.g. `Format(093000T, 0, '<Hours24,2>:<Minutes,2>')` → `'09:30'`).
+  Tested by `tests/85-picture-format/` (9 test cases).
+- **Invariant-culture decimal formatting** — `AlCompat.Format()` for decimal values
+  now always uses `.` as the decimal separator regardless of OS locale, matching
+  real BC behavior.
+
 ## [1.0.11] — 2026-04-13
 
 ### Added

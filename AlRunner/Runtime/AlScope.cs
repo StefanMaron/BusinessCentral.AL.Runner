@@ -640,13 +640,34 @@ public static class AlCompat
     /// </summary>
     public static string Format(object? value, int length, string formatString)
     {
-        // Unwrap NavDate / DateTime for date format strings
-        DateTime? dt = ExtractDateTime(value);
-        if (dt.HasValue && !string.IsNullOrEmpty(formatString))
+        if (!string.IsNullOrEmpty(formatString) && formatString.Contains('<'))
         {
-            var result = ApplyAlFormatString(dt.Value, formatString);
-            if (result != null)
-                return result;
+            // Unwrap NavDate / DateTime for date format strings
+            DateTime? dt = ExtractDateTime(value);
+            if (dt.HasValue)
+            {
+                var dtResult = ApplyAlFormatString(dt.Value, formatString);
+                if (dtResult != null)
+                    return dtResult;
+            }
+
+            // Handle NavTime with time picture strings (e.g. '<Hours24,2>:<Minutes,2>')
+            var typeName = value?.GetType().Name;
+            if (typeName == "NavTime")
+            {
+                var timeResult = ApplyTimeFormatString(value!, formatString);
+                if (timeResult != null)
+                    return timeResult;
+            }
+
+            // Handle decimal / Decimal18 with picture strings (<Precision,min:max> or <Standard Format,N>)
+            decimal? dec = ExtractDecimal(value);
+            if (dec.HasValue)
+            {
+                var decResult = ApplyDecimalFormatString(dec.Value, formatString);
+                if (decResult != null)
+                    return decResult;
+            }
         }
 
         // Fallback: ignore the format string and use default formatting
@@ -761,10 +782,214 @@ public static class AlCompat
         return raw;
     }
 
+    /// <summary>
+    /// Extract a decimal value from a BC value type (Decimal18, NavDecimal, or plain decimal).
+    /// Returns null if the value is not a decimal type.
+    /// </summary>
+    private static decimal? ExtractDecimal(object? value)
+    {
+        if (value == null) return null;
+        if (value is MockVariant mv) return ExtractDecimal(mv.Value);
+        if (value is decimal d) return d;
+        if (value is double dbl) return (decimal)dbl;
+        if (value is float f) return (decimal)f;
+        var typeName = value.GetType().Name;
+        if (typeName == "Decimal18" || typeName == "NavDecimal")
+        {
+            // Try direct conversion first
+            try { return Convert.ToDecimal(value); } catch { }
+            // For NavDecimal: Value property returns Decimal18; for Decimal18: implicit to decimal
+            try
+            {
+                var valProp = value.GetType().GetProperty("Value");
+                if (valProp != null)
+                {
+                    var inner = valProp.GetValue(value);
+                    if (inner == null) return null;
+                    // inner may be Decimal18 — try converting it too
+                    try { return Convert.ToDecimal(inner); } catch { }
+                    // Decimal18 may have its own Value property (double or long)
+                    var innerProp = inner.GetType().GetProperty("Value");
+                    if (innerProp != null)
+                    {
+                        var innerVal = innerProp.GetValue(inner);
+                        if (innerVal != null) return Convert.ToDecimal(innerVal);
+                    }
+                }
+            }
+            catch { }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Apply an AL decimal picture format string to a decimal value.
+    /// Supports:
+    ///   &lt;Precision,min:max&gt;  — round to max decimal places, show at least min decimal places
+    ///   &lt;Standard Format,N&gt; — N=0 default formatting, N=1 no decimals
+    /// Returns null if the format string is not a recognised decimal picture string.
+    /// </summary>
+    private static string? ApplyDecimalFormatString(decimal value, string formatString)
+    {
+        // Strip outer whitespace and angle-brackets to get the token content
+        var fs = formatString.Trim();
+        if (!fs.StartsWith('<') || !fs.EndsWith('>'))
+            return null;
+        // Only handle single-token picture strings for now
+        // (multi-token strings like '<Precision,1:2><some other>' are not standard for decimals)
+        var token = fs.Substring(1, fs.Length - 2).Trim();
+
+        // <Precision,min:max>
+        if (token.StartsWith("Precision,", StringComparison.OrdinalIgnoreCase))
+        {
+            var rest = token.Substring("Precision,".Length);
+            var colonPos = rest.IndexOf(':');
+            if (colonPos >= 0)
+            {
+                if (int.TryParse(rest.Substring(0, colonPos).Trim(), out int minDec) &&
+                    int.TryParse(rest.Substring(colonPos + 1).Trim(), out int maxDec))
+                {
+                    // Round to maxDec decimal places
+                    var rounded = Math.Round(value, maxDec, MidpointRounding.AwayFromZero);
+                    if (maxDec <= 0)
+                        return rounded.ToString("0", System.Globalization.CultureInfo.InvariantCulture);
+                    // Format to maxDec places (fixed), then strip trailing zeros down to minDec
+                    var fullFmt = "0." + new string('0', maxDec);
+                    var full = rounded.ToString(fullFmt, System.Globalization.CultureInfo.InvariantCulture);
+                    // Strip trailing zeros but keep at least minDec decimal digits
+                    if (full.Contains('.'))
+                    {
+                        int dotPos = full.IndexOf('.');
+                        int end = full.Length;
+                        int minEnd = dotPos + 1 + minDec;
+                        while (end > minEnd && full[end - 1] == '0')
+                            end--;
+                        // If minDec == 0 and result ends with '.', remove the dot
+                        if (end == dotPos + 1 && minDec == 0)
+                            end = dotPos;
+                        full = full.Substring(0, end);
+                    }
+                    return full;
+                }
+            }
+        }
+
+        // <Standard Format,N>
+        if (token.StartsWith("Standard Format,", StringComparison.OrdinalIgnoreCase))
+        {
+            var rest = token.Substring("Standard Format,".Length).Trim();
+            if (int.TryParse(rest, out int formatNo))
+            {
+                return formatNo switch
+                {
+                    1 => Math.Round(value, 0, MidpointRounding.AwayFromZero)
+                             .ToString("0", System.Globalization.CultureInfo.InvariantCulture),
+                    _ => FormatDecimal(value), // Format 0 and unknown: default AL decimal formatting
+                };
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Apply an AL time picture format string to a NavTime value.
+    /// Parses tokens like &lt;Hours24,N&gt;, &lt;Minutes,N&gt;, &lt;Seconds,N&gt; interleaved with literals.
+    /// Returns null if the format string contains no time tokens.
+    /// </summary>
+    private static string? ApplyTimeFormatString(object navTimeValue, string formatString)
+    {
+        // Extract the underlying DateTime from NavTime
+        DateTime? dt = null;
+        try
+        {
+            var valProp = navTimeValue.GetType().GetProperty("Value");
+            if (valProp != null)
+            {
+                var raw = valProp.GetValue(navTimeValue);
+                if (raw is DateTime rawDt) dt = rawDt;
+            }
+        }
+        catch { }
+
+        if (!dt.HasValue) return null;
+
+        // Parse the format string, resolving time tokens
+        bool hasTimeToken = false;
+        var result = new System.Text.StringBuilder();
+        int i = 0;
+        while (i < formatString.Length)
+        {
+            if (formatString[i] == '<')
+            {
+                int end = formatString.IndexOf('>', i);
+                if (end < 0)
+                {
+                    result.Append(formatString[i]);
+                    i++;
+                    continue;
+                }
+
+                string token = formatString.Substring(i + 1, end - i - 1);
+                string? resolved = ResolveAlTimeToken(dt.Value, token);
+                if (resolved != null)
+                {
+                    hasTimeToken = true;
+                    result.Append(resolved);
+                }
+                else
+                {
+                    // Unknown token — preserve as-is
+                    result.Append('<');
+                    result.Append(token);
+                    result.Append('>');
+                }
+                i = end + 1;
+            }
+            else
+            {
+                result.Append(formatString[i]);
+                i++;
+            }
+        }
+
+        return hasTimeToken ? result.ToString() : null;
+    }
+
+    /// <summary>
+    /// Resolve a single AL time format token like "Hours24,2", "Minutes,2", "Seconds,2".
+    /// Returns null if the token is not a recognised time token.
+    /// </summary>
+    private static string? ResolveAlTimeToken(DateTime dt, string token)
+    {
+        string name;
+        int width = 0;
+        int commaPos = token.IndexOf(',');
+        if (commaPos >= 0)
+        {
+            name = token.Substring(0, commaPos).Trim();
+            int.TryParse(token.Substring(commaPos + 1).Trim(), out width);
+        }
+        else
+        {
+            name = token.Trim();
+        }
+
+        return name.ToLowerInvariant() switch
+        {
+            "hours24" => width > 0 ? dt.Hour.ToString($"D{width}") : dt.Hour.ToString(),
+            "hours12" => (dt.Hour % 12 == 0 ? 12 : dt.Hour % 12).ToString(width > 0 ? $"D{width}" : ""),
+            "minutes" => width > 0 ? dt.Minute.ToString($"D{width}") : dt.Minute.ToString(),
+            "seconds" => width > 0 ? dt.Second.ToString($"D{width}") : dt.Second.ToString(),
+            _ => null, // Not a time token
+        };
+    }
+
     private static string FormatDecimal(decimal d)
     {
-        // AL Format() shows whole numbers without decimals
-        return d == Math.Truncate(d) ? d.ToString("0") : d.ToString("0.##########");
+        // AL Format() shows whole numbers without decimals, always using invariant (dot) decimal separator
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        return d == Math.Truncate(d) ? d.ToString("0", culture) : d.ToString("0.##########", culture);
     }
 
     /// <summary>

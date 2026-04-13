@@ -338,6 +338,17 @@ These have been implemented and are tested by the test suite:
    `NullReferenceException` in `NavIntegerFormatter.FormatWithFormatNumber` that occurs
    when `NavSession` is null in the runner context. Tested by `tests/67-strsubstno-integer/`.
 
+14. **Picture-string tokens in `Format(value, length, formatString)`** (`Runtime/AlScope.cs`) —
+    `AlCompat.Format()` now handles AL picture strings for decimal and time values:
+    - `<Precision,min:max>` — rounds a `Decimal` to at most `max` decimal places, shows at
+      least `min` (e.g. `Format(1.567, 0, '<Precision,1:2>')` → `'1.57'`).
+    - `<Standard Format,N>` — N=0 uses default AL decimal formatting (dot separator, no
+      trailing zeros); N=1 rounds to integer.
+    - Time picture strings like `<Hours24,2>:<Minutes,2>` applied to `Time` variables
+      (e.g. `Format(093000T, 0, '<Hours24,2>:<Minutes,2>')` → `'09:30'`).
+    Also fixes a bug where `AlCompat.Format()` used the OS locale's decimal separator instead
+    of always using `.` (invariant). Tested by `tests/85-picture-format/` (9 test cases).
+
 10. **RecordRef / FieldRef runtime support** (`Runtime/MockRecordRef.cs`,
     `Runtime/MockFieldRef.cs`) — `MockRecordRef` delegates all data operations to
     `MockRecordHandle`, sharing the same in-memory table store as typed Record
