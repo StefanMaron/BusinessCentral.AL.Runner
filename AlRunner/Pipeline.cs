@@ -828,7 +828,13 @@ public class AlRunnerPipeline
         if (!Regex.IsMatch(source, @"^\s*report(extension)?\b", RegexOptions.IgnoreCase))
             return source;
 
-        return StripNamedBlock(source, "rendering");
+        source = StripNamedBlock(source, "rendering");
+        // Remove DefaultRenderingLayout property — it references layout names
+        // defined inside the rendering block which we just stripped.
+        source = Regex.Replace(source,
+            @"(?im)^\s*DefaultRenderingLayout\s*=\s*[^;]+;\s*$",
+            "");
+        return source;
     }
 
     private static string StripNamedBlock(string source, string blockName)

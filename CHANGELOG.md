@@ -6,7 +6,58 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+- **Report variable support** — `NavReportHandle` is rewritten to `MockReportHandle`,
+  a standalone replacement that supports `SetTableView()`, `Run()` (no-op), and
+  `RunRequestPage()` (dispatches to `[RequestPageHandler]`). Report and report-extension
+  generated classes are stubbed so BC-only layout/runtime infrastructure does not block
+  compilation. `rendering { ... }` blocks and `DefaultRenderingLayout` properties are
+  stripped from report AL source before transpilation.
+  Tested by `tests/91-report-handle/` (3 test cases) and `tests/95-rendering-strip/` (2 test cases).
+- **`[RequestPageHandler]` dispatch** — `HandlerRegistry` now registers and invokes
+  `[RequestPageHandler]` procedures for `Report.RunRequestPage()` calls, with fallback
+  to `[ModalPageHandler]` when no dedicated request-page handler is registered.
+  Tested by `tests/92-request-page-handler/` (2 test cases).
+- **Extended TestPage support** — `MockTestPageHandle` gains `GoToRecord()`, `Next()`,
+  `New()`, `ClearReference()`, and `GetPart()` for subpage navigation.
+  `MockTestPageField` gains assignable `ALValue`, `ALAsDecimal()`, and `ALEnabled()`.
+  `MockTestPageFilter` now tracks filters with `ALGetFilter()`.
+  Tested by `tests/90-testpage-extended/` (10 test cases).
+- **`GetBySystemId`** — `MockRecordHandle` and `MockRecordRef` now support
+  `ALGetBySystemId(Guid)` for looking up records by their system ID.
+  Tested by `tests/93-record-getbysystemid/` (2 test cases).
+- **`ClearFieldValue`** — `MockRecordHandle.ClearFieldValue(fieldNo)` resets a single
+  field to its default. The rewriter redirects `ALSystemVariable.Clear(x)` to
+  `x.Clear()` for RecordRef and similar types.
+  Tested by `tests/94-clear-field-value/` (3 test cases).
+- **`ALGetView` / `ALSetView`** — `MockRecordHandle` stores and returns view text.
+  `MockRecordRef.ALSetView` now delegates to the underlying handle.
+- **Global array variables** — `MockRecordHandle.GetGlobalArrayVariable()` returns
+  typed `MockArray<T>` instances for Code, Text, Integer, Decimal, and Boolean.
+- **`AlCompat.ObjectToMockArray<T>()`** — replacement for `ALCompiler.ObjectToNavArray`,
+  converting runtime objects into the rewritten `MockArray` shape.
+- **`MockFile.ALUploadIntoStream()`** — standalone replacement for `NavFile` upload
+  dialogs. Returns `false` (no client surface) and clears the target stream.
+- **`MockTextBuilder.ALAppendLine()`** — parameterless `AppendLine` overloads for
+  appending a bare newline.
+- **`MockInStream.Clear()`** — resets the in-memory stream to empty.
+- **`MockSystemOperatingSystem.ALGetUrl()`** — returns a mock URL string.
+- **`ClearApplicationMemberVariables()` stub** — injected into all codeunit classes
+  so `TestRunner` codeunits compile after base-class removal.
+- **`SetSelectionFilter` on page classes** — delegates to `ALCopy` + `ALSetRecFilter`.
+- **Improved stub isolation** — built-in test stubs (Assert, Variable Storage) are
+  compiled in isolation when real BC test packages are present, preventing symbol
+  collisions. Stubs are skipped entirely when the source contains no test-library usage.
+- **TestRunner codeunit support** — `NavTestRunnerCodeUnit` is now handled alongside
+  other codeunit base types. BC-specific override members
+  (`OnTestRunMethodsHaveTestPermissionsParameter`, `CommitTestCodeunits`,
+  `CommitTestFunctions`) are stripped during rewriting.
+
 ### Fixed
+- **`ObjectToDecimal` crash on `NavDecimal`** — `AlCompat.ObjectToDecimal()` now
+  routes through `ExtractDecimal()` to handle BC's `NavDecimal` type, which does not
+  implement `IConvertible`. Previously threw `InvalidCastException` when `TestPage`
+  field `AsDecimal()` was called.
 - **`CS1503` in codeunits that declare HTTP variables** — `AlScope` now implements
   `ITreeObject` (with stub `Tree`, `Type`, and `SingleThreaded` members), satisfying
   the parent-scope requirement of Nav* type constructors (`NavHttpClient`,

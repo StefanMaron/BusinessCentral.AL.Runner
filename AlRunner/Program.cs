@@ -261,7 +261,12 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   (in-memory byte buffer; sufficient for text round-trip tests)
 - Library - Variable Storage (codeunit 131004) — Enqueue, DequeueText, DequeueInteger,
   DequeueDecimal, DequeueBoolean, DequeueDate, DequeueVariant, AssertEmpty, Clear, IsEmpty
-- TestPage navigation — Caption, First(), GoToKey(), Filter.SetFilter() (stubs; return true/no-op)
+- TestPage navigation — Caption, First(), GoToKey(), GoToRecord(), Next(), New(), GetPart(),
+  Filter.SetFilter()/GetFilter(), field AsDecimal(), Enabled() (stubs; return true/no-op
+  unless otherwise noted; Next() returns false)
+- Request page handler dispatch — [RequestPageHandler] intercepts Report.RunRequestPage() calls
+- Report variables — SetTableView(), Run() (no-op), RunRequestPage() (dispatches handler).
+  Report rendering and layout evaluation are not available.
 - Format() / Evaluate() type conversions, including picture strings:
   - Date tokens: `<Year4>`, `<Month,2>`, `<Day,2>`, `<Hours24,2>`, `<Minutes,2>`, `<Seconds,2>`
   - Decimal tokens: `<Precision,min:max>` (round/pad decimals), `<Standard Format,N>` (N=0 default, N=1 integer)
@@ -273,15 +278,17 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - Partial compilation (skips unsupported object types like XMLport)
 - Coverage reporting via `--coverage` (statement-level, outputs cobertura.xml)
 - Fluent builder pattern: `exit(this)` in codeunit methods returning `Codeunit "Self"`
-- Test handler functions: [ConfirmHandler], [MessageHandler], [ModalPageHandler]
+- Test handler functions: [ConfirmHandler], [MessageHandler], [ModalPageHandler], [RequestPageHandler]
   - ConfirmHandler intercepts Confirm() calls, receives question text, sets reply
   - MessageHandler intercepts Message() calls, receives message text
   - ModalPageHandler intercepts Page.RunModal() calls, receives a TestPage handle,
     can set field values and invoke OK/Cancel actions; returns FormResult to caller
+  - RequestPageHandler intercepts Report.RunRequestPage() calls
 
 ### What al-runner does NOT support
 
-- Pages, Reports, XMLports — stub them via `--stubs <dir>` or inject via AL interface
+- Page and report rendering fidelity — inject via AL interface or exclude from runner
+  when correctness depends on real BC UI/runtime behavior
 - HTTP / REST calls — inject via AL interface
 - Event subscribers — OnAfterModify, OnAfterInsert, etc. do not fire
 - StrMenu is not supported

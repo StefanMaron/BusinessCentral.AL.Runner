@@ -84,24 +84,26 @@ These are the BC runtime types replaced in standalone mode:
 | `AlCompat` | `ALCompiler`, `NavFormatEvaluateHelper` | Type conversion helpers; ALRandomize/ALRandom. |
 | `MockRecordRef` | `NavRecordRef` | RecordRef backed by MockRecordHandle. Open/Close, Field, Insert/Modify/Delete, FindSet/Next, GetTable/SetTable. |
 | `MockFieldRef` | `NavFieldRef` | FieldRef with ALValue get/set, ALNumber, ALSetRange, ALSetFilter, ALValidate. |
-| `MockTestPageHandle` | `NavTestPageHandle` | TestPage variable mock. OpenEdit/OpenView/OpenNew/Close/Trap lifecycle; GetField for field access; GetBuiltInAction for OK/Cancel. Tracks ModalResult for RunModal interception. Caption, First(), GoToKey(), Filter.SetFilter() stubs. |
-| `MockTestPageField` | TestPage field | ALSetValue/ALValue for field get/set on TestPage fields. ALCaption stub. |
+| `MockTestPageHandle` | `NavTestPageHandle` | TestPage variable mock. OpenEdit/OpenView/OpenNew/Close/Trap/New/ClearReference lifecycle; GetField for field access; GetBuiltInAction for OK/Cancel. GoToRecord(), Next(), GetPart() navigation. Tracks ModalResult for RunModal interception. Caption, First(), GoToKey(), Filter.SetFilter()/GetFilter() stubs. |
+| `MockTestPageField` | TestPage field | ALSetValue/ALValue (assignable) for field get/set on TestPage fields. ALCaption, ALAsDecimal(), ALEnabled() stubs. |
 | `MockTestPageAction` | TestPage action | ALInvoke for OK/Cancel/Close built-in actions. Sets parent handle's ModalResult (OK→LookupOK, Cancel→LookupCancel). |
-| `MockTestPageFilter` | TestPage filter | ALSetFilter(fieldNo, filterExpression) no-op for TestPage.Filter.SetFilter() calls. |
+| `MockTestPageFilter` | TestPage filter | ALSetFilter(fieldNo, filterExpression) and ALGetFilter(fieldNo) for TestPage filter tracking. |
+| `MockReportHandle` | `NavReportHandle` | Report variable mock. SetTableView(), Run() (no-op), RunRequestPage() (dispatches to RequestPageHandler). Helper-procedure dispatch via Invoke(). |
+| `MockFile` | `NavFile` | Standalone file-dialog replacement. ALUploadIntoStream returns false (no client surface). |
 | `MockFormHandle` | `NavFormHandle` | Page variable mock. RunModal() dispatches to ModalPageHandler via HandlerRegistry, returns FormResult. |
 | `MockVariableStorage` | Codeunit 131004 "Library - Variable Storage" | In-memory FIFO queue: Enqueue, DequeueText/Integer/Decimal/Boolean/Date/Variant, AssertEmpty, Clear, IsEmpty. |
 | `MockBlob` | `NavBLOB` | In-memory BLOB field. CreateInStream/CreateOutStream, HasValue, Clear. |
 | `MockInStream` | `NavInStream` | In-memory InStream for reading BLOB data as text/bytes. |
 | `MockOutStream` | `NavOutStream` | In-memory OutStream for writing text/bytes to BLOB. |
 | `MockStream` | `ALStream` | Static stream helper. ALReadText/ALWriteText routing to MockInStream/MockOutStream. |
-| `HandlerRegistry` | BC test framework | Dispatches ConfirmHandler/MessageHandler/ModalPageHandler from [NavTest].Handlers to registered handler methods. |
+| `HandlerRegistry` | BC test framework | Dispatches ConfirmHandler/MessageHandler/ModalPageHandler/RequestPageHandler from [NavTest].Handlers to registered handler methods. |
 | `MockJsonHelper` | `NavJsonToken.ALWriteTo/ALReadFrom/ALSelectToken/ALSelectTokens` | Bypasses TrappableOperationExecutor for JSON serialization/deserialization. Real BC types used for all other JSON operations. |
 | `MockSession` | `ALSession.ALStartSession/ALStopSession/ALIsSessionActive`, `NavSession.Sleep` | StartSession dispatches codeunit synchronously via MockCodeunitHandle, returns true. StopSession/Sleep are no-ops. IsSessionActive returns false. |
 | `MockXmlPortHandle` | `NavXmlPortHandle` | XmlPort variable stub. Exposes Source/Destination properties and Import/Export instance methods (throw NotSupportedException). Static StaticImport/StaticExport for `XmlPort.Import/Export(portId, stream)` calls. Invoke() returns null. |
 
 ### MockRecordHandle capabilities
 
-- Init, Insert, Modify, ModifyAll, Get, Delete, DeleteAll
+- Init, Insert, Modify, ModifyAll, Get, GetBySystemId, Delete, DeleteAll
 - FindFirst, FindLast, FindSet, Next iteration
 - Composite primary keys (RegisterPrimaryKey)
 - SetCurrentKey / SetAscending sort ordering
@@ -110,6 +112,9 @@ These are the BC runtime types replaced in standalone mode:
 - OnValidate triggers on field assignment
 - Count, IsEmpty
 - Field read/write by field ID (GetFieldValueSafe / SetFieldValueSafe)
+- ClearFieldValue (reset single field to default)
+- ALGetView / ALSetView (store/retrieve view text)
+- GetGlobalArrayVariable (typed MockArray for Code, Text, Integer, Decimal, Boolean)
 - ALFieldNo(fieldName) lookups (RegisterFieldName)
 - Cross-record table reset via `ResetAll()` between tests
 
@@ -273,11 +278,17 @@ test belongs in the full BC pipeline, not in the runner.
   OnAfterDelete, etc. are NOT fired. The DB trigger pipeline is not implemented.
 - **Page, Report, XmlPort** — Page variables (`Page "X"`) are stubs via `MockFormHandle`.
   `RunModal()` dispatches to `[ModalPageHandler]` when registered; otherwise throws.
-  TestPage variables (`TestPage "X"`) support field get/set and built-in actions via
-  `MockTestPageHandle`. ConfirmHandler, MessageHandler, and ModalPageHandler dispatch
-  is supported. XmlPort variables (`XmlPort "X"`) compile via `MockXmlPortHandle` but
+  TestPage variables (`TestPage "X"`) support field get/set, built-in actions,
+  navigation (GoToRecord, Next, New, GetPart), and filter tracking (SetFilter/GetFilter)
+  via `MockTestPageHandle`. ConfirmHandler, MessageHandler, ModalPageHandler, and
+  RequestPageHandler dispatch is supported. Report variables (`Report "X"`) compile via
+  `MockReportHandle` with `SetTableView()`, `Run()` (no-op), and `RunRequestPage()`
+  (dispatches to `[RequestPageHandler]`). Report rendering/layout is NOT available.
+  `rendering { ... }` blocks are stripped from report AL source before transpilation.
+  XmlPort variables (`XmlPort "X"`) compile via `MockXmlPortHandle` but
   `Import()`/`Export()` throw `NotSupportedException` at runtime — XmlPort I/O requires
-  the BC service tier. Report is NOT supported. Developer must inject via AL interfaces.
+  the BC service tier. Developer must inject via AL interfaces for full report/page
+  rendering fidelity.
 - **HTTP** — NOT supported. Developer must inject via AL interfaces.
 - **Events/subscribers** — NOT supported. `RunEvent`, `ALBindSubscription`,
   `ALUnbindSubscription` are no-ops.
@@ -366,22 +377,31 @@ These have been implemented and are tested by the test suite:
 
 11. **TestPage support** (`Runtime/MockTestPageHandle.cs`, `Runtime/HandlerRegistry.cs`)
     — `NavTestPageHandle` is rewritten to `MockTestPageHandle`. Supports:
-    - `OpenEdit()` / `OpenView()` / `OpenNew()` / `Close()` / `Trap()` lifecycle
+    - `OpenEdit()` / `OpenView()` / `OpenNew()` / `Close()` / `Trap()` / `New()` /
+      `ClearReference()` lifecycle
     - `GetField(fieldHash)` returning `MockTestPageField` with `ALSetValue` / `ALValue`
+      (assignable), `ALAsDecimal()`, `ALEnabled()`
     - `GetBuiltInAction(FormResult)` returning `MockTestPageAction` with `ALInvoke()`
+    - `GoToRecord(rec)` navigation (stub returns `true`)
+    - `Next()` navigation (stub returns `false`)
+    - `GetPart(partHash)` returning a nested `MockTestPageHandle`
     - **ConfirmHandler** dispatch: `[ConfirmHandler]` procedures intercept `Confirm()` calls
     - **MessageHandler** dispatch: `[MessageHandler]` procedures intercept `Message()` calls
     - **ModalPageHandler** dispatch: `[ModalPageHandler]` procedures intercept `Page.RunModal()`
       calls. `MockFormHandle.RunModal()` creates a `MockTestPageHandle`, invokes the handler,
       and returns the `FormResult` set by OK/Cancel action invocation. Missing handler throws
       a descriptive error.
+    - **RequestPageHandler** dispatch: `[RequestPageHandler]` procedures intercept
+      `Report.RunRequestPage()` calls. Falls back to `[ModalPageHandler]` if no dedicated
+      request-page handler is registered.
     - Handler registration via `[NavTest].Handlers` attribute on test methods
     - `Caption` property (stub returns `"TestPage"`)
     - `First()` navigation (stub returns `true`)
     - `GoToKey(keyValues...)` navigation (stub returns `true`)
-    - `Filter.SetFilter(fieldNo, filterExpression)` no-op via `MockTestPageFilter`
+    - `Filter.SetFilter(fieldNo, filterExpression)` and `Filter.GetFilter(fieldNo)` via
+      `MockTestPageFilter`
     Tested by `tests/71-testpage/` (13 test cases), `tests/73-modal-handler/` (3 test cases),
-    and `tests/74-testpage-navigation/` (6 test cases).
+    `tests/74-testpage-navigation/` (6 test cases), and `tests/90-testpage-extended/` (10 test cases).
 
 12. **Library - Variable Storage mock** (`Runtime/MockVariableStorage.cs`) —
     Built-in stub for codeunit 131004 "Library - Variable Storage". Provides an
@@ -400,6 +420,32 @@ These have been implemented and are tested by the test suite:
     mock streams. BLOB fields on records auto-persist `MockBlob` instances.
     Supports: `CreateInStream`, `CreateOutStream`, `HasValue`, `WriteText`,
     `ReadText`. Tested by `tests/78-blob-stream/` (6 test cases).
+
+15. **Report handle support** (`Runtime/MockReportHandle.cs`) — `NavReportHandle`
+    is rewritten to `MockReportHandle`, a standalone replacement for BC's report
+    handle. Supports `SetTableView()`, `Run()` (no-op), `RunRequestPage()` (dispatches
+    to `[RequestPageHandler]`), and helper-procedure dispatch via `Invoke()`.
+    Report and report-extension generated classes are stubbed so BC-only layout/runtime
+    infrastructure does not block compilation. `rendering { ... }` blocks and
+    `DefaultRenderingLayout` properties are stripped from report AL source before
+    transpilation. Tested by `tests/91-report-handle/` (3 test cases) and
+    `tests/95-rendering-strip/` (2 test cases).
+
+16. **`[RequestPageHandler]` dispatch** (`Runtime/HandlerRegistry.cs`) — `HandlerRegistry`
+    now registers and invokes `[RequestPageHandler]` procedures. Falls back to
+    `[ModalPageHandler]` when no dedicated request-page handler is registered.
+    Tested by `tests/92-request-page-handler/` (2 test cases).
+
+17. **`GetBySystemId`** (`Runtime/MockRecordHandle.cs`, `Runtime/MockRecordRef.cs`) —
+    `ALGetBySystemId(Guid)` looks up records by system ID field (2000000000). Throws
+    when not found with `DataError.ThrowError`, returns false with `DataError.TrapError`.
+    Tested by `tests/93-record-getbysystemid/` (2 test cases).
+
+18. **`ClearFieldValue`** (`Runtime/MockRecordHandle.cs`) — Resets a single field to
+    its default by removing it from the field dictionary. Supports both direct and
+    extension-scoped overloads. The rewriter redirects `ALSystemVariable.Clear(x)` to
+    `x.Clear()` for non-NavComplexValue types. Tested by `tests/94-clear-field-value/`
+    (3 test cases).
 
 ## Remaining Gaps
 
@@ -579,8 +625,10 @@ Follows the `BusinessCentral.AL.*` pattern:
 | `AlRunner/Runtime/MockJsonHelper.cs` | JSON WriteTo/ReadFrom/SelectToken bypass for TrappableOperationExecutor |
 | `AlRunner/Runtime/MockRecordRef.cs` | RecordRef backed by MockRecordHandle (Open, Field, Insert, FindSet, GetTable/SetTable) |
 | `AlRunner/Runtime/MockFieldRef.cs` | FieldRef with ALValue get/set, ALNumber, ALSetRange, ALSetFilter |
-| `AlRunner/Runtime/MockTestPageHandle.cs` | TestPage mock: lifecycle, field access, built-in actions |
-| `AlRunner/Runtime/HandlerRegistry.cs` | ConfirmHandler/MessageHandler/ModalPageHandler dispatch for test codeunits |
+| `AlRunner/Runtime/MockTestPageHandle.cs` | TestPage mock: lifecycle, field access, navigation (GoToRecord/Next/New/GetPart), filter tracking, built-in actions |
+| `AlRunner/Runtime/MockReportHandle.cs` | Report variable mock: SetTableView, Run, RunRequestPage, helper dispatch via Invoke |
+| `AlRunner/Runtime/MockFile.cs` | File-dialog replacement: ALUploadIntoStream (returns false, no client surface) |
+| `AlRunner/Runtime/HandlerRegistry.cs` | ConfirmHandler/MessageHandler/ModalPageHandler/RequestPageHandler dispatch for test codeunits |
 | `AlRunner/StubGenerator.cs` | `--generate-stubs` command: scaffold AL stubs from .app symbol packages |
 | `AlRunner/Runtime/MockVariableStorage.cs` | In-memory FIFO queue mock for Library - Variable Storage (codeunit 131004) |
 | `AlRunner/Runtime/MockBlob.cs` | In-memory BLOB field replacement for NavBLOB |

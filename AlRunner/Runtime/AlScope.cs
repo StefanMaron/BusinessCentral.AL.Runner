@@ -463,6 +463,8 @@ public static class AlCompat
     public static decimal ObjectToDecimal(object? value)
     {
         if (value == null) return 0m;
+        var extracted = ExtractDecimal(value);
+        if (extracted.HasValue) return extracted.Value;
         return Convert.ToDecimal(value);
     }
 
