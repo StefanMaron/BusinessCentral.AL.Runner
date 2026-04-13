@@ -83,6 +83,20 @@ public class MockVariant
     public object? Value => _value;
 
     /// <summary>
+    /// Explicit cast to MockRecordHandle.
+    /// Supports the AL pattern: MyRec := MyVariant;
+    /// The BC compiler emits ALCompiler.ObjectToExactINavRecordHandle(variant),
+    /// which the rewriter transforms to (MockRecordHandle)(variant).
+    /// </summary>
+    public static explicit operator MockRecordHandle(MockVariant v)
+    {
+        if (v._value is MockRecordHandle rec) return rec;
+        throw new InvalidCastException(
+            $"Cannot cast Variant (holding {v._value?.GetType().Name ?? "null"}) to Record. " +
+            "The Variant must contain a Record value.");
+    }
+
+    /// <summary>
     /// Stub ITreeObject for NavVariant.Factory constructor.
     /// NavVariant.Factory(ITreeObject) requires non-null parent.
     /// We implement ITreeObject minimally to satisfy the null check.

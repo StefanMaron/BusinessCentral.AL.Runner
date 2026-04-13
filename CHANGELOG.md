@@ -4,6 +4,22 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Variant-to-Record cast now works** — AL code that assigns a `Variant` to a
+  `Record` variable (`MyRec := MyVariant;`) previously caused a Roslyn compile
+  error `CS0030: Cannot convert type 'MockVariant' to 'MockRecordHandle'`. Fixed
+  by adding an explicit cast operator `MockVariant → MockRecordHandle` that
+  unwraps the inner value, matching BC runtime behavior. Tested by
+  `tests/84-variant-to-record/` (5 test cases).
+- **`Variant.IsRecord()` and other `Variant.IsXxx()` type-checks now unwrap
+  the `MockVariant` wrapper** — `AlCompat.ALIsRecord()` (and all sibling
+  `ALIs*` helpers) previously received the `MockVariant` object directly from
+  the rewriter and checked its type name, which always failed for record-typed
+  variants. All `ALIs*` methods now unwrap `MockVariant` before type-checking
+  the underlying value.
+
 ## [1.0.9] — 2026-04-13
 
 ### Added

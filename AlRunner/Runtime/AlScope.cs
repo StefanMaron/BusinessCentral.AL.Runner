@@ -804,28 +804,31 @@ public static class AlCompat
     }
 
     // NavVariant type-check properties (rewritten from value.ALIsXxx to AlCompat.ALIsXxx(value))
-    public static bool ALIsBoolean(object? v) => v is bool;
-    public static bool ALIsOption(object? v) => v is Enum || v?.GetType().Name == "NavOption";
-    public static bool ALIsInteger(object? v) => v is int;
-    public static bool ALIsByte(object? v) => v is byte;
-    public static bool ALIsBigInteger(object? v) => v is long;
-    public static bool ALIsDecimal(object? v) => v is decimal || v?.GetType().Name == "Decimal18";
-    public static bool ALIsText(object? v) => v is string || v?.GetType().Name == "NavText";
-    public static bool ALIsCode(object? v) => v?.GetType().Name == "NavCode";
-    public static bool ALIsChar(object? v) => v is char;
-    public static bool ALIsTextConst(object? v) => v?.GetType().Name == "NavTextConstant";
-    public static bool ALIsDate(object? v) => v is DateTime dt && dt.TimeOfDay == TimeSpan.Zero;
-    public static bool ALIsTime(object? v) => v?.GetType().Name == "NavTime";
-    public static bool ALIsDuration(object? v) => v is TimeSpan;
-    public static bool ALIsDateTime(object? v) => v is DateTime;
-    public static bool ALIsDateFormula(object? v) => v?.GetType().Name == "NavDateFormula";
-    public static bool ALIsGuid(object? v) => v is Guid;
-    public static bool ALIsRecordId(object? v) => v?.GetType().Name == "NavRecordId";
-    public static bool ALIsRecord(object? v) => v?.GetType().Name.StartsWith("Record") == true;
-    public static bool ALIsRecordRef(object? v) => v?.GetType().Name == "NavRecordRef";
-    public static bool ALIsFieldRef(object? v) => v?.GetType().Name == "NavFieldRef";
-    public static bool ALIsCodeunit(object? v) => v?.GetType().Name.StartsWith("Codeunit") == true;
-    public static bool ALIsFile(object? v) => v?.GetType().Name == "NavFile";
+    // The rewriter passes the MockVariant object directly, so each method must
+    // unwrap MockVariant before checking the underlying value type.
+    private static object? UnwrapVariant(object? v) => v is MockVariant mv ? mv.Value : v;
+    public static bool ALIsBoolean(object? v) { v = UnwrapVariant(v); return v is bool; }
+    public static bool ALIsOption(object? v) { v = UnwrapVariant(v); return v is Enum || v?.GetType().Name == "NavOption"; }
+    public static bool ALIsInteger(object? v) { v = UnwrapVariant(v); return v is int; }
+    public static bool ALIsByte(object? v) { v = UnwrapVariant(v); return v is byte; }
+    public static bool ALIsBigInteger(object? v) { v = UnwrapVariant(v); return v is long; }
+    public static bool ALIsDecimal(object? v) { v = UnwrapVariant(v); return v is decimal || v?.GetType().Name == "Decimal18"; }
+    public static bool ALIsText(object? v) { v = UnwrapVariant(v); return v is string || v?.GetType().Name == "NavText"; }
+    public static bool ALIsCode(object? v) { v = UnwrapVariant(v); return v?.GetType().Name == "NavCode"; }
+    public static bool ALIsChar(object? v) { v = UnwrapVariant(v); return v is char; }
+    public static bool ALIsTextConst(object? v) { v = UnwrapVariant(v); return v?.GetType().Name == "NavTextConstant"; }
+    public static bool ALIsDate(object? v) { v = UnwrapVariant(v); return v is DateTime dt && dt.TimeOfDay == TimeSpan.Zero; }
+    public static bool ALIsTime(object? v) { v = UnwrapVariant(v); return v?.GetType().Name == "NavTime"; }
+    public static bool ALIsDuration(object? v) { v = UnwrapVariant(v); return v is TimeSpan; }
+    public static bool ALIsDateTime(object? v) { v = UnwrapVariant(v); return v is DateTime; }
+    public static bool ALIsDateFormula(object? v) { v = UnwrapVariant(v); return v?.GetType().Name == "NavDateFormula"; }
+    public static bool ALIsGuid(object? v) { v = UnwrapVariant(v); return v is Guid; }
+    public static bool ALIsRecordId(object? v) { v = UnwrapVariant(v); return v?.GetType().Name == "NavRecordId"; }
+    public static bool ALIsRecord(object? v) { v = UnwrapVariant(v); return v is MockRecordHandle || v?.GetType().Name.StartsWith("Record") == true; }
+    public static bool ALIsRecordRef(object? v) { v = UnwrapVariant(v); return v is MockRecordRef || v?.GetType().Name == "NavRecordRef"; }
+    public static bool ALIsFieldRef(object? v) { v = UnwrapVariant(v); return v is MockFieldRef || v?.GetType().Name == "NavFieldRef"; }
+    public static bool ALIsCodeunit(object? v) { v = UnwrapVariant(v); return v?.GetType().Name.StartsWith("Codeunit") == true; }
+    public static bool ALIsFile(object? v) { v = UnwrapVariant(v); return v?.GetType().Name == "NavFile"; }
     public static bool ALIsDotNet(object? v) => false; // DotNet types not supported in standalone
     public static bool ALIsAutomation(object? v) => false; // Automation types not supported in standalone
 
