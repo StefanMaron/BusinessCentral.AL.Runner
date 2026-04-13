@@ -285,9 +285,9 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 
 ### Stubs workflow
 
-Stubs are empty or simplified AL codeunit files you provide so that al-runner
-can compile your source even when it depends on ISV or BC objects that are not
-natively mocked by the runner.
+Stubs are empty or simplified AL object files (often codeunits, but any AL object
+type) you provide so that al-runner can compile your source even when it depends on
+ISV or BC objects that are not natively mocked by the runner.
 
 **When stubs help vs when they don't:**
 
@@ -323,7 +323,7 @@ hand-edited stubs are preserved.
 
 Step 3 — Review and edit the generated stubs as needed:
 ```
-./stubs/Cod70100.ISV-Integration-Mgt.al   ← one file per codeunit
+./stubs/Cod70100.ISVIntegrationMgt.al   ← one file per codeunit
 ```
 Each generated stub has correct procedure signatures (parameter types, var,
 return types) with minimal bodies (`exit(false)`, `exit('')`, etc.). For most
@@ -345,6 +345,8 @@ the codeunit uses an unsupported BC feature (Page, HTTP, events, etc.). Either:
 **What `--generate-stubs` produces:**
 
 - One `.al` file per codeunit found in the packages, named `CodNNNNN.Name.al`
+  (Name is sanitized: only letters, digits, `-`, and `_` are kept; spaces and
+  other punctuation are removed — e.g. "ISV Integration Mgt." → `ISVIntegrationMgt`)
 - Correct procedure signatures: all parameters, `var` modifiers, `Record "X"`,
   `Enum "X"`, and return types
 - Default `exit(...)` bodies (false for Boolean, 0 for Integer/Decimal, '' for Text/Code)
@@ -361,7 +363,8 @@ the codeunit uses an unsupported BC feature (Page, HTTP, events, etc.). Either:
   rather than unfiltered (`--generate-stubs .alpackages ./stubs`) to keep the stub
   directory lean — only the procedures your source actually calls are emitted
 
-**Example stub for an unsupported codeunit:**
+**Example stub for an unsupported codeunit** (hand-written; generated stubs default
+to `exit(false)` for Boolean — change return values as needed for your tests):
 ```al
 codeunit 70100 "ISV Integration Mgt."
 {
