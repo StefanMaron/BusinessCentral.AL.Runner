@@ -562,7 +562,7 @@ public class AlRunnerPipeline
             if (results.Count == 0 && options.RunProcedure != null)
                 stderr.WriteLine($"Error: Procedure '{options.RunProcedure}' not found in the generated code.");
             if (!options.OutputJson)
-                Executor.PrintResults(results, runSw.ElapsedMilliseconds);
+                Executor.PrintResults(results, runSw.ElapsedMilliseconds, options.Verbose);
             exitCode = Executor.ExitCode(results);
 
             if (options.CaptureValues)

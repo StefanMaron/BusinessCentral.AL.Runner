@@ -2079,8 +2079,29 @@ public static class Executor
     }
 
     /// <summary>Print human-readable test results to console.</summary>
-    public static void PrintResults(List<AlRunner.TestResult> results, long? totalMs = null)
+    public static void PrintResults(List<AlRunner.TestResult> results, long? totalMs = null, bool verbose = false)
     {
+        // Deduplicate repeated error messages: show each unique message once as a WARN block,
+        // then print compact "ERROR TestName (blocked)" lines for affected tests.
+        // Only active in non-verbose mode; verbose falls back to full per-test detail.
+        var dedupMessages = new HashSet<string>();
+        if (!verbose)
+        {
+            var errorMessageCounts = results
+                .Where(r => r.Status == AlRunner.TestStatus.Error && r.Message != null)
+                .GroupBy(r => r.Message!)
+                .Where(g => g.Count() >= 2)
+                .ToDictionary(g => g.Key, g => g.Count());
+
+            foreach (var (msg, count) in errorMessageCounts)
+            {
+                dedupMessages.Add(msg);
+                Console.WriteLine($"WARN  {msg}");
+                Console.WriteLine($"      ({count} tests blocked — use -v for per-test details)");
+                Console.WriteLine();
+            }
+        }
+
         foreach (var r in results)
         {
             switch (r.Status)
@@ -2094,13 +2115,20 @@ public static class Executor
                     if (r.StackTrace != null) Console.Write(r.StackTrace);
                     break;
                 case AlRunner.TestStatus.Error:
-                    Console.WriteLine($"ERROR {r.Name}");
-                    if (r.Message != null) Console.WriteLine($"      {r.Message}");
-                    if (r.IsRunnerBug)
-                        Console.WriteLine($"      ⚑ Runner limitation — update al-runner or file an issue at https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues");
+                    if (!verbose && r.Message != null && dedupMessages.Contains(r.Message))
+                    {
+                        Console.WriteLine($"ERROR {r.Name} (blocked)");
+                    }
                     else
-                        Console.WriteLine($"      Inject this dependency via an AL interface.");
-                    if (r.StackTrace != null) Console.Write(r.StackTrace);
+                    {
+                        Console.WriteLine($"ERROR {r.Name}");
+                        if (r.Message != null) Console.WriteLine($"      {r.Message}");
+                        if (r.IsRunnerBug)
+                            Console.WriteLine($"      ⚑ Runner limitation — update al-runner or file an issue at https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues");
+                        else
+                            Console.WriteLine($"      Inject this dependency via an AL interface.");
+                        if (r.StackTrace != null) Console.Write(r.StackTrace);
+                    }
                     break;
             }
         }
