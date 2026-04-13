@@ -173,6 +173,22 @@ public class AlDeclarationParsingTests
     }
 
     [Fact]
+    public void ProfileWithoutNumericId()
+    {
+        var names = SourceFileMapper.ParseObjectDeclarations("profile \"My Profile\"\n{\n}");
+        Assert.Single(names);
+        Assert.Equal("My Profile", names[0]);
+    }
+
+    [Fact]
+    public void ControlAddInWithoutNumericId()
+    {
+        var names = SourceFileMapper.ParseObjectDeclarations("controladdin MyControl\n{\n}");
+        Assert.Single(names);
+        Assert.Equal("MyControl", names[0]);
+    }
+
+    [Fact]
     public void CaseInsensitiveKeyword()
     {
         var names = SourceFileMapper.ParseObjectDeclarations("CODEUNIT 50 \"Foo\"\n{\n}");

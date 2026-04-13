@@ -378,7 +378,9 @@ public class AlRunnerPipeline
             Runtime.TableFieldRegistry.ParseAndRegister(options.InlineCode);
         }
 
-        // Auto-discover dependency .app files from --packages directories
+        // Auto-discover dependency .app files from --packages directories.
+        // Note: dependency/stub sources are intentionally NOT registered with SourceFileMapper —
+        // they are external code whose captured values and coverage should not appear in user files.
         if (options.PackagePaths.Count > 0 && inputGroups.Any(g => g.Path.EndsWith(".app", StringComparison.OrdinalIgnoreCase)))
         {
             AutoDiscoverDependencies(options.PackagePaths, inputGroups, inputPaths, alSources);
@@ -589,6 +591,11 @@ public class AlRunnerPipeline
             if (options.IterationTracking)
                 Runtime.IterationTracker.Disable();
             Runtime.MessageCapture.Disable();
+
+            if (options.IterationTracking || options.ShowCoverage)
+            {
+                _scopeToObject = CoverageReport.BuildScopeToObjectMap(generatedCSharpList!);
+            }
         }
         Timer.EndStage("Test execution");
         Timer.Print();

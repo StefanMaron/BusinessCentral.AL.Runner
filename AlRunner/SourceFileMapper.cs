@@ -85,7 +85,7 @@ public static class SourceFileMapper
     }
 
     private static readonly Regex ObjectDeclPattern = new(
-        @"^(?:codeunit|table|page|report|xmlport|query|enum|enumextension|tableextension|pageextension|interface|permissionset|permissionsetextension|reportextension|profile|controladdin)\s+\d+\s+(?:""([^""]+)""|(\w+))",
+        @"^(?:(?:codeunit|table|page|report|xmlport|query|enum|enumextension|tableextension|pageextension|interface|permissionset|permissionsetextension|reportextension)\s+\d+|(?:profile|controladdin)(?:\s+\d+)?)\s+(?:""([^""]+)""|(\w+))",
         RegexOptions.IgnoreCase | RegexOptions.Multiline);
 
     /// <summary>
