@@ -57,4 +57,17 @@ public class IntegrationTests
         Assert.Equal(0, result.ExitCode);
         Assert.Contains("Coverage:", result.StdOut);
     }
+
+    [Fact]
+    public async Task GuideFlag_PrintsStubsWorkflowSection()
+    {
+        var result = await CliRunner.RunAsync("--guide");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("Stubs workflow", result.StdOut);
+        Assert.Contains("--generate-stubs", result.StdOut);
+        Assert.Contains("--stubs", result.StdOut);
+        Assert.Contains("compilation", result.StdOut);
+        Assert.Contains("Maintaining stubs", result.StdOut);
+    }
 }

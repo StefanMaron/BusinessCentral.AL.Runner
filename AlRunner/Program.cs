@@ -283,19 +283,96 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 7. For external dependencies (mail, HTTP, pages), define an AL interface and
    inject a mock implementation in the test
 
-### Handling unsupported dependencies
+### Stubs workflow
 
-Use `--stubs <dir>` to provide stub AL files that replace ISV or unsupported objects.
-Each stub declares the same object ID and name but with a simplified body. The runner
-auto-excludes conflicting symbol packages when stubs are loaded.
+Stubs are empty or simplified AL codeunit files you provide so that al-runner
+can compile your source even when it depends on ISV or BC objects that are not
+natively mocked by the runner.
 
-Example stub for an unsupported codeunit:
+**When stubs help vs when they don't:**
+
+| Symptom | Root cause | Fix |
+|---------|------------|-----|
+| "Tip: use --stubs" in output | Compilation gap — runner excluded a file it couldn't compile | Generate and add stubs |
+| AL compiler error: object not found | Missing symbol reference | Add --packages or generate a stub |
+| `NotSupportedException` at runtime | Missing mock (runtime gap) | Inject via AL interface or skip |
+| Test assertion fails | Logic bug | Fix the production code |
+
+Stubs only fix **compilation** gaps — missing type/object symbols the AL compiler
+needs to build the assembly. They cannot fix **runtime** gaps where al-runner has
+no mock for a BC platform operation. For runtime gaps, inject the dependency via an
+AL interface and provide a mock implementation in the test.
+
+**Iterative workflow:**
+
+Step 1 — Run normally and note the gaps:
+```
+al-runner --packages .alpackages ./src ./test
+```
+If you see `Tip: use --stubs to provide stub AL files for unsupported dependencies`,
+one or more objects were excluded from compilation. Stubs can restore them.
+
+Step 2 — Generate stubs for only the codeunits your source references:
+```
+al-runner --generate-stubs .alpackages ./stubs ./src ./test
+```
+This reads `SymbolReference.json` from each `.app` in `.alpackages`, filters to
+codeunits (and procedures) your source actually calls, and emits one `.al` stub
+file per codeunit into `./stubs/`. Existing files are never overwritten, so
+hand-edited stubs are preserved.
+
+Step 3 — Review and edit the generated stubs as needed:
+```
+./stubs/Cod70100.ISV-Integration-Mgt.al   ← one file per codeunit
+```
+Each generated stub has correct procedure signatures (parameter types, var,
+return types) with minimal bodies (`exit(false)`, `exit('')`, etc.). For most
+compilation gaps this is sufficient. If a test actually exercises the stubbed
+procedure you may need to fill in a real return value.
+
+Step 4 — Re-run with stubs:
+```
+al-runner --packages .alpackages --stubs ./stubs ./src ./test
+```
+The runner compiles your stubs alongside the source. Conflicting symbol packages
+are excluded automatically.
+
+Step 5 — Iterate. If tests still fail at runtime with `NotSupportedException`,
+the codeunit uses an unsupported BC feature (Page, HTTP, events, etc.). Either:
+- Skip that codeunit (don't include it in your test run), or
+- Inject the dependency via an AL interface so the runner can use a mock.
+
+**What `--generate-stubs` produces:**
+
+- One `.al` file per codeunit found in the packages, named `CodNNNNN.Name.al`
+- Correct procedure signatures: all parameters, `var` modifiers, `Record "X"`,
+  `Enum "X"`, and return types
+- Default `exit(...)` bodies (false for Boolean, 0 for Integer/Decimal, '' for Text/Code)
+- Codeunits already natively mocked by al-runner (e.g. codeunit 130 "Library Assert")
+  are skipped automatically
+- Existing files in the output dir are never overwritten (re-run is safe)
+
+**Maintaining stubs over time:**
+
+- Keep the `./stubs/` directory in source control alongside your test code
+- When a dependency package is updated, re-run `--generate-stubs` — new codeunits
+  get new stub files; existing hand-edited files are left untouched
+- Use source-filtered generation (`--generate-stubs .alpackages ./stubs ./src ./test`)
+  rather than unfiltered (`--generate-stubs .alpackages ./stubs`) to keep the stub
+  directory lean — only the procedures your source actually calls are emitted
+
+**Example stub for an unsupported codeunit:**
 ```al
 codeunit 70100 "ISV Integration Mgt."
 {
     procedure DoSomething(): Boolean
     begin
         exit(true);
+    end;
+
+    procedure GetStatus(ItemNo: Code[20]): Text[50]
+    begin
+        exit('');
     end;
 }
 ```
@@ -368,26 +445,6 @@ al-runner --server                                         # long-running JSON-R
 al-runner --generate-stubs .alpackages ./stubs             # scaffold stubs from .app packages (all codeunits)
 al-runner --generate-stubs .alpackages ./stubs ./src ./test  # only stubs referenced in source
 ```
-
-### Generating stubs from .app packages
-
-Use `--generate-stubs <packages-dir> <output-dir> [<src-dir> ...]` to scaffold empty
-AL stub files from .app symbol packages. This reads SymbolReference.json from each
-.app file and emits one `.al` file per codeunit with correct procedure signatures,
-parameter types, and return types. Generated stubs have empty bodies — fill in
-implementations as needed.
-
-When source directories are provided, only codeunits actually referenced in the AL
-source are generated. A codeunit is considered referenced if its name (case-insensitive)
-or numeric ID appears anywhere in the source .al files. Additionally, only procedures
-that appear to be called (name followed by `(`) are included in the stub.
-This dramatically reduces the number of generated stubs for large symbol packages.
-
-When no source directories are given, all codeunits are emitted (backward compatible).
-
-Codeunits that al-runner already mocks natively (e.g. codeunit 130 "Library Assert")
-are skipped automatically. Existing files in the output directory are never overwritten,
-so hand-edited stubs are preserved across regeneration.
 
 ### Machine-readable output (--output-json)
 
