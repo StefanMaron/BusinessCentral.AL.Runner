@@ -7,6 +7,17 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Fixed
+- **`CS1503` in codeunits that declare HTTP variables** — `AlScope` now implements
+  `ITreeObject` (with stub `Tree`, `Type`, and `SingleThreaded` members), satisfying
+  the parent-scope requirement of Nav* type constructors (`NavHttpClient`,
+  `NavHttpRequestMessage`, `NavHttpResponseMessage`, `NavHttpContent`). Previously
+  any codeunit that declared an `HttpClient`, `HttpRequestMessage`, `HttpResponseMessage`,
+  or `HttpContent` local variable was excluded as a `CompilationGap` with
+  `CS1503: cannot convert from AlScope to ITreeObject`. The null! catch-all rewriter
+  rule that was masking the root cause has been removed.
+  Codeunits with HTTP variables now compile; pure-logic methods in those codeunits
+  (ones that don't actually send HTTP requests) are fully testable.
+  Tested by `tests/89-nav-type-constructors/` (3 test cases).
 - **`RecRef.Find()` (no-arg) compilation error** — The BC compiler emits
   `recRef.ALFind(DataError.ThrowError)` for AL's no-argument `RecRef.Find()`.
   `MockRecordRef` now provides a matching `ALFind(DataError)` overload that routes
