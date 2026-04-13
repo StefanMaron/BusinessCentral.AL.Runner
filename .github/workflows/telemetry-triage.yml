@@ -1,0 +1,35 @@
+name: Telemetry Triage
+
+on:
+  workflow_dispatch:
+    inputs:
+      from_time:
+        description: 'Query from this ISO-8601 UTC timestamp (leave blank to auto-detect from last run)'
+        required: false
+        default: ''
+      dry_run:
+        description: 'Dry run — print what would happen without creating issues'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  triage:
+    name: Analyze crash reports and file issues
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      actions: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run triage
+        env:
+          APPINSIGHTS_API_KEY: ${{ secrets.APPINSIGHTS_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_WORKFLOW_REF: ${{ github.workflow_ref }}
+          FROM_TIME: ${{ inputs.from_time }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+        run: python tools/telemetry-triage/triage.py
