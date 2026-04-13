@@ -73,14 +73,16 @@ public class AlRunnerServer
 
         // Fingerprint the request — also updates per-file hashes used for the diff.
         var fingerprint = _cache.ComputeFingerprint(request.SourcePaths);
-        var cachedAssembly = _cache.TryGet(fingerprint);
+        var cacheHit = _cache.TryGet(fingerprint);
 
-        if (cachedAssembly != null)
+        if (cacheHit != null)
         {
-            // Cache hit — just re-run tests on the cached assembly
-            Runtime.MockCodeunitHandle.CurrentAssembly = cachedAssembly;
-            var results = Executor.RunTests(cachedAssembly);
-            return SerializeServerResponse(results, Executor.ExitCode(results), cached: true);
+            // Cache hit — re-run tests on the cached assembly, returning the
+            // compilation errors that were seen when the assembly was first compiled.
+            Runtime.MockCodeunitHandle.CurrentAssembly = cacheHit.Value.Assembly;
+            var results = Executor.RunTests(cacheHit.Value.Assembly);
+            return SerializeServerResponse(results, Executor.ExitCode(results), cached: true,
+                compilationErrors: cacheHit.Value.CompilationErrors);
         }
 
         // Cache miss — diff BEFORE storing the new entry so the report
@@ -97,15 +99,19 @@ public class AlRunnerServer
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(options);
 
-        // Cache the compiled assembly if available
+        // Capture compilation errors before caching so they survive the next request.
+        var compilationErrors = new Dictionary<string, List<string>>(RoslynCompiler.ExcludedFiles);
+
+        // Cache the compiled assembly (with its compilation errors) if available.
         if (result.ExitCode == 0 || result.Tests.Count > 0)
         {
             var assembly = Runtime.MockCodeunitHandle.CurrentAssembly;
             if (assembly != null)
-                _cache.Store(fingerprint, assembly);
+                _cache.Store(fingerprint, assembly, compilationErrors);
         }
 
-        return SerializeServerResponse(result.Tests, result.ExitCode, cached: false, changedFiles: changedFiles);
+        return SerializeServerResponse(result.Tests, result.ExitCode, cached: false,
+            changedFiles: changedFiles, compilationErrors: compilationErrors);
     }
 
     private string HandleExecute(ServerRequest request, Task<List<Microsoft.CodeAnalysis.MetadataReference>> refsTask)
@@ -167,22 +173,19 @@ public class AlRunnerServer
         });
     }
 
-    private static string SerializeServerResponse(List<TestResult> tests, int exitCode, bool cached, List<string>? changedFiles = null)
+    private static string SerializeServerResponse(List<TestResult> tests, int exitCode, bool cached,
+        List<string>? changedFiles = null, Dictionary<string, List<string>>? compilationErrors = null)
     {
-        // On cache hits no compilation occurred, so ExcludedFiles holds stale data from a
-        // prior request. Only surface compilationErrors on fresh compilations (cache miss).
-        object? compilationErrorsObj = null;
-        if (!cached)
-        {
-            var excludedFiles = RoslynCompiler.ExcludedFiles;
-            compilationErrorsObj = excludedFiles.Count > 0
-                ? excludedFiles.Select(kvp => new
-                {
-                    file = System.IO.Path.GetFileName(kvp.Key),
-                    errors = kvp.Value
-                })
-                : null;
-        }
+        // compilationErrors is passed in explicitly — either from the live compilation (cache miss)
+        // or from the stored cache entry (cache hit). Never read the static RoslynCompiler.ExcludedFiles
+        // here, because on cache hits that field holds stale data from the previous request.
+        var compilationErrorsObj = compilationErrors != null && compilationErrors.Count > 0
+            ? (object?)compilationErrors.Select(kvp => new
+            {
+                file = System.IO.Path.GetFileName(kvp.Key),
+                errors = kvp.Value
+            })
+            : null;
 
         var output = new
         {
@@ -238,6 +241,14 @@ public class CompilationCache
         public required string Fingerprint { get; init; }
         public required Dictionary<string, string> FileHashes { get; init; }
         public required Assembly Assembly { get; init; }
+        public required Dictionary<string, List<string>> CompilationErrors { get; init; }
+    }
+
+    /// <summary>The result of a successful cache lookup.</summary>
+    public readonly struct CacheHit
+    {
+        public Assembly Assembly { get; init; }
+        public Dictionary<string, List<string>> CompilationErrors { get; init; }
     }
 
     /// <summary>
@@ -270,10 +281,10 @@ public class CompilationCache
     }
 
     /// <summary>
-    /// Return a cached assembly for the given fingerprint, promoting it to
-    /// the front of the LRU, or null on miss.
+    /// Return the cached assembly and compilation errors for the given fingerprint,
+    /// promoting the entry to the front of the LRU, or null on miss.
     /// </summary>
-    public Assembly? TryGet(string fingerprint)
+    public CacheHit? TryGet(string fingerprint)
     {
         var node = _lru.First;
         while (node != null)
@@ -282,21 +293,26 @@ public class CompilationCache
             {
                 _lru.Remove(node);
                 _lru.AddFirst(node);
-                return node.Value.Assembly;
+                return new CacheHit
+                {
+                    Assembly = node.Value.Assembly,
+                    CompilationErrors = node.Value.CompilationErrors
+                };
             }
             node = node.Next;
         }
         return null;
     }
 
-    /// <summary>Store an assembly under its fingerprint, evicting the LRU tail if full.</summary>
-    public void Store(string fingerprint, Assembly assembly)
+    /// <summary>Store an assembly and its compilation errors under the given fingerprint, evicting the LRU tail if full.</summary>
+    public void Store(string fingerprint, Assembly assembly, Dictionary<string, List<string>> compilationErrors)
     {
         var entry = new CacheEntry
         {
             Fingerprint = fingerprint,
             FileHashes = new Dictionary<string, string>(LastFileHashes, StringComparer.OrdinalIgnoreCase),
-            Assembly = assembly
+            Assembly = assembly,
+            CompilationErrors = compilationErrors
         };
         _lru.AddFirst(entry);
         while (_lru.Count > MaxSlots)
