@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Fixed
+- **`FieldRef.SetRange(Variant)` never matched records** — When AL code assigned a text literal to a `Variant` and then called `FieldRef.SetRange(v)`, the filter never matched because `MockVariant`'s implicit `NavValue?` operator returned `null` for non-NavValue content (raw CLR strings). The operator now converts primitive CLR values to their NavValue equivalents (`string→NavText`, `int→NavInteger`, `bool→NavBoolean`, `long→NavBigInteger`). Additionally, `NavValueToString` now trims trailing spaces from `NavCode` values (which BC pads to `maxLength`), fixing equality comparisons between `Code[N]` fields and `NavText` filter values. Tested by `tests/82-recref-fieldindex/` (`FieldRefSetRangeWithVariant`) and `tests/87-fieldref-setrange-types/` (8 new cases covering Integer, Code, Option, and Decimal-range filters via FieldRef).
 - **`GlobalLanguage()` NullReferenceException in standalone mode** — `ALSystemLanguage.get_ALGlobalLanguage` and `set_ALGlobalLanguage` crashed because there is no live BC session context in the runner. The rewriter now intercepts `ALSystemLanguage.ALGlobalLanguage` (both get and set) and routes them to `MockLanguage.ALGlobalLanguage`, a static int property backed by an in-memory field defaulting to 1033 (ENU). `MockLanguage.Reset()` is called between tests to restore the default. Fixes #82. Tested by `tests/86-global-language/` (5 cases).
 
 ### Added
