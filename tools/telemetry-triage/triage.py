@@ -83,17 +83,16 @@ def get_from_time() -> str:
 
     # Try to get the completion time of the last successful run of this workflow.
     # GITHUB_WORKFLOW_REF has the form "owner/repo/.github/workflows/file.yml@refs/..."
+    current_run_id = str(os.environ.get("GITHUB_RUN_ID", ""))
     workflow_file = os.environ.get("GITHUB_WORKFLOW_REF", "").split("@")[0].split("/")[-1]
     if workflow_file:
         try:
             url = (
                 f"{GH_API_BASE}/repos/{GH_REPO}/actions/workflows/{workflow_file}/runs"
-                f"?conclusion=success&per_page=2"
+                f"?conclusion=success&per_page=5"
             )
             data = http_get(url, gh_headers())
-            runs = data.get("workflow_runs", [])
-            # runs[0] is the most recent completed run; skip the current run if it
-            # appears (it won't — it's still in_progress when this step executes)
+            runs = [r for r in data.get("workflow_runs", []) if str(r.get("id", "")) != current_run_id]
             if runs:
                 last_time = runs[0]["updated_at"]
                 print(f"Last successful run completed at: {last_time}")
