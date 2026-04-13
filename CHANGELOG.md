@@ -15,8 +15,15 @@ All notable changes to this project are documented here. Format based on
   package containing binaries for both .NET 8 and .NET 9. `dotnet tool install`
   automatically selects the build matching the installed runtime, so users with
   only .NET 9 no longer need to install .NET 8 separately. Closes #75.
+- **JUnit XML output (`--output-junit <path>`)** — Writes a standard JUnit XML test
+  report alongside normal console output. GitHub Actions, Azure DevOps, and GitLab CI
+  natively render JUnit XML as test annotations, summaries, and trend graphs. Combined
+  with `--coverage` (Cobertura XML), this completes the CI integration story:
+  - `--coverage` → coverage tab (Cobertura)
+  - `--output-junit` → test results tab (JUnit XML)
 
-### Added
+  Tests are grouped by AL codeunit name as `<testsuite>` elements. Real assertion
+  failures use `<failure>`; runner limitations use `<error>`. Closes #72.
 - **Compact summary line at end of test runs** — After each test run, the output
   now ends with a concise one-liner analogous to pytest/jest:
   - All pass: `42 passed in 1.8s`

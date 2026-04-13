@@ -290,4 +290,162 @@ public class RunnerErrorClassificationTests
         Assert.Equal(1, result.ExitCode);
         Assert.Contains(result.Tests, t => t.Status == TestStatus.Fail);
     }
+
+    // ---------------------------------------------------------------------------
+    // PrintResults deduplication tests (issue #70)
+    // ---------------------------------------------------------------------------
+
+    /// <summary>
+    /// When multiple tests share the same error message, the message should appear
+    /// exactly once in the output (as a WARN block), not repeated per test.
+    /// Each individual ERROR line should be compact — just the test name + "(blocked)".
+    /// </summary>
+    [Fact]
+    public void PrintResults_RepeatedErrorMessage_MessageShownOnceAsWarn()
+    {
+        var sharedMessage = "CompilationExcludedException: Codeunit 50123 was excluded during compilation.";
+        var tests = new List<TestResult>
+        {
+            new() { Name = "Test1", Status = TestStatus.Error, Message = sharedMessage },
+            new() { Name = "Test2", Status = TestStatus.Error, Message = sharedMessage },
+            new() { Name = "Test3", Status = TestStatus.Error, Message = sharedMessage },
+        };
+
+        var output = CaptureStdOut(() => Executor.PrintResults(tests));
+
+        // Message should appear exactly once (in the WARN block)
+        var msgOccurrences = CountOccurrences(output, sharedMessage);
+        Assert.True(msgOccurrences == 1, $"Expected message to appear exactly once, but found {msgOccurrences} occurrence(s):\n{output}");
+
+        // Should have a WARN prefix for the summary
+        Assert.Contains("WARN", output);
+
+        // Each test should still have an ERROR line
+        Assert.Contains("ERROR Test1", output);
+        Assert.Contains("ERROR Test2", output);
+        Assert.Contains("ERROR Test3", output);
+
+        // The individual ERROR lines should be compact (contain "blocked")
+        Assert.Contains("(blocked)", output);
+    }
+
+    /// <summary>
+    /// With verbose=true, full details are printed per test (old behavior, no deduplication).
+    /// </summary>
+    [Fact]
+    public void PrintResults_RepeatedErrorMessage_Verbose_ShowsFullDetailsPerTest()
+    {
+        var sharedMessage = "CompilationExcludedException: Codeunit 50123 was excluded during compilation.";
+        var tests = new List<TestResult>
+        {
+            new() { Name = "Test1", Status = TestStatus.Error, Message = sharedMessage },
+            new() { Name = "Test2", Status = TestStatus.Error, Message = sharedMessage },
+        };
+
+        var output = CaptureStdOut(() => Executor.PrintResults(tests, verbose: true));
+
+        // With verbose, message appears once per test (not deduplicated)
+        var msgOccurrences = CountOccurrences(output, sharedMessage);
+        Assert.True(msgOccurrences == 2, $"Expected message to appear once per test (2 times) in verbose mode, but found {msgOccurrences}:\n{output}");
+
+        // Should NOT have WARN prefix in verbose mode
+        Assert.DoesNotContain("WARN", output);
+    }
+
+    /// <summary>
+    /// A single test with a unique error message should still print full details
+    /// (no WARN block, no compact line — unchanged behavior).
+    /// </summary>
+    [Fact]
+    public void PrintResults_UniqueErrorMessage_FullDetailsShown()
+    {
+        var uniqueMessage = "NotSupportedException: Page 50100 is not supported.";
+        var tests = new List<TestResult>
+        {
+            new() { Name = "TestA", Status = TestStatus.Error, Message = uniqueMessage, IsRunnerBug = true },
+        };
+
+        var output = CaptureStdOut(() => Executor.PrintResults(tests));
+
+        // Message should appear in output
+        Assert.Contains(uniqueMessage, output);
+        Assert.Contains("ERROR TestA", output);
+
+        // Should NOT have WARN prefix (no deduplication for unique errors)
+        Assert.DoesNotContain("WARN", output);
+
+        // ERROR line should NOT be compact — no "(blocked)" suffix when unique
+        Assert.DoesNotContain("(blocked)", output);
+    }
+
+    /// <summary>
+    /// Tests with different messages should each still show their own full details.
+    /// No WARN block should be shown.
+    /// </summary>
+    [Fact]
+    public void PrintResults_DifferentErrorMessages_NoDeduplication()
+    {
+        var tests = new List<TestResult>
+        {
+            new() { Name = "Test1", Status = TestStatus.Error, Message = "Error message A", IsRunnerBug = true },
+            new() { Name = "Test2", Status = TestStatus.Error, Message = "Error message B", IsRunnerBug = true },
+        };
+
+        var output = CaptureStdOut(() => Executor.PrintResults(tests));
+
+        Assert.Contains("Error message A", output);
+        Assert.Contains("Error message B", output);
+        Assert.DoesNotContain("WARN", output);
+        Assert.DoesNotContain("(blocked)", output);
+    }
+
+    /// <summary>
+    /// FAIL tests should never be deduplicated — each failure is unique and must
+    /// always show its full message.
+    /// </summary>
+    [Fact]
+    public void PrintResults_RepeatedFailMessage_NeverDeduplicated()
+    {
+        var sharedMessage = "Expected 1, got 2";
+        var tests = new List<TestResult>
+        {
+            new() { Name = "Test1", Status = TestStatus.Fail, Message = sharedMessage },
+            new() { Name = "Test2", Status = TestStatus.Fail, Message = sharedMessage },
+        };
+
+        var output = CaptureStdOut(() => Executor.PrintResults(tests));
+
+        // Each FAIL should show its message (2 occurrences expected)
+        var msgOccurrences = CountOccurrences(output, sharedMessage);
+        Assert.True(msgOccurrences == 2, $"Expected fail message to appear once per test, got {msgOccurrences}:\n{output}");
+
+        // Should NOT have WARN prefix (no deduplication for failures)
+        Assert.DoesNotContain("WARN", output);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Helpers
+    // ---------------------------------------------------------------------------
+
+    private static string CaptureStdOut(Action action)
+    {
+        var captured = new System.IO.StringWriter();
+        var prev = Console.Out;
+        Console.SetOut(captured);
+        try { action(); }
+        finally { Console.SetOut(prev); }
+        return captured.ToString();
+    }
+
+    private static int CountOccurrences(string text, string pattern)
+    {
+        int count = 0;
+        int index = 0;
+        while ((index = text.IndexOf(pattern, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += pattern.Length;
+        }
+        return count;
+    }
 }

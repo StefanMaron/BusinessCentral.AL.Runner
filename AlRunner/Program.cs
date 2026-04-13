@@ -36,6 +36,7 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("  -e '<al code>'        Run inline AL code");
     Console.Error.WriteLine("  -v, --verbose         Show detailed transpilation and compilation output");
     Console.Error.WriteLine("  --output-json         Output results as machine-readable JSON (status: pass/fail/error)");
+    Console.Error.WriteLine("  --output-junit <path> Write JUnit XML test report to <path> (for CI test result tabs)");
     Console.Error.WriteLine("  --capture-values      Capture variable values after each test for inline display");
     Console.Error.WriteLine("  --iteration-tracking  Track per-iteration data for loops (requires --output-json)");
     Console.Error.WriteLine("  --run <procedure>     Run only the specified procedure by name");
@@ -55,6 +56,7 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("  al-runner --coverage ./src ./test             Run tests with coverage");
     Console.Error.WriteLine("  al-runner --packages .alpackages ./src        Run with dependencies");
     Console.Error.WriteLine("  al-runner --output-json ./src ./test          Get JSON results for tooling");
+    Console.Error.WriteLine("  al-runner --output-junit results.xml ./src ./test  Write JUnit XML report");
     Console.Error.WriteLine("  al-runner --run TestMyThing ./src ./test      Run a single test procedure");
     Console.Error.WriteLine("  al-runner --server                            Start JSON-RPC daemon");
     Console.Error.WriteLine("  al-runner --generate-stubs .alpackages ./stubs ./src ./test");
@@ -146,6 +148,12 @@ while (argIdx < args.Length)
             break;
         case "--output-json":
             options.OutputJson = true;
+            argIdx++;
+            break;
+        case "--output-junit":
+            argIdx++;
+            if (argIdx >= args.Length) { Console.Error.WriteLine("Error: --output-junit requires a file path argument"); return 1; }
+            options.OutputJunitPath = args[argIdx];
             argIdx++;
             break;
         case "--capture-values":
@@ -449,6 +457,7 @@ al-runner --packages .alpackages --stubs ./stubs ./src ./test  # with stubs
 al-runner -v ./src ./test                                 # verbose output
 al-runner --dump-rewritten ./src ./test                   # inspect generated C#
 al-runner --output-json ./src ./test                      # machine-readable JSON output
+al-runner --output-junit results.xml ./src ./test         # JUnit XML report for CI
 al-runner --run TestMyProcedure ./src ./test              # run a single test by name
 al-runner --capture-values ./src ./test                   # capture variable values after each test
 al-runner --iteration-tracking ./src ./test                   # track loop iterations
@@ -476,6 +485,26 @@ al-runner into editors, CI systems, or other tooling.
 excluded from the Roslyn compilation, each with the C# errors that caused
 exclusion. Tests that call into excluded types produce `status: "error"`.
 The `errors` count includes these tests. The `failed` count does not.
+
+### JUnit XML output (--output-junit <path>)
+
+Writes a standard JUnit XML file alongside normal console output:
+
+```
+al-runner --output-junit results.xml --packages .alpackages ./src ./test
+```
+
+GitHub Actions, Azure DevOps, and GitLab CI natively render JUnit XML as test
+annotations, summaries, and trend graphs. Combined with `--coverage` (Cobertura),
+this completes the CI integration story:
+- Cobertura → coverage tab (via `--coverage`)
+- JUnit → test results tab (via `--output-junit`)
+
+**Element mapping:**
+- `<failure>` — real assertion failure (a bug in your AL code).
+- `<error>` — runner limitation or configuration gap (not a code bug).
+- Tests are grouped by codeunit name as `<testsuite>` elements.
+- Time values are in seconds.
 
 ### Server mode (--server)
 
@@ -1904,6 +1933,9 @@ public static class Executor
 
         foreach (var (testName, scopeType, parentType) in testScopes)
         {
+            // Resolve the AL codeunit name for grouping in JUnit output
+            var codeunitName = AlRunner.SourceFileMapper.GetObjectForClass(parentType.Name);
+
             // Reset in-memory state before each test
             AlRunner.Runtime.MockRecordHandle.ResetAll();
             AlRunner.Runtime.MockIsolatedStorage.ResetAll();
@@ -1969,7 +2001,8 @@ public static class Executor
                     {
                         Name = testName,
                         Status = AlRunner.TestStatus.Fail,
-                        Message = $"OnRun() method not found on {scopeType.Name}"
+                        Message = $"OnRun() method not found on {scopeType.Name}",
+                        CodeunitName = codeunitName
                     });
                     continue;
                 }
@@ -1986,7 +2019,8 @@ public static class Executor
                 {
                     Name = testName,
                     Status = AlRunner.TestStatus.Pass,
-                    DurationMs = sw.ElapsedMilliseconds
+                    DurationMs = sw.ElapsedMilliseconds,
+                    CodeunitName = codeunitName
                 });
             }
             catch (TargetInvocationException ex)
@@ -2004,7 +2038,8 @@ public static class Executor
                         Message = $"{inner!.GetType().Name}: {inner.Message}",
                         StackTrace = FormatStackFrames(inner),
                         AlSourceLine = FindAlSourceLine(inner),
-                        AlSourceColumn = FindAlSourceColumn(inner)
+                        AlSourceColumn = FindAlSourceColumn(inner),
+                        CodeunitName = codeunitName
                     });
                 }
                 else if (IsRunnerError(inner!))
@@ -2017,7 +2052,8 @@ public static class Executor
                         StackTrace = FormatStackFrames(inner),
                         AlSourceLine = FindAlSourceLine(inner),
                         AlSourceColumn = FindAlSourceColumn(inner),
-                        IsRunnerBug = true
+                        IsRunnerBug = true,
+                        CodeunitName = codeunitName
                     });
                 }
                 else
@@ -2029,7 +2065,8 @@ public static class Executor
                         Message = inner!.Message,
                         StackTrace = FormatStackFrames(inner),
                         AlSourceLine = FindAlSourceLine(inner),
-                        AlSourceColumn = FindAlSourceColumn(inner)
+                        AlSourceColumn = FindAlSourceColumn(inner),
+                        CodeunitName = codeunitName
                     });
                 }
             }
@@ -2042,7 +2079,8 @@ public static class Executor
                     Message = $"{ex.GetType().Name}: {ex.Message}",
                     StackTrace = FormatStackFrames(ex),
                     AlSourceLine = FindAlSourceLine(ex),
-                    AlSourceColumn = FindAlSourceColumn(ex)
+                    AlSourceColumn = FindAlSourceColumn(ex),
+                    CodeunitName = codeunitName
                 });
             }
             catch (Exception ex)
@@ -2057,7 +2095,8 @@ public static class Executor
                         StackTrace = FormatStackFrames(ex),
                         AlSourceLine = FindAlSourceLine(ex),
                         AlSourceColumn = FindAlSourceColumn(ex),
-                        IsRunnerBug = true
+                        IsRunnerBug = true,
+                        CodeunitName = codeunitName
                     });
                 }
                 else
@@ -2069,7 +2108,8 @@ public static class Executor
                         Message = ex.Message,
                         StackTrace = FormatStackFrames(ex),
                         AlSourceLine = FindAlSourceLine(ex),
-                        AlSourceColumn = FindAlSourceColumn(ex)
+                        AlSourceColumn = FindAlSourceColumn(ex),
+                        CodeunitName = codeunitName
                     });
                 }
             }
@@ -2079,8 +2119,29 @@ public static class Executor
     }
 
     /// <summary>Print human-readable test results to console.</summary>
-    public static void PrintResults(List<AlRunner.TestResult> results, long? totalMs = null)
+    public static void PrintResults(List<AlRunner.TestResult> results, long? totalMs = null, bool verbose = false)
     {
+        // Deduplicate repeated error messages: show each unique message once as a WARN block,
+        // then print compact "ERROR TestName (blocked)" lines for affected tests.
+        // Only active in non-verbose mode; verbose falls back to full per-test detail.
+        var dedupMessages = new HashSet<string>();
+        if (!verbose)
+        {
+            var errorMessageCounts = results
+                .Where(r => r.Status == AlRunner.TestStatus.Error && r.Message != null)
+                .GroupBy(r => r.Message!)
+                .Where(g => g.Count() >= 2)
+                .ToDictionary(g => g.Key, g => g.Count());
+
+            foreach (var (msg, count) in errorMessageCounts)
+            {
+                dedupMessages.Add(msg);
+                Console.WriteLine($"WARN  {msg}");
+                Console.WriteLine($"      ({count} tests blocked — use -v for per-test details)");
+                Console.WriteLine();
+            }
+        }
+
         foreach (var r in results)
         {
             switch (r.Status)
@@ -2094,13 +2155,20 @@ public static class Executor
                     if (r.StackTrace != null) Console.Write(r.StackTrace);
                     break;
                 case AlRunner.TestStatus.Error:
-                    Console.WriteLine($"ERROR {r.Name}");
-                    if (r.Message != null) Console.WriteLine($"      {r.Message}");
-                    if (r.IsRunnerBug)
-                        Console.WriteLine($"      ⚑ Runner limitation — update al-runner or file an issue at https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues");
+                    if (!verbose && r.Message != null && dedupMessages.Contains(r.Message))
+                    {
+                        Console.WriteLine($"ERROR {r.Name} (blocked)");
+                    }
                     else
-                        Console.WriteLine($"      Inject this dependency via an AL interface.");
-                    if (r.StackTrace != null) Console.Write(r.StackTrace);
+                    {
+                        Console.WriteLine($"ERROR {r.Name}");
+                        if (r.Message != null) Console.WriteLine($"      {r.Message}");
+                        if (r.IsRunnerBug)
+                            Console.WriteLine($"      ⚑ Runner limitation — update al-runner or file an issue at https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues");
+                        else
+                            Console.WriteLine($"      Inject this dependency via an AL interface.");
+                        if (r.StackTrace != null) Console.Write(r.StackTrace);
+                    }
                     break;
             }
         }

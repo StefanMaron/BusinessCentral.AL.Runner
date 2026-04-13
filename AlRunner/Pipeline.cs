@@ -21,6 +21,8 @@ public class PipelineOptions
     public bool IterationTracking { get; set; }
     /// <summary>Run only this specific procedure by name (e.g. "TestCalculateVAT").</summary>
     public string? RunProcedure { get; set; }
+    /// <summary>If set, write a JUnit XML test report to this path after test execution.</summary>
+    public string? OutputJunitPath { get; set; }
 }
 
 public enum TestStatus { Pass, Fail, Error }
@@ -44,6 +46,11 @@ public class TestResult
     /// limitation or bug), not from user AL logic or a missing dependency injection.
     /// </summary>
     public bool IsRunnerBug { get; init; }
+    /// <summary>
+    /// The AL codeunit name that contains this test method. Used for grouping
+    /// tests by suite in JUnit XML output.
+    /// </summary>
+    public string? CodeunitName { get; init; }
 }
 
 public class CapturedValue
@@ -141,6 +148,11 @@ public class AlRunnerPipeline
         {
             Dictionary<string, List<string>>? compilationErrors = null; // file exclusion removed in #80
             stdoutStr = SerializeJsonOutput(testResults, exitCode, capturedValues: capturedValues, messages: messages, iterations: iterationLoops, compilationErrors: compilationErrors, scopeToObject: _scopeToObject);
+        }
+
+        if (options.OutputJunitPath != null && testResults.Count > 0)
+        {
+            JUnitReport.WriteJUnit(options.OutputJunitPath, testResults);
         }
 
         return new PipelineResult
@@ -562,7 +574,7 @@ public class AlRunnerPipeline
             if (results.Count == 0 && options.RunProcedure != null)
                 stderr.WriteLine($"Error: Procedure '{options.RunProcedure}' not found in the generated code.");
             if (!options.OutputJson)
-                Executor.PrintResults(results, runSw.ElapsedMilliseconds);
+                Executor.PrintResults(results, runSw.ElapsedMilliseconds, options.Verbose);
             exitCode = Executor.ExitCode(results);
 
             if (options.CaptureValues)
