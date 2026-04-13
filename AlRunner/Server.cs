@@ -169,6 +169,15 @@ public class AlRunnerServer
 
     private static string SerializeServerResponse(List<TestResult> tests, int exitCode, bool cached, List<string>? changedFiles = null)
     {
+        var excludedFiles = RoslynCompiler.ExcludedFiles;
+        object? compilationErrorsObj = excludedFiles.Count > 0
+            ? excludedFiles.Select(kvp => new
+            {
+                file = System.IO.Path.GetFileName(kvp.Key),
+                errors = kvp.Value
+            })
+            : null;
+
         var output = new
         {
             tests = tests.Select(t => new
@@ -184,6 +193,7 @@ public class AlRunnerServer
             errors = tests.Count(t => t.Status == TestStatus.Error),
             total = tests.Count,
             exitCode,
+            compilationErrors = compilationErrorsObj,
             cached,
             // Only emit changedFiles on cache miss — cache hits have no diff.
             changedFiles = cached ? null : changedFiles

@@ -110,7 +110,7 @@ public class MockCodeunitHandle
         {
             var exclusionInfo = RoslynCompiler.GetExclusionInfo($"Codeunit{_codeunitId}");
             if (exclusionInfo != null)
-                throw new InvalidOperationException(
+                throw new CompilationExcludedException(
                     $"Codeunit {_codeunitId} was excluded during compilation.\n{exclusionInfo}");
             throw new InvalidOperationException($"Codeunit {_codeunitId} not found in assembly");
         }
@@ -281,7 +281,7 @@ public class MockCodeunitHandle
         {
             var exclusionInfo = RoslynCompiler.GetExclusionInfo($"Codeunit{codeunitId}");
             if (exclusionInfo != null)
-                throw new InvalidOperationException(
+                throw new CompilationExcludedException(
                     $"Codeunit {codeunitId} was excluded during compilation.\n{exclusionInfo}");
             throw new InvalidOperationException($"Codeunit {codeunitId} not found in assembly");
         }

@@ -22,6 +22,14 @@ All notable changes to this project are documented here. Format based on
   (`NavBoolean`, `NavInteger`, `NavBigInteger`, `NavDecimal`, `NavDate`,
   `NavDateTime`, `NavGuid`) that appear when values come from record fields
   rather than AL literals. Tested by `tests/84-variant-to-record/` (8 test cases).
+- **`--output-json` now distinguishes compilation errors from test failures** —
+  Tests that could not run because a dependency was excluded from Roslyn
+  compilation (e.g. XmlPorts, unsupported BC object types) now receive
+  `"status": "error"` instead of `"status": "fail"` in the JSON output.
+  The top-level `"errors"` field correctly counts these, while `"failed"` is
+  reserved for genuine assertion failures. A new top-level `"compilationErrors"`
+  array lists each excluded file alongside its Roslyn diagnostics, so callers
+  know exactly which objects couldn't be compiled. Resolves [#67](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/67).
 
 ## [1.0.9] — 2026-04-13
 
