@@ -50,48 +50,101 @@ public static class TelemetryReporter
     }
 
     /// <summary>
-    /// After a test run, prompts the user to report any runner-originated errors
-    /// (IsRunnerBug = true). Groups duplicates, shows a single prompt, then sends.
-    /// Safe to call in all contexts — skips silently when non-interactive or noTelemetry is set.
+    /// After a test run, collects ALL pipeline gaps — Roslyn compilation exclusions
+    /// (rewriter misses) and runtime runner-bug errors — shows a single combined prompt,
+    /// and sends everything in one batch if the user consents.
+    ///
+    /// Compilation gaps: files excluded during iterative Roslyn retry because the
+    /// BC-generated C# couldn't compile, indicating the rewriter doesn't handle some
+    /// AL pattern yet.
+    ///
+    /// Runtime gaps: tests that ended with TestStatus.Error + IsRunnerBug = true,
+    /// indicating a missing mock or dispatch path in AlRunner.Runtime.
+    ///
+    /// Safe to call in all contexts — skips silently when non-interactive or noTelemetry.
     /// </summary>
-    public static async Task TryReportTestErrorsAsync(
-        List<TestResult> tests, bool outputJson, bool noTelemetry)
+    public static async Task TryReportPipelineGapsAsync(
+        List<TestResult> tests,
+        Dictionary<string, List<string>> compilationGaps,
+        bool outputJson,
+        bool noTelemetry)
     {
         if (noTelemetry) return;
         if (!CanPromptUser(outputJson)) return;
 
-        var runnerErrors = tests
+        var runtimeErrors = tests
             .Where(t => t.Status == TestStatus.Error && t.IsRunnerBug)
             .ToList();
-        if (runnerErrors.Count == 0) return;
 
-        var grouped = runnerErrors
+        var compGapCount = compilationGaps.Count;
+
+        if (runtimeErrors.Count == 0 && compGapCount == 0) return;
+
+        var runtimeGrouped = runtimeErrors
             .GroupBy(t => t.Message ?? "")
             .Select(g => (Message: g.Key, Count: g.Count(), Sample: g.First()))
             .ToList();
 
         Console.Error.WriteLine();
         Console.Error.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        Console.Error.WriteLine($"  {runnerErrors.Count} runner limitation(s) encountered — report them?");
-        Console.Error.WriteLine("  Reporting helps improve al-runner support for more AL patterns.");
+        Console.Error.WriteLine("  Runner limitations encountered — report them?");
+        Console.Error.WriteLine("  Reporting helps improve al-runner support proactively.");
         Console.Error.WriteLine();
         Console.Error.WriteLine("  What will be sent (no AL source code, no file paths):");
-        foreach (var (msg, count, _) in grouped.Take(3))
-            Console.Error.WriteLine($"    × {ScrubMessage(msg)}{(count > 1 ? $" ({count}×)" : "")}");
-        if (grouped.Count > 3)
-            Console.Error.WriteLine($"    … and {grouped.Count - 3} more unique error(s)");
+
+        if (compGapCount > 0)
+        {
+            Console.Error.WriteLine($"  Compilation ({compGapCount} file(s) excluded — rewriter gaps):");
+            foreach (var (file, errors) in compilationGaps.Take(3))
+            {
+                var shortName = Path.GetFileNameWithoutExtension(file);
+                var firstErr = errors.Count > 0 ? ScrubMessage(errors[0]) : "unknown error";
+                Console.Error.WriteLine($"    × {shortName}: {firstErr}");
+            }
+            if (compGapCount > 3)
+                Console.Error.WriteLine($"    … and {compGapCount - 3} more file(s)");
+        }
+
+        if (runtimeErrors.Count > 0)
+        {
+            Console.Error.WriteLine($"  Runtime ({runtimeErrors.Count} test(s) — missing mock/dispatch):");
+            foreach (var (msg, count, _) in runtimeGrouped.Take(3))
+                Console.Error.WriteLine($"    × {ScrubMessage(msg)}{(count > 1 ? $" ({count}×)" : "")}");
+            if (runtimeGrouped.Count > 3)
+                Console.Error.WriteLine($"    … and {runtimeGrouped.Count - 3} more unique error(s)");
+        }
+
         Console.Error.WriteLine($"    Version : {GetVersionString()}  OS: {GetOsString()}");
         Console.Error.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
         if (!PromptYesNoWithTimeout($"Send error report? [y/N] (auto-no in {PromptTimeoutSeconds}s): "))
             return;
 
-        foreach (var error in runnerErrors)
+        // Send compilation gaps as a batch event
+        if (compGapCount > 0)
         {
-            var report = BuildTestErrorReport(error);
+            var gapMessages = compilationGaps
+                .SelectMany(kv => kv.Value.Select(err => $"{Path.GetFileNameWithoutExtension(kv.Key)}: {err}"))
+                .Take(20)
+                .ToList();
+            var compReport = new TelemetryReport(
+                ExceptionType: "AlRunner.CompilationGap",
+                ScrubbedMessage: ScrubMessage($"{compGapCount} file(s) excluded: " + string.Join("; ", gapMessages.Take(3))),
+                StackText: string.Join("\n", gapMessages),
+                FrameCount: gapMessages.Count,
+                RunnerVersion: GetVersionString(),
+                Os: GetOsString());
+            await SendAsync(compReport);
+        }
+
+        // Send each unique runtime error (deduplicated by message)
+        foreach (var (_, _, sample) in runtimeGrouped)
+        {
+            var report = BuildTestErrorReport(sample);
             if (report != null)
                 await SendAsync(report);
         }
+
         Console.Error.WriteLine("  ✓ Error report sent. Thank you!");
     }
 
@@ -164,7 +217,7 @@ public static class TelemetryReporter
             .ToList() ?? new List<string>();
 
         return new TelemetryReport(
-            ExceptionType: "System.InvalidOperationException",
+            ExceptionType: "AlRunner.RuntimeGap",
             ScrubbedMessage: ScrubMessage(result.Message ?? ""),
             StackText: string.Join("\n", frames),
             FrameCount: frames.Count,

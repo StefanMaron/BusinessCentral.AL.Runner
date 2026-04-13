@@ -209,8 +209,12 @@ if (!string.IsNullOrEmpty(result.StdOut))
 if (!string.IsNullOrEmpty(result.StdErr))
     Console.Error.Write(result.StdErr);
 
-// Report runner-originated errors via telemetry (interactive only, with timeout)
-await AlRunner.TelemetryReporter.TryReportTestErrorsAsync(result.Tests, options.OutputJson, noTelemetry);
+// Print compilation gap warnings after test output so they're visible
+Executor.PrintCompilationGaps(RoslynCompiler.ExcludedFiles);
+
+// Report all pipeline gaps (compilation exclusions + runtime errors) via telemetry
+await AlRunner.TelemetryReporter.TryReportPipelineGapsAsync(
+    result.Tests, RoslynCompiler.ExcludedFiles, options.OutputJson, noTelemetry);
 
 return result.ExitCode;
 
@@ -2124,6 +2128,29 @@ public static class Executor
         if (results.Count == 0) return 1;
         var failedOrError = results.Count(r => r.Status != AlRunner.TestStatus.Pass);
         return failedOrError > 0 ? 1 : 0;
+    }
+
+    /// <summary>
+    /// Prints a visible warning block for any AL source files that were excluded
+    /// from Roslyn compilation due to rewriter gaps. Called after test output so
+    /// the user sees the reason behind any "not found in assembly" errors above.
+    /// </summary>
+    public static void PrintCompilationGaps(Dictionary<string, List<string>> excludedFiles)
+    {
+        if (excludedFiles.Count == 0) return;
+
+        Console.WriteLine();
+        Console.WriteLine($"WARN  {excludedFiles.Count} source file(s) excluded from compilation (rewriter gap):");
+        foreach (var (file, errors) in excludedFiles.Take(5))
+        {
+            var shortName = Path.GetFileNameWithoutExtension(file);
+            foreach (var err in errors.Take(2))
+                Console.WriteLine($"      {shortName}: {err}");
+        }
+        if (excludedFiles.Count > 5)
+            Console.WriteLine($"      … and {excludedFiles.Count - 5} more. Run with -v for the full list.");
+        Console.WriteLine($"      ⚑ Runner limitation — these may cause ERROR results above.");
+        Console.WriteLine($"        File an issue: https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues");
     }
 
     private static void CaptureFieldValues(object scope, Type scopeType, string testName)
