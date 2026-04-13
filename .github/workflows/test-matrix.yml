@@ -51,7 +51,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: |
+            8.0.x
+            9.0.x
 
       - name: Build (auto-downloads BC ${{ matrix.bc-version }} DLLs)
         run: |
@@ -59,10 +61,13 @@ jobs:
           # Tell the runtime where the MSBuild target cached the DLLs
           echo "BC_SERVICE_TIER_PATH=${HOME}/.local/share/al-runner/artifacts/${{ matrix.bc-version }}" >> "$GITHUB_ENV"
 
-      - name: Run C# tests
-        run: dotnet test AlRunner.Tests/AlRunner.Tests.csproj --no-build --verbosity minimal
+      - name: Run C# tests (net8.0)
+        run: dotnet test AlRunner.Tests/AlRunner.Tests.csproj --no-build --framework net8.0 --verbosity minimal
 
-      - name: Run all AL tests
+      - name: Run C# tests (net9.0)
+        run: dotnet test AlRunner.Tests/AlRunner.Tests.csproj --no-build --framework net9.0 --verbosity minimal
+
+      - name: Run all AL tests (net8.0)
         run: |
           # Run each test case individually so duplicate object IDs across test suites
           # don't cause false compilation failures.
@@ -74,15 +79,29 @@ jobs:
             echo "--- $s ---"
             # Exit 0 = all pass, Exit 2 = runner limitation (expected for some suites)
             # Exit 1 = real test failure, Exit 3 = AL compile error — both block CI
-            dotnet run --no-build --project AlRunner -- "tests/$s/src" "tests/$s/test" || {
+            dotnet run --no-build --project AlRunner --framework net8.0 -- "tests/$s/src" "tests/$s/test" || {
               exit_code=$?
               [ $exit_code -eq 2 ] || exit $exit_code
             }
           done
 
-      - name: Run stubs test
+      - name: Run all AL tests (net9.0)
         run: |
-          dotnet run --no-build --project AlRunner -- --stubs tests/39-stubs/stubs tests/39-stubs/src tests/39-stubs/test
+          for s in $(ls -d tests/*/src | sed 's|tests/||;s|/src||' | grep -v '06-' | grep -v '39-' | grep -v '46-' | sort); do
+            echo "--- $s ---"
+            dotnet run --no-build --project AlRunner --framework net9.0 -- "tests/$s/src" "tests/$s/test" || {
+              exit_code=$?
+              [ $exit_code -eq 2 ] || exit $exit_code
+            }
+          done
+
+      - name: Run stubs test (net8.0)
+        run: |
+          dotnet run --no-build --project AlRunner --framework net8.0 -- --stubs tests/39-stubs/stubs tests/39-stubs/src tests/39-stubs/test
+
+      - name: Run stubs test (net9.0)
+        run: |
+          dotnet run --no-build --project AlRunner --framework net9.0 -- --stubs tests/39-stubs/stubs tests/39-stubs/src tests/39-stubs/test
 
   all-tests:
     name: All BC versions passed
