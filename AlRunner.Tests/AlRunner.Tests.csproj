@@ -25,7 +25,7 @@
   <PropertyGroup>
     <_AlRunnerOut>$(MSBuildProjectDirectory)/../AlRunner/bin/$(Configuration)/$(TargetFramework)</_AlRunnerOut>
   </PropertyGroup>
-  <Target Name="CopyBCDlls" AfterTargets="Build">
+  <Target Name="CopyBCDlls" AfterTargets="Build" Condition="'$(TargetFramework)' != ''">
     <ItemGroup>
       <BCDlls Include="$(_AlRunnerOut)/Microsoft.Dynamics.Nav.CodeAnalysis*.dll" />
       <BCDlls Include="$(_AlRunnerOut)/Microsoft.CodeAnalysis*.dll" />
