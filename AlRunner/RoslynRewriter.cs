@@ -786,6 +786,15 @@ protected bool CallGetFormatExtensionMethod(int fieldNo, ref string result) { re
         if (text == "NavTestPageHandle")
             return node.WithIdentifier(SyntaxFactory.Identifier("MockTestPageHandle"));
 
+        // NavXmlPortHandle -> MockXmlPortHandle
+        // BC emits `XmlPort "X"` AL variables as `NavXmlPortHandle xP` fields with
+        // `new NavXmlPortHandle(this, xmlPortId)` initializers. The real ctor wants
+        // ITreeObject which standalone mode lacks.  After the existing .Target-stripping
+        // rewrite, members like Source, Destination, Import(), Export() are called
+        // directly on the handle — MockXmlPortHandle satisfies those.
+        if (text == "NavXmlPortHandle")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockXmlPortHandle"));
+
         // NavRecordRef -> MockRecordRef
         // NavRecordRef's real ctor wants ITreeObject; MockRecordRef has a
         // parameterless ctor and stub methods so the AL declaration compiles.
@@ -995,6 +1004,23 @@ protected bool CallGetFormatExtensionMethod(int fieldNo, ref string result) { re
         // new MockTestPageHandle(this, pageId) -> new MockTestPageHandle(pageId)
         // Same pattern as MockFormHandle: strip ITreeObject 'this', keep page ID.
         if (typeText == "MockTestPageHandle" && visited.ArgumentList != null)
+        {
+            if (visited.ArgumentList.Arguments.Count == 2)
+            {
+                return visited.WithArgumentList(
+                    SyntaxFactory.ArgumentList(
+                        SyntaxFactory.SingletonSeparatedList(visited.ArgumentList.Arguments[1])));
+            }
+            if (visited.ArgumentList.Arguments.Count == 1)
+            {
+                return visited.WithArgumentList(SyntaxFactory.ArgumentList());
+            }
+        }
+
+        // new MockXmlPortHandle(this, xmlPortId) -> new MockXmlPortHandle(xmlPortId)
+        // BC emits `new NavXmlPortHandle(this, id)` in scope-class field initializers.
+        // Strip ITreeObject 'this', keep the XmlPort ID so the mock knows which port it is.
+        if (typeText == "MockXmlPortHandle" && visited.ArgumentList != null)
         {
             if (visited.ArgumentList.Arguments.Count == 2)
             {
@@ -1407,6 +1433,41 @@ protected bool CallGetFormatExtensionMethod(int fieldNo, ref string result) { re
             // NavCodeunit.RunCodeunit(DataError, id, record) -> MockCodeunitHandle.RunCodeunit(errorLevel, id)
             // NavCodeunit.RunCodeunit is a static dispatch method requiring NavSession
             if (exprText == "NavCodeunit" && methodName == "RunCodeunit")
+            {
+                var args = visited.ArgumentList.Arguments;
+                if (args.Count >= 2)
+                {
+                    // First argument is DataError (TrapError or ThrowError)
+                    var errorLevelArg = args[0].Expression;
+                    // The second argument is the codeunit ID
+                    var codeunitIdArg = args[1].Expression;
+                    return SyntaxFactory.InvocationExpression(
+                        SyntaxFactory.MemberAccessExpression(
+                            SyntaxKind.SimpleMemberAccessExpression,
+                            SyntaxFactory.IdentifierName("MockCodeunitHandle"),
+                            SyntaxFactory.IdentifierName("RunCodeunit")),
+                        SyntaxFactory.ArgumentList(
+                            SyntaxFactory.SeparatedList<ArgumentSyntax>(new[] {
+                                SyntaxFactory.Argument(errorLevelArg),
+                                SyntaxFactory.Argument(codeunitIdArg)
+                            })));
+                }
+            }
+
+            // NavXmlPort.Import(DataError, xmlPortId, stream [, rec]) -> MockXmlPortHandle.StaticImport(...)
+            // NavXmlPort.Export(DataError, xmlPortId, stream [, rec]) -> MockXmlPortHandle.StaticExport(...)
+            // BC emits these static calls for the short form: XmlPort.Import(XmlPort::"X", InStr).
+            // NavXmlPort requires the service tier; forward to stub that throws NotSupportedException.
+            if (exprText == "NavXmlPort" && (methodName == "Import" || methodName == "Export"))
+            {
+                var stubMethod = methodName == "Import" ? "StaticImport" : "StaticExport";
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("MockXmlPortHandle"),
+                        SyntaxFactory.IdentifierName(stubMethod)),
+                    visited.ArgumentList);
+            }
             {
                 var args = visited.ArgumentList.Arguments;
                 if (args.Count >= 2)

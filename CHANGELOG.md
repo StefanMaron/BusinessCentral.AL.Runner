@@ -4,6 +4,19 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.11] — 2026-04-13
+
+### Added
+- **XmlPort stub (`MockXmlPortHandle`)** — Codeunits that declare `XmlPort "X"` variables
+  now compile and run in al-runner. `NavXmlPortHandle` is rewritten to `MockXmlPortHandle`,
+  which exposes `Source`/`Destination` stream properties and satisfies `Import`/`Export`
+  instance method calls from the BC compiler output. The static `XmlPort.Import(portId, stream)`
+  / `XmlPort.Export(portId, stream)` forms (emitted as `NavXmlPort.Import/Export`) are
+  redirected to `MockXmlPortHandle.StaticImport/StaticExport`. All import/export methods
+  throw `NotSupportedException` at runtime with a clear message directing the developer to
+  inject the XmlPort dependency via an AL interface. `Invoke()` returns null.
+  Tested by `tests/84-xmlport/` (6 test cases).
+
 ## [1.0.10] — 2026-04-13
 
 ### Fixed

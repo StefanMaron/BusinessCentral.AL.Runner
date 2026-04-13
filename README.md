@@ -95,7 +95,8 @@ The codeunit's direct logic is correct. Note: if the test implicitly depends on 
 Known gaps for real-world use:
 
 1. **Implicit event publishers on DB operations** — `OnAfterModify`, `OnAfterInsert`, etc. do NOT fire. Tests that depend on event subscribers will produce silent false positives (see test 05).
-2. **TestPage (partial)** — field access, lifecycle (`OpenEdit`/`Close`), actions (`OK`/`Cancel`), navigation (`First()`, `GoToKey()`, `Filter.SetFilter()`), and `[ConfirmHandler]`/`[MessageHandler]`/`[ModalPageHandler]` work. Report, XMLPort, and non-test page rendering are not supported.
+2. **TestPage (partial)** — field access, lifecycle (`OpenEdit`/`Close`), actions (`OK`/`Cancel`), navigation (`First()`, `GoToKey()`, `Filter.SetFilter()`), and `[ConfirmHandler]`/`[MessageHandler]`/`[ModalPageHandler]` work. Report and non-test page rendering are not supported.
+3. **XmlPort (partial)** — `XmlPort "X"` variables compile via `MockXmlPortHandle`. Accessing `XmlPortId` and `GetStatus()` style logic works. `Import()`/`Export()` (both instance and static `XmlPort.Import(portId, stream)`) throw `NotSupportedException` at runtime — XmlPort I/O requires the BC service tier. Inject via AL interface to make it testable.
 3. **HTTP** — not supported. Inject via AL interface.
 4. **Filter groups** (FilterGroup) — not tracked.
 5. **ALGetFilter** — returns empty string even when filters are active.

@@ -280,7 +280,7 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 4. Mark each test procedure with `[Test]`
 5. Tests must be self-contained: insert test data, call logic, assert results
 6. Use `asserterror` + `Assert.ExpectedError` for error path testing
-7. For external dependencies (mail, HTTP, pages), define an AL interface and
+7. For external dependencies (mail, HTTP, pages, XmlPort I/O), define an AL interface and
    inject a mock implementation in the test
 
 ### Handling unsupported dependencies
