@@ -68,13 +68,15 @@ All notable changes to this project are documented here. Format based on
   results on repeated identical requests.
 
 ### Fixed
-- **`Insert()` now enforces primary-key uniqueness for all tables** — Previously,
+- **`Insert()` now enforces primary-key uniqueness for more tables** — Previously,
   PK uniqueness was only checked when the table's key declaration had been parsed from
   AL source by `TableFieldRegistry`. Tables without an explicit `keys {}` block, or
   tables loaded from external `.app` symbol packages, skipped the check entirely,
   allowing silent duplicate inserts that would have errored in real BC. Now `ALInsert`
-  always falls back to field 1 as the implicit PK (matching BC's own default) when no
-  key is registered, so duplicate inserts are caught in all cases.
+  falls back to field 1 as the implicit PK when no key is registered, restoring
+  duplicate detection for tables without a declared key. Note: for symbol-only tables
+  whose actual PK is composite or does not include field 1, behavior may still differ
+  from real BC.
   Tested by `tests/86-pk-insert-fallback/`. Fixes [#78](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/78).
 - **`Dialog` variable type now compiles and runs** — AL codeunits that declare a
   `Dialog` variable and call `Open`, `Update`, and `Close` on it previously failed

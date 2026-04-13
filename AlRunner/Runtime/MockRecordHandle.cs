@@ -1570,7 +1570,7 @@ public class MockRecordHandle
         {
             var rowVal = row.TryGetValue(fieldNo, out var rv) ? NavValueToString(rv) : "";
             var curVal = current.TryGetValue(fieldNo, out var cv) ? NavValueToString(cv) : "";
-            if (rowVal != curVal) return false;
+            if (!PkValuesEqual(rowVal, curVal)) return false;
         }
         return true;
     }
