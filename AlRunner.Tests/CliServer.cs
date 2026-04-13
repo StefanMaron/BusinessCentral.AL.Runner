@@ -22,12 +22,20 @@ public class CliServer : IAsyncDisposable
 
     public int ExitCode => _process.ExitCode;
 
+    // Derive the current TFM moniker (e.g. "net8.0" or "net9.0") from the running CLR version
+    // so that dotnet run targets the same framework that is executing the test.
+    private static string CurrentFramework()
+    {
+        var v = System.Environment.Version;
+        return $"net{v.Major}.{v.Minor}";
+    }
+
     public static async Task<CliServer> StartAsync()
     {
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet",
-            Arguments = $"run --no-build --project \"{ProjectPath}\" -- --server",
+            Arguments = $"run --no-build --framework {CurrentFramework()} --project \"{ProjectPath}\" -- --server",
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,

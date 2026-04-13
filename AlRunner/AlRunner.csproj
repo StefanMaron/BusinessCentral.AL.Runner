@@ -117,17 +117,19 @@
     </Reference>
   </ItemGroup>
 
-  <!-- Auto-download AL compiler if not present -->
+  <!-- Auto-download AL compiler if not present.
+       Restricted to net8.0 to avoid parallel download conflicts when both inner builds run simultaneously. -->
   <Target Name="EnsureALCompiler" BeforeTargets="ResolveAssemblyReferences"
-          Condition="!Exists('$(ALCompilerPath)/Microsoft.Dynamics.Nav.CodeAnalysis.dll')">
+          Condition="'$(TargetFramework)' == 'net8.0' AND !Exists('$(ALCompilerPath)/Microsoft.Dynamics.Nav.CodeAnalysis.dll')">
     <Message Importance="high" Text="AL compiler not found. Downloading from NuGet..." />
     <Exec Command="dotnet run --project &quot;$(MSBuildProjectDirectory)/../tools/DownloadArtifacts&quot; -- al-compiler $(_ALToolVersion) &quot;$(ALCompilerPath)&quot;" />
   </Target>
 
-  <!-- Auto-download BC Service Tier DLLs if not present -->
+  <!-- Auto-download BC Service Tier DLLs if not present.
+       Restricted to net8.0 to avoid parallel download conflicts when both inner builds run simultaneously. -->
   <Target Name="EnsureBCServiceTierDlls" BeforeTargets="ResolveAssemblyReferences"
           DependsOnTargets="EnsureALCompiler"
-          Condition="!Exists('$(ServiceTierPath)/Microsoft.Dynamics.Nav.Types.dll')">
+          Condition="'$(TargetFramework)' == 'net8.0' AND !Exists('$(ServiceTierPath)/Microsoft.Dynamics.Nav.Types.dll')">
     <Message Importance="high" Text="BC Service Tier DLLs not found. Downloading via range request..." />
     <Exec Command="dotnet run --project &quot;$(MSBuildProjectDirectory)/../tools/DownloadArtifacts&quot; -- service-tier $(_BCVersion) &quot;$(ServiceTierPath)&quot;" />
   </Target>
