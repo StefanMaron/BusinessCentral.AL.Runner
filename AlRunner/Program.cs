@@ -35,7 +35,7 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("  --dump-rewritten      Print rewritten C# (after rewriting) and exit");
     Console.Error.WriteLine("  -e '<al code>'        Run inline AL code");
     Console.Error.WriteLine("  -v, --verbose         Show detailed transpilation and compilation output");
-    Console.Error.WriteLine("  --output-json         Output results as machine-readable JSON");
+    Console.Error.WriteLine("  --output-json         Output results as machine-readable JSON (status: pass/fail/error)");
     Console.Error.WriteLine("  --capture-values      Capture variable values after each test for inline display");
     Console.Error.WriteLine("  --iteration-tracking  Track per-iteration data for loops (requires --output-json)");
     Console.Error.WriteLine("  --run <procedure>     Run only the specified procedure by name");
@@ -456,6 +456,18 @@ Produces a JSON object with per-test results including `name`, `status`
 (AL source line where an error occurred). Also includes summary counts:
 `passed`, `failed`, `errors`, `total`, `exitCode`. Suitable for integrating
 al-runner into editors, CI systems, or other tooling.
+
+**Status values:**
+- `"pass"` — test ran and all assertions passed.
+- `"fail"` — test ran and an assertion failed (real bug in your AL code).
+- `"error"` — test could not run due to a tooling/configuration issue (e.g., a
+  dependency codeunit was excluded from compilation, or an unsupported feature
+  was encountered). This is NOT a test failure; fix the configuration or add stubs.
+
+**`compilationErrors` field** (when present): a list of source files that were
+excluded from the Roslyn compilation, each with the C# errors that caused
+exclusion. Tests that call into excluded types produce `status: "error"`.
+The `errors` count includes these tests. The `failed` count does not.
 
 ### Server mode (--server)
 
@@ -2077,7 +2089,7 @@ public static class Executor
                 while (inner is TargetInvocationException tie && tie.InnerException != null)
                     inner = tie.InnerException;
 
-                if (inner is NotSupportedException)
+                if (inner is NotSupportedException or AlRunner.Runtime.CompilationExcludedException)
                 {
                     results.Add(new AlRunner.TestResult
                     {
@@ -2114,6 +2126,18 @@ public static class Executor
                         AlSourceColumn = FindAlSourceColumn(inner)
                     });
                 }
+            }
+            catch (AlRunner.Runtime.CompilationExcludedException ex)
+            {
+                results.Add(new AlRunner.TestResult
+                {
+                    Name = testName,
+                    Status = AlRunner.TestStatus.Error,
+                    Message = $"{ex.GetType().Name}: {ex.Message}",
+                    StackTrace = FormatStackFrames(ex),
+                    AlSourceLine = FindAlSourceLine(ex),
+                    AlSourceColumn = FindAlSourceColumn(ex)
+                });
             }
             catch (Exception ex)
             {

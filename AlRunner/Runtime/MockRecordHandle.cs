@@ -1786,7 +1786,7 @@ public class MockRecordHandle
         {
             var exclusionInfo = RoslynCompiler.GetExclusionInfo(recordTypeName);
             if (exclusionInfo != null)
-                throw new InvalidOperationException(
+                throw new CompilationExcludedException(
                     $"Record type {recordTypeName} was excluded during compilation.\n{exclusionInfo}");
             throw new InvalidOperationException($"Record type {recordTypeName} not found in assembly for Invoke");
         }

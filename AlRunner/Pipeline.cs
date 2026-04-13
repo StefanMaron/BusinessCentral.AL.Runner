@@ -135,7 +135,8 @@ public class AlRunnerPipeline
         var stdoutStr = stdout.ToString();
         if (options.OutputJson && (testResults.Count > 0 || messages.Count > 0))
         {
-            stdoutStr = SerializeJsonOutput(testResults, exitCode, capturedValues: capturedValues, messages: messages, iterations: iterationLoops);
+            var compilationErrors = RoslynCompiler.ExcludedFiles.Count > 0 ? RoslynCompiler.ExcludedFiles : null;
+            stdoutStr = SerializeJsonOutput(testResults, exitCode, capturedValues: capturedValues, messages: messages, iterations: iterationLoops, compilationErrors: compilationErrors);
         }
 
         return new PipelineResult
@@ -153,7 +154,8 @@ public class AlRunnerPipeline
     public static string SerializeJsonOutput(
         List<TestResult> tests, int exitCode, bool indented = true,
         List<CapturedValue>? capturedValues = null, List<string>? messages = null,
-        List<Runtime.IterationTracker.LoopRecord>? iterations = null)
+        List<Runtime.IterationTracker.LoopRecord>? iterations = null,
+        IReadOnlyDictionary<string, List<string>>? compilationErrors = null)
     {
         object? capturedValuesObj = capturedValues?.Count > 0
             ? capturedValues.Select(c => new
@@ -162,6 +164,14 @@ public class AlRunnerPipeline
                 variableName = c.VariableName,
                 value = c.Value,
                 statementId = c.StatementId
+            })
+            : null;
+
+        object? compilationErrorsObj = compilationErrors?.Count > 0
+            ? compilationErrors.Select(kvp => new
+            {
+                file = System.IO.Path.GetFileName(kvp.Key),
+                errors = kvp.Value
             })
             : null;
 
@@ -183,6 +193,7 @@ public class AlRunnerPipeline
             errors = tests.Count(t => t.Status == TestStatus.Error),
             total = tests.Count,
             exitCode,
+            compilationErrors = compilationErrorsObj,
             capturedValues = capturedValuesObj,
             messages = messages?.Count > 0 ? messages : null,
             iterations = iterations?.Count > 0
