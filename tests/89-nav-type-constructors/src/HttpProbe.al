@@ -38,7 +38,10 @@ codeunit 56900 "HTTP Probe"
     /// This is what the tests actually call.
     /// </summary>
     procedure IsValidUrl(Url: Text): Boolean
+    var
+        LowerUrl: Text;
     begin
-        exit(Url.StartsWith('http://') or Url.StartsWith('https://'));
+        LowerUrl := LowerCase(Url);
+        exit(LowerUrl.StartsWith('http://') or LowerUrl.StartsWith('https://'));
     end;
 }

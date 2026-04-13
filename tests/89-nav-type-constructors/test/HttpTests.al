@@ -28,6 +28,17 @@ codeunit 56901 "HTTP Tests"
         Assert.IsTrue(Probe.IsValidUrl('https://api.example.com/v1/data'), 'https URL must be valid');
     end;
 
+    [Test]
+    procedure UppercaseSchemeAccepted()
+    var
+        Probe: Codeunit "HTTP Probe";
+    begin
+        // [GIVEN] An uppercase HTTP:// scheme (case-insensitive validation)
+        // [WHEN]  IsValidUrl is called
+        // [THEN]  Returns true
+        Assert.IsTrue(Probe.IsValidUrl('HTTP://Example.com'), 'Uppercase HTTP scheme must be valid');
+    end;
+
     // --- Negative tests ---
 
     [Test]

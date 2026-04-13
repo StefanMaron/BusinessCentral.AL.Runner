@@ -5,9 +5,25 @@ namespace AlRunner.Runtime;
 /// <summary>
 /// Minimal base class replacing NavMethodScope&lt;T&gt; for standalone execution.
 /// Provides stub implementations of the debug-hit methods and a Run() entry point.
+///
+/// Implements <see cref="ITreeObject"/> with stub properties so that scope's
+/// <c>this</c> reference can be passed to any BC <c>Nav*</c> type constructor
+/// that requires a non-null <c>ITreeObject</c> parent — without a rewriter
+/// replacement and without triggering the null-check in NavComplexValue.
 /// </summary>
-public class AlScope : IDisposable
+public class AlScope : IDisposable, ITreeObject
 {
+    // ITreeObject — stub properties, never inspected in standalone mode.
+    // NavComplexValue validates parent != null in its constructor; it stores the
+    // parent reference but does not call parent.Tree during construction (empirically
+    // verified: NullifyFirstThisArgMethods already passes null! as the ITreeObject
+    // for blob/stream method calls and those work without NullReferenceException).
+    // This pattern is identical to MockInterfaceHandle, which also implements
+    // ITreeObject with Tree => null! and is used successfully throughout the suite.
+    TreeHandler ITreeObject.Tree => null!;
+    TreeObjectType ITreeObject.Type => default;
+    bool ITreeObject.SingleThreaded => false;
+
     protected virtual void OnRun() { }
 
     public void Run() => OnRun();

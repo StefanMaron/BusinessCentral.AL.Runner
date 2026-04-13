@@ -1238,35 +1238,8 @@ protected bool CallGetFormatExtensionMethod(int fieldNo, ref string result) { re
 
         // NOTE: We no longer strip 'this' from scope constructor calls.
         // Scope constructors now keep the βparent parameter and store it as _parent.
-
-        // Generic fallback: for any remaining BC Nav*/AL* type constructor whose first
-        // argument is 'this' (the scope, which extends AlScope — not ITreeObject),
-        // replace 'this' with null! to prevent CS1503.
-        // This catches types not individually mocked, such as NavHttpClient,
-        // NavHttpContent, NavHttpRequestMessage, NavHttpResponseMessage, etc.
-        // The null! is safe because these types only use the ITreeObject parent for
-        // session/error context; any runtime failure caused by the null will surface
-        // as a NotSupportedException when the unsupported BC API is actually invoked,
-        // which is the expected behavior for al-runner CompilationGap exclusions.
-        if (visited.ArgumentList != null && visited.ArgumentList.Arguments.Count >= 1)
-        {
-            var firstArgText = visited.ArgumentList.Arguments[0].Expression.ToString();
-            if (firstArgText == "this")
-            {
-                var typeName = visited.Type.ToString();
-                if (typeName.StartsWith("Nav") || typeName.StartsWith("AL"))
-                {
-                    var nullBang = SyntaxFactory.PostfixUnaryExpression(
-                        SyntaxKind.SuppressNullableWarningExpression,
-                        SyntaxFactory.LiteralExpression(SyntaxKind.NullLiteralExpression));
-                    var newArgs = new SeparatedSyntaxList<ArgumentSyntax>();
-                    newArgs = newArgs.Add(SyntaxFactory.Argument(nullBang));
-                    for (int i = 1; i < visited.ArgumentList.Arguments.Count; i++)
-                        newArgs = newArgs.Add(visited.ArgumentList.Arguments[i]);
-                    return visited.WithArgumentList(SyntaxFactory.ArgumentList(newArgs));
-                }
-            }
-        }
+        // AlScope implements ITreeObject, so 'this' is a valid non-null ITreeObject
+        // for any Nav*/AL* type constructor — no CS1503 and no null-check failures.
 
         return visited;
     }
