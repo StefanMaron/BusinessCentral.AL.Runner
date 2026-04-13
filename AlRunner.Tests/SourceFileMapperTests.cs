@@ -67,6 +67,45 @@ public class SourceFileMapperTests
         };
         Assert.Null(SourceFileMapper.GetFileForScope("Codeunit50020_Scope", scopeToObject));
     }
+
+    [Fact]
+    public void GetFileForScope_PrefixMatch_BareMethodName()
+    {
+        SourceFileMapper.Register("CI Pipeline Tests", "test/Tests.al");
+        var scopeToObject = new Dictionary<string, string>
+        {
+            ["ThreeAssignments_Scope_12345"] = "CI Pipeline Tests"
+        };
+        // Bare method name "ThreeAssignments" should match key starting with "ThreeAssignments_"
+        Assert.Equal("test/Tests.al", SourceFileMapper.GetFileForScope("ThreeAssignments", scopeToObject));
+    }
+
+    [Fact]
+    public void GetFileForScope_PrefixMatch_DoesNotMatchPartialName()
+    {
+        SourceFileMapper.Register("Helper", "src/Helper.al");
+        var scopeToObject = new Dictionary<string, string>
+        {
+            ["HelperFunc_Scope_999"] = "Helper"
+        };
+        // "Helper" should NOT prefix-match "HelperFunc_Scope_999" because
+        // the key starts with "HelperFunc_" not "Helper_"
+        Assert.Null(SourceFileMapper.GetFileForScope("Helper", scopeToObject));
+    }
+
+    [Fact]
+    public void GetFileForScope_ExactMatchPreferredOverPrefix()
+    {
+        SourceFileMapper.Register("Object A", "a.al");
+        SourceFileMapper.Register("Object B", "b.al");
+        var scopeToObject = new Dictionary<string, string>
+        {
+            ["MyScope"] = "Object A",
+            ["MyScope_Scope_999"] = "Object B"
+        };
+        // Exact match "MyScope" → Object A should win over prefix match
+        Assert.Equal("a.al", SourceFileMapper.GetFileForScope("MyScope", scopeToObject));
+    }
 }
 
 public class AlDeclarationParsingTests
