@@ -108,6 +108,36 @@ public class SourceFileMapperTests
     }
 }
 
+public class ClassToObjectMappingTests
+{
+    public ClassToObjectMappingTests()
+    {
+        SourceFileMapper.Clear();
+    }
+
+    [Fact]
+    public void RegisterClass_GetObjectForClass_RoundTrip()
+    {
+        SourceFileMapper.RegisterClass("Codeunit50471", "CI Pipeline Tests");
+        Assert.Equal("CI Pipeline Tests", SourceFileMapper.GetObjectForClass("Codeunit50471"));
+    }
+
+    [Fact]
+    public void GetObjectForClass_UnknownClass_ReturnsFallback()
+    {
+        Assert.Equal("UnknownClass", SourceFileMapper.GetObjectForClass("UnknownClass"));
+    }
+
+    [Fact]
+    public void Clear_AlsoResetsClassMappings()
+    {
+        SourceFileMapper.RegisterClass("Codeunit50471", "CI Pipeline Tests");
+        SourceFileMapper.Clear();
+        // Falls back to className after clear
+        Assert.Equal("Codeunit50471", SourceFileMapper.GetObjectForClass("Codeunit50471"));
+    }
+}
+
 public class AlDeclarationParsingTests
 {
     [Fact]

@@ -44,8 +44,10 @@ public static class SourceFileMapper
         if (scopeToObject.TryGetValue(scopeName, out var objectName))
             return GetFile(objectName);
 
-        // Prefix match: scopeName might be "MethodName" while scopeToObject has
-        // "MethodName_Scope_HASH". Find any key that starts with scopeName + "_".
+        // Prefix match fallback: some capture paths use bare method names (without
+        // _Scope_HASH suffix). Find any scopeToObject key that starts with scopeName + "_".
+        // Used by iterations (IterationTracker stores scope class names).
+        // Captured values bypass this entirely via direct GetFile(objectName).
         var prefix = scopeName + "_";
         foreach (var (key, value) in scopeToObject)
         {

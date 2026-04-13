@@ -423,7 +423,7 @@ public class AlRunnerPipeline
         }
 
         // Register C# class names → AL object names for captured value resolution
-        var outerClassPattern = new System.Text.RegularExpressions.Regex(@"^\s*public\s+(?:sealed\s+)?class\s+(\w+)", System.Text.RegularExpressions.RegexOptions.Multiline);
+        var outerClassPattern = new System.Text.RegularExpressions.Regex(@"^\s*public\s+(?:\w+\s+)*class\s+(\w+)", System.Text.RegularExpressions.RegexOptions.Multiline);
         foreach (var (name, code) in generatedCSharpList)
         {
             var classMatch = outerClassPattern.Match(code);
