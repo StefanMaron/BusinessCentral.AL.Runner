@@ -6,15 +6,14 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
-### Fixed
-- **`FieldRef.SetRange(Variant)` never matched records** — When AL code assigned a text literal to a `Variant` and then called `FieldRef.SetRange(v)`, the filter never matched because `MockVariant`'s implicit `NavValue?` operator returned `null` for non-NavValue content (raw CLR strings). The operator now converts primitive CLR values to their NavValue equivalents (`string→NavText`, `int→NavInteger`, `bool→NavBoolean`, `long→NavBigInteger`). Additionally, `NavValueToString` now trims trailing spaces from `NavCode` values (which BC pads to `maxLength`), fixing equality comparisons between `Code[N]` fields and `NavText` filter values. Tested by `tests/82-recref-fieldindex/` (`FieldRefSetRangeWithVariant`) and `tests/87-fieldref-setrange-types/` (8 new cases covering Integer, Code, Option, and Decimal-range filters via FieldRef).
-- **`GlobalLanguage()` NullReferenceException in standalone mode** — `ALSystemLanguage.get_ALGlobalLanguage` and `set_ALGlobalLanguage` crashed because there is no live BC session context in the runner. The rewriter now intercepts `ALSystemLanguage.ALGlobalLanguage` (both get and set) and routes them to `MockLanguage.ALGlobalLanguage`, a static int property backed by an in-memory field defaulting to 1033 (ENU). `MockLanguage.Reset()` is called between tests to restore the default. Fixes #82. Tested by `tests/86-global-language/` (5 cases).
+## [1.0.12] — 2026-04-13
 
 ### Added
 - **Multi-target net8.0 and net9.0** — `al-runner` now ships as a single NuGet
   package containing binaries for both .NET 8 and .NET 9. `dotnet tool install`
   automatically selects the build matching the installed runtime, so users with
-  only .NET 9 no longer need to install .NET 8 separately. Closes #75.
+  only .NET 9 no longer need to install .NET 8 separately.
+  Closes [#75](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/75).
 - **JUnit XML output (`--output-junit <path>`)** — Writes a standard JUnit XML test
   report alongside normal console output. GitHub Actions, Azure DevOps, and GitLab CI
   natively render JUnit XML as test annotations, summaries, and trend graphs. Combined
@@ -23,7 +22,8 @@ All notable changes to this project are documented here. Format based on
   - `--output-junit` → test results tab (JUnit XML)
 
   Tests are grouped by AL codeunit name as `<testsuite>` elements. Real assertion
-  failures use `<failure>`; runner limitations use `<error>`. Closes #72.
+  failures use `<failure>`; runner limitations use `<error>`.
+  Closes [#72](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/72).
 - **Compact summary line at end of test runs** — After each test run, the output
   now ends with a concise one-liner analogous to pytest/jest:
   - All pass: `42 passed in 1.8s`
@@ -31,7 +31,8 @@ All notable changes to this project are documented here. Format based on
   - With setup errors: `9 passed, 1 errors in 0.3s`
   Only non-zero counts are shown. Runner-limitation errors (`IsRunnerBug=true`) are
   labelled `blocked (runner limitation)`; other errors are labelled `errors`.
-  Elapsed time is always included when timing is available. Closes #71.
+  Elapsed time is always included when timing is available.
+  Closes [#71](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/71).
 - **`sourceFile` field on iterations and captured values** — The `--output-json`
   iteration and captured-value records now include a `sourceFile` property with the
   path to the AL file that contains the loop or variable. A new `SourceFileMapper`
@@ -42,7 +43,8 @@ All notable changes to this project are documented here. Format based on
   - `MockStream.ALWrite`/`ALRead` overloads for `Integer`, `Boolean`, `Decimal18` — binary read/write via `OStr.Write(value)` / `IStr.Read(value)` in AL
   - `MockStream.ALCopyStream` — implements `COPYSTREAM(OutStr, InStr)`; rewriter redirects `ALSystemVariable.ALCopyStream` to `MockStream.ALCopyStream`
 
-  Tested by `tests/79-stream-surface/` (10 cases). Fixes #65.
+  Tested by `tests/79-stream-surface/` (10 cases).
+  Fixes [#65](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/65).
 - **Picture-string tokens in `Format()`** — `Format(value, 0, formatString)` now
   handles AL decimal and time picture strings:
   - `<Precision,min:max>` — rounds a decimal to at most `max` decimal places and
@@ -69,6 +71,13 @@ All notable changes to this project are documented here. Format based on
   Fixes [#46](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/46).
 
 ### Changed
+- **Deduplicate repeated error blocks in output** — When multiple tests share the
+  same runner-limitation error (e.g. 66 tests all blocked by the same
+  `CompilationExcludedException`), `PrintResults` now prints the message once as a
+  `WARN` block with a count, then compact `ERROR TestName (blocked)` lines. With
+  `-v`/`--verbose`, the old full per-test detail is preserved. Single/unique errors
+  and all `FAIL` tests are never deduplicated.
+  Closes [#70](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/70).
 - **Invariant-culture decimal formatting** — `AlCompat.Format()` for decimal values
   now always uses `.` as the decimal separator regardless of OS locale, matching
   real BC behavior.
@@ -85,6 +94,15 @@ All notable changes to this project are documented here. Format based on
   results on repeated identical requests.
 
 ### Fixed
+- **`FieldRef.SetRange(Variant)` never matched records** — When AL code assigned a
+  text literal to a `Variant` and then called `FieldRef.SetRange(v)`, the filter never
+  matched because `MockVariant`'s implicit `NavValue?` operator returned `null` for
+  non-NavValue content (raw CLR strings). The operator now converts primitive CLR values
+  to their NavValue equivalents (`string→NavText`, `int→NavInteger`, `bool→NavBoolean`,
+  `long→NavBigInteger`). Additionally, `NavValueToString` now trims trailing spaces from
+  `NavCode` values (which BC pads to `maxLength`), fixing equality comparisons between
+  `Code[N]` fields and `NavText` filter values.
+  Tested by `tests/82-recref-fieldindex/` and `tests/87-fieldref-setrange-types/` (8 cases).
 - **`GlobalLanguage()` NullReferenceException in standalone mode** — `ALSystemLanguage.get_ALGlobalLanguage` and `set_ALGlobalLanguage` crashed because there is no live BC session context in the runner. The rewriter now intercepts `ALSystemLanguage.ALGlobalLanguage` (both get and set) and routes them to `MockLanguage.ALGlobalLanguage`, a static int property backed by an in-memory field defaulting to 1033 (ENU). `MockLanguage.Reset()` is called between tests to restore the default. Fixes [#82](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/82). Tested by `tests/86-global-language/` (5 cases).
 - **`FieldRef.SetRange` CS0121 ambiguity resolved** — `MockFieldRef.ALSetRange` had
   both `ALSetRange(NavValue)` and `ALSetRange(MockVariant)` overloads. Because
