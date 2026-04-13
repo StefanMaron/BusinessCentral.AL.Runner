@@ -11,6 +11,15 @@ All notable changes to this project are documented here. Format based on
 - **`GlobalLanguage()` NullReferenceException in standalone mode** — `ALSystemLanguage.get_ALGlobalLanguage` and `set_ALGlobalLanguage` crashed because there is no live BC session context in the runner. The rewriter now intercepts `ALSystemLanguage.ALGlobalLanguage` (both get and set) and routes them to `MockLanguage.ALGlobalLanguage`, a static int property backed by an in-memory field defaulting to 1033 (ENU). `MockLanguage.Reset()` is called between tests to restore the default. Fixes #82. Tested by `tests/86-global-language/` (5 cases).
 
 ### Added
+- **JUnit XML output (`--output-junit <path>`)** — Writes a standard JUnit XML test
+  report alongside normal console output. GitHub Actions, Azure DevOps, and GitLab CI
+  natively render JUnit XML as test annotations, summaries, and trend graphs. Combined
+  with `--coverage` (Cobertura XML), this completes the CI integration story:
+  - `--coverage` → coverage tab (Cobertura)
+  - `--output-junit` → test results tab (JUnit XML)
+
+  Tests are grouped by AL codeunit name as `<testsuite>` elements. Real assertion
+  failures use `<failure>`; runner limitations use `<error>`. Closes #72.
 - **Compact summary line at end of test runs** — After each test run, the output
   now ends with a concise one-liner analogous to pytest/jest:
   - All pass: `42 passed in 1.8s`
