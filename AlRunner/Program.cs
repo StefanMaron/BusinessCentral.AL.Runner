@@ -209,6 +209,9 @@ if (!string.IsNullOrEmpty(result.StdOut))
 if (!string.IsNullOrEmpty(result.StdErr))
     Console.Error.Write(result.StdErr);
 
+// Report runner-originated errors via telemetry (interactive only, with timeout)
+await AlRunner.TelemetryReporter.TryReportTestErrorsAsync(result.Tests, options.OutputJson, noTelemetry);
+
 return result.ExitCode;
 
 void PrintGuide()
@@ -2022,6 +2025,19 @@ public static class Executor
                         AlSourceColumn = FindAlSourceColumn(inner)
                     });
                 }
+                else if (IsRunnerError(inner!))
+                {
+                    results.Add(new AlRunner.TestResult
+                    {
+                        Name = testName,
+                        Status = AlRunner.TestStatus.Error,
+                        Message = inner!.Message,
+                        StackTrace = FormatStackFrames(inner),
+                        AlSourceLine = FindAlSourceLine(inner),
+                        AlSourceColumn = FindAlSourceColumn(inner),
+                        IsRunnerBug = true
+                    });
+                }
                 else
                 {
                     results.Add(new AlRunner.TestResult
@@ -2037,15 +2053,31 @@ public static class Executor
             }
             catch (Exception ex)
             {
-                results.Add(new AlRunner.TestResult
+                if (IsRunnerError(ex))
                 {
-                    Name = testName,
-                    Status = AlRunner.TestStatus.Fail,
-                    Message = ex.Message,
-                    StackTrace = FormatStackFrames(ex),
-                    AlSourceLine = FindAlSourceLine(ex),
-                    AlSourceColumn = FindAlSourceColumn(ex)
-                });
+                    results.Add(new AlRunner.TestResult
+                    {
+                        Name = testName,
+                        Status = AlRunner.TestStatus.Error,
+                        Message = ex.Message,
+                        StackTrace = FormatStackFrames(ex),
+                        AlSourceLine = FindAlSourceLine(ex),
+                        AlSourceColumn = FindAlSourceColumn(ex),
+                        IsRunnerBug = true
+                    });
+                }
+                else
+                {
+                    results.Add(new AlRunner.TestResult
+                    {
+                        Name = testName,
+                        Status = AlRunner.TestStatus.Fail,
+                        Message = ex.Message,
+                        StackTrace = FormatStackFrames(ex),
+                        AlSourceLine = FindAlSourceLine(ex),
+                        AlSourceColumn = FindAlSourceColumn(ex)
+                    });
+                }
             }
         }
 
@@ -2070,7 +2102,10 @@ public static class Executor
                 case AlRunner.TestStatus.Error:
                     Console.WriteLine($"ERROR {r.Name}");
                     if (r.Message != null) Console.WriteLine($"      {r.Message}");
-                    Console.WriteLine($"      Inject this dependency via an AL interface.");
+                    if (r.IsRunnerBug)
+                        Console.WriteLine($"      ⚑ Runner limitation — update al-runner or file an issue at https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues");
+                    else
+                        Console.WriteLine($"      Inject this dependency via an AL interface.");
                     if (r.StackTrace != null) Console.Write(r.StackTrace);
                     break;
             }
@@ -2123,6 +2158,16 @@ public static class Executor
         var (typeName, stmtId) = lastHit.Value;
         return SourceLineMapper.GetAlLineFromStatement(typeName, stmtId);
     }
+
+    /// <summary>
+    /// Returns true when the exception originates from AlRunner.Runtime mock code,
+    /// indicating a runner limitation rather than a user test logic failure.
+    /// These should be reported as <see cref="AlRunner.TestStatus.Error"/> with
+    /// <see cref="AlRunner.TestResult.IsRunnerBug"/> = true.
+    /// </summary>
+    private static bool IsRunnerError(Exception ex) =>
+        ex is InvalidOperationException &&
+        ex.StackTrace?.Contains("AlRunner.Runtime.Mock") == true;
 
     /// <summary>
     /// Get the AL source column from the last StmtHit that was executed before

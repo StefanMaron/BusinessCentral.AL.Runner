@@ -49,6 +49,52 @@ public static class TelemetryReporter
         Console.Error.WriteLine("  ✓ Error report sent. Thank you!");
     }
 
+    /// <summary>
+    /// After a test run, prompts the user to report any runner-originated errors
+    /// (IsRunnerBug = true). Groups duplicates, shows a single prompt, then sends.
+    /// Safe to call in all contexts — skips silently when non-interactive or noTelemetry is set.
+    /// </summary>
+    public static async Task TryReportTestErrorsAsync(
+        List<TestResult> tests, bool outputJson, bool noTelemetry)
+    {
+        if (noTelemetry) return;
+        if (!CanPromptUser(outputJson)) return;
+
+        var runnerErrors = tests
+            .Where(t => t.Status == TestStatus.Error && t.IsRunnerBug)
+            .ToList();
+        if (runnerErrors.Count == 0) return;
+
+        var grouped = runnerErrors
+            .GroupBy(t => t.Message ?? "")
+            .Select(g => (Message: g.Key, Count: g.Count(), Sample: g.First()))
+            .ToList();
+
+        Console.Error.WriteLine();
+        Console.Error.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        Console.Error.WriteLine($"  {runnerErrors.Count} runner limitation(s) encountered — report them?");
+        Console.Error.WriteLine("  Reporting helps improve al-runner support for more AL patterns.");
+        Console.Error.WriteLine();
+        Console.Error.WriteLine("  What will be sent (no AL source code, no file paths):");
+        foreach (var (msg, count, _) in grouped.Take(3))
+            Console.Error.WriteLine($"    × {ScrubMessage(msg)}{(count > 1 ? $" ({count}×)" : "")}");
+        if (grouped.Count > 3)
+            Console.Error.WriteLine($"    … and {grouped.Count - 3} more unique error(s)");
+        Console.Error.WriteLine($"    Version : {GetVersionString()}  OS: {GetOsString()}");
+        Console.Error.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+        if (!PromptYesNoWithTimeout($"Send error report? [y/N] (auto-no in {PromptTimeoutSeconds}s): "))
+            return;
+
+        foreach (var error in runnerErrors)
+        {
+            var report = BuildTestErrorReport(error);
+            if (report != null)
+                await SendAsync(report);
+        }
+        Console.Error.WriteLine("  ✓ Error report sent. Thank you!");
+    }
+
     // ─── Internals ────────────────────────────────────────────────────────────
 
     private record TelemetryReport(
@@ -97,17 +143,43 @@ public static class TelemetryReporter
         // No AlRunner frames = crash originated entirely in user-generated code, not our bug
         if (frames.Count == 0) return null;
 
-        var version = Assembly.GetExecutingAssembly().GetName().Version;
-        var versionStr = version != null ? $"{version.Major}.{version.Minor}.{version.Build}" : "unknown";
-
         return new TelemetryReport(
             ExceptionType: inner.GetType().FullName ?? inner.GetType().Name,
             ScrubbedMessage: ScrubMessage(inner.Message),
             StackText: string.Join("\n", frames),
             FrameCount: frames.Count,
-            RunnerVersion: versionStr,
-            Os: Environment.OSVersion.Platform.ToString().ToLowerInvariant());
+            RunnerVersion: GetVersionString(),
+            Os: GetOsString());
     }
+
+    private static TelemetryReport? BuildTestErrorReport(TestResult result)
+    {
+        if (result.StackTrace == null && result.Message == null) return null;
+
+        var frames = result.StackTrace?
+            .Split('\n')
+            .Select(f => f.Trim())
+            .Where(f => !string.IsNullOrEmpty(f) && f.Contains("AlRunner."))
+            .Take(10)
+            .ToList() ?? new List<string>();
+
+        return new TelemetryReport(
+            ExceptionType: "System.InvalidOperationException",
+            ScrubbedMessage: ScrubMessage(result.Message ?? ""),
+            StackText: string.Join("\n", frames),
+            FrameCount: frames.Count,
+            RunnerVersion: GetVersionString(),
+            Os: GetOsString());
+    }
+
+    private static string GetVersionString()
+    {
+        var version = Assembly.GetExecutingAssembly().GetName().Version;
+        return version != null ? $"{version.Major}.{version.Minor}.{version.Build}" : "unknown";
+    }
+
+    private static string GetOsString() =>
+        Environment.OSVersion.Platform.ToString().ToLowerInvariant();
 
     /// <summary>Keep only stack frames originating from AlRunner code.</summary>
     private static List<string> ExtractRunnerFrames(Exception ex)
