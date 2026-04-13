@@ -14,6 +14,13 @@ public static class CliRunner
 
     public record CliResult(int ExitCode, string StdOut, string StdErr);
 
+    // Derive the current TFM moniker (e.g. "net8.0" or "net9.0") from the running CLR version.
+    private static string CurrentFramework()
+    {
+        var v = System.Environment.Version;
+        return $"net{v.Major}.{v.Minor}";
+    }
+
     /// <summary>
     /// Run al-runner with the given arguments via "dotnet run".
     /// </summary>
@@ -22,7 +29,7 @@ public static class CliRunner
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet",
-            Arguments = $"run --no-build --project \"{ProjectPath}\" -- {args}",
+            Arguments = $"run --no-build --framework {CurrentFramework()} --project \"{ProjectPath}\" -- {args}",
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,

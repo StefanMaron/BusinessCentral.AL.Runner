@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -55,9 +55,15 @@
   </PropertyGroup>
 
   <!-- BC service tier runtime dependencies not included in the default .NET runtime -->
-  <ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
     <PackageReference Include="System.Diagnostics.EventLog" Version="8.0.1" />
     <PackageReference Include="System.Configuration.ConfigurationManager" Version="8.0.1" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net9.0'">
+    <PackageReference Include="System.Diagnostics.EventLog" Version="9.0.4" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="9.0.4" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>
 
@@ -111,17 +117,27 @@
     </Reference>
   </ItemGroup>
 
-  <!-- Auto-download AL compiler if not present -->
-  <Target Name="EnsureALCompiler" BeforeTargets="ResolveAssemblyReferences"
-          Condition="!Exists('$(ALCompilerPath)/Microsoft.Dynamics.Nav.CodeAnalysis.dll')">
+  <!-- Auto-download AL compiler if not present.
+       Runs in the outer build (BeforeTargets=DispatchToInnerBuilds) so DLLs are present
+       before either inner build starts its ResolveAssemblyReferences pass. Also runs in
+       single-target builds (BeforeTargets=ResolveAssemblyReferences) where there is no
+       outer/inner split. Skipped in inner builds (TargetFramework is set, TargetFrameworks
+       is also set) to avoid redundant downloads. -->
+  <Target Name="EnsureALCompiler"
+          BeforeTargets="DispatchToInnerBuilds;ResolveAssemblyReferences"
+          Condition="!Exists('$(ALCompilerPath)/Microsoft.Dynamics.Nav.CodeAnalysis.dll')
+                     AND ('$(TargetFrameworks)' == '' OR '$(TargetFramework)' == '')">
     <Message Importance="high" Text="AL compiler not found. Downloading from NuGet..." />
     <Exec Command="dotnet run --project &quot;$(MSBuildProjectDirectory)/../tools/DownloadArtifacts&quot; -- al-compiler $(_ALToolVersion) &quot;$(ALCompilerPath)&quot;" />
   </Target>
 
-  <!-- Auto-download BC Service Tier DLLs if not present -->
-  <Target Name="EnsureBCServiceTierDlls" BeforeTargets="ResolveAssemblyReferences"
+  <!-- Auto-download BC Service Tier DLLs if not present.
+       Same execution conditions as EnsureALCompiler. -->
+  <Target Name="EnsureBCServiceTierDlls"
+          BeforeTargets="DispatchToInnerBuilds;ResolveAssemblyReferences"
           DependsOnTargets="EnsureALCompiler"
-          Condition="!Exists('$(ServiceTierPath)/Microsoft.Dynamics.Nav.Types.dll')">
+          Condition="!Exists('$(ServiceTierPath)/Microsoft.Dynamics.Nav.Types.dll')
+                     AND ('$(TargetFrameworks)' == '' OR '$(TargetFramework)' == '')">
     <Message Importance="high" Text="BC Service Tier DLLs not found. Downloading via range request..." />
     <Exec Command="dotnet run --project &quot;$(MSBuildProjectDirectory)/../tools/DownloadArtifacts&quot; -- service-tier $(_BCVersion) &quot;$(ServiceTierPath)&quot;" />
   </Target>

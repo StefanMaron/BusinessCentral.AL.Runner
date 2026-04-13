@@ -11,6 +11,10 @@ All notable changes to this project are documented here. Format based on
 - **`GlobalLanguage()` NullReferenceException in standalone mode** — `ALSystemLanguage.get_ALGlobalLanguage` and `set_ALGlobalLanguage` crashed because there is no live BC session context in the runner. The rewriter now intercepts `ALSystemLanguage.ALGlobalLanguage` (both get and set) and routes them to `MockLanguage.ALGlobalLanguage`, a static int property backed by an in-memory field defaulting to 1033 (ENU). `MockLanguage.Reset()` is called between tests to restore the default. Fixes #82. Tested by `tests/86-global-language/` (5 cases).
 
 ### Added
+- **Multi-target net8.0 and net9.0** — `al-runner` now ships as a single NuGet
+  package containing binaries for both .NET 8 and .NET 9. `dotnet tool install`
+  automatically selects the build matching the installed runtime, so users with
+  only .NET 9 no longer need to install .NET 8 separately. Closes #75.
 - **JUnit XML output (`--output-junit <path>`)** — Writes a standard JUnit XML test
   report alongside normal console output. GitHub Actions, Azure DevOps, and GitLab CI
   natively render JUnit XML as test annotations, summaries, and trend graphs. Combined
