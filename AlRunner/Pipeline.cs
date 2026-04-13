@@ -175,7 +175,8 @@ public class AlRunnerPipeline
                 message = t.Message,
                 stackTrace = t.StackTrace?.TrimEnd(),
                 alSourceLine = t.AlSourceLine,
-                alSourceColumn = t.AlSourceColumn
+                alSourceColumn = t.AlSourceColumn,
+                isRunnerBug = t.IsRunnerBug ? (bool?)true : null
             }),
             passed = tests.Count(t => t.Status == TestStatus.Pass),
             failed = tests.Count(t => t.Status == TestStatus.Fail),
