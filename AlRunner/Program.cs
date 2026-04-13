@@ -1489,66 +1489,6 @@ public static class SourceLineMapper
 // ===========================================================================
 public static class RoslynCompiler
 {
-    /// <summary>
-    /// Maps excluded source file paths to the Roslyn errors that caused exclusion.
-    /// Populated during iterative retry so that runtime "not found" errors can
-    /// explain WHY a codeunit or record type was excluded from compilation.
-    /// </summary>
-    public static Dictionary<string, List<string>> ExcludedFiles { get; } = new();
-
-    /// <summary>
-    /// Look up exclusion info for a type name fragment (e.g. "Codeunit74320" or "Record50100").
-    /// First checks file names for a direct match, then checks error messages for references
-    /// to the type, and finally falls back to listing all excluded files if any exist.
-    /// Returns a multi-line explanation or null if no files were excluded.
-    /// </summary>
-    public static string? GetExclusionInfo(string typeNameFragment)
-    {
-        if (ExcludedFiles.Count == 0) return null;
-
-        // 1. Direct match: file name contains the fragment (e.g. "Codeunit74320.cs")
-        var matches = ExcludedFiles
-            .Where(kv => Path.GetFileNameWithoutExtension(kv.Key)
-                .Contains(typeNameFragment, StringComparison.OrdinalIgnoreCase))
-            .ToList();
-
-        // 2. Indirect match: error messages reference the type name
-        if (matches.Count == 0)
-        {
-            matches = ExcludedFiles
-                .Where(kv => kv.Value.Any(err =>
-                    err.Contains(typeNameFragment, StringComparison.OrdinalIgnoreCase)))
-                .ToList();
-        }
-
-        // 3. Fallback: if there are excluded files but no specific match, show all
-        if (matches.Count == 0)
-            matches = ExcludedFiles.ToList();
-
-        var sb = new System.Text.StringBuilder();
-        if (matches.Count <= 5)
-        {
-            foreach (var (file, errors) in matches)
-            {
-                sb.AppendLine($"      {Path.GetFileName(file)} was excluded during compilation.");
-                foreach (var err in errors.Take(3))
-                    sb.AppendLine($"      {err}");
-            }
-        }
-        else
-        {
-            sb.AppendLine($"      {matches.Count} source file(s) were excluded during compilation.");
-            // Show the first few with their errors
-            foreach (var (file, errors) in matches.Take(3))
-            {
-                sb.AppendLine($"      {Path.GetFileName(file)}: {(errors.Count > 0 ? errors[0] : "unknown error")}");
-            }
-            sb.AppendLine($"      ... and {matches.Count - 3} more. Run with -v for full list.");
-        }
-        sb.Append("      Tip: use --stubs to provide stub AL files for unsupported dependencies.");
-        return sb.ToString();
-    }
-
     public static Assembly? Compile(string csharpSource) =>
         Compile(new List<(string Name, string Code)> { ("source", csharpSource) });
 
@@ -1725,9 +1665,6 @@ public static class RoslynCompiler
     internal static Assembly? CompileFromTrees(List<Microsoft.CodeAnalysis.SyntaxTree> syntaxTrees,
         List<Microsoft.CodeAnalysis.MetadataReference>? preloadedReferences)
     {
-        // Clear any exclusion info from previous compilations
-        ExcludedFiles.Clear();
-
         var references = preloadedReferences ?? LoadReferences();
 
         var compilation = Microsoft.CodeAnalysis.CSharp.CSharpCompilation.Create(
@@ -1746,71 +1683,9 @@ public static class RoslynCompiler
             var errors = result.Diagnostics
                 .Where(d => d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error)
                 .ToList();
-            Log.Info($"Roslyn compilation failed ({errors.Count} errors):");
+            Console.Error.WriteLine($"Roslyn compilation failed ({errors.Count} errors):");
             foreach (var d in errors.Take(30))
-                Log.Info($"  {SourceLineMapper.FormatDiagnostic(d)}");
-
-            // Iteratively remove error-producing source files and recompile.
-            // Each round only removes files with DIRECT errors, preserving files
-            // that are error-free themselves but were compiled alongside broken ones.
-            var currentTrees = new List<Microsoft.CodeAnalysis.SyntaxTree>(syntaxTrees);
-            var allExcluded = new HashSet<string>();
-
-            for (int round = 1; round <= 5; round++)
-            {
-                var errorTreePaths = errors
-                    .Select(d => d.Location.SourceTree?.FilePath)
-                    .Where(p => p != null)
-                    .Distinct()
-                    .ToHashSet();
-
-                if (errorTreePaths.Count == 0 || errorTreePaths.Count >= currentTrees.Count)
-                    break;
-
-                // Record which files are being excluded and why
-                foreach (var p in errorTreePaths)
-                {
-                    allExcluded.Add(p!);
-                    if (!ExcludedFiles.ContainsKey(p!))
-                    {
-                        ExcludedFiles[p!] = errors
-                            .Where(d => d.Location.SourceTree?.FilePath == p)
-                            .Take(3)
-                            .Select(d => SourceLineMapper.FormatDiagnostic(d))
-                            .ToList();
-                    }
-                }
-
-                var treesToRemove = currentTrees
-                    .Where(t => errorTreePaths.Contains(t.FilePath))
-                    .ToList();
-
-                currentTrees = currentTrees
-                    .Where(t => !errorTreePaths.Contains(t.FilePath))
-                    .ToList();
-
-                Log.Info($"Retry round {round}: removed {errorTreePaths.Count} file(s), {currentTrees.Count} remaining");
-
-                // Use RemoveSyntaxTrees for incremental reuse of Roslyn internal state
-                compilation = compilation.RemoveSyntaxTrees(treesToRemove);
-
-                using var retryMs = new MemoryStream();
-                var retryResult = compilation.Emit(retryMs);
-
-                if (retryResult.Success)
-                {
-                    Log.Info($"Compilation succeeded after excluding {allExcluded.Count} file(s).");
-                    retryMs.Seek(0, SeekOrigin.Begin);
-                    return Assembly.Load(retryMs.ToArray());
-                }
-
-                errors = retryResult.Diagnostics
-                    .Where(d => d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error)
-                    .ToList();
-                Log.Info($"  {errors.Count} error(s) remain");
-            }
-
-            Log.Info($"Compilation failed after iterative retry. {allExcluded.Count} file(s) excluded, {errors.Count} error(s) remain.");
+                Console.Error.WriteLine($"  {SourceLineMapper.FormatDiagnostic(d)}");
             return null;
         }
 

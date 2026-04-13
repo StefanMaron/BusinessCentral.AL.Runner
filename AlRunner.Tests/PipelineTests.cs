@@ -216,4 +216,59 @@ public class PipelineTests
         Assert.True(failedTest.TryGetProperty("message", out var msg));
         Assert.False(string.IsNullOrEmpty(msg.GetString()));
     }
+
+    // --- RED tests for Issue #66: remove silent file exclusion ---
+
+    /// <summary>
+    /// When two C# sources are compiled together and one has errors, the compiler
+    /// must return null (failure) rather than silently excluding the bad file and
+    /// returning an assembly from only the good file.
+    /// </summary>
+    [Fact]
+    public void RoslynCompiler_MultipleFiles_ReturnsNullWhenAnyFileHasErrors()
+    {
+        const string goodCSharp = @"
+namespace AlRunnerGenerated {
+    public class GoodClass { public int Value => 42; }
+}";
+        const string badCSharp = @"
+namespace AlRunnerGenerated {
+    public class BrokenClass { THIS IS NOT VALID C# }
+}";
+
+        var assembly = RoslynCompiler.Compile(new List<(string Name, string Code)>
+        {
+            ("GoodFile.cs", goodCSharp),
+            ("BrokenFile.cs", badCSharp)
+        });
+
+        // Must fail: any compilation error in any file must cause null return
+        Assert.Null(assembly);
+    }
+
+    /// <summary>
+    /// When two C# sources are compiled together and one has errors, the result
+    /// must be null — the good file must NOT be compiled in isolation (no silent exclusion).
+    /// </summary>
+    [Fact]
+    public void RoslynCompiler_MultipleFiles_ReturnsNullWhenSecondFileHasErrors()
+    {
+        const string goodCSharp = @"
+namespace AlRunnerGenerated {
+    public class GoodClass2 { public int Value => 42; }
+}";
+        const string badCSharp = @"
+namespace AlRunnerGenerated {
+    public class BrokenClass2 { THIS IS NOT VALID C# }
+}";
+
+        var assembly = RoslynCompiler.Compile(new List<(string Name, string Code)>
+        {
+            ("GoodFile2.cs", goodCSharp),
+            ("BrokenFile2.cs", badCSharp)
+        });
+
+        // Entire compilation must fail — not just the bad file silently excluded
+        Assert.Null(assembly);
+    }
 }
