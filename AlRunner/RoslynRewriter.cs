@@ -1965,6 +1965,21 @@ protected bool CallGetFormatExtensionMethod(int fieldNo, ref string result) { re
                 }
             }
 
+            // ALSystemVariable.ALCopyStream(dataError, outStream, inStream)
+            // -> MockStream.ALCopyStream(dataError, outStream, inStream)
+            // BC emits COPYSTREAM as a call to ALSystemVariable.ALCopyStream which takes
+            // NavOutStream/NavInStream. After the NavOutStream/NavInStream type rename those
+            // args are MockOutStream/MockInStream, so we redirect to MockStream.ALCopyStream
+            // which accepts the mock types.
+            if (exprText == "ALSystemVariable" && methodName == "ALCopyStream")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("MockStream"),
+                        SyntaxFactory.IdentifierName("ALCopyStream")));
+            }
+
             // ALSystemErrorHandling.ALClearLastError() -> AlScope.LastErrorText = ""
             // ALSystemErrorHandling.ALGetLastErrorTextFunc(...) -> AlScope.LastErrorText
             if (exprText == "ALSystemErrorHandling")

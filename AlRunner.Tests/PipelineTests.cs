@@ -271,4 +271,32 @@ namespace AlRunnerGenerated {
         // Entire compilation must fail regardless of file ordering
         Assert.Null(assembly);
     }
+
+    [Fact]
+    public void IterationTracking_EmitsSourceFile()
+    {
+        var pipeline = new AlRunnerPipeline();
+        var result = pipeline.Run(new PipelineOptions
+        {
+            InputPaths = { TestPath("67-iteration-tracking", "src"), TestPath("67-iteration-tracking", "test") },
+            OutputJson = true,
+            IterationTracking = true,
+        });
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.NotNull(result.Iterations);
+        Assert.True(result.Iterations!.Count > 0, "Expected at least one loop");
+
+        // Parse the JSON output to verify sourceFile is present
+        using var doc = System.Text.Json.JsonDocument.Parse(result.StdOut);
+        var iterations = doc.RootElement.GetProperty("iterations");
+        foreach (var iter in iterations.EnumerateArray())
+        {
+            Assert.True(iter.TryGetProperty("sourceFile", out var sf), "Expected sourceFile property on iteration");
+            var sourceFile = sf.GetString()!;
+            Assert.EndsWith(".al", sourceFile);
+            // Loops are in src/LoopHelper.al, not test/LoopTest.al
+            Assert.Contains("LoopHelper", sourceFile);
+        }
+    }
 }

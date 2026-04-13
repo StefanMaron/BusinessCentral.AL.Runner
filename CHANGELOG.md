@@ -7,6 +7,10 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- `MockOutStream.ALAssign` — enables `OutStr2 := OutStr1` stream assignment in AL code
+- `MockStream.ALWrite`/`ALRead` overloads for `Integer`, `Boolean`, `Decimal18` — binary read/write via `OStr.Write(value)` / `IStr.Read(value)` in AL
+- `MockStream.ALCopyStream` — implements `COPYSTREAM(OutStr, InStr)` in AL; rewriter redirects `ALSystemVariable.ALCopyStream` to `MockStream.ALCopyStream`
+- Test suite `tests/79-stream-surface` (10 cases) covering OutStream assignment, InStream assignment, CopyStream, EOS detection, binary integer/boolean/decimal read/write, and passing streams as `var` parameters
 - **Picture-string tokens in `Format()`** — `Format(value, 0, formatString)` now
   handles AL decimal and time picture strings:
   - `<Precision,min:max>` — rounds a decimal to at most `max` decimal places and

@@ -38,12 +38,15 @@ public class MockOutStream
     }
 
     /// <summary>
-    /// ALAssign — AL: OutStr2 := OutStr1 — copies the other stream's state.
+    /// ALAssign — AL: OutStr2 := OutStr1 — makes this stream share the same buffer and flush callback.
     /// BC compiler emits <c>outStream.ALAssign(otherOutStream)</c> for assignment.
     /// </summary>
     public void ALAssign(MockOutStream other)
     {
-        _buffer = new List<byte>(other._buffer);
+        _buffer = other._buffer;
         OnFlush = other.OnFlush;
     }
+
+    /// <summary>Return the current buffered bytes (used by ALCopyStream).</summary>
+    internal byte[] GetBytes() => _buffer.ToArray();
 }

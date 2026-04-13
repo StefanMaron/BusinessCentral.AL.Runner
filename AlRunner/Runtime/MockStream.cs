@@ -100,4 +100,100 @@ public static class MockStream
     {
         return ALReadText(reader, dataError, passByRef, length);
     }
+
+    /// <summary>
+    /// ALWrite — writes an integer value to the stream as little-endian bytes.
+    /// Matches: ALStream.ALWrite(INavStreamWriter, DataError, int)
+    /// </summary>
+    public static int ALWrite(MockOutStream writer, DataError dataError, int value, int length = -1)
+    {
+        byte[] bytes = BitConverter.GetBytes(value);
+        if (!BitConverter.IsLittleEndian) Array.Reverse(bytes);
+        writer.Write(bytes, 0, bytes.Length);
+        return bytes.Length;
+    }
+
+    /// <summary>
+    /// ALRead — reads an integer from the stream (little-endian bytes).
+    /// </summary>
+    public static int ALRead(MockInStream reader, DataError dataError, ByRef<int> passByRef)
+    {
+        byte[] bytes = new byte[4];
+        int read = reader.Read(bytes, 0, 4);
+        if (!BitConverter.IsLittleEndian) Array.Reverse(bytes);
+        passByRef.Value = BitConverter.ToInt32(bytes, 0);
+        return read;
+    }
+
+    /// <summary>
+    /// ALWrite — writes a boolean value to the stream as a single byte.
+    /// Matches: ALStream.ALWrite(INavStreamWriter, DataError, bool)
+    /// </summary>
+    public static int ALWrite(MockOutStream writer, DataError dataError, bool value, int length = -1)
+    {
+        writer.Write(new byte[] { value ? (byte)1 : (byte)0 }, 0, 1);
+        return 1;
+    }
+
+    /// <summary>
+    /// ALRead — reads a boolean from the stream (single byte).
+    /// </summary>
+    public static int ALRead(MockInStream reader, DataError dataError, ByRef<bool> passByRef)
+    {
+        byte[] b = new byte[1];
+        int read = reader.Read(b, 0, 1);
+        passByRef.Value = b[0] != 0;
+        return read;
+    }
+
+    /// <summary>
+    /// ALWrite — writes a Decimal18 value to the stream as little-endian decimal bytes.
+    /// Matches: ALStream.ALWrite(INavStreamWriter, DataError, Decimal18)
+    /// </summary>
+    public static int ALWrite(MockOutStream writer, DataError dataError, Decimal18 value, int length = -1)
+    {
+        decimal d = (decimal)value;
+        int[] bits = decimal.GetBits(d);
+        byte[] bytes = new byte[16];
+        for (int i = 0; i < 4; i++)
+        {
+            byte[] part = BitConverter.GetBytes(bits[i]);
+            if (!BitConverter.IsLittleEndian) Array.Reverse(part);
+            Array.Copy(part, 0, bytes, i * 4, 4);
+        }
+        writer.Write(bytes, 0, bytes.Length);
+        return bytes.Length;
+    }
+
+    /// <summary>
+    /// ALRead — reads a Decimal18 from the stream (16 little-endian bytes).
+    /// </summary>
+    public static int ALRead(MockInStream reader, DataError dataError, ByRef<Decimal18> passByRef)
+    {
+        byte[] bytes = new byte[16];
+        int read = reader.Read(bytes, 0, 16);
+        int[] bits = new int[4];
+        for (int i = 0; i < 4; i++)
+        {
+            byte[] part = new byte[4];
+            Array.Copy(bytes, i * 4, part, 0, 4);
+            if (!BitConverter.IsLittleEndian) Array.Reverse(part);
+            bits[i] = BitConverter.ToInt32(part, 0);
+        }
+        decimal d = new decimal(bits);
+        passByRef.Value = new Decimal18(d);
+        return read;
+    }
+
+    /// <summary>
+    /// ALCopyStream — copies all bytes from InStream to OutStream.
+    /// Intercepts ALSystemVariable.ALCopyStream(DataError, NavOutStream, NavInStream).
+    /// </summary>
+    public static void ALCopyStream(DataError dataError, MockOutStream writer, MockInStream reader)
+    {
+        byte[] buf = new byte[4096];
+        int read;
+        while ((read = reader.Read(buf, 0, buf.Length)) > 0)
+            writer.Write(buf, 0, read);
+    }
 }
