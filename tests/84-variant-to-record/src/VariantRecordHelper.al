@@ -5,6 +5,8 @@ table 84001 "VR Item"
         field(1; "No."; Code[20]) { }
         field(2; Description; Text[100]) { }
         field(3; Quantity; Decimal) { }
+        field(4; Count; Integer) { }
+        field(5; Active; Boolean) { }
     }
     keys
     {

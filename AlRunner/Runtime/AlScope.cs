@@ -806,23 +806,26 @@ public static class AlCompat
     // NavVariant type-check properties (rewritten from value.ALIsXxx to AlCompat.ALIsXxx(value))
     // The rewriter passes the MockVariant object directly, so each method must
     // unwrap MockVariant before checking the underlying value type.
+    // HasTypeName also handles NAV runtime wrapper types (NavBoolean, NavInteger, etc.)
+    // that appear when values originate from record fields rather than AL literals.
     private static object? UnwrapVariant(object? v) => v is MockVariant mv ? mv.Value : v;
-    public static bool ALIsBoolean(object? v) { v = UnwrapVariant(v); return v is bool; }
-    public static bool ALIsOption(object? v) { v = UnwrapVariant(v); return v is Enum || v?.GetType().Name == "NavOption"; }
-    public static bool ALIsInteger(object? v) { v = UnwrapVariant(v); return v is int; }
+    private static bool HasTypeName(object? v, string typeName) => v?.GetType().Name == typeName;
+    public static bool ALIsBoolean(object? v) { v = UnwrapVariant(v); return v is bool || HasTypeName(v, "NavBoolean"); }
+    public static bool ALIsOption(object? v) { v = UnwrapVariant(v); return v is Enum || HasTypeName(v, "NavOption"); }
+    public static bool ALIsInteger(object? v) { v = UnwrapVariant(v); return v is int || HasTypeName(v, "NavInteger"); }
     public static bool ALIsByte(object? v) { v = UnwrapVariant(v); return v is byte; }
-    public static bool ALIsBigInteger(object? v) { v = UnwrapVariant(v); return v is long; }
-    public static bool ALIsDecimal(object? v) { v = UnwrapVariant(v); return v is decimal || v?.GetType().Name == "Decimal18"; }
-    public static bool ALIsText(object? v) { v = UnwrapVariant(v); return v is string || v?.GetType().Name == "NavText"; }
-    public static bool ALIsCode(object? v) { v = UnwrapVariant(v); return v?.GetType().Name == "NavCode"; }
+    public static bool ALIsBigInteger(object? v) { v = UnwrapVariant(v); return v is long || HasTypeName(v, "NavBigInteger"); }
+    public static bool ALIsDecimal(object? v) { v = UnwrapVariant(v); return v is decimal || HasTypeName(v, "Decimal18") || HasTypeName(v, "NavDecimal"); }
+    public static bool ALIsText(object? v) { v = UnwrapVariant(v); return v is string || HasTypeName(v, "NavText"); }
+    public static bool ALIsCode(object? v) { v = UnwrapVariant(v); return HasTypeName(v, "NavCode"); }
     public static bool ALIsChar(object? v) { v = UnwrapVariant(v); return v is char; }
-    public static bool ALIsTextConst(object? v) { v = UnwrapVariant(v); return v?.GetType().Name == "NavTextConstant"; }
-    public static bool ALIsDate(object? v) { v = UnwrapVariant(v); return v is DateTime dt && dt.TimeOfDay == TimeSpan.Zero; }
-    public static bool ALIsTime(object? v) { v = UnwrapVariant(v); return v?.GetType().Name == "NavTime"; }
+    public static bool ALIsTextConst(object? v) { v = UnwrapVariant(v); return HasTypeName(v, "NavTextConstant"); }
+    public static bool ALIsDate(object? v) { v = UnwrapVariant(v); return (v is DateTime dt && dt.TimeOfDay == TimeSpan.Zero) || HasTypeName(v, "NavDate"); }
+    public static bool ALIsTime(object? v) { v = UnwrapVariant(v); return HasTypeName(v, "NavTime"); }
     public static bool ALIsDuration(object? v) { v = UnwrapVariant(v); return v is TimeSpan; }
-    public static bool ALIsDateTime(object? v) { v = UnwrapVariant(v); return v is DateTime; }
-    public static bool ALIsDateFormula(object? v) { v = UnwrapVariant(v); return v?.GetType().Name == "NavDateFormula"; }
-    public static bool ALIsGuid(object? v) { v = UnwrapVariant(v); return v is Guid; }
+    public static bool ALIsDateTime(object? v) { v = UnwrapVariant(v); return v is DateTime || HasTypeName(v, "NavDateTime"); }
+    public static bool ALIsDateFormula(object? v) { v = UnwrapVariant(v); return HasTypeName(v, "NavDateFormula"); }
+    public static bool ALIsGuid(object? v) { v = UnwrapVariant(v); return v is Guid || HasTypeName(v, "NavGuid"); }
     public static bool ALIsRecordId(object? v) { v = UnwrapVariant(v); return v?.GetType().Name == "NavRecordId"; }
     public static bool ALIsRecord(object? v) { v = UnwrapVariant(v); return v is MockRecordHandle || v?.GetType().Name.StartsWith("Record") == true; }
     public static bool ALIsRecordRef(object? v) { v = UnwrapVariant(v); return v is MockRecordRef || v?.GetType().Name == "NavRecordRef"; }

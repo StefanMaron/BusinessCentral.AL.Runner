@@ -73,6 +73,62 @@ codeunit 84901 "Variant To Record Tests"
         Assert.IsFalse(RecVariant.IsRecord(), 'Variant holding text should report IsRecord = false');
     end;
 
+    // ── Nav-wrapper type-check tests ──────────────────────────────────────────
+    // Values read from record fields come back as Nav runtime wrappers
+    // (NavBoolean, NavInteger, NavDecimal, etc.). Variant.IsXxx() must return
+    // true for these, not just for raw CLR types.
+
+    [Test]
+    procedure TestVariantIsBooleanForRecordField()
+    var
+        VRItem: Record "VR Item";
+        V: Variant;
+    begin
+        // [GIVEN] A Boolean field value stored in a Variant via record field read
+        VRItem."No." := 'BOOL-001';
+        VRItem.Active := true;
+        VRItem.Insert();
+        VRItem.Get('BOOL-001');
+        V := VRItem.Active;
+
+        // [THEN] IsBoolean returns true even though the wrapper is NavBoolean
+        Assert.IsTrue(V.IsBoolean(), 'Variant holding a Boolean field value should report IsBoolean = true');
+    end;
+
+    [Test]
+    procedure TestVariantIsIntegerForRecordField()
+    var
+        VRItem: Record "VR Item";
+        V: Variant;
+    begin
+        // [GIVEN] An Integer field value stored in a Variant
+        VRItem."No." := 'INT-001';
+        VRItem.Count := 7;
+        VRItem.Insert();
+        VRItem.Get('INT-001');
+        V := VRItem.Count;
+
+        // [THEN] IsInteger returns true even though the wrapper is NavInteger
+        Assert.IsTrue(V.IsInteger(), 'Variant holding an Integer field value should report IsInteger = true');
+    end;
+
+    [Test]
+    procedure TestVariantIsDecimalForRecordField()
+    var
+        VRItem: Record "VR Item";
+        V: Variant;
+    begin
+        // [GIVEN] A Decimal field value stored in a Variant
+        VRItem."No." := 'DEC-001';
+        VRItem.Quantity := 3.14;
+        VRItem.Insert();
+        VRItem.Get('DEC-001');
+        V := VRItem.Quantity;
+
+        // [THEN] IsDecimal returns true even though the wrapper is Decimal18/NavDecimal
+        Assert.IsTrue(V.IsDecimal(), 'Variant holding a Decimal field value should report IsDecimal = true');
+    end;
+
     [Test]
     procedure TestDirectVariantAssignToRecord()
     var
