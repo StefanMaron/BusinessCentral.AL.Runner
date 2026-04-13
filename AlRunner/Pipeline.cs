@@ -555,12 +555,14 @@ public class AlRunnerPipeline
                 Runtime.IterationTracker.Enable();
             }
 
+            var runSw = System.Diagnostics.Stopwatch.StartNew();
             var results = Executor.RunTests(assembly, captureValues: options.CaptureValues, runProcedure: options.RunProcedure);
+            runSw.Stop();
             testResults.AddRange(results);
             if (results.Count == 0 && options.RunProcedure != null)
                 stderr.WriteLine($"Error: Procedure '{options.RunProcedure}' not found in the generated code.");
             if (!options.OutputJson)
-                Executor.PrintResults(results);
+                Executor.PrintResults(results, runSw.ElapsedMilliseconds);
             exitCode = Executor.ExitCode(results);
 
             if (options.CaptureValues)

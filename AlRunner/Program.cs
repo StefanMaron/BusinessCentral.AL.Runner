@@ -2077,7 +2077,7 @@ public static class Executor
     }
 
     /// <summary>Print human-readable test results to console.</summary>
-    public static void PrintResults(List<AlRunner.TestResult> results)
+    public static void PrintResults(List<AlRunner.TestResult> results, long totalMs = 0)
     {
         foreach (var r in results)
         {
@@ -2105,9 +2105,13 @@ public static class Executor
 
         var passed = results.Count(r => r.Status == AlRunner.TestStatus.Pass);
         var failed = results.Count(r => r.Status == AlRunner.TestStatus.Fail);
-        var errors = results.Count(r => r.Status == AlRunner.TestStatus.Error);
+        var blocked = results.Count(r => r.Status == AlRunner.TestStatus.Error);
+        var timeStr = totalMs > 0 ? $" in {totalMs / 1000.0:0.0}s" : "";
         Console.WriteLine();
-        Console.WriteLine($"Results: {passed} passed, {failed} failed, {errors} errors, {passed + failed + errors} total");
+        if (failed == 0 && blocked == 0)
+            Console.WriteLine($"{passed} passed{timeStr}");
+        else
+            Console.WriteLine($"{passed} passed, {failed} failed, {blocked} blocked (runner limitation){timeStr}");
     }
 
     /// <summary>
