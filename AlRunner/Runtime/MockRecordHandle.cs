@@ -1521,7 +1521,7 @@ public class MockRecordHandle
         switch (value)
         {
             case NavText nt: return (string)nt;
-            case NavCode nc: return (string)nc;
+            case NavCode nc: return ((string)nc).TrimEnd();  // NavCode may be space-padded to maxLength
             case NavInteger ni: return ((int)ni).ToString(System.Globalization.CultureInfo.InvariantCulture);
             case NavBoolean nb: return ((bool)nb).ToString();
             case NavBigInteger nbi: return ((long)nbi).ToString(System.Globalization.CultureInfo.InvariantCulture);

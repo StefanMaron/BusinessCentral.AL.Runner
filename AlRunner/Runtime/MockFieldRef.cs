@@ -129,7 +129,9 @@ public class MockFieldRef
     /// Note: The MockVariant-specific overload was removed because MockVariant has
     /// implicit conversions to/from NavValue, which caused CS0121 ambiguity when C#
     /// could not choose between ALSetRange(NavValue) and ALSetRange(MockVariant).
-    /// The object overload handles all remaining cases safely.
+    /// MockVariant's implicit operator to NavValue? now returns a proper NavValue for
+    /// primitive CLR types (string→NavText, int→NavInteger, etc.) so that Variant
+    /// values passed to ALSetRange(NavValue) work correctly without a separate overload.
     /// </summary>
     public void ALSetRange(object value)
     {
@@ -137,7 +139,8 @@ public class MockFieldRef
             ALSetRange(nv);
         else if (value is MockVariant mv)
         {
-            if (mv.Value is NavValue mvNv)
+            NavValue? mvNv = mv;  // use improved implicit operator
+            if (mvNv != null)
                 ALSetRange(mvNv);
             else
                 _owner?.SetRange(_fieldNo, new NavText(mv.Value?.ToString() ?? ""));

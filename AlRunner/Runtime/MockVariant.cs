@@ -43,11 +43,23 @@ public class MockVariant
 
     /// <summary>
     /// Implicit conversion to allow MockVariant in NavValue contexts.
+    /// Returns a NavValue representation of the stored value, converting
+    /// primitive CLR types (string, int, bool, long, decimal) to their
+    /// NavValue equivalents so that Variant values work correctly in
+    /// filter/range operations (e.g. FieldRef.SetRange(v)).
     /// </summary>
     public static implicit operator NavValue?(MockVariant? v)
     {
-        if (v?._value is NavValue nv) return nv;
-        return null;
+        switch (v?._value)
+        {
+            case null: return null;
+            case NavValue nv: return nv;
+            case string s: return new NavText(s);
+            case int i: return NavInteger.Create(i);
+            case bool b: return NavBoolean.Create(b);
+            case long l: return NavBigInteger.Create(l);
+            default: return new NavText(v._value?.ToString() ?? "");
+        }
     }
 
     /// <summary>
