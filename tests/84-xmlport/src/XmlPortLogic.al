@@ -13,13 +13,15 @@ codeunit 58400 "XmlPort Logic"
         exit('ready');
     end;
 
-    /// Returns the XmlPort ID exposed by the mock so tests can verify the
-    /// handle was constructed with the right ID.
+    /// Returns a constant to prove a codeunit that declares an XmlPort variable
+    /// can compile and execute logic normally. This does not test the handle's
+    /// internal XmlPort ID (the mock does not expose it to AL callers) — it only
+    /// confirms that code around an XmlPort declaration runs without error.
     procedure GetXmlPortId(): Integer
     var
         XP: XmlPort "XmlPort Items";
     begin
-        // Just declaring and returning proves the variable declaration compiles.
+        // Declaring XP must compile; the returned constant is a compilation smoke-test.
         exit(58400);
     end;
 

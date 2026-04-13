@@ -1024,12 +1024,15 @@ protected bool CallGetFormatExtensionMethod(int fieldNo, ref string result) { re
         {
             if (visited.ArgumentList.Arguments.Count == 2)
             {
+                // BC emits new NavXmlPortHandle(this, xmlPortId) — strip ITreeObject 'this', keep ID.
                 return visited.WithArgumentList(
                     SyntaxFactory.ArgumentList(
                         SyntaxFactory.SingletonSeparatedList(visited.ArgumentList.Arguments[1])));
             }
-            if (visited.ArgumentList.Arguments.Count == 1)
+            if (visited.ArgumentList.Arguments.Count == 1 &&
+                visited.ArgumentList.Arguments[0].Expression.ToString() == "this")
             {
+                // Single-arg form with 'this' (no ID) — strip the ITreeObject parent.
                 return visited.WithArgumentList(SyntaxFactory.ArgumentList());
             }
         }
@@ -1467,26 +1470,6 @@ protected bool CallGetFormatExtensionMethod(int fieldNo, ref string result) { re
                         SyntaxFactory.IdentifierName("MockXmlPortHandle"),
                         SyntaxFactory.IdentifierName(stubMethod)),
                     visited.ArgumentList);
-            }
-            {
-                var args = visited.ArgumentList.Arguments;
-                if (args.Count >= 2)
-                {
-                    // First argument is DataError (TrapError or ThrowError)
-                    var errorLevelArg = args[0].Expression;
-                    // The second argument is the codeunit ID
-                    var codeunitIdArg = args[1].Expression;
-                    return SyntaxFactory.InvocationExpression(
-                        SyntaxFactory.MemberAccessExpression(
-                            SyntaxKind.SimpleMemberAccessExpression,
-                            SyntaxFactory.IdentifierName("MockCodeunitHandle"),
-                            SyntaxFactory.IdentifierName("RunCodeunit")),
-                        SyntaxFactory.ArgumentList(
-                            SyntaxFactory.SeparatedList<ArgumentSyntax>(new[] {
-                                SyntaxFactory.Argument(errorLevelArg),
-                                SyntaxFactory.Argument(codeunitIdArg)
-                            })));
-                }
             }
 
             // ALIsolatedStorage.ALSet/ALGet/ALContains/ALDelete -> MockIsolatedStorage

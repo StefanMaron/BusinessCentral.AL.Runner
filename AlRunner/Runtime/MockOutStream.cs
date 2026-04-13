@@ -36,4 +36,14 @@ public class MockOutStream
             _buffer.Add(data[i]);
         OnFlush?.Invoke(_buffer.ToArray());
     }
+
+    /// <summary>
+    /// ALAssign — AL: OutStr2 := OutStr1 — copies the other stream's state.
+    /// BC compiler emits <c>outStream.ALAssign(otherOutStream)</c> for assignment.
+    /// </summary>
+    public void ALAssign(MockOutStream other)
+    {
+        _buffer = new List<byte>(other._buffer);
+        OnFlush = other.OnFlush;
+    }
 }
