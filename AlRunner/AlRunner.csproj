@@ -118,18 +118,26 @@
   </ItemGroup>
 
   <!-- Auto-download AL compiler if not present.
-       Restricted to net8.0 to avoid parallel download conflicts when both inner builds run simultaneously. -->
-  <Target Name="EnsureALCompiler" BeforeTargets="ResolveAssemblyReferences"
-          Condition="'$(TargetFramework)' == 'net8.0' AND !Exists('$(ALCompilerPath)/Microsoft.Dynamics.Nav.CodeAnalysis.dll')">
+       Runs in the outer build (BeforeTargets=DispatchToInnerBuilds) so DLLs are present
+       before either inner build starts its ResolveAssemblyReferences pass. Also runs in
+       single-target builds (BeforeTargets=ResolveAssemblyReferences) where there is no
+       outer/inner split. Skipped in inner builds (TargetFramework is set, TargetFrameworks
+       is also set) to avoid redundant downloads. -->
+  <Target Name="EnsureALCompiler"
+          BeforeTargets="DispatchToInnerBuilds;ResolveAssemblyReferences"
+          Condition="!Exists('$(ALCompilerPath)/Microsoft.Dynamics.Nav.CodeAnalysis.dll')
+                     AND ('$(TargetFrameworks)' == '' OR '$(TargetFramework)' == '')">
     <Message Importance="high" Text="AL compiler not found. Downloading from NuGet..." />
     <Exec Command="dotnet run --project &quot;$(MSBuildProjectDirectory)/../tools/DownloadArtifacts&quot; -- al-compiler $(_ALToolVersion) &quot;$(ALCompilerPath)&quot;" />
   </Target>
 
   <!-- Auto-download BC Service Tier DLLs if not present.
-       Restricted to net8.0 to avoid parallel download conflicts when both inner builds run simultaneously. -->
-  <Target Name="EnsureBCServiceTierDlls" BeforeTargets="ResolveAssemblyReferences"
+       Same execution conditions as EnsureALCompiler. -->
+  <Target Name="EnsureBCServiceTierDlls"
+          BeforeTargets="DispatchToInnerBuilds;ResolveAssemblyReferences"
           DependsOnTargets="EnsureALCompiler"
-          Condition="'$(TargetFramework)' == 'net8.0' AND !Exists('$(ServiceTierPath)/Microsoft.Dynamics.Nav.Types.dll')">
+          Condition="!Exists('$(ServiceTierPath)/Microsoft.Dynamics.Nav.Types.dll')
+                     AND ('$(TargetFrameworks)' == '' OR '$(TargetFramework)' == '')">
     <Message Importance="high" Text="BC Service Tier DLLs not found. Downloading via range request..." />
     <Exec Command="dotnet run --project &quot;$(MSBuildProjectDirectory)/../tools/DownloadArtifacts&quot; -- service-tier $(_BCVersion) &quot;$(ServiceTierPath)&quot;" />
   </Target>
