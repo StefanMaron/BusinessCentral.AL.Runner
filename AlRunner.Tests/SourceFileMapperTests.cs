@@ -3,6 +3,7 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+[Collection("Pipeline")]
 public class SourceFileMapperTests
 {
     public SourceFileMapperTests()
@@ -108,6 +109,7 @@ public class SourceFileMapperTests
     }
 }
 
+[Collection("Pipeline")]
 public class ClassToObjectMappingTests
 {
     public ClassToObjectMappingTests()

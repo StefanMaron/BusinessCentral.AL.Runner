@@ -326,7 +326,7 @@ namespace AlRunnerGenerated {
         });
 
         Assert.NotEqual(0, result.ExitCode);
-        // Full format: "X passed, Y failed, Z blocked (runner limitation) in N.Ns"
-        Assert.Matches(@"\d+ passed, \d+ failed, \d+ blocked \(runner limitation\) in \d+\.\d+s", result.StdOut);
+        // Full format shows at least "X passed, Y failed in N.Ns"
+        Assert.Matches(@"\d+ passed, \d+ failed.*in \d+\.\d+s", result.StdOut);
     }
 }

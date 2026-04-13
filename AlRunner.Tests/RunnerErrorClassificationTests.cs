@@ -174,7 +174,7 @@ public class RunnerErrorClassificationTests
         finally { Console.SetOut(prev); }
 
         var output = captured.ToString();
-        Assert.Contains("1 passed, 0 failed, 1 blocked (runner limitation) in 2.5s", output);
+        Assert.Contains("1 passed, 1 blocked (runner limitation) in 2.5s", output);
     }
 
     [Fact]
