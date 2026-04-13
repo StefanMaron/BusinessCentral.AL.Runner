@@ -217,6 +217,28 @@ Full BC pipeline (MsDyn365Bc.On.Linux, 45+ min) — full fidelity test execution
 The full BC service tier pipeline:
 - https://github.com/StefanMaron/MsDyn365Bc.On.Linux
 
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | All tests passed |
+| `1` | Test assertion failures (real bugs in code) or usage/argument error |
+| `2` | Runner limitations only (no assertion failures; all blocked tests are due to Roslyn compilation gaps or missing mock support) |
+| `3` | AL compilation error (the AL source itself does not compile) |
+
+Use exit codes in CI to tolerate runner gaps without hiding real failures:
+
+```bash
+al-runner --packages .alpackages ./src ./test
+rc=$?
+if [ $rc -eq 2 ]; then
+  echo "Runner limitations only — not a build failure"
+  exit 0
+elif [ $rc -ne 0 ]; then
+  exit $rc
+fi
+```
+
 ## How It Works
 
 AL Runner has a 4-stage pipeline:
