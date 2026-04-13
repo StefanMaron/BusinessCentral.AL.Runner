@@ -47,6 +47,7 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("                        <src-dir> ...   optional  when given, only codeunits actually");
     Console.Error.WriteLine("                                                  referenced in those dirs are emitted");
     Console.Error.WriteLine("  --guide               Print test-writing guide for AI coding agents");
+    Console.Error.WriteLine("  --no-telemetry        Disable crash reporting prompt on unexpected errors");
     Console.Error.WriteLine("  -h, --help            Show this help");
     Console.Error.WriteLine();
     Console.Error.WriteLine("Examples:");
@@ -70,6 +71,7 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
 
 // Parse arguments into PipelineOptions
 var options = new AlRunner.PipelineOptions();
+bool noTelemetry = false;
 
 int argIdx = 0;
 while (argIdx < args.Length)
@@ -159,6 +161,10 @@ while (argIdx < args.Length)
             options.Verbose = true;
             argIdx++;
             break;
+        case "--no-telemetry":
+            noTelemetry = true;
+            argIdx++;
+            break;
         case "--stubs":
             argIdx++;
             if (argIdx >= args.Length) { Console.Error.WriteLine("Error: --stubs requires a directory argument"); return 1; }
@@ -185,7 +191,17 @@ while (argIdx < args.Length)
 }
 
 var pipeline = new AlRunner.AlRunnerPipeline();
-var result = pipeline.Run(options);
+AlRunner.PipelineResult result;
+try
+{
+    result = pipeline.Run(options);
+}
+catch (Exception ex)
+{
+    await AlRunner.TelemetryReporter.TryReportAsync(ex, options.OutputJson, noTelemetry);
+    Console.Error.WriteLine($"Fatal: {ex.GetType().Name}: {ex.Message}");
+    return 2;
+}
 
 // Forward captured output to actual console
 if (!string.IsNullOrEmpty(result.StdOut))

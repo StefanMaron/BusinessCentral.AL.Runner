@@ -6,6 +6,15 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+- **Opt-in crash telemetry** — When an unexpected .NET exception escapes the runner
+  pipeline, al-runner now prompts the user to send an anonymous error report to
+  Application Insights (Azure). The prompt only appears in interactive terminal
+  sessions (never in CI, server mode, or when output is redirected). A 30-second
+  timeout auto-answers "no" so no pipeline can ever hang. Only `AlRunner.*` stack
+  frames are included — user AL source, file paths, and codeunit names are never
+  transmitted. Use `--no-telemetry` to disable the prompt entirely.
+
 ### Fixed
 - **Duplicate `.app` packages no longer cause AL0275 "ambiguous reference" errors**
   — When the packages directory contains multiple copies of the same extension
