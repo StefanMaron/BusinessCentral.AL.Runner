@@ -20,6 +20,14 @@ All notable changes to this project are documented here. Format based on
   now always uses `.` as the decimal separator regardless of OS locale, matching
   real BC behavior.
 
+### Changed
+- **Source files with compilation errors are no longer silently excluded** — Previously,
+  when Roslyn compilation failed, al-runner would silently retry by dropping the
+  offending files and compiling the remaining ones. This could produce a passing run
+  that was missing whole codeunits. Now, any compilation error causes an immediate hard
+  failure: all errors are printed to stderr and the runner exits. This ensures you always
+  compile the full app or get a clear error — no silent partial results.
+
 ## [1.0.11] — 2026-04-13
 
 ### Added

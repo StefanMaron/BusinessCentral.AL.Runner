@@ -216,4 +216,59 @@ public class PipelineTests
         Assert.True(failedTest.TryGetProperty("message", out var msg));
         Assert.False(string.IsNullOrEmpty(msg.GetString()));
     }
+
+    // --- Regression tests for Issue #66: no silent file exclusion during compilation ---
+
+    /// <summary>
+    /// When two C# sources are compiled together and one has errors, the compiler
+    /// must return null (failure) rather than silently excluding the bad file and
+    /// returning an assembly from only the good file.
+    /// </summary>
+    [Fact]
+    public void RoslynCompiler_MultipleFiles_ReturnsNullWhenAnyFileHasErrors()
+    {
+        const string goodCSharp = @"
+namespace AlRunnerGenerated {
+    public class GoodClass { public int Value => 42; }
+}";
+        const string badCSharp = @"
+namespace AlRunnerGenerated {
+    public class BrokenClass { THIS IS NOT VALID C# }
+}";
+
+        var assembly = RoslynCompiler.Compile(new List<(string Name, string Code)>
+        {
+            ("GoodFile", goodCSharp),
+            ("BrokenFile", badCSharp)
+        });
+
+        // Must fail: any compilation error in any file must cause null return
+        Assert.Null(assembly);
+    }
+
+    /// <summary>
+    /// When two C# sources are compiled together and the first file has errors, the result
+    /// must be null — ordering must not affect failure behaviour (no silent exclusion).
+    /// </summary>
+    [Fact]
+    public void RoslynCompiler_MultipleFiles_ReturnsNullWhenFirstFileHasErrors()
+    {
+        const string badCSharp = @"
+namespace AlRunnerGenerated {
+    public class BrokenClass2 { THIS IS NOT VALID C# }
+}";
+        const string goodCSharp = @"
+namespace AlRunnerGenerated {
+    public class GoodClass2 { public int Value => 42; }
+}";
+
+        var assembly = RoslynCompiler.Compile(new List<(string Name, string Code)>
+        {
+            ("BrokenFile2", badCSharp),
+            ("GoodFile2", goodCSharp)
+        });
+
+        // Entire compilation must fail regardless of file ordering
+        Assert.Null(assembly);
+    }
 }

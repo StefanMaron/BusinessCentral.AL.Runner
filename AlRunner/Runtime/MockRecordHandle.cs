@@ -1784,10 +1784,6 @@ public class MockRecordHandle
         var recordType = assembly.GetTypes().FirstOrDefault(t => t.Name == recordTypeName);
         if (recordType == null)
         {
-            var exclusionInfo = RoslynCompiler.GetExclusionInfo(recordTypeName);
-            if (exclusionInfo != null)
-                throw new CompilationExcludedException(
-                    $"Record type {recordTypeName} was excluded during compilation.\n{exclusionInfo}");
             throw new InvalidOperationException($"Record type {recordTypeName} not found in assembly for Invoke");
         }
 

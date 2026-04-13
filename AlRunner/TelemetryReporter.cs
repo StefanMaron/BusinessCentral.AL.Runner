@@ -65,7 +65,6 @@ public static class TelemetryReporter
     /// </summary>
     public static async Task TryReportPipelineGapsAsync(
         List<TestResult> tests,
-        Dictionary<string, List<string>> compilationGaps,
         bool outputJson,
         bool noTelemetry)
     {
@@ -76,9 +75,7 @@ public static class TelemetryReporter
             .Where(t => t.Status == TestStatus.Error && t.IsRunnerBug)
             .ToList();
 
-        var compGapCount = compilationGaps.Count;
-
-        if (runtimeErrors.Count == 0 && compGapCount == 0) return;
+        if (runtimeErrors.Count == 0) return;
 
         var runtimeGrouped = runtimeErrors
             .GroupBy(t => t.Message ?? "")
@@ -91,19 +88,6 @@ public static class TelemetryReporter
         Console.Error.WriteLine("  Reporting helps improve al-runner support proactively.");
         Console.Error.WriteLine();
         Console.Error.WriteLine("  What will be sent (no AL source code, no file paths):");
-
-        if (compGapCount > 0)
-        {
-            Console.Error.WriteLine($"  Compilation ({compGapCount} file(s) excluded — rewriter gaps):");
-            foreach (var (file, errors) in compilationGaps.Take(3))
-            {
-                var shortName = Path.GetFileNameWithoutExtension(file);
-                var firstErr = errors.Count > 0 ? ScrubMessage(errors[0]) : "unknown error";
-                Console.Error.WriteLine($"    × {shortName}: {firstErr}");
-            }
-            if (compGapCount > 3)
-                Console.Error.WriteLine($"    … and {compGapCount - 3} more file(s)");
-        }
 
         if (runtimeErrors.Count > 0)
         {
@@ -119,23 +103,6 @@ public static class TelemetryReporter
 
         if (!PromptYesNoWithTimeout($"Send error report? [y/N] (auto-no in {PromptTimeoutSeconds}s): "))
             return;
-
-        // Send compilation gaps as a batch event
-        if (compGapCount > 0)
-        {
-            var gapMessages = compilationGaps
-                .SelectMany(kv => kv.Value.Select(err => $"{Path.GetFileNameWithoutExtension(kv.Key)}: {ScrubMessage(err)}"))
-                .Take(20)
-                .ToList();
-            var compReport = new TelemetryReport(
-                ExceptionType: "AlRunner.CompilationGap",
-                ScrubbedMessage: ScrubMessage($"{compGapCount} file(s) excluded: " + string.Join("; ", gapMessages.Take(3))),
-                StackText: string.Join("\n", gapMessages),
-                FrameCount: gapMessages.Count,
-                RunnerVersion: GetVersionString(),
-                Os: GetOsString());
-            await SendAsync(compReport);
-        }
 
         // Send each unique runtime error (deduplicated by message)
         foreach (var (_, _, sample) in runtimeGrouped)
