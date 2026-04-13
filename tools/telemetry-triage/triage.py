@@ -52,6 +52,17 @@ def http_post(url, headers, body):
         print(f"  HTTP {e.code}: {e.read().decode()}", file=sys.stderr)
         raise
 
+def http_patch(url, headers, body):
+    data = json.dumps(body).encode()
+    headers = {**headers, "Content-Type": "application/json"}
+    req = urllib.request.Request(url, data=data, headers=headers, method="PATCH")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        print(f"  HTTP {e.code}: {e.read().decode()}", file=sys.stderr)
+        raise
+
 def gh_headers():
     return {
         "Authorization": f"Bearer {GH_TOKEN}",
@@ -117,10 +128,9 @@ exceptions
 
 def query_telemetry(from_time: str) -> list[dict]:
     kql = KQL.replace("{from_time}", from_time)
-    url = f"{AI_QUERY_URL}?query={urllib.request.quote(kql)}"
     headers = {"x-api-key": API_KEY, "Accept": "application/json"}
     print(f"Querying Application Insights from {from_time}…")
-    data = http_get(url, headers)
+    data = http_post(AI_QUERY_URL, headers, {"query": kql})
 
     tables = data.get("tables", [])
     if not tables:
@@ -154,16 +164,18 @@ def ensure_label_exists():
             raise
 
 def find_existing_issue(exception_type: str) -> dict | None:
-    """Search for an open issue whose title matches the exception type fingerprint."""
-    title_fragment = urllib.request.quote(f"[telemetry] {exception_type}")
-    url = f"{GH_API_BASE}/repos/{GH_REPO}/issues?state=open&labels={ISSUE_LABEL}&per_page=100"
-    try:
-        issues = http_get(url, gh_headers())
-        for issue in issues:
-            if issue.get("title", "").startswith(f"[telemetry] {exception_type}"):
-                return issue
-    except Exception as e:
-        print(f"  Warning: could not search issues: {e}", file=sys.stderr)
+    """Search for an open or closed issue whose title matches the exception type fingerprint."""
+    expected_title = f"[telemetry] {exception_type}"
+    # Check open issues first; if not found, check closed (to avoid duplicates on re-occurring crashes).
+    for state in ("open", "closed"):
+        url = f"{GH_API_BASE}/repos/{GH_REPO}/issues?state={state}&labels={ISSUE_LABEL}&per_page=100"
+        try:
+            issues = http_get(url, gh_headers())
+            for issue in issues:
+                if issue.get("title", "").startswith(expected_title):
+                    return issue
+        except Exception as e:
+            print(f"  Warning: could not search {state} issues: {e}", file=sys.stderr)
     return None
 
 def build_issue_body(row: dict, from_time: str) -> str:
@@ -247,11 +259,22 @@ def create_issue(row: dict, from_time: str):
 
 def update_issue(issue: dict, row: dict, from_time: str):
     issue_number = issue["number"]
+    issue_state  = issue.get("state", "open")
     comment_body = build_update_comment(row, from_time)
 
     if DRY_RUN:
-        print(f"  [DRY RUN] Would comment on issue #{issue_number}: {issue['title']} (+{row.get('occurrences')} occurrence(s))")
+        reopen_note = " + reopen" if issue_state == "closed" else ""
+        print(f"  [DRY RUN] Would comment{reopen_note} on issue #{issue_number}: {issue['title']} (+{row.get('occurrences')} occurrence(s))")
         return
+
+    # Reopen the issue if it was previously closed (crash re-occurring).
+    if issue_state == "closed":
+        http_patch(
+            f"{GH_API_BASE}/repos/{GH_REPO}/issues/{issue_number}",
+            gh_headers(),
+            {"state": "open"},
+        )
+        print(f"  Reopened issue #{issue_number}: {issue['title']}")
 
     http_post(
         f"{GH_API_BASE}/repos/{GH_REPO}/issues/{issue_number}/comments",
