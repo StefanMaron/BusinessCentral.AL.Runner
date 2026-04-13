@@ -108,10 +108,11 @@ public class JsonOutputTests
     // --- Integration tests via AlRunnerPipeline ---
 
     [Fact]
-    public void PartialCompile_OutputJson_PopulatesCompilationErrors()
+    public void OutputJson_PassingTests_EmitsJsonWithTests()
     {
-        // The src directory has an XmlPort that fails Roslyn compilation
-        // and a codeunit that compiles and runs successfully.
+        // Verify that --output-json produces valid JSON with test results when
+        // compilation succeeds. Partial compilation (file exclusion) was removed
+        // in #80 — compilation is now all-or-nothing.
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
@@ -119,23 +120,21 @@ public class JsonOutputTests
             OutputJson = true
         });
 
+        Assert.Equal(0, result.ExitCode);
         var doc = JsonDocument.Parse(result.StdOut.Trim());
         var root = doc.RootElement;
 
-        // The codeunit tests should pass
-        Assert.Equal(0, root.GetProperty("errors").GetInt32());
         Assert.True(root.GetProperty("passed").GetInt32() > 0);
-
-        // compilationErrors should be present because the XmlPort was excluded
-        Assert.True(root.TryGetProperty("compilationErrors", out var compErrors),
-            "compilationErrors field must be present when XmlPort is excluded");
-        Assert.True(compErrors.GetArrayLength() > 0);
+        Assert.Equal(0, root.GetProperty("errors").GetInt32());
+        Assert.Equal(0, root.GetProperty("failed").GetInt32());
+        // compilationErrors field is absent — no per-file exclusion in all-or-nothing mode
+        Assert.False(root.TryGetProperty("compilationErrors", out _));
     }
 
     [Fact]
-    public void PartialCompile_PassingTests_StillShowPass()
+    public void OutputJson_AllTestsPass_StatusIsPass()
     {
-        // Even with compilation errors present, passing tests get status "pass"
+        // Every test in test-84 should get status "pass" in the JSON output.
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
@@ -146,11 +145,8 @@ public class JsonOutputTests
         var doc = JsonDocument.Parse(result.StdOut.Trim());
         var tests = doc.RootElement.GetProperty("tests").EnumerateArray().ToList();
 
-        var passingTests = tests.Where(t => t.GetProperty("status").GetString() == "pass").ToList();
-        Assert.True(passingTests.Count >= 2, "At least two tests should pass");
-
-        var errorStatuses = tests.Where(t => t.GetProperty("status").GetString() == "error").ToList();
-        Assert.Empty(errorStatuses);
+        Assert.True(tests.Count >= 2, "At least two tests should be present");
+        Assert.All(tests, t => Assert.Equal("pass", t.GetProperty("status").GetString()));
     }
 
     [Fact]

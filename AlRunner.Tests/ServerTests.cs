@@ -86,12 +86,12 @@ public class ServerTests
     }
 
     [Fact]
-    public async Task Server_CacheHit_CompilationErrors_MatchOriginalCompilation()
+    public async Task Server_CacheHit_ReturnsCachedTrue()
     {
-        // The test-84 src dir contains an XmlPort that fails Roslyn compilation,
-        // so the first (cache-miss) response should include compilationErrors.
-        // The second identical request (cache hit) must return the same
-        // compilationErrors — not an empty/null stale result.
+        // The first request compiles and runs tests (cache miss, cached: false).
+        // An identical second request should be served from the assembly cache
+        // (cache hit, cached: true) and return the same test results.
+        // Partial compilation / compilationErrors was removed in #80.
         await using var server = await CliServer.StartAsync();
 
         var request = JsonSerializer.Serialize(new
@@ -104,17 +104,13 @@ public class ServerTests
         var response1 = await server.SendAsync(request);
         var doc1 = JsonDocument.Parse(response1);
         Assert.False(doc1.RootElement.GetProperty("cached").GetBoolean(), "first request should be a cache miss");
-        Assert.True(doc1.RootElement.TryGetProperty("compilationErrors", out var errors1),
-            "first response must include compilationErrors for the excluded XmlPort");
-        var errorCount1 = errors1.GetArrayLength();
-        Assert.True(errorCount1 > 0, "compilationErrors must be non-empty on cache miss");
+        var passed1 = doc1.RootElement.GetProperty("passed").GetInt32();
+        Assert.True(passed1 > 0, "first request must have passing tests");
 
         // Cache hit — identical request
         var response2 = await server.SendAsync(request);
         var doc2 = JsonDocument.Parse(response2);
         Assert.True(doc2.RootElement.GetProperty("cached").GetBoolean(), "second request should be a cache hit");
-        Assert.True(doc2.RootElement.TryGetProperty("compilationErrors", out var errors2),
-            "cache hit response must still include compilationErrors — not stale/missing");
-        Assert.Equal(errorCount1, errors2.GetArrayLength());
+        Assert.Equal(passed1, doc2.RootElement.GetProperty("passed").GetInt32());
     }
 }
