@@ -6,6 +6,14 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Fixed
+- **`RecRef.Find()` (no-arg) compilation error** — The BC compiler emits
+  `recRef.ALFind(DataError.ThrowError)` for AL's no-argument `RecRef.Find()`.
+  `MockRecordRef` now provides a matching `ALFind(DataError)` overload that routes
+  through `TryFind` so an empty table returns `false` instead of throwing.
+  Previously caused `CS1503: cannot convert from DataError to string` at Roslyn
+  compilation. Tested by `tests/88-recref-find/` (6 test cases).
+
 ## [1.0.12] — 2026-04-13
 
 ### Added
