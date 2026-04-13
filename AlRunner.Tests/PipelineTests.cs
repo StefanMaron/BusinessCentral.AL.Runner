@@ -299,4 +299,34 @@ namespace AlRunnerGenerated {
             Assert.Contains("LoopHelper", sourceFile);
         }
     }
+
+    [Fact]
+    public void SummaryLine_AllPass_ShowsCompactFormat()
+    {
+        var pipeline = new AlRunnerPipeline();
+        var result = pipeline.Run(new PipelineOptions
+        {
+            InputPaths = { TestPath("01-pure-function", "src"), TestPath("01-pure-function", "test") }
+        });
+
+        Assert.Equal(0, result.ExitCode);
+        // Compact format: "X passed in N.Ns" — no "failed" or "blocked" on a clean run
+        Assert.Matches(@"\d+ passed in \d+\.\d+s", result.StdOut);
+        Assert.DoesNotContain("failed", result.StdOut);
+        Assert.DoesNotContain("blocked", result.StdOut);
+    }
+
+    [Fact]
+    public void SummaryLine_WithFailure_ShowsFullFormat()
+    {
+        var pipeline = new AlRunnerPipeline();
+        var result = pipeline.Run(new PipelineOptions
+        {
+            InputPaths = { TestPath("06-intentional-failure", "src"), TestPath("06-intentional-failure", "test") }
+        });
+
+        Assert.NotEqual(0, result.ExitCode);
+        // Full format shows at least "X passed, Y failed in N.Ns"
+        Assert.Matches(@"\d+ passed, \d+ failed.*in \d+\.\d+s", result.StdOut);
+    }
 }

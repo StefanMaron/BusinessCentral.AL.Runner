@@ -137,6 +137,85 @@ public class RunnerErrorClassificationTests
         Assert.Contains("github.com/StefanMaron/BusinessCentral.AL.Runner/issues", output);
     }
 
+    [Fact]
+    public void PrintResults_SummaryLine_AllPass_ShowsCompactFormat()
+    {
+        var tests = new List<TestResult>
+        {
+            new() { Name = "TestA", Status = TestStatus.Pass, DurationMs = 5 },
+            new() { Name = "TestB", Status = TestStatus.Pass, DurationMs = 3 },
+        };
+
+        var captured = new System.IO.StringWriter();
+        var prev = Console.Out;
+        Console.SetOut(captured);
+        try { Executor.PrintResults(tests, totalMs: 100); }
+        finally { Console.SetOut(prev); }
+
+        var output = captured.ToString();
+        Assert.Matches(@"2 passed in 0\.1s", output);
+        Assert.DoesNotContain("failed", output);
+        Assert.DoesNotContain("blocked", output);
+    }
+
+    [Fact]
+    public void PrintResults_SummaryLine_WithBlockedTests_ShowsBlockedFormat()
+    {
+        var tests = new List<TestResult>
+        {
+            new() { Name = "TestPass", Status = TestStatus.Pass },
+            new() { Name = "TestBlocked", Status = TestStatus.Error, IsRunnerBug = true, Message = "Not supported" },
+        };
+
+        var captured = new System.IO.StringWriter();
+        var prev = Console.Out;
+        Console.SetOut(captured);
+        try { Executor.PrintResults(tests, totalMs: 2500); }
+        finally { Console.SetOut(prev); }
+
+        var output = captured.ToString();
+        Assert.Contains("1 passed, 1 blocked (runner limitation) in 2.5s", output);
+    }
+
+    [Fact]
+    public void PrintResults_SummaryLine_WithFailures_ShowsFullFormat()
+    {
+        var tests = new List<TestResult>
+        {
+            new() { Name = "TestPass", Status = TestStatus.Pass },
+            new() { Name = "TestFail", Status = TestStatus.Fail, Message = "assertion failed" },
+            new() { Name = "TestBlocked", Status = TestStatus.Error, IsRunnerBug = true },
+        };
+
+        var captured = new System.IO.StringWriter();
+        var prev = Console.Out;
+        Console.SetOut(captured);
+        try { Executor.PrintResults(tests, totalMs: 1800); }
+        finally { Console.SetOut(prev); }
+
+        var output = captured.ToString();
+        Assert.Contains("1 passed, 1 failed, 1 blocked (runner limitation) in 1.8s", output);
+    }
+
+    [Fact]
+    public void PrintResults_SummaryLine_NoElapsedTime_OmitsTimeClause()
+    {
+        var tests = new List<TestResult>
+        {
+            new() { Name = "TestA", Status = TestStatus.Pass },
+        };
+
+        var captured = new System.IO.StringWriter();
+        var prev = Console.Out;
+        Console.SetOut(captured);
+        try { Executor.PrintResults(tests); }
+        finally { Console.SetOut(prev); }
+
+        var output = captured.ToString();
+        Assert.Contains("1 passed", output);
+        Assert.DoesNotContain(" in ", output);
+    }
+
     // ---------------------------------------------------------------------------
     // ExitCode() differentiation tests
     // ---------------------------------------------------------------------------

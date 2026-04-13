@@ -7,6 +7,14 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Compact summary line at end of test runs** — After each test run, the output
+  now ends with a concise one-liner analogous to pytest/jest:
+  - All pass: `42 passed in 1.8s`
+  - With failures: `9 passed, 2 failed, 3 blocked (runner limitation) in 1.8s`
+  - With setup errors: `9 passed, 1 errors in 0.3s`
+  Only non-zero counts are shown. Runner-limitation errors (`IsRunnerBug=true`) are
+  labelled `blocked (runner limitation)`; other errors are labelled `errors`.
+  Elapsed time is always included when timing is available. Closes #71.
 - **`sourceFile` field on iterations and captured values** — The `--output-json`
   iteration and captured-value records now include a `sourceFile` property with the
   path to the AL file that contains the loop or variable. A new `SourceFileMapper`
