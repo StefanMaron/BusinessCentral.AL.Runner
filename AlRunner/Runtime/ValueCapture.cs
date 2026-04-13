@@ -7,7 +7,7 @@ namespace AlRunner.Runtime;
 /// </summary>
 public static class ValueCapture
 {
-    private static readonly List<(string ScopeName, string VariableName, string? Value, int StatementId)> _captures = new();
+    private static readonly List<(string ScopeName, string ObjectName, string VariableName, string? Value, int StatementId)> _captures = new();
     private static bool _enabled;
 
     public static bool Enabled => _enabled;
@@ -15,13 +15,13 @@ public static class ValueCapture
     public static void Enable() => _enabled = true;
     public static void Disable() => _enabled = false;
 
-    public static void Capture(string scopeName, string variableName, object? value, int statementId)
+    public static void Capture(string scopeName, string objectName, string variableName, object? value, int statementId)
     {
         if (!_enabled) return;
-        _captures.Add((scopeName, variableName, value?.ToString(), statementId));
+        _captures.Add((scopeName, objectName, variableName, value?.ToString(), statementId));
     }
 
-    public static List<(string ScopeName, string VariableName, string? Value, int StatementId)> GetCaptures()
+    public static List<(string ScopeName, string ObjectName, string VariableName, string? Value, int StatementId)> GetCaptures()
         => new(_captures);
 
     public static void Reset()

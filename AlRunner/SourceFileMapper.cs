@@ -11,6 +11,7 @@ namespace AlRunner;
 public static class SourceFileMapper
 {
     private static readonly Dictionary<string, string> _objectToFile = new();
+    private static readonly Dictionary<string, string> _classToObject = new();
 
     /// <summary>
     /// Register an AL object name to its source file path.
@@ -56,11 +57,29 @@ public static class SourceFileMapper
     }
 
     /// <summary>
+    /// Register a C# class name to its AL object name.
+    /// Called after transpilation to map parent class names back to objects.
+    /// </summary>
+    public static void RegisterClass(string className, string objectName)
+    {
+        _classToObject[className] = objectName;
+    }
+
+    /// <summary>
+    /// Look up the AL object name for a C# class name.
+    /// </summary>
+    public static string GetObjectForClass(string className)
+    {
+        return _classToObject.TryGetValue(className, out var obj) ? obj : className;
+    }
+
+    /// <summary>
     /// Reset between runs.
     /// </summary>
     public static void Clear()
     {
         _objectToFile.Clear();
+        _classToObject.Clear();
     }
 
     private static readonly Regex ObjectDeclPattern = new(

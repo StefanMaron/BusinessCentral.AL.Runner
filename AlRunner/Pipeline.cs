@@ -44,6 +44,7 @@ public class TestResult
 public class CapturedValue
 {
     public required string ScopeName { get; init; }
+    public required string ObjectName { get; init; }
     public required string VariableName { get; init; }
     public string? Value { get; init; }
     public int StatementId { get; init; }
@@ -107,11 +108,12 @@ public class AlRunnerPipeline
         var capturedValues = new List<CapturedValue>();
         if (options.CaptureValues)
         {
-            foreach (var (scopeName, variableName, value, stmtId) in Runtime.ValueCapture.GetCaptures())
+            foreach (var (scopeName, objectName, variableName, value, stmtId) in Runtime.ValueCapture.GetCaptures())
             {
                 capturedValues.Add(new CapturedValue
                 {
                     ScopeName = scopeName,
+                    ObjectName = objectName,
                     VariableName = variableName,
                     Value = value,
                     StatementId = stmtId
@@ -157,9 +159,7 @@ public class AlRunnerPipeline
             ? capturedValues.Select(c => new
             {
                 scopeName = c.ScopeName,
-                sourceFile = scopeToObject != null
-                    ? SourceFileMapper.GetFileForScope(c.ScopeName, scopeToObject)
-                    : null,
+                sourceFile = SourceFileMapper.GetFile(c.ObjectName),
                 variableName = c.VariableName,
                 value = c.Value,
                 statementId = c.StatementId
@@ -422,6 +422,15 @@ public class AlRunnerPipeline
             }
         }
 
+        // Register C# class names → AL object names for captured value resolution
+        var outerClassPattern = new System.Text.RegularExpressions.Regex(@"^\s*public\s+(?:sealed\s+)?class\s+(\w+)", System.Text.RegularExpressions.RegexOptions.Multiline);
+        foreach (var (name, code) in generatedCSharpList)
+        {
+            var classMatch = outerClassPattern.Match(code);
+            if (classMatch.Success)
+                SourceFileMapper.RegisterClass(classMatch.Groups[1].Value, name);
+        }
+
         Log.Info($"\nTranspiled {generatedCSharpList.Count} AL objects to C#");
 
         if (options.DumpCSharp)
@@ -448,7 +457,7 @@ public class AlRunnerPipeline
             // The capture function no-ops when ValueCapture.Enabled is false,
             // so we can run this unconditionally and avoid a separate code
             // path for capture vs non-capture runs.
-            var injectedRoot = ValueCaptureInjector.Inject(tree.GetRoot());
+            var injectedRoot = ValueCaptureInjector.Inject(tree.GetRoot(), name);
             if (options.IterationTracking)
                 injectedRoot = IterationInjector.Inject(injectedRoot);
             tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.Create((Microsoft.CodeAnalysis.CSharp.CSharpSyntaxNode)injectedRoot);
@@ -542,7 +551,7 @@ public class AlRunnerPipeline
             Runtime.MessageCapture.Disable();
 
             Dictionary<string, string>? scopeToObject = null;
-            if (options.IterationTracking || options.ShowCoverage || options.CaptureValues)
+            if (options.IterationTracking || options.ShowCoverage)
             {
                 scopeToObject = CoverageReport.BuildScopeToObjectMap(generatedCSharpList!);
             }

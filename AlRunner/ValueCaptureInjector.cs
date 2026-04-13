@@ -17,11 +17,14 @@ namespace AlRunner;
 public sealed class ValueCaptureInjector : CSharpSyntaxRewriter
 {
     private string? _currentScopeClass;
+    private readonly string _objectName;
     private HashSet<string> _runtimeTypeFields = new();
 
-    public static SyntaxNode Inject(SyntaxNode root)
+    private ValueCaptureInjector(string objectName) { _objectName = objectName; }
+
+    public static SyntaxNode Inject(SyntaxNode root, string objectName = "")
     {
-        var injector = new ValueCaptureInjector();
+        var injector = new ValueCaptureInjector(objectName);
         return injector.Visit(root);
     }
 
@@ -157,10 +160,13 @@ public sealed class ValueCaptureInjector : CSharpSyntaxRewriter
     private StatementSyntax BuildCaptureCall(string fieldName, int stmtId)
     {
         // AlRunner.Runtime.ValueCapture.Capture(
-        //   <scopeClass>, <fieldName>, (object?)this.<fieldName>, <stmtId>);
+        //   <scopeClass>, <objectName>, <fieldName>, (object?)this.<fieldName>, <stmtId>);
         var scopeLit = SyntaxFactory.LiteralExpression(
             SyntaxKind.StringLiteralExpression,
             SyntaxFactory.Literal(_currentScopeClass!));
+        var objLit = SyntaxFactory.LiteralExpression(
+            SyntaxKind.StringLiteralExpression,
+            SyntaxFactory.Literal(_objectName));
         var nameLit = SyntaxFactory.LiteralExpression(
             SyntaxKind.StringLiteralExpression,
             SyntaxFactory.Literal(fieldName));
@@ -175,7 +181,6 @@ public sealed class ValueCaptureInjector : CSharpSyntaxRewriter
             SyntaxKind.NumericLiteralExpression,
             SyntaxFactory.Literal(stmtId));
 
-        // Fully-qualified so it resolves regardless of using directives in the file.
         var target = SyntaxFactory.ParseExpression("AlRunner.Runtime.ValueCapture.Capture");
 
         var call = SyntaxFactory.InvocationExpression(
@@ -183,6 +188,7 @@ public sealed class ValueCaptureInjector : CSharpSyntaxRewriter
             SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList(new[]
             {
                 SyntaxFactory.Argument(scopeLit),
+                SyntaxFactory.Argument(objLit),
                 SyntaxFactory.Argument(nameLit),
                 SyntaxFactory.Argument(valueArg),
                 SyntaxFactory.Argument(idLit)
