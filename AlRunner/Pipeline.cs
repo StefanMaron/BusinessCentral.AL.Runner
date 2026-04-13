@@ -83,6 +83,7 @@ public class PipelineResult
 public class AlRunnerPipeline
 {
     private Dictionary<string, string>? _scopeToObject;
+    public RewriteCache? RewriteCache { get; set; }
 
     /// <summary>
     /// Run the full AL Runner pipeline: transpile → rewrite → compile → execute.
@@ -480,9 +481,20 @@ public class AlRunnerPipeline
         var refsTask = Task.Run(() => RoslynCompiler.LoadReferences());
 
         var rewrittenTrees = new (string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)[generatedCSharpList.Count];
+        int rewriteHits = 0;
         Parallel.For(0, generatedCSharpList.Count, i =>
         {
             var (name, code) = generatedCSharpList[i];
+
+            // Check rewrite cache — if C# output is unchanged, reuse prior tree
+            var cached = RewriteCache?.TryGet(name, code);
+            if (cached != null)
+            {
+                rewrittenTrees[i] = (name, cached);
+                Interlocked.Increment(ref rewriteHits);
+                return;
+            }
+
             var tree = RoslynRewriter.RewriteToTree(code);
             // Second pass: inject per-statement ValueCapture.Capture calls.
             // The capture function no-ops when ValueCapture.Enabled is false,
@@ -493,7 +505,13 @@ public class AlRunnerPipeline
                 injectedRoot = IterationInjector.Inject(injectedRoot);
             tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.Create((Microsoft.CodeAnalysis.CSharp.CSharpSyntaxNode)injectedRoot);
             rewrittenTrees[i] = (name, tree);
+
+            // Store in cache for next run
+            RewriteCache?.Store(name, code, tree);
         });
+
+        if (rewriteHits > 0)
+            Log.Info($"Rewrite cache: {rewriteHits}/{generatedCSharpList.Count} hits");
         var rewrittenTreeList = rewrittenTrees.ToList();
 
         List<(string Name, string Code)>? _rewrittenStringList = null;

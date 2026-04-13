@@ -14,6 +14,7 @@ namespace AlRunner;
 public class AlRunnerServer
 {
     private readonly CompilationCache _cache = new();
+    private readonly RewriteCache _rewriteCache = new();
 
     public async Task RunAsync(TextReader input, TextWriter output, CancellationToken ct = default)
     {
@@ -97,6 +98,7 @@ public class AlRunnerServer
             options.StubPaths.AddRange(request.StubPaths);
 
         var pipeline = new AlRunnerPipeline();
+        pipeline.RewriteCache = _rewriteCache;
         var result = pipeline.Run(options);
 
         // Compilation errors (file-level exclusion was removed in #80; always empty now).
