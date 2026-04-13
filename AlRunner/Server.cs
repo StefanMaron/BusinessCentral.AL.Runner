@@ -169,14 +169,20 @@ public class AlRunnerServer
 
     private static string SerializeServerResponse(List<TestResult> tests, int exitCode, bool cached, List<string>? changedFiles = null)
     {
-        var excludedFiles = RoslynCompiler.ExcludedFiles;
-        object? compilationErrorsObj = excludedFiles.Count > 0
-            ? excludedFiles.Select(kvp => new
-            {
-                file = System.IO.Path.GetFileName(kvp.Key),
-                errors = kvp.Value
-            })
-            : null;
+        // On cache hits no compilation occurred, so ExcludedFiles holds stale data from a
+        // prior request. Only surface compilationErrors on fresh compilations (cache miss).
+        object? compilationErrorsObj = null;
+        if (!cached)
+        {
+            var excludedFiles = RoslynCompiler.ExcludedFiles;
+            compilationErrorsObj = excludedFiles.Count > 0
+                ? excludedFiles.Select(kvp => new
+                {
+                    file = System.IO.Path.GetFileName(kvp.Key),
+                    errors = kvp.Value
+                })
+                : null;
+        }
 
         var output = new
         {

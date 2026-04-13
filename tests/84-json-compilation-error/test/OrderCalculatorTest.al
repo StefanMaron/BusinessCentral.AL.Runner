@@ -28,12 +28,12 @@ codeunit 50842 "Order Calculator Test"
     end;
 
     [Test]
-    procedure TotalWithTax_WrongResult_Fails()
+    procedure TotalWithTax_WrongExpectedValue_AssertError()
     var
         Calc: Codeunit "Order Calculator";
         Result: Decimal;
     begin
-        // Negative: assert that incorrect expected value fails (proves runner catches failures)
+        // Negative: asserterror verifies the runner raises an error for wrong expected values
         Result := Calc.TotalWithTax(100, 10);
         asserterror Assert.AreEqual(999, Result, 'Should fail - wrong expected value');
     end;

@@ -149,8 +149,8 @@ public class JsonOutputTests
         var passingTests = tests.Where(t => t.GetProperty("status").GetString() == "pass").ToList();
         Assert.True(passingTests.Count >= 2, "At least two tests should pass");
 
-        var failStatuses = tests.Where(t => t.GetProperty("status").GetString() == "error").ToList();
-        Assert.Empty(failStatuses);
+        var errorStatuses = tests.Where(t => t.GetProperty("status").GetString() == "error").ToList();
+        Assert.Empty(errorStatuses);
     }
 
     [Fact]
