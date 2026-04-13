@@ -217,7 +217,7 @@ public class PipelineTests
         Assert.False(string.IsNullOrEmpty(msg.GetString()));
     }
 
-    // --- RED tests for Issue #66: remove silent file exclusion ---
+    // --- Regression tests for Issue #66: no silent file exclusion during compilation ---
 
     /// <summary>
     /// When two C# sources are compiled together and one has errors, the compiler
@@ -238,8 +238,8 @@ namespace AlRunnerGenerated {
 
         var assembly = RoslynCompiler.Compile(new List<(string Name, string Code)>
         {
-            ("GoodFile.cs", goodCSharp),
-            ("BrokenFile.cs", badCSharp)
+            ("GoodFile", goodCSharp),
+            ("BrokenFile", badCSharp)
         });
 
         // Must fail: any compilation error in any file must cause null return
@@ -264,8 +264,8 @@ namespace AlRunnerGenerated {
 
         var assembly = RoslynCompiler.Compile(new List<(string Name, string Code)>
         {
-            ("GoodFile2.cs", goodCSharp),
-            ("BrokenFile2.cs", badCSharp)
+            ("GoodFile2", goodCSharp),
+            ("BrokenFile2", badCSharp)
         });
 
         // Entire compilation must fail — not just the bad file silently excluded

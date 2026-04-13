@@ -25,18 +25,6 @@
   <PropertyGroup>
     <_AlRunnerOut>$(MSBuildProjectDirectory)/../AlRunner/bin/$(Configuration)/$(TargetFramework)</_AlRunnerOut>
   </PropertyGroup>
-
-  <!-- Reference Microsoft.CodeAnalysis at compile time so tests can use Roslyn types directly -->
-  <ItemGroup>
-    <Reference Include="Microsoft.CodeAnalysis">
-      <HintPath>$(_AlRunnerOut)/Microsoft.CodeAnalysis.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="Microsoft.CodeAnalysis.CSharp">
-      <HintPath>$(_AlRunnerOut)/Microsoft.CodeAnalysis.CSharp.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-  </ItemGroup>
   <Target Name="CopyBCDlls" AfterTargets="Build">
     <ItemGroup>
       <BCDlls Include="$(_AlRunnerOut)/Microsoft.Dynamics.Nav.CodeAnalysis*.dll" />
