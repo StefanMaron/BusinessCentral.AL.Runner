@@ -247,28 +247,28 @@ namespace AlRunnerGenerated {
     }
 
     /// <summary>
-    /// When two C# sources are compiled together and one has errors, the result
-    /// must be null — the good file must NOT be compiled in isolation (no silent exclusion).
+    /// When two C# sources are compiled together and the first file has errors, the result
+    /// must be null — ordering must not affect failure behaviour (no silent exclusion).
     /// </summary>
     [Fact]
-    public void RoslynCompiler_MultipleFiles_ReturnsNullWhenSecondFileHasErrors()
+    public void RoslynCompiler_MultipleFiles_ReturnsNullWhenFirstFileHasErrors()
     {
-        const string goodCSharp = @"
-namespace AlRunnerGenerated {
-    public class GoodClass2 { public int Value => 42; }
-}";
         const string badCSharp = @"
 namespace AlRunnerGenerated {
     public class BrokenClass2 { THIS IS NOT VALID C# }
 }";
+        const string goodCSharp = @"
+namespace AlRunnerGenerated {
+    public class GoodClass2 { public int Value => 42; }
+}";
 
         var assembly = RoslynCompiler.Compile(new List<(string Name, string Code)>
         {
-            ("GoodFile2", goodCSharp),
-            ("BrokenFile2", badCSharp)
+            ("BrokenFile2", badCSharp),
+            ("GoodFile2", goodCSharp)
         });
 
-        // Entire compilation must fail — not just the bad file silently excluded
+        // Entire compilation must fail regardless of file ordering
         Assert.Null(assembly);
     }
 }

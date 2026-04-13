@@ -64,12 +64,16 @@ jobs:
 
       - name: Run all AL tests
         run: |
-          # 06- = intentional failure fixture
+          # Run each test case individually so duplicate object IDs across test suites
+          # don't cause false compilation failures.
+          # 06- = intentional failure fixture (always fails, excluded)
           # 39- = stubs scenario — run separately with --stubs
           # 46- = missing-dep namespace-mismatch fixture — intentionally
           #        fails without --stubs; covered by C# MissingDepHintTests
-          DIRS=$(ls -d tests/*/src tests/*/test 2>/dev/null | grep -v '06-' | grep -v '39-' | grep -v '46-' | sort)
-          dotnet run --no-build --project AlRunner -- $DIRS
+          for s in $(ls -d tests/*/src | sed 's|tests/||;s|/src||' | grep -v '06-' | grep -v '39-' | grep -v '46-' | sort); do
+            echo "--- $s ---"
+            dotnet run --no-build --project AlRunner -- "tests/$s/src" "tests/$s/test"
+          done
 
       - name: Run stubs test
         run: |
