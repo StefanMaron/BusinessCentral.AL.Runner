@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """
 telemetry-triage: Query Application Insights for al-runner crash reports,
-group them by exception type, and create/update GitHub Issues.
+use GitHub Copilot to extract individual distinct problems, and create
+focused GitHub Issues — one per problem, skipping already-tracked ones.
 
 Required environment variables:
   APPINSIGHTS_API_KEY   Application Insights API key (read access)
-  GITHUB_TOKEN          GitHub token with issues:write permission
+  GITHUB_TOKEN          GitHub token with issues:write and models:read
   GITHUB_REPOSITORY     owner/repo (set automatically by Actions)
-  APPINSIGHTS_APP_ID    Application Insights application ID
 
 Optional:
+  APPINSIGHTS_APP_ID    Application Insights application ID
   FROM_TIME             ISO-8601 UTC timestamp to query from (overrides last-run detection)
   DRY_RUN               Set to "1" to print what would happen without creating issues
 """
 
 import json
 import os
-import re
 import sys
 import urllib.request
 import urllib.error
@@ -27,14 +27,16 @@ from datetime import datetime, timezone, timedelta
 APP_ID       = os.environ.get("APPINSIGHTS_APP_ID", "3986aa86-ec55-4392-a3fc-0a8cac86a6d3")
 API_KEY      = os.environ["APPINSIGHTS_API_KEY"]
 GH_TOKEN     = os.environ["GITHUB_TOKEN"]
-GH_REPO      = os.environ["GITHUB_REPOSITORY"]   # e.g. "StefanMaron/BusinessCentral.AL.Runner"
+GH_REPO      = os.environ["GITHUB_REPOSITORY"]
 DRY_RUN      = os.environ.get("DRY_RUN", "0") == "1"
 
-AI_QUERY_URL = f"https://api.applicationinsights.io/v1/apps/{APP_ID}/query"
-GH_API_BASE  = "https://api.github.com"
-ISSUE_LABEL  = "telemetry"
+AI_QUERY_URL    = f"https://api.applicationinsights.io/v1/apps/{APP_ID}/query"
+GH_API_BASE     = "https://api.github.com"
+GH_MODELS_URL   = "https://models.github.ai/inference/chat/completions"
+COPILOT_MODEL   = "openai/gpt-4o-mini"
+ISSUE_LABEL     = "telemetry"
 
-# ─── Helpers ──────────────────────────────────────────────────────────────────
+# ─── HTTP helpers ─────────────────────────────────────────────────────────────
 
 def http_get(url, headers):
     req = urllib.request.Request(url, headers=headers)
@@ -46,7 +48,7 @@ def http_post(url, headers, body):
     headers = {**headers, "Content-Type": "application/json"}
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with urllib.request.urlopen(req, timeout=60) as r:
             return json.loads(r.read().decode())
     except urllib.error.HTTPError as e:
         print(f"  HTTP {e.code}: {e.read().decode()}", file=sys.stderr)
@@ -73,16 +75,10 @@ def gh_headers():
 # ─── Step 1: Determine time window ────────────────────────────────────────────
 
 def get_from_time() -> str:
-    """
-    Return ISO-8601 UTC timestamp to query from.
-    Priority: FROM_TIME env var > last successful run of this workflow > 24h ago.
-    """
     if from_time_env := os.environ.get("FROM_TIME"):
         print(f"Using FROM_TIME from environment: {from_time_env}")
         return from_time_env
 
-    # Try to get the completion time of the last successful run of this workflow.
-    # GITHUB_WORKFLOW_REF has the form "owner/repo/.github/workflows/file.yml@refs/..."
     current_run_id = str(os.environ.get("GITHUB_RUN_ID", ""))
     workflow_file = os.environ.get("GITHUB_WORKFLOW_REF", "").split("@")[0].split("/")[-1]
     if workflow_file:
@@ -100,7 +96,6 @@ def get_from_time() -> str:
         except Exception as e:
             print(f"Could not determine last run time: {e}", file=sys.stderr)
 
-    # Default: 24 hours ago
     fallback = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
     print(f"Defaulting to 24h lookback: {fallback}")
     return fallback
@@ -139,10 +134,121 @@ def query_telemetry(from_time: str) -> list[dict]:
     cols  = [c["name"] for c in table["columns"]]
     rows  = []
     for row in table["rows"]:
-        rows.append(dict(zip(cols, row)))
+        r = dict(zip(cols, row))
+        # make_set returns dynamic arrays; parse if they came back as strings
+        for field in ("versions", "os_list"):
+            if isinstance(r.get(field), str):
+                try:
+                    r[field] = json.loads(r[field])
+                except Exception:
+                    r[field] = []
+        rows.append(r)
     return rows
 
-# ─── Step 3: Interact with GitHub Issues ──────────────────────────────────────
+# ─── Step 3: Fetch existing issues for deduplication ──────────────────────────
+
+def fetch_all_open_issues() -> list[dict]:
+    """Return all open issues (title + number + body excerpt) for Copilot matching."""
+    issues = []
+    page = 1
+    while True:
+        url = f"{GH_API_BASE}/repos/{GH_REPO}/issues?state=open&per_page=100&page={page}"
+        try:
+            batch = http_get(url, gh_headers())
+            if not batch:
+                break
+            issues.extend(batch)
+            if len(batch) < 100:
+                break
+            page += 1
+        except Exception as e:
+            print(f"Warning: could not fetch issues page {page}: {e}", file=sys.stderr)
+            break
+    return issues
+
+# ─── Step 4: Copilot analysis ─────────────────────────────────────────────────
+
+SYSTEM_PROMPT = """You are a triage assistant for al-runner, a Business Central AL unit test runner.
+al-runner transpiles AL source to C# and compiles it in-memory. It mocks BC runtime types (NavRecordHandle,
+NavInStream, NavOutStream, NavDialog, etc.) so tests can run without a BC service tier.
+
+Your job: given raw telemetry crash reports and a list of existing GitHub issues, extract every distinct
+technical problem and decide whether it is already tracked.
+
+Known limitations (by design — do NOT file issues for these):
+- Report, XMLPort — not supported, by design
+- HTTP — not supported, by design
+- Events/subscribers — not supported, by design
+- Page variables other than TestPage — partially supported via MockFormHandle
+
+Rules:
+1. Extract one entry per distinct root cause (not one per exception type — a single exception can embed many problems).
+2. For each problem, check the existing issues list. Match semantically, not just by keyword.
+3. If already tracked: set "existing_issue_number" to the issue number (integer).
+4. If genuinely new and actionable: set "existing_issue_number" to null.
+5. Skip known-by-design limitations entirely — do not include them at all.
+6. Titles must be concise and technical (under 80 chars). No "telemetry:" prefix.
+
+Return ONLY valid JSON matching this schema (no markdown, no explanation):
+{
+  "problems": [
+    {
+      "title": "string",
+      "body": "string (markdown, describe the gap and paste relevant error lines)",
+      "existing_issue_number": null or integer
+    }
+  ]
+}"""
+
+def analyze_with_copilot(rows: list[dict], existing_issues: list[dict]) -> list[dict]:
+    """Call GitHub Copilot to extract individual problems from telemetry rows."""
+
+    issues_summary = "\n".join(
+        f"#{i['number']}: {i['title']}"
+        for i in existing_issues
+    )
+
+    # Trim sample_stack to avoid huge payloads — first 2000 chars is enough
+    trimmed_rows = []
+    for r in rows:
+        tr = dict(r)
+        if tr.get("sample_stack") and len(tr["sample_stack"]) > 2000:
+            tr["sample_stack"] = tr["sample_stack"][:2000] + "… [truncated]"
+        trimmed_rows.append(tr)
+
+    user_content = f"""Existing open GitHub issues:
+{issues_summary}
+
+Telemetry crash reports from Application Insights:
+{json.dumps(trimmed_rows, indent=2)}
+
+Extract individual distinct problems. Return JSON only."""
+
+    headers = {
+        "Authorization": f"Bearer {GH_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    body = {
+        "model": COPILOT_MODEL,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user",   "content": user_content},
+        ],
+        "response_format": {"type": "json_object"},
+        "temperature": 0,
+    }
+
+    print("Calling GitHub Copilot for problem analysis…")
+    result = http_post(GH_MODELS_URL, headers, body)
+    content = result["choices"][0]["message"]["content"]
+
+    try:
+        return json.loads(content).get("problems", [])
+    except json.JSONDecodeError as e:
+        print(f"Copilot returned invalid JSON: {e}\n{content}", file=sys.stderr)
+        return []
+
+# ─── Step 5: GitHub issue management ──────────────────────────────────────────
 
 def ensure_label_exists():
     url = f"{GH_API_BASE}/repos/{GH_REPO}/labels/{ISSUE_LABEL}"
@@ -162,93 +268,10 @@ def ensure_label_exists():
         else:
             raise
 
-def find_existing_issue(exception_type: str) -> dict | None:
-    """Search for an open or closed issue whose title matches the exception type fingerprint."""
-    expected_title = f"[telemetry] {exception_type}"
-    # Check open issues first; if not found, check closed (to avoid duplicates on re-occurring crashes).
-    for state in ("open", "closed"):
-        url = f"{GH_API_BASE}/repos/{GH_REPO}/issues?state={state}&labels={ISSUE_LABEL}&per_page=100"
-        try:
-            issues = http_get(url, gh_headers())
-            for issue in issues:
-                if issue.get("title", "").startswith(expected_title):
-                    return issue
-        except Exception as e:
-            print(f"  Warning: could not search {state} issues: {e}", file=sys.stderr)
-    return None
-
-def build_issue_body(row: dict, from_time: str) -> str:
-    exc_type    = row.get("type", "Unknown")
-    sample_msg  = row.get("sample_msg", "")  or "(no message)"
-    sample_stk  = row.get("sample_stack", "") or "(no stack)"
-    occurrences = row.get("occurrences", 0)
-    first_seen  = row.get("first_seen", "")
-    last_seen   = row.get("last_seen", "")
-    versions    = row.get("versions", [])
-    os_list     = row.get("os_list", [])
-
-    ver_str = ", ".join(v for v in versions if v) or "unknown"
-    os_str  = ", ".join(o for o in os_list if o) or "unknown"
-
-    return f"""## Crash report: `{exc_type}`
-
-**Occurrences:** {occurrences}  
-**First seen:** {first_seen}  
-**Last seen:** {last_seen}  
-**Versions affected:** {ver_str}  
-**OS:** {os_str}  
-
-### Sample message
-
-```
-{sample_msg}
-```
-
-### Sample stack (runner frames only)
-
-```
-{sample_stk}
-```
-
----
-*Automatically created by the telemetry triage workflow from Application Insights data since `{from_time}`.*  
-*Only `AlRunner.*` stack frames are collected — no AL source code or user file paths.*
-<!-- telemetry-fingerprint: {exc_type} -->
-"""
-
-def build_update_comment(row: dict, from_time: str) -> str:
-    exc_type    = row.get("type", "Unknown")
-    occurrences = row.get("occurrences", 0)
-    first_seen  = row.get("first_seen", "")
-    last_seen   = row.get("last_seen", "")
-    versions    = row.get("versions", [])
-    sample_msg  = row.get("sample_msg", "") or "(no message)"
-    sample_stk  = row.get("sample_stack", "") or "(no stack)"
-    ver_str     = ", ".join(v for v in versions if v) or "unknown"
-    now         = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    return f"""### Triage update — {now}
-
-**New occurrences since `{from_time}`:** {occurrences}  
-**First seen:** {first_seen} | **Last seen:** {last_seen}  
-**Versions:** {ver_str}  
-
-**Sample message:** `{sample_msg}`
-
-```
-{sample_stk}
-```
-"""
-
-def create_issue(row: dict, from_time: str):
-    exc_type = row.get("type", "Unknown")
-    title    = f"[telemetry] {exc_type}"
-    body     = build_issue_body(row, from_time)
-
+def create_issue(title: str, body: str):
     if DRY_RUN:
-        print(f"  [DRY RUN] Would create issue: {title} ({row.get('occurrences')} occurrence(s))")
+        print(f"  [DRY RUN] Would create: {title}")
         return
-
     result = http_post(
         f"{GH_API_BASE}/repos/{GH_REPO}/issues",
         gh_headers(),
@@ -256,31 +279,35 @@ def create_issue(row: dict, from_time: str):
     )
     print(f"  Created issue #{result['number']}: {title}")
 
-def update_issue(issue: dict, row: dict, from_time: str):
-    issue_number = issue["number"]
-    issue_state  = issue.get("state", "open")
-    comment_body = build_update_comment(row, from_time)
+def comment_on_issue(issue_number: int, title: str, body: str, from_time: str):
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    comment = f"### Telemetry update — {now}\n\nNew occurrences seen since `{from_time}`.\n\n{body}"
+
+    # Reopen if closed
+    try:
+        issue = http_get(f"{GH_API_BASE}/repos/{GH_REPO}/issues/{issue_number}", gh_headers())
+        if issue.get("state") == "closed":
+            if DRY_RUN:
+                print(f"  [DRY RUN] Would reopen #{issue_number}")
+            else:
+                http_patch(
+                    f"{GH_API_BASE}/repos/{GH_REPO}/issues/{issue_number}",
+                    gh_headers(),
+                    {"state": "open"},
+                )
+                print(f"  Reopened #{issue_number}")
+    except Exception as e:
+        print(f"  Warning: could not check state of #{issue_number}: {e}", file=sys.stderr)
 
     if DRY_RUN:
-        reopen_note = " + reopen" if issue_state == "closed" else ""
-        print(f"  [DRY RUN] Would comment{reopen_note} on issue #{issue_number}: {issue['title']} (+{row.get('occurrences')} occurrence(s))")
+        print(f"  [DRY RUN] Would comment on #{issue_number}: {title}")
         return
-
-    # Reopen the issue if it was previously closed (crash re-occurring).
-    if issue_state == "closed":
-        http_patch(
-            f"{GH_API_BASE}/repos/{GH_REPO}/issues/{issue_number}",
-            gh_headers(),
-            {"state": "open"},
-        )
-        print(f"  Reopened issue #{issue_number}: {issue['title']}")
-
     http_post(
         f"{GH_API_BASE}/repos/{GH_REPO}/issues/{issue_number}/comments",
         gh_headers(),
-        {"body": comment_body},
+        {"body": comment},
     )
-    print(f"  Updated issue #{issue_number}: {issue['title']} (+{row.get('occurrences')} occurrence(s))")
+    print(f"  Commented on #{issue_number}: {title}")
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
@@ -295,30 +322,43 @@ def main():
         print("No exceptions found in the time window. Nothing to do.")
         return
 
-    total_occurrences = sum(r.get("occurrences", 0) for r in rows)
-    print(f"Found {len(rows)} unique exception type(s), {total_occurrences} total occurrence(s).")
+    total = sum(r.get("occurrences", 0) for r in rows)
+    print(f"Found {len(rows)} exception type(s), {total} total occurrence(s).")
+    print()
+
+    existing_issues = fetch_all_open_issues()
+    print(f"Fetched {len(existing_issues)} open issue(s) for deduplication.")
+    print()
+
+    problems = analyze_with_copilot(rows, existing_issues)
+    if not problems:
+        print("Copilot found no actionable new problems.")
+        return
+
+    print(f"Copilot identified {len(problems)} problem(s):")
     print()
 
     ensure_label_exists()
 
     created = 0
-    updated = 0
+    commented = 0
 
-    for row in rows:
-        exc_type = row.get("type", "Unknown")
-        count    = row.get("occurrences", 0)
-        print(f"  {exc_type} ({count}×)")
+    for p in problems:
+        title  = p.get("title", "Unknown problem")
+        body   = p.get("body", "")
+        existing = p.get("existing_issue_number")
 
-        existing = find_existing_issue(exc_type)
         if existing:
-            update_issue(existing, row, from_time)
-            updated += 1
+            print(f"  Already tracked in #{existing}: {title}")
+            comment_on_issue(existing, title, body, from_time)
+            commented += 1
         else:
-            create_issue(row, from_time)
+            print(f"  New: {title}")
+            create_issue(title, body)
             created += 1
 
     print()
-    print(f"Done. Created {created} issue(s), updated {updated} issue(s).")
+    print(f"Done. Created {created} issue(s), commented on {commented} existing issue(s).")
     if DRY_RUN:
         print("[DRY RUN] No changes were made.")
 

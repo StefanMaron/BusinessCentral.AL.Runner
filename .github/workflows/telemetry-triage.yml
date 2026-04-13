@@ -20,6 +20,7 @@ jobs:
     permissions:
       issues: write
       actions: read
+      models: read
 
     steps:
       - uses: actions/checkout@v4
