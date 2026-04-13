@@ -1758,7 +1758,8 @@ public static class RoslynCompiler
         }
 
         ms.Seek(0, SeekOrigin.Begin);
-        return Assembly.Load(ms.ToArray());
+        var alc = new System.Runtime.Loader.AssemblyLoadContext($"TestRun_{Guid.NewGuid():N}", isCollectible: true);
+        return alc.LoadFromStream(ms);
     }
 
     private const string BcArtifactVersion = "27.5.46862.48827";
