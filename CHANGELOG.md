@@ -7,10 +7,17 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
-- `MockOutStream.ALAssign` — enables `OutStr2 := OutStr1` stream assignment in AL code
-- `MockStream.ALWrite`/`ALRead` overloads for `Integer`, `Boolean`, `Decimal18` — binary read/write via `OStr.Write(value)` / `IStr.Read(value)` in AL
-- `MockStream.ALCopyStream` — implements `COPYSTREAM(OutStr, InStr)` in AL; rewriter redirects `ALSystemVariable.ALCopyStream` to `MockStream.ALCopyStream`
-- Test suite `tests/79-stream-surface` (10 cases) covering OutStream assignment, InStream assignment, CopyStream, EOS detection, binary integer/boolean/decimal read/write, and passing streams as `var` parameters
+- **`sourceFile` field on iterations and captured values** — The `--output-json`
+  iteration and captured-value records now include a `sourceFile` property with the
+  path to the AL file that contains the loop or variable. A new `SourceFileMapper`
+  class resolves AL object names to source files at input-loading time.
+  Tested by `tests/67-iteration-tracking/`.
+- **Stream assignment, binary I/O, and `COPYSTREAM`** — Three new stream capabilities:
+  - `MockOutStream.ALAssign` — enables `OutStr2 := OutStr1` stream assignment in AL
+  - `MockStream.ALWrite`/`ALRead` overloads for `Integer`, `Boolean`, `Decimal18` — binary read/write via `OStr.Write(value)` / `IStr.Read(value)` in AL
+  - `MockStream.ALCopyStream` — implements `COPYSTREAM(OutStr, InStr)`; rewriter redirects `ALSystemVariable.ALCopyStream` to `MockStream.ALCopyStream`
+
+  Tested by `tests/79-stream-surface/` (10 cases). Fixes #65.
 - **Picture-string tokens in `Format()`** — `Format(value, 0, formatString)` now
   handles AL decimal and time picture strings:
   - `<Precision,min:max>` — rounds a decimal to at most `max` decimal places and
@@ -20,9 +27,10 @@ All notable changes to this project are documented here. Format based on
   - Time picture strings (`<Hours24,N>:<Minutes,N>`) applied to `Time` variables
     (e.g. `Format(093000T, 0, '<Hours24,2>:<Minutes,2>')` → `'09:30'`).
   Tested by `tests/85-picture-format/` (9 test cases).
-- **Invariant-culture decimal formatting** — `AlCompat.Format()` for decimal values
-  now always uses `.` as the decimal separator regardless of OS locale, matching
-  real BC behavior.
+- **`--generate-stubs` workflow documented in `--guide`** — The agent guide now
+  includes a section explaining when and how to use `--generate-stubs` to scaffold
+  AL stubs for missing dependencies, including the filtered form that limits output
+  to objects actually referenced by the source under test.
 - **Differentiated exit codes for CI integration** — al-runner now returns distinct
   exit codes so CI scripts can distinguish real failures from runner gaps:
   - `0` — all tests passed
@@ -33,15 +41,23 @@ All notable changes to this project are documented here. Format based on
 
   Previously, all non-success outcomes returned `1`. This change enables incremental
   CI adoption: tolerate exit code `2` while treating `1` and `3` as hard failures.
-  ([#46](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/46))
+  Fixes [#46](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/46).
 
 ### Changed
+- **Invariant-culture decimal formatting** — `AlCompat.Format()` for decimal values
+  now always uses `.` as the decimal separator regardless of OS locale, matching
+  real BC behavior.
 - **Source files with compilation errors are no longer silently excluded** — Previously,
   when Roslyn compilation failed, al-runner would silently retry by dropping the
   offending files and compiling the remaining ones. This could produce a passing run
   that was missing whole codeunits. Now, any compilation error causes an immediate hard
   failure: all errors are printed to stderr and the runner exits. This ensures you always
   compile the full app or get a clear error — no silent partial results.
+  Fixes [#66](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/66).
+- **Server cache preserves compilation state across requests** — The `--server` JSON-RPC
+  daemon now stores compilation errors alongside the compiled assembly in the cache.
+  Cache hits return the same error state as the original compilation, preventing stale
+  results on repeated identical requests.
 
 ### Fixed
 - **`Dialog` variable type now compiles and runs** — AL codeunits that declare a
@@ -50,7 +66,13 @@ All notable changes to this project are documented here. Format based on
   emitted string literals for the dialog format string. `MockDialog.ALOpen` and
   `ALUpdate` now accept both `string` and `NavText`/`NavValue` overloads, matching
   all patterns emitted by the BC compiler. Tested by `tests/85-dialog/` (4 test cases).
-  Fixes #63.
+  Fixes [#63](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/63).
+- **XmlPort object classes no longer break compilation** — XmlPort schema classes
+  generated by the BC compiler (`XmlPortNNNN : NavXmlPort`) contain complex
+  constructor and schema-initialization code that cannot compile in standalone mode.
+  The rewriter now replaces these entire class bodies with minimal stubs extending
+  `MockXmlPortHandle`, so any test suite that includes an XmlPort definition compiles
+  and runs correctly.
 
 ## [1.0.11] — 2026-04-13
 
@@ -84,13 +106,10 @@ All notable changes to this project are documented here. Format based on
   `NavDateTime`, `NavGuid`) that appear when values come from record fields
   rather than AL literals. Tested by `tests/84-variant-to-record/` (8 test cases).
 - **`--output-json` now distinguishes compilation errors from test failures** —
-  Tests that could not run because a dependency was excluded from Roslyn
-  compilation (e.g. XmlPorts, unsupported BC object types) now receive
-  `"status": "error"` instead of `"status": "fail"` in the JSON output.
-  The top-level `"errors"` field correctly counts these, while `"failed"` is
-  reserved for genuine assertion failures. A new top-level `"compilationErrors"`
-  array lists each excluded file alongside its Roslyn diagnostics, so callers
-  know exactly which objects couldn't be compiled. Resolves [#67](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/67).
+  Tests that could not run due to a runner limitation now receive `"status": "error"`
+  instead of `"status": "fail"` in the JSON output. The top-level `"errors"` field
+  correctly counts these, while `"failed"` is reserved for genuine assertion failures.
+  Resolves [#67](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/67).
 
 ## [1.0.9] — 2026-04-13
 
