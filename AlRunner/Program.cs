@@ -2139,18 +2139,18 @@ public static class Executor
     {
         if (excludedFiles.Count == 0) return;
 
-        Console.WriteLine();
-        Console.WriteLine($"WARN  {excludedFiles.Count} source file(s) excluded from compilation (rewriter gap):");
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"WARN  {excludedFiles.Count} source file(s) excluded from compilation (rewriter gap):");
         foreach (var (file, errors) in excludedFiles.Take(5))
         {
             var shortName = Path.GetFileNameWithoutExtension(file);
             foreach (var err in errors.Take(2))
-                Console.WriteLine($"      {shortName}: {err}");
+                Console.Error.WriteLine($"      {shortName}: {err}");
         }
         if (excludedFiles.Count > 5)
-            Console.WriteLine($"      … and {excludedFiles.Count - 5} more. Run with -v for the full list.");
-        Console.WriteLine($"      ⚑ Runner limitation — these may cause ERROR results above.");
-        Console.WriteLine($"        File an issue: https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues");
+            Console.Error.WriteLine($"      … and {excludedFiles.Count - 5} more. Run with -v for the full list.");
+        Console.Error.WriteLine($"      ⚑ Runner limitation — these may cause ERROR results above.");
+        Console.Error.WriteLine($"        File an issue: https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues");
     }
 
     private static void CaptureFieldValues(object scope, Type scopeType, string testName)

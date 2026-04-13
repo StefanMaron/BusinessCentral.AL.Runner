@@ -124,7 +124,7 @@ public static class TelemetryReporter
         if (compGapCount > 0)
         {
             var gapMessages = compilationGaps
-                .SelectMany(kv => kv.Value.Select(err => $"{Path.GetFileNameWithoutExtension(kv.Key)}: {err}"))
+                .SelectMany(kv => kv.Value.Select(err => $"{Path.GetFileNameWithoutExtension(kv.Key)}: {ScrubMessage(err)}"))
                 .Take(20)
                 .ToList();
             var compReport = new TelemetryReport(
