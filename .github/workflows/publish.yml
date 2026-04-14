@@ -88,11 +88,11 @@ jobs:
 
       - name: Run stubs test (net8.0)
         run: |
-          dotnet run --no-build --project AlRunner --framework net8.0 -- --stubs tests/39-stubs/stubs tests/39-stubs/src tests/39-stubs/test
+          dotnet run --no-build --project AlRunner --framework net8.0 -- --stubs tests/stubs/39-stubs/stubs tests/stubs/39-stubs/src tests/stubs/39-stubs/test
 
       - name: Run stubs test (net9.0)
         run: |
-          dotnet run --no-build --project AlRunner --framework net9.0 -- --stubs tests/39-stubs/stubs tests/39-stubs/src tests/39-stubs/test
+          dotnet run --no-build --project AlRunner --framework net9.0 -- --stubs tests/stubs/39-stubs/stubs tests/stubs/39-stubs/src tests/stubs/39-stubs/test
 
   publish:
     needs: test
