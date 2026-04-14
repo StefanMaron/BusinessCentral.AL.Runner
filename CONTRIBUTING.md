@@ -18,15 +18,25 @@ Every feature, fix, and mock addition must have tests. No change merges without 
 
 ### AL end-to-end tests (`tests/`)
 
-Each test case is a self-contained directory:
+Tests live in numbered buckets inside `tests/`:
 
 ```
-tests/NN-descriptive-name/
+tests/
+  bucket-1/   — suites 01–32, 71, 77, 79-gui-fieldclass
+  bucket-2/   — suites 33–95
+  stubs/      — 39-stubs (run separately with --stubs)
+  excluded/   — fixtures not in the main loop
+```
+
+Each suite inside a bucket:
+
+```
+tests/bucket-N/NN-descriptive-name/
   src/   — AL source codeunit(s) exercising the feature
   test/  — AL test codeunit (Subtype = Test) using Assert
 ```
 
-Number the directory sequentially after the last existing one. The CI pipeline discovers and runs all of them automatically.
+Put new suites in the bucket with fewer entries. Check that the AL object IDs (codeunit, table numbers) in your new suite don't clash with other suites already in that bucket — suites in the same bucket compile together, so IDs must be unique within a bucket. IDs may repeat across buckets (they run as separate invocations).
 
 **Every test case must cover both directions:**
 
@@ -67,11 +77,20 @@ dotnet build AlRunner.slnx
 dotnet test AlRunner.Tests/
 
 # AL end-to-end tests (net8.0)
-for s in $(ls -d tests/*/src | sed 's|tests/||;s|/src||' | grep -v '06-' | sort); do
-  dotnet run --project AlRunner --framework net8.0 -- "tests/$s/src" "tests/$s/test" || {
+for bucket in tests/bucket-*/; do
+  args=""
+  for suite in "$bucket"*/; do
+    [ -d "${suite}src"  ] && args="$args ${suite}src"
+    [ -d "${suite}test" ] && args="$args ${suite}test"
+  done
+  dotnet run --project AlRunner --framework net8.0 -- $args || {
     rc=$?; [ $rc -eq 2 ] || exit $rc
   }
 done
+
+# Stubs suite (needs --stubs flag)
+dotnet run --project AlRunner --framework net8.0 -- \
+  --stubs tests/stubs/39-stubs/stubs tests/stubs/39-stubs/src tests/stubs/39-stubs/test
 ```
 
 Exit code 2 means the runner hit a known limitation (not a test failure). Exit codes 1 and 3 are real failures and block CI.

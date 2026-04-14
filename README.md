@@ -72,11 +72,11 @@ AL Runner is designed to run **before** the full BC service tier pipeline as a f
 - .app file loading as test input (source directories only; .app supported for symbol references)
 - Filter groups (FilterGroup)
 
-## What It Doesn't Support (and Why That's OK)
+## What It Doesn't Support (and Why)
 
-The runner has a deliberate scope boundary: **if you can't inject a dependency via an AL interface, that code path isn't unit-testable in standalone mode**.
+The items listed above are **architectural limits** — they require the BC service tier and cannot be emulated in a single .NET process. Everything else is either already supported or a gap being actively closed.
 
-This is a design decision, not a bug. Code that truly depends on the BC service tier (page actions, HTTP calls, events fired by the DB tier) should be tested in the full pipeline. The runner covers the logic layer.
+If AL code fails to run and the reason isn't in the architectural list above, that is likely a runner gap rather than a problem with your code. Report it at https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
 
 ## Pipeline Outcomes
 
