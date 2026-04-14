@@ -47,8 +47,6 @@ public class RoslynRewriter : CSharpSyntaxRewriter
     {
         "ALCommit",   // ALDatabase.ALCommit() — SQL transaction commit, no-op standalone
         "ALSelectLatestVersion", // ALDatabase.ALSelectLatestVersion() — no-op standalone
-        "ALBindSubscription",   // ALSession.ALBindSubscription() — event binding, no-op standalone
-        "ALUnbindSubscription", // ALSession.ALUnbindSubscription() — event unbinding, no-op standalone
     };
 
     private static readonly HashSet<string> StripITreeObjectArgMethods = new(StringComparer.Ordinal)
@@ -175,20 +173,41 @@ public class RoslynRewriter : CSharpSyntaxRewriter
     public override SyntaxNode? VisitAttributeList(AttributeListSyntax node)
     {
         var kept = new SeparatedSyntaxList<AttributeSyntax>();
+        bool anyReplaced = false;
         foreach (var attr in node.Attributes)
         {
             var attrName = GetSimpleAttributeName(attr);
-            if (!BcAttributeNames.Contains(attrName))
+            if (attrName == "NavCodeunitOptions" && IsManualEventSubscriber(attr))
+            {
+                // Replace NavCodeunitOptions with ManualEventSubscriber marker
+                kept = kept.Add(SyntaxFactory.Attribute(
+                    SyntaxFactory.ParseName("AlRunner.Runtime.ManualEventSubscriber")));
+                anyReplaced = true;
+            }
+            else if (!BcAttributeNames.Contains(attrName))
                 kept = kept.Add(attr);
         }
 
         if (kept.Count == 0)
             return null; // remove entire attribute list
 
-        if (kept.Count == node.Attributes.Count)
+        if (!anyReplaced && kept.Count == node.Attributes.Count)
             return base.VisitAttributeList(node); // nothing changed
 
         return node.WithAttributes(kept);
+    }
+
+    /// <summary>
+    /// Check if a NavCodeunitOptions attribute indicates EventSubscriberInstance = Manual.
+    /// In generated C#: <c>[NavCodeunitOptions(NavCodeunitOptions.EventManualBinding, ...)]</c>
+    /// The first arg is a flags enum — <c>EventManualBinding</c> or a bitwise OR containing it.
+    /// </summary>
+    private static bool IsManualEventSubscriber(AttributeSyntax attr)
+    {
+        if (attr.ArgumentList == null || attr.ArgumentList.Arguments.Count == 0)
+            return false;
+        var firstArg = attr.ArgumentList.Arguments[0].Expression.ToString();
+        return firstArg.Contains("EventManualBinding");
     }
 
     private static string GetSimpleAttributeName(AttributeSyntax attr)
@@ -2549,21 +2568,49 @@ public void ClearApplicationMemberVariables() { }
                 return SyntaxFactory.EmptyStatement();
             }
 
+            // Rewrite ALSession.ALBindSubscription(DataError, target) → target.Bind()
+            // and ALSession.ALUnbindSubscription(DataError, target) → target.Unbind()
+            if (invocation.Expression is MemberAccessExpressionSyntax bindMa &&
+                (bindMa.Name.Identifier.Text == "ALBindSubscription" ||
+                 bindMa.Name.Identifier.Text == "ALUnbindSubscription") &&
+                invocation.ArgumentList.Arguments.Count >= 2)
+            {
+                var methodName = bindMa.Name.Identifier.Text == "ALBindSubscription" ? "Bind" : "Unbind";
+                // Second arg is the codeunit target — strip .Target if present
+                var targetExpr = invocation.ArgumentList.Arguments[1].Expression;
+                if (targetExpr is MemberAccessExpressionSyntax targetMa &&
+                    targetMa.Name.Identifier.Text == "Target")
+                    targetExpr = targetMa.Expression;
+                var call = SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        targetExpr,
+                        SyntaxFactory.IdentifierName(methodName)),
+                    SyntaxFactory.ArgumentList());
+                return SyntaxFactory.ExpressionStatement(call);
+            }
+
             // `βscope.RunEvent()` dispatches event subscribers. Walk the
             // ancestor tree to recover the enclosing Codeunit<N> type and
             // the enclosing event method name, then rewrite the statement
             // to a direct call into AlCompat.FireEvent which consults the
             // subscriber registry built at runtime via reflection.
+            // Also forward the enclosing method's parameters so subscribers
+            // receive the publisher's actual ByRef<T> / value arguments.
             if (invocation.Expression is MemberAccessExpressionSyntax runEventMa &&
                 runEventMa.Name.Identifier.Text == "RunEvent" &&
                 invocation.ArgumentList.Arguments.Count == 0)
             {
                 int? cuId = null;
                 string? eventName = null;
+                MethodDeclarationSyntax? enclosingMethod = null;
                 foreach (var ancestor in node.Ancestors())
                 {
-                    if (eventName == null && ancestor is MethodDeclarationSyntax mdecl)
+                    if (enclosingMethod == null && ancestor is MethodDeclarationSyntax mdecl)
+                    {
                         eventName = mdecl.Identifier.Text;
+                        enclosingMethod = mdecl;
+                    }
                     if (ancestor is ClassDeclarationSyntax cdecl && cdecl.Identifier.Text.StartsWith("Codeunit"))
                     {
                         var idStr = cdecl.Identifier.Text.Substring("Codeunit".Length);
@@ -2573,20 +2620,65 @@ public void ClearApplicationMemberVariables() { }
                 }
                 if (cuId.HasValue && eventName != null)
                 {
+                    // Check if the enclosing event method has [NavEvent(_, true, _)]
+                    // where the second argument (IncludeSender) is true.
+                    bool includeSender = false;
+                    if (enclosingMethod != null)
+                    {
+                        foreach (var attrList in enclosingMethod.AttributeLists)
+                        foreach (var attr in attrList.Attributes)
+                        {
+                            var simpleAttrName = GetSimpleAttributeName(attr);
+                            if (simpleAttrName is "NavEvent" or "NavEventAttribute")
+                            {
+                                if (attr.ArgumentList?.Arguments.Count >= 2)
+                                {
+                                    var secondArg = attr.ArgumentList.Arguments[1].Expression;
+                                    if (secondArg is LiteralExpressionSyntax lit &&
+                                        lit.IsKind(SyntaxKind.TrueLiteralExpression))
+                                        includeSender = true;
+                                }
+                            }
+                        }
+                    }
+
+                    var argsList = new List<ArgumentSyntax>
+                    {
+                        SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(
+                            SyntaxKind.NumericLiteralExpression,
+                            SyntaxFactory.Literal(cuId.Value))),
+                        SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(
+                            SyntaxKind.StringLiteralExpression,
+                            SyntaxFactory.Literal(eventName)))
+                    };
+
+                    // When IncludeSender=true, prepend a MockCodeunitHandle wrapping
+                    // the publisher instance so subscribers receive it as their first arg.
+                    if (includeSender)
+                    {
+                        argsList.Add(SyntaxFactory.Argument(
+                            SyntaxFactory.InvocationExpression(
+                                SyntaxFactory.MemberAccessExpression(
+                                    SyntaxKind.SimpleMemberAccessExpression,
+                                    SyntaxFactory.IdentifierName("MockCodeunitHandle"),
+                                    SyntaxFactory.IdentifierName("FromInstance")),
+                                SyntaxFactory.ArgumentList(SyntaxFactory.SingletonSeparatedList(
+                                    SyntaxFactory.Argument(SyntaxFactory.ThisExpression()))))));
+                    }
+
+                    // Forward the enclosing event method's parameters
+                    if (enclosingMethod != null)
+                    {
+                        foreach (var param in enclosingMethod.ParameterList.Parameters)
+                            argsList.Add(SyntaxFactory.Argument(
+                                SyntaxFactory.IdentifierName(param.Identifier.Text)));
+                    }
                     var call = SyntaxFactory.InvocationExpression(
                         SyntaxFactory.MemberAccessExpression(
                             SyntaxKind.SimpleMemberAccessExpression,
                             SyntaxFactory.IdentifierName("AlCompat"),
                             SyntaxFactory.IdentifierName("FireEvent")),
-                        SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList(new[]
-                        {
-                            SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(
-                                SyntaxKind.NumericLiteralExpression,
-                                SyntaxFactory.Literal(cuId.Value))),
-                            SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(
-                                SyntaxKind.StringLiteralExpression,
-                                SyntaxFactory.Literal(eventName)))
-                        })));
+                        SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList(argsList)));
                     return SyntaxFactory.ExpressionStatement(call);
                 }
                 // Fallback: strip the call, same as before.

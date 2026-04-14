@@ -106,6 +106,8 @@ These are the BC runtime types replaced in standalone mode:
 | `MockSession` | `ALSession.ALStartSession/ALStopSession/ALIsSessionActive`, `NavSession.Sleep` | StartSession dispatches codeunit synchronously via MockCodeunitHandle, returns true. StopSession/Sleep are no-ops. IsSessionActive returns false. |
 | `MockXmlPortHandle` | `NavXmlPortHandle` | XmlPort variable stub. Exposes Source/Destination properties and Import/Export instance methods (throw NotSupportedException). Static StaticImport/StaticExport for `XmlPort.Import/Export(portId, stream)` calls. Invoke() returns null. |
 | `MockQueryHandle` | `NavQueryHandle` / `NavQuery` | Query variable and base class stub. Close/SetFilter/SetRange/TopNumberOfRows are no-ops. Open/Read/SaveAsCsv/SaveAsXml/SaveAsJson/SaveAsExcel throw NotSupportedException. GetColumnValueSafe returns type defaults. Invoke() returns null. |
+| `EventSubscriberRegistry` | BC event infrastructure | Static registry mapping `(ObjectType, ObjectId, EventName)` to subscriber methods. Auto-discovers `[NavEventSubscriber]` attributes via reflection. Supports manual subscriber binding (Bind/Unbind) for `[ManualEventSubscriber]`-annotated codeunits. |
+| `ManualEventSubscriberAttribute` | `NavCodeunitOptions.EventManualBinding` | Marker attribute emitted by the rewriter on codeunit classes with `EventSubscriberInstance = Manual`. Detected by `EventSubscriberRegistry.Build()` to gate dispatch on `Bind()`. |
 
 ### MockRecordHandle capabilities
 
@@ -123,6 +125,8 @@ These are the BC runtime types replaced in standalone mode:
 - GetGlobalArrayVariable (typed MockArray for Code, Text, Integer, Decimal, Boolean)
 - ALFieldNo(fieldName) lookups (RegisterFieldName)
 - Cross-record table reset via `ResetAll()` between tests
+- Implicit DB trigger events: OnBefore/AfterInsert, OnBefore/AfterModify, OnBefore/AfterDelete, OnBefore/AfterValidate
+- xRec snapshot creation via `SnapshotForXRec()` for modify/delete/validate events
 
 ### Removed out-of-scope files
 
@@ -334,9 +338,14 @@ test belongs in the full BC pipeline, not in the runner.
   in HTTP codeunits (those that don't actually call `HttpClient.Send()`) are fully
   testable. Developer must inject HTTP send via AL interface for unit-testable code.
 - **Events/subscribers** — Custom `[IntegrationEvent]`/`[BusinessEvent]` dispatch
-  works via `AlCompat.FireEvent()` + `EventSubscriberRegistry`. However, implicit
-  DB trigger events (OnBefore/AfterInsert/Modify/Delete) are NOT fired, subscriber
-  parameters are not forwarded, and `BindSubscription`/`UnbindSubscription` are no-ops.
+  works via `AlCompat.FireEvent()` + `EventSubscriberRegistry`. `IncludeSender=true`
+  passes the publisher instance to subscribers via `MockCodeunitHandle.FromInstance()`.
+  Subscriber parameters are forwarded with `ByRef<T>` writeback. Implicit DB trigger
+  events (OnBefore/AfterInsert, OnBefore/AfterModify, OnBefore/AfterDelete,
+  OnBefore/AfterValidate) fire from `MockRecordHandle`. `BindSubscription`/
+  `UnbindSubscription` work for manual subscriber codeunits. Remaining gaps:
+  `OnBefore/AfterRenameEvent` not yet fired; `ModifyAll`/`DeleteAll` do not fire
+  per-row events; implicit event publishers on table extension triggers not wired.
 - **.app file loading** — NOT supported for test input. Always runs from AL source
   directories. Dependencies can be loaded from .app for symbol references only.
 - **Filter groups** (FilterGroup) — not tracked.
@@ -348,6 +357,10 @@ test belongs in the full BC pipeline, not in the runner.
 - **Codeunit OnRun with record parameter** — `RunCodeunit` only finds parameterless
   `OnRun()` methods. Codeunits whose OnRun trigger takes a record parameter (e.g.,
   `trigger OnRun(var Rec: Record "Job Queue Entry")`) will silently do nothing.
+- **ALInsert ignores DataError level** (#128) — `ALInsert()` always throws on
+  duplicate PK regardless of `errorLevel`. AL code like `if not Rec.Insert() then`
+  crashes instead of returning false. Other methods (`ALModify`, `ALGet`, etc.)
+  correctly respect `DataError.ThrowError` vs `DataError.Never`.
 
 ---
 
@@ -492,7 +505,34 @@ These have been implemented and are tested by the test suite:
     `x.Clear()` for non-NavComplexValue types. Tested by `tests/94-clear-field-value/`
     (6 test cases).
 
-## Remaining Gaps
+19. **Event subscriber parameter forwarding** (`AlRunner/RoslynRewriter.cs`,
+    `AlRunner/Runtime/AlScope.cs`) — Publisher event arguments (`ByRef<T>` and
+    value parameters) are forwarded from `βscope.RunEvent()` to subscriber
+    methods via positional matching. `AlCompat.FireEvent()` accepts
+    `params object?[] eventArgs` and passes them through to subscriber
+    invocations. This enables subscriber write-back through shared `ByRef<T>`
+    references. Tested by `tests/97-event-params/` (2 test cases) and
+    `tests/101-multi-subscribers/` (2 test cases).
+
+20. **Implicit DB trigger events** (`AlRunner/Runtime/MockRecordHandle.cs`) —
+    `MockRecordHandle` fires OnBefore/AfterInsertEvent, OnBefore/AfterModifyEvent,
+    OnBefore/AfterDeleteEvent from `ALInsert`/`ALModify`/`ALDelete`, and
+    OnBefore/AfterValidateEvent from `ALValidateSafe`/`ALValidate`. Events fire
+    regardless of `runTrigger` (matching BC behavior). xRec snapshots are created
+    via `SnapshotForXRec()` before mutations. Uses `EventSubscriberRegistry` with
+    3-tuple key `(ObjectType, ObjectId, EventName)` to prevent table/codeunit ID
+    collision. Tested by `tests/98-db-trigger-events/` (5 test cases) and
+    `tests/99-validate-events/` (3 test cases).
+
+21. **BindSubscription / UnbindSubscription** (`AlRunner/RoslynRewriter.cs`,
+    `AlRunner/Runtime/MockCodeunitHandle.cs`, `AlRunner/Runtime/EventSubscriberRegistry.cs`,
+    `AlRunner/Runtime/ManualEventSubscriberAttribute.cs`) — The rewriter detects
+    `NavCodeunitOptions.EventManualBinding` in `[NavCodeunitOptions]` and emits a
+    `[ManualEventSubscriber]` marker attribute. `ALSession.ALBindSubscription()` /
+    `ALUnbindSubscription()` are rewritten to `MockCodeunitHandle.Bind()` /
+    `Unbind()`. The `EventSubscriberRegistry` tracks bound instances and only
+    dispatches to manual subscribers when bound. Bindings are reset between tests.
+    Tested by `tests/100-bind-subscription/` (3 test cases).
 
 These are gaps that remain for full production use:
 
@@ -696,6 +736,8 @@ Follows the `BusinessCentral.AL.*` pattern:
 | `AlRunner/Runtime/MockSession.cs` | Session API stubs: StartSession (synchronous dispatch), StopSession, IsSessionActive, Sleep |
 | `AlRunner/Runtime/MockXmlPortHandle.cs` | XmlPort variable stub: Source/Destination properties, Import/Export (throw NotSupportedException), Invoke (returns null), StaticImport/StaticExport for static XmlPort.Import/Export calls |
 | `AlRunner/Runtime/MockQueryHandle.cs` | Query variable and base class stub: Close/SetFilter/SetRange/TopNumberOfRows no-ops, Open/Read/SaveAs throw NotSupportedException |
+| `AlRunner/Runtime/EventSubscriberRegistry.cs` | Event subscriber discovery + dispatch: 3-tuple key (ObjectType, ObjectId, EventName), manual binding support, auto/manual subscriber classification |
+| `AlRunner/Runtime/ManualEventSubscriberAttribute.cs` | Marker attribute for manual event subscriber codeunits (emitted by rewriter from NavCodeunitOptions.EventManualBinding) |
 | `AlRunner/stubs/LibraryAssert.al` | AL stub for codeunit 130 (auto-loaded for compilation) |
 | `AlRunner/stubs/LibraryVariableStorage.al` | AL stub for codeunit 131004 (auto-loaded for compilation) |
 | `tests/bucket-1/`, `tests/bucket-2/` | Test suites in buckets (each bucket = one al-runner invocation). `src/*.al` + `test/*.al` per suite. |

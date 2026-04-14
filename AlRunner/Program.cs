@@ -297,7 +297,11 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - Query data access (Open/Read) — queries require the BC service tier (SQL views);
   use AL interfaces to inject query results for testing
 - HTTP / REST calls — inject via AL interface
-- Event subscribers — OnAfterModify, OnAfterInsert, etc. do not fire
+- Event subscribers — Custom IntegrationEvent/BusinessEvent dispatch works with
+  IncludeSender support. Implicit DB trigger events (OnBefore/AfterInsert/Modify/
+  Delete/Validate) fire. Subscriber parameters are forwarded. BindSubscription/
+  UnbindSubscription work. Remaining gaps: OnBefore/AfterRenameEvent not yet fired;
+  ModifyAll/DeleteAll skip per-row events.
 - StrMenu is not supported
 - Filter groups (FilterGroup)
 
@@ -368,7 +372,7 @@ The runner compiles your stubs alongside the source. Conflicting symbol packages
 are excluded automatically.
 
 Step 5 — Iterate. If tests still fail at runtime with `NotSupportedException`,
-the codeunit uses an unsupported BC feature (Page, HTTP, events, etc.). Either:
+the codeunit uses an unsupported BC feature (Page, HTTP, etc.). Either:
 - Skip that codeunit (don't include it in your test run), or
 - Inject the dependency via an AL interface so the runner can use a mock.
 
@@ -564,7 +568,33 @@ fi
   a transpilation issue.
 - al-runner resets all in-memory tables between test methods — no cleanup needed.
 - If al-runner says FAIL, the failure is real. If it says PASS, the direct logic is
-  correct but implicit event side-effects are not tested (run the full BC pipeline).
+  correct. Note: ModifyAll/DeleteAll do not fire per-row events, and OnRename events
+  are not yet supported — the full BC pipeline catches these edge cases.
+
+### Event subscribers
+
+al-runner supports event subscribers for custom and implicit DB events:
+
+**Custom events** — `[IntegrationEvent]` and `[BusinessEvent]` publishers dispatch
+to `[EventSubscriber]` methods. Subscriber parameters (including `var` / `ByRef`)
+are forwarded and mutations propagate back to the publisher scope.
+
+**IncludeSender** — When `[IntegrationEvent(true, false)]` or `[BusinessEvent(true)]`
+is used, the publishing codeunit instance is passed as the first subscriber parameter
+(`sender: Codeunit "Publisher"`). Subscribers can read/write publisher state.
+
+**Implicit DB events** — `OnBeforeInsertEvent`, `OnAfterInsertEvent`,
+`OnBeforeModifyEvent`, `OnAfterModifyEvent`, `OnBeforeDeleteEvent`,
+`OnAfterDeleteEvent`, `OnBeforeValidateEvent`, `OnAfterValidateEvent` fire from
+record operations. The `Rec` and `xRec` references are passed to subscribers.
+
+**Manual binding** — Codeunits with `EventSubscriberInstance = Manual` only fire
+after `BindSubscription(Sub)`. Call `UnbindSubscription(Sub)` to stop. Bindings
+are reset between tests.
+
+**ConfirmHandler / MessageHandler / ModalPageHandler** — Supported via
+`HandlerRegistry` for test codeunits. Register handlers in the `[Test]` attribute's
+`HandlerFunctions` property.
 
 ### Reporting issues
 
@@ -2004,6 +2034,7 @@ public static class Executor
             AlRunner.Runtime.HandlerRegistry.Reset();
             AlRunner.Runtime.MockSession.Reset();
             AlRunner.Runtime.MockLanguage.Reset();
+            AlRunner.Runtime.EventSubscriberRegistry.ResetBindings();
 
             try
             {

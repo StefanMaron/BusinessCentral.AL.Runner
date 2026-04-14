@@ -369,13 +369,35 @@ public static class AlCompat
     /// <c>NavEventSubscriberAttribute</c> the first time FireEvent is
     /// called — later runs on the same assembly reuse the cache.
     /// </summary>
-    public static void FireEvent(int publisherCodeunitId, string eventName)
+    public static void FireEvent(int publisherId, string eventName, params object?[] eventArgs)
+    {
+        FireEvent(EventSubscriberRegistry.ObjectTypeCodeunit, publisherId, eventName, eventArgs);
+    }
+
+    /// <summary>
+    /// Fire an event, dispatching to all registered subscribers.
+    /// Manual subscribers are only dispatched if a matching instance is
+    /// currently bound via <see cref="EventSubscriberRegistry.Bind"/>.
+    /// </summary>
+    public static void FireEvent(int objectType, int publisherId, string eventName, params object?[] eventArgs)
     {
         var asm = MockCodeunitHandle.CurrentAssembly;
         if (asm == null) return;
-        var subs = EventSubscriberRegistry.GetSubscribers(asm, publisherCodeunitId, eventName);
-        foreach (var (ownerType, method) in subs)
+        var subs = EventSubscriberRegistry.GetSubscribers(asm, objectType, publisherId, eventName);
+        foreach (var sub in subs)
         {
+            var ownerType = sub.OwnerType;
+            var method = sub.Method;
+
+            // Manual subscribers: only fire if a bound instance exists
+            if (EventSubscriberRegistry.IsManualSubscriber(ownerType))
+            {
+                foreach (var boundInst in EventSubscriberRegistry.GetBoundInstances(ownerType))
+                    InvokeSubscriber(boundInst, method, eventArgs);
+                continue;
+            }
+
+            // Automatic subscribers: create a fresh instance
             object? instance;
             try
             {
@@ -386,17 +408,21 @@ public static class AlCompat
             }
             catch { continue; }
 
-            // Zero-arg call for now — subscribers that take Sender/Rec
-            // arguments get them filled with null. That matches BC's
-            // "best effort" stance for standalone event dispatch.
-            var parameters = method.GetParameters();
-            var args = new object?[parameters.Length];
-            try { method.Invoke(instance, args); }
-            catch (System.Reflection.TargetInvocationException tie)
-            {
-                if (tie.InnerException != null) throw tie.InnerException;
-                throw;
-            }
+            InvokeSubscriber(instance, method, eventArgs);
+        }
+    }
+
+    private static void InvokeSubscriber(object? instance, System.Reflection.MethodInfo method, object?[] eventArgs)
+    {
+        var parameters = method.GetParameters();
+        var args = new object?[parameters.Length];
+        for (int i = 0; i < args.Length && i < eventArgs.Length; i++)
+            args[i] = eventArgs[i];
+        try { method.Invoke(instance, args); }
+        catch (System.Reflection.TargetInvocationException tie)
+        {
+            if (tie.InnerException != null) throw tie.InnerException;
+            throw;
         }
     }
 

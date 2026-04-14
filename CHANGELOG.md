@@ -6,6 +6,36 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+- **Event subscriber parameter forwarding** — Publisher event arguments (`ByRef<T>`
+  and value parameters) are now forwarded from `βscope.RunEvent()` to subscriber
+  methods via positional matching. Subscribers that modify `var` parameters (e.g.
+  `var IsHandled: Boolean`) now write back correctly through shared `ByRef<T>`
+  references. (#116)
+- **Implicit DB trigger events** — `MockRecordHandle` now fires
+  `OnBeforeInsertEvent`/`OnAfterInsertEvent`, `OnBeforeModifyEvent`/`OnAfterModifyEvent`,
+  `OnBeforeDeleteEvent`/`OnAfterDeleteEvent` from `ALInsert`/`ALModify`/`ALDelete`, and
+  `OnBeforeValidateEvent`/`OnAfterValidateEvent` from `ALValidateSafe`/`ALValidate`.
+  Events fire regardless of `runTrigger` (matching BC behavior). xRec snapshots
+  are captured before mutations. (#116)
+- **BindSubscription / UnbindSubscription** — Manual event subscriber codeunits
+  (`EventSubscriberInstance = Manual` in AL) are now detected via
+  `[ManualEventSubscriber]` marker attribute emitted by the rewriter. The rewriter
+  rewrites `ALSession.ALBindSubscription()`/`ALUnbindSubscription()` to
+  `MockCodeunitHandle.Bind()`/`Unbind()`. Manual subscribers only fire when bound.
+  Bindings are reset between tests. (#116)
+- **`EventSubscriberRegistry` refactored** — Uses 3-tuple key
+  `(ObjectType, ObjectId, EventName)` to prevent table/codeunit ID collision.
+  Supports both automatic and manual subscriber classification.
+- **New test suites**: `97-event-params` (2), `98-db-trigger-events` (5),
+  `99-validate-events` (3), `100-bind-subscription` (3), `101-multi-subscribers` (2),
+  `102-sender-pattern` (6), `103-before-db-events` (7), `104-xrec-behavior` (3),
+  `105-subscriber-error` (4) — 35 new test cases total.
+- **IncludeSender support** — `IntegrationEvent(true, false)` and
+  `BusinessEvent(true)` now correctly pass the publishing codeunit instance as
+  the first subscriber parameter via `MockCodeunitHandle.FromInstance(this)`.
+  Subscribers can read/write publisher state through the sender handle. (#116)
+
 ### Fixed
 - **`CS1503` in codeunits that call `HttpContent.WriteFrom(InStream)` or `HttpContent.ReadAs(var InStream)`** —
   After the `NavInStream → MockInStream` type rename in the rewriter, calls to
