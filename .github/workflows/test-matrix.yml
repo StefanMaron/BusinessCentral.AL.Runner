@@ -24,7 +24,7 @@ jobs:
         id: resolve
         run: |
           # Resolve short version prefixes to full versions via Microsoft's index
-          BC_PREFIXES="26.0 26.3 26.5 27.0 27.3 27.5"
+          BC_PREFIXES="26.0 26.3 26.5 27.0 27.3 27.5 28.0"
           VERSIONS="[]"
           for prefix in $BC_PREFIXES; do
             FULL=$(dotnet run --project tools/DownloadArtifacts -- resolve-version "$prefix" dummy 2>/dev/null)

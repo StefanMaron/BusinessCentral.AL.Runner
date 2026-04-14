@@ -2294,13 +2294,35 @@ public static class Executor
 
     /// <summary>
     /// Returns true when the exception originates from AlRunner.Runtime mock code,
+    /// or from a missing BC runtime DLL (FileNotFoundException / FileLoadException
+    /// for a Microsoft.Dynamics.Nav.* or Microsoft.BusinessCentral.* assembly),
     /// indicating a runner limitation rather than a user test logic failure.
     /// These should be reported as <see cref="AlRunner.TestStatus.Error"/> with
     /// <see cref="AlRunner.TestResult.IsRunnerBug"/> = true.
     /// </summary>
-    private static bool IsRunnerError(Exception ex) =>
-        ex is InvalidOperationException &&
-        ex.StackTrace?.Contains("AlRunner.Runtime.Mock") == true;
+    private static bool IsRunnerError(Exception ex)
+    {
+        if (ex is InvalidOperationException &&
+            ex.StackTrace?.Contains("AlRunner.Runtime.Mock") == true)
+            return true;
+
+        // Missing BC runtime DLL — not a test logic failure, it's a runner gap.
+        // Happens when a new BC version introduces a new assembly dependency that
+        // the artifact downloader has not yet been updated to fetch.
+        if (ex is System.IO.FileNotFoundException or System.IO.FileLoadException)
+        {
+            var msg = ex.Message;
+            if (msg.Contains("Microsoft.Dynamics.Nav.") ||
+                msg.Contains("Microsoft.BusinessCentral."))
+                return true;
+        }
+
+        // Walk inner exceptions (e.g. TypeInitializationException wrapping FileNotFoundException)
+        if (ex.InnerException != null && IsRunnerError(ex.InnerException))
+            return true;
+
+        return false;
+    }
 
     /// <summary>
     /// Get the AL source column from the last StmtHit that was executed before

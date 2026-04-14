@@ -7,11 +7,21 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Fixed
+- **Missing BC runtime DLL classified as runner limitation** — `FileNotFoundException`
+  and `FileLoadException` for `Microsoft.Dynamics.Nav.*` or `Microsoft.BusinessCentral.*`
+  assemblies are now reported as ERROR (runner limitation, exit 2) instead of FAIL
+  (test assertion failure, exit 1). This correctly classifies missing BC runtime DLLs
+  (e.g. `Microsoft.BusinessCentral.Telemetry.Abstractions` introduced in BC 28) as
+  a runner gap rather than a code bug.
 - **Page without SourceTable compiles cleanly** — `SetSelectionFilter` no longer
   injects `this.Rec` into page classes that have no source table, fixing a CS1061
   Roslyn error for pages that only define helper procedures.
 
 ### Changed
+- **Test matrix extended to BC 28.0** — `28.0` added to the version prefix list in
+  `test-matrix.yml`. BC 28 introduced `Microsoft.BusinessCentral.Telemetry.Abstractions`
+  as a new runtime dependency not yet fetched by the artifact downloader; one test
+  (`SingleArgValidateFiresTrigger`) shows as a runner limitation (ERROR) on BC 28 only.
 - **Vision reframe** — project rationale updated from "pure-logic codeunits only"
   to broad AL language compatibility. Docs, guide, and limitations page updated to
   reflect that unsupported AL constructs are gaps to fix, not design boundaries.
