@@ -1,0 +1,32 @@
+table 50111 "Transfer Target"
+{
+    DataClassification = ToBeClassified;
+
+    fields
+    {
+        field(1; "Entry No."; Integer)
+        {
+            DataClassification = ToBeClassified;
+        }
+        field(2; "Name"; Text[100])
+        {
+            DataClassification = ToBeClassified;
+        }
+        field(3; "Amount"; Decimal)
+        {
+            DataClassification = ToBeClassified;
+        }
+        field(5; "Extra"; Text[50])
+        {
+            DataClassification = ToBeClassified;
+        }
+    }
+
+    keys
+    {
+        key(PK; "Entry No.")
+        {
+            Clustered = true;
+        }
+    }
+}

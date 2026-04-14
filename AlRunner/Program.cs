@@ -241,8 +241,11 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 
 - Pure-logic codeunits (arithmetic, string ops, record CRUD, enums, options)
 - In-memory table store: Insert, Modify, Get, Delete, FindSet, FindFirst, FindLast, Next
-- Composite primary keys, sort ordering (SetCurrentKey / SetAscending)
+- TransferFields, CountApprox, Consistent (no-op), FieldActive (true), AddLink/HasLinks/DeleteLinks
+- WritePermission/ReadPermission (true), SetPermissionFilter (no-op), LockTable (no-op)
+- Composite primary keys, sort ordering (SetCurrentKey / SetAscending), CurrentKey, Ascending
 - SETRANGE / SETFILTER filtering (=, <>, <, <=, >, >=, wildcards, OR via |)
+- GetFilter(field), GetFilters, HasFilter — return active filter expressions
 - Cross-codeunit dispatch (Codeunit.Run, direct codeunit variable calls)
 - AL interfaces for dependency injection
 - `asserterror` blocks + `GetLastErrorText()`

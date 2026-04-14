@@ -91,6 +91,9 @@ public class RoslynRewriter : CSharpSyntaxRewriter
         "ALFilterGroup", "ALSetRangeSafe", "ALReadIsolation",
         "ALTransferFields", "ALMark", "ALMarkedOnly",
         "ALGetFilters", "ALGetRangeMinSafe", "ALGetRangeMaxSafe",
+        "ALHasFilter", "ALCurrentKey", "ALAscending", "ALCountApprox",
+        "ALConsistent", "ALFieldActive", "ALAddLink", "ALDeleteLink", "ALDeleteLinks",
+        "ALHasLinks", "ALWritePermission", "ALSetPermissionFilter",
         "SetFieldValueSafe", "GetFieldValueSafe", "GetFieldRefSafe",
     };
 
@@ -502,9 +505,22 @@ public void ALTransferFields(MockRecordHandle source, bool initPrimaryKey = true
 public void ALMark(bool mark = true) => Rec.ALMark(mark);
 public bool ALMarkedOnly { get => Rec.ALMarkedOnly; set => Rec.ALMarkedOnly = value; }
 public int CurrFieldNo { get; set; }
-public string ALGetFilters() => Rec.ALGetFilters();
+public string ALGetFilters => Rec.ALGetFilters;
+public bool ALHasFilter => Rec.ALHasFilter;
 public NavValue ALGetRangeMinSafe(int fieldNo, NavType expectedType) => Rec.ALGetRangeMinSafe(fieldNo, expectedType);
 public NavValue ALGetRangeMaxSafe(int fieldNo, NavType expectedType) => Rec.ALGetRangeMaxSafe(fieldNo, expectedType);
+public string ALCurrentKey => Rec.ALCurrentKey;
+public bool ALAscending => Rec.ALAscending;
+public int ALCountApprox => Rec.ALCountApprox;
+public void ALConsistent(bool consistent) => Rec.ALConsistent(consistent);
+public bool ALFieldActive(int fieldNo) => Rec.ALFieldActive(fieldNo);
+public void ALAddLink(string link) => Rec.ALAddLink(link);
+public void ALAddLink(string link, string description) => Rec.ALAddLink(link, description);
+public void ALDeleteLink(int linkId) => Rec.ALDeleteLink(linkId);
+public void ALDeleteLinks() => Rec.ALDeleteLinks();
+public bool ALHasLinks => Rec.ALHasLinks;
+public bool ALWritePermission => Rec.ALWritePermission;
+public void ALSetPermissionFilter() => Rec.ALSetPermissionFilter();
 protected bool CallGetDecimalPlacesExtensionMethod(int fieldNo, ref string result) { return false; }
 protected bool CallGetTableRelationExtensionMethod(int fieldNo, MockRecordHandle rec, ref bool result) { return false; }
 protected bool CallGetFormatExtensionMethod(int fieldNo, ref string result) { return false; }

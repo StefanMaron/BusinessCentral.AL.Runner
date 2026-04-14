@@ -1863,9 +1863,10 @@ public class MockRecordHandle
     /// </summary>
     public void ALTransferFields(MockRecordHandle source, bool initPrimaryKey = true)
     {
+        var pkFields = new HashSet<int>(GetPrimaryKeyFields());
         foreach (var kv in source._fields)
         {
-            if (!initPrimaryKey && kv.Key == 1) continue; // skip PK field
+            if (!initPrimaryKey && pkFields.Contains(kv.Key)) continue;
             _fields[kv.Key] = kv.Value;
         }
     }
@@ -1900,28 +1901,80 @@ public class MockRecordHandle
     }
 
     /// <summary>
-    /// AL GetFilter — stub returning empty string.
-    /// In BC, this returns the current filter expression as a string.
+    /// AL GetFilter() — returns all active filters as a combined string.
+    /// Equivalent to the no-arg overload in BC.
     /// </summary>
     public string ALGetFilter()
     {
-        return "";
+        return ALGetFilters;
     }
 
     /// <summary>
-    /// AL GetFilter(fieldNo) — stub returning empty string for specific field.
+    /// AL GetFilter(fieldNo) — returns the filter expression for a specific field.
+    /// For range filters with from==to: returns the value string.
+    /// For range filters with from!=to: returns "FROM..TO".
+    /// For expression filters: returns the stored expression.
+    /// Returns empty string when no filter is active on that field.
     /// </summary>
     public string ALGetFilter(int fieldNo)
     {
-        return "";
+        if (!_filters.TryGetValue(fieldNo, out var filter))
+            return "";
+        return SerializeFilter(filter);
     }
 
     /// <summary>
-    /// AL GetFilters — returns all active filters as a single string.
+    /// AL GetFilters — returns all active filters as a combined string.
+    /// Format: "FieldName: Expression, FieldName2: Expression2"
+    /// Fields are ordered by field number for deterministic output.
     /// </summary>
-    public string ALGetFilters()
+    public string ALGetFilters
     {
-        return "";
+        get
+        {
+            if (_filters.Count == 0)
+                return "";
+
+            var parts = new List<string>();
+            foreach (var kv in _filters.OrderBy(f => f.Key))
+            {
+                var fieldName = GetFieldNameByNo(kv.Key);
+                var expr = SerializeFilter(kv.Value);
+                parts.Add($"{fieldName}: {expr}");
+            }
+            return string.Join(", ", parts);
+        }
+    }
+
+    /// <summary>
+    /// AL HasFilter — returns true if any filters are currently active.
+    /// </summary>
+    public bool ALHasFilter => _filters.Count > 0;
+
+    private string SerializeFilter(FieldFilter filter)
+    {
+        if (filter.IsRangeFilter)
+        {
+            var fromStr = NavValueToString(filter.FromValue!);
+            var toStr = NavValueToString(filter.ToValue!);
+            if (fromStr == toStr)
+                return fromStr;
+            return $"{fromStr}..{toStr}";
+        }
+        return filter.FilterExpression ?? "";
+    }
+
+    private string GetFieldNameByNo(int fieldNo)
+    {
+        if (_fieldNames.TryGetValue(_tableId, out var names))
+        {
+            foreach (var kv in names)
+            {
+                if (kv.Value == fieldNo)
+                    return kv.Key;
+            }
+        }
+        return $"Field{fieldNo}";
     }
 
     /// <summary>
@@ -1942,6 +1995,129 @@ public class MockRecordHandle
         if (_filters.TryGetValue(fieldNo, out var filter) && filter.ToValue != null)
             return filter.ToValue;
         return DefaultForType(expectedType);
+    }
+
+    /// <summary>
+    /// AL CurrentKey — returns the name of the current sort key.
+    /// When no key is explicitly set, returns the PK field names.
+    /// </summary>
+    public string ALCurrentKey
+    {
+        get
+        {
+            var keyFields = _currentKeyFields;
+            if (keyFields == null || keyFields.Length == 0)
+            {
+                // Default to PK fields
+                if (_primaryKeys.TryGetValue(_tableId, out var pk) && pk.Length > 0)
+                    keyFields = pk;
+                else
+                    return "";
+            }
+            var names = new List<string>();
+            foreach (var fieldNo in keyFields)
+                names.Add(GetFieldNameByNo(fieldNo));
+            return string.Join(",", names);
+        }
+    }
+
+    /// <summary>
+    /// AL Ascending — returns whether the current sort order is ascending.
+    /// Defaults to true. Checks the first current key field's ascending state.
+    /// </summary>
+    public bool ALAscending
+    {
+        get
+        {
+            if (_currentKeyFields != null && _currentKeyFields.Length > 0)
+            {
+                if (_ascending.TryGetValue(_currentKeyFields[0], out var isAsc))
+                    return isAsc;
+            }
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// AL CountApprox — in BC returns an approximate count (faster than Count).
+    /// In standalone mode, returns the same as Count.
+    /// </summary>
+    public int ALCountApprox => ALCount;
+
+    /// <summary>
+    /// AL Consistent — marks the record for transaction consistency checking.
+    /// No-op in standalone mode (no transaction support).
+    /// </summary>
+    public void ALConsistent(bool consistent)
+    {
+        // No-op: transaction consistency not supported in standalone mode
+    }
+
+    /// <summary>
+    /// AL FieldActive — returns whether a field is active (enabled) in the current record.
+    /// In standalone mode, always returns true for any field.
+    /// </summary>
+    public bool ALFieldActive(int fieldNo)
+    {
+        return true;
+    }
+
+    // -----------------------------------------------------------------------
+    // Record links — in-memory tracking
+    // -----------------------------------------------------------------------
+    private readonly List<string> _links = new();
+
+    /// <summary>
+    /// AL AddLink — adds a link (URL or note) to the record.
+    /// </summary>
+    public void ALAddLink(string link)
+    {
+        _links.Add(link);
+    }
+
+    /// <summary>
+    /// AL AddLink — overload with description.
+    /// </summary>
+    public void ALAddLink(string link, string description)
+    {
+        _links.Add(link);
+    }
+
+    /// <summary>
+    /// AL DeleteLink — deletes a specific link by index.
+    /// </summary>
+    public void ALDeleteLink(int linkId)
+    {
+        if (linkId > 0 && linkId <= _links.Count)
+            _links.RemoveAt(linkId - 1);
+    }
+
+    /// <summary>
+    /// AL DeleteLinks — deletes all links from the record.
+    /// </summary>
+    public void ALDeleteLinks()
+    {
+        _links.Clear();
+    }
+
+    /// <summary>
+    /// AL HasLinks — returns true if the record has any links.
+    /// </summary>
+    public bool ALHasLinks => _links.Count > 0;
+
+    /// <summary>
+    /// AL WritePermission — checks if the user has write permission on the table.
+    /// In standalone mode, always returns true (no permission enforcement).
+    /// </summary>
+    public bool ALWritePermission => true;
+
+    /// <summary>
+    /// AL SetPermissionFilter — applies permission-based filtering.
+    /// No-op in standalone mode (no permission enforcement).
+    /// </summary>
+    public void ALSetPermissionFilter()
+    {
+        // No-op: permissions not supported in standalone mode
     }
 
     /// <summary>

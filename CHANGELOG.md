@@ -21,9 +21,30 @@ All notable changes to this project are documented here. Format based on
   throws when the record does not exist and `errorLevel` is `DataError.ThrowError`
   (i.e. the return value is not captured in AL). Previously it silently returned
   `false` regardless of error level. (#128)
+- **`ALTransferFields` skips all PK fields** — When `initPrimaryKey=false`,
+  `TransferFields` now skips all registered primary key fields instead of only
+  field 1. Correctly handles composite primary keys. (#113)
 
 ### Added
-- **New test suite**: `107-rename` — 9 tests covering `Record.Rename()` with
+- **`GetFilter` / `GetFilters` / `HasFilter`** — `GetFilter(fieldNo)` now returns
+  the actual filter expression (equality value, `FROM..TO` range, or SetFilter
+  expression) instead of empty string. `GetFilters` returns all active filters
+  as a combined string. `HasFilter` returns true when any filter is active. (#113)
+- **`CurrentKey` / `Ascending`** — `CurrentKey` property returns the current sort
+  key field name(s), defaulting to PK. `Ascending` property returns whether the
+  sort order is ascending (default true). (#113)
+- **Record stub methods** — `CountApprox` (returns Count), `Consistent(bool)`
+  (no-op), `FieldActive(fieldNo)` (returns true), `AddLink`/`DeleteLink`/
+  `DeleteLinks`/`HasLinks` (in-memory tracking), `WritePermission` (returns true),
+  `SetPermissionFilter` (no-op). (#113)
+- **New test suite**: `108-getfilter` — 11 tests covering GetFilter, GetFilters,
+  and HasFilter with range/expression filters and reset behavior.
+- **New test suite**: `109-currentkey` — 4 tests covering CurrentKey and Ascending
+  property getters.
+- **New test suite**: `110-transferfields` — 3 tests covering TransferFields with
+  PK handling.
+- **New test suite**: `111-record-stubs` — 8 tests covering CountApprox, Consistent,
+  FieldActive, AddLink/HasLinks/DeleteLinks, WritePermission, SetPermissionFilter.
   single and composite primary keys, non-existent record errors, key conflict
   detection, error suppression via return value, and record count preservation.
 - **New test suite**: `106-dataerror-suppress` — 21 tests covering `DataError`

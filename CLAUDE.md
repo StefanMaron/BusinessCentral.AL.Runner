@@ -349,7 +349,6 @@ test belongs in the full BC pipeline, not in the runner.
 - **.app file loading** — NOT supported for test input. Always runs from AL source
   directories. Dependencies can be loaded from .app for symbol references only.
 - **Filter groups** (FilterGroup) — not tracked.
-- **ALGetFilter** — returns empty string even when filters are active.
 - **InitValue** — field InitValue properties from AL source are not applied by
   `MockRecordHandle.ALInit()`. Fields always initialize to type defaults (0, "", false).
 - **ALFieldCaption** — returns "FieldNN" instead of the actual caption. The runner
@@ -534,13 +533,36 @@ These have been implemented and are tested by the test suite:
     dispatches to manual subscribers when bound. Bindings are reset between tests.
     Tested by `tests/100-bind-subscription/` (3 test cases).
 
+22. **GetFilter / GetFilters / HasFilter** (`Runtime/MockRecordHandle.cs`) —
+    `GetFilter(fieldNo)` serializes the active filter for a field: equality values,
+    `FROM..TO` ranges, and SetFilter expressions. `GetFilters` (property) returns
+    all active filters as a comma-separated string sorted by field number.
+    `HasFilter` returns true when any filter is active. Previously these were stubs
+    returning empty string / not implemented.
+    Tested by `tests/108-getfilter/` (11 test cases).
+
+23. **CurrentKey / Ascending** (`Runtime/MockRecordHandle.cs`) — `CurrentKey`
+    property returns the name(s) of the current sort key fields (defaults to PK
+    when none explicitly set). `Ascending` property returns whether the current
+    sort order is ascending (defaults to true).
+    Tested by `tests/109-currentkey/` (4 test cases).
+
+24. **Record stub methods** (`Runtime/MockRecordHandle.cs`) — CountApprox (maps
+    to Count), Consistent(bool) (no-op), FieldActive(fieldNo) (returns true),
+    AddLink/DeleteLink/DeleteLinks/HasLinks (in-memory tracking),
+    WritePermission (returns true), SetPermissionFilter (no-op).
+    Tested by `tests/111-record-stubs/` (8 test cases).
+
+25. **TransferFields PK handling** (`Runtime/MockRecordHandle.cs`) — Fixed to
+    skip all registered PK fields (not just field 1) when `initPrimaryKey=false`.
+    Tested by `tests/110-transferfields/` (3 test cases).
+
 These are gaps that remain for full production use:
 
 1. **Wire al-runner.json config into the CLI** — config file exists but is not
    read by the CLI.
 2. **Filter groups** (FilterGroup) — not tracked.
-3. **ALGetFilter** — returns empty string even when filters are active.
-4. **RecordRef/FieldRef metadata** — `FieldRef.Name`, `FieldRef.Caption`,
+3. **RecordRef/FieldRef metadata** — `FieldRef.Name`, `FieldRef.Caption`,
    `FieldRef.Type`, `FieldRef.Length`, `FieldRef.Class` return stub defaults
    (no field metadata infrastructure). `FieldCount` returns the number of
    fields that have been set on the current record, not the table schema count.
@@ -711,7 +733,7 @@ Follows the `BusinessCentral.AL.*` pattern:
 | `AlRunner/PackageScanner.cs` | Scans package dirs for `.app` files; two-pass deduplication (by GUID then by publisher+name+version) |
 | `AlRunner/RoslynRewriter.cs` | BC→mock type transformations (AST-level) |
 | `AlRunner/Runtime/AlScope.cs` | Base scope, AlDialog, AlCompat, MockDialog |
-| `AlRunner/Runtime/MockRecordHandle.cs` | In-memory record store with filtering, composite PKs, sort ordering |
+| `AlRunner/Runtime/MockRecordHandle.cs` | In-memory record store with filtering, composite PKs, sort ordering, GetFilter/HasFilter, CurrentKey/Ascending, links, TransferFields |
 | `AlRunner/Runtime/MockCodeunitHandle.cs` | Cross-codeunit dispatch via reflection |
 | `AlRunner/Runtime/MockVariant.cs` | AL Variant type replacement |
 | `AlRunner/Runtime/MockArray.cs` | AL Array type replacement |
@@ -755,7 +777,7 @@ alDirectCompile repo. Everything needed is in this CLAUDE.md and the source file
 
 Priority order for next work:
 1. Wire al-runner.json config into the CLI
-2. Implement ALGetFilter to return actual filter expressions
-3. Implement filter groups (FilterGroup)
-4. Add more Assert methods (AreNearlyEqual, Fail, etc.)
-5. Implement RecordRef / FieldRef runtime support
+2. Implement filter groups (FilterGroup)
+3. Implement ChangeCompany / CurrentCompany (company isolation)
+4. Implement GetPosition / SetPosition
+5. Implement SetView (GetView/SetView round-trip beyond stored string)
