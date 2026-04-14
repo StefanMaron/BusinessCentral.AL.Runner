@@ -2197,7 +2197,7 @@ public static class Executor
         var failed = results.Count(r => r.Status == AlRunner.TestStatus.Fail);
         var blocked = results.Count(r => r.Status == AlRunner.TestStatus.Error && r.IsRunnerBug);
         var errors = results.Count(r => r.Status == AlRunner.TestStatus.Error && !r.IsRunnerBug);
-        var timeStr = totalMs.HasValue ? $" in {totalMs.Value / 1000.0:0.0}s" : "";
+        var timeStr = totalMs.HasValue ? $" in {(totalMs.Value / 1000.0).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}s" : "";
         var parts = new System.Collections.Generic.List<string> { $"{passed} passed" };
         if (failed > 0) parts.Add($"{failed} failed");
         if (blocked > 0) parts.Add($"{blocked} blocked (runner limitation)");
