@@ -7,6 +7,11 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Fixed
+- **`ALRename` properly updates table rows** — `MockRecordHandle.ALRename()` was
+  a broken stub that only modified the handle's field bag without touching the
+  in-memory table store. Now it: (1) finds the current record by its PK,
+  (2) checks for key conflicts, (3) updates the actual table row, and
+  (4) honors `errorLevel` (throws or returns false). (#130)
 - **`ALInsert` honors `DataError` level** — `MockRecordHandle.ALInsert()` now
   checks the `errorLevel` parameter before throwing on duplicate primary key.
   When AL code captures the return value (`if not Rec.Insert() then …`), the
@@ -18,6 +23,9 @@ All notable changes to this project are documented here. Format based on
   `false` regardless of error level. (#128)
 
 ### Added
+- **New test suite**: `107-rename` — 9 tests covering `Record.Rename()` with
+  single and composite primary keys, non-existent record errors, key conflict
+  detection, error suppression via return value, and record count preservation.
 - **New test suite**: `106-dataerror-suppress` — 21 tests covering `DataError`
   error-suppression behavior for Insert, Delete, Modify, Get, FindFirst,
   FindLast, FindSet, and the real-world `if not Insert() then Modify()` pattern.
