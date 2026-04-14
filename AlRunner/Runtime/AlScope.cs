@@ -1,5 +1,5 @@
 using Microsoft.Dynamics.Nav.Runtime;
-
+using Microsoft.Dynamics.Nav.Types;
 namespace AlRunner.Runtime;
 
 /// <summary>
@@ -1189,5 +1189,47 @@ public static class AlCompat
         _random ??= new Random();
         if (maxNumber <= 0) return 0;
         return _random.Next(1, maxNumber + 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // HttpContent stream helpers
+    // -----------------------------------------------------------------------
+    // After the NavInStream→MockInStream type rename in the rewriter, calls to
+    // NavHttpContent.ALLoadFrom(NavInStream) and .ALReadAs(ITreeObject, DataError,
+    // ByRef<NavInStream>) fail with CS1503 because MockInStream/ByRef<MockInStream>
+    // is not compatible with the real Nav types. The rewriter redirects those calls
+    // to AlCompat.HttpContentLoadFrom / AlCompat.HttpContentReadAs which accept
+    // the mock stream types.
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Replacement for NavHttpContent.ALLoadFrom(MockInStream).
+    /// BC emits content.ALLoadFrom(inStream.Value) for HttpContent.WriteFrom(InStream).
+    /// Reads all available text from the mock stream and loads it as UTF-8 content.
+    /// </summary>
+    public static void HttpContentLoadFrom(NavHttpContent content, MockInStream stream)
+    {
+        content.ALLoadFrom(new NavText(stream.ReadAll()));
+    }
+
+    /// <summary>
+    /// Passthrough for NavHttpContent.ALLoadFrom(NavText) — text variant of
+    /// HttpContent.WriteFrom(Text) still routes through here after the rewriter
+    /// redirect so the same AlCompat.HttpContentLoadFrom name handles both overloads.
+    /// </summary>
+    public static void HttpContentLoadFrom(NavHttpContent content, NavText text)
+        => content.ALLoadFrom(text);
+
+    /// <summary>
+    /// Replacement for NavHttpContent.ALReadAs(ITreeObject, DataError, ByRef&lt;NavInStream&gt;).
+    /// BC emits content.ALReadAs(this, DataError.ThrowError, stream) for
+    /// HttpContent.ReadAs(var Stream: InStream). Sending HTTP is not available in
+    /// standalone mode, so this is a no-op that leaves the stream empty.
+    /// </summary>
+    public static void HttpContentReadAs(NavHttpContent content, object? scope, DataError errorLevel, ByRef<MockInStream> stream)
+    {
+        // HTTP not available standalone — provide an empty stream so the variable
+        // is at least initialised and subsequent reads return empty instead of crashing.
+        stream.Value = new MockInStream();
     }
 }

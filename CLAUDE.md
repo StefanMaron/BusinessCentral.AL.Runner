@@ -96,9 +96,11 @@ These are the BC runtime types replaced in standalone mode:
 | `MockFormHandle` | `NavFormHandle` | Page variable mock. RunModal() dispatches to ModalPageHandler via HandlerRegistry, returns FormResult. |
 | `MockVariableStorage` | Codeunit 131004 "Library - Variable Storage" | In-memory FIFO queue: Enqueue, DequeueText/Integer/Decimal/Boolean/Date/Variant, AssertEmpty, Clear, IsEmpty. |
 | `MockBlob` | `NavBLOB` | In-memory BLOB field. CreateInStream/CreateOutStream, HasValue, Clear. |
-| `MockInStream` | `NavInStream` | In-memory InStream for reading BLOB data as text/bytes. |
+| `MockInStream` | `NavInStream` | In-memory InStream for reading BLOB data as text/bytes. Also used by `AlCompat.HttpContentLoadFrom` to read stream content into `NavHttpContent`. |
 | `MockOutStream` | `NavOutStream` | In-memory OutStream for writing text/bytes to BLOB. |
 | `MockStream` | `ALStream` | Static stream helper. ALReadText/ALWriteText routing to MockInStream/MockOutStream. |
+| `AlCompat.HttpContentLoadFrom` | `NavHttpContent.ALLoadFrom(NavInStream)` | Accepts `MockInStream`; reads all text and forwards to `ALLoadFrom(NavText)`. The 1-arg `ALLoadFrom` redirect handles both NavText and MockInStream. |
+| `AlCompat.HttpContentReadAs` | `NavHttpContent.ALReadAs(ITreeObject, DataError, ByRef<NavInStream>)` | No-op; sets target InStream to empty MockInStream (HTTP receive not available without service tier). |
 | `HandlerRegistry` | BC test framework | Dispatches ConfirmHandler/MessageHandler/ModalPageHandler/RequestPageHandler from [NavTest].Handlers to registered handler methods. |
 | `MockJsonHelper` | `NavJsonToken.ALWriteTo/ALReadFrom/ALSelectToken/ALSelectTokens` | Bypasses TrappableOperationExecutor for JSON serialization/deserialization. Real BC types used for all other JSON operations. |
 | `MockSession` | `ALSession.ALStartSession/ALStopSession/ALIsSessionActive`, `NavSession.Sleep` | StartSession dispatches codeunit synchronously via MockCodeunitHandle, returns true. StopSession/Sleep are no-ops. IsSessionActive returns false. |
@@ -325,7 +327,12 @@ test belongs in the full BC pipeline, not in the runner.
   `Open()`, `Read()`, `SaveAsCsv/Xml/Json/Excel()` throw `NotSupportedException` —
   query data access requires the BC service tier (SQL views). Developer must inject
   query dependencies via AL interfaces for testable code.
-- **HTTP** — NOT supported. Developer must inject via AL interfaces.
+- **HTTP** — Sending/receiving HTTP is NOT supported (no service tier). Codeunits that
+  declare `HttpClient`, `HttpRequestMessage`, `HttpResponseMessage`, or `HttpContent`
+  variables now compile. `HttpContent.WriteFrom(InStream)` and `ReadAs(var InStream)`
+  are handled by `AlCompat` helpers so they no longer produce CS1503. Pure-logic methods
+  in HTTP codeunits (those that don't actually call `HttpClient.Send()`) are fully
+  testable. Developer must inject HTTP send via AL interface for unit-testable code.
 - **Events/subscribers** — NOT supported. `RunEvent`, `ALBindSubscription`,
   `ALUnbindSubscription` are no-ops.
 - **.app file loading** — NOT supported for test input. Always runs from AL source

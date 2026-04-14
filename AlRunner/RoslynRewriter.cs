@@ -2251,6 +2251,52 @@ public void ClearApplicationMemberVariables() { }
                         SyntaxFactory.IdentifierName("LastErrorText"));
                 }
             }
+
+            // NavHttpContent.ALLoadFrom(MockInStream) — CS1503 after NavInStream→MockInStream rename.
+            // BC emits content.ALLoadFrom(inStream.Value) for HttpContent.WriteFrom(InStream).
+            // NavHttpContent.ALLoadFrom(NavInStream) cannot accept MockInStream, so redirect to
+            // AlCompat.HttpContentLoadFrom which has an overload for MockInStream.
+            // The 1-arg (NavText) form is also redirected for uniformity; its AlCompat overload
+            // delegates straight back to the real method.
+            if (methodName == "ALLoadFrom" && visited.ArgumentList.Arguments.Count == 1)
+            {
+                var receiver = memberAccess.Expression;
+                var arg = visited.ArgumentList.Arguments[0];
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("HttpContentLoadFrom")),
+                    SyntaxFactory.ArgumentList(
+                        SyntaxFactory.SeparatedList<ArgumentSyntax>(new[] {
+                            SyntaxFactory.Argument(receiver),
+                            arg
+                        })));
+            }
+
+            // NavHttpContent.ALReadAs(this, DataError, ByRef<MockInStream>) — CS1503.
+            // BC emits content.ALReadAs(this, DataError.ThrowError, bodyStream) for
+            // HttpContent.ReadAs(var Stream: InStream).  After NavInStream→MockInStream rename
+            // the ByRef<MockInStream> is incompatible with ByRef<NavInStream>.
+            // Only the 3-arg form (stream variant) needs the redirect; the 2-arg form
+            // (text variant: ALReadAs(DataError, ByRef<NavText>)) works without changes.
+            if (methodName == "ALReadAs" && visited.ArgumentList.Arguments.Count == 3)
+            {
+                var receiver = memberAccess.Expression;
+                var args = visited.ArgumentList.Arguments;
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("HttpContentReadAs")),
+                    SyntaxFactory.ArgumentList(
+                        SyntaxFactory.SeparatedList<ArgumentSyntax>(new[] {
+                            SyntaxFactory.Argument(receiver),
+                            args[0],
+                            args[1],
+                            args[2]
+                        })));
+            }
         }
 
         return visited;

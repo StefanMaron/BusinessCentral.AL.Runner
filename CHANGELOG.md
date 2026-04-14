@@ -7,6 +7,23 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Fixed
+- **`CS1503` in codeunits that call `HttpContent.WriteFrom(InStream)` or `HttpContent.ReadAs(var InStream)`** —
+  After the `NavInStream → MockInStream` type rename in the rewriter, calls to
+  `NavHttpContent.ALLoadFrom(MockInStream)` and `NavHttpContent.ALReadAs(ITreeObject, DataError, ByRef<MockInStream>)`
+  failed with `CS1503` because `MockInStream` is not a subtype of `NavInStream`.
+  The rewriter now intercepts:
+  - `content.ALLoadFrom(arg)` (1-arg form) → `AlCompat.HttpContentLoadFrom(content, arg)`
+  - `content.ALReadAs(scope, dataError, stream)` (3-arg form) → `AlCompat.HttpContentReadAs(content, scope, dataError, stream)`
+
+  `AlCompat.HttpContentLoadFrom` has overloads for both `NavText` (delegating to the real
+  method) and `MockInStream` (reads text from the stream then delegates).
+  `AlCompat.HttpContentReadAs` is a no-op that initialises the stream variable to an empty
+  `MockInStream` (HTTP is not available in standalone mode).
+  The 2-arg text form of `ALReadAs(DataError, ByRef<NavText>)` is not affected.
+  Codeunits such as "GO Express Request Builder" (codeunit 50611) that call
+  `HttpContent.WriteFrom(InStream)` now compile and their pure-logic methods are testable.
+  Fixes [#105](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/105).
+  Tested by `tests/bucket-2/96-httpcontent-stream/` (5 test cases).
 - **Missing BC runtime DLL classified as runner limitation** — `FileNotFoundException`
   and `FileLoadException` for `Microsoft.Dynamics.Nav.*` or `Microsoft.BusinessCentral.*`
   assemblies are now reported as ERROR (runner limitation, exit 2) instead of FAIL

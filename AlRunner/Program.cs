@@ -259,6 +259,9 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   Remove, Replace, Count, WriteTo, ReadFrom, SelectToken, AsValue, AsText, AsInteger, etc.
 - BLOB / InStream / OutStream — CreateInStream/CreateOutStream, HasValue, ReadText/WriteText
   (in-memory byte buffer; sufficient for text round-trip tests)
+- HttpContent.WriteFrom(InStream) / ReadAs(var InStream) — compile and run in standalone
+  mode; WriteFrom reads the in-memory stream bytes as text content; ReadAs sets the target
+  InStream to an empty stream (HTTP send/receive is not available without a service tier)
 - Library - Variable Storage (codeunit 131004) — Enqueue, DequeueText, DequeueInteger,
   DequeueDecimal, DequeueBoolean, DequeueDate, DequeueVariant, AssertEmpty, Clear, IsEmpty
 - TestPage navigation — Caption, First(), GoToKey(), GoToRecord(), Next(), New(), GetPart(),
