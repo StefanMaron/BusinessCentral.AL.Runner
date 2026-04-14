@@ -29,6 +29,42 @@ codeunit 59001 "Query Tests"
         Logic.TryClose();
     end;
 
+    [Test]
+    procedure QuerySetRangeIsNoOp()
+    begin
+        // [GIVEN] A declared Query variable
+        // [WHEN]  We call SetRange with from/to bounds on a column
+        // [THEN]  No error is raised — SetRange is a no-op
+        Logic.TrySetRange();
+    end;
+
+    [Test]
+    procedure QuerySetSingleRangeIsNoOp()
+    begin
+        // [GIVEN] A declared Query variable
+        // [WHEN]  We call SetRange with a single value on a column
+        // [THEN]  No error is raised — SetRange is a no-op
+        Logic.TrySetSingleRange();
+    end;
+
+    [Test]
+    procedure QueryClearRangeIsNoOp()
+    begin
+        // [GIVEN] A declared Query variable
+        // [WHEN]  We call SetRange with no value (clear range) on a column
+        // [THEN]  No error is raised — SetRange is a no-op
+        Logic.TryClearRange();
+    end;
+
+    [Test]
+    procedure QueryMultipleFiltersIsNoOp()
+    begin
+        // [GIVEN] A declared Query variable
+        // [WHEN]  We call SetFilter, SetRange, TopNumberOfRows, and Close
+        // [THEN]  All succeed without error — all are no-ops except Close
+        Logic.TryMultipleFilters();
+    end;
+
     // ------------------------------------------------------------------
     // Negative: calling Open/Read must throw a NotSupportedException
     // with 'Query' in the message so the developer gets a clear hint.
@@ -71,6 +107,26 @@ codeunit 59001 "Query Tests"
         // [WHEN]  We call TopNumberOfRows then Open
         // [THEN]  The TopNumberOfRows succeeds (no-op) but Open throws
         asserterror Logic.TrySetTop();
+        Assert.ExpectedError('Query');
+    end;
+
+    [Test]
+    procedure QuerySaveAsCsvThrowsNotSupported()
+    begin
+        // [GIVEN] A declared Query variable
+        // [WHEN]  We call Q.SaveAsCsv()
+        // [THEN]  A clear 'Query' error is raised
+        asserterror Logic.TrySaveAsCsv();
+        Assert.ExpectedError('Query');
+    end;
+
+    [Test]
+    procedure QuerySaveAsXmlThrowsNotSupported()
+    begin
+        // [GIVEN] A declared Query variable
+        // [WHEN]  We call Q.SaveAsXml()
+        // [THEN]  A clear 'Query' error is raised
+        asserterror Logic.TrySaveAsXml();
         Assert.ExpectedError('Query');
     end;
 }

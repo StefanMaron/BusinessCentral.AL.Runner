@@ -81,4 +81,55 @@ codeunit 59000 "Query Logic"
         Q.TopNumberOfRows(10);
         Q.Open();
     end;
+
+    /// Sets a range on a query column — should succeed as a no-op.
+    procedure TrySetRange()
+    var
+        Q: Query "Item Ledger Query";
+    begin
+        Q.SetRange(EntryNo, 1, 100);
+    end;
+
+    /// Sets a single-value range on a query column — should succeed as a no-op.
+    procedure TrySetSingleRange()
+    var
+        Q: Query "Item Ledger Query";
+    begin
+        Q.SetRange(ItemNo, 'ITEM001');
+    end;
+
+    /// Clears a range on a query column — should succeed as a no-op.
+    procedure TryClearRange()
+    var
+        Q: Query "Item Ledger Query";
+    begin
+        Q.SetRange(EntryNo);
+    end;
+
+    /// Tests multiple filter/range operations on different columns.
+    procedure TryMultipleFilters()
+    var
+        Q: Query "Item Ledger Query";
+    begin
+        Q.SetFilter(ItemNo, 'ITEM*');
+        Q.SetRange(EntryNo, 1, 50);
+        Q.TopNumberOfRows(10);
+        Q.Close();
+    end;
+
+    /// Tries Q.SaveAsCsv — must throw NotSupportedException.
+    procedure TrySaveAsCsv()
+    var
+        Q: Query "Item Ledger Query";
+    begin
+        Q.SaveAsCsv('output.csv');
+    end;
+
+    /// Tries Q.SaveAsXml — must throw NotSupportedException.
+    procedure TrySaveAsXml()
+    var
+        Q: Query "Item Ledger Query";
+    begin
+        Q.SaveAsXml('output.xml');
+    end;
 }

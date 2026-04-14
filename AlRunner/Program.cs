@@ -278,10 +278,15 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   - MessageHandler intercepts Message() calls, receives message text
   - ModalPageHandler intercepts Page.RunModal() calls, receives a TestPage handle,
     can set field values and invoke OK/Cancel actions; returns FormResult to caller
+- Query variables — declaring Query variables compiles; Close/SetFilter/SetRange/
+  TopNumberOfRows are no-ops; Open/Read/SaveAs throw NotSupportedException.
+  Inject query dependencies via AL interface for unit-testable code.
 
 ### What al-runner does NOT support
 
-- Pages, Reports, XMLports — stub them via `--stubs <dir>` or inject via AL interface
+- Pages, Reports — stub them via `--stubs <dir>` or inject via AL interface
+- Query data access (Open/Read) — queries require the BC service tier (SQL views);
+  use AL interfaces to inject query results for testing
 - HTTP / REST calls — inject via AL interface
 - Event subscribers — OnAfterModify, OnAfterInsert, etc. do not fire
 - StrMenu is not supported

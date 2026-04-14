@@ -6,6 +6,26 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+- **Query object support** (`Runtime/MockQueryHandle.cs`, `RoslynRewriter.cs`) —
+  AL `Query` objects now compile and run in standalone mode.  The BC compiler
+  generates `QueryNNNN : NavQuery` classes that reference `NCLMetaQuery` and
+  service-tier SQL views; the rewriter replaces the entire class with a minimal
+  stub extending `MockQueryHandle` (same pattern used for XmlPort objects).
+  `NavQueryHandle` is rewritten to `MockQueryHandle`.
+  **Supported operations (no-ops allowing pre-Open setup code to run):**
+  - `Q.Close()` — no-op
+  - `Q.SetFilter(column, expression)` — no-op
+  - `Q.SetRange(column [, from [, to]])` — no-op
+  - `Q.TopNumberOfRows(n)` / `Q.ColumnCaption` / `Q.ColumnName` — property stubs
+  **Operations that throw `NotSupportedException`** (query data access requires
+  the BC service tier):
+  - `Q.Open()`, `Q.Read()`
+  - `Q.SaveAsCsv()`, `Q.SaveAsXml()`, `Q.SaveAsJson()`, `Q.SaveAsExcel()`
+  Inject query dependencies via an AL interface to make query-dependent code
+  unit-testable.  Tested by `tests/90-query-object/` (12 test cases).
+  Fixes [#86](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/86).
+
 ### Fixed
 - **`CS1503` in codeunits that declare HTTP variables** — `AlScope` now implements
   `ITreeObject` (with stub `Tree`, `Type`, and `SingleThreaded` members), satisfying

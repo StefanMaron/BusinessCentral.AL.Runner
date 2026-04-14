@@ -98,6 +98,7 @@ These are the BC runtime types replaced in standalone mode:
 | `MockJsonHelper` | `NavJsonToken.ALWriteTo/ALReadFrom/ALSelectToken/ALSelectTokens` | Bypasses TrappableOperationExecutor for JSON serialization/deserialization. Real BC types used for all other JSON operations. |
 | `MockSession` | `ALSession.ALStartSession/ALStopSession/ALIsSessionActive`, `NavSession.Sleep` | StartSession dispatches codeunit synchronously via MockCodeunitHandle, returns true. StopSession/Sleep are no-ops. IsSessionActive returns false. |
 | `MockXmlPortHandle` | `NavXmlPortHandle` | XmlPort variable stub. Exposes Source/Destination properties and Import/Export instance methods (throw NotSupportedException). Static StaticImport/StaticExport for `XmlPort.Import/Export(portId, stream)` calls. Invoke() returns null. |
+| `MockQueryHandle` | `NavQueryHandle` / `NavQuery` | Query variable and base class stub. Close/SetFilter/SetRange/TopNumberOfRows are no-ops. Open/Read/SaveAsCsv/SaveAsXml/SaveAsJson/SaveAsExcel throw NotSupportedException. GetColumnValueSafe returns type defaults. Invoke() returns null. |
 
 ### MockRecordHandle capabilities
 
@@ -278,6 +279,11 @@ test belongs in the full BC pipeline, not in the runner.
   is supported. XmlPort variables (`XmlPort "X"`) compile via `MockXmlPortHandle` but
   `Import()`/`Export()` throw `NotSupportedException` at runtime — XmlPort I/O requires
   the BC service tier. Report is NOT supported. Developer must inject via AL interfaces.
+- **Query data access** — Query variables (`Query "X"`) compile via `MockQueryHandle`.
+  `Close()`, `SetFilter()`, `SetRange()`, `TopNumberOfRows()` are no-ops.
+  `Open()`, `Read()`, `SaveAsCsv/Xml/Json/Excel()` throw `NotSupportedException` —
+  query data access requires the BC service tier (SQL views). Developer must inject
+  query dependencies via AL interfaces for testable code.
 - **HTTP** — NOT supported. Developer must inject via AL interfaces.
 - **Events/subscribers** — NOT supported. `RunEvent`, `ALBindSubscription`,
   `ALUnbindSubscription` are no-ops.
@@ -589,6 +595,7 @@ Follows the `BusinessCentral.AL.*` pattern:
 | `AlRunner/Runtime/MockStream.cs` | Static ALStream replacement routing to MockInStream/MockOutStream |
 | `AlRunner/Runtime/MockSession.cs` | Session API stubs: StartSession (synchronous dispatch), StopSession, IsSessionActive, Sleep |
 | `AlRunner/Runtime/MockXmlPortHandle.cs` | XmlPort variable stub: Source/Destination properties, Import/Export (throw NotSupportedException), Invoke (returns null), StaticImport/StaticExport for static XmlPort.Import/Export calls |
+| `AlRunner/Runtime/MockQueryHandle.cs` | Query variable and base class stub: Close/SetFilter/SetRange/TopNumberOfRows no-ops, Open/Read/SaveAs throw NotSupportedException |
 | `AlRunner/stubs/LibraryAssert.al` | AL stub for codeunit 130 (auto-loaded for compilation) |
 | `AlRunner/stubs/LibraryVariableStorage.al` | AL stub for codeunit 131004 (auto-loaded for compilation) |
 | `tests/NN-name/` | Test suites (self-documenting: `src/*.al` + `test/*.al`). Run `ls tests/` to discover. |
