@@ -2388,17 +2388,18 @@ public static class Executor
         if (ex is MissingMethodException or MissingMemberException)
             return true;
 
-        // An exception whose innermost stack frame is inside BC runtime DLLs indicates
+        // An exception whose innermost frame originates from BC runtime DLLs indicates
         // the runner is calling service-tier code without the required context.
-        // Only the first frame is checked so that BC frames appearing deeper in the
-        // call stack (during normal AL execution) do not produce false positives.
-        var firstFrame = ex.StackTrace?
-            .Split('\n')
-            .Select(f => f.Trim())
-            .FirstOrDefault(f => !string.IsNullOrEmpty(f));
-        if (firstFrame != null &&
-            (firstFrame.Contains("Microsoft.Dynamics.Nav.", StringComparison.Ordinal) ||
-             firstFrame.Contains("Microsoft.BusinessCentral.", StringComparison.Ordinal)))
+        // Only the innermost frame (frame 0) is checked so that BC frames appearing
+        // deeper in the call stack during normal AL execution do not produce false positives.
+        var throwingNamespace = new System.Diagnostics.StackTrace(ex)
+            .GetFrame(0)?
+            .GetMethod()?
+            .DeclaringType?
+            .Namespace;
+        if (throwingNamespace != null &&
+            (throwingNamespace.StartsWith("Microsoft.Dynamics.Nav.", StringComparison.Ordinal) ||
+             throwingNamespace.StartsWith("Microsoft.BusinessCentral.", StringComparison.Ordinal)))
             return true;
 
         return false;

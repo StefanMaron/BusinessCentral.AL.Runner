@@ -99,7 +99,7 @@ public static class TelemetryReporter
         if (hasRewriterErrors)
         {
             Console.Error.WriteLine($"  Rewriter ({rewriterErrors!.Count} object(s) — AL construct not handled):");
-            foreach (var (name, error) in rewriterErrors.Take(3))
+            foreach (var (_, error) in rewriterErrors.Take(3))
                 Console.Error.WriteLine($"    × {ScrubMessage(error)}");
             if (rewriterErrors.Count > 3)
                 Console.Error.WriteLine($"    … and {rewriterErrors.Count - 3} more");

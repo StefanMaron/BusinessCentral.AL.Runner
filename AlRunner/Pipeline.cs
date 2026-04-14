@@ -526,7 +526,8 @@ public class AlRunnerPipeline
         Timer.StartStage("Roslyn rewriting");
         var refsTask = Task.Run(() => RoslynCompiler.LoadReferences());
 
-        var rewrittenTrees = new (string Name, Microsoft.CodeAnalysis.SyntaxTree? Tree)[generatedCSharpList.Count];
+        var rewrittenTrees = new List<(string Name, Microsoft.CodeAnalysis.SyntaxTree? Tree)>(
+            Enumerable.Repeat<(string, Microsoft.CodeAnalysis.SyntaxTree?)>((string.Empty, null), generatedCSharpList.Count));
         int rewriteHits = 0;
         var rewriteFailures = new System.Collections.Concurrent.ConcurrentBag<(string Name, string Error)>();
         Parallel.For(0, generatedCSharpList.Count, i =>

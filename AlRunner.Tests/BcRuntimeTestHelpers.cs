@@ -6,6 +6,10 @@ namespace Microsoft.Dynamics.Nav.TestHelper
 {
     internal static class BcRuntimeSimulator
     {
+        // NoInlining is required: the JIT must NOT inline this method into its caller,
+        // otherwise the stack frame for this method disappears and
+        // IsLikelyRunnerLimitation() cannot detect the Microsoft.Dynamics.Nav namespace
+        // at frame 0.
         [System.Runtime.CompilerServices.MethodImpl(
             System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         public static void ThrowNull() =>
@@ -17,6 +21,10 @@ namespace Microsoft.BusinessCentral.TestHelper
 {
     internal static class BusinessCentralSimulator
     {
+        // NoInlining is required: the JIT must NOT inline this method into its caller,
+        // otherwise the stack frame for this method disappears and
+        // IsLikelyRunnerLimitation() cannot detect the Microsoft.BusinessCentral namespace
+        // at frame 0.
         [System.Runtime.CompilerServices.MethodImpl(
             System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         public static void ThrowNull() =>
