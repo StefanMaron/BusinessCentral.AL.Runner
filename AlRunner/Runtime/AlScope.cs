@@ -136,6 +136,26 @@ public class AlScope : IDisposable, ITreeObject
     /// </summary>
     public static string LastErrorText { get; set; } = "";
 
+    // NavMethodScope static fields/methods — the BC compiler can emit static
+    // references to these on scope classes that inherit from AlScope.
+    public static int ExitStatementNumber { get; set; }
+    public static int MaxStackDepth { get; set; } = 1000;
+    public static string LastErrorCallStack { get; set; } = "";
+
+    public static AlScope? FindTryMethodScope(AlScope scope)
+    {
+        // In the real runtime this walks the scope chain looking for a
+        // try-function scope. In standalone mode, return null (no try scope).
+        return null;
+    }
+
+    public static string MethodName(int memberId)
+    {
+        // In the real runtime this maps member IDs to method names for
+        // diagnostics. Return a placeholder in standalone mode.
+        return $"Method_{memberId}";
+    }
+
     /// <summary>
     /// AL's [TryFunction] attribute. BC emits
     /// <c>TryInvoke(() =&gt; base.Parent.TryMethod())</c> at call sites.

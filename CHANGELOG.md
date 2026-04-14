@@ -7,6 +7,30 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Report `CurrReport.Skip()` and `CurrReport.Break()` support** — Report
+  classes now include `Skip()` and `Break()` method stubs injected by the
+  rewriter. Previously these calls caused CS1061 because the `NavReport` base
+  class was stripped. (#168 related)
+- **MockInStream: ALLength, ALPosition, ALResetPosition** — `MockInStream` now
+  exposes `ALLength` (total stream length), `ALPosition` (current read position),
+  and `ALResetPosition()` to reset the stream to the beginning. (#169)
+- **MockRecordRef: 20+ missing methods** — Added `ALMark()`, `ALMarkedOnly`,
+  `ALClearMarks`, `ALChangeCompany`, `ALAscending`, `ALHasFilter`, `ALGetFilters`,
+  `ALGetPosition`, `ALSetPosition`, `ALRename`, `ALFieldExists`, `ALModifyAll`,
+  `ALGetFilter`, `ALCurrentCompany` to `MockRecordRef`. (#170)
+- **MockFile: ALUploadIntoStream / ALDownloadFromStream overloads** — Added the
+  5-arg and 6-arg `ALUploadIntoStream` overloads (with dialog title, folder,
+  filter, filename, and upload GUID) plus `ALDownloadFromStream` overloads.
+  The rewriter now also redirects `NavFile.ALDownloadFromStream` to `MockFile`.
+  (#171, #174)
+- **MockFieldRef.ALSetTable** — No-op stub for `ALSetTable` emitted by BC
+  compiler for page API extension code. (#172)
+- **AlScope static stubs** — Added `ExitStatementNumber`, `MaxStackDepth`,
+  `LastErrorCallStack`, `FindTryMethodScope()`, `MethodName()` static members
+  to `AlScope` for NavMethodScope compatibility. (#173)
+- **MockRecordHandle: FiltersActive, HasField** — `FiltersActive` property
+  returns whether any SetRange/SetFilter is active. `HasField(int)` checks
+  if a field has been set on the record.
 - **Codeunit OnRun with record parameter** — `Codeunit.Run(codeunitId, record)`
   now correctly forwards the record to the target codeunit's `OnRun` trigger.
   Previously the record was silently dropped, causing `NullReferenceException`

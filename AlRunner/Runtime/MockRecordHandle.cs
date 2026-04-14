@@ -816,6 +816,18 @@ public class MockRecordHandle
     /// <summary>Number of fields that have been set on this record handle.</summary>
     public int FieldCount => _fields.Count;
 
+    /// <summary>Whether any filters are currently active on this record handle.</summary>
+    public bool FiltersActive => _filters.Count > 0;
+
+    /// <summary>Whether a field with the given number has been set on any record in this table.</summary>
+    public bool HasField(int fieldNo)
+    {
+        if (_fields.ContainsKey(fieldNo)) return true;
+        if (_tables.TryGetValue(_tableId, out var rows))
+            return rows.Any(r => r.ContainsKey(fieldNo));
+        return false;
+    }
+
     /// <summary>
     /// Returns the field numbers that have been set on the current record, sorted ascending.
     /// Used by MockRecordRef.ALFieldIndex to return the nth field.

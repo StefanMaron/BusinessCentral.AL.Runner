@@ -9,6 +9,7 @@ using Microsoft.Dynamics.Nav.Types;
 /// </summary>
 public static class MockFile
 {
+    // --- ALUploadIntoStream overloads ---
     public static bool ALUploadIntoStream(DataError errorLevel, string filter, ByRef<MockInStream> inStream)
     {
         if (inStream.Value != null)
@@ -20,6 +21,41 @@ public static class MockFile
     {
         if (inStream.Value != null)
             inStream.Value.Clear();
+        return false;
+    }
+
+    public static bool ALUploadIntoStream(DataError errorLevel, string dialogTitle, string fromFolder, string filter, ByRef<NavText> fileName, ByRef<MockInStream> inStream, System.Guid uploadId)
+    {
+        if (inStream.Value != null)
+            inStream.Value.Clear();
+        return false;
+    }
+
+    public static bool ALUploadIntoStream(DataError errorLevel, string dialogTitle, string fromFolder, string filter, ByRef<NavOemText> fileName, ByRef<MockInStream> inStream, System.Guid uploadId)
+    {
+        if (inStream.Value != null)
+            inStream.Value.Clear();
+        return false;
+    }
+
+    // --- ALDownloadFromStream overloads ---
+    public static bool ALDownloadFromStream(DataError errorLevel, MockInStream inStream, string dialogTitle, string fromFolder, string filter, ByRef<NavText> fileName, System.Guid downloadId)
+    {
+        return false;
+    }
+
+    public static bool ALDownloadFromStream(DataError errorLevel, MockInStream inStream, string dialogTitle, string fromFolder, string filter, ByRef<NavOemText> fileName, System.Guid downloadId)
+    {
+        return false;
+    }
+
+    public static bool ALDownloadFromStream(DataError errorLevel, MockInStream inStream, string dialogTitle, string fromFolder, string filter, ByRef<NavText> fileName)
+    {
+        return false;
+    }
+
+    public static bool ALDownloadFromStream(DataError errorLevel, MockInStream inStream, string dialogTitle, ByRef<NavText> fileName)
+    {
         return false;
     }
 }

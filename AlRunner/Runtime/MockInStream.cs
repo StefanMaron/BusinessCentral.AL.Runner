@@ -1,6 +1,7 @@
 namespace AlRunner.Runtime;
 
 using System.Text;
+using Microsoft.Dynamics.Nav.Types;
 
 /// <summary>
 /// In-memory InStream replacement for NavInStream.
@@ -73,5 +74,17 @@ public class MockInStream
         Array.Copy(_data, _pos, buffer, offset, toRead);
         _pos += toRead;
         return toRead;
+    }
+
+    /// <summary>ALLength — BC's InStream.Length property. Returns total byte length.</summary>
+    public int ALLength => _data.Length;
+
+    /// <summary>ALPosition — BC's InStream.Position property. Returns current read position.</summary>
+    public int ALPosition => _pos;
+
+    /// <summary>ALResetPosition — BC's InStream.ResetPosition(). Resets read position to 0.</summary>
+    public void ALResetPosition(DataError errorLevel = DataError.ThrowError)
+    {
+        _pos = 0;
     }
 }

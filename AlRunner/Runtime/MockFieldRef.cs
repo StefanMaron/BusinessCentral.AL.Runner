@@ -194,6 +194,14 @@ public class MockFieldRef
     /// <summary>ALByValue — returns value copy (no-op in mock).</summary>
     public MockFieldRef ALByValue() => this;
 
+    /// <summary>
+    /// ALSetTable — some BC-generated code (notably page API extensions) emits
+    /// <c>fieldRef.ALSetTable(record, shareTable)</c>. NavFieldRef in the SDK does
+    /// not have this method, but the emitted code references it on the MockFieldRef
+    /// after the rewriter renames types. No-op stub for compile compatibility.
+    /// </summary>
+    public void ALSetTable(object record, bool shareTable = false) { }
+
     /// <summary>Static Default factory — mirrors NavFieldRef.Default(ITreeObject).</summary>
     public static MockFieldRef Default() => new MockFieldRef();
 

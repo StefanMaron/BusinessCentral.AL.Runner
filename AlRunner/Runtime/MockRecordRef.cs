@@ -303,8 +303,66 @@ public class MockRecordRef
     public void ALSetRecFilter() => _handle?.ALSetRecFilter();
 
     // -- Mark / MarkedOnly (stubs) --
+    public bool ALMark() => false;
     public void ALMark(bool mark) { }
-    public void ALMarkedOnly(bool markedOnly) { }
+    public bool ALMarkedOnly
+    {
+        get => false;
+        set { /* No-op */ }
+    }
+    public void ALClearMarks() { }
+
+    // -- ChangeCompany (no-op in standalone — single company) --
+    public bool ALChangeCompany(string companyName) => true;
+    public bool ALChangeCompany(DataError errorLevel, string companyName) => true;
+    public bool ALChangeCompany() => true;
+    public bool ALChangeCompany(DataError errorLevel) => true;
+
+    // -- Ascending --
+    public bool ALAscending
+    {
+        get => true;
+        set { /* No-op in mock */ }
+    }
+
+    // -- HasFilter / GetFilters --
+    public bool ALHasFilter => _handle?.FiltersActive ?? false;
+    public string ALGetFilters => "";
+
+    // -- GetPosition / SetPosition --
+    public string ALGetPosition()
+    {
+        if (_handle == null) return "";
+        var val = _handle.GetFieldValueSafe(1, NavType.Integer);
+        string valStr;
+        try { valStr = AlCompat.Format(val); }
+        catch { valStr = val?.ToString() ?? ""; }
+        return $"Entry No.={valStr}";
+    }
+    public string ALGetPosition(bool useCaptions) => ALGetPosition();
+    public void ALSetPosition(string position) { /* No-op stub */ }
+
+    // -- Rename --
+    public void ALRename(params NavValue[] values) => _handle?.ALRename(DataError.ThrowError, values);
+    public bool ALRename(DataError errorLevel, params NavValue[] values)
+    {
+        if (_handle == null) return false;
+        return _handle.ALRename(errorLevel, values);
+    }
+
+    // -- FieldExists --
+    public bool ALFieldExists(int fieldNo) => _handle?.HasField(fieldNo) ?? false;
+    public bool ALFieldExists(string fieldName) => false;
+
+    // -- ModifyAll --
+    public void ALModifyAll(int fieldNo, NavValue newValue) => _handle?.ALModifyAllSafe(fieldNo, NavType.Text, newValue);
+    public void ALModifyAll(int fieldNo, NavValue newValue, bool runTrigger) => _handle?.ALModifyAllSafe(fieldNo, NavType.Text, newValue, runTrigger);
+
+    // -- GetFilter (per-field) --
+    public string ALGetFilter(int fieldNo) => "";
+
+    // -- CurrentCompany --
+    public string ALCurrentCompany => "";
 
     // -- TableCaption / TableName --
     public string ALTableCaption => _handle?.ALTableCaption ?? "";

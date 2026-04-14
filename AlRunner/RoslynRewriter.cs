@@ -303,6 +303,25 @@ public class RoslynRewriter : CSharpSyntaxRewriter
                     if (Visit(method) is MemberDeclarationSyntax visitedMethod)
                         preservedMembers.Add(visitedMethod);
                 }
+                else if (member is FieldDeclarationSyntax)
+                {
+                    // Preserve fields (e.g. label NavTextConstant/NavText constants)
+                    // so nested scope classes can reference them.
+                    if (Visit(member) is MemberDeclarationSyntax visitedMember)
+                        preservedMembers.Add(visitedMember);
+                }
+                else if (member is PropertyDeclarationSyntax prop)
+                {
+                    // Skip override properties — they reference base class
+                    // infrastructure we removed (IsCompiledForOnPremise, ObjectName).
+                    if (prop.Modifiers.Any(SyntaxKind.OverrideKeyword))
+                        continue;
+                    // Skip properties referencing RequestOptionsPage (removed base member).
+                    if (prop.Identifier.Text == "RequestOptionsPage")
+                        continue;
+                    if (Visit(member) is MemberDeclarationSyntax visitedMember)
+                        preservedMembers.Add(visitedMember);
+                }
                 else if (member is ClassDeclarationSyntax
                     or StructDeclarationSyntax
                     or InterfaceDeclarationSyntax
@@ -317,6 +336,16 @@ public class RoslynRewriter : CSharpSyntaxRewriter
             preservedMembers.Insert(0,
                 SyntaxFactory.ParseMemberDeclaration(
                     $"public {node.Identifier.Text}() {{ }}")!);
+
+            // Inject CurrReport.Skip() and CurrReport.Break() stubs.
+            // BC compiler emits these as instance calls on the report class
+            // (this.Skip(), this.Break()), but the base class is removed.
+            preservedMembers.Add(
+                SyntaxFactory.ParseMemberDeclaration(
+                    "public void Skip() { }")!);
+            preservedMembers.Add(
+                SyntaxFactory.ParseMemberDeclaration(
+                    "public void Break() { }")!);
 
             var stubClass = node
                 .WithBaseList(null)
@@ -2255,6 +2284,18 @@ public void ClearApplicationMemberVariables() { }
                         SyntaxKind.SimpleMemberAccessExpression,
                         SyntaxFactory.IdentifierName("MockFile"),
                         SyntaxFactory.IdentifierName("ALUploadIntoStream")));
+            }
+
+            // NavFile.ALDownloadFromStream(...) -> MockFile.ALDownloadFromStream(...)
+            // Same pattern: after NavInStream → MockInStream rewrite, the arg type
+            // no longer matches NavFile's signature.
+            if (exprText == "NavFile" && methodName == "ALDownloadFromStream")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("MockFile"),
+                        SyntaxFactory.IdentifierName("ALDownloadFromStream")));
             }
 
             // ALCompiler.ObjectToNavArray<T>(x) -> AlCompat.ObjectToMockArray<T>(x)
