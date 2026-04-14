@@ -518,20 +518,34 @@ public MockCurrPage CurrPage { get; } = new MockCurrPage();
         // Also inject extension-dispatch stubs that NavForm provided as virtual methods.
         if (isPageClass)
         {
-            var pageMemberCode = @"
-public void Update(bool saveRecord = true) { }
-public void Close() { }
-public void Activate() { }
-public void SaveRecord() { }
-public void SetTableView(MockRecordHandle rec) { }
-// SetSelectionFilter: In real BC, this applies the UI-selection filter from a
-// temporary recordset. In standalone mode we approximate by copying the page's
-// Rec and applying its record filter — sufficient for compilation but not
-// semantically identical to the real multi-selection behaviour.
-public void SetSelectionFilter(MockRecordHandle rec) { rec.ALCopy(this.Rec, true); rec.ALSetRecFilter(); }
-protected bool CallGetDecimalPlacesExtensionMethod(int fieldNo, ref string result) { return false; }
-protected bool CallGetTableRelationExtensionMethod(int fieldNo, MockRecordHandle rec, ref bool result) { return false; }
-protected bool CallGetFormatExtensionMethod(int fieldNo, ref string result) { return false; }
+            // Pages with a SourceTable have a Rec field; pages without one do not.
+            // SetSelectionFilter must only reference this.Rec when the field exists.
+            bool hasRec = visited.Members
+                .OfType<FieldDeclarationSyntax>()
+                .Any(f => f.Declaration.Variables.Any(v => v.Identifier.Text == "Rec"))
+                || visited.Members
+                .OfType<PropertyDeclarationSyntax>()
+                .Any(p => p.Identifier.Text == "Rec");
+
+            var setSelectionFilter = hasRec
+                // SetSelectionFilter: In real BC, this applies the UI-selection filter from a
+                // temporary recordset. In standalone mode we approximate by copying the page's
+                // Rec and applying its record filter — sufficient for compilation but not
+                // semantically identical to the real multi-selection behaviour.
+                ? "public void SetSelectionFilter(MockRecordHandle rec) { rec.ALCopy(this.Rec, true); rec.ALSetRecFilter(); }"
+                // Page has no SourceTable — no Rec field, so just apply the record filter.
+                : "public void SetSelectionFilter(MockRecordHandle rec) { rec.ALSetRecFilter(); }";
+
+            var pageMemberCode = $@"
+public void Update(bool saveRecord = true) {{ }}
+public void Close() {{ }}
+public void Activate() {{ }}
+public void SaveRecord() {{ }}
+public void SetTableView(MockRecordHandle rec) {{ }}
+{setSelectionFilter}
+protected bool CallGetDecimalPlacesExtensionMethod(int fieldNo, ref string result) {{ return false; }}
+protected bool CallGetTableRelationExtensionMethod(int fieldNo, MockRecordHandle rec, ref bool result) {{ return false; }}
+protected bool CallGetFormatExtensionMethod(int fieldNo, ref string result) {{ return false; }}
 ";
             var pageMembers = CSharpSyntaxTree.ParseText(
                 $"class _Temp_ {{ {pageMemberCode} }}").GetRoot()
