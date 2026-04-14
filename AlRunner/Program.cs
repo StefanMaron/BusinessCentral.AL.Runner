@@ -280,7 +280,7 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
     can set field values and invoke OK/Cancel actions; returns FormResult to caller
 - Query variables — declaring Query variables compiles; Close/SetFilter/SetRange/
   TopNumberOfRows are no-ops; Open/Read/SaveAs throw NotSupportedException.
-  Inject query dependencies via AL interface for unit-testable code.
+  Inject query dependencies via an AL interface for unit-testable code.
 
 ### What al-runner does NOT support
 
