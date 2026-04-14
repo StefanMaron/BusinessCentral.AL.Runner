@@ -279,16 +279,18 @@ public class MockRecordHandle
         if (runTrigger)
             TryFireRecordTrigger("OnInsert");
 
-        // Always enforce primary-key uniqueness.
+        // Enforce primary-key uniqueness.
         var pkFields = GetPrimaryKeyFields();
         foreach (var existing in table)
         {
             if (RowMatchesPrimaryKey(existing, _fields, pkFields))
             {
-                throw new Exception(
-                    $"The {TableName()} already exists. Identification fields and values: " +
-                    string.Join(", ", pkFields.Select(f =>
-                        $"{f}='{(_fields.TryGetValue(f, out var v) ? NavValueToString(v) : "")}'")));
+                if (errorLevel == DataError.ThrowError)
+                    throw new Exception(
+                        $"The {TableName()} already exists. Identification fields and values: " +
+                        string.Join(", ", pkFields.Select(f =>
+                            $"{f}='{(_fields.TryGetValue(f, out var v) ? NavValueToString(v) : "")}'")));
+                return false;
             }
         }
 
@@ -620,6 +622,11 @@ public class MockRecordHandle
                 return true;
             }
         }
+        if (errorLevel == DataError.ThrowError)
+            throw new Exception(
+                $"The {TableName()} does not exist. Identification fields and values: " +
+                string.Join(", ", pkFields.Select(f =>
+                    $"{f}='{(_fields.TryGetValue(f, out var v) ? NavValueToString(v) : "")}'")));
         return false;
     }
 

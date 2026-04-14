@@ -4,6 +4,24 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **`ALInsert` honors `DataError` level** — `MockRecordHandle.ALInsert()` now
+  checks the `errorLevel` parameter before throwing on duplicate primary key.
+  When AL code captures the return value (`if not Rec.Insert() then …`), the
+  BC compiler passes `DataError.Never` and the method returns `false` instead
+  of throwing. Previously it always threw regardless of error level. (#128)
+- **`ALDelete` throws on missing record** — `MockRecordHandle.ALDelete()` now
+  throws when the record does not exist and `errorLevel` is `DataError.ThrowError`
+  (i.e. the return value is not captured in AL). Previously it silently returned
+  `false` regardless of error level. (#128)
+
+### Added
+- **New test suite**: `106-dataerror-suppress` — 21 tests covering `DataError`
+  error-suppression behavior for Insert, Delete, Modify, Get, FindFirst,
+  FindLast, FindSet, and the real-world `if not Insert() then Modify()` pattern.
+
 ## [1.0.13] - 2026-04-14
 
 ### Added
