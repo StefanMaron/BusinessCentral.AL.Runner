@@ -327,7 +327,7 @@ public static class TelemetryReporter
         // Remove Unix-style paths (/home/..., /var/..., etc.)
         message = Regex.Replace(message, @"(/[\w.\-]+){2,}", "[path]");
         // Truncate to 200 chars
-        return message.Length > 200 ? message[..200] + "…" : message;
+        return message.Length > 500 ? message[..500] + "…" : message;
     }
 
     private static async Task SendAsync(TelemetryReport report)

@@ -69,6 +69,17 @@ All notable changes to this project are documented here. Format based on
   now groups by `type, outerMessage` instead of just `type`, so each unique
   error message gets its own row instead of all `AlRunner.CompilationGap`
   exceptions collapsing into a single row.
+- **Telemetry triage root-cause aggregation** — The triage workflow now pre-
+  aggregates compilation gaps by root-cause pattern before sending to Copilot.
+  CS0103 label-like variables (`*Lbl`, `*Txt`, etc.) collapse into one group;
+  CS1061 errors on generated types (Report/Page/Extension) collapse by target;
+  CS1061 errors on mock types keep separate entries per missing method. Handles
+  scope-qualified type names (`Report70400.SomeScope` → `Report70400`) and
+  truncated telemetry messages gracefully. A safety cap aborts issue creation if
+  Copilot returns more than 15 new problems (likely a grouping failure).
+- **Telemetry message truncation limit** — `ScrubMessage` now truncates at 500
+  characters instead of 200, preserving full error context for long generated
+  type names like `ReportExtension50506.DtldCustLedgEntries_…`.
 - **`ALTransferFields` skips all PK fields** — When `initPrimaryKey=false`,
   `TransferFields` now skips all registered primary key fields instead of only
   field 1. Correctly handles composite primary keys. (#113)

@@ -45,3 +45,4 @@ lcov.info
 # Benchmark artifacts
 BenchmarkDotNet.Artifacts/
 publish-*/
+**/__pycache__/
