@@ -1,0 +1,58 @@
+name: PR Check
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  require-tests:
+    name: Tests updated
+    runs-on: ubuntu-latest
+    # Skip this check when the PR carries the 'docs-only' or 'no-tests-needed' label
+    if: |
+      !contains(github.event.pull_request.labels.*.name, 'docs-only') &&
+      !contains(github.event.pull_request.labels.*.name, 'no-tests-needed')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check that tests/ was updated when AlRunner/ changed
+        run: |
+          BASE=${{ github.event.pull_request.base.sha }}
+          HEAD=${{ github.event.pull_request.head.sha }}
+
+          # Files changed in this PR
+          CHANGED=$(git diff --name-only "$BASE"..."$HEAD")
+
+          # Did any runtime or rewriter source change?
+          SOURCE_CHANGED=$(echo "$CHANGED" | grep -E '^AlRunner/' | grep -vE '\.(md)$' || true)
+
+          if [ -z "$SOURCE_CHANGED" ]; then
+            echo "No AlRunner/ source changes — test check skipped."
+            exit 0
+          fi
+
+          echo "AlRunner/ changes detected:"
+          echo "$SOURCE_CHANGED"
+
+          # Did any test file also change?
+          TESTS_CHANGED=$(echo "$CHANGED" | grep -E '^tests/' || true)
+
+          if [ -z "$TESTS_CHANGED" ]; then
+            echo ""
+            echo "ERROR: AlRunner/ was modified but no files under tests/ were updated."
+            echo ""
+            echo "Every change that affects behavior, mocks, or rewriter rules must include"
+            echo "a test. See CONTRIBUTING.md for the requirements."
+            echo ""
+            echo "If this PR genuinely needs no tests (e.g. docs-only or CI infra change),"
+            echo "add the 'docs-only' or 'no-tests-needed' label to bypass this check."
+            exit 1
+          fi
+
+          echo ""
+          echo "Test files updated:"
+          echo "$TESTS_CHANGED"
+          echo ""
+          echo "Test presence check passed. Copilot review will assess test quality."
