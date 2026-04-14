@@ -2253,11 +2253,15 @@ public void ClearApplicationMemberVariables() { }
             }
 
             // NavHttpContent.ALLoadFrom(MockInStream) — CS1503 after NavInStream→MockInStream rename.
-            // BC emits content.ALLoadFrom(inStream.Value) for HttpContent.WriteFrom(InStream).
-            // NavHttpContent.ALLoadFrom(NavInStream) cannot accept MockInStream, so redirect to
-            // AlCompat.HttpContentLoadFrom which has an overload for MockInStream.
-            // The 1-arg (NavText) form is also redirected for uniformity; its AlCompat overload
-            // delegates straight back to the real method.
+            // BC emits two distinct patterns for HttpContent.WriteFrom(InStream):
+            //   • var-parameter:    content.ALLoadFrom(this.bodyStream.Value)  — ByRef<MockInStream>.Value
+            //   • local-variable:   content.ALLoadFrom(this.localStream)       — direct MockInStream field
+            // A guard on ".Value" alone (arg.Expression is MemberAccessExpression{Name:"Value"}) would
+            // only cover the ByRef case and silently leave the local-variable case broken (still CS1503).
+            // ALLoadFrom is unique to NavHttpContent in BC-generated code; the AlCompat overloads cover
+            // both MockInStream (stream case) and NavText (text case, passthrough). If an unrelated
+            // receiver type ever appeared, its non-NavHttpContent first arg would produce a targeted
+            // CS1503 at the AlCompat call site — visible immediately and easy to fix with a new overload.
             if (methodName == "ALLoadFrom" && visited.ArgumentList.Arguments.Count == 1)
             {
                 var receiver = memberAccess.Expression;
