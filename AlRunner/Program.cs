@@ -259,14 +259,19 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - Dialog variable (Open, Update, Close — all no-ops in standalone mode)
 - RecordRef / FieldRef — Open, Close, Field(n).Value get/set, Insert, Modify,
   Delete, DeleteAll, FindSet+Next iteration, GetTable/SetTable, SetRange/SetFilter,
-  RecRef := OtherRecRef assignment, SetLoadFields (no-op)
+  RecRef := OtherRecRef assignment, SetLoadFields (no-op), Mark/MarkedOnly/ClearMarks
+  (no-op stubs), Rename, FieldExists, FieldCount, HasFilter, GetFilters, GetPosition,
+  SetPosition, Ascending, ChangeCompany (no-op), ModifyAll, CurrentCompany
 - JSON types: JsonObject, JsonArray, JsonToken, JsonValue — Add, Get, Contains,
   Remove, Replace, Count, WriteTo, ReadFrom, SelectToken, AsValue, AsText, AsInteger, etc.
 - BLOB / InStream / OutStream — CreateInStream/CreateOutStream, HasValue, ReadText/WriteText
-  (in-memory byte buffer; sufficient for text round-trip tests)
+  (in-memory byte buffer; sufficient for text round-trip tests).
+  InStream also supports Length, Position, ResetPosition for byte-level stream operations.
 - HttpContent.WriteFrom(InStream) / ReadAs(var InStream) — compile and run in standalone
   mode; WriteFrom reads the in-memory stream bytes as text content; ReadAs sets the target
   InStream to an empty stream (HTTP send/receive is not available without a service tier)
+- File dialog stubs: UploadIntoStream (5-arg and 6-arg), DownloadFromStream (4 overloads) —
+  all return false in standalone mode (no client UI). Compile and run without error.
 - Library - Variable Storage (codeunit 131004) — Enqueue, DequeueText, DequeueInteger,
   DequeueDecimal, DequeueBoolean, DequeueDate, DequeueVariant, AssertEmpty, Clear, IsEmpty
 - TestPage navigation — Caption, First(), GoToKey(), GoToRecord(), Next(), New(), GetPart(),
@@ -274,7 +279,9 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   unless otherwise noted; Next() returns false)
 - Request page handler dispatch — [RequestPageHandler] intercepts Report.RunRequestPage() calls
 - Report variables — SetTableView(), Run() (no-op), RunRequestPage() (dispatches handler).
+  CurrReport.Skip() and CurrReport.Break() are available inside report triggers.
   Report rendering and layout evaluation are not available.
+  Report label fields and properties are preserved (accessible in generated code).
 - Format() / Evaluate() type conversions, including picture strings:
   - Date tokens: `<Year4>`, `<Month,2>`, `<Day,2>`, `<Hours24,2>`, `<Minutes,2>`, `<Seconds,2>`
   - Decimal tokens: `<Precision,min:max>` (round/pad decimals), `<Standard Format,N>` (N=0 default, N=1 integer)

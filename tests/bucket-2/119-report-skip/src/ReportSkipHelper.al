@@ -1,8 +1,10 @@
 codeunit 70501 "Report Skip Helper"
 {
-    procedure RunReportSkip(): Boolean
+    procedure RunReportSkip()
+    var
+        ReportWithSkip: Report "Report With Skip";
     begin
-        // Just verify the report compiles — CurrReport.Skip() must be available
-        exit(true);
+        // Run the report — this exercises CurrReport.Skip() at runtime
+        ReportWithSkip.Run();
     end;
 }

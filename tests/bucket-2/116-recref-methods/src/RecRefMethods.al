@@ -89,6 +89,22 @@ codeunit 50117 "RecRef Method Helper"
         RecRef.ClearMarks();
     end;
 
+    procedure TestClearMarksAndCheck(): Boolean
+    var
+        Rec: Record "RecRef Method Table";
+        RecRef: RecordRef;
+    begin
+        Rec."Entry No." := 1;
+        Rec.Description := 'ClearTest';
+        Rec.Insert();
+
+        RecRef.Open(Database::"RecRef Method Table");
+        RecRef.FindFirst();
+        RecRef.Mark(true);
+        RecRef.ClearMarks();
+        exit(RecRef.Mark());
+    end;
+
     procedure TestGetFilters(): Text
     var
         RecRef: RecordRef;

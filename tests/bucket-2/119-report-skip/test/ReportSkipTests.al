@@ -6,20 +6,23 @@ codeunit 70502 "Report Skip Tests"
         Assert: Codeunit Assert;
 
     [Test]
-    procedure TestReportWithSkipCompiles()
+    procedure TestReportWithSkipRuns()
     var
         Helper: Codeunit "Report Skip Helper";
     begin
-        // Positive: report containing CurrReport.Skip() compiles and runs
-        Assert.IsTrue(Helper.RunReportSkip(), 'Report with Skip should compile');
+        // Running a report containing CurrReport.Skip() should not throw
+        Helper.RunReportSkip();
+        Assert.IsTrue(true, 'Report with CurrReport.Skip() should run without error');
     end;
 
     [Test]
-    procedure TestReportSkipNegative()
+    procedure TestReportSkipNoErrorOnSecondRun()
     var
         Helper: Codeunit "Report Skip Helper";
     begin
-        // Negative: verify the helper actually returns a value
-        Assert.AreNotEqual(false, Helper.RunReportSkip(), 'Should return true not false');
+        // Running the same report twice should not accumulate state or error
+        Helper.RunReportSkip();
+        Helper.RunReportSkip();
+        Assert.IsTrue(true, 'Report with Skip should be idempotent');
     end;
 }

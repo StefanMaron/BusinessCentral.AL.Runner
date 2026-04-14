@@ -15,14 +15,14 @@ codeunit 50119 "File Stream Tests"
     end;
 
     [Test]
-    procedure TestUploadDoesNotError()
+    procedure TestUploadResultIsFalse()
     var
         Helper: Codeunit "File Stream Helper";
         Result: Boolean;
     begin
-        // Positive: calling UploadIntoStream doesn't throw
+        // Verify the return value is consistently false
         Result := Helper.TestUploadWithFileName();
-        Assert.IsTrue(true, 'UploadIntoStream should not throw');
+        Assert.AreEqual(false, Result, 'Upload result should be false');
     end;
 
     [Test]
@@ -35,13 +35,13 @@ codeunit 50119 "File Stream Tests"
     end;
 
     [Test]
-    procedure TestDownloadDoesNotError()
+    procedure TestDownloadResultIsFalse()
     var
         Helper: Codeunit "File Stream Helper";
         Result: Boolean;
     begin
-        // Positive: calling DownloadFromStream doesn't throw
+        // Verify the return value is consistently false
         Result := Helper.TestDownloadFromStream();
-        Assert.IsTrue(true, 'DownloadFromStream should not throw');
+        Assert.AreEqual(false, Result, 'Download result should be false');
     end;
 }

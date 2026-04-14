@@ -6,19 +6,24 @@ codeunit 50121 "FieldRef SetTable Tests"
         Assert: Codeunit Assert;
 
     [Test]
-    procedure TestSetTableCompiles()
+    procedure TestSetTableCopiesEntryNo()
     var
         Helper: Codeunit "FieldRef SetTable Helper";
+        EntryNo: Integer;
+        Desc: Text[100];
     begin
-        Assert.IsTrue(Helper.TestFieldRefSetTable(), 'SetTable should work');
+        Helper.SetTableCopiesData(EntryNo, Desc);
+        Assert.AreEqual(42, EntryNo, 'SetTable should copy Entry No. from RecRef');
     end;
 
     [Test]
-    procedure TestSetTableNegative()
+    procedure TestSetTableCopiesDescription()
     var
         Helper: Codeunit "FieldRef SetTable Helper";
+        EntryNo: Integer;
+        Desc: Text[100];
     begin
-        // Negative: calling the helper on an empty table should still succeed
-        Assert.IsTrue(Helper.TestFieldRefSetTable(), 'SetTable on empty table should not error');
+        Helper.SetTableCopiesData(EntryNo, Desc);
+        Assert.AreEqual('SetTableTest', Desc, 'SetTable should copy Description from RecRef');
     end;
 }

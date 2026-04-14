@@ -40,13 +40,12 @@ codeunit 50917 "RecRef Method Tests"
     end;
 
     [Test]
-    procedure TestMarkCompiles()
+    procedure TestMarkReturnsFalseAsStub()
     var
         Helper: Codeunit "RecRef Method Helper";
     begin
-        // Mark is a no-op stub — just verify it compiles and doesn't crash
-        Helper.TestMark();
-        Assert.IsTrue(true, 'Mark() should compile and not crash');
+        // Mark is a no-op stub — Mark() always returns false
+        Assert.IsFalse(Helper.TestMark(), 'Mark() stub should return false');
     end;
 
     [Test]
@@ -58,12 +57,12 @@ codeunit 50917 "RecRef Method Tests"
     end;
 
     [Test]
-    procedure TestClearMarksNoError()
+    procedure TestClearMarksAfterMark()
     var
         Helper: Codeunit "RecRef Method Helper";
     begin
-        Helper.TestClearMarks();
-        Assert.IsTrue(true, 'ClearMarks should not error');
+        // ClearMarks after Mark(true) should not error, and Mark() should still return false (stub)
+        Assert.IsFalse(Helper.TestClearMarksAndCheck(), 'After ClearMarks, Mark() should return false');
     end;
 
     [Test]
