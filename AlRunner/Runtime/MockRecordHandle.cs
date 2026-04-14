@@ -303,8 +303,8 @@ public class MockRecordHandle
         // Copy the SystemId back into the handle's field bag
         _fields[SystemIdFieldNo] = row[SystemIdFieldNo];
 
-        // Fire OnAfterInsertEvent(var Rec)
-        FireImplicitDbEvent("OnAfterInsertEvent", this);
+        // Fire OnAfterInsertEvent(var Rec, RunTrigger: Boolean)
+        FireImplicitDbEvent("OnAfterInsertEvent", this, runTrigger);
 
         return true;
     }
@@ -420,8 +420,8 @@ public class MockRecordHandle
             {
                 table[i] = new Dictionary<int, NavValue>(_fields);
 
-                // Fire OnAfterModifyEvent(var Rec, var xRec)
-                FireImplicitDbEvent("OnAfterModifyEvent", this, xRec);
+                // Fire OnAfterModifyEvent(var Rec, var xRec, RunTrigger: Boolean)
+                FireImplicitDbEvent("OnAfterModifyEvent", this, xRec, runTrigger);
                 return true;
             }
         }
@@ -615,8 +615,8 @@ public class MockRecordHandle
             {
                 table.RemoveAt(i);
 
-                // Fire OnAfterDeleteEvent(var Rec)
-                FireImplicitDbEvent("OnAfterDeleteEvent", this);
+                // Fire OnAfterDeleteEvent(var Rec, RunTrigger: Boolean)
+                FireImplicitDbEvent("OnAfterDeleteEvent", this, runTrigger);
                 return true;
             }
         }

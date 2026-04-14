@@ -106,8 +106,8 @@ public static class EventSubscriberRegistry
         var result = new Dictionary<(int, int, string), List<SubscriberEntry>>();
 
         // Detect manual subscriber types by checking for ManualEventSubscriber attribute
-        // (emitted by the rewriter to preserve EventSubscriberInstance = Manual)
-        var manualTypes = new HashSet<Type>();
+        // (emitted by the rewriter to preserve EventSubscriberInstance = Manual).
+        // Detected types are recorded directly in _manualSubscriberTypes during the scan.
 
         Type[] types;
         try { types = assembly.GetTypes(); }
@@ -122,7 +122,6 @@ public static class EventSubscriberRegistry
             {
                 if (attr.AttributeType.Name == "ManualEventSubscriberAttribute")
                 {
-                    manualTypes.Add(type);
                     _manualSubscriberTypes.Add(type);
                     break;
                 }
