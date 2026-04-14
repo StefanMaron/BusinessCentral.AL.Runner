@@ -1283,9 +1283,55 @@ public class MockRecordHandle
 
     public bool ALRename(DataError errorLevel, params NavValue[] newKeyValues)
     {
+        var table = _tables[_tableId];
         var pkFields = GetPrimaryKeyFields();
+
+        // 1. Find the current record in the table by its current PK values
+        int sourceIndex = -1;
+        for (int i = 0; i < table.Count; i++)
+        {
+            if (RowMatchesPrimaryKey(table[i], _fields, pkFields))
+            {
+                sourceIndex = i;
+                break;
+            }
+        }
+        if (sourceIndex < 0)
+        {
+            if (errorLevel == DataError.ThrowError)
+                throw new Exception(
+                    $"The {TableName()} does not exist. Identification fields and values: " +
+                    string.Join(", ", pkFields.Select(f =>
+                        $"{f}='{(_fields.TryGetValue(f, out var v) ? NavValueToString(v) : "")}'")));
+            return false;
+        }
+
+        // 2. Build a temporary field bag with the new key values to check for conflicts
+        var newKeyBag = new Dictionary<int, NavValue>(_fields);
         for (int i = 0; i < newKeyValues.Length && i < pkFields.Length; i++)
+            newKeyBag[pkFields[i]] = newKeyValues[i];
+
+        for (int i = 0; i < table.Count; i++)
+        {
+            if (i == sourceIndex) continue;
+            if (RowMatchesPrimaryKey(table[i], newKeyBag, pkFields))
+            {
+                if (errorLevel == DataError.ThrowError)
+                    throw new Exception(
+                        $"The {TableName()} already exists. Identification fields and values: " +
+                        string.Join(", ", pkFields.Select(f =>
+                            $"{f}='{(newKeyBag.TryGetValue(f, out var v) ? NavValueToString(v) : "")}'")));
+                return false;
+            }
+        }
+
+        // 3. Update the PK fields in the table row and in the handle's field bag
+        for (int i = 0; i < newKeyValues.Length && i < pkFields.Length; i++)
+        {
+            table[sourceIndex][pkFields[i]] = newKeyValues[i];
             _fields[pkFields[i]] = newKeyValues[i];
+        }
+
         return true;
     }
 
