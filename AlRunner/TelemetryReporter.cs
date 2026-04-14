@@ -52,7 +52,7 @@ public static class TelemetryReporter
     /// <summary>
     /// After a test run, collects ALL pipeline gaps — rewriter failures, Roslyn
     /// compilation errors, and runtime runner-bug errors — shows a single combined
-    /// prompt, and sends everything in one batch if the user consents.
+    /// prompt, and sends the collected telemetry if the user consents.
     ///
     /// Rewriter gaps: AL objects whose C# could not be rewritten, indicating the
     /// rewriter does not handle some AL language pattern yet.
@@ -129,14 +129,15 @@ public static class TelemetryReporter
         if (!PromptYesNoWithTimeout($"Send error report? [y/N] (auto-no in {PromptTimeoutSeconds}s): "))
             return;
 
-        // Send rewriter failures
+        // Send rewriter failures — include the object name for correlation (it's a generated
+        // class name like "Codeunit_50100", not a user file path, so it's safe to transmit).
         if (hasRewriterErrors)
         {
             foreach (var (name, error) in rewriterErrors!)
             {
                 var report = new TelemetryReport(
                     ExceptionType: "AlRunner.RewriterGap",
-                    ScrubbedMessage: ScrubMessage(error),
+                    ScrubbedMessage: $"{name}: {ScrubMessage(error)}",
                     StackText: "",
                     FrameCount: 0,
                     RunnerVersion: GetVersionString(),

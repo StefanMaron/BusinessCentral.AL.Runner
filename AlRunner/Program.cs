@@ -1839,7 +1839,7 @@ public static class RoslynCompiler
             Console.Error.WriteLine();
             Console.Error.WriteLine("  ⚑ These errors may indicate AL constructs not yet handled by the runner's rewriter.");
             Console.Error.WriteLine("  Use --dump-rewritten to inspect the rewritten C# code.");
-            Console.Error.WriteLine("  This will be reported via telemetry (run with --no-telemetry to opt out).");
+            Console.Error.WriteLine("  You may be prompted to report this via telemetry in interactive mode (run with --no-telemetry to opt out).");
             return null;
         }
 

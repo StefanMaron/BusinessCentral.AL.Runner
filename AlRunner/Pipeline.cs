@@ -23,6 +23,14 @@ public class PipelineOptions
     public string? RunProcedure { get; set; }
     /// <summary>If set, write a JUnit XML test report to this path after test execution.</summary>
     public string? OutputJunitPath { get; set; }
+
+    /// <summary>
+    /// Optional override for the C# rewriter step, intended for unit-testing the pipeline's
+    /// rewriter-error-handling path. When set, replaces <see cref="RoslynRewriter.RewriteToTree"/>
+    /// for every object. Throw to simulate a rewriter gap; return a tree with bad C# to simulate
+    /// a Roslyn compilation gap.
+    /// </summary>
+    public Func<string, Microsoft.CodeAnalysis.SyntaxTree>? RewriterFactory { get; set; }
 }
 
 public enum TestStatus { Pass, Fail, Error }
@@ -166,9 +174,10 @@ public class AlRunnerPipeline
         }
 
         var stdoutStr = stdout.ToString();
-        if (options.OutputJson && (testResults.Count > 0 || messages.Count > 0))
+        if (options.OutputJson)
         {
-            // Pass compilation/rewriter errors to JSON output so tooling can inspect them.
+            // Always emit JSON when --output-json is set, even when there are no tests,
+            // so that tooling can observe compilation/rewriter gap errors via exitCode and errors fields.
             IReadOnlyDictionary<string, List<string>>? compilationErrorsDict = null;
             if (_compilationErrors?.Count > 0)
             {
@@ -526,8 +535,7 @@ public class AlRunnerPipeline
         Timer.StartStage("Roslyn rewriting");
         var refsTask = Task.Run(() => RoslynCompiler.LoadReferences());
 
-        var rewrittenTrees = new List<(string Name, Microsoft.CodeAnalysis.SyntaxTree? Tree)>(
-            Enumerable.Repeat<(string, Microsoft.CodeAnalysis.SyntaxTree?)>((string.Empty, null), generatedCSharpList.Count));
+        var rewrittenTrees = new (string Name, Microsoft.CodeAnalysis.SyntaxTree? Tree)[generatedCSharpList.Count];
         int rewriteHits = 0;
         var rewriteFailures = new System.Collections.Concurrent.ConcurrentBag<(string Name, string Error)>();
         Parallel.For(0, generatedCSharpList.Count, i =>
@@ -545,7 +553,9 @@ public class AlRunnerPipeline
 
             try
             {
-                var tree = RoslynRewriter.RewriteToTree(code);
+                // Use the injected rewriter factory if provided (for testing), otherwise the real rewriter.
+                var rewriterFn = options.RewriterFactory ?? RoslynRewriter.RewriteToTree;
+                var tree = rewriterFn(code);
                 // Second pass: inject per-statement ValueCapture.Capture calls.
                 // The capture function no-ops when ValueCapture.Enabled is false,
                 // so we can run this unconditionally and avoid a separate code
@@ -556,8 +566,9 @@ public class AlRunnerPipeline
                 tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.Create((Microsoft.CodeAnalysis.CSharp.CSharpSyntaxNode)injectedRoot);
                 rewrittenTrees[i] = (name, tree);
 
-                // Store in cache for next run
-                RewriteCache?.Store(name, code, tree, options.IterationTracking);
+                // Store in cache for next run (skip when using an injected factory)
+                if (options.RewriterFactory == null)
+                    RewriteCache?.Store(name, code, tree, options.IterationTracking);
             }
             catch (Exception ex)
             {
@@ -579,7 +590,7 @@ public class AlRunnerPipeline
                 stderr.WriteLine($"    × {failName}: {failMsg}");
             stderr.WriteLine();
             stderr.WriteLine("  To debug: run with --dump-csharp to see the generated C# before rewriting.");
-            stderr.WriteLine("  This will be reported via telemetry (run with --no-telemetry to opt out).");
+            stderr.WriteLine("  You may be prompted to report this via telemetry in interactive mode (run with --no-telemetry to opt out).");
             _rewriterErrors = failures;
             Timer.EndStage("Roslyn rewriting");
             return 2;

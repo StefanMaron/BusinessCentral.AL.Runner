@@ -614,76 +614,94 @@ public class RunnerErrorClassificationTests
     }
 
 
+
     // ---------------------------------------------------------------------------
     // Pipeline error reporting — rewriter failures and compilation failures
     // ---------------------------------------------------------------------------
 
     /// <summary>
-    /// When the rewriter throws for an AL object, the pipeline should fail with
-    /// exit code 2 and PipelineResult.RewriterErrors should be populated.
-    /// We simulate a rewriter failure by passing deliberately broken C# to the
-    /// pipeline via its internal path — using the CliRunner for end-to-end coverage.
-    /// Here we verify the data contract only: RewriterErrors is exposed on the result.
+    /// When the rewriter throws for an AL object, the pipeline must:
+    ///   - return ExitCode == 2 (runner limitation, not assertion failure)
+    ///   - populate RewriterErrors with the failing object name and exception message
+    ///   - not throw an AggregateException to the caller
     /// </summary>
     [Fact]
-    public void PipelineResult_RewriterErrors_PropertyExistsAndIsSettable()
+    public void RewriterGap_ReturnsExitCode2_AndPopulatesRewriterErrors()
     {
-        // The property must be readable and its type must be a list of (Name, Error)
-        var result = new PipelineResult
+        var pipeline = new AlRunnerPipeline();
+        // Inject a rewriter that throws unconditionally — simulates a rewriter gap
+        var result = pipeline.Run(new PipelineOptions
         {
-            ExitCode = 2,
-            RewriterErrors = new List<(string Name, string Error)>
-            {
-                ("Codeunit_50000", "InvalidOperationException: rewrite failed")
-            }
-        };
+            InlineCode = "Message('hello');",
+            RewriterFactory = _ => throw new InvalidOperationException("simulated rewriter gap")
+        });
 
+        Assert.Equal(2, result.ExitCode);
         Assert.NotNull(result.RewriterErrors);
-        Assert.Single(result.RewriterErrors);
-        Assert.Equal("Codeunit_50000", result.RewriterErrors[0].Name);
-        Assert.Contains("rewrite failed", result.RewriterErrors[0].Error);
+        Assert.NotEmpty(result.RewriterErrors);
+        // The error must include the exception type and message
+        var error = result.RewriterErrors[0].Error;
+        Assert.Contains("InvalidOperationException", error);
+        Assert.Contains("simulated rewriter gap", error);
+        // Stderr must mention the runner gap hint
+        Assert.Contains("AL constructs not yet handled", result.StdErr);
+        Assert.Contains("--dump-csharp", result.StdErr);
     }
 
     /// <summary>
-    /// When Roslyn compilation fails, the pipeline should fail with exit code 2
-    /// and PipelineResult.CompilationErrors should be populated.
+    /// When the rewriter produces C# that Roslyn cannot compile, the pipeline must:
+    ///   - return ExitCode == 2 (runner limitation, not assertion failure)
+    ///   - populate CompilationErrors with the Roslyn error messages
+    ///   - not expose any test results (compilation never completed)
     /// </summary>
     [Fact]
-    public void PipelineResult_CompilationErrors_PropertyExistsAndIsSettable()
+    public void CompilationGap_ReturnsExitCode2_AndPopulatesCompilationErrors()
     {
-        var result = new PipelineResult
+        var pipeline = new AlRunnerPipeline();
+        // Inject a rewriter that returns syntactically valid but semantically
+        // broken C# — simulates a rewriter gap that slips through to the Roslyn step.
+        var result = pipeline.Run(new PipelineOptions
         {
-            ExitCode = 2,
-            CompilationErrors = new List<string>
-            {
-                "CS1503: Argument 1: cannot convert from 'MockInStream' to 'NavInStream' at Codeunit.cs:42"
-            }
-        };
+            InlineCode = "Message('hello');",
+            RewriterFactory = _ =>
+                Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(
+                    // Uses NonExistentType_XYZ which Roslyn cannot resolve
+                    "namespace AlRunner { public class Broken { NonExistentType_XYZ _f; } }")
+        });
 
+        Assert.Equal(2, result.ExitCode);
         Assert.NotNull(result.CompilationErrors);
-        Assert.Single(result.CompilationErrors);
-        Assert.Contains("CS1503", result.CompilationErrors[0]);
+        Assert.NotEmpty(result.CompilationErrors);
+        // At least one error must reference the unknown type
+        Assert.Contains(result.CompilationErrors, e => e.Contains("NonExistentType_XYZ"));
+        // Stderr must carry the runner gap hint and debugging tip
+        Assert.Contains("not yet handled by the runner", result.StdErr);
+        Assert.Contains("--dump-rewritten", result.StdErr);
+        // No test results — compilation never completed
+        Assert.Empty(result.Tests);
     }
 
     /// <summary>
-    /// End-to-end: AL code that produces a Roslyn compilation failure must
-    /// produce exit code 2 (runner limitation, not assertion failure).
-    /// We use a deliberately invalid rewritten C# by testing the full pipeline
-    /// through CliRunner using AL code whose transpiled form cannot compile.
-    /// Since we can't directly inject a rewriter fault, we verify the exit-code
-    /// contract for compilation gaps using the existing 06-intentional-failure
-    /// fixture (which verifies exit code 1 for real test failures) as a
-    /// counter-proof that the exit code system is functioning.
+    /// Negative proof: a real assertion failure still returns ExitCode == 1,
+    /// not ExitCode == 2.  ExitCode 2 is reserved for runner limitations only.
     /// </summary>
     [Fact]
-    public void Pipeline_CompilationOrRewriterGap_Returns2_NotAssertionFailure()
+    public void RealAssertionFailure_ReturnsExitCode1_NotExitCode2()
     {
-        // Exit code 2 is specifically "runner limitation" — not user assertion failure (1)
-        // Verify that the pipeline correctly distinguishes these via ExitCode values
-        Assert.Equal(0, (int)TestStatus.Pass);
-        Assert.NotEqual((int)TestStatus.Pass, (int)TestStatus.Fail);
-        Assert.NotEqual((int)TestStatus.Pass, (int)TestStatus.Error);
-        Assert.NotEqual((int)TestStatus.Fail, (int)TestStatus.Error);
+        var pipeline = new AlRunnerPipeline();
+        var result = pipeline.Run(new PipelineOptions
+        {
+            InputPaths =
+            {
+                TestPath("06-intentional-failure", "src"),
+                TestPath("06-intentional-failure", "test")
+            }
+        });
+
+        // Assertion failures must produce exit code 1, never exit code 2
+        Assert.Equal(1, result.ExitCode);
+        Assert.Null(result.RewriterErrors);
+        Assert.Null(result.CompilationErrors);
     }
 
     // ---------------------------------------------------------------------------
