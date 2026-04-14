@@ -6,6 +6,20 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+- **Generic catch-all runner-limitation detection** — The test executor now
+  classifies additional exception types as runner limitations (`Status = Error`,
+  `IsRunnerBug = true`) instead of misreporting them as test failures
+  (`Status = Fail`):
+  - `MissingMethodException` / `MissingMemberException` — a BC runtime method
+    that has not yet been mocked by the runner.
+  - Any exception whose call stack originates in `Microsoft.Dynamics.Nav.*` or
+    `Microsoft.BusinessCentral.*` code — the BC service-tier context required
+    by that method is not available in standalone mode.
+  These cases now surface as `ERROR` with the "⚑ Runner limitation" hint
+  and `IsRunnerBug = true` in JSON output, and contribute to exit code 2
+  instead of exit code 1. (#131)
+
 ### Fixed
 - **`ALRename` properly updates table rows** — `MockRecordHandle.ALRename()` was
   a broken stub that only modified the handle's field bag without touching the

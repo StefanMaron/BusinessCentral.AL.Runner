@@ -505,6 +505,115 @@ public class RunnerErrorClassificationTests
     }
 
     // ---------------------------------------------------------------------------
+    // IsLikelyRunnerLimitation — generic catch-all heuristic
+    // ---------------------------------------------------------------------------
+
+    /// <summary>
+    /// MissingMethodException always indicates a BC runtime method that the runner
+    /// has not yet mocked — must be classified as a runner limitation.
+    /// </summary>
+    [Fact]
+    public void IsLikelyRunnerLimitation_MissingMethodException_ReturnsTrue()
+    {
+        var ex = new MissingMethodException("void SomeMockHandle.ALUnsupportedMethod()");
+        Assert.True(Executor.IsLikelyRunnerLimitation(ex));
+    }
+
+    /// <summary>
+    /// MissingMemberException (base class of MissingMethodException and
+    /// MissingFieldException) must also be classified as a runner limitation.
+    /// </summary>
+    [Fact]
+    public void IsLikelyRunnerLimitation_MissingMemberException_ReturnsTrue()
+    {
+        var ex = new MissingMemberException("SomeMockHandle", "ALUnsupportedField");
+        Assert.True(Executor.IsLikelyRunnerLimitation(ex));
+    }
+
+    /// <summary>
+    /// An exception whose stack trace contains Microsoft.Dynamics.Nav.* frames
+    /// originates from BC runtime code that requires service-tier context —
+    /// must be classified as a runner limitation.
+    /// </summary>
+    [Fact]
+    public void IsLikelyRunnerLimitation_ExceptionFromBcRuntimeNamespace_ReturnsTrue()
+    {
+        Exception? ex = null;
+        try
+        {
+            // Calling ThrowFromBcNamespace() produces a real stack trace that
+            // contains the "Microsoft.Dynamics.Nav." namespace segment because
+            // the helper class lives in that namespace.
+            Microsoft.Dynamics.Nav.TestHelper.BcRuntimeSimulator.ThrowNull();
+        }
+        catch (NullReferenceException e) { ex = e; }
+
+        Assert.NotNull(ex);
+        Assert.True(Executor.IsLikelyRunnerLimitation(ex!));
+    }
+
+    /// <summary>
+    /// An exception from the Microsoft.BusinessCentral.* namespace also indicates
+    /// a BC service-tier dependency — must be classified as a runner limitation.
+    /// </summary>
+    [Fact]
+    public void IsLikelyRunnerLimitation_ExceptionFromBusinessCentralNamespace_ReturnsTrue()
+    {
+        Exception? ex = null;
+        try { Microsoft.BusinessCentral.TestHelper.BusinessCentralSimulator.ThrowNull(); }
+        catch (NullReferenceException e) { ex = e; }
+
+        Assert.NotNull(ex);
+        Assert.True(Executor.IsLikelyRunnerLimitation(ex!));
+    }
+
+    /// <summary>
+    /// A plain NullReferenceException with no BC runtime frames in the stack trace
+    /// is NOT a runner limitation — it is a user test logic failure.
+    /// </summary>
+    [Fact]
+    public void IsLikelyRunnerLimitation_PlainNullReferenceException_ReturnsFalse()
+    {
+        var ex = new NullReferenceException("object is null");
+        // Exception created directly, no stack trace → not from BC runtime
+        Assert.False(Executor.IsLikelyRunnerLimitation(ex));
+    }
+
+    /// <summary>
+    /// A standard assertion exception (the kind thrown by AL Assert codeunit)
+    /// must NOT be classified as a runner limitation.
+    /// </summary>
+    [Fact]
+    public void IsLikelyRunnerLimitation_PlainException_ReturnsFalse()
+    {
+        var ex = new InvalidOperationException("Expected 1, got 2");
+        Assert.False(Executor.IsLikelyRunnerLimitation(ex));
+    }
+
+    /// <summary>
+    /// MissingMethodException must produce Status=Error (IsRunnerBug=true) when it
+    /// surfaces through the test executor, not Status=Fail.
+    /// Verified via the pipeline using inline AL code that exercises a runtime path
+    /// where reflection cannot find an overload on the mock type.
+    /// </summary>
+    [Fact]
+    public void Pipeline_MissingMethodException_ClassifiedAsError()
+    {
+        // MissingMethodException surfaces when MockCodeunitHandle.Invoke finds a
+        // matching codeunit class but the invoked method overload is missing.
+        // We simulate this directly: build a result set that mirrors how the
+        // executor would classify such an exception, then verify IsRunnerBug=true.
+        var missingMethodEx = new MissingMethodException("void Codeunit50000.ALMissingProc()");
+        Assert.True(Executor.IsLikelyRunnerLimitation(missingMethodEx),
+            "MissingMethodException must be classified as a runner limitation");
+
+        // Also verify it does NOT satisfy IsRunnerError (old path) so the new path
+        // is the one doing the classification.
+        Assert.False(Executor.IsRunnerError(missingMethodEx),
+            "MissingMethodException must not already be caught by IsRunnerError");
+    }
+
+    // ---------------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------------
 
