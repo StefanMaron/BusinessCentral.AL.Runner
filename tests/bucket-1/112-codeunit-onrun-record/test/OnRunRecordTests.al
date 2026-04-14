@@ -82,13 +82,16 @@ codeunit 80900 "OnRun Record Tests"
     [Test]
     procedure TestParameterlessOnRunStillWorks()
     var
-        Pl: Codeunit "OnRun Parameterless";
+        Rec: Record "OnRun Test Table";
     begin
-        // [GIVEN/WHEN] A codeunit without TableNo is called directly
-        Pl.SetValue(42);
+        // [GIVEN] A codeunit with a parameterless OnRun trigger
 
-        // [THEN] It works normally
-        Assert.AreEqual(42, Pl.GetValue(), 'Parameterless codeunit should work normally');
+        // [WHEN] Codeunit.Run is called without a record
+        Codeunit.Run(Codeunit::"OnRun No Params");
+
+        // [THEN] The OnRun trigger executed and inserted a record
+        Assert.IsTrue(Rec.Get('NOPARAMS'), 'Parameterless OnRun should execute via Codeunit.Run');
+        Assert.AreEqual('no-params-ran', Rec.Description, 'Description should be set by parameterless OnRun');
     end;
 
     [Test]

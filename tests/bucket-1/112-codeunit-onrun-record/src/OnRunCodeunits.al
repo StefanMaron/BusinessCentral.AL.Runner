@@ -28,22 +28,20 @@ codeunit 80102 "OnRun Counter"
 }
 
 /// <summary>
-/// Parameterless OnRun — should still work after the fix.
+/// Parameterless OnRun — verifies that codeunits without TableNo still dispatch
+/// correctly via Codeunit.Run after the record-parameter reflection changes.
 /// </summary>
-codeunit 80103 "OnRun Parameterless"
+codeunit 80103 "OnRun No Params"
 {
-    procedure SetValue(NewVal: Integer)
-    begin
-        StoredValue := NewVal;
-    end;
-
-    procedure GetValue(): Integer
-    begin
-        exit(StoredValue);
-    end;
-
+    trigger OnRun()
     var
-        StoredValue: Integer;
+        Rec: Record "OnRun Test Table";
+    begin
+        Rec.Init();
+        Rec."No." := 'NOPARAMS';
+        Rec.Description := 'no-params-ran';
+        Rec.Insert();
+    end;
 }
 
 /// <summary>

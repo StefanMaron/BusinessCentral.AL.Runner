@@ -50,17 +50,9 @@ public static class MockSession
     public static bool ALStartSession(DataError errorLevel, ByRef<int> sessionId, int codeunitId, string companyName, MockRecordHandle record)
     {
         sessionId.Value = _nextSessionId++;
-        try
-        {
-            MockCodeunitHandle.RunCodeunit(errorLevel, codeunitId, record);
-            return true;
-        }
-        catch
-        {
-            if (errorLevel == DataError.TrapError)
-                return false;
-            throw;
-        }
+        // RunCodeunit already handles TrapError (returns false) and ThrowError (throws).
+        // Return its result directly so a trapped failure is propagated as false, not true.
+        return MockCodeunitHandle.RunCodeunit(errorLevel, codeunitId, record);
     }
 
     /// <summary>
@@ -68,17 +60,7 @@ public static class MockSession
     /// </summary>
     public static bool ALStartSession(DataError errorLevel, int sessionId, int codeunitId, string companyName, MockRecordHandle record)
     {
-        try
-        {
-            MockCodeunitHandle.RunCodeunit(errorLevel, codeunitId, record);
-            return true;
-        }
-        catch
-        {
-            if (errorLevel == DataError.TrapError)
-                return false;
-            throw;
-        }
+        return MockCodeunitHandle.RunCodeunit(errorLevel, codeunitId, record);
     }
 
     /// <summary>
@@ -94,7 +76,7 @@ public static class MockSession
     /// </summary>
     public static bool ALStartSession(DataError errorLevel, ByRef<int> sessionId, int codeunitId, string companyName, MockRecordHandle record, NavDuration timeout)
     {
-        return ALStartSession(errorLevel, sessionId, codeunitId, companyName);
+        return ALStartSession(errorLevel, sessionId, codeunitId, companyName, record);
     }
 
     /// <summary>
