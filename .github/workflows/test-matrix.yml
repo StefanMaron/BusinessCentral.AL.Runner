@@ -67,41 +67,60 @@ jobs:
       - name: Run C# tests (net9.0)
         run: dotnet test AlRunner.Tests/AlRunner.Tests.csproj --no-build --framework net9.0 --verbosity minimal
 
-      - name: Run all AL tests (net8.0)
+      - name: Run AL test buckets (net8.0)
         run: |
-          # Run each test case individually so duplicate object IDs across test suites
-          # don't cause false compilation failures.
-          # 06- = intentional failure fixture (always fails, excluded)
-          # 39- = stubs scenario — run separately with --stubs
-          # 46- = missing-dep namespace-mismatch fixture — intentionally
-          #        fails without --stubs; covered by C# MissingDepHintTests
-          for s in $(ls -d tests/*/src | sed 's|tests/||;s|/src||' | grep -v '06-' | grep -v '39-' | grep -v '46-' | sort); do
-            echo "--- $s ---"
+          # Tests are organised into bucket-* directories. Each bucket is one al-runner
+          # invocation — all suites in the bucket compile and run together.
+          # Object IDs are unique within each bucket (bucket-1 and bucket-2 have no
+          # overlapping IDs). Add bucket-3, bucket-4, ... when a bucket exceeds ~50 suites.
+          for bucket in tests/bucket-*/; do
+            args=""
+            for suite in "$bucket"*/; do
+              [ -d "${suite}src"  ] && args="$args ${suite}src"
+              [ -d "${suite}test" ] && args="$args ${suite}test"
+            done
+            echo "=== $bucket ==="
             # Exit 0 = all pass, Exit 2 = runner limitation (expected for some suites)
             # Exit 1 = real test failure, Exit 3 = AL compile error — both block CI
-            dotnet run --no-build --project AlRunner --framework net8.0 -- "tests/$s/src" "tests/$s/test" || {
-              exit_code=$?
-              [ $exit_code -eq 2 ] || exit $exit_code
+            dotnet run --no-build --project AlRunner --framework net8.0 -- $args || {
+              exit_code=$?; [ $exit_code -eq 2 ] || exit $exit_code
             }
           done
 
-      - name: Run all AL tests (net9.0)
+      - name: Run AL test buckets (net9.0)
         run: |
-          for s in $(ls -d tests/*/src | sed 's|tests/||;s|/src||' | grep -v '06-' | grep -v '39-' | grep -v '46-' | sort); do
-            echo "--- $s ---"
-            dotnet run --no-build --project AlRunner --framework net9.0 -- "tests/$s/src" "tests/$s/test" || {
-              exit_code=$?
-              [ $exit_code -eq 2 ] || exit $exit_code
+          for bucket in tests/bucket-*/; do
+            args=""
+            for suite in "$bucket"*/; do
+              [ -d "${suite}src"  ] && args="$args ${suite}src"
+              [ -d "${suite}test" ] && args="$args ${suite}test"
+            done
+            echo "=== $bucket ==="
+            dotnet run --no-build --project AlRunner --framework net9.0 -- $args || {
+              exit_code=$?; [ $exit_code -eq 2 ] || exit $exit_code
             }
           done
 
       - name: Run stubs test (net8.0)
         run: |
-          dotnet run --no-build --project AlRunner --framework net8.0 -- --stubs tests/39-stubs/stubs tests/39-stubs/src tests/39-stubs/test
+          dotnet run --no-build --project AlRunner --framework net8.0 -- --stubs tests/stubs/39-stubs/stubs tests/stubs/39-stubs/src tests/stubs/39-stubs/test
 
       - name: Run stubs test (net9.0)
         run: |
-          dotnet run --no-build --project AlRunner --framework net9.0 -- --stubs tests/39-stubs/stubs tests/39-stubs/src tests/39-stubs/test
+          dotnet run --no-build --project AlRunner --framework net9.0 -- --stubs tests/stubs/39-stubs/stubs tests/stubs/39-stubs/src tests/stubs/39-stubs/test
+
+      - name: Verify intentional-failure fixture (net8.0)
+        run: |
+          # This fixture must exit 1 (test failures). Any other exit code is a bug.
+          dotnet run --no-build --project AlRunner --framework net8.0 -- \
+            tests/excluded/06-intentional-failure/src tests/excluded/06-intentional-failure/test; \
+          rc=$?; [ $rc -eq 1 ] || { echo "Expected exit 1, got $rc"; exit 1; }
+
+      - name: Verify intentional-failure fixture (net9.0)
+        run: |
+          dotnet run --no-build --project AlRunner --framework net9.0 -- \
+            tests/excluded/06-intentional-failure/src tests/excluded/06-intentional-failure/test; \
+          rc=$?; [ $rc -eq 1 ] || { echo "Expected exit 1, got $rc"; exit 1; }
 
   all-tests:
     name: All BC versions passed
