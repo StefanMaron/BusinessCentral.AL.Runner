@@ -6,6 +6,19 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+- **System, Database & Session utility stubs** — `Session.LogMessage()` (no-op),
+  `Session.ApplicationArea()` (returns empty string), `Session.GetExecutionContext()` /
+  `GetModuleExecutionContext()` (return `ExecutionContext.Normal`),
+  `Database.LockTimeout(bool)` (no-op), `CompanyProperty.DisplayName()` / `UrlName()`
+  (return empty string), `RoundDateTime(dt, precision, direction)` (full implementation
+  with ms precision and direction rounding). `ProductName.Full/Short/Marketing` and
+  `NormalDate/ClosingDate` already worked via real BC types. (#122)
+- **NavDateTime formatting fix** — `AlCompat.Format()` now handles `NavDateTime`
+  values directly by casting to `DateTime`, avoiding the `NullReferenceException` in
+  `NavDateTimeFormatter.GetStandardFormat` that occurred when `NavSession` was null.
+  This fixes `Assert.AreEqual`/`AreNotEqual` comparisons involving DateTime values.
+
 ## [1.0.14] - 2026-04-14
 
 ### Added

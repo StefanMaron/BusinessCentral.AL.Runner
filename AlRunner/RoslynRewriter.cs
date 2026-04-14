@@ -1872,6 +1872,96 @@ public void ClearApplicationMemberVariables() { }
                         SyntaxFactory.IdentifierName("Sleep")));
             }
 
+            // ALSession.ALApplicationArea(session) -> AlCompat.ApplicationArea()
+            // Requires NavSession which doesn't exist in standalone mode.
+            if (exprText == "ALSession" && methodName == "ALApplicationArea")
+            {
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("ApplicationArea")),
+                    SyntaxFactory.ArgumentList())
+                    .WithTriviaFrom(visited);
+            }
+
+            // ALSession.ALGetExecutionContext(session) / ALGetModuleExecutionContext(session)
+            // -> AlCompat.GetExecutionContext()
+            if (exprText == "ALSession" &&
+                (methodName == "ALGetExecutionContext" || methodName == "ALGetModuleExecutionContext"))
+            {
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("GetExecutionContext")),
+                    SyntaxFactory.ArgumentList())
+                    .WithTriviaFrom(visited);
+            }
+
+            // ALCompanyProperty.ALDisplayName() / ALUrlName() -> AlCompat stubs
+            // Real BC implementation requires NavEnvironment which crashes standalone.
+            if (exprText == "ALCompanyProperty" && methodName == "ALDisplayName")
+            {
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("CompanyPropertyDisplayName")),
+                    SyntaxFactory.ArgumentList())
+                    .WithTriviaFrom(visited);
+            }
+            if (exprText == "ALCompanyProperty" && methodName == "ALUrlName")
+            {
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("CompanyPropertyUrlName")),
+                    SyntaxFactory.ArgumentList())
+                    .WithTriviaFrom(visited);
+            }
+
+            // ALSystemDate.ALRoundDateTime(session, dt, [precision], [direction])
+            // -> AlCompat.RoundDateTime(dt, [precision], [direction])
+            // Strip the session arg; real BC impl requires NavSession.
+            if (exprText == "ALSystemDate" && methodName == "ALRoundDateTime")
+            {
+                var args = visited.ArgumentList.Arguments;
+                var keptArgs = new SeparatedSyntaxList<ArgumentSyntax>();
+                for (int i = 1; i < args.Count; i++)
+                    keptArgs = keptArgs.Add(args[i]);
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("RoundDateTime")),
+                    SyntaxFactory.ArgumentList(keptArgs))
+                    .WithTriviaFrom(visited);
+            }
+
+            // ALSystemDate.ALNormalDate(date) -> AlCompat.NormalDate(date)
+            // Real BC impl throws NavNCLDateInvalidException on 0D.
+            if (exprText == "ALSystemDate" && methodName == "ALNormalDate")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("NormalDate")));
+            }
+
+            // ALSystemDate.ALClosingDate(date) -> AlCompat.ClosingDate(date)
+            // Real BC impl throws on 0D.
+            if (exprText == "ALSystemDate" && methodName == "ALClosingDate")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("ClosingDate")));
+            }
+
             // ALCompiler.ToSecretText(navText) -> AlCompat.ToSecretText(navText)
             // ToSecretText wraps a text value as NavSecretText; requires NavSession in BC.
             if (exprText == "ALCompiler" && methodName == "ToSecretText")
@@ -2641,6 +2731,15 @@ public void ClearApplicationMemberVariables() { }
                 return SyntaxFactory.EmptyStatement();
             }
 
+            // ALSession.ALLogMessage(...) → no-op
+            // Requires Microsoft.BusinessCentral.Telemetry.Abstractions assembly which is unavailable.
+            if (invocation.Expression is MemberAccessExpressionSyntax logMa &&
+                logMa.Expression.ToString() == "ALSession" &&
+                logMa.Name.Identifier.Text == "ALLogMessage")
+            {
+                return SyntaxFactory.EmptyStatement();
+            }
+
             // Rewrite ALSession.ALBindSubscription(DataError, target) → target.Bind()
             // and ALSession.ALUnbindSubscription(DataError, target) → target.Unbind()
             if (invocation.Expression is MemberAccessExpressionSyntax bindMa &&
@@ -2792,6 +2891,17 @@ public void ClearApplicationMemberVariables() { }
                                         SyntaxKind.StringLiteralExpression,
                                         SyntaxFactory.Literal("Compilation error")))))));
             }
+        }
+
+        // ALDatabase.ALLockTimeout = value → no-op
+        // Real BC implementation requires NavEnvironment which crashes standalone.
+        if (node.Expression is AssignmentExpressionSyntax lockAssignment &&
+            lockAssignment.Left is MemberAccessExpressionSyntax lockMa &&
+            lockMa.Expression is IdentifierNameSyntax lockDbId &&
+            lockDbId.Identifier.Text == "ALDatabase" &&
+            lockMa.Name.Identifier.Text == "ALLockTimeout")
+        {
+            return SyntaxFactory.EmptyStatement();
         }
 
         return base.VisitExpressionStatement(node);

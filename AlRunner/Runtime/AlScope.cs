@@ -688,6 +688,12 @@ public static class AlCompat
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavInteger ni) return ((int)ni).ToString();
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavBigInteger nbi) return ((long)nbi).ToString();
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavGuid ng) return ((Guid)ng).ToString();
+                // NavDateTime: cast to DateTime to avoid NavDateTimeFormatter needing NavSession
+                if (typeName == "NavDateTime")
+                {
+                    try { return ((DateTime)(Microsoft.Dynamics.Nav.Runtime.NavDateTime)value).ToString("o", System.Globalization.CultureInfo.InvariantCulture); }
+                    catch { return ""; }
+                }
                 // NavTime/NavDate/NavOption inside NavValue: use reflection to extract raw value
                 // These types' ToString() calls NavSession-dependent formatters.
                 if (typeName == "NavTime")
@@ -1288,5 +1294,96 @@ public static class AlCompat
         // Return an empty stream so the AL variable is initialised and subsequent
         // InStream reads return end-of-stream rather than a NullReferenceException.
         stream.Value = new MockInStream();
+    }
+
+    /// <summary>
+    /// Session.ApplicationArea() stub — returns empty string in standalone mode.
+    /// </summary>
+    public static string ApplicationArea() => "";
+
+    /// <summary>
+    /// Session.GetExecutionContext() / GetModuleExecutionContext() stub.
+    /// Returns default ExecutionContext enum value in standalone mode.
+    /// </summary>
+    public static Microsoft.Dynamics.Nav.Types.ExecutionContext GetExecutionContext() => default;
+
+    /// <summary>
+    /// CompanyProperty.DisplayName() stub — returns a default company name.
+    /// </summary>
+    public static string CompanyPropertyDisplayName() => "My Company";
+
+    /// <summary>
+    /// CompanyProperty.UrlName() stub — returns a URL-encoded company name.
+    /// </summary>
+    public static string CompanyPropertyUrlName() => "My%20Company";
+
+    /// <summary>
+    /// NormalDate(date) — wraps ALSystemDate.ALNormalDate with 0D handling.
+    /// BC runtime throws NavNCLDateInvalidException on 0D; we return 0D.
+    /// </summary>
+    public static NavDate NormalDate(NavDate date)
+    {
+        if (date == NavDate.Default) return NavDate.Default;
+        return ALSystemDate.ALNormalDate(date);
+    }
+
+    /// <summary>
+    /// ClosingDate(date) — wraps ALSystemDate.ALClosingDate with 0D handling.
+    /// </summary>
+    public static NavDate ClosingDate(NavDate date)
+    {
+        if (date == NavDate.Default) return NavDate.Default;
+        return ALSystemDate.ALClosingDate(date);
+    }
+
+    /// <summary>
+    /// RoundDateTime(dt) — rounds to nearest 1000ms (default precision).
+    /// </summary>
+    public static NavDateTime RoundDateTime(NavDateTime dt)
+    {
+        return RoundDateTime(dt, 1000, "=");
+    }
+
+    /// <summary>
+    /// RoundDateTime(dt, precision) — rounds to nearest with given precision in ms.
+    /// </summary>
+    public static NavDateTime RoundDateTime(NavDateTime dt, long precision)
+    {
+        return RoundDateTime(dt, precision, "=");
+    }
+
+    /// <summary>
+    /// RoundDateTime(dt, precision, direction) — rounds a DateTime value.
+    /// Precision is in milliseconds. Direction: '>' (up), '&lt;' (down), '=' (nearest).
+    /// </summary>
+    public static NavDateTime RoundDateTime(NavDateTime dt, long precision, string direction)
+    {
+        if (dt == NavDateTime.Default) return NavDateTime.Default;
+        if (precision <= 0) precision = 1;
+
+        var dateTime = (DateTime)dt;
+        long ticksPrecision = precision * TimeSpan.TicksPerMillisecond;
+        long ticks = dateTime.Ticks;
+        long remainder = ticks % ticksPrecision;
+
+        long roundedTicks;
+        switch (direction)
+        {
+            case ">":
+                roundedTicks = remainder == 0 ? ticks : ticks + (ticksPrecision - remainder);
+                break;
+            case "<":
+                roundedTicks = ticks - remainder;
+                break;
+            default: // "=" or nearest
+                roundedTicks = remainder >= ticksPrecision / 2
+                    ? ticks + (ticksPrecision - remainder)
+                    : ticks - remainder;
+                break;
+        }
+
+        #pragma warning disable CS0618 // NavDateTime.Create(DateTime) is marked obsolete but is the only session-free overload
+        return NavDateTime.Create(new DateTime(roundedTicks, dateTime.Kind));
+        #pragma warning restore CS0618
     }
 }
