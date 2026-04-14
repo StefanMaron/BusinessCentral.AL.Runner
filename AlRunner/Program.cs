@@ -2300,29 +2300,52 @@ public static class Executor
     /// These should be reported as <see cref="AlRunner.TestStatus.Error"/> with
     /// <see cref="AlRunner.TestResult.IsRunnerBug"/> = true.
     /// </summary>
-    private static bool IsRunnerError(Exception ex)
+    public static bool IsRunnerError(Exception ex)
     {
         if (ex is InvalidOperationException &&
             ex.StackTrace?.Contains("AlRunner.Runtime.Mock") == true)
             return true;
 
-        // Missing BC runtime DLL — not a test logic failure, it's a runner gap.
-        // Happens when a new BC version introduces a new assembly dependency that
-        // the artifact downloader has not yet been updated to fetch.
-        if (ex is System.IO.FileNotFoundException or System.IO.FileLoadException)
-        {
-            var msg = ex.Message;
-            if (msg.Contains("Microsoft.Dynamics.Nav.") ||
-                msg.Contains("Microsoft.BusinessCentral."))
-                return true;
-        }
+        if (IsMissingBcRuntimeDll(ex))
+            return true;
 
-        // Walk inner exceptions (e.g. TypeInitializationException wrapping FileNotFoundException)
+        // Walk InnerException (e.g. TypeInitializationException wrapping FileNotFoundException)
         if (ex.InnerException != null && IsRunnerError(ex.InnerException))
             return true;
 
+        // AggregateException can wrap multiple load failures.
+        if (ex is AggregateException agg)
+            foreach (var inner in agg.InnerExceptions)
+                if (inner != null && IsRunnerError(inner))
+                    return true;
+
+        // ReflectionTypeLoadException exposes nested loader failures via LoaderExceptions.
+        if (ex is ReflectionTypeLoadException rtle)
+            foreach (var loader in rtle.LoaderExceptions)
+                if (loader != null && IsRunnerError(loader))
+                    return true;
+
         return false;
     }
+
+    public static bool IsMissingBcRuntimeAssemblyName(string? value) =>
+        value?.Contains("Microsoft.Dynamics.Nav.", StringComparison.Ordinal) == true ||
+        value?.Contains("Microsoft.BusinessCentral.", StringComparison.Ordinal) == true;
+
+    /// <summary>
+    /// Returns true when the exception represents a missing BC runtime DLL.
+    /// Prefers the structured FileName property over the (potentially localised) Message.
+    /// </summary>
+    public static bool IsMissingBcRuntimeDll(Exception ex) => ex switch
+    {
+        System.IO.FileNotFoundException fnf =>
+            IsMissingBcRuntimeAssemblyName(fnf.FileName) ||
+            IsMissingBcRuntimeAssemblyName(fnf.Message),
+        System.IO.FileLoadException fle =>
+            IsMissingBcRuntimeAssemblyName(fle.FileName) ||
+            IsMissingBcRuntimeAssemblyName(fle.Message),
+        _ => false
+    };
 
     /// <summary>
     /// Get the AL source column from the last StmtHit that was executed before

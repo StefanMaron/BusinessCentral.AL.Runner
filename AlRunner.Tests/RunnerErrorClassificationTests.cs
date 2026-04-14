@@ -424,6 +424,87 @@ public class RunnerErrorClassificationTests
     }
 
     // ---------------------------------------------------------------------------
+    // IsMissingBcRuntimeDll — unit tests for the new classification helper
+    // ---------------------------------------------------------------------------
+
+    /// <summary>
+    /// FileNotFoundException with a BC assembly name in FileName is classified as a
+    /// runner limitation (missing BC runtime DLL), not a test assertion failure.
+    /// </summary>
+    [Theory]
+    [InlineData("Microsoft.Dynamics.Nav.Ncl.dll")]
+    [InlineData("Microsoft.BusinessCentral.Telemetry.Abstractions.dll")]
+    public void IsMissingBcRuntimeDll_FileNotFound_ByFileName_ReturnsTrue(string assemblyFile)
+    {
+        var ex = new System.IO.FileNotFoundException("The system cannot find the file.", assemblyFile);
+        Assert.True(Executor.IsMissingBcRuntimeDll(ex));
+    }
+
+    /// <summary>
+    /// FileNotFoundException whose Message (not FileName) contains a BC assembly name
+    /// is also classified — FileName is null when the CLR embeds the name in the message.
+    /// </summary>
+    [Fact]
+    public void IsMissingBcRuntimeDll_FileNotFound_ByMessage_ReturnsTrue()
+    {
+        var ex = new System.IO.FileNotFoundException(
+            "Could not load file or assembly 'Microsoft.BusinessCentral.Telemetry.Abstractions, Version=10.0.0.0'.");
+        Assert.True(Executor.IsMissingBcRuntimeDll(ex));
+    }
+
+    /// <summary>
+    /// FileNotFoundException for a non-BC assembly (e.g. user code missing a DLL) must
+    /// NOT be classified as a runner limitation.
+    /// </summary>
+    [Fact]
+    public void IsMissingBcRuntimeDll_FileNotFound_NonBcAssembly_ReturnsFalse()
+    {
+        var ex = new System.IO.FileNotFoundException("File not found.", "SomeUserLibrary.dll");
+        Assert.False(Executor.IsMissingBcRuntimeDll(ex));
+    }
+
+    /// <summary>
+    /// FileLoadException for a BC assembly (version conflict, strong-name failure, etc.)
+    /// is also classified as a runner limitation.
+    /// </summary>
+    [Fact]
+    public void IsMissingBcRuntimeDll_FileLoadException_BcAssembly_ReturnsTrue()
+    {
+        var ex = new System.IO.FileLoadException(
+            "Could not load file or assembly 'Microsoft.Dynamics.Nav.Types, Version=28.0.0.0'.",
+            "Microsoft.Dynamics.Nav.Types.dll");
+        Assert.True(Executor.IsMissingBcRuntimeDll(ex));
+    }
+
+    /// <summary>
+    /// AggregateException wrapping a BC FileNotFoundException must be classified as a
+    /// runner limitation via the recursive inner-exception traversal in IsRunnerError.
+    /// </summary>
+    [Fact]
+    public void IsRunnerError_AggregateException_WrappingBcFileNotFound_ReturnsTrue()
+    {
+        var inner = new System.IO.FileNotFoundException(
+            "Could not load file or assembly 'Microsoft.BusinessCentral.Telemetry.Abstractions'.",
+            "Microsoft.BusinessCentral.Telemetry.Abstractions.dll");
+        var agg = new AggregateException("One or more errors occurred.", inner);
+        Assert.True(Executor.IsRunnerError(agg));
+    }
+
+    /// <summary>
+    /// TypeInitializationException (InnerException path) wrapping a BC FileNotFoundException
+    /// must also be classified as a runner limitation.
+    /// </summary>
+    [Fact]
+    public void IsRunnerError_TypeInitializationException_WrappingBcFileNotFound_ReturnsTrue()
+    {
+        var inner = new System.IO.FileNotFoundException(
+            "Could not load file or assembly 'Microsoft.Dynamics.Nav.Ncl'.",
+            "Microsoft.Dynamics.Nav.Ncl.dll");
+        var outer = new TypeInitializationException("SomeNavType", inner);
+        Assert.True(Executor.IsRunnerError(outer));
+    }
+
+    // ---------------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------------
 
