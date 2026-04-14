@@ -19,6 +19,29 @@ All notable changes to this project are documented here. Format based on
   These cases now surface as `ERROR` with the "⚑ Runner limitation" hint
   and `IsRunnerBug = true` in JSON output, and contribute to exit code 2
   instead of exit code 1. (#131)
+- **Per-object rewriter error handling** — When `RoslynRewriter.RewriteToTree`
+  throws for an AL object (e.g. unexpected AL language construct in the C# AST),
+  the runner now:
+  - Catches the exception per-tree in the rewriter's `Parallel.For` loop
+  - Reports a clean `⚑ These objects contain AL constructs not yet handled…` error
+    block naming each failing object and the exception type/message
+  - Populates `PipelineResult.RewriterErrors` so telemetry can include the gap
+  - Fails with exit code 2 (runner limitation) instead of crashing with an
+    unhandled `AggregateException`
+- **Roslyn compilation failure hint** — When the C# compiler rejects the rewritten
+  code, the error output now includes:
+  `⚑ These errors may indicate AL constructs not yet handled by the runner's rewriter.`
+  and a pointer to `--dump-rewritten` for debugging. Compiler errors are also
+  stored in `PipelineResult.CompilationErrors` for telemetry.
+- **Telemetry covers all pipeline stages** — `TelemetryReporter.TryReportPipelineGapsAsync`
+  now accepts and reports rewriter gaps (`RewriterErrors`) and compilation gaps
+  (`CompilationErrors`) in addition to runtime gaps, all in a single combined prompt.
+
+### Removed
+- **Dead `CompilationExcludedException` code** — The file-exclusion mechanism was
+  removed in #80. The exception class and its two unreachable catch blocks have
+  been deleted. The `TryReportPipelineGapsAsync` docstring no longer references
+  the removed "iterative Roslyn retry" path.
 
 ### Fixed
 - **`ALRename` properly updates table rows** — `MockRecordHandle.ALRename()` was

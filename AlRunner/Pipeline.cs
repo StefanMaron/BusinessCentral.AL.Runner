@@ -83,12 +83,26 @@ public class PipelineResult
     public Assembly? Assembly { get; init; }
     /// <summary>The collectible ALC that owns <see cref="Assembly"/>. Call Unload() to release.</summary>
     public System.Runtime.Loader.AssemblyLoadContext? LoadContext { get; init; }
+
+    /// <summary>
+    /// AL objects whose C# could not be rewritten (rewriter gap).
+    /// Each entry is (ObjectName, ErrorMessage). Non-null only when at least one rewriter failure occurred.
+    /// </summary>
+    public List<(string Name, string Error)>? RewriterErrors { get; init; }
+
+    /// <summary>
+    /// C# compiler error messages from the Roslyn compilation stage, when compilation failed.
+    /// Non-null only when compilation produced errors.
+    /// </summary>
+    public List<string>? CompilationErrors { get; init; }
 }
 
 public class AlRunnerPipeline
 {
     private Dictionary<string, string>? _scopeToObject;
     private RoslynCompiler.CompileResult? _compileResult;
+    private List<(string Name, string Error)>? _rewriterErrors;
+    private List<string>? _compilationErrors;
     public RewriteCache? RewriteCache { get; set; }
     public SyntaxTreeCache? SyntaxTreeCache { get; set; }
 
@@ -154,8 +168,16 @@ public class AlRunnerPipeline
         var stdoutStr = stdout.ToString();
         if (options.OutputJson && (testResults.Count > 0 || messages.Count > 0))
         {
-            Dictionary<string, List<string>>? compilationErrors = null; // file exclusion removed in #80
-            stdoutStr = SerializeJsonOutput(testResults, exitCode, capturedValues: capturedValues, messages: messages, iterations: iterationLoops, compilationErrors: compilationErrors, scopeToObject: _scopeToObject);
+            // Pass compilation/rewriter errors to JSON output so tooling can inspect them.
+            IReadOnlyDictionary<string, List<string>>? compilationErrorsDict = null;
+            if (_compilationErrors?.Count > 0)
+            {
+                compilationErrorsDict = new Dictionary<string, List<string>>
+                {
+                    ["roslyn"] = _compilationErrors
+                };
+            }
+            stdoutStr = SerializeJsonOutput(testResults, exitCode, capturedValues: capturedValues, messages: messages, iterations: iterationLoops, compilationErrors: compilationErrorsDict, scopeToObject: _scopeToObject);
         }
 
         if (options.OutputJunitPath != null && testResults.Count > 0)
@@ -173,7 +195,9 @@ public class AlRunnerPipeline
             StdOut = stdoutStr,
             StdErr = stderr.ToString(),
             Assembly = _compileResult?.Assembly,
-            LoadContext = _compileResult?.LoadContext
+            LoadContext = _compileResult?.LoadContext,
+            RewriterErrors = _rewriterErrors,
+            CompilationErrors = _compilationErrors
         };
     }
 
@@ -502,8 +526,9 @@ public class AlRunnerPipeline
         Timer.StartStage("Roslyn rewriting");
         var refsTask = Task.Run(() => RoslynCompiler.LoadReferences());
 
-        var rewrittenTrees = new (string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)[generatedCSharpList.Count];
+        var rewrittenTrees = new (string Name, Microsoft.CodeAnalysis.SyntaxTree? Tree)[generatedCSharpList.Count];
         int rewriteHits = 0;
+        var rewriteFailures = new System.Collections.Concurrent.ConcurrentBag<(string Name, string Error)>();
         Parallel.For(0, generatedCSharpList.Count, i =>
         {
             var (name, code) = generatedCSharpList[i];
@@ -517,24 +542,54 @@ public class AlRunnerPipeline
                 return;
             }
 
-            var tree = RoslynRewriter.RewriteToTree(code);
-            // Second pass: inject per-statement ValueCapture.Capture calls.
-            // The capture function no-ops when ValueCapture.Enabled is false,
-            // so we can run this unconditionally and avoid a separate code
-            // path for capture vs non-capture runs.
-            var injectedRoot = ValueCaptureInjector.Inject(tree.GetRoot(), name);
-            if (options.IterationTracking)
-                injectedRoot = IterationInjector.Inject(injectedRoot);
-            tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.Create((Microsoft.CodeAnalysis.CSharp.CSharpSyntaxNode)injectedRoot);
-            rewrittenTrees[i] = (name, tree);
+            try
+            {
+                var tree = RoslynRewriter.RewriteToTree(code);
+                // Second pass: inject per-statement ValueCapture.Capture calls.
+                // The capture function no-ops when ValueCapture.Enabled is false,
+                // so we can run this unconditionally and avoid a separate code
+                // path for capture vs non-capture runs.
+                var injectedRoot = ValueCaptureInjector.Inject(tree.GetRoot(), name);
+                if (options.IterationTracking)
+                    injectedRoot = IterationInjector.Inject(injectedRoot);
+                tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.Create((Microsoft.CodeAnalysis.CSharp.CSharpSyntaxNode)injectedRoot);
+                rewrittenTrees[i] = (name, tree);
 
-            // Store in cache for next run
-            RewriteCache?.Store(name, code, tree, options.IterationTracking);
+                // Store in cache for next run
+                RewriteCache?.Store(name, code, tree, options.IterationTracking);
+            }
+            catch (Exception ex)
+            {
+                rewrittenTrees[i] = (name, null);
+                var msg = $"{ex.GetType().Name}: {ex.Message}";
+                rewriteFailures.Add((name, msg));
+                if (Log.Verbose)
+                    stderr.WriteLine($"  rewriter exception for '{name}': {ex}");
+            }
         });
+
+        if (rewriteFailures.Count > 0)
+        {
+            var failures = rewriteFailures.OrderBy(f => f.Name).ToList();
+            stderr.WriteLine();
+            stderr.WriteLine($"ERROR: C# rewriting failed for {failures.Count} AL object(s)");
+            stderr.WriteLine("  ⚑ These objects contain AL constructs not yet handled by the runner's rewriter.");
+            foreach (var (failName, failMsg) in failures)
+                stderr.WriteLine($"    × {failName}: {failMsg}");
+            stderr.WriteLine();
+            stderr.WriteLine("  To debug: run with --dump-csharp to see the generated C# before rewriting.");
+            stderr.WriteLine("  This will be reported via telemetry (run with --no-telemetry to opt out).");
+            _rewriterErrors = failures;
+            Timer.EndStage("Roslyn rewriting");
+            return 2;
+        }
 
         if (rewriteHits > 0)
             Log.Info($"Rewrite cache: {rewriteHits}/{generatedCSharpList.Count} hits");
-        var rewrittenTreeList = rewrittenTrees.ToList();
+        var rewrittenTreeList = rewrittenTrees
+            .Where(t => t.Tree != null)
+            .Select(t => (t.Name, Tree: t.Tree!))
+            .ToList();
 
         List<(string Name, string Code)>? _rewrittenStringList = null;
         List<(string Name, string Code)> GetRewrittenStrings()
@@ -564,10 +619,13 @@ public class AlRunnerPipeline
         var mapperTask = Task.Run(() =>
             SourceLineMapper.Build(generatedCSharpList, GetRewrittenStrings()));
         var preloadedRefs = refsTask.Result;
-        var compileResult = RoslynCompiler.Compile(rewrittenTreeList, preloadedRefs);
+        var compilationErrorSink = new List<string>();
+        var compileResult = RoslynCompiler.Compile(rewrittenTreeList, preloadedRefs, compilationErrorSink);
         mapperTask.Wait();
         if (compileResult == null)
         {
+            if (compilationErrorSink.Count > 0)
+                _compilationErrors = compilationErrorSink;
             if (!options.DumpRewritten && options.Verbose)
             {
                 stderr.WriteLine("\n--- Rewritten C# (for debugging compilation failure) ---");

@@ -50,13 +50,15 @@ public static class TelemetryReporter
     }
 
     /// <summary>
-    /// After a test run, collects ALL pipeline gaps — Roslyn compilation exclusions
-    /// (rewriter misses) and runtime runner-bug errors — shows a single combined prompt,
-    /// and sends everything in one batch if the user consents.
+    /// After a test run, collects ALL pipeline gaps — rewriter failures, Roslyn
+    /// compilation errors, and runtime runner-bug errors — shows a single combined
+    /// prompt, and sends everything in one batch if the user consents.
     ///
-    /// Compilation gaps: files excluded during iterative Roslyn retry because the
-    /// BC-generated C# couldn't compile, indicating the rewriter doesn't handle some
-    /// AL pattern yet.
+    /// Rewriter gaps: AL objects whose C# could not be rewritten, indicating the
+    /// rewriter does not handle some AL language pattern yet.
+    ///
+    /// Compilation gaps: C# compiler errors after rewriting, indicating the rewriter
+    /// produced C# that does not compile — another class of rewriter gap.
     ///
     /// Runtime gaps: tests that ended with TestStatus.Error + IsRunnerBug = true,
     /// indicating a missing mock or dispatch path in AlRunner.Runtime.
@@ -66,7 +68,9 @@ public static class TelemetryReporter
     public static async Task TryReportPipelineGapsAsync(
         List<TestResult> tests,
         bool outputJson,
-        bool noTelemetry)
+        bool noTelemetry,
+        List<(string Name, string Error)>? rewriterErrors = null,
+        List<string>? compilationErrors = null)
     {
         if (noTelemetry) return;
         if (!CanPromptUser(outputJson)) return;
@@ -75,7 +79,10 @@ public static class TelemetryReporter
             .Where(t => t.Status == TestStatus.Error && t.IsRunnerBug)
             .ToList();
 
-        if (runtimeErrors.Count == 0) return;
+        bool hasRewriterErrors = rewriterErrors?.Count > 0;
+        bool hasCompilationErrors = compilationErrors?.Count > 0;
+
+        if (runtimeErrors.Count == 0 && !hasRewriterErrors && !hasCompilationErrors) return;
 
         var runtimeGrouped = runtimeErrors
             .GroupBy(t => t.Message ?? "")
@@ -88,6 +95,24 @@ public static class TelemetryReporter
         Console.Error.WriteLine("  Reporting helps improve al-runner support proactively.");
         Console.Error.WriteLine();
         Console.Error.WriteLine("  What will be sent (no AL source code, no file paths):");
+
+        if (hasRewriterErrors)
+        {
+            Console.Error.WriteLine($"  Rewriter ({rewriterErrors!.Count} object(s) — AL construct not handled):");
+            foreach (var (name, error) in rewriterErrors.Take(3))
+                Console.Error.WriteLine($"    × {ScrubMessage(error)}");
+            if (rewriterErrors.Count > 3)
+                Console.Error.WriteLine($"    … and {rewriterErrors.Count - 3} more");
+        }
+
+        if (hasCompilationErrors)
+        {
+            Console.Error.WriteLine($"  Compilation ({compilationErrors!.Count} error(s) — rewriter gap in C# output):");
+            foreach (var err in compilationErrors.Take(3))
+                Console.Error.WriteLine($"    × {ScrubMessage(err)}");
+            if (compilationErrors.Count > 3)
+                Console.Error.WriteLine($"    … and {compilationErrors.Count - 3} more");
+        }
 
         if (runtimeErrors.Count > 0)
         {
@@ -103,6 +128,35 @@ public static class TelemetryReporter
 
         if (!PromptYesNoWithTimeout($"Send error report? [y/N] (auto-no in {PromptTimeoutSeconds}s): "))
             return;
+
+        // Send rewriter failures
+        if (hasRewriterErrors)
+        {
+            foreach (var (name, error) in rewriterErrors!)
+            {
+                var report = new TelemetryReport(
+                    ExceptionType: "AlRunner.RewriterGap",
+                    ScrubbedMessage: ScrubMessage(error),
+                    StackText: "",
+                    FrameCount: 0,
+                    RunnerVersion: GetVersionString(),
+                    Os: GetOsString());
+                await SendAsync(report);
+            }
+        }
+
+        // Send compilation failures (grouped as a single report for brevity)
+        if (hasCompilationErrors)
+        {
+            var report = new TelemetryReport(
+                ExceptionType: "AlRunner.CompilationGap",
+                ScrubbedMessage: string.Join("; ", compilationErrors!.Take(5).Select(ScrubMessage)),
+                StackText: "",
+                FrameCount: 0,
+                RunnerVersion: GetVersionString(),
+                Os: GetOsString());
+            await SendAsync(report);
+        }
 
         // Send each unique runtime error (deduplicated by message)
         foreach (var (_, _, sample) in runtimeGrouped)

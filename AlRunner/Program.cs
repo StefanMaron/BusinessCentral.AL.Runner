@@ -223,9 +223,11 @@ if (!string.IsNullOrEmpty(result.StdOut))
 if (!string.IsNullOrEmpty(result.StdErr))
     Console.Error.Write(result.StdErr);
 
-// Report pipeline gaps (runtime errors) via telemetry
+// Report pipeline gaps (rewriter, compilation, runtime) via telemetry
 await AlRunner.TelemetryReporter.TryReportPipelineGapsAsync(
-    result.Tests, options.OutputJson, noTelemetry);
+    result.Tests, options.OutputJson, noTelemetry,
+    rewriterErrors: result.RewriterErrors,
+    compilationErrors: result.CompilationErrors);
 
 return result.ExitCode;
 
@@ -1660,9 +1662,11 @@ public static class RoslynCompiler
     /// Compile from pre-built SyntaxTrees (avoids re-parsing rewritten C#).
     /// Trees are re-rooted with deduplicated file paths for readable diagnostics.
     /// Optionally accepts pre-loaded MetadataReferences to skip redundant loading.
+    /// If <paramref name="errorSink"/> is provided, compiler error messages are also added to it.
     /// </summary>
     internal static CompileResult? Compile(List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)> namedTrees,
-        List<Microsoft.CodeAnalysis.MetadataReference>? preloadedReferences = null)
+        List<Microsoft.CodeAnalysis.MetadataReference>? preloadedReferences = null,
+        IList<string>? errorSink = null)
     {
         // Assign deduplicated file paths to trees for readable Roslyn diagnostics
         var nameCount = new Dictionary<string, int>();
@@ -1682,7 +1686,7 @@ public static class RoslynCompiler
             return t.Tree.WithFilePath($"{baseName}.cs");
         }).ToList();
 
-        return CompileFromTrees(syntaxTrees, preloadedReferences);
+        return CompileFromTrees(syntaxTrees, preloadedReferences, errorSink);
     }
 
     /// <summary>
@@ -1804,7 +1808,8 @@ public static class RoslynCompiler
     }
 
     internal static CompileResult? CompileFromTrees(List<Microsoft.CodeAnalysis.SyntaxTree> syntaxTrees,
-        List<Microsoft.CodeAnalysis.MetadataReference>? preloadedReferences)
+        List<Microsoft.CodeAnalysis.MetadataReference>? preloadedReferences,
+        IList<string>? errorSink = null)
     {
         var references = preloadedReferences ?? LoadReferences();
 
@@ -1826,7 +1831,15 @@ public static class RoslynCompiler
                 .ToList();
             Console.Error.WriteLine($"Roslyn compilation failed ({errors.Count} errors):");
             foreach (var d in errors)
-                Console.Error.WriteLine($"  {SourceLineMapper.FormatDiagnostic(d)}");
+            {
+                var formatted = SourceLineMapper.FormatDiagnostic(d);
+                Console.Error.WriteLine($"  {formatted}");
+                errorSink?.Add(formatted);
+            }
+            Console.Error.WriteLine();
+            Console.Error.WriteLine("  ⚑ These errors may indicate AL constructs not yet handled by the runner's rewriter.");
+            Console.Error.WriteLine("  Use --dump-rewritten to inspect the rewritten C# code.");
+            Console.Error.WriteLine("  This will be reported via telemetry (run with --no-telemetry to opt out).");
             return null;
         }
 
@@ -2120,7 +2133,7 @@ public static class Executor
                 while (inner is TargetInvocationException tie && tie.InnerException != null)
                     inner = tie.InnerException;
 
-                if (inner is NotSupportedException or AlRunner.Runtime.CompilationExcludedException)
+                if (inner is NotSupportedException)
                 {
                     results.Add(new AlRunner.TestResult
                     {
@@ -2160,19 +2173,6 @@ public static class Executor
                         CodeunitName = codeunitName
                     });
                 }
-            }
-            catch (AlRunner.Runtime.CompilationExcludedException ex)
-            {
-                results.Add(new AlRunner.TestResult
-                {
-                    Name = testName,
-                    Status = AlRunner.TestStatus.Error,
-                    Message = $"{ex.GetType().Name}: {ex.Message}",
-                    StackTrace = FormatStackFrames(ex),
-                    AlSourceLine = FindAlSourceLine(ex),
-                    AlSourceColumn = FindAlSourceColumn(ex),
-                    CodeunitName = codeunitName
-                });
             }
             catch (Exception ex)
             {
