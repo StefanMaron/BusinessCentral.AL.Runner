@@ -261,7 +261,13 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   Delete, DeleteAll, FindSet+Next iteration, GetTable/SetTable, SetRange/SetFilter,
   RecRef := OtherRecRef assignment, SetLoadFields (no-op), Mark/MarkedOnly/ClearMarks
   (no-op stubs), Rename, FieldExists, FieldCount, HasFilter, GetFilters, GetPosition,
-  SetPosition, Ascending, ChangeCompany (no-op), ModifyAll, CurrentCompany
+  SetPosition, Ascending, ChangeCompany (no-op), ModifyAll, CurrentCompany,
+  SystemIdNo, SystemCreatedAtNo, SystemCreatedByNo, SystemModifiedAtNo,
+  SystemModifiedByNo (return well-known BC system field numbers).
+  FieldRef also supports: IsEnum, EnumValueCount(), GetEnumValueName(index),
+  GetEnumValueCaption(index), GetEnumValueOrdinal(index) — enum introspection
+  using registered enum metadata. CalcSum() — sums a decimal field across all
+  filtered records; result is available via the next Value read.
 - JSON types: JsonObject, JsonArray, JsonToken, JsonValue — Add, Get, Contains,
   Remove, Replace, Count, WriteTo, ReadFrom, SelectToken, AsValue, AsText, AsInteger, etc.
 - BLOB / InStream / OutStream — CreateInStream/CreateOutStream, HasValue, ReadText/WriteText

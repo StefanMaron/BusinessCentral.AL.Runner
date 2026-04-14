@@ -1121,6 +1121,47 @@ public class MockRecordHandle
         return true;
     }
 
+    /// <summary>
+    /// Calculate the sum of a single field across all filtered records.
+    /// Used by MockFieldRef.ALCalcSum to implement FieldRef.CalcSum().
+    /// </summary>
+    internal decimal CalcSumField(int fieldNo)
+    {
+        var rows = GetFilteredRecords();
+        decimal sum = 0;
+        foreach (var row in rows)
+        {
+            if (!row.TryGetValue(fieldNo, out var val)) continue;
+            sum += NavValueToDecimal(val);
+        }
+        return sum;
+    }
+
+    private static decimal NavValueToDecimal(NavValue value)
+    {
+        switch (value)
+        {
+            case NavInteger ni: return (int)ni;
+            case NavBigInteger nbi: return (long)nbi;
+            default: break;
+        }
+        // NavDecimal wraps Decimal18; extract via reflection (same pattern as NavValueToString)
+        if (value is NavDecimal nd)
+        {
+            try
+            {
+                var raw = _navDecimalValueProp?.GetValue(nd);
+                if (raw != null) return Convert.ToDecimal(raw);
+            }
+            catch { }
+        }
+        if (decimal.TryParse(NavValueToString(value),
+            System.Globalization.NumberStyles.Any,
+            System.Globalization.CultureInfo.InvariantCulture, out var d))
+            return d;
+        return 0;
+    }
+
     // -----------------------------------------------------------------------
     // SetLoadFields — performance hint, no-op in standalone mode
     // -----------------------------------------------------------------------

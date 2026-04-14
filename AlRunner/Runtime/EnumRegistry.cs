@@ -266,4 +266,12 @@ public static class EnumRegistry
             ? list
             : Array.Empty<(int, string)>();
     }
+
+    /// <summary>Look up enum members by AL enum name (case-insensitive).</summary>
+    public static IReadOnlyList<(int Ordinal, string Name)> GetMembersByName(string enumName)
+    {
+        return _byName.TryGetValue(enumName, out var list)
+            ? list
+            : Array.Empty<(int, string)>();
+    }
 }

@@ -6,6 +6,20 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+- **FieldRef enum introspection** — `MockFieldRef` now supports `ALIsEnum`,
+  `ALOptionValueCount()`, `ALGetOptionValueName(index)`,
+  `ALGetOptionValueCaption(index)`, and `ALGetOptionValueOrdinal(index)`.
+  These methods use `TableFieldRegistry` (which now parses `Enum "X"` field
+  type declarations) and `EnumRegistry.GetMembersByName()` to resolve enum
+  metadata at runtime. (#126)
+- **FieldRef.CalcSum** — `MockFieldRef.ALCalcSum()` sums a field's values
+  across all filtered records in the underlying table. The result is returned
+  via the next `ALValue` read, matching BC's CalcSum semantics. (#126)
+- **RecordRef system-field number accessors** — Added `ALSystemCreatedAtNo`
+  (2000000001), `ALSystemCreatedByNo` (2000000002), and `ALSystemModifiedByNo`
+  (2000000004) to `MockRecordRef`. (#126)
+
 ## [1.0.14] - 2026-04-14
 
 ### Added
