@@ -46,6 +46,12 @@ All notable changes to this project are documented here. Format based on
 - **Telemetry covers all pipeline stages** — `TelemetryReporter.TryReportPipelineGapsAsync`
   now accepts and reports rewriter gaps (`RewriterErrors`) and compilation gaps
   (`CompilationErrors`) in addition to runtime gaps, all in a single combined prompt.
+- **Compilation error deduplication in telemetry** — Compilation errors are now
+  grouped by CS error code + target type before display and telemetry send. E.g.
+  74 CS1061 errors on `Report70400` collapse into one line `CS1061 on 'Report70400' (74×)`.
+  Each deduplicated group is sent as its own telemetry report (instead of one
+  joined blob), making the triage workflow able to create separate issues per
+  unique error type.
 
 ### Removed
 - **Dead `CompilationExcludedException` code** — The file-exclusion mechanism was
@@ -54,6 +60,15 @@ All notable changes to this project are documented here. Format based on
   the removed "iterative Roslyn retry" path.
 
 ### Fixed
+- **Skip RDLC report layout generation** — `Compilation.Emit()` now uses
+  `CompilationGenerationOptions.Code | Navigation` instead of `All`, skipping
+  RDLC layout generation that crashes with `NullReferenceException` in
+  `ReportRdlcUtilities.GenerateRdlcLayout` when running standalone. Report
+  objects still emit C# code for dataset columns and triggers.
+- **Telemetry triage KQL groups by message** — The triage workflow's KQL query
+  now groups by `type, outerMessage` instead of just `type`, so each unique
+  error message gets its own row instead of all `AlRunner.CompilationGap`
+  exceptions collapsing into a single row.
 - **`ALTransferFields` skips all PK fields** — When `initPrimaryKey=false`,
   `TransferFields` now skips all registered primary key fields instead of only
   field 1. Correctly handles composite primary keys. (#113)

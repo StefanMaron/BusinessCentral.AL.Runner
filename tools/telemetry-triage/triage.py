@@ -116,7 +116,7 @@ exceptions
     os_list      = make_set(os, 10),
     sample_stack = any(tostring(details)),
     sample_msg   = any(outerMessage)
-  by type
+  by type, outerMessage
 | order by occurrences desc
 """
 

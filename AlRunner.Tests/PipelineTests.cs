@@ -329,4 +329,89 @@ namespace AlRunnerGenerated {
         // Full format shows at least "X passed, Y failed in N.Ns"
         Assert.Matches(@"\d+ passed, \d+ failed.*in \d+\.\d+s", result.StdOut);
     }
+
+    // ─── Compilation error deduplication ──────────────────────────────────────
+
+    [Fact]
+    public void DeduplicateCompilationErrors_GroupsByCSCodeAndType()
+    {
+        var errors = new List<string>
+        {
+            "Obj.cs(10,5): error CS1061: 'Report70400' does not contain a definition for 'amountDue'",
+            "Obj.cs(20,5): error CS1061: 'Report70400' does not contain a definition for 'Totals'",
+            "Obj.cs(30,5): error CS1061: 'Report70400' does not contain a definition for 'columnHead'",
+            "Obj.cs(40,5): error CS0103: The name 'privacyBlockedTxt' does not exist in the current context",
+        };
+
+        var grouped = TelemetryReporter.DeduplicateCompilationErrors(errors);
+
+        // CS1061 on 'Report70400' should be one group with count 3
+        var cs1061 = grouped.Single(g => g.Key == "CS1061 on 'Report70400'");
+        Assert.Equal(3, cs1061.Count);
+
+        // CS0103 on 'privacyBlockedTxt' should be a separate group with count 1
+        var cs0103 = grouped.Single(g => g.Key == "CS0103 on 'privacyBlockedTxt'");
+        Assert.Equal(1, cs0103.Count);
+        Assert.Contains("does not exist", cs0103.SampleMessage);
+    }
+
+    [Fact]
+    public void DeduplicateCompilationErrors_EmptyList()
+    {
+        var grouped = TelemetryReporter.DeduplicateCompilationErrors(new List<string>());
+        Assert.Empty(grouped);
+    }
+
+    [Fact]
+    public void DeduplicateCompilationErrors_OrderedByCountDescending()
+    {
+        var errors = new List<string>
+        {
+            "A.cs(1,1): error CS0103: The name 'x' does not exist in the current context",
+            "A.cs(2,1): error CS1061: 'Foo' does not contain a definition for 'bar'",
+            "A.cs(3,1): error CS1061: 'Foo' does not contain a definition for 'baz'",
+            "A.cs(4,1): error CS1061: 'Foo' does not contain a definition for 'qux'",
+        };
+
+        var grouped = TelemetryReporter.DeduplicateCompilationErrors(errors);
+
+        Assert.Equal(2, grouped.Count);
+        Assert.Equal("CS1061 on 'Foo'", grouped[0].Key); // 3× comes first
+        Assert.Equal(3, grouped[0].Count);
+        Assert.Equal("CS0103 on 'x'", grouped[1].Key);
+        Assert.Equal(1, grouped[1].Count);
+    }
+
+    // ─── Report dataset columns (RDLC skip) ─────────────────────────────────
+
+    [Fact]
+    public void ReportWithDatasetColumns_CompilesAndRuns()
+    {
+        var pipeline = new AlRunnerPipeline();
+        var result = pipeline.Run(new PipelineOptions
+        {
+            InputPaths = { TestPath("112-report-dataset-columns", "src"),
+                           TestPath("112-report-dataset-columns", "test") }
+        });
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("4 passed", result.StdOut);
+    }
+
+    [Fact]
+    public void CompilationErrors_PopulatedOnFailure()
+    {
+        // Pipeline should populate CompilationErrors when Roslyn compilation fails.
+        // Use test 112 which compiles fine — verify CompilationErrors is null/empty on success.
+        var pipeline = new AlRunnerPipeline();
+        var result = pipeline.Run(new PipelineOptions
+        {
+            InputPaths = { TestPath("112-report-dataset-columns", "src"),
+                           TestPath("112-report-dataset-columns", "test") }
+        });
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.True(result.CompilationErrors == null || result.CompilationErrors.Count == 0,
+            "CompilationErrors should be null or empty on successful compilation");
+    }
 }

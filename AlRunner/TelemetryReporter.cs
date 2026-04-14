@@ -105,13 +105,20 @@ public static class TelemetryReporter
                 Console.Error.WriteLine($"    … and {rewriterErrors.Count - 3} more");
         }
 
+        // Deduplicate compilation errors: group by CS code + first quoted token so that
+        // e.g. 74 CS1061 errors on Report70400 collapse into one line with a count.
+        List<(string Key, int Count, string SampleMessage)>? compilationGrouped = null;
         if (hasCompilationErrors)
         {
-            Console.Error.WriteLine($"  Compilation ({compilationErrors!.Count} error(s) — rewriter gap in C# output):");
-            foreach (var err in compilationErrors.Take(3))
-                Console.Error.WriteLine($"    × {ScrubMessage(err)}");
-            if (compilationErrors.Count > 3)
-                Console.Error.WriteLine($"    … and {compilationErrors.Count - 3} more");
+            compilationGrouped = DeduplicateCompilationErrors(compilationErrors!);
+            Console.Error.WriteLine($"  Compilation ({compilationGrouped.Count} unique error type(s) — rewriter gap in C# output):");
+            foreach (var (key, count, sample) in compilationGrouped.Take(5))
+            {
+                var display = count > 1 ? $"{key} ({count}×)" : $"{key}: {sample}";
+                Console.Error.WriteLine($"    × {ScrubMessage(display)}");
+            }
+            if (compilationGrouped.Count > 5)
+                Console.Error.WriteLine($"    … and {compilationGrouped.Count - 5} more unique error type(s)");
         }
 
         if (runtimeErrors.Count > 0)
@@ -146,17 +153,22 @@ public static class TelemetryReporter
             }
         }
 
-        // Send compilation failures (grouped as a single report for brevity)
-        if (hasCompilationErrors)
+        // Send each deduplicated compilation error group as its own telemetry report
+        // so the triage workflow can create separate issues per unique error type.
+        if (compilationGrouped != null)
         {
-            var report = new TelemetryReport(
-                ExceptionType: "AlRunner.CompilationGap",
-                ScrubbedMessage: string.Join("; ", compilationErrors!.Take(5).Select(ScrubMessage)),
-                StackText: "",
-                FrameCount: 0,
-                RunnerVersion: GetVersionString(),
-                Os: GetOsString());
-            await SendAsync(report);
+            foreach (var (key, count, sample) in compilationGrouped)
+            {
+                var msg = count > 1 ? $"{key} ({count}×)" : $"{key}: {sample}";
+                var report = new TelemetryReport(
+                    ExceptionType: "AlRunner.CompilationGap",
+                    ScrubbedMessage: ScrubMessage(msg),
+                    StackText: "",
+                    FrameCount: 0,
+                    RunnerVersion: GetVersionString(),
+                    Os: GetOsString());
+                await SendAsync(report);
+            }
         }
 
         // Send each unique runtime error (deduplicated by message)
@@ -171,6 +183,42 @@ public static class TelemetryReporter
     }
 
     // ─── Internals ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Groups compilation error messages by CS error code + first single-quoted token.
+    /// E.g. 74 "CS1061: 'Report70400' does not contain…" errors collapse into one
+    /// group keyed "CS1061 on 'Report70400'" with count 74.
+    /// </summary>
+    public static List<(string Key, int Count, string SampleMessage)> DeduplicateCompilationErrors(
+        List<string> errors)
+    {
+        var singleQuoteRx = new Regex(@"'([^']+)'");
+        // Extract CS code from formatted error: "ObjectName.cs(line,col): error CS1061: ..."
+        var csCodeRx = new Regex(@"\berror (CS\d+):");
+
+        return errors
+            .GroupBy(err =>
+            {
+                var codeMatch = csCodeRx.Match(err);
+                var code = codeMatch.Success ? codeMatch.Groups[1].Value : "CS????";
+                // Extract first single-quoted token from the message portion (after "error CSxxxx: ")
+                var msgStart = codeMatch.Success ? codeMatch.Index + codeMatch.Length : 0;
+                var msgPortion = err[msgStart..];
+                var tokenMatch = singleQuoteRx.Match(msgPortion);
+                return tokenMatch.Success ? $"{code} on '{tokenMatch.Groups[1].Value}'" : code;
+            })
+            .Select(g =>
+            {
+                // For the sample message, extract just the diagnostic message (after "error CSxxxx: ")
+                var sample = g.First();
+                var codeMatch = csCodeRx.Match(sample);
+                if (codeMatch.Success)
+                    sample = sample[(codeMatch.Index + codeMatch.Length)..].TrimStart();
+                return (Key: g.Key, Count: g.Count(), SampleMessage: sample);
+            })
+            .OrderByDescending(g => g.Count)
+            .ToList();
+    }
 
     private record TelemetryReport(
         string ExceptionType,
