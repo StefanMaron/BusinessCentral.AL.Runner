@@ -48,7 +48,6 @@ codeunit 80900 "OnRun Record Tests"
     procedure TestOnRunWithNonExistingRecord()
     var
         Rec: Record "OnRun Test Table";
-        Success: Boolean;
     begin
         // [GIVEN] A record that does NOT exist in the table
         Rec.Init();
