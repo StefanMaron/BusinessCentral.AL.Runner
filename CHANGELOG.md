@@ -6,6 +6,21 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+- **MockNotification** — In-memory replacement for `NavNotification`. Message,
+  Send, Recall, SetData/GetData/HasData, AddAction, Id, Scope. Send and Recall
+  are no-ops; data store is in-memory; Id auto-generates a Guid. (#121)
+- **BigText support** — `NavBigText` works as-is (real BC type, no session
+  dependency). AddText, GetSubText, TextPos, Length all function correctly. (#121)
+- **MockTaskScheduler** — CreateTask dispatches codeunit synchronously via
+  MockCodeunitHandle (same pattern as MockSession.StartSession), returns a Guid.
+  TaskExists returns false, CancelTask/SetTaskReady are no-ops. (#121)
+- **MockDataTransfer** — Minimal stub so code using DataTransfer compiles and
+  runs without error. SetTables, AddFieldValue, AddConstantValue, AddJoin,
+  AddSourceFilter, CopyFields, CopyRows are all no-ops. (#121)
+- Test suite `tests/bucket-2/122-unstubbed-types/` with 21 test cases covering
+  all four types.
+
 ## [1.0.14] - 2026-04-14
 
 ### Added
