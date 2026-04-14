@@ -78,11 +78,17 @@ public class PipelineResult
     public string StdOut { get; init; } = "";
     /// <summary>Captured stderr lines from the pipeline.</summary>
     public string StdErr { get; init; } = "";
+
+    /// <summary>The compiled assembly (null when compilation failed).</summary>
+    public Assembly? Assembly { get; init; }
+    /// <summary>The collectible ALC that owns <see cref="Assembly"/>. Call Unload() to release.</summary>
+    public System.Runtime.Loader.AssemblyLoadContext? LoadContext { get; init; }
 }
 
 public class AlRunnerPipeline
 {
     private Dictionary<string, string>? _scopeToObject;
+    private RoslynCompiler.CompileResult? _compileResult;
     public RewriteCache? RewriteCache { get; set; }
     public SyntaxTreeCache? SyntaxTreeCache { get; set; }
 
@@ -165,7 +171,9 @@ public class AlRunnerPipeline
             Messages = messages,
             Iterations = iterationLoops,
             StdOut = stdoutStr,
-            StdErr = stderr.ToString()
+            StdErr = stderr.ToString(),
+            Assembly = _compileResult?.Assembly,
+            LoadContext = _compileResult?.LoadContext
         };
     }
 
@@ -552,9 +560,9 @@ public class AlRunnerPipeline
         var mapperTask = Task.Run(() =>
             SourceLineMapper.Build(generatedCSharpList, GetRewrittenStrings()));
         var preloadedRefs = refsTask.Result;
-        var assembly = RoslynCompiler.Compile(rewrittenTreeList, preloadedRefs);
+        var compileResult = RoslynCompiler.Compile(rewrittenTreeList, preloadedRefs);
         mapperTask.Wait();
-        if (assembly == null)
+        if (compileResult == null)
         {
             if (!options.DumpRewritten && options.Verbose)
             {
@@ -568,10 +576,12 @@ public class AlRunnerPipeline
             Timer.EndStage("Roslyn compilation");
             return 2;
         }
+        _compileResult = compileResult;
         Timer.EndStage("Roslyn compilation");
 
         // Step 4: Execute
         Timer.StartStage("Test execution");
+        var assembly = compileResult.Assembly;
         Runtime.MockCodeunitHandle.CurrentAssembly = assembly;
         Executor.RegisterStatements(GetRewrittenStrings());
 

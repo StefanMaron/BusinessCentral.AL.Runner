@@ -1557,10 +1557,13 @@ public static class SourceLineMapper
 // ===========================================================================
 public static class RoslynCompiler
 {
-    public static Assembly? Compile(string csharpSource) =>
+    /// <summary>Bundles the compiled assembly with its collectible ALC so callers can unload it.</summary>
+    public record CompileResult(Assembly Assembly, System.Runtime.Loader.AssemblyLoadContext LoadContext);
+
+    public static CompileResult? Compile(string csharpSource) =>
         Compile(new List<(string Name, string Code)> { ("source", csharpSource) });
 
-    public static Assembly? Compile(List<(string Name, string Code)> namedSources)
+    public static CompileResult? Compile(List<(string Name, string Code)> namedSources)
     {
         // Parse source strings into syntax trees, then delegate to the tree-based overload
         var nameCount = new Dictionary<string, int>();
@@ -1588,7 +1591,7 @@ public static class RoslynCompiler
     /// Trees are re-rooted with deduplicated file paths for readable diagnostics.
     /// Optionally accepts pre-loaded MetadataReferences to skip redundant loading.
     /// </summary>
-    internal static Assembly? Compile(List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)> namedTrees,
+    internal static CompileResult? Compile(List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)> namedTrees,
         List<Microsoft.CodeAnalysis.MetadataReference>? preloadedReferences = null)
     {
         // Assign deduplicated file paths to trees for readable Roslyn diagnostics
@@ -1725,12 +1728,12 @@ public static class RoslynCompiler
         return references.ToList();
     }
 
-    private static Assembly? CompileFromTrees(List<Microsoft.CodeAnalysis.SyntaxTree> syntaxTrees)
+    private static CompileResult? CompileFromTrees(List<Microsoft.CodeAnalysis.SyntaxTree> syntaxTrees)
     {
         return CompileFromTrees(syntaxTrees, null);
     }
 
-    internal static Assembly? CompileFromTrees(List<Microsoft.CodeAnalysis.SyntaxTree> syntaxTrees,
+    internal static CompileResult? CompileFromTrees(List<Microsoft.CodeAnalysis.SyntaxTree> syntaxTrees,
         List<Microsoft.CodeAnalysis.MetadataReference>? preloadedReferences)
     {
         var references = preloadedReferences ?? LoadReferences();
@@ -1759,10 +1762,11 @@ public static class RoslynCompiler
 
         ms.Seek(0, SeekOrigin.Begin);
         // Collectible ALC: the assembly (and its ALC) stays alive as long as any
-        // reference to the Assembly exists (e.g., in CompilationCache). When the
-        // last reference drops (cache eviction, process exit), GC collects both.
+        // reference to the Assembly or ALC exists (e.g., in CompilationCache).
+        // Callers must call alc.Unload() when the assembly is no longer needed.
         var alc = new System.Runtime.Loader.AssemblyLoadContext($"TestRun_{Guid.NewGuid():N}", isCollectible: true);
-        return alc.LoadFromStream(ms);
+        var assembly = alc.LoadFromStream(ms);
+        return new CompileResult(assembly, alc);
     }
 
     private const string BcArtifactVersion = "27.5.46862.48827";

@@ -16,11 +16,6 @@
     <TieredPGO>false</TieredPGO>
     <TieredCompilationQuickJitForLoops>true</TieredCompilationQuickJitForLoops>
 
-    <!-- Server GC: parallel collection threads for compiler workloads.
-         Higher baseline memory (~2x) but 2-5x fewer GC pauses. -->
-    <ServerGarbageCollection>true</ServerGarbageCollection>
-    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
-
     <!-- R2R: pre-compile to native code at publish time. Eliminates JIT for AlRunner's
          own code (~420ms cold-start savings). Only takes effect with `dotnet publish -r <rid>`. -->
     <PublishReadyToRun>true</PublishReadyToRun>

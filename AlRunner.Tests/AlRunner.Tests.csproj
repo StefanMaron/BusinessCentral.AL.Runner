@@ -21,6 +21,19 @@
     <ProjectReference Include="../AlRunner/AlRunner.csproj" />
   </ItemGroup>
 
+  <!-- Reference Roslyn and BC CodeAnalysis for cache tests that create SyntaxTrees directly -->
+  <ItemGroup>
+    <Reference Include="Microsoft.CodeAnalysis">
+      <HintPath>../AlRunner/bin/$(Configuration)/$(TargetFramework)/Microsoft.CodeAnalysis.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.CodeAnalysis.CSharp">
+      <HintPath>../AlRunner/bin/$(Configuration)/$(TargetFramework)/Microsoft.CodeAnalysis.CSharp.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Dynamics.Nav.CodeAnalysis">
+      <HintPath>../AlRunner/bin/$(Configuration)/$(TargetFramework)/Microsoft.Dynamics.Nav.CodeAnalysis.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
   <!-- Copy BC compiler and service tier DLLs from AlRunner output so in-process tests can find them -->
   <PropertyGroup>
     <_AlRunnerOut>$(MSBuildProjectDirectory)/../AlRunner/bin/$(Configuration)/$(TargetFramework)</_AlRunnerOut>
