@@ -735,7 +735,9 @@ public static class AlTranspiler
             options: new CompilationOptions(
                 continueBuildOnError: true,
                 target: CompilationTarget.OnPrem,
-                generateOptions: CompilationGenerationOptions.All
+                // Exclude ReportLayout — the runner has no RDLC file system and
+                // GenerateRdlcLayout crashes with NullReferenceException.
+                generateOptions: CompilationGenerationOptions.Code | CompilationGenerationOptions.Navigation
             )
         );
 
@@ -868,7 +870,7 @@ public static class AlTranspiler
                     options: new CompilationOptions(
                         continueBuildOnError: true,
                         target: CompilationTarget.OnPrem,
-                        generateOptions: CompilationGenerationOptions.All
+                        generateOptions: CompilationGenerationOptions.Code | CompilationGenerationOptions.Navigation
                     ))
                     .WithReferenceLoader(refLoader)
                     .AddReferences(dedupedSpecs);
@@ -924,7 +926,7 @@ public static class AlTranspiler
                         options: new CompilationOptions(
                             continueBuildOnError: true,
                             target: CompilationTarget.OnPrem,
-                            generateOptions: CompilationGenerationOptions.All
+                            generateOptions: CompilationGenerationOptions.Code | CompilationGenerationOptions.Navigation
                         ))
                         .WithReferenceLoader(refLoader)
                         .AddReferences(filteredSpecs);
