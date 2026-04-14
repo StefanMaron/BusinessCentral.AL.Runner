@@ -7,7 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
-- **Query object support** (`Runtime/MockQueryHandle.cs`, `RoslynRewriter.cs`) —
+- **Query object support** (`AlRunner/Runtime/MockQueryHandle.cs`, `AlRunner/RoslynRewriter.cs`) —
   AL `Query` objects now compile and run in standalone mode.  The BC compiler
   generates `QueryNNNN : NavQuery` classes that reference `NCLMetaQuery` and
   service-tier SQL views; the rewriter replaces the entire class with a minimal
@@ -25,6 +25,24 @@ All notable changes to this project are documented here. Format based on
   Inject query dependencies via an AL interface to make query-dependent code
   unit-testable.  Tested by `tests/90-query-object/` (12 test cases).
   Fixes [#86](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/86).
+
+### Performance
+- **Cold-start optimizations** — `TieredPGO=false` and `QuickJitForLoops=true`
+  reduce JIT overhead for short-lived CLI runs (~77 ms saved). `PublishReadyToRun`
+  pre-compiles AlRunner to native code at publish time (~420 ms saved with
+  `dotnet publish -r <rid>`).
+- **Parallel AL parsing** — `ParseObjectText` calls run via `Parallel.For` instead
+  of a sequential loop (3.3x speedup on multi-file projects).
+- **Pre-sized MemoryStream** — Roslyn emit uses a 512 KB pre-allocated stream,
+  avoiding 10+ resize-and-copy cycles per compilation.
+- **Per-file rewrite cache (server mode)** — Rewritten Roslyn SyntaxTrees are
+  cached by transpiled C# content. On warm re-run with one file changed, only
+  that file is re-rewritten (41 ms → 1.7 ms, 24x speedup).
+- **SyntaxTree cache (server mode)** — Parsed AL SyntaxTrees are cached by file
+  content hash. Unchanged files skip `ParseObjectText` entirely.
+- **Collectible AssemblyLoadContext** — Compiled test assemblies load into
+  collectible ALCs. Memory is bounded by the 8-slot LRU cache instead of growing
+  indefinitely.
 
 ### Fixed
 - **`CS1503` in codeunits that declare HTTP variables** — `AlScope` now implements

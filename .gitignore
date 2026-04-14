@@ -39,3 +39,9 @@ lcov.info
 
 # Logs
 *.log
+
+.mcp.json
+
+# Benchmark artifacts
+BenchmarkDotNet.Artifacts/
+publish-*/

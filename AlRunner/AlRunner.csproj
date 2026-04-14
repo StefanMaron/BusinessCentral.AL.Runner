@@ -9,6 +9,16 @@
     <NoWarn>MSB3277</NoWarn>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <InternalsVisibleTo>AlRunner.Tests</InternalsVisibleTo>
+    <InternalsVisibleTo>AlRunner.Benchmarks</InternalsVisibleTo>
+
+    <!-- Cold-start: disable Dynamic PGO profiler overhead (never pays back in <2s process),
+         allow QuickJit for loopy methods (BC compiler + Roslyn have many). -->
+    <TieredPGO>false</TieredPGO>
+    <TieredCompilationQuickJitForLoops>true</TieredCompilationQuickJitForLoops>
+
+    <!-- R2R: pre-compile to native code at publish time. Eliminates JIT for AlRunner's
+         own code (~420ms cold-start savings). Only takes effect with `dotnet publish -r <rid>`. -->
+    <PublishReadyToRun>true</PublishReadyToRun>
 
     <!-- dotnet tool packaging -->
     <PackAsTool>true</PackAsTool>

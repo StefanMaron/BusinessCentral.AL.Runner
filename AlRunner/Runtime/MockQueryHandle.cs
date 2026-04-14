@@ -93,7 +93,7 @@ public class MockQueryHandle
     public void ALSetRangeSafe(int columnNo, NavType expectedType) { }
 
     /// <summary><c>Q.SetRange(columnNo, value)</c> — single-value range, no-op.</summary>
-    public void ALSetRangeSafe(int columnNo, NavType expectedType, NavValue fromValue) { }
+    public void ALSetRangeSafe(int columnNo, NavType expectedType, NavValue value) { }
 
     /// <summary><c>Q.SetRange(columnNo, from, to)</c> — range, no-op.</summary>
     public void ALSetRangeSafe(int columnNo, NavType expectedType, NavValue fromValue, NavValue toValue) { }

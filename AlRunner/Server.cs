@@ -14,6 +14,8 @@ namespace AlRunner;
 public class AlRunnerServer
 {
     private readonly CompilationCache _cache = new();
+    private readonly RewriteCache _rewriteCache = new();
+    private readonly SyntaxTreeCache _syntaxTreeCache = new();
 
     public async Task RunAsync(TextReader input, TextWriter output, CancellationToken ct = default)
     {
@@ -97,6 +99,8 @@ public class AlRunnerServer
             options.StubPaths.AddRange(request.StubPaths);
 
         var pipeline = new AlRunnerPipeline();
+        pipeline.RewriteCache = _rewriteCache;
+        pipeline.SyntaxTreeCache = _syntaxTreeCache;
         var result = pipeline.Run(options);
 
         // Compilation errors (file-level exclusion was removed in #80; always empty now).
@@ -105,9 +109,8 @@ public class AlRunnerServer
         // Cache the compiled assembly (with its compilation errors) if available.
         if (result.ExitCode == 0 || result.Tests.Count > 0)
         {
-            var assembly = Runtime.MockCodeunitHandle.CurrentAssembly;
-            if (assembly != null)
-                _cache.Store(fingerprint, assembly, compilationErrors);
+            if (result.Assembly != null && result.LoadContext != null)
+                _cache.Store(fingerprint, result.Assembly, result.LoadContext, compilationErrors);
         }
 
         return SerializeServerResponse(result.Tests, result.ExitCode, cached: false,
@@ -134,6 +137,7 @@ public class AlRunnerServer
             options.CaptureValues = true;
 
         var pipeline = new AlRunnerPipeline();
+        pipeline.SyntaxTreeCache = _syntaxTreeCache;
         var result = pipeline.Run(options);
 
         return SerializeExecuteResponse(result);
@@ -240,6 +244,7 @@ public class CompilationCache
         public required string Fingerprint { get; init; }
         public required Dictionary<string, string> FileHashes { get; init; }
         public required Assembly Assembly { get; init; }
+        public required System.Runtime.Loader.AssemblyLoadContext LoadContext { get; init; }
         public required Dictionary<string, List<string>> CompilationErrors { get; init; }
     }
 
@@ -247,6 +252,7 @@ public class CompilationCache
     public readonly struct CacheHit
     {
         public Assembly Assembly { get; init; }
+        public System.Runtime.Loader.AssemblyLoadContext LoadContext { get; init; }
         public Dictionary<string, List<string>> CompilationErrors { get; init; }
     }
 
@@ -295,6 +301,7 @@ public class CompilationCache
                 return new CacheHit
                 {
                     Assembly = node.Value.Assembly,
+                    LoadContext = node.Value.LoadContext,
                     CompilationErrors = node.Value.CompilationErrors
                 };
             }
@@ -304,18 +311,25 @@ public class CompilationCache
     }
 
     /// <summary>Store an assembly and its compilation errors under the given fingerprint, evicting the LRU tail if full.</summary>
-    public void Store(string fingerprint, Assembly assembly, Dictionary<string, List<string>> compilationErrors)
+    public void Store(string fingerprint, Assembly assembly,
+        System.Runtime.Loader.AssemblyLoadContext loadContext,
+        Dictionary<string, List<string>> compilationErrors)
     {
         var entry = new CacheEntry
         {
             Fingerprint = fingerprint,
             FileHashes = new Dictionary<string, string>(LastFileHashes, StringComparer.OrdinalIgnoreCase),
             Assembly = assembly,
+            LoadContext = loadContext,
             CompilationErrors = compilationErrors
         };
         _lru.AddFirst(entry);
         while (_lru.Count > MaxSlots)
+        {
+            var evicted = _lru.Last!.Value;
             _lru.RemoveLast();
+            evicted.LoadContext.Unload();
+        }
     }
 
     /// <summary>

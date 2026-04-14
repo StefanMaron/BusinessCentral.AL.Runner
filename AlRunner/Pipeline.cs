@@ -78,11 +78,19 @@ public class PipelineResult
     public string StdOut { get; init; } = "";
     /// <summary>Captured stderr lines from the pipeline.</summary>
     public string StdErr { get; init; } = "";
+
+    /// <summary>The compiled assembly (null when compilation failed).</summary>
+    public Assembly? Assembly { get; init; }
+    /// <summary>The collectible ALC that owns <see cref="Assembly"/>. Call Unload() to release.</summary>
+    public System.Runtime.Loader.AssemblyLoadContext? LoadContext { get; init; }
 }
 
 public class AlRunnerPipeline
 {
     private Dictionary<string, string>? _scopeToObject;
+    private RoslynCompiler.CompileResult? _compileResult;
+    public RewriteCache? RewriteCache { get; set; }
+    public SyntaxTreeCache? SyntaxTreeCache { get; set; }
 
     /// <summary>
     /// Run the full AL Runner pipeline: transpile → rewrite → compile → execute.
@@ -163,7 +171,9 @@ public class AlRunnerPipeline
             Messages = messages,
             Iterations = iterationLoops,
             StdOut = stdoutStr,
-            StdErr = stderr.ToString()
+            StdErr = stderr.ToString(),
+            Assembly = _compileResult?.Assembly,
+            LoadContext = _compileResult?.LoadContext
         };
     }
 
@@ -258,6 +268,7 @@ public class AlRunnerPipeline
             Log.Verbose = true;
 
         var alSources = new List<string>();
+        var sourceFilePaths = new List<string?>(); // parallel to alSources: file path or null
         var stubSources = new List<string>();
         var assertStubSources = new List<string>();
         var inputPaths = new List<string>();
@@ -273,6 +284,7 @@ public class AlRunnerPipeline
                 code = $"codeunit 99 __Inline {{ trigger OnRun() begin {code} end; }}";
             }
             alSources.Add(code);
+            sourceFilePaths.Add(null); // inline code has no file path
         }
 
         // Reset per-run state that the AL parsing populates.
@@ -325,6 +337,7 @@ public class AlRunnerPipeline
                 {
                     Log.Info($"  {name}");
                     alSources.Add(source);
+                    sourceFilePaths.Add(null); // .app extracts have no disk file path
                     groupSources.Add(source);
 
                     // Register extracted objects with SourceFileMapper using the .app-relative name
@@ -351,6 +364,7 @@ public class AlRunnerPipeline
                     Log.Info($"  {Path.GetFileName(f)}");
                     var src = File.ReadAllText(f);
                     alSources.Add(src);
+                    sourceFilePaths.Add(Path.GetFullPath(f));
                     groupSources.Add(src);
 
                     var relativePath = Path.GetRelativePath(Directory.GetCurrentDirectory(), f);
@@ -365,6 +379,7 @@ public class AlRunnerPipeline
             {
                 var src = File.ReadAllText(path);
                 alSources.Add(src);
+                sourceFilePaths.Add(Path.GetFullPath(path));
                 var fullPath = Path.GetFullPath(Path.GetDirectoryName(path)!);
                 inputPaths.Add(fullPath);
                 inputGroups.Add((fullPath, new List<string> { src }));
@@ -420,10 +435,14 @@ public class AlRunnerPipeline
 
         // Auto-include AL stubs (Assert, etc.)
         LoadAssertStubs(options.PackagePaths, inputPaths, inputGroups, alSources, assertStubSources);
+        // Pad sourceFilePaths with nulls for any stubs added by LoadAssertStubs
+        while (sourceFilePaths.Count < alSources.Count)
+            sourceFilePaths.Add(null);
 
         // Step 1: Transpile
         Timer.StartStage("AL transpilation");
-        var generatedCSharpList = Transpile(options, alSources, inputGroups, inputPaths, stubSources, stderr);
+        var generatedCSharpList = Transpile(options, alSources, inputGroups, inputPaths, stubSources, stderr,
+            syntaxTreeCache: SyntaxTreeCache, sourceFilePaths: sourceFilePaths);
         if (generatedCSharpList == null)
         {
             Timer.EndStage("AL transpilation");
@@ -480,9 +499,20 @@ public class AlRunnerPipeline
         var refsTask = Task.Run(() => RoslynCompiler.LoadReferences());
 
         var rewrittenTrees = new (string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)[generatedCSharpList.Count];
+        int rewriteHits = 0;
         Parallel.For(0, generatedCSharpList.Count, i =>
         {
             var (name, code) = generatedCSharpList[i];
+
+            // Check rewrite cache — if C# output is unchanged, reuse prior tree
+            var cached = RewriteCache?.TryGet(name, code, options.IterationTracking);
+            if (cached != null)
+            {
+                rewrittenTrees[i] = (name, cached);
+                Interlocked.Increment(ref rewriteHits);
+                return;
+            }
+
             var tree = RoslynRewriter.RewriteToTree(code);
             // Second pass: inject per-statement ValueCapture.Capture calls.
             // The capture function no-ops when ValueCapture.Enabled is false,
@@ -493,7 +523,13 @@ public class AlRunnerPipeline
                 injectedRoot = IterationInjector.Inject(injectedRoot);
             tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.Create((Microsoft.CodeAnalysis.CSharp.CSharpSyntaxNode)injectedRoot);
             rewrittenTrees[i] = (name, tree);
+
+            // Store in cache for next run
+            RewriteCache?.Store(name, code, tree, options.IterationTracking);
         });
+
+        if (rewriteHits > 0)
+            Log.Info($"Rewrite cache: {rewriteHits}/{generatedCSharpList.Count} hits");
         var rewrittenTreeList = rewrittenTrees.ToList();
 
         List<(string Name, string Code)>? _rewrittenStringList = null;
@@ -524,9 +560,9 @@ public class AlRunnerPipeline
         var mapperTask = Task.Run(() =>
             SourceLineMapper.Build(generatedCSharpList, GetRewrittenStrings()));
         var preloadedRefs = refsTask.Result;
-        var assembly = RoslynCompiler.Compile(rewrittenTreeList, preloadedRefs);
+        var compileResult = RoslynCompiler.Compile(rewrittenTreeList, preloadedRefs);
         mapperTask.Wait();
-        if (assembly == null)
+        if (compileResult == null)
         {
             if (!options.DumpRewritten && options.Verbose)
             {
@@ -540,10 +576,12 @@ public class AlRunnerPipeline
             Timer.EndStage("Roslyn compilation");
             return 2;
         }
+        _compileResult = compileResult;
         Timer.EndStage("Roslyn compilation");
 
         // Step 4: Execute
         Timer.StartStage("Test execution");
+        var assembly = compileResult.Assembly;
         Runtime.MockCodeunitHandle.CurrentAssembly = assembly;
         Executor.RegisterStatements(GetRewrittenStrings());
 
@@ -802,7 +840,9 @@ public class AlRunnerPipeline
         List<(string Path, List<string> Sources)> inputGroups,
         List<string> inputPaths,
         List<string> stubSources,
-        TextWriter stderr)
+        TextWriter stderr,
+        SyntaxTreeCache? syntaxTreeCache = null,
+        List<string?>? sourceFilePaths = null)
     {
         // Handle stub replacement before transpilation
         var separateStubSources = new List<string>();
@@ -836,14 +876,21 @@ public class AlRunnerPipeline
 
                 if (foundInSource)
                 {
-                    alSources.RemoveAll(src =>
+                    // Remove matching sources and their parallel sourceFilePaths entries
+                    for (int ri = alSources.Count - 1; ri >= 0; ri--)
                     {
-                        var srcMatch = Regex.Match(src,
+                        var srcMatch = Regex.Match(alSources[ri],
                             @"(?:codeunit|table|page|report|xmlport|query|enum|interface)\s+(\d+)",
                             RegexOptions.IgnoreCase);
-                        return srcMatch.Success && srcMatch.Value.ToLowerInvariant() == stubId;
-                    });
+                        if (srcMatch.Success && srcMatch.Value.ToLowerInvariant() == stubId)
+                        {
+                            alSources.RemoveAt(ri);
+                            if (sourceFilePaths != null && ri < sourceFilePaths.Count)
+                                sourceFilePaths.RemoveAt(ri);
+                        }
+                    }
                     alSources.Add(stub);
+                    sourceFilePaths?.Add(null); // stubs have no disk file path
                     Log.Info($"Stub replaces source object: {stubId}");
                 }
                 else
@@ -906,7 +953,8 @@ public class AlRunnerPipeline
         }
         else
         {
-            generatedCSharpList = AlTranspiler.TranspileMulti(alSources, options.PackagePaths, inputPaths);
+            generatedCSharpList = AlTranspiler.TranspileMulti(alSources, options.PackagePaths, inputPaths,
+                treeCache: syntaxTreeCache, sourceFilePaths: sourceFilePaths);
             if (generatedCSharpList == null || generatedCSharpList.Count == 0)
                 return null;
         }
