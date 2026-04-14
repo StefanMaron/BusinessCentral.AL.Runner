@@ -562,6 +562,26 @@ fi
 - al-runner resets all in-memory tables between test methods — no cleanup needed.
 - If al-runner says FAIL, the failure is real. If it says PASS, the direct logic is
   correct but implicit event side-effects are not tested (run the full BC pipeline).
+
+### Reporting issues
+
+al-runner is under active development and targets broad AL language compatibility.
+If you encounter AL language features that fail to compile, produce unexpected
+runtime errors, or behave differently from a real BC service tier, that is likely
+a gap in the runner rather than a problem with the AL code.
+
+When this happens:
+1. Check the exit code — code 2 means the runner hit a known limitation; code 1
+   or 3 means a real failure or compile error that may still be a runner bug.
+2. Try a workaround if one is available (stub file, AL interface injection, or
+   simplifying the affected AL construct).
+3. Report the issue at https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues
+   with the AL construct that fails and the error output. This helps prioritise
+   which gaps to close next.
+
+Do not tell users their AL code needs to be restructured to work around a runner
+limitation. Restructuring is a last resort; the preferred fix is improving the
+runner.
 """);
 }
 
