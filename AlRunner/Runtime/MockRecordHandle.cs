@@ -107,17 +107,31 @@ public class MockRecordHandle
     /// </summary>
     public NavValue GetGlobalVariable(int id, NavType type) => DefaultForType(type);
     public void SetGlobalVariable(int id, NavType type, object value) { }
-    public object GetGlobalArrayVariable(int id, NavType type) => type switch
+
+    // Cache global array variables so mutations persist across calls.
+    // Generated page/page-extension code reads the same array multiple times;
+    // without caching each call returns a fresh instance, discarding prior writes.
+    private readonly Dictionary<(int id, NavType type), object> _globalArrayCache = new();
+
+    public object GetGlobalArrayVariable(int id, NavType type)
     {
-        NavType.Code => new MockArray<NavCode>(new NavCode(20, ""), 8),
-        NavType.Text => new MockArray<NavText>(NavText.Default(0), 8),
-        NavType.Integer => new MockArray<NavInteger>(NavInteger.Default, 8),
-        NavType.Decimal => new MockArray<NavDecimal>(NavDecimal.Default, 8),
-        NavType.Boolean => new MockArray<NavBoolean>(NavBoolean.Default, 8),
-        _ => throw new NotSupportedException(
-            $"GetGlobalArrayVariable: unsupported element type {type}. " +
-            "Add a case for this NavType if the generated code requires it."),
-    };
+        if (_globalArrayCache.TryGetValue((id, type), out var cached))
+            return cached;
+
+        object array = type switch
+        {
+            NavType.Code => new MockArray<NavCode>(new NavCode(20, ""), 8),
+            NavType.Text => new MockArray<NavText>(NavText.Default(0), 8),
+            NavType.Integer => new MockArray<NavInteger>(NavInteger.Default, 8),
+            NavType.Decimal => new MockArray<NavDecimal>(NavDecimal.Default, 8),
+            NavType.Boolean => new MockArray<NavBoolean>(NavBoolean.Default, 8),
+            _ => throw new NotSupportedException(
+                $"GetGlobalArrayVariable: unsupported element type {type}. " +
+                "Add a case for this NavType if the generated code requires it."),
+        };
+        _globalArrayCache[(id, type)] = array;
+        return array;
+    }
 
     public void SetFieldValueSafe(int fieldNo, NavType expectedType, NavValue value)
     {
