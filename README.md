@@ -21,11 +21,11 @@ Rewritten C#
 Results in milliseconds
 ```
 
-It works well for pure-logic codeunits. For the remaining gaps, see [What's Missing](#whats-missing) below.
+It targets broad AL language compatibility. For known gaps, see [What's Missing](#whats-missing) below.
 
 ## Why
 
-Running a full BC CI pipeline (compile, publish, initialize, run tests) takes 45+ minutes. AL Runner makes the pure-logic unit test portion take under a second, giving you a fast inner loop for codeunit logic that doesn't depend on UI, HTTP, or external services.
+Running a full BC CI pipeline (compile, publish, initialize, run tests) takes 45+ minutes. AL Runner makes the unit test portion take under a second, giving you a fast inner loop for codeunit logic that can run without the BC service tier.
 
 AL Runner is designed to run **before** the full BC service tier pipeline as a fast pre-check. It does not replace the full pipeline.
 
@@ -211,7 +211,7 @@ AL Runner is designed to sit before the full BC service tier in CI:
 ```
 Pull Request
   ↓
-al-runner (seconds) — catches pure-logic failures fast
+al-runner (seconds) — catches AL logic failures fast
   ↓ (only if al-runner passes)
 Full BC pipeline (MsDyn365Bc.On.Linux, 45+ min) — full fidelity test execution
 ```

@@ -6,6 +6,13 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Changed
+- **Vision reframe** — project rationale updated from "pure-logic codeunits only"
+  to broad AL language compatibility. Docs, guide, and limitations page updated to
+  reflect that unsupported AL constructs are gaps to fix, not design boundaries.
+- **CONTRIBUTING.md** — added contributor guide covering TDD requirements, CI matrix,
+  CHANGELOG policy, documentation checklist, and code-quality rules.
+
 ### Added
 - **Report variable support** — `NavReportHandle` is rewritten to `MockReportHandle`,
   a standalone replacement that supports `SetTableView()`, `Run()` (no-op), and

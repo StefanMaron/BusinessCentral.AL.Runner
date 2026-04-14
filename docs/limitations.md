@@ -1,7 +1,10 @@
 # AL Runner — Limitations
 
-AL Runner trades full fidelity for speed. Understanding what it fundamentally cannot
-do helps you decide what to test here and what to send to the full BC pipeline.
+AL Runner targets broad AL language compatibility. The limits below are
+architectural — they require the BC service tier and cannot be emulated in a
+single .NET process. Everything else is either already supported or a gap that
+can be fixed. If AL code fails to run and the reason is not listed here, report
+it as a bug.
 
 ---
 
@@ -114,14 +117,13 @@ the exact value will see different results.
 
 ---
 
-## The right scope
+## When to use the full BC pipeline instead
 
-al-runner is designed for **pure-logic codeunits**: code that reads and writes
-in-memory records, calls other codeunits, and produces a result that can be
-asserted in a test.
+al-runner targets broad AL language compatibility. If AL code compiles but
+fails to run, that is a gap to report, not a reason to restructure your code.
 
-If the correctness of the code depends on any of the following, test it in the
-full BC service tier pipeline instead:
+The hard exceptions — things that require the BC service tier by architecture —
+are listed above. For those, test in the full pipeline:
 
 - Event subscribers that pass data via `var Rec` or `Sender` parameters
 - Real company or setup data being present
@@ -131,8 +133,12 @@ full BC service tier pipeline instead:
 - HTTP calls to external services
 - Permissions or entitlements
 
+Everything else is in scope for the runner. If you hit a failure that does not
+fall into one of the categories above, report it as a gap at
+https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
+
 ```
-al-runner  →  pure-logic failures in seconds
+al-runner  →  AL logic failures in seconds
     ↓ (only if al-runner passes)
 Full BC pipeline  →  full fidelity, 45+ minutes
 ```

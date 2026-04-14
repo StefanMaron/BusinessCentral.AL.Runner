@@ -3,10 +3,13 @@
 ## Vision
 
 Run Business Central AL unit tests in milliseconds, with no BC service tier, no
-Docker, no SQL Server, and no license. The goal is a fast feedback loop for
-pure-logic codeunits that don't depend on UI, HTTP, or external services.
+Docker, no SQL Server, and no license. The goal is broad AL language compatibility —
+targeting the full functional AL surface so that any codeunit that can run without
+the BC service tier can be tested here.
 
-This works for pure-logic codeunits. See Known Limitations for the remaining gaps.
+A small number of hard architectural limits exist (parallel session contracts,
+transaction isolation, service-tier rendering, HTTP). Everything else is a gap to
+close. See Known Limitations for details.
 
 ---
 
@@ -541,7 +544,7 @@ al-runner ./src ./test
 al-runner runs as a fast pre-check step before the full BC service tier pipeline
 (MsDyn365Bc.On.Linux). The recommended workflow:
 
-1. **al-runner** — run in CI in seconds for pure-logic unit tests (fast feedback)
+1. **al-runner** — run in CI in seconds for AL unit tests (fast feedback)
 2. **Full pipeline** — run the BC service tier (Docker + SQL) for integration/UI tests
 
 The full pipeline lives at:
