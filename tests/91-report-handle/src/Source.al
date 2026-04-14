@@ -29,6 +29,13 @@ codeunit 91001 "RH Report Runner"
         Rep.Run();
     end;
 
+    procedure RunReportWithoutTableView()
+    var
+        Rep: Report "RH Test Report";
+    begin
+        Rep.Run();
+    end;
+
     procedure RunRequestPageAndGetResult(): Text
     var
         Rep: Report "RH Test Report";

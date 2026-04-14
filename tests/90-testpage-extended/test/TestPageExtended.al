@@ -61,9 +61,14 @@ codeunit 90001 "TPX TestPage Extended Tests"
         // [GIVEN] An open TestPage with a part
         TP.OpenEdit();
 
-        // [WHEN] GetPart is accessed (via LinesPart)
-        // [THEN] It compiles and returns a handle without crashing
-        Assert.IsTrue(true, 'GetPart should return a handle');
+        // [WHEN] A field is set on the parent and a different value on the part
+        TP.NameField.SetValue('Parent');
+        TP.LinesPart.NameField.SetValue('PartValue');
+
+        // [THEN] Parent and part fields are isolated — they don't interfere
+        Assert.AreEqual('Parent', TP.NameField.Value, 'Parent field should retain its value');
+        Assert.AreEqual('PartValue', TP.LinesPart.NameField.Value, 'Part field should have its own value');
+        Assert.AreNotEqual(Format(TP.NameField.Value), Format(TP.LinesPart.NameField.Value), 'Parent and part values should be independent');
         TP.Close();
     end;
 

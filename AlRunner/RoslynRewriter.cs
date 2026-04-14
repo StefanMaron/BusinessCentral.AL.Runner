@@ -467,6 +467,10 @@ public void Close() { }
 public void Activate() { }
 public void SaveRecord() { }
 public void SetTableView(MockRecordHandle rec) { }
+// SetSelectionFilter: In real BC, this applies the UI-selection filter from a
+// temporary recordset. In standalone mode we approximate by copying the page's
+// Rec and applying its record filter — sufficient for compilation but not
+// semantically identical to the real multi-selection behaviour.
 public void SetSelectionFilter(MockRecordHandle rec) { rec.ALCopy(this.Rec, true); rec.ALSetRecFilter(); }
 protected bool CallGetDecimalPlacesExtensionMethod(int fieldNo, ref string result) { return false; }
 protected bool CallGetTableRelationExtensionMethod(int fieldNo, MockRecordHandle rec, ref bool result) { return false; }

@@ -857,6 +857,11 @@ public class AlRunnerPipeline
             if (openBrace < 0)
                 break;
 
+            // Simple brace-depth counting. Does not skip braces inside
+            // single-quoted AL string literals or comments, so a caption like
+            //   Caption = 'Some {brace} text'
+            // would confuse the counter. This is acceptable for `rendering`
+            // blocks which don't contain string literals with braces.
             int depth = 0;
             int i = openBrace;
             for (; i < source.Length; i++)

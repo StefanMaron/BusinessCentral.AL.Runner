@@ -182,7 +182,7 @@ public class MockCodeunitHandle
                 {
                     if (i < args.Length)
                     {
-                        convertedArgs[i] = ConvertArg(args[i], parameters[i].ParameterType);
+                        convertedArgs[i] = ConvertArgInternal(args[i], parameters[i].ParameterType);
                     }
                 }
 
@@ -210,7 +210,7 @@ public class MockCodeunitHandle
             for (int i = 0; i < parameters.Length; i++)
             {
                 if (i < args.Length)
-                    convertedArgs[i] = ConvertArg(args[i], parameters[i].ParameterType);
+                    convertedArgs[i] = ConvertArgInternal(args[i], parameters[i].ParameterType);
             }
             return bestMethod.Invoke(_codeunitInstance, convertedArgs);
         }
@@ -572,11 +572,13 @@ public class MockCodeunitHandle
     /// <summary>
     /// Scores how well a method's parameter types match the actual argument types.
     /// Higher score = better match. Used for fallback method resolution when exact
-    /// member ID matching fails (e.g., Variant-based signatures in test code vs
-    /// type-specific overloads in stub code).
-    /// Unwraps MockVariant to check the underlying value's type.
+    /// <summary>
+    /// Score how well a reflected method's parameter types match the supplied arguments.
+    /// Used by both <see cref="MockCodeunitHandle"/> and <see cref="MockReportHandle"/>
+    /// for overload resolution during reflection-based dispatch.
+    /// Unwraps <see cref="MockVariant"/> to check the underlying value's type.
     /// </summary>
-    private static int ScoreMethodMatch(MethodInfo method, object[] args)
+    internal static int ScoreMethodMatch(MethodInfo method, object[] args)
     {
         int score = 0;
         var parameters = method.GetParameters();
@@ -602,9 +604,9 @@ public class MockCodeunitHandle
         return score;
     }
 
-    internal static object? ConvertArgForTests(object? arg, Type targetType) => ConvertArg(arg, targetType);
+    internal static object? ConvertArg(object? arg, Type targetType) => ConvertArgInternal(arg, targetType);
 
-    private static object? ConvertArg(object? arg, Type targetType)
+    private static object? ConvertArgInternal(object? arg, Type targetType)
     {
         if (arg == null) return null;
         if (targetType.IsAssignableFrom(arg.GetType())) return arg;
@@ -617,7 +619,7 @@ public class MockCodeunitHandle
         // MockVariant -> unwrap to underlying value and retry
         if (arg is MockVariant mv)
         {
-            return ConvertArg(mv.Value, targetType);
+            return ConvertArgInternal(mv.Value, targetType);
         }
 
         // MockCodeunitHandle -> MockInterfaceHandle (AL interface injection)

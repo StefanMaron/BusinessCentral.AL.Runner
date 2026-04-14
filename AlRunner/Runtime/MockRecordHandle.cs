@@ -114,7 +114,9 @@ public class MockRecordHandle
         NavType.Integer => new MockArray<NavInteger>(NavInteger.Default, 8),
         NavType.Decimal => new MockArray<NavDecimal>(NavDecimal.Default, 8),
         NavType.Boolean => new MockArray<NavBoolean>(NavBoolean.Default, 8),
-        _ => Array.Empty<object>(),
+        _ => throw new NotSupportedException(
+            $"GetGlobalArrayVariable: unsupported element type {type}. " +
+            "Add a case for this NavType if the generated code requires it."),
     };
 
     public void SetFieldValueSafe(int fieldNo, NavType expectedType, NavValue value)

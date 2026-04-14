@@ -27,16 +27,14 @@ codeunit 92002 "RPH Request Page Tests"
     end;
 
     [Test]
-    procedure RunRequestPageWithoutHandlerStillReturns()
+    procedure RunRequestPageWithoutHandlerThrows()
     var
         Caller: Codeunit "RPH Report Caller";
-        Result: Text;
     begin
         // [GIVEN] No handler registered
-        // [WHEN] RunRequestPage is called
-        Result := Caller.CallRunRequestPage();
-
-        // [THEN] Returns XML stub without crashing (handler is optional)
-        Assert.AreNotEqual('', Result, 'RunRequestPage should return XML stub even without handler');
+        // [WHEN] RunRequestPage is called without a handler
+        // [THEN] It should throw an error (handler is required)
+        asserterror Caller.CallRunRequestPage();
+        Assert.ExpectedError('No RequestPageHandler registered');
     end;
 }

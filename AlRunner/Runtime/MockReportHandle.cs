@@ -84,7 +84,7 @@ public class MockReportHandle
             for (int i = 0; i < parameters.Length; i++)
             {
                 if (i < args.Length)
-                    convertedArgs[i] = MockCodeunitHandle.ConvertArgForTests(args[i], parameters[i].ParameterType);
+                    convertedArgs[i] = MockCodeunitHandle.ConvertArg(args[i], parameters[i].ParameterType);
             }
 
             return method.Invoke(report, convertedArgs);
@@ -106,6 +106,9 @@ public class MockReportHandle
         if (reportType == null)
             return null;
 
+        // Skip the generated constructor (may reference BC runtime infrastructure).
+        // InitializeComponent handles field wiring. Risk: field initializers outside
+        // InitializeComponent will be null/default.
         _reportInstance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(reportType);
         var initMethod = reportType.GetMethod("InitializeComponent",
             BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
@@ -123,28 +126,5 @@ public class MockReportHandle
     }
 
     private static int ScoreMethodMatch(MethodInfo method, object[] args)
-    {
-        var parameters = method.GetParameters();
-        if (parameters.Length != args.Length)
-            return -1;
-
-        var score = 0;
-        for (int i = 0; i < parameters.Length; i++)
-        {
-            var arg = args[i];
-            if (arg == null)
-            {
-                score += 1;
-                continue;
-            }
-
-            var targetType = parameters[i].ParameterType;
-            if (targetType.IsInstanceOfType(arg))
-                score += 3;
-            else
-                score += 1;
-        }
-
-        return score;
-    }
+        => MockCodeunitHandle.ScoreMethodMatch(method, args);
 }

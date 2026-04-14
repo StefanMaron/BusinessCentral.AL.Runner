@@ -22,4 +22,14 @@ codeunit 94001 "CFV Clear Helper"
         Rec.Amount := Value;
         Clear(Rec.Amount);
     end;
+
+    procedure ClearName(var Rec: Record "CFV Test Record")
+    begin
+        Clear(Rec.Name);
+    end;
+
+    procedure ClearAmount(var Rec: Record "CFV Test Record")
+    begin
+        Clear(Rec.Amount);
+    end;
 }

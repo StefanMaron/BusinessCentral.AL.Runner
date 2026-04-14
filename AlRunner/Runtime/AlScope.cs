@@ -526,7 +526,11 @@ public static class AlCompat
                 }
                 return result;
             }
-            catch { }
+            catch (Exception)
+            {
+                // NavArray reflection failed (type mismatch, missing method, etc.)
+                // — fall through to empty default array.
+            }
         }
 
         return new MockArray<T>(default!, 8);

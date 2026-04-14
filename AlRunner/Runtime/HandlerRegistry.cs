@@ -199,7 +199,9 @@ public static class HandlerRegistry
     {
         var handler = _requestPageHandler ?? _modalPageHandler;
         if (handler == null || _parentInstance == null)
-            return;
+            throw new Exception($"No RequestPageHandler registered for report/page {pageId}. " +
+                "Add [HandlerFunctions('YourHandler')] to the test and a " +
+                "[RequestPageHandler] or [ModalPageHandler] procedure.");
 
         var testPage = new MockTestPageHandle(pageId);
 
