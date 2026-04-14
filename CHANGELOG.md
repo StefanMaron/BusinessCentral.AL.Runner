@@ -28,8 +28,13 @@ All notable changes to this project are documented here. Format based on
   `(ObjectType, ObjectId, EventName)` to prevent table/codeunit ID collision.
   Supports both automatic and manual subscriber classification.
 - **New test suites**: `97-event-params` (2), `98-db-trigger-events` (5),
-  `99-validate-events` (3), `100-bind-subscription` (3), `101-multi-subscribers` (2)
-  — 15 new test cases total.
+  `99-validate-events` (3), `100-bind-subscription` (3), `101-multi-subscribers` (2),
+  `102-sender-pattern` (6), `103-before-db-events` (7), `104-xrec-behavior` (3),
+  `105-subscriber-error` (4) — 35 new test cases total.
+- **IncludeSender support** — `IntegrationEvent(true, false)` and
+  `BusinessEvent(true)` now correctly pass the publishing codeunit instance as
+  the first subscriber parameter via `MockCodeunitHandle.FromInstance(this)`.
+  Subscribers can read/write publisher state through the sender handle. (#116)
 
 ### Fixed
 - **`CS1503` in codeunits that call `HttpContent.WriteFrom(InStream)` or `HttpContent.ReadAs(var InStream)`** —

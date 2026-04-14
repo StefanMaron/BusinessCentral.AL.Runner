@@ -338,13 +338,14 @@ test belongs in the full BC pipeline, not in the runner.
   in HTTP codeunits (those that don't actually call `HttpClient.Send()`) are fully
   testable. Developer must inject HTTP send via AL interface for unit-testable code.
 - **Events/subscribers** — Custom `[IntegrationEvent]`/`[BusinessEvent]` dispatch
-  works via `AlCompat.FireEvent()` + `EventSubscriberRegistry`. Subscriber
-  parameters are forwarded. Implicit DB trigger events (OnBefore/AfterInsert,
-  OnBefore/AfterModify, OnBefore/AfterDelete, OnBefore/AfterValidate) fire from
-  `MockRecordHandle`. `BindSubscription`/`UnbindSubscription` work for manual
-  subscriber codeunits. Remaining gaps: `OnBefore/AfterRenameEvent` not yet
-  fired; `ModifyAll`/`DeleteAll` do not fire per-row events; implicit event
-  publishers on table extension triggers not wired.
+  works via `AlCompat.FireEvent()` + `EventSubscriberRegistry`. `IncludeSender=true`
+  passes the publisher instance to subscribers via `MockCodeunitHandle.FromInstance()`.
+  Subscriber parameters are forwarded with `ByRef<T>` writeback. Implicit DB trigger
+  events (OnBefore/AfterInsert, OnBefore/AfterModify, OnBefore/AfterDelete,
+  OnBefore/AfterValidate) fire from `MockRecordHandle`. `BindSubscription`/
+  `UnbindSubscription` work for manual subscriber codeunits. Remaining gaps:
+  `OnBefore/AfterRenameEvent` not yet fired; `ModifyAll`/`DeleteAll` do not fire
+  per-row events; implicit event publishers on table extension triggers not wired.
 - **.app file loading** — NOT supported for test input. Always runs from AL source
   directories. Dependencies can be loaded from .app for symbol references only.
 - **Filter groups** (FilterGroup) — not tracked.
@@ -356,6 +357,10 @@ test belongs in the full BC pipeline, not in the runner.
 - **Codeunit OnRun with record parameter** — `RunCodeunit` only finds parameterless
   `OnRun()` methods. Codeunits whose OnRun trigger takes a record parameter (e.g.,
   `trigger OnRun(var Rec: Record "Job Queue Entry")`) will silently do nothing.
+- **ALInsert ignores DataError level** (#128) — `ALInsert()` always throws on
+  duplicate PK regardless of `errorLevel`. AL code like `if not Rec.Insert() then`
+  crashes instead of returning false. Other methods (`ALModify`, `ALGet`, etc.)
+  correctly respect `DataError.ThrowError` vs `DataError.Never`.
 
 ---
 

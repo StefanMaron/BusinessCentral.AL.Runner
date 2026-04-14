@@ -297,10 +297,11 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - Query data access (Open/Read) — queries require the BC service tier (SQL views);
   use AL interfaces to inject query results for testing
 - HTTP / REST calls — inject via AL interface
-- Event subscribers — Custom IntegrationEvent/BusinessEvent dispatch works. Implicit
-  DB trigger events (OnBefore/AfterInsert/Modify/Delete/Validate) fire. Subscriber
-  parameters are forwarded. BindSubscription/UnbindSubscription work. Remaining gaps:
-  OnBefore/AfterRenameEvent not yet fired; ModifyAll/DeleteAll skip per-row events.
+- Event subscribers — Custom IntegrationEvent/BusinessEvent dispatch works with
+  IncludeSender support. Implicit DB trigger events (OnBefore/AfterInsert/Modify/
+  Delete/Validate) fire. Subscriber parameters are forwarded. BindSubscription/
+  UnbindSubscription work. Remaining gaps: OnBefore/AfterRenameEvent not yet fired;
+  ModifyAll/DeleteAll skip per-row events.
 - StrMenu is not supported
 - Filter groups (FilterGroup)
 
@@ -577,6 +578,10 @@ al-runner supports event subscribers for custom and implicit DB events:
 **Custom events** — `[IntegrationEvent]` and `[BusinessEvent]` publishers dispatch
 to `[EventSubscriber]` methods. Subscriber parameters (including `var` / `ByRef`)
 are forwarded and mutations propagate back to the publisher scope.
+
+**IncludeSender** — When `[IntegrationEvent(true, false)]` or `[BusinessEvent(true)]`
+is used, the publishing codeunit instance is passed as the first subscriber parameter
+(`sender: Codeunit "Publisher"`). Subscribers can read/write publisher state.
 
 **Implicit DB events** — `OnBeforeInsertEvent`, `OnAfterInsertEvent`,
 `OnBeforeModifyEvent`, `OnAfterModifyEvent`, `OnBeforeDeleteEvent`,

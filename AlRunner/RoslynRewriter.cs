@@ -2620,6 +2620,28 @@ public void ClearApplicationMemberVariables() { }
                 }
                 if (cuId.HasValue && eventName != null)
                 {
+                    // Check if the enclosing event method has [NavEvent(_, true, _)]
+                    // where the second argument (IncludeSender) is true.
+                    bool includeSender = false;
+                    if (enclosingMethod != null)
+                    {
+                        foreach (var attrList in enclosingMethod.AttributeLists)
+                        foreach (var attr in attrList.Attributes)
+                        {
+                            var simpleAttrName = GetSimpleAttributeName(attr);
+                            if (simpleAttrName is "NavEvent" or "NavEventAttribute")
+                            {
+                                if (attr.ArgumentList?.Arguments.Count >= 2)
+                                {
+                                    var secondArg = attr.ArgumentList.Arguments[1].Expression;
+                                    if (secondArg is LiteralExpressionSyntax lit &&
+                                        lit.IsKind(SyntaxKind.TrueLiteralExpression))
+                                        includeSender = true;
+                                }
+                            }
+                        }
+                    }
+
                     var argsList = new List<ArgumentSyntax>
                     {
                         SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(
@@ -2629,6 +2651,21 @@ public void ClearApplicationMemberVariables() { }
                             SyntaxKind.StringLiteralExpression,
                             SyntaxFactory.Literal(eventName)))
                     };
+
+                    // When IncludeSender=true, prepend a MockCodeunitHandle wrapping
+                    // the publisher instance so subscribers receive it as their first arg.
+                    if (includeSender)
+                    {
+                        argsList.Add(SyntaxFactory.Argument(
+                            SyntaxFactory.InvocationExpression(
+                                SyntaxFactory.MemberAccessExpression(
+                                    SyntaxKind.SimpleMemberAccessExpression,
+                                    SyntaxFactory.IdentifierName("MockCodeunitHandle"),
+                                    SyntaxFactory.IdentifierName("FromInstance")),
+                                SyntaxFactory.ArgumentList(SyntaxFactory.SingletonSeparatedList(
+                                    SyntaxFactory.Argument(SyntaxFactory.ThisExpression()))))));
+                    }
+
                     // Forward the enclosing event method's parameters
                     if (enclosingMethod != null)
                     {
