@@ -1103,7 +1103,8 @@ protected bool CallGetFormatExtensionMethod(int fieldNo, ref string result) { re
                             visited.ArgumentList.Arguments[2]
                         })));
             }
-            if (visited.ArgumentList.Arguments.Count == 2)
+            if (visited.ArgumentList.Arguments.Count == 2 &&
+                visited.ArgumentList.Arguments[0].Expression.ToString() == "this")
             {
                 // 2 args: (this, queryId) → keep arg [1].
                 return visited.WithArgumentList(

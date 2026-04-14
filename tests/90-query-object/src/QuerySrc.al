@@ -28,8 +28,8 @@ query 59000 "Item Ledger Query"
     }
 }
 
-/// Codeunit that exercises query variables without calling Open/Read/Close.
-/// Proves that Query objects compile and non-data code runs correctly.
+/// Codeunit that exercises query variables while avoiding Open/Read on the positive path.
+/// Proves that Query objects compile and non-data code, such as Close and filter setup methods, runs correctly.
 codeunit 59000 "Query Logic"
 {
     /// Returns a constant to verify the codeunit compiles alongside the query.

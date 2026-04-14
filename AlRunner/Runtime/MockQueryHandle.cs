@@ -49,6 +49,7 @@ public class MockQueryHandle
     public MockQueryHandle(int queryId, SecurityFiltering securityFiltering)
     {
         QueryId = queryId;
+        ALSecurityFiltering = securityFiltering;
     }
 
     // ------------------------------------------------------------------
