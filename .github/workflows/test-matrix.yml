@@ -112,15 +112,18 @@ jobs:
       - name: Verify intentional-failure fixture (net8.0)
         run: |
           # This fixture must exit 1 (test failures). Any other exit code is a bug.
+          # Use || to capture exit code without triggering set -e.
           dotnet run --no-build --project AlRunner --framework net8.0 -- \
-            tests/excluded/06-intentional-failure/src tests/excluded/06-intentional-failure/test; \
-          rc=$?; [ $rc -eq 1 ] || { echo "Expected exit 1, got $rc"; exit 1; }
+            tests/excluded/06-intentional-failure/src tests/excluded/06-intentional-failure/test \
+            || rc=$?
+          [ "${rc:-0}" -eq 1 ] || { echo "Expected exit 1, got ${rc:-0}"; exit 1; }
 
       - name: Verify intentional-failure fixture (net9.0)
         run: |
           dotnet run --no-build --project AlRunner --framework net9.0 -- \
-            tests/excluded/06-intentional-failure/src tests/excluded/06-intentional-failure/test; \
-          rc=$?; [ $rc -eq 1 ] || { echo "Expected exit 1, got $rc"; exit 1; }
+            tests/excluded/06-intentional-failure/src tests/excluded/06-intentional-failure/test \
+            || rc=$?
+          [ "${rc:-0}" -eq 1 ] || { echo "Expected exit 1, got ${rc:-0}"; exit 1; }
 
   all-tests:
     name: All BC versions passed
