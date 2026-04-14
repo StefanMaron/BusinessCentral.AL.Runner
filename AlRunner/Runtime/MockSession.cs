@@ -45,13 +45,22 @@ public static class MockSession
     /// <summary>
     /// StartSession with record parameter.
     /// ALSession.ALStartSession(DataError, ByRef&lt;int&gt; sessionId, int codeunitId, string companyName, MockRecordHandle record)
-    /// Dispatches the codeunit synchronously and returns true.
-    /// The record parameter is accepted but not passed to OnRun (OnRun with record params
-    /// is a known limitation of the runner).
+    /// Dispatches the codeunit synchronously and forwards the record to OnRun.
     /// </summary>
     public static bool ALStartSession(DataError errorLevel, ByRef<int> sessionId, int codeunitId, string companyName, MockRecordHandle record)
     {
-        return ALStartSession(errorLevel, sessionId, codeunitId, companyName);
+        sessionId.Value = _nextSessionId++;
+        try
+        {
+            MockCodeunitHandle.RunCodeunit(errorLevel, codeunitId, record);
+            return true;
+        }
+        catch
+        {
+            if (errorLevel == DataError.TrapError)
+                return false;
+            throw;
+        }
     }
 
     /// <summary>
@@ -61,7 +70,7 @@ public static class MockSession
     {
         try
         {
-            MockCodeunitHandle.RunCodeunit(codeunitId);
+            MockCodeunitHandle.RunCodeunit(errorLevel, codeunitId, record);
             return true;
         }
         catch

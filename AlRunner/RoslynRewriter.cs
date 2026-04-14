@@ -1673,7 +1673,7 @@ public void ClearApplicationMemberVariables() { }
                 return visited;
             }
 
-            // NavCodeunit.RunCodeunit(DataError, id, record) -> MockCodeunitHandle.RunCodeunit(errorLevel, id)
+            // NavCodeunit.RunCodeunit(DataError, id [, record]) -> MockCodeunitHandle.RunCodeunit(errorLevel, id [, record])
             // NavCodeunit.RunCodeunit is a static dispatch method requiring NavSession
             if (exprText == "NavCodeunit" && methodName == "RunCodeunit")
             {
@@ -1684,6 +1684,22 @@ public void ClearApplicationMemberVariables() { }
                     var errorLevelArg = args[0].Expression;
                     // The second argument is the codeunit ID
                     var codeunitIdArg = args[1].Expression;
+                    if (args.Count >= 3)
+                    {
+                        // Third argument is the record — forward it so OnRun(MockRecordHandle) receives it
+                        var recordArg = args[2].Expression;
+                        return SyntaxFactory.InvocationExpression(
+                            SyntaxFactory.MemberAccessExpression(
+                                SyntaxKind.SimpleMemberAccessExpression,
+                                SyntaxFactory.IdentifierName("MockCodeunitHandle"),
+                                SyntaxFactory.IdentifierName("RunCodeunit")),
+                            SyntaxFactory.ArgumentList(
+                                SyntaxFactory.SeparatedList<ArgumentSyntax>(new[] {
+                                    SyntaxFactory.Argument(errorLevelArg),
+                                    SyntaxFactory.Argument(codeunitIdArg),
+                                    SyntaxFactory.Argument(recordArg)
+                                })));
+                    }
                     return SyntaxFactory.InvocationExpression(
                         SyntaxFactory.MemberAccessExpression(
                             SyntaxKind.SimpleMemberAccessExpression,

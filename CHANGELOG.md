@@ -7,6 +7,16 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Codeunit OnRun with record parameter** — `Codeunit.Run(codeunitId, record)`
+  now correctly forwards the record to the target codeunit's `OnRun` trigger.
+  Previously the record was silently dropped, causing `NullReferenceException`
+  inside codeunits that declare `TableNo`. The rewriter now passes the 3rd
+  argument of `NavCodeunit.RunCodeunit(DataError, id, record)` through to
+  `MockCodeunitHandle.RunCodeunit(DataError, id, record)`. `RunCodeunitCore`
+  looks up `OnRun(MockRecordHandle)` by exact signature and passes the record
+  directly. `MockSession.StartSession` with a record parameter also forwards
+  it to `OnRun`. Job-queue and batch-posting patterns that dispatch via
+  `Codeunit.Run(codeunitId, rec)` now work correctly. (#135)
 - **Generic catch-all runner-limitation detection** — The test executor now
   classifies additional exception types as runner limitations (`Status = Error`,
   `IsRunnerBug = true`) instead of misreporting them as test failures

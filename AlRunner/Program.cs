@@ -248,7 +248,7 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - Composite primary keys, sort ordering (SetCurrentKey / SetAscending), CurrentKey, Ascending
 - SETRANGE / SETFILTER filtering (=, <>, <, <=, >, >=, wildcards, OR via |)
 - GetFilter(field), GetFilters, HasFilter — return active filter expressions
-- Cross-codeunit dispatch (Codeunit.Run, direct codeunit variable calls)
+- Cross-codeunit dispatch (Codeunit.Run, Codeunit.Run(id, Rec) with record parameter, direct codeunit variable calls)
 - AL interfaces for dependency injection
 - `asserterror` blocks + `GetLastErrorText()`
 - Assert codeunit: AreEqual, AreNotEqual, IsTrue, IsFalse, ExpectedError, RecordIsEmpty, etc.

@@ -257,7 +257,7 @@ public class MockCodeunitHandle
     {
         try
         {
-            RunCodeunit(_codeunitId);
+            RunCodeunitCore(_codeunitId, record as MockRecordHandle);
             return true;
         }
         catch
@@ -273,11 +273,11 @@ public class MockCodeunitHandle
     /// When errorLevel is TrapError, exceptions are caught and false is returned.
     /// When errorLevel is ThrowError, exceptions propagate and true is returned on success.
     /// </summary>
-    public static bool RunCodeunit(DataError errorLevel, int codeunitId)
+    public static bool RunCodeunit(DataError errorLevel, int codeunitId, MockRecordHandle? record = null)
     {
         try
         {
-            RunCodeunitCore(codeunitId);
+            RunCodeunitCore(codeunitId, record);
             return true;
         }
         catch
@@ -293,10 +293,10 @@ public class MockCodeunitHandle
     /// </summary>
     public static void RunCodeunit(int codeunitId)
     {
-        RunCodeunitCore(codeunitId);
+        RunCodeunitCore(codeunitId, null);
     }
 
-    private static void RunCodeunitCore(int codeunitId)
+    private static void RunCodeunitCore(int codeunitId, MockRecordHandle? record = null)
     {
         var handle = new MockCodeunitHandle(codeunitId);
         // Invoke the OnRun scope (member ID 0 or find OnRun explicitly)
@@ -323,12 +323,29 @@ public class MockCodeunitHandle
             return;
         }
 
-        // Try finding OnRun with parameters
+        // Try finding OnRun with a MockRecordHandle parameter (codeunit with TableNo)
+        var onRunWithRecord = codeunitType.GetMethod("OnRun",
+            bindingFlags, null, new[] { typeof(MockRecordHandle) }, null);
+        if (onRunWithRecord != null)
+        {
+            onRunWithRecord.Invoke(instance, new object?[] { record });
+            return;
+        }
+
+        // Fallback: any OnRun overload — pass null for all parameters
         var onRunMethods = codeunitType.GetMethods(bindingFlags)
             .Where(m => m.Name == "OnRun").ToArray();
         if (onRunMethods.Length > 0)
         {
-            onRunMethods[0].Invoke(instance, new object?[onRunMethods[0].GetParameters().Length]);
+            var parameters = onRunMethods[0].GetParameters();
+            var args = new object?[parameters.Length];
+            // Fill MockRecordHandle parameters with the provided record
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                if (parameters[i].ParameterType == typeof(MockRecordHandle))
+                    args[i] = record;
+            }
+            onRunMethods[0].Invoke(instance, args);
             return;
         }
     }

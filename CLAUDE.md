@@ -103,7 +103,7 @@ These are the BC runtime types replaced in standalone mode:
 | `AlCompat.HttpContentReadAs` | `NavHttpContent.ALReadAs(ITreeObject, DataError, ByRef<NavInStream>)` | No-op; sets target InStream to empty MockInStream (HTTP receive not available without service tier). |
 | `HandlerRegistry` | BC test framework | Dispatches ConfirmHandler/MessageHandler/ModalPageHandler/RequestPageHandler from [NavTest].Handlers to registered handler methods. |
 | `MockJsonHelper` | `NavJsonToken.ALWriteTo/ALReadFrom/ALSelectToken/ALSelectTokens` | Bypasses TrappableOperationExecutor for JSON serialization/deserialization. Real BC types used for all other JSON operations. |
-| `MockSession` | `ALSession.ALStartSession/ALStopSession/ALIsSessionActive`, `NavSession.Sleep` | StartSession dispatches codeunit synchronously via MockCodeunitHandle, returns true. StopSession/Sleep are no-ops. IsSessionActive returns false. |
+| `MockSession` | `ALSession.ALStartSession/ALStopSession/ALIsSessionActive`, `NavSession.Sleep` | StartSession dispatches codeunit synchronously via MockCodeunitHandle, forwarding any record parameter to OnRun. StopSession/Sleep are no-ops. IsSessionActive returns false. |
 | `MockXmlPortHandle` | `NavXmlPortHandle` | XmlPort variable stub. Exposes Source/Destination properties and Import/Export instance methods (throw NotSupportedException). Static StaticImport/StaticExport for `XmlPort.Import/Export(portId, stream)` calls. Invoke() returns null. |
 | `MockQueryHandle` | `NavQueryHandle` / `NavQuery` | Query variable and base class stub. Close/SetFilter/SetRange/TopNumberOfRows are no-ops. Open/Read/SaveAsCsv/SaveAsXml/SaveAsJson/SaveAsExcel throw NotSupportedException. GetColumnValueSafe returns type defaults. Invoke() returns null. |
 | `EventSubscriberRegistry` | BC event infrastructure | Static registry mapping `(ObjectType, ObjectId, EventName)` to subscriber methods. Auto-discovers `[NavEventSubscriber]` attributes via reflection. Supports manual subscriber binding (Bind/Unbind) for `[ManualEventSubscriber]`-annotated codeunits. |
@@ -353,9 +353,6 @@ test belongs in the full BC pipeline, not in the runner.
   `MockRecordHandle.ALInit()`. Fields always initialize to type defaults (0, "", false).
 - **ALFieldCaption** — returns "FieldNN" instead of the actual caption. The runner
   lacks field metadata infrastructure.
-- **Codeunit OnRun with record parameter** — `RunCodeunit` only finds parameterless
-  `OnRun()` methods. Codeunits whose OnRun trigger takes a record parameter (e.g.,
-  `trigger OnRun(var Rec: Record "Job Queue Entry")`) will silently do nothing.
 - **ALInsert ignores DataError level** (#128) — `ALInsert()` always throws on
   duplicate PK regardless of `errorLevel`. AL code like `if not Rec.Insert() then`
   crashes instead of returning false. Other methods (`ALModify`, `ALGet`, etc.)
@@ -557,6 +554,17 @@ These have been implemented and are tested by the test suite:
     skip all registered PK fields (not just field 1) when `initPrimaryKey=false`.
     Tested by `tests/110-transferfields/` (3 test cases).
 
+26. **Codeunit OnRun with record parameter** (`AlRunner/RoslynRewriter.cs`,
+    `AlRunner/Runtime/MockCodeunitHandle.cs`, `AlRunner/Runtime/MockSession.cs`) —
+    `Codeunit.Run(codeunitId, record)` now forwards the record to the target
+    codeunit's `OnRun(MockRecordHandle)`. The rewriter passes the 3rd arg of
+    `NavCodeunit.RunCodeunit(DataError, id, record)` through to
+    `MockCodeunitHandle.RunCodeunit(DataError, id, record)`. `RunCodeunitCore`
+    looks up `OnRun(MockRecordHandle)` first and passes the record directly.
+    `MockSession.ALStartSession` with a record parameter forwards it to
+    `RunCodeunit` as well. Tested by `tests/bucket-1/112-codeunit-onrun-record/`
+    (6 test cases).
+
 These are gaps that remain for full production use:
 
 1. **Wire al-runner.json config into the CLI** — config file exists but is not
@@ -567,19 +575,16 @@ These are gaps that remain for full production use:
    (no field metadata infrastructure). `FieldCount` returns the number of
    fields that have been set on the current record, not the table schema count.
 5. **KeyRef** — not implemented.
-6. **Codeunit OnRun with record parameter** — `RunCodeunit` only finds
-   parameterless `OnRun()` methods. Codeunits whose OnRun trigger takes a
-   record parameter will silently do nothing.
-7. **Implicit DB trigger events** — OnBefore/AfterInsert/Modify/Delete/Rename
+6. **Implicit DB trigger events** — OnBefore/AfterInsert/Modify/Delete/Rename
    are NOT fired by MockRecordHandle.
-8. **Temporary records** — `IsTemporary` always returns false; no isolated
+7. **Temporary records** — `IsTemporary` always returns false; no isolated
    partition for temp records.
-9. **FlowField formulas beyond Exist** — `Sum`, `Count`, `Lookup`, `Average`,
+8. **FlowField formulas beyond Exist** — `Sum`, `Count`, `Lookup`, `Average`,
    `Min`, `Max` are not computed by CalcFields.
-10. **ErrorInfo & collectible errors** — `Error(ErrorInfo)` works (throws with
-    message) but ErrorInfo property access and the collectible errors framework
-    are not implemented.
-11. **RecordId fidelity** — `ALRecordId` returns `NavRecordId.Default` instead
+9. **ErrorInfo & collectible errors** — `Error(ErrorInfo)` works (throws with
+   message) but ErrorInfo property access and the collectible errors framework
+   are not implemented.
+10. **RecordId fidelity** — `ALRecordId` returns `NavRecordId.Default` instead
     of encoding the actual table ID + primary key values.
 
 ---
