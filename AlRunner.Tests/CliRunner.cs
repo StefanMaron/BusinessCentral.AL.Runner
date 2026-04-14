@@ -12,6 +12,23 @@ public static class CliRunner
 
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
+    /// <summary>
+    /// Resolves a test case name to its directory under tests/.
+    /// Searches bucket-*, stubs/, and excluded/ subdirectories.
+    /// </summary>
+    public static string FindTestCase(string testCaseName)
+    {
+        var testsRoot = Path.Combine(RepoRoot, "tests");
+        foreach (var bucket in Directory.GetDirectories(testsRoot).OrderBy(d => d))
+        {
+            var candidate = Path.Combine(bucket, testCaseName);
+            if (Directory.Exists(candidate))
+                return candidate;
+        }
+        throw new DirectoryNotFoundException(
+            $"Test case '{testCaseName}' not found under {testsRoot}/*/");
+    }
+
     public record CliResult(int ExitCode, string StdOut, string StdErr);
 
     // Derive the current TFM moniker (e.g. "net8.0" or "net9.0") from the running CLR version.
@@ -53,8 +70,9 @@ public static class CliRunner
     /// </summary>
     public static Task<CliResult> RunTestCaseAsync(string testCaseName, string extraArgs = "")
     {
-        var srcDir = Path.Combine(RepoRoot, "tests", testCaseName, "src");
-        var testDir = Path.Combine(RepoRoot, "tests", testCaseName, "test");
+        var caseDir = FindTestCase(testCaseName);
+        var srcDir = Path.Combine(caseDir, "src");
+        var testDir = Path.Combine(caseDir, "test");
         var args = $"\"{srcDir}\" \"{testDir}\"";
         if (!string.IsNullOrEmpty(extraArgs))
             args = $"{extraArgs} {args}";

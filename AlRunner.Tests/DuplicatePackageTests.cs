@@ -17,7 +17,7 @@ public class DuplicatePackageTests
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 
     private static string TestPath(string testCase, string sub) =>
-        Path.Combine(RepoRoot, "tests", testCase, sub);
+        Path.Combine(CliRunner.FindTestCase(testCase), sub);
 
     // The alc binary path — configurable via env var, falls back to the VS Code extension location.
     private static readonly string? AlcPath = FindAlcPath();

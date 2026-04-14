@@ -9,7 +9,7 @@ public class ServerTests
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 
     private static string TestPath(string testCase, string sub) =>
-        Path.Combine(RepoRoot, "tests", testCase, sub);
+        Path.Combine(CliRunner.FindTestCase(testCase), sub);
 
     [Fact]
     public async Task Server_RunTests_ReturnsJsonResult()

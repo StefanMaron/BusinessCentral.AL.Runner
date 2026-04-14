@@ -19,7 +19,7 @@ public class RunnerErrorClassificationTests
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 
     private static string TestPath(string testCase, string sub) =>
-        Path.Combine(RepoRoot, "tests", testCase, sub);
+        Path.Combine(CliRunner.FindTestCase(testCase), sub);
 
     /// <summary>
     /// Verifies the detection component: MockCodeunitHandle throws the specific
