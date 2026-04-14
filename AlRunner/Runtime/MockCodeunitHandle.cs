@@ -61,6 +61,42 @@ public class MockCodeunitHandle
     }
 
     /// <summary>
+    /// Bind this codeunit as a manual event subscriber. The underlying
+    /// generated class instance is created (if needed) and registered so
+    /// its subscriber methods fire during event dispatch.
+    /// </summary>
+    public void Bind()
+    {
+        var assembly = CurrentAssembly ?? Assembly.GetExecutingAssembly();
+        var codeunitType = FindCodeunitType(assembly);
+        if (codeunitType == null) return;
+        EnsureInstance(codeunitType);
+        if (_codeunitInstance != null)
+            EventSubscriberRegistry.Bind(_codeunitInstance);
+    }
+
+    /// <summary>
+    /// Unbind a previously bound manual event subscriber instance.
+    /// </summary>
+    public void Unbind()
+    {
+        if (_codeunitInstance != null)
+            EventSubscriberRegistry.Unbind(_codeunitInstance);
+    }
+
+    /// <summary>
+    /// Lazily create the codeunit class instance and run InitializeComponent.
+    /// </summary>
+    private void EnsureInstance(Type codeunitType)
+    {
+        if (_codeunitInstance != null) return;
+        _codeunitInstance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(codeunitType);
+        var initMethod = codeunitType.GetMethod("InitializeComponent",
+            BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
+        initMethod?.Invoke(_codeunitInstance, null);
+    }
+
+    /// <summary>
     /// Static factory matching the rewritten constructor pattern.
     /// </summary>
     public static MockCodeunitHandle Create(int codeunitId)
@@ -111,14 +147,7 @@ public class MockCodeunitHandle
             throw new InvalidOperationException($"Codeunit {_codeunitId} not found in assembly");
         }
 
-        // Lazily create codeunit instance and call InitializeComponent
-        if (_codeunitInstance == null)
-        {
-            _codeunitInstance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(codeunitType);
-            var initMethod = codeunitType.GetMethod("InitializeComponent",
-                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
-            initMethod?.Invoke(_codeunitInstance, null);
-        }
+        EnsureInstance(codeunitType);
 
         // Find the public method whose scope class name contains the memberId.
         // Scope classes are named like: ApplyDiscount_Scope_1351223168

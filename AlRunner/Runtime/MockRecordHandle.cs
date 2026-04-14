@@ -271,20 +271,15 @@ public class MockRecordHandle
     {
         var table = _tables[_tableId];
 
-        // Run the AL `trigger OnInsert()` body if requested. The generated
-        // Record<N> class overrides a protected OnInsert() that creates a
-        // scope and runs the trigger body against `this.Rec` — we reflect
-        // over it, create an instance whose field bag is this handle's
-        // bag, and invoke OnInsert() directly.
+        // Fire OnBeforeInsertEvent(var Rec, RunTrigger: Boolean)
+        // — always fires, regardless of runTrigger
+        FireImplicitDbEvent("OnBeforeInsertEvent", this, runTrigger);
+
+        // Run the AL `trigger OnInsert()` body if requested.
         if (runTrigger)
             TryFireRecordTrigger("OnInsert");
 
         // Always enforce primary-key uniqueness.
-        // GetPrimaryKeyFields() returns the registered composite PK when the table's
-        // AL source was parsed by TableFieldRegistry, or falls back to [1] (field 1)
-        // when no PK was registered (e.g. table from an external package or a table
-        // with no explicit keys{} block). BC implicitly uses field 1 as the PK for
-        // any table without a declared key, so the [1] fallback is always correct.
         var pkFields = GetPrimaryKeyFields();
         foreach (var existing in table)
         {
@@ -299,16 +294,17 @@ public class MockRecordHandle
 
         var row = new Dictionary<int, NavValue>(_fields);
 
-        // Auto-populate SystemId if not already set, so that ALGetBySystemId
-        // can find records inserted in standalone mode.
+        // Auto-populate SystemId if not already set
         if (!row.ContainsKey(SystemIdFieldNo) || (row[SystemIdFieldNo] is NavGuid g && g.ToGuid() == Guid.Empty))
             row[SystemIdFieldNo] = new NavGuid(Guid.NewGuid());
 
         table.Add(row);
 
-        // Copy the SystemId back into the handle's field bag so that
-        // reading Rec.SystemId after Insert() returns the generated value.
+        // Copy the SystemId back into the handle's field bag
         _fields[SystemIdFieldNo] = row[SystemIdFieldNo];
+
+        // Fire OnAfterInsertEvent(var Rec)
+        FireImplicitDbEvent("OnAfterInsertEvent", this);
 
         return true;
     }
@@ -376,17 +372,56 @@ public class MockRecordHandle
 
     private string TableName() => $"Record Table {_tableId}";
 
+    /// <summary>
+    /// Fire an implicit DB trigger event (OnBefore/AfterInsertEvent, etc.)
+    /// by dispatching through AlCompat.FireEvent with ObjectType.Table.
+    /// Subscribers registered via <c>[EventSubscriber(ObjectType::Table, ...)]</c>
+    /// will be invoked. These events always fire regardless of runTrigger —
+    /// runTrigger only controls AL trigger bodies.
+    /// </summary>
+    private void FireImplicitDbEvent(string eventName, params object?[] eventArgs)
+    {
+        AlCompat.FireEvent(EventSubscriberRegistry.ObjectTypeTable, _tableId, eventName, eventArgs);
+    }
+
+    /// <summary>
+    /// Create a snapshot of the current field bag (for xRec) before a mutation.
+    /// Returns a new MockRecordHandle sharing the same table store but with
+    /// a copy of the current field values.
+    /// </summary>
+    private MockRecordHandle SnapshotForXRec()
+    {
+        var xRec = new MockRecordHandle(_tableId);
+        foreach (var kv in _fields)
+            xRec._fields[kv.Key] = kv.Value;
+        return xRec;
+    }
+
     public bool ALModify(DataError errorLevel) => ALModify(errorLevel, false);
 
     public bool ALModify(DataError errorLevel, bool runTrigger)
     {
         var table = _tables[_tableId];
         var pkFields = GetPrimaryKeyFields();
+
+        // Capture xRec (snapshot before mutation) for event subscribers
+        var xRec = SnapshotForXRec();
+
+        // Fire OnBeforeModifyEvent(var Rec, var xRec, RunTrigger: Boolean)
+        FireImplicitDbEvent("OnBeforeModifyEvent", this, xRec, runTrigger);
+
+        // Run the AL `trigger OnModify()` body if requested
+        if (runTrigger)
+            TryFireRecordTrigger("OnModify");
+
         for (int i = 0; i < table.Count; i++)
         {
             if (RowMatchesPrimaryKey(table[i], _fields, pkFields))
             {
                 table[i] = new Dictionary<int, NavValue>(_fields);
+
+                // Fire OnAfterModifyEvent(var Rec, var xRec)
+                FireImplicitDbEvent("OnAfterModifyEvent", this, xRec);
                 return true;
             }
         }
@@ -566,11 +601,22 @@ public class MockRecordHandle
     {
         var table = _tables[_tableId];
         var pkFields = GetPrimaryKeyFields();
+
+        // Fire OnBeforeDeleteEvent(var Rec, RunTrigger: Boolean)
+        FireImplicitDbEvent("OnBeforeDeleteEvent", this, runTrigger);
+
+        // Run the AL `trigger OnDelete()` body if requested
+        if (runTrigger)
+            TryFireRecordTrigger("OnDelete");
+
         for (int i = 0; i < table.Count; i++)
         {
             if (RowMatchesPrimaryKey(table[i], _fields, pkFields))
             {
                 table.RemoveAt(i);
+
+                // Fire OnAfterDeleteEvent(var Rec)
+                FireImplicitDbEvent("OnAfterDeleteEvent", this);
                 return true;
             }
         }
@@ -793,13 +839,16 @@ public class MockRecordHandle
     // -----------------------------------------------------------------------
 
     /// <summary>
-    /// AL's VALIDATE(FieldNo, Value) — sets the field and would fire OnValidate trigger.
-    /// In standalone mode we just set the value since we don't have trigger infrastructure.
+    /// AL's VALIDATE(FieldNo, Value) — sets the field and fires OnValidate trigger.
+    /// Also fires implicit OnBefore/AfterValidateEvent for event subscribers.
     /// </summary>
     public void ALValidateSafe(int fieldNo, NavType expectedType, NavValue value)
     {
+        var xRec = SnapshotForXRec();
+        FireImplicitDbEvent("OnBeforeValidateEvent", this, xRec, fieldNo);
         _fields[fieldNo] = value;
         FireOnValidate(fieldNo);
+        FireImplicitDbEvent("OnAfterValidateEvent", this, xRec, fieldNo);
     }
 
     /// <summary>
@@ -808,7 +857,10 @@ public class MockRecordHandle
     /// </summary>
     public void ALValidateSafe(int fieldNo, NavType expectedType)
     {
+        var xRec = SnapshotForXRec();
+        FireImplicitDbEvent("OnBeforeValidateEvent", this, xRec, fieldNo);
         FireOnValidate(fieldNo);
+        FireImplicitDbEvent("OnAfterValidateEvent", this, xRec, fieldNo);
     }
 
     /// <summary>
@@ -816,8 +868,11 @@ public class MockRecordHandle
     /// </summary>
     public void ALValidate(DataError errorLevel, int fieldNo, NavType expectedType, NavValue value)
     {
+        var xRec = SnapshotForXRec();
+        FireImplicitDbEvent("OnBeforeValidateEvent", this, xRec, fieldNo);
         _fields[fieldNo] = value;
         FireOnValidate(fieldNo);
+        FireImplicitDbEvent("OnAfterValidateEvent", this, xRec, fieldNo);
     }
 
     /// <summary>
