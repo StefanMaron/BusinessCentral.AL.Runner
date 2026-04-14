@@ -1872,6 +1872,23 @@ public void ClearApplicationMemberVariables() { }
                         SyntaxFactory.IdentifierName("Sleep")));
             }
 
+            // ErrorCollection.ALClearCollectedErrors() -> AlScope.ClearCollectedErrors()
+            // ErrorCollection.ALGetCollectedErrors(bool) -> AlScope.GetCollectedErrors(bool)
+            // The real ErrorCollection depends on NavSession; redirect to AlScope's
+            // thread-static collected-errors list.
+            if ((exprText == "ErrorCollection" || exprText.EndsWith(".ErrorCollection", StringComparison.Ordinal)) &&
+                (methodName == "ALClearCollectedErrors" || methodName == "ALGetCollectedErrors"))
+            {
+                var targetMethod = methodName == "ALClearCollectedErrors"
+                    ? "ClearCollectedErrors"
+                    : "GetCollectedErrors";
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlScope"),
+                        SyntaxFactory.IdentifierName(targetMethod)));
+            }
+
             // ALCompiler.ToSecretText(navText) -> AlCompat.ToSecretText(navText)
             // ToSecretText wraps a text value as NavSecretText; requires NavSession in BC.
             if (exprText == "ALCompiler" && methodName == "ToSecretText")
@@ -2486,6 +2503,27 @@ public void ClearApplicationMemberVariables() { }
                     SyntaxKind.SimpleMemberAccessExpression,
                     SyntaxFactory.IdentifierName("AlScope"),
                     SyntaxFactory.IdentifierName("LastErrorText"));
+            }
+        }
+
+        // Pattern: ErrorCollection.ALHasCollectedErrors -> AlScope.HasCollectedErrors
+        //          ErrorCollection.ALIsCollectingErrors -> AlScope.IsCollectingErrors
+        // ErrorCollection depends on NavSession; redirect to AlScope's thread-static state.
+        // Handles both short (`ErrorCollection`) and fully-qualified
+        // (`Microsoft.Dynamics.Nav.Runtime.ErrorCollection`) forms.
+        {
+            var exprStr = visited.Expression.ToString();
+            if ((exprStr == "ErrorCollection" || exprStr.EndsWith(".ErrorCollection", StringComparison.Ordinal)) &&
+                (visited.Name.Identifier.Text == "ALHasCollectedErrors" || visited.Name.Identifier.Text == "ALIsCollectingErrors"))
+            {
+                var targetProp = visited.Name.Identifier.Text == "ALHasCollectedErrors"
+                    ? "HasCollectedErrors"
+                    : "IsCollectingErrors";
+                return SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("AlScope"),
+                    SyntaxFactory.IdentifierName(targetProp))
+                    .WithTriviaFrom(visited);
             }
         }
 

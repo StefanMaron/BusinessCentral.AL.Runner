@@ -138,7 +138,7 @@ dotnet run --project AlRunner -- ./src ./test
 | `AlRunner/DiagnosticClassifier.cs` | AL diagnostic message parser |
 | `AlRunner/PackageScanner.cs` | .app file scanning and deduplication |
 | `AlRunner/StubGenerator.cs` | `--generate-stubs` command |
-| `AlRunner/Runtime/AlScope.cs` | Base scope, AlDialog, AlCompat, MockDialog |
+| `AlRunner/Runtime/AlScope.cs` | Base scope, AlDialog (Error/Message + ErrorInfo), AlCompat, MockDialog, collectible errors state |
 | `AlRunner/Runtime/MockRecordHandle.cs` | In-memory record store (filtering, composite PKs, sort, triggers) |
 | `AlRunner/Runtime/MockCodeunitHandle.cs` | Cross-codeunit dispatch via reflection |
 | `AlRunner/Runtime/EventSubscriberRegistry.cs` | Event subscriber discovery + dispatch |

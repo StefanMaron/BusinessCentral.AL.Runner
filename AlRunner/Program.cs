@@ -251,6 +251,10 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - Cross-codeunit dispatch (Codeunit.Run, Codeunit.Run(id, Rec) with record parameter, direct codeunit variable calls)
 - AL interfaces for dependency injection
 - `asserterror` blocks + `GetLastErrorText()`
+- ErrorInfo type — `ErrorInfo.Create()`, set `Message`, `DetailedMessage`, `FieldNo`, `Collectible`, etc.
+  `Error(ErrorInfo)` throws with the message text. Collectible errors: mark `ErrorInfo.Collectible := true`
+  and wrap the calling procedure with `[ErrorBehavior(ErrorBehavior::Collect)]` to collect instead of throw.
+  `HasCollectedErrors()`, `GetCollectedErrors(clear)`, `ClearCollectedErrors()`, `IsCollectingErrors()` all work.
 - Assert codeunit: AreEqual, AreNotEqual, IsTrue, IsFalse, ExpectedError, RecordIsEmpty, etc.
 - OnValidate triggers on table fields
 - Table procedures (custom procedures on table objects)
@@ -2056,6 +2060,7 @@ public static class Executor
             AlRunner.Runtime.MockIsolatedStorage.ResetAll();
             AlRunner.Runtime.MockVariableStorage.Reset();
             AlRunner.Runtime.AlScope.ResetLastStatement();
+            AlRunner.Runtime.AlScope.ResetCollectedErrors();
             AlRunner.Runtime.HandlerRegistry.Reset();
             AlRunner.Runtime.MockSession.Reset();
             AlRunner.Runtime.MockLanguage.Reset();

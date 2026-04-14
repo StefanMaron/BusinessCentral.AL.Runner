@@ -29,13 +29,26 @@ public class AlScope : IDisposable, ITreeObject
     public void Run() => OnRun();
 
     /// <summary>
-    /// BC's RunBehavior — wraps the OnRun call with commit behavior control.
-    /// In standalone mode, we just call OnRun and ignore the commit/error semantics.
+    /// BC's RunBehavior — wraps the OnRun call with commit/error behavior control.
     /// Generated code calls: scope.RunBehavior(false, CommitBehavior.Ignore, null);
+    /// Or for [ErrorBehavior(ErrorBehavior::Collect)]:
+    ///   scope.RunBehavior(false, null, ErrorBehavior.Collect);
     /// </summary>
-    public void RunBehavior(bool suppressErrors, object? commitBehavior, object? record)
+    public void RunBehavior(bool suppressErrors, object? commitBehavior, object? errorBehaviorOrRecord)
     {
-        OnRun();
+        bool enableCollecting = errorBehaviorOrRecord is ErrorBehavior eb && eb == ErrorBehavior.Collect;
+        bool wasCollecting = _isCollectingErrors;
+        if (enableCollecting)
+            _isCollectingErrors = true;
+        try
+        {
+            OnRun();
+        }
+        finally
+        {
+            if (enableCollecting)
+                _isCollectingErrors = wasCollecting;
+        }
     }
 
     public void Dispose() { }
@@ -141,6 +154,41 @@ public class AlScope : IDisposable, ITreeObject
     public static int ExitStatementNumber { get; set; }
     public static int MaxStackDepth { get; set; } = 1000;
     public static string LastErrorCallStack { get; set; } = "";
+
+    // ── Collectible errors ──────────────────────────────────────────────
+    // Thread-static to avoid cross-test contamination in parallel scenarios.
+
+    [ThreadStatic] private static bool _isCollectingErrors;
+    [ThreadStatic] private static List<NavALErrorInfo>? _collectedErrors;
+
+    internal static List<NavALErrorInfo> CollectedErrors => _collectedErrors ??= new();
+
+    /// <summary>Returns true when at least one collectible error has been recorded.</summary>
+    public static bool HasCollectedErrors => CollectedErrors.Count > 0;
+
+    /// <summary>Returns true when execution is inside an [ErrorBehavior(Collect)] scope.</summary>
+    public static bool IsCollectingErrors => _isCollectingErrors;
+
+    /// <summary>Returns the collected errors, optionally clearing the list.</summary>
+    public static NavList<NavALErrorInfo> GetCollectedErrors(bool clearErrors)
+    {
+        var result = NavList<NavALErrorInfo>.Default;
+        foreach (var err in CollectedErrors)
+            result.ALAdd(err);
+        if (clearErrors)
+            CollectedErrors.Clear();
+        return result;
+    }
+
+    /// <summary>Clears all collected errors.</summary>
+    public static void ClearCollectedErrors() => CollectedErrors.Clear();
+
+    /// <summary>Reset collected errors state between tests.</summary>
+    public static void ResetCollectedErrors()
+    {
+        _isCollectingErrors = false;
+        _collectedErrors = null;
+    }
 
     public static AlScope? FindTryMethodScope(AlScope scope)
     {
@@ -301,10 +349,20 @@ public static class AlDialog
 
     /// <summary>
     /// Overload for AL's Error(ErrorInfo) pattern where NavALErrorInfo is passed directly.
+    /// When the error is collectible and collecting mode is active, the error is
+    /// added to the collected errors list instead of throwing.
     /// </summary>
     public static void Error(Microsoft.Dynamics.Nav.Runtime.NavALErrorInfo errorInfo)
     {
-        throw new Exception(errorInfo?.ToString() ?? "Error");
+        var message = errorInfo?.ALMessage ?? "Error";
+
+        if (errorInfo != null && errorInfo.ALCollectible && AlScope.IsCollectingErrors)
+        {
+            AlScope.CollectedErrors.Add(errorInfo);
+            return;
+        }
+
+        throw new Exception(message);
     }
 
     /// <summary>

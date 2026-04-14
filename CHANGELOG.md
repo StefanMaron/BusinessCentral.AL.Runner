@@ -6,6 +6,15 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+- **ErrorInfo type & collectible errors** — `Error(ErrorInfo)` now uses
+  `ErrorInfo.Message` for the error text (previously used `.ToString()` which
+  included internal field metadata). Collectible errors are fully supported:
+  mark `ErrorInfo.Collectible := true` and annotate procedures with
+  `[ErrorBehavior(ErrorBehavior::Collect)]` to collect errors instead of
+  throwing. Global functions `HasCollectedErrors()`, `GetCollectedErrors()`,
+  `ClearCollectedErrors()`, and `IsCollectingErrors()` all work. (#117)
+
 ## [1.0.14] - 2026-04-14
 
 ### Added
