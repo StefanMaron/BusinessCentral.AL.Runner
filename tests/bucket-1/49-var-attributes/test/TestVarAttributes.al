@@ -1,4 +1,4 @@
-codeunit 55301 "Test Var Attributes"
+codeunit 55501 "Test Var Attributes"
 {
     Subtype = Test;
 

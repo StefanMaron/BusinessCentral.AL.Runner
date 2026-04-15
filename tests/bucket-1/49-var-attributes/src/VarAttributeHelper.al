@@ -1,4 +1,4 @@
-codeunit 55300 "Var Attribute Helper"
+codeunit 55500 "Var Attribute Helper"
 {
     var
         [Protected]
