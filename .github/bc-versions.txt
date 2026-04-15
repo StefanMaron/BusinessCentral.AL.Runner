@@ -1,0 +1,4 @@
+# BC version prefixes to test against.
+# Both test-matrix.yml and publish.yml read this file.
+# Add or remove versions here — both workflows pick up changes automatically.
+26.0 26.3 26.5 27.0 27.3 27.5 28.0

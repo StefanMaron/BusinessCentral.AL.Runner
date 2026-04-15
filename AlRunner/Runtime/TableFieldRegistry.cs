@@ -36,9 +36,14 @@ public static class TableFieldRegistry
         @"\bkey\s*\(\s*[^;]+;\s*([^)]+)\)",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-    // Caption = 'value';  inside a field or table body
+    // AL escapes embedded apostrophes by doubling them, e.g. 'Vendor''s Name'.
     private static readonly Regex CaptionProp = new(
-        @"\bCaption\s*=\s*'([^']*)'\s*;",
+        @"\bCaption\s*=\s*'((?:''|[^'])*)'\s*;",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    // field(id; name; type) — extended regex capturing Enum fields specifically
+    private static readonly Regex FieldDeclWithType = new(
+        @"\bfield\s*\(\s*(\d+)\s*;\s*(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))\s*;\s*(?:Enum\s+(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*)))",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     // tableId -> (fieldName -> fieldId)
@@ -51,12 +56,16 @@ public static class TableFieldRegistry
     // tableId -> (fieldId -> FieldMeta)
     private static readonly Dictionary<int, Dictionary<int, FieldMeta>> _fieldMeta = new();
 
+    // (tableId, fieldNo) -> enum name (for fields declared as Enum "XYZ")
+    private static readonly Dictionary<(int TableId, int FieldNo), string> _enumFields = new();
+
     public static void Clear()
     {
         _byTable.Clear();
         _tableNames.Clear();
         _tableCaptions.Clear();
         _fieldMeta.Clear();
+        _enumFields.Clear();
     }
 
     public static void ParseAndRegister(string alSource)
@@ -87,7 +96,7 @@ public static class TableFieldRegistry
             var tablePreamble = fieldsIdx >= 0 ? body.Substring(0, fieldsIdx) : body;
             var tableCapMatch = CaptionProp.Match(tablePreamble);
             if (tableCapMatch.Success)
-                _tableCaptions[tableId] = tableCapMatch.Groups[1].Value;
+                _tableCaptions[tableId] = DecodeAlSingleQuotedString(tableCapMatch.Groups[1].Value);
 
             if (!_byTable.TryGetValue(tableId, out var fields))
                 _byTable[tableId] = fields = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -141,11 +150,19 @@ public static class TableFieldRegistry
                         var fieldBody = body.Substring(fStart, fEnd - fStart - 1);
                         var capMatch = CaptionProp.Match(fieldBody);
                         if (capMatch.Success)
-                            fieldCaption = capMatch.Groups[1].Value;
+                            fieldCaption = DecodeAlSingleQuotedString(capMatch.Groups[1].Value);
                     }
                 }
 
                 meta[fieldId] = new FieldMeta(fieldId, name, fieldCaption, typeName, length);
+            }
+
+            // Extract enum field type info: field(id; name; Enum "EnumName")
+            foreach (Match em in FieldDeclWithType.Matches(body))
+            {
+                if (!int.TryParse(em.Groups[1].Value, out var fieldId)) continue;
+                var enumName = em.Groups[4].Success ? em.Groups[4].Value : em.Groups[5].Value;
+                _enumFields[(tableId, fieldId)] = enumName;
             }
 
             // Extract the first declared key (typically Clustered PK) and
@@ -232,5 +249,19 @@ public static class TableFieldRegistry
         if (_fieldMeta.TryGetValue(tableId, out var meta))
             return meta.Count;
         return 0;
+    }
+
+    /// <summary>
+    /// Returns the AL enum name for a field declared as <c>Enum "X"</c>, or null
+    /// if the field is not an enum type.
+    /// </summary>
+    public static string? GetEnumName(int tableId, int fieldNo)
+    {
+        return _enumFields.TryGetValue((tableId, fieldNo), out var name) ? name : null;
+    }
+
+    private static string DecodeAlSingleQuotedString(string value)
+    {
+        return value.Replace("''", "'");
     }
 }

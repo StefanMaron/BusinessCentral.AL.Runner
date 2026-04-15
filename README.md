@@ -40,6 +40,8 @@ AL Runner is designed to run **before** the full BC service tier pipeline as a f
 - Assert codeunit (ID 130): AreEqual, AreNotEqual, IsTrue, IsFalse, ExpectedError, RecordIsEmpty, etc.
 - `asserterror` keyword (catches expected errors) + `GetLastErrorText()`
 - `Error()` / `Message()` — Error throws an exception; Message writes to console
+- ErrorInfo type with collectible errors: `Error(ErrorInfo)`, `HasCollectedErrors()`, `GetCollectedErrors()`,
+  `ClearCollectedErrors()`, `IsCollectingErrors()`, `[ErrorBehavior(ErrorBehavior::Collect)]`
 - OnValidate triggers on table fields
 - Table procedures (custom procedures on table objects)
 - IsolatedStorage (in-memory key-value store)

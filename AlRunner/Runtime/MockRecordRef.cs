@@ -30,7 +30,7 @@ public class MockRecordRef
     public void Open(int tableId, bool temporary, string? companyName)
     {
         Number = tableId;
-        _handle = new MockRecordHandle(tableId);
+        _handle = new MockRecordHandle(tableId, temporary);
     }
 
     public void Close()
@@ -388,7 +388,10 @@ public class MockRecordRef
     // -- IsTemporary --
     public bool ALIsTemporary => false;
     public int ALSystemIdNo => 2000000000;
+    public int ALSystemCreatedAtNo => 2000000001;
+    public int ALSystemCreatedByNo => 2000000002;
     public int ALSystemModifiedAtNo => 2000000003;
+    public int ALSystemModifiedByNo => 2000000004;
 
     // -- ReadIsolation (no-op in standalone mode) --
     /// <summary>
@@ -487,4 +490,10 @@ public class MockRecordRef
     {
         _handle?.ALTestFieldSafe(fieldNo, NavType.Text, expectedValue);
     }
+
+    /// <summary>Expose the table ID for MockFieldRef enum lookups.</summary>
+    internal int TableId => Number;
+
+    /// <summary>Expose the underlying handle for MockFieldRef.CalcSum.</summary>
+    internal MockRecordHandle? Handle => _handle;
 }
