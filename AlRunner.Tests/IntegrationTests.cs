@@ -70,4 +70,17 @@ public class IntegrationTests
         Assert.Contains("compilation", result.StdOut);
         Assert.Contains("Maintaining stubs", result.StdOut);
     }
+
+    [Fact]
+    public async Task StrictFlag_PromotesRunnerLimitationToFailure()
+    {
+        // Without --strict: XmlPort.Import() throws NotSupportedException → exit 2
+        var normal = await CliRunner.RunTestCaseAsync("strict-mode-fixture");
+        Assert.Equal(2, normal.ExitCode);
+
+        // With --strict: same error → exit 1 (promoted to failure)
+        var strict = await CliRunner.RunTestCaseAsync("strict-mode-fixture", "--strict");
+        Assert.Equal(1, strict.ExitCode);
+        Assert.Contains("Blocked tests", strict.StdOut);
+    }
 }
