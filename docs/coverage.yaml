@@ -5650,8 +5650,10 @@ Table.Consistent:
 Table.Copy:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1 (ShareTable bool, default false)
+  tests:
+    - tests/bucket-1/51-record-copy
 
 Table.CopyFilter:
   layer: runtime-api
