@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <NoWarn>MSB3277</NoWarn>
+    <NoWarn>MSB3277;CA1416</NoWarn>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <InternalsVisibleTo>AlRunner.Tests</InternalsVisibleTo>
     <InternalsVisibleTo>AlRunner.Benchmarks</InternalsVisibleTo>
