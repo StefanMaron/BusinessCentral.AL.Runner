@@ -6040,7 +6040,10 @@ Table.TestField:
 Table.TransferFields:
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/39-transferfields
+    - tests/bucket-2/110-transferfields
   notes: overloads=2
 
 Table.Truncate:
