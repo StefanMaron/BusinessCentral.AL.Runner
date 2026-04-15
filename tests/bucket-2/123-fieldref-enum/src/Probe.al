@@ -61,6 +61,31 @@ codeunit 56230 "FE Probe"
         exit(FldRef.Value);
     end;
 
+    procedure CalcSumQuantity(TableId: Integer; FieldNo: Integer): Decimal
+    var
+        RecRef: RecordRef;
+        FldRef: FieldRef;
+    begin
+        RecRef.Open(TableId);
+        FldRef := RecRef.Field(FieldNo);
+        FldRef.CalcSum();
+        exit(FldRef.Value);
+    end;
+
+    procedure CalcSumPriceWithFilter(TableId: Integer; PriceFieldNo: Integer; IdFieldNo: Integer; MinId: Integer): Decimal
+    var
+        RecRef: RecordRef;
+        FldRef: FieldRef;
+        IdFld: FieldRef;
+    begin
+        RecRef.Open(TableId);
+        IdFld := RecRef.Field(IdFieldNo);
+        IdFld.SetFilter('>=%1', MinId);
+        FldRef := RecRef.Field(PriceFieldNo);
+        FldRef.CalcSum();
+        exit(FldRef.Value);
+    end;
+
     procedure SystemFieldNos(): Text
     var
         RecRef: RecordRef;

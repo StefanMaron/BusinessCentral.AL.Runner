@@ -141,4 +141,70 @@ codeunit 56231 "FE Tests"
         // In standalone mode, WritePermission always returns true
         Assert.IsTrue(Probe.WritePermissionTest(Item), 'WritePermission should be true');
     end;
+
+    // === Negative tests: enum out-of-range ===
+
+    [Test]
+    procedure GetEnumValueNameOutOfRangeErrors()
+    begin
+        // [GIVEN] Enum "FE Color" has 4 values (indices 1..4)
+        // [WHEN] GetEnumValueName is called with index 5 (out of range)
+        // [THEN] An error is thrown
+        asserterror Probe.FieldRefGetEnumValueName(56230, 3, 5);
+        Assert.ExpectedError('out of range');
+    end;
+
+    [Test]
+    procedure GetEnumValueOrdinalOutOfRangeErrors()
+    begin
+        asserterror Probe.FieldRefGetEnumValueOrdinal(56230, 3, 0);
+        Assert.ExpectedError('out of range');
+    end;
+
+    // === CalcSum with Integer field ===
+
+    [Test]
+    procedure CalcSumIntegerFieldReturnsDecimal()
+    var
+        Item: Record "FE Test Item";
+    begin
+        // CalcSum always returns Decimal (matching BC behavior)
+        Item.Init();
+        Item."Id" := 1;
+        Item."Quantity" := 10;
+        Item.Insert();
+
+        Item.Init();
+        Item."Id" := 2;
+        Item."Quantity" := 25;
+        Item.Insert();
+
+        Assert.AreEqual(35.0, Probe.CalcSumQuantity(56230, 5), 'CalcSum on Integer field returns Decimal: 10 + 25 = 35');
+    end;
+
+    // === CalcSum with active filters ===
+
+    [Test]
+    procedure CalcSumRespectsFilters()
+    var
+        Item: Record "FE Test Item";
+    begin
+        Item.Init();
+        Item."Id" := 1;
+        Item."Price" := 10.00;
+        Item.Insert();
+
+        Item.Init();
+        Item."Id" := 2;
+        Item."Price" := 20.00;
+        Item.Insert();
+
+        Item.Init();
+        Item."Id" := 3;
+        Item."Price" := 30.00;
+        Item.Insert();
+
+        // Filter: Id >= 2 should only sum records 2 and 3
+        Assert.AreEqual(50.00, Probe.CalcSumPriceWithFilter(56230, 4, 1, 2), 'CalcSum with filter Id>=2: 20 + 30 = 50');
+    end;
 }

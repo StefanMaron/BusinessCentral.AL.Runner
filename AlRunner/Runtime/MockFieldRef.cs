@@ -207,8 +207,8 @@ public class MockFieldRef
     {
         var members = GetEnumMembers();
         if (members == null || index < 1 || index > members.Count)
-            return "";
-        return members[index - 1].Name;
+            throw new Exception($"Index {index} is out of range. The enum has {members?.Count ?? 0} values.");
+        return members![index - 1].Name;
     }
 
     /// <summary>ALGetOptionValueCaption — returns the enum value caption at a 1-based index (same as name; no caption infrastructure).</summary>
@@ -216,8 +216,8 @@ public class MockFieldRef
     {
         var members = GetEnumMembers();
         if (members == null || index < 1 || index > members.Count)
-            return "";
-        return members[index - 1].Name;
+            throw new Exception($"Index {index} is out of range. The enum has {members?.Count ?? 0} values.");
+        return members![index - 1].Name;
     }
 
     /// <summary>ALGetOptionValueOrdinal — returns the enum ordinal at a 1-based index.</summary>
@@ -225,8 +225,8 @@ public class MockFieldRef
     {
         var members = GetEnumMembers();
         if (members == null || index < 1 || index > members.Count)
-            return 0;
-        return members[index - 1].Ordinal;
+            throw new Exception($"Index {index} is out of range. The enum has {members?.Count ?? 0} values.");
+        return members![index - 1].Ordinal;
     }
 
     // -- CalcSum --
@@ -234,6 +234,7 @@ public class MockFieldRef
     /// <summary>
     /// ALCalcSum — sums this field's values across all filtered records in the
     /// underlying table. The result is stored and returned via the next ALValue read.
+    /// Always stores as NavDecimal (matching BC behavior where sums are always Decimal).
     /// </summary>
     public void ALCalcSum(DataError errorLevel = DataError.ThrowError)
     {
