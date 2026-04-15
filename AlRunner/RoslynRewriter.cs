@@ -1007,6 +1007,22 @@ public void ClearApplicationMemberVariables() { }
         if (text == "ALSystemOperatingSystem")
             return node.WithIdentifier(SyntaxFactory.Identifier("MockSystemOperatingSystem"));
 
+        // NavHttp* -> MockHttp* (HttpClient, HttpResponseMessage, HttpContent,
+        // HttpHeaders, HttpRequestMessage)
+        // All BC HTTP types derive from NavComplexValue which requires
+        // Parent.Tree != null — impossible in standalone mode. The rewriter
+        // replaces them with lightweight in-memory mocks.
+        if (text == "NavHttpClient")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockHttpClient"));
+        if (text == "NavHttpResponseMessage")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockHttpResponseMessage"));
+        if (text == "NavHttpContent")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockHttpContent"));
+        if (text == "NavHttpHeaders")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockHttpHeaders"));
+        if (text == "NavHttpRequestMessage")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockHttpRequestMessage"));
+
         // NavFormHandle -> MockFormHandle
         // BC emits `Page "X"` AL variables as `NavFormHandle p` fields with
         // `new NavFormHandle(this, pageId)` initializers — both args would
@@ -1366,6 +1382,18 @@ public void ClearApplicationMemberVariables() { }
         // variants with table id / company / temp flag) at scope-class init time.
         // The stub has no ITreeObject dependency — strip all constructor args.
         if (typeText == "MockRecordRef")
+        {
+            return visited.WithArgumentList(SyntaxFactory.ArgumentList());
+        }
+
+        // new MockHttp*(this) -> new MockHttp*()
+        // BC emits `new NavHttpClient(this)`, `new NavHttpResponseMessage(this)`,
+        // `new NavHttpContent(this)`, `new NavHttpRequestMessage(this)` in
+        // scope-class field initialisers. All take a single ITreeObject parent
+        // whose .Tree must not be null. Strip it — the mocks are parameterless.
+        if (typeText is "MockHttpClient" or "MockHttpResponseMessage"
+            or "MockHttpContent" or "MockHttpRequestMessage"
+            && visited.ArgumentList?.Arguments.Count == 1)
         {
             return visited.WithArgumentList(SyntaxFactory.ArgumentList());
         }

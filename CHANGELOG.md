@@ -22,6 +22,17 @@ All notable changes to this project are documented here. Format based on
   are blocked, warned, or errored, the pipeline reports failure — only a fully
   green run is considered a pass.
 
+### Added
+- **HTTP mock types** — `NavHttpClient`, `NavHttpResponseMessage`, `NavHttpContent`,
+  `NavHttpHeaders`, and `NavHttpRequestMessage` are replaced with in-memory mocks
+  (`MockHttpClient`, `MockHttpResponseMessage`, `MockHttpContent`, `MockHttpHeaders`,
+  `MockHttpRequestMessage`) that work without `NavSession`. `HttpContent.WriteFrom(Text)`
+  / `ReadAs(var Text)` round-trips text. `HttpResponseMessage` defaults to status 200.
+  `HttpHeaders.Add/Contains/Remove` work. `HttpClient.Send/Get/Post/Put/Delete/Patch`
+  throw descriptive `NotSupportedException` recommending AL interface injection.
+  `HttpContent.WriteFrom(InStream)` / `ReadAs(var InStream)` now round-trip content
+  (previously ReadAs returned an empty stream). (#123)
+
 ### Improved
 - **XmlPort & Query runtime error messages** — `MockXmlPortHandle.Import/Export`
   and `MockQueryHandle.Open/Read` now throw descriptive `NotSupportedException`

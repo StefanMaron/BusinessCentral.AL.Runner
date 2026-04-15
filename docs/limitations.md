@@ -90,11 +90,20 @@ dispatch, and report/request-page variables support a limited standalone surface
   helper procedures, `Run()`, and `RunRequestPage()`, but report layout/rendering
   behavior is still not available.
 
-### No HTTP
+### HTTP — partial support
 
-The runner has no network access. `HttpClient`, `HttpRequestMessage`, and similar
-calls will fail. Inject these dependencies via an AL interface if you want to unit
-test the logic around HTTP calls.
+HTTP types (`HttpClient`, `HttpRequestMessage`, `HttpResponseMessage`, `HttpContent`,
+`HttpHeaders`) are replaced with in-memory mocks. The following works:
+
+- `HttpContent.WriteFrom(Text)` / `ReadAs(var Text)` — text round-trip
+- `HttpContent.WriteFrom(InStream)` / `ReadAs(var InStream)` — stream round-trip
+- `HttpResponseMessage.HttpStatusCode()` (default 200), `IsSuccessStatusCode()`
+- `HttpHeaders.Add()`, `Contains()`, `Remove()`
+- `HttpRequestMessage.Method()`, `SetRequestUri()`, `Content()`
+
+**Not supported:** `HttpClient.Send()`, `Get()`, `Post()`, `Put()`, `Delete()`,
+`Patch()` — these throw `NotSupportedException`. Inject HTTP dependencies via an
+AL interface if you want to unit test the logic around HTTP calls.
 
 ---
 

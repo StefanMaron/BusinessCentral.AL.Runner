@@ -1,0 +1,66 @@
+namespace AlRunner.Runtime;
+
+using Microsoft.Dynamics.Nav.Runtime;
+using Microsoft.Dynamics.Nav.Types;
+
+/// <summary>
+/// Stub for <c>NavHttpContent</c> / AL's <c>HttpContent</c> variable.
+///
+/// BC emits <c>new NavHttpContent(this)</c> in scope-class field initialisers.
+/// The real ctor takes an ITreeObject parent whose <c>.Tree</c> must not be null.
+/// The rewriter rewrites the type to <c>MockHttpContent</c> and strips the arg.
+///
+/// Stores text content in memory. WriteFrom stores text; ReadAs retrieves it.
+/// The stream overloads are redirected by the rewriter through
+/// <c>AlCompat.HttpContentLoadFrom</c> / <c>AlCompat.HttpContentReadAs</c>.
+/// </summary>
+public class MockHttpContent
+{
+    private string _textContent = "";
+    private MockHttpHeaders _headers = new();
+
+    public MockHttpContent() { }
+
+    /// <summary>
+    /// BC emits the text variant: <c>content.ALLoadFrom(new NavText(...))</c>
+    /// for <c>HttpContent.WriteFrom(Text)</c>. This is called from AlCompat
+    /// after the rewriter redirect.
+    /// </summary>
+    public void ALLoadFrom(NavText text)
+    {
+        _textContent = text?.ToString() ?? "";
+    }
+
+    /// <summary>
+    /// BC emits the 2-arg text variant:
+    /// <c>content.ALReadAs(DataError, ByRef&lt;NavText&gt;)</c>
+    /// for <c>HttpContent.ReadAs(var Text)</c>. Called directly on the mock.
+    /// </summary>
+    public void ALReadAs(DataError errorLevel, ByRef<NavText> text)
+    {
+        text.Value = new NavText(_textContent);
+    }
+
+    /// <summary>Content headers. BC emits <c>content.ALGetHeaders</c>.</summary>
+    public MockHttpHeaders ALGetHeaders => _headers;
+
+    /// <summary>
+    /// ALAssign for the ByRef pattern and <c>content := response.Content</c>.
+    /// </summary>
+    public void ALAssign(MockHttpContent other)
+    {
+        if (other == null) return;
+        _textContent = other._textContent;
+        _headers = other._headers;
+    }
+
+    /// <summary>Returns the currently stored text content.</summary>
+    public string GetText() => _textContent;
+
+    /// <summary>No-op Clear.</summary>
+    public void Clear()
+    {
+        _textContent = "";
+        _headers = new();
+    }
+}

@@ -292,8 +292,13 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   (in-memory byte buffer; sufficient for text round-trip tests).
   InStream also supports Length, Position, ResetPosition for byte-level stream operations.
 - HttpContent.WriteFrom(InStream) / ReadAs(var InStream) — compile and run in standalone
-  mode; WriteFrom reads the in-memory stream bytes as text content; ReadAs sets the target
-  InStream to an empty stream (HTTP send/receive is not available without a service tier)
+  mode; WriteFrom reads the in-memory stream bytes as text content; ReadAs returns a
+  MockInStream populated with the stored content (round-trip from WriteFrom).
+- HttpClient, HttpRequestMessage, HttpResponseMessage, HttpContent, HttpHeaders — all
+  HTTP types are replaced with in-memory mocks. HttpContent.WriteFrom(Text)/ReadAs(var Text)
+  round-trips text. HttpResponseMessage default status is 200. HttpHeaders supports
+  Add/Contains/Remove. HttpClient.Send/Get/Post/Put/Delete/Patch throw
+  NotSupportedException (use AL interface injection for HTTP-dependent code).
 - File dialog stubs: UploadIntoStream (5-arg and 6-arg), DownloadFromStream (4 overloads) —
   all return false in standalone mode (no client UI). Compile and run without error.
 - Library - Variable Storage (codeunit 131004) — Enqueue, DequeueText, DequeueInteger,
@@ -367,7 +372,10 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   abstract XmlPort dependencies for testing.
 - Query data access (Open/Read) — queries require the BC service tier (SQL views);
   use Record operations instead, or inject the query behind an AL interface
-- HTTP / REST calls — inject via AL interface
+- HTTP / REST calls — HttpClient.Send/Get/Post etc. throw NotSupportedException;
+  inject actual HTTP dependencies via AL interface. HttpContent text round-trip,
+  HttpHeaders, HttpResponseMessage properties, and HttpRequestMessage construction
+  all work without the service tier.
 - Event subscribers — Custom IntegrationEvent/BusinessEvent dispatch works with
   IncludeSender support. Implicit DB trigger events (OnBefore/AfterInsert/Modify/
   Delete/Validate) fire. Subscriber parameters are forwarded. BindSubscription/

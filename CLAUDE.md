@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Run Business Central AL unit tests in milliseconds — no BC service tier, no Docker, no SQL Server, no license.
 
-The goal is **broad AL language compatibility**: any AL codeunit that can run without the BC service tier should compile and execute here. All AL code should compile without modification. The only acceptable reason to restructure AL code is to implement dependency injection or stubs for features that are architecturally out of scope (e.g. HTTP, real page rendering).
+The goal is **broad AL language compatibility**: any AL codeunit that can run without the BC service tier should compile and execute here. All AL code should compile without modification. The only acceptable reason to restructure AL code is to implement dependency injection or stubs for features that are architecturally out of scope (e.g. actual HTTP network calls, real page rendering).
 
-Hard architectural limits (parallel session contracts, real transaction isolation, service-tier rendering, HTTP) are the only non-negotiable gaps. Everything else is a gap to close. See `docs/limitations.md` for the full breakdown.
+Hard architectural limits (parallel session contracts, real transaction isolation, service-tier rendering, HTTP network I/O) are the only non-negotiable gaps. Everything else is a gap to close. See `docs/limitations.md` for the full breakdown.
 
 ---
 
