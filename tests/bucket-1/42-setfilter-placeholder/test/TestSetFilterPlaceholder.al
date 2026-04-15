@@ -1,4 +1,4 @@
-codeunit 54500 "Test SetFilter Placeholder"
+codeunit 54520 "Test SetFilter Placeholder"
 {
     Subtype = Test;
 
