@@ -55,12 +55,12 @@ public static class DiagnosticClassifier
     }
 
     /// <summary>
-    /// Returns true when an AL0275 diagnostic message describes a cross-extension
-    /// collision: both sides name different extensions. This happens when multiple
-    /// extensions compiled together define extension objects (pageextension,
-    /// tableextension, etc.) with the same name — valid in production BC where
-    /// extensions compile independently, but triggers false AL0275 in the runner's
-    /// single-pass compilation.
+    /// Returns true when an AL0275 diagnostic message names two *different* extensions.
+    /// This is a building-block check — callers must additionally verify that the
+    /// ambiguous object name belongs to an extension type (PageExtension, TableExtension,
+    /// etc.) before suppressing. See Program.cs Case 3 for the two-pass approach that
+    /// uses this method together with <see cref="IsCrossExtensionDuplicateDeclaration"/>
+    /// to suppress only extension-object collisions, never regular object ambiguities.
     /// </summary>
     public static bool IsCrossExtensionAmbiguity(string message)
     {

@@ -179,6 +179,56 @@ public class DiagnosticClassifierTests
     }
 
     [Fact]
+    public void IsCrossExtensionDuplicateDeclaration_ReportExtensionType_ReturnsTrue()
+    {
+        var msg = "An application object of type 'ReportExtension' with name 'InvoiceExt' " +
+                  "is already declared by the extension 'AppAlpha by Publisher A (1.0.0.0)'";
+        Assert.True(DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration(msg));
+    }
+
+    [Fact]
+    public void IsCrossExtensionDuplicateDeclaration_PermissionSetExtensionType_ReturnsTrue()
+    {
+        var msg = "An application object of type 'PermissionSetExtension' with name 'MyPermExt' " +
+                  "is already declared by the extension 'AppAlpha by Publisher A (1.0.0.0)'";
+        Assert.True(DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration(msg));
+    }
+
+    [Fact]
+    public void IsCrossExtensionDuplicateDeclaration_ProfileExtensionType_ReturnsTrue()
+    {
+        var msg = "An application object of type 'ProfileExtension' with name 'AccountantExt' " +
+                  "is already declared by the extension 'AppAlpha by Publisher A (1.0.0.0)'";
+        Assert.True(DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration(msg));
+    }
+
+    [Fact]
+    public void IsCrossExtensionDuplicateDeclaration_ReportType_ReturnsFalse()
+    {
+        // Report is NOT an extension type — must NOT be suppressed
+        var msg = "An application object of type 'Report' with name 'My Report' " +
+                  "is already declared by the extension 'AppAlpha by Publisher A (1.0.0.0)'";
+        Assert.False(DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration(msg));
+    }
+
+    [Fact]
+    public void IsCrossExtensionDuplicateDeclaration_EnumType_ReturnsFalse()
+    {
+        // Enum (not EnumExtension) is NOT an extension type — must NOT be suppressed
+        var msg = "An application object of type 'Enum' with name 'My Enum' " +
+                  "is already declared by the extension 'AppAlpha by Publisher A (1.0.0.0)'";
+        Assert.False(DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration(msg));
+    }
+
+    [Fact]
+    public void IsCrossExtensionDuplicateDeclaration_QueryType_ReturnsFalse()
+    {
+        var msg = "An application object of type 'Query' with name 'My Query' " +
+                  "is already declared by the extension 'AppAlpha by Publisher A (1.0.0.0)'";
+        Assert.False(DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration(msg));
+    }
+
+    [Fact]
     public void IsCrossExtensionDuplicateDeclaration_UnrelatedMessage_ReturnsFalse()
     {
         Assert.False(DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration("some other error"));
