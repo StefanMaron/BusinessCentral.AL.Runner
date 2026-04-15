@@ -7,6 +7,13 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **`Record.CalcSums` implementation (#293)** — `ALCalcSums` was a no-op stub; now
+  sums each requested field across all records matching the current filters and writes
+  the result back into the record's fields. Integer fields stay `NavInteger`; Decimal
+  fields become `NavDecimal`. New suite `tests/bucket-1/51-calcsums` adds 6 proving
+  tests: Decimal sum, Integer sum, filtered sum, multi-field sum, empty result (→ 0),
+  and filter-excludes-all (→ 0). Coverage map: `Table.CalcSums` moved from `gap` to
+  `covered`.
 - **`Record.DeleteAll` coverage (#289)** — `ALDeleteAll` was already fully
   implemented in `MockRecordHandle` (no-filter variant clears all rows; filter
   variant removes only matching rows). New suite `tests/bucket-1/50-deleteall`

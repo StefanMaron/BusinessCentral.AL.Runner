@@ -1311,12 +1311,27 @@ public class MockRecordHandle
     }
 
     /// <summary>
-    /// AL's CALCSUMS — calculates sum of specified fields across filtered records.
-    /// Returns true; the actual sum is not computed (would need field metadata to know types).
+    /// AL's CALCSUMS — calculates sum of specified fields across all records that match
+    /// the current filters and writes each sum back into the corresponding field on this record.
     /// </summary>
     public bool ALCalcSums(DataError errorLevel, params int[] fieldNos)
     {
-        // No-op stub: real implementation would sum over filtered records
+        var rows = GetFilteredRecords();
+        foreach (var fieldNo in fieldNos)
+        {
+            decimal sum = 0m;
+            bool isInteger = true;
+            foreach (var row in rows)
+            {
+                if (!row.TryGetValue(fieldNo, out var val)) continue;
+                if (!(val is NavInteger) && !(val is NavBigInteger))
+                    isInteger = false;
+                sum += NavValueToDecimal(val);
+            }
+            _fields[fieldNo] = isInteger
+                ? (NavValue)NavInteger.Create((int)sum)
+                : NavDecimal.Create(new Decimal18(sum));
+        }
         return true;
     }
 

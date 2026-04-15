@@ -5622,8 +5622,10 @@ Table.CalcFields:
 Table.CalcSums:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests:
+    - tests/bucket-1/51-calcsums
+  notes: overloads=1; sums filtered records and writes result back into the record fields
 
 Table.ChangeCompany:
   layer: runtime-api
