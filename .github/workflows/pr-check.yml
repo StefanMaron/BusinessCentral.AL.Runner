@@ -13,7 +13,7 @@ jobs:
       !contains(github.event.pull_request.labels.*.name, 'docs-only') &&
       !contains(github.event.pull_request.labels.*.name, 'no-tests-needed')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 

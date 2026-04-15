@@ -16,8 +16,8 @@ jobs:
     outputs:
       matrix: ${{ steps.resolve.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '8.0.x'
       - name: Resolve BC versions
@@ -48,8 +48,8 @@ jobs:
     env:
       BC_VERSION: ${{ matrix.bc-version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: |
             8.0.x
