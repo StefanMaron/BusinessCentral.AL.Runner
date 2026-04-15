@@ -7,6 +7,12 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Test coverage: `Record.FindLast()` (#258)** — `MockRecordHandle.ALFindLast`
+  was already implemented; new suite `tests/bucket-1/258-findlast` adds 6
+  proving tests: unfiltered positions to last PK, empty table returns false,
+  filtered set returns filtered last, filter with no matches returns false,
+  `SetFilter('<>Z')` proves filters are honoured (returns M, not Z), and
+  `FindFirst`/`FindLast` return different records.
 - **Test coverage: `Record.IsTemporary()` (#254)** — `MockRecordHandle.ALIsTemporary`
   was already implemented; new suite `tests/bucket-1/254-record-istemporary`
   adds 5 proving tests: normal Record → false, `temporary` Record → true,
