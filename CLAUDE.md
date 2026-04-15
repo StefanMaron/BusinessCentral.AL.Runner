@@ -139,13 +139,14 @@ dotnet run --project AlRunner -- ./src ./test
 | `AlRunner/PackageScanner.cs` | .app file scanning and deduplication |
 | `AlRunner/StubGenerator.cs` | `--generate-stubs` command |
 | `AlRunner/Runtime/AlScope.cs` | Base scope, AlDialog (Error/Message + ErrorInfo), AlCompat (Format, RoundDateTime, utility stubs), MockDialog, collectible errors state |
-| `AlRunner/Runtime/MockRecordHandle.cs` | In-memory record store (filtering, composite PKs, sort, triggers) |
+| `AlRunner/Runtime/MockRecordHandle.cs` | In-memory record store (filtering, composite PKs, sort, triggers, temp records, CalcFields) |
 | `AlRunner/Runtime/MockCodeunitHandle.cs` | Cross-codeunit dispatch via reflection |
 | `AlRunner/Runtime/EventSubscriberRegistry.cs` | Event subscriber discovery + dispatch |
 | `AlRunner/Runtime/HandlerRegistry.cs` | Test handler dispatch (ConfirmHandler, MessageHandler, ModalPageHandler, RequestPageHandler) |
 | `AlRunner/Runtime/MockTestPageHandle.cs` | TestPage mock with full lifecycle, field access, navigation |
-| `AlRunner/Runtime/MockRecordRef.cs` | RecordRef backed by MockRecordHandle; Mark/ClearMarks (stubs), Rename, FieldExists, HasFilter, GetPosition, Ascending, ModifyAll |
-| `AlRunner/Runtime/MockFieldRef.cs` | FieldRef with value get/set, range/filter, ALSetTable (no-op stub for BC compiler page API extensions) |
+| `AlRunner/Runtime/MockRecordRef.cs` | RecordRef backed by MockRecordHandle; Mark/ClearMarks (stubs), Rename, FieldExists, HasFilter, GetPosition, Ascending, ModifyAll, system-field number accessors (SystemIdNo, SystemCreatedAtNo, SystemCreatedByNo, SystemModifiedAtNo, SystemModifiedByNo) |
+| `AlRunner/Runtime/MockFieldRef.cs` | FieldRef with value get/set, range/filter, Name/Caption/Type/Length from metadata, enum introspection (IsEnum, EnumValueCount, GetEnumValueName/Caption/Ordinal), CalcSum, ALSetTable (no-op stub) |
+| `AlRunner/Runtime/TableFieldRegistry.cs` | Transpile-time AL field metadata registry (field name/caption/type/length, table name/caption, enum field names, PK extraction) |
 | `AlRunner/Runtime/MockNotification.cs` | In-memory Notification mock: Message, Send, Recall, SetData/GetData/HasData, AddAction, Id, Scope |
 | `AlRunner/Runtime/MockTaskScheduler.cs` | TaskScheduler stubs: CreateTask (sync dispatch), TaskExists, CancelTask, SetTaskReady |
 | `AlRunner/Runtime/MockDataTransfer.cs` | DataTransfer stubs: SetTables, AddFieldValue, AddConstantValue, CopyFields, CopyRows (no-ops) |

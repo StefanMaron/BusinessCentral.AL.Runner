@@ -39,8 +39,8 @@ public class MockXmlPortHandle
     /// </summary>
     public void Import(object? errorLevel = null)
         => throw new NotSupportedException(
-            $"XmlPort.Import is not supported in al-runner standalone mode. " +
-            "Inject the XmlPort dependency via an AL interface to make this code unit-testable.");
+            $"XmlPort {XmlPortId} Import requires the BC service tier and is not supported by al-runner. " +
+            "Use AL interface injection to abstract XmlPort dependencies for testing.");
 
     /// <summary>
     /// Instance <c>XP.Export()</c>. Always throws — XmlPort I/O requires the service tier.
@@ -48,8 +48,8 @@ public class MockXmlPortHandle
     /// </summary>
     public void Export(object? errorLevel = null)
         => throw new NotSupportedException(
-            $"XmlPort.Export is not supported in al-runner standalone mode. " +
-            "Inject the XmlPort dependency via an AL interface to make this code unit-testable.");
+            $"XmlPort {XmlPortId} Export requires the BC service tier and is not supported by al-runner. " +
+            "Use AL interface injection to abstract XmlPort dependencies for testing.");
 
     /// <summary>
     /// Dispatch a plain helper procedure on the XmlPort (e.g. custom triggers).
@@ -69,8 +69,8 @@ public class MockXmlPortHandle
     /// </summary>
     public static void StaticImport(object? errorLevel, int xmlPortId, object? stream, object? rec = null)
         => throw new NotSupportedException(
-            $"XmlPort.Import (XmlPort {xmlPortId}) is not supported in al-runner standalone mode. " +
-            "Inject the XmlPort dependency via an AL interface to make this code unit-testable.");
+            $"XmlPort {xmlPortId} Import requires the BC service tier and is not supported by al-runner. " +
+            "Use AL interface injection to abstract XmlPort dependencies for testing.");
 
     /// <summary>
     /// Static <c>XmlPort.Export(portId, OutStr [, Rec])</c> stub.
@@ -78,6 +78,6 @@ public class MockXmlPortHandle
     /// </summary>
     public static void StaticExport(object? errorLevel, int xmlPortId, object? stream, object? rec = null)
         => throw new NotSupportedException(
-            $"XmlPort.Export (XmlPort {xmlPortId}) is not supported in al-runner standalone mode. " +
-            "Inject the XmlPort dependency via an AL interface to make this code unit-testable.");
+            $"XmlPort {xmlPortId} Export requires the BC service tier and is not supported by al-runner. " +
+            "Use AL interface injection to abstract XmlPort dependencies for testing.");
 }

@@ -6,7 +6,42 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Improved
+- **XmlPort & Query runtime error messages** — `MockXmlPortHandle.Import/Export`
+  and `MockQueryHandle.Open/Read` now throw descriptive `NotSupportedException`
+  messages that mention "BC service tier" and suggest "AL interface injection"
+  (XmlPort) or "Record operations" (Query) as actionable alternatives. (#124)
+
 ### Added
+- **Field metadata infrastructure** — `TableFieldRegistry` now parses and stores
+  field-level metadata (name, caption, type, length) and table-level metadata
+  (name, caption) from AL source at transpile time. `MockRecordHandle.ALFieldCaption`,
+  `ALTableCaption`, `ALTableName` return real values from the registry (falling back
+  to stub defaults for unregistered tables). `MockFieldRef.ALName`, `ALCaption`,
+  `ALType`, `ALLength` use the registry. `MockRecordRef.ALName` and `ALFieldCount`
+  return schema-based values. `MockRecordHandle.FieldCount` returns the schema field
+  count when metadata is available. Caption values with embedded apostrophes
+  (e.g. `'Vendor''s Name'`) are unescaped correctly. (#114)
+- **Temporary records** — `Record "X" temporary` variables now use an isolated in-memory
+  store per handle instance, fully separated from non-temporary records of the same table.
+  `IsTemporary()` returns the correct value. `RecordRef.Open(tableId, true)` creates a
+  temporary RecordRef. (#120)
+- **FlowField CalcFormula: count, sum, lookup** — `CalcFields` now evaluates `count(...)`,
+  `sum(...)`, and `lookup(...)` formulas in addition to the existing `exist(...)` support.
+  Count returns the number of matching rows, Sum aggregates a decimal field, and Lookup
+  returns the target field value from the first matching row. (#120)
+- **FieldRef enum introspection** — `MockFieldRef` now supports `ALIsEnum`,
+  `ALOptionValueCount()`, `ALGetOptionValueName(index)`,
+  `ALGetOptionValueCaption(index)`, and `ALGetOptionValueOrdinal(index)`.
+  These methods use `TableFieldRegistry` (which now parses `Enum "X"` field
+  type declarations) and `EnumRegistry.GetMembersByName()` to resolve enum
+  metadata at runtime. (#126)
+- **FieldRef.CalcSum** — `MockFieldRef.ALCalcSum()` sums a field's values
+  across all filtered records in the underlying table. The result is returned
+  via the next `ALValue` read, matching BC's CalcSum semantics. (#126)
+- **RecordRef system-field number accessors** — Added `ALSystemCreatedAtNo`
+  (2000000001), `ALSystemCreatedByNo` (2000000002), and `ALSystemModifiedByNo`
+  (2000000004) to `MockRecordRef`. (#126)
 - **ErrorInfo type & collectible errors** — `Error(ErrorInfo)` now uses
   `ErrorInfo.Message` for the error text (previously used `.ToString()` which
   included internal field metadata). Collectible errors are fully supported:

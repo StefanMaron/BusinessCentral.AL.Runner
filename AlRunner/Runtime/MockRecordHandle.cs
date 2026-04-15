@@ -20,6 +20,11 @@ public class MockRecordHandle
     public int TableId => _tableId;
     private Dictionary<int, NavValue> _fields = new();
 
+    // Whether this handle represents a temporary record variable.
+    private readonly bool _isTemporary;
+    // Private row store for temporary records — isolated from the global _tables.
+    private readonly List<Dictionary<int, NavValue>>? _tempRows;
+
     // Global in-memory table store: tableId -> list of rows (each row = dict of fieldNo -> NavValue)
     private static readonly Dictionary<int, List<Dictionary<int, NavValue>>> _tables = new();
 
@@ -41,12 +46,29 @@ public class MockRecordHandle
     // Field name -> field number mapping per table (registered via RegisterFieldName)
     private static readonly Dictionary<int, Dictionary<string, int>> _fieldNames = new();
 
-    public MockRecordHandle(int tableId)
+    public MockRecordHandle(int tableId) : this(tableId, false) { }
+
+    public MockRecordHandle(int tableId, bool temporary)
     {
         _tableId = tableId;
-        if (!_tables.ContainsKey(tableId))
-            _tables[tableId] = new List<Dictionary<int, NavValue>>();
+        _isTemporary = temporary;
+        if (temporary)
+        {
+            _tempRows = new List<Dictionary<int, NavValue>>();
+        }
+        else
+        {
+            if (!_tables.ContainsKey(tableId))
+                _tables[tableId] = new List<Dictionary<int, NavValue>>();
+        }
     }
+
+    /// <summary>
+    /// Returns the row list for this handle — the private temp store for
+    /// temporary records, or the shared global table for non-temporary ones.
+    /// </summary>
+    private List<Dictionary<int, NavValue>> GetRows()
+        => _isTemporary ? _tempRows! : _tables[_tableId];
 
     /// <summary>Reset all tables between test runs.</summary>
     public static void ResetAll()
@@ -269,7 +291,7 @@ public class MockRecordHandle
 
     public bool ALInsert(DataError errorLevel, bool runTrigger)
     {
-        var table = _tables[_tableId];
+        var table = GetRows();
 
         // Fire OnBeforeInsertEvent(var Rec, RunTrigger: Boolean)
         // — always fires, regardless of runTrigger
@@ -388,12 +410,13 @@ public class MockRecordHandle
 
     /// <summary>
     /// Create a snapshot of the current field bag (for xRec) before a mutation.
-    /// Returns a new MockRecordHandle sharing the same table store but with
-    /// a copy of the current field values.
+    /// Returns a new MockRecordHandle with a copy of the current field values.
+    /// The temporary flag is preserved so that <c>xRec.IsTemporary()</c> returns
+    /// the same value as the original record.
     /// </summary>
     private MockRecordHandle SnapshotForXRec()
     {
-        var xRec = new MockRecordHandle(_tableId);
+        var xRec = new MockRecordHandle(_tableId, _isTemporary);
         foreach (var kv in _fields)
             xRec._fields[kv.Key] = kv.Value;
         return xRec;
@@ -403,7 +426,7 @@ public class MockRecordHandle
 
     public bool ALModify(DataError errorLevel, bool runTrigger)
     {
-        var table = _tables[_tableId];
+        var table = GetRows();
         var pkFields = GetPrimaryKeyFields();
 
         // Capture xRec (snapshot before mutation) for event subscribers
@@ -442,8 +465,8 @@ public class MockRecordHandle
 
     public void ALModifyAllSafe(int fieldNo, NavType expectedType, NavValue value, bool runTrigger)
     {
-        if (!_tables.TryGetValue(_tableId, out var table))
-            return;
+        var table = GetRows();
+        if (table.Count == 0) return;
         var filtered = GetFilteredRecords();
         var pkFields = GetPrimaryKeyFields();
         foreach (var filteredRow in filtered)
@@ -462,7 +485,7 @@ public class MockRecordHandle
 
     public bool ALGet(DataError errorLevel, params NavValue[] keyValues)
     {
-        var table = _tables[_tableId];
+        var table = GetRows();
         var pkFields = GetPrimaryKeyFields();
         foreach (var row in table)
         {
@@ -490,8 +513,7 @@ public class MockRecordHandle
 
     public bool ALGetBySystemId(DataError errorLevel, Guid systemId)
     {
-        if (!_tables.TryGetValue(_tableId, out var table))
-            return false;
+        var table = GetRows();
 
         foreach (var row in table)
         {
@@ -601,7 +623,7 @@ public class MockRecordHandle
 
     public bool ALDelete(DataError errorLevel, bool runTrigger = false)
     {
-        var table = _tables[_tableId];
+        var table = GetRows();
         var pkFields = GetPrimaryKeyFields();
 
         // Fire OnBeforeDeleteEvent(var Rec, RunTrigger: Boolean)
@@ -644,12 +666,12 @@ public class MockRecordHandle
         if (_filters.Count == 0)
         {
             // No filters: delete all records in the table
-            _tables[_tableId] = new List<Dictionary<int, NavValue>>();
+            GetRows().Clear();
         }
         else
         {
             // Filters active: only delete matching records
-            var table = _tables[_tableId];
+            var table = GetRows();
             var toRemove = GetFilteredRecords();
             var toRemoveKeys = new HashSet<string>(
                 toRemove.Select(r => RowKey(r)));
@@ -813,8 +835,18 @@ public class MockRecordHandle
 
     public bool ALIsEmpty => GetFilteredRecords().Count == 0;
 
-    /// <summary>Number of fields that have been set on this record handle.</summary>
-    public int FieldCount => _fields.Count;
+    /// <summary>
+    /// Number of fields that have been set on this record handle.
+    /// When table schema metadata is available, returns the schema field count instead.
+    /// </summary>
+    public int FieldCount
+    {
+        get
+        {
+            var schemaCount = TableFieldRegistry.GetFieldCount(_tableId);
+            return schemaCount > 0 ? schemaCount : _fields.Count;
+        }
+    }
 
     /// <summary>Whether any filters are currently active on this record handle.</summary>
     public bool FiltersActive => _filters.Count > 0;
@@ -823,9 +855,7 @@ public class MockRecordHandle
     public bool HasField(int fieldNo)
     {
         if (_fields.ContainsKey(fieldNo)) return true;
-        if (_tables.TryGetValue(_tableId, out var rows))
-            return rows.Any(r => r.ContainsKey(fieldNo));
-        return false;
+        return GetRows().Any(r => r.ContainsKey(fieldNo));
     }
 
     /// <summary>
@@ -1025,8 +1055,15 @@ public class MockRecordHandle
     /// <summary>
     /// AL's CALCFIELDS — calculates FlowFields by consulting the
     /// transpile-time <see cref="CalcFormulaRegistry"/> and evaluating
-    /// <c>exist(...)</c> formulas against the in-memory tables.
-    /// Other formula kinds (count/sum/lookup/...) remain no-ops.
+    /// formulas against the in-memory tables. Supported kinds:
+    /// <list type="bullet">
+    ///   <item><c>exist(...)</c> — sets the field to <c>true</c> if any matching row exists.</item>
+    ///   <item><c>count(...)</c> — sets the field to the number of matching rows.</item>
+    ///   <item><c>sum(...)</c> — sets the field to the aggregate decimal sum of the target field.</item>
+    ///   <item><c>lookup(...)</c> — sets the field to the target field value of the first matching row,
+    ///     or clears it to default when no rows match.</item>
+    /// </list>
+    /// Other formula kinds (<c>min</c>/<c>max</c>/<c>average</c>) remain no-ops.
     /// </summary>
     public void ALCalcFields(DataError errorLevel, params int[] fieldNos)
     {
@@ -1035,32 +1072,86 @@ public class MockRecordHandle
             var formula = CalcFormulaRegistry.Find(_tableId, fieldNo);
             if (formula is null) continue;
 
-            if (formula.Kind == CalcFormulaRegistry.FormulaKind.Exist)
+            switch (formula.Kind)
             {
-                bool exists = EvaluateExistFormula(formula);
-                _fields[fieldNo] = NavBoolean.Create(exists);
+                case CalcFormulaRegistry.FormulaKind.Exist:
+                {
+                    var rows = GetMatchingRows(formula);
+                    _fields[fieldNo] = NavBoolean.Create(rows.Any());
+                    break;
+                }
+                case CalcFormulaRegistry.FormulaKind.Count:
+                {
+                    var rows = GetMatchingRows(formula);
+                    _fields[fieldNo] = NavInteger.Create(rows.Count);
+                    break;
+                }
+                case CalcFormulaRegistry.FormulaKind.Sum:
+                {
+                    var rows = GetMatchingRows(formula);
+                    var targetId = CalcFormulaRegistry.GetTableIdByName(formula.TargetTableName);
+                    var aggFieldId = targetId.HasValue && formula.TargetAggregateField != null
+                        ? ResolveField(targetId.Value, formula.TargetAggregateField)
+                        : null;
+                    decimal sum = 0m;
+                    if (aggFieldId.HasValue)
+                    {
+                        foreach (var row in rows)
+                        {
+                            if (row.TryGetValue(aggFieldId.Value, out var val))
+                                sum += NavValueToDecimal(val);
+                        }
+                    }
+                    _fields[fieldNo] = NavDecimal.Create(new Decimal18(sum));
+                    break;
+                }
+                case CalcFormulaRegistry.FormulaKind.Lookup:
+                {
+                    var rows = GetMatchingRows(formula);
+                    var targetId = CalcFormulaRegistry.GetTableIdByName(formula.TargetTableName);
+                    var aggFieldId = targetId.HasValue && formula.TargetAggregateField != null
+                        ? ResolveField(targetId.Value, formula.TargetAggregateField)
+                        : null;
+                    if (aggFieldId.HasValue && rows.Count > 0 &&
+                        rows[0].TryGetValue(aggFieldId.Value, out var lookupVal))
+                    {
+                        _fields[fieldNo] = lookupVal;
+                    }
+                    else
+                    {
+                        // No matching rows — clear the field so stale values don't persist
+                        _fields.Remove(fieldNo);
+                    }
+                    break;
+                }
             }
         }
     }
 
-    private bool EvaluateExistFormula(CalcFormulaRegistry.Formula formula)
+    /// <summary>
+    /// Resolve a field name to its field ID, preferring the transpile-time
+    /// TableFieldRegistry over runtime RegisterFieldName.
+    /// </summary>
+    private static int? ResolveField(int tableId, string fieldName)
     {
-        var targetId = CalcFormulaRegistry.GetTableIdByName(formula.TargetTableName);
-        if (targetId is null || !_tables.TryGetValue(targetId.Value, out var rows)) return false;
+        var fromRegistry = TableFieldRegistry.GetFieldId(tableId, fieldName);
+        if (fromRegistry.HasValue) return fromRegistry;
+        if (_fieldNames.TryGetValue(tableId, out var dict) &&
+            dict.TryGetValue(fieldName, out var id))
+            return id;
+        return null;
+    }
 
-        // Field name -> field id lookups. Prefer the transpile-time
-        // TableFieldRegistry (populated from AL source at pipeline start)
-        // since runtime RegisterFieldName is only called for tables whose
-        // generated code actually references ALFieldNo(name) somewhere.
-        int? ResolveField(int tableId, string fieldName)
-        {
-            var fromRegistry = TableFieldRegistry.GetFieldId(tableId, fieldName);
-            if (fromRegistry.HasValue) return fromRegistry;
-            if (_fieldNames.TryGetValue(tableId, out var dict) &&
-                dict.TryGetValue(fieldName, out var id))
-                return id;
-            return null;
-        }
+    /// <summary>
+    /// Returns all rows from the target table that match the formula's where-clause
+    /// conditions, evaluated against the current record's field values.
+    /// </summary>
+    private List<Dictionary<int, NavValue>> GetMatchingRows(CalcFormulaRegistry.Formula formula)
+    {
+        var result = new List<Dictionary<int, NavValue>>();
+        var targetId = CalcFormulaRegistry.GetTableIdByName(formula.TargetTableName);
+        if (targetId is null || !_tables.TryGetValue(targetId.Value, out var rows))
+            return result;
 
         foreach (var row in rows)
         {
@@ -1095,7 +1186,6 @@ public class MockRecordHandle
                 }
                 else
                 {
-                    // filter(...) not supported yet — treat as non-matching.
                     allMatch = false;
                     break;
                 }
@@ -1106,9 +1196,9 @@ public class MockRecordHandle
                     break;
                 }
             }
-            if (allMatch) return true;
+            if (allMatch) result.Add(row);
         }
-        return false;
+        return result;
     }
 
     /// <summary>
@@ -1119,6 +1209,47 @@ public class MockRecordHandle
     {
         // No-op stub: real implementation would sum over filtered records
         return true;
+    }
+
+    /// <summary>
+    /// Calculate the sum of a single field across all filtered records.
+    /// Used by MockFieldRef.ALCalcSum to implement FieldRef.CalcSum().
+    /// </summary>
+    internal decimal CalcSumField(int fieldNo)
+    {
+        var rows = GetFilteredRecords();
+        decimal sum = 0;
+        foreach (var row in rows)
+        {
+            if (!row.TryGetValue(fieldNo, out var val)) continue;
+            sum += NavValueToDecimal(val);
+        }
+        return sum;
+    }
+
+    private static decimal NavValueToDecimal(NavValue value)
+    {
+        switch (value)
+        {
+            case NavInteger ni: return (int)ni;
+            case NavBigInteger nbi: return (long)nbi;
+            default: break;
+        }
+        // NavDecimal wraps Decimal18; extract via reflection (same pattern as NavValueToString)
+        if (value is NavDecimal nd)
+        {
+            try
+            {
+                var raw = _navDecimalValueProp?.GetValue(nd);
+                if (raw != null) return Convert.ToDecimal(raw);
+            }
+            catch { }
+        }
+        if (decimal.TryParse(NavValueToString(value),
+            System.Globalization.NumberStyles.Any,
+            System.Globalization.CultureInfo.InvariantCulture, out var d))
+            return d;
+        return 0;
     }
 
     // -----------------------------------------------------------------------
@@ -1152,12 +1283,13 @@ public class MockRecordHandle
     // -----------------------------------------------------------------------
 
     /// <summary>
-    /// AL's FIELDCAPTION — returns the caption of a field. Returns a placeholder
-    /// since we don't have metadata infrastructure.
+    /// AL's FIELDCAPTION — returns the caption of a field. Looks up metadata
+    /// from TableFieldRegistry; falls back to field name, then to "FieldNN".
     /// </summary>
     public NavText ALFieldCaption(int fieldNo)
     {
-        return new NavText($"Field{fieldNo}");
+        var caption = TableFieldRegistry.GetFieldCaption(_tableId, fieldNo);
+        return new NavText(caption ?? $"Field{fieldNo}");
     }
 
     // -----------------------------------------------------------------------
@@ -1277,25 +1409,34 @@ public class MockRecordHandle
     }
 
     /// <summary>
-    /// AL's TABLECAPTION — returns the caption of the table.
-    /// Returns a placeholder since we don't have metadata.
+    /// AL's TABLECAPTION — returns the caption of the table. Looks up metadata
+    /// from TableFieldRegistry; falls back to table name, then to "TableNN".
     /// </summary>
-    public string ALTableCaption => $"Table{_tableId}";
+    public string ALTableCaption
+    {
+        get
+        {
+            var caption = TableFieldRegistry.GetTableCaption(_tableId);
+            if (caption != null) return caption;
+            var name = TableFieldRegistry.GetTableName(_tableId);
+            return name ?? $"Table{_tableId}";
+        }
+    }
 
     /// <summary>
     /// AL's ISTEMPORARY — returns whether this is a temporary record.
-    /// In standalone mode, all records are effectively in-memory, returns false.
     /// </summary>
-    public bool ALIsTemporary => false;
+    public bool ALIsTemporary => _isTemporary;
 
     /// <summary>
-    /// AL's TABLENAME — returns the name of the table.
+    /// AL's TABLENAME — returns the name of the table. Looks up metadata
+    /// from TableFieldRegistry; falls back to "TableNN".
     /// </summary>
-    public string ALTableName => $"Table{_tableId}";
+    public string ALTableName => TableFieldRegistry.GetTableName(_tableId) ?? $"Table{_tableId}";
 
     public bool ALRename(DataError errorLevel, params NavValue[] newKeyValues)
     {
-        var table = _tables[_tableId];
+        var table = GetRows();
         var pkFields = GetPrimaryKeyFields();
 
         // 1. Find the current record in the table by its current PK values
@@ -1371,7 +1512,7 @@ public class MockRecordHandle
     /// </summary>
     private List<Dictionary<int, NavValue>> GetFilteredRecords()
     {
-        var table = _tables[_tableId];
+        var table = GetRows();
         List<Dictionary<int, NavValue>> result;
 
         if (_filters.Count == 0)
