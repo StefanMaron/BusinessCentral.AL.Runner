@@ -4,6 +4,16 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Enum extension test coverage (#227)** — new suite
+  `tests/bucket-1/36-enum-extension` confirms that `enumextension` objects
+  transpile and run correctly: base enum values retain their ordinals,
+  extension values resolve to their declared ordinals (100, 101), and
+  `Format()` / `AsInteger()` work against extension members. Coverage map
+  updated: `enumextension_declaration` moved from `gap` to `covered`.
+
 ## [1.0.15] - 2026-04-15
 
 ### Added

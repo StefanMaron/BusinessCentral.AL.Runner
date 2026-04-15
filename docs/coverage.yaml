@@ -147,7 +147,9 @@ xmlport_declaration:
 enumextension_declaration:
   layer: syntax
   category: extension
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/36-enum-extension
 
 pagecustomization_declaration:
   layer: syntax
