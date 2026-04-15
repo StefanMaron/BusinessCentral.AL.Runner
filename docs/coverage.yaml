@@ -5768,14 +5768,18 @@ Table.Find:
 Table.FindFirst:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests:
+    - tests/bucket-1/52-findfirst
+  notes: overloads=1; positions to first matching record in current key order
 
 Table.FindLast:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests:
+    - tests/bucket-1/258-findlast
+  notes: overloads=1; positions to last matching record in current key order
 
 Table.FindSet:
   layer: runtime-api
