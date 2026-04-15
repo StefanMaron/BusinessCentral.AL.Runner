@@ -913,4 +913,57 @@ public class RunnerErrorClassificationTests
         }
         return count;
     }
+
+    // ── LooksLikeFrameworkVersionMismatch ──
+
+    [Fact]
+    public void FrameworkMismatch_SystemTextJson_ReturnsTrue()
+    {
+        var msg = "Could not load file or assembly 'System.Text.Json, Version=10.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51'.";
+        Assert.True(Executor.LooksLikeFrameworkVersionMismatch(msg));
+    }
+
+    [Fact]
+    public void FrameworkMismatch_MicrosoftExtensions_ReturnsTrue()
+    {
+        var msg = "Could not load file or assembly 'Microsoft.Extensions.Logging, Version=10.0.0.0'.";
+        Assert.True(Executor.LooksLikeFrameworkVersionMismatch(msg));
+    }
+
+    [Fact]
+    public void FrameworkMismatch_BcDll_ReturnsFalse()
+    {
+        // BC runtime DLLs are not framework version mismatches
+        var msg = "Could not load file or assembly 'Microsoft.Dynamics.Nav.Ncl, Version=28.0.0.0'.";
+        Assert.False(Executor.LooksLikeFrameworkVersionMismatch(msg));
+    }
+
+    [Fact]
+    public void FrameworkMismatch_NullMessage_ReturnsFalse()
+    {
+        Assert.False(Executor.LooksLikeFrameworkVersionMismatch(null));
+    }
+
+    [Fact]
+    public void FrameworkMismatch_UnrelatedMessage_ReturnsFalse()
+    {
+        Assert.False(Executor.LooksLikeFrameworkVersionMismatch("Object reference not set to an instance of an object."));
+    }
+
+    [Fact]
+    public void PrintResults_FrameworkMismatch_ShowsInstallHint()
+    {
+        var results = new List<AlRunner.TestResult>
+        {
+            new()
+            {
+                Name = "TestSomething",
+                Status = AlRunner.TestStatus.Fail,
+                Message = "Could not load file or assembly 'System.Text.Json, Version=10.0.0.0'."
+            }
+        };
+        var output = CaptureStdOut(() => Executor.PrintResults(results));
+        Assert.Contains("Install .NET 10", output);
+        Assert.Contains("https://dotnet.microsoft.com/download/dotnet/10.0", output);
+    }
 }

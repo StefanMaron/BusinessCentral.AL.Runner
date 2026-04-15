@@ -2406,6 +2406,8 @@ public static class Executor
                 case AlRunner.TestStatus.Fail:
                     Console.WriteLine($"FAIL  {r.Name}");
                     if (r.Message != null) Console.WriteLine($"      {r.Message}");
+                    if (LooksLikeFrameworkVersionMismatch(r.Message))
+                        Console.WriteLine($"      ℹ This BC version requires a newer .NET runtime. Install .NET 10: https://dotnet.microsoft.com/download/dotnet/10.0");
                     if (r.StackTrace != null) Console.Write(r.StackTrace);
                     break;
                 case AlRunner.TestStatus.Error:
@@ -2417,7 +2419,9 @@ public static class Executor
                     {
                         Console.WriteLine($"ERROR {r.Name}");
                         if (r.Message != null) Console.WriteLine($"      {r.Message}");
-                        if (r.IsRunnerBug)
+                        if (LooksLikeFrameworkVersionMismatch(r.Message))
+                            Console.WriteLine($"      ℹ This BC version requires a newer .NET runtime. Install .NET 10: https://dotnet.microsoft.com/download/dotnet/10.0");
+                        else if (r.IsRunnerBug)
                             Console.WriteLine($"      ⚑ Runner limitation — update al-runner or file an issue at https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues");
                         else
                             Console.WriteLine($"      Inject this dependency via an AL interface.");
@@ -2607,6 +2611,20 @@ public static class Executor
             IsMissingBcRuntimeAssemblyName(fle.Message),
         _ => false
     };
+
+    /// <summary>
+    /// Returns true when a test result message looks like a .NET framework assembly
+    /// version mismatch — e.g. BC 28 DLLs requesting System.Text.Json 10.0 on .NET 8.
+    /// Used to print actionable guidance; does NOT change error classification.
+    /// </summary>
+    public static bool LooksLikeFrameworkVersionMismatch(string? message)
+    {
+        if (message == null) return false;
+        if (!message.Contains("Could not load file or assembly", StringComparison.OrdinalIgnoreCase))
+            return false;
+        return message.Contains("'System.", StringComparison.Ordinal) ||
+               message.Contains("'Microsoft.Extensions.", StringComparison.Ordinal);
+    }
 
     /// <summary>
     /// Get the AL source column from the last StmtHit that was executed before

@@ -51,19 +51,17 @@ jobs:
           dotnet-version: |
             8.0.x
             9.0.x
+            10.0.x
 
       - name: Build (auto-downloads BC ${{ matrix.bc-version }} DLLs)
         run: |
           dotnet build AlRunner.slnx -p:_BCVersion=${{ matrix.bc-version }}
           echo "BC_SERVICE_TIER_PATH=${HOME}/.local/share/al-runner/artifacts/${{ matrix.bc-version }}" >> "$GITHUB_ENV"
 
-      - name: Run C# tests (net8.0)
-        run: dotnet test AlRunner.Tests/AlRunner.Tests.csproj --no-build --framework net8.0 --verbosity minimal
+      - name: Run C# tests
+        run: dotnet test AlRunner.Tests/AlRunner.Tests.csproj --no-build --framework net10.0 --verbosity minimal
 
-      - name: Run C# tests (net9.0)
-        run: dotnet test AlRunner.Tests/AlRunner.Tests.csproj --no-build --framework net9.0 --verbosity minimal
-
-      - name: Run AL test buckets (net8.0)
+      - name: Run AL test buckets
         run: |
           for bucket in tests/bucket-*/; do
             args=""
@@ -75,42 +73,16 @@ jobs:
               [ -d "${suite}test" ] && args="$args ${suite}test"
             done
             echo "=== $bucket ==="
-            dotnet run --no-build --project AlRunner --framework net8.0 -- --strict $args
+            dotnet run --no-build --project AlRunner --framework net10.0 -- --strict $args
           done
 
-      - name: Run AL test buckets (net9.0)
+      - name: Run stubs test
         run: |
-          for bucket in tests/bucket-*/; do
-            args=""
-            for suite in "$bucket"*/; do
-              [ -d "${suite}src"  ] && args="$args ${suite}src"
-              for appdir in "${suite}"app*/; do
-                [ -d "$appdir" ] && args="$args $appdir"
-              done
-              [ -d "${suite}test" ] && args="$args ${suite}test"
-            done
-            echo "=== $bucket ==="
-            dotnet run --no-build --project AlRunner --framework net9.0 -- --strict $args
-          done
+          dotnet run --no-build --project AlRunner --framework net10.0 -- --stubs tests/stubs/39-stubs/stubs tests/stubs/39-stubs/src tests/stubs/39-stubs/test
 
-      - name: Run stubs test (net8.0)
+      - name: Verify intentional-failure fixture
         run: |
-          dotnet run --no-build --project AlRunner --framework net8.0 -- --stubs tests/stubs/39-stubs/stubs tests/stubs/39-stubs/src tests/stubs/39-stubs/test
-
-      - name: Run stubs test (net9.0)
-        run: |
-          dotnet run --no-build --project AlRunner --framework net9.0 -- --stubs tests/stubs/39-stubs/stubs tests/stubs/39-stubs/src tests/stubs/39-stubs/test
-
-      - name: Verify intentional-failure fixture (net8.0)
-        run: |
-          dotnet run --no-build --project AlRunner --framework net8.0 -- \
-            tests/excluded/06-intentional-failure/src tests/excluded/06-intentional-failure/test \
-            || rc=$?
-          [ "${rc:-0}" -eq 1 ] || { echo "Expected exit 1, got ${rc:-0}"; exit 1; }
-
-      - name: Verify intentional-failure fixture (net9.0)
-        run: |
-          dotnet run --no-build --project AlRunner --framework net9.0 -- \
+          dotnet run --no-build --project AlRunner --framework net10.0 -- \
             tests/excluded/06-intentional-failure/src tests/excluded/06-intentional-failure/test \
             || rc=$?
           [ "${rc:-0}" -eq 1 ] || { echo "Expected exit 1, got ${rc:-0}"; exit 1; }
@@ -127,6 +99,7 @@ jobs:
           dotnet-version: |
             8.0.x
             9.0.x
+            10.0.x
 
       - name: Determine version
         id: version
