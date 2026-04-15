@@ -31,6 +31,13 @@ All notable changes to this project are documented here. Format based on
   filter (`Amount` in 20..40). RED confirmed by temporarily pointing
   `ALCount` at the unfiltered row count. Coverage map: `Table.Count` moved
   from `gap` to `covered`.
+- **`Record.SetCurrentKey` traversal-order coverage (#264)** — sort-order
+  behavior was implemented in `MockRecordHandle` but had no proving tests for
+  FindSet/Next traversal. Extended `tests/bucket-2/109-currentkey` with 5 new
+  tests: SetCurrentKey by Name changes traversal order, SetCurrentKey by
+  Sequence changes traversal order, resetting to primary key restores PK order,
+  Name sort does not traverse in PK order (negative), and descending sort
+  reverses traversal order.
 - **Test coverage: `Record.IsTemporary()` (#254)** — `MockRecordHandle.ALIsTemporary`
   was already implemented; new suite `tests/bucket-1/254-record-istemporary`
   adds 5 proving tests: normal Record → false, `temporary` Record → true,
