@@ -5916,8 +5916,10 @@ Table.Modify:
 Table.ModifyAll:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests:
+    - tests/bucket-1/30-modify-all
+  notes: overloads=1; bulk-sets a field value on all filtered records
 
 Table.Next:
   layer: runtime-api
