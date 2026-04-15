@@ -30,7 +30,7 @@ jobs:
           BC_PREFIXES=$(cat .github/bc-versions.txt | grep -v '^#' | tr '\n' ' ')
           VERSIONS="[]"
           for prefix in $BC_PREFIXES; do
-            FULL=$(dotnet run --project tools/DownloadArtifacts -- resolve-version "$prefix" dummy 2>/dev/null)
+            FULL=$(dotnet run --project tools/DownloadArtifacts -- resolve-version "$prefix" dummy 2>/dev/null || true)
             if [ -n "$FULL" ]; then
               VERSIONS=$(echo "$VERSIONS" | python3 -c "import json,sys; v=json.load(sys.stdin); v.append('$FULL'); print(json.dumps(v))")
             fi
