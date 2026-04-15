@@ -7,6 +7,12 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **`fieldgroups` section syntax coverage (#279)** — tables with `fieldgroups`
+  declarations (e.g. `DropDown`, `Brick`) compile and all record operations
+  work correctly. New suite `tests/bucket-1/48-fieldgroups`: 5 positive tests
+  (Insert+Get, Modify, Delete, FindSet iteration, Count) and 2 negative tests
+  (Get non-existent key, duplicate-key Insert error). Coverage map:
+  `fieldgroup_declaration` and `fieldgroups_section` moved from `gap` to `covered`.
 - **`Table.SetCurrentKey` iteration-order coverage (#223)** — `ALSetCurrentKey`
   was already implemented in `MockRecordHandle` but had no proving tests that
   verify `FindSet`/`Next` actually returns records in the specified field order.
