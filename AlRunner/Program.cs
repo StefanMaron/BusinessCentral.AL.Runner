@@ -289,6 +289,16 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - Session API: StartSession (dispatches codeunit synchronously, returns true), StopSession (no-op),
   IsSessionActive (returns false), Sleep (no-op)
 - Built-in session functions: CompanyName, UserId, TenantId, SerialNumber (return empty string)
+- System & Session utilities:
+  - Session.LogMessage() — no-op (telemetry not available without service tier)
+  - Session.ApplicationArea() — returns empty string
+  - Session.GetExecutionContext() / GetModuleExecutionContext() — returns ExecutionContext.Normal
+  - Database.LockTimeout(bool) — no-op (no real database)
+  - CompanyProperty.DisplayName() / UrlName() — returns stub company name (""My Company"" / ""My%20Company"")
+  - ProductName.Full() / Short() / Marketing() — returns real BC product names
+  - RoundDateTime(dt [, precision] [, direction]) — rounds DateTime with ms precision;
+    direction: '>' (up), '<' (down), '=' (nearest, default). Default precision 1000ms.
+  - NormalDate(date) / ClosingDate(date) — work natively via BC types
 - GlobalLanguage() — returns and sets an in-memory language ID (default 1033 = ENU); reset between tests
 - Partial compilation (skips unsupported object types like XMLport)
 - Coverage reporting via `--coverage` (statement-level, outputs cobertura.xml)
