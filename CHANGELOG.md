@@ -7,13 +7,15 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
-- **`Table.FindFirst` coverage (#297)** — `ALFindFirst` was already implemented in
-  `MockRecordHandle`. New suite `tests/bucket-1/52-findfirst` adds 7 proving tests:
-  unfiltered PK order, SetRange filter, SetCurrentKey alternate key, single record,
-  empty table (→ false), no-match filter (→ false), and non-mutating check.
-  Also marks `Table.FindLast` as covered (existing suite
-  `tests/bucket-1/258-findlast`). Coverage map: both `Table.FindFirst` and
-  `Table.FindLast` moved from `gap` to `covered`.
+- **`Table.FindFirst` coverage + PK sort fix (#297)** — New suite
+  `tests/bucket-1/52-findfirst` adds 7 proving tests for `FindFirst`. The tests
+  revealed a bug: `GetFilteredRecords` only sorted when `SetCurrentKey` had been
+  called; without it, records were returned in insertion order instead of PK order.
+  Fixed `GetFilteredRecords` to always sort — by `_currentKeyFields` when set,
+  falling back to PK fields otherwise (matches BC behaviour). Also marks
+  `Table.FindLast` as covered (existing suite `tests/bucket-1/258-findlast`).
+  Coverage map: both `Table.FindFirst` and `Table.FindLast` moved from `gap` to
+  `covered`.
 - **`Table.ModifyAll` coverage.yaml fix (#292)** — `ALModifyAllSafe` was already
   implemented in `MockRecordHandle`; coverage map incorrectly listed it as `gap`.
   Existing suite `tests/bucket-1/30-modify-all` has 4 proving tests (update all,
