@@ -1457,11 +1457,24 @@ public class MockRecordHandle
         foreach (var kv in source._filters)
             _filters[kv.Key] = kv.Value;
 
-        // ShareTable: for temporary records, share the same row list so that
-        // inserts/deletes via one variable are visible via the other.
-        if (shareTable && _isTemporary && source._isTemporary)
+        // For temporary records, handle the table data:
+        if (_isTemporary && source._isTemporary)
         {
-            _tempRows = source._tempRows;
+            if (shareTable)
+            {
+                // ShareTable=true: share the same row list — inserts/deletes via
+                // one variable are immediately visible via the other.
+                _tempRows = source._tempRows;
+            }
+            else
+            {
+                // ShareTable=false (default): deep-copy source rows into an
+                // independent list so both start with the same data but
+                // subsequent mutations are isolated.
+                _tempRows = source._tempRows!
+                    .Select(row => new Dictionary<int, NavValue>(row))
+                    .ToList();
+            }
         }
     }
 
