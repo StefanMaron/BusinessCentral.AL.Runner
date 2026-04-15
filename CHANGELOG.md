@@ -23,6 +23,11 @@ All notable changes to this project are documented here. Format based on
   all 4 ordinals by index, `Contains` positive, instance-variable syntax, and 2 negative
   tests (ordinal 9 not contained, count ≠ 3). Coverage map: `EnumType.Names` and
   `EnumType.Ordinals` moved from `gap` to `covered`.
+- **Test coverage: `Record.Get` by primary key (#275)** — `MockRecordHandle.ALGet` was
+  already implemented; new suite `tests/bucket-1/48-record-get` adds 6 proving tests:
+  single-key Get retrieves correct record, Get returns true on match, Get on missing key
+  throws "not found" error, Get distinguishes between different keys, composite PK Get
+  loads the correct row, and composite-key not-found also errors correctly.
 - **Record.Count with SetFilter expressions coverage (#260)** — `Count` with
   SetFilter comparators / OR-lists / range expressions was already honoured
   in `MockRecordHandle.ALCount` but had no dedicated proving test. New suite

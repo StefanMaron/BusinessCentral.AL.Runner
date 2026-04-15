@@ -524,4 +524,17 @@ namespace AlRunnerGenerated {
         Assert.True(result.Passed > 0);
         Assert.Equal(0, result.Failed);
     }
+
+    [Fact]
+    public void RecordGet_RetrievesByPrimaryKey()
+    {
+        var pipeline = new AlRunnerPipeline();
+        var result = pipeline.Run(new PipelineOptions
+        {
+            InputPaths = { TestPath("48-record-get", "src"), TestPath("48-record-get", "test") }
+        });
+        Assert.Equal(0, result.ExitCode);
+        Assert.True(result.Passed > 0);
+        Assert.Equal(0, result.Failed);
+    }
 }
