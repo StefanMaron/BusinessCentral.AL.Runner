@@ -142,13 +142,13 @@ dotnet run --project AlRunner -- ./src ./test
 | `AlRunner/Runtime/MockRecordHandle.cs` | In-memory record store (filtering, composite PKs, sort, triggers, temp records, CalcFields) |
 | `AlRunner/Runtime/MockCodeunitHandle.cs` | Cross-codeunit dispatch via reflection |
 | `AlRunner/Runtime/EventSubscriberRegistry.cs` | Event subscriber discovery + dispatch |
-| `AlRunner/Runtime/HandlerRegistry.cs` | Test handler dispatch (ConfirmHandler, MessageHandler, ModalPageHandler, RequestPageHandler, ReportHandler) |
-| `AlRunner/Runtime/MockTestPageHandle.cs` | TestPage mock with full lifecycle, field access, navigation |
+| `AlRunner/Runtime/HandlerRegistry.cs` | Test handler dispatch (ConfirmHandler, MessageHandler, ModalPageHandler, RequestPageHandler, ReportHandler, SendNotificationHandler) |
+| `AlRunner/Runtime/MockTestPageHandle.cs` | TestPage mock with full lifecycle, field access, navigation, Editable, ValidationErrorCount, Last, Previous, Expand, GetRecord |
 | `AlRunner/Runtime/MockRecordRef.cs` | RecordRef backed by MockRecordHandle; Mark/MarkedOnly/ClearMarks (functional), Rename, FieldExists, HasFilter, GetPosition, Ascending (get/set), ModifyAll, KeyCount/KeyIndex/CurrentKeyIndex, system-field number accessors |
 | `AlRunner/Runtime/MockFieldRef.cs` | FieldRef with value get/set, range/filter, GetFilter, GetRangeMin/Max, Record(), Name/Caption/Type/Length from metadata, enum introspection (IsEnum, EnumValueCount, GetEnumValueName/Caption/Ordinal), CalcSum, ALSetTable (no-op stub) |
 | `AlRunner/Runtime/MockKeyRef.cs` | KeyRef mock: FieldCount, FieldIndex(n), Record, Active, ALAssign |
 | `AlRunner/Runtime/TableFieldRegistry.cs` | Transpile-time AL field metadata registry (field name/caption/type/length, table name/caption, enum field names, PK extraction) |
-| `AlRunner/Runtime/MockNotification.cs` | In-memory Notification mock: Message, Send, Recall, SetData/GetData/HasData, AddAction, Id, Scope |
+| `AlRunner/Runtime/MockNotification.cs` | In-memory Notification mock: Message, Send (dispatches to SendNotificationHandler), Recall, SetData/GetData/HasData, AddAction, Id, Scope |
 | `AlRunner/Runtime/MockTaskScheduler.cs` | TaskScheduler stubs: CreateTask (sync dispatch), TaskExists, CancelTask, SetTaskReady |
 | `AlRunner/Runtime/MockBigText.cs` | BigText mock: ALAddText, ALGetSubText, ALTextPos, ALLength, ALWrite, ALRead (StringBuilder-backed) |
 | `AlRunner/Runtime/MockDataTransfer.cs` | DataTransfer stubs: SetTables, AddFieldValue, AddConstantValue, CopyFields, CopyRows (no-ops) |

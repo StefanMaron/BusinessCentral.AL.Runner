@@ -53,6 +53,18 @@ public class MockTestPageHandle
     public string ALCaption => "TestPage";
 
     /// <summary>
+    /// Whether the page is editable. Stub returns true.
+    /// BC emits <c>tP.Target.ALEditable</c> as a property access.
+    /// </summary>
+    public bool ALEditable => true;
+
+    /// <summary>
+    /// Returns the number of validation errors on the page. Stub returns 0.
+    /// BC emits <c>tP.Target.ALValidationErrorCount()</c>.
+    /// </summary>
+    public int ALValidationErrorCount() => 0;
+
+    /// <summary>
     /// Navigates to the first record on the page. Stub returns true.
     /// </summary>
     public bool ALFirst() => true;
@@ -69,6 +81,31 @@ public class MockTestPageHandle
     /// </summary>
     public bool ALNext() => false;
     public bool ALNext(int steps) => false;
+
+    /// <summary>
+    /// Navigates to the last record on the page. Stub returns false (empty page).
+    /// BC emits <c>tP.Target.ALLast()</c>.
+    /// </summary>
+    public bool ALLast() => false;
+
+    /// <summary>
+    /// Navigates to the previous record on the page. Stub returns false (empty page).
+    /// BC emits <c>tP.Target.ALPrevious()</c>.
+    /// </summary>
+    public bool ALPrevious() => false;
+
+    /// <summary>
+    /// Expands or collapses a tree node on the page. No-op in standalone mode.
+    /// BC emits <c>tP.Target.ALExpand(bool)</c>.
+    /// </summary>
+    public void ALExpand(bool expand) { }
+
+    /// <summary>
+    /// Returns a MockRecordHandle representing the underlying record of the page.
+    /// Stub returns a new empty record handle. BC emits <c>tP.Target.ALGetRecord()</c>
+    /// for <c>TestPage.GetRecord(var Rec)</c>.
+    /// </summary>
+    public MockRecordHandle ALGetRecord() => new MockRecordHandle(PageId);
 
     /// <summary>
     /// Navigates to the record matching the given key values. Stub returns true.

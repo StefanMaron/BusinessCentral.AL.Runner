@@ -36,6 +36,9 @@ public static class HandlerRegistry
     // Registered report handler: method that takes (MockTestPageHandle testPage)
     private static MethodInfo? _reportHandler;
 
+    // Registered send notification handler: method that takes (ByRef<MockNotification> notification) and returns bool
+    private static MethodInfo? _sendNotificationHandler;
+
     /// <summary>
     /// Register handlers for the current test. Called by the Executor before each test.
     /// </summary>
@@ -80,6 +83,8 @@ public static class HandlerRegistry
                         _requestPageHandler = method;
                     else if (handlerTypeName == "Report")
                         _reportHandler = method;
+                    else if (handlerTypeName == "SendNotification")
+                        _sendNotificationHandler = method;
                 }
             }
         }
@@ -265,6 +270,68 @@ public static class HandlerRegistry
     public static bool HasModalPageHandler => _modalPageHandler != null;
 
     /// <summary>
+    /// Check if a send notification handler is registered.
+    /// </summary>
+    public static bool HasSendNotificationHandler => _sendNotificationHandler != null;
+
+    /// <summary>
+    /// Invoke the registered send notification handler, if any.
+    /// The handler signature is: bool Handler(ByRef&lt;MockNotification&gt; notification)
+    /// Returns true if a handler was found and invoked.
+    /// </summary>
+    public static bool InvokeSendNotificationHandler(MockNotification notification)
+    {
+        if (_sendNotificationHandler == null || _parentInstance == null)
+            return false;
+
+        // The handler takes ByRef<MockNotification>. Build one with getter/setter delegates.
+        var parameters = _sendNotificationHandler.GetParameters();
+        if (parameters.Length < 1)
+            return false;
+
+        var byRefType = parameters[0].ParameterType;
+        var byRef = Activator.CreateInstance(byRefType)!;
+
+        var storage = new MockNotification[] { notification };
+
+        foreach (var field in byRefType.GetFields(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance))
+        {
+            var ft = field.FieldType;
+            // Setter delegate
+            if (ft.Name.Contains("Action") || field.Name.Contains("set") || field.Name.Contains("Set"))
+            {
+                try
+                {
+                    Action<MockNotification> setter = v => storage[0] = v;
+                    field.SetValue(byRef, Delegate.CreateDelegate(ft, setter.Target!, setter.Method));
+                }
+                catch { /* try next field */ }
+            }
+            // Getter delegate
+            if (ft.Name.Contains("Func") || field.Name.Contains("get") || field.Name.Contains("Get"))
+            {
+                try
+                {
+                    Func<MockNotification> getter = () => storage[0];
+                    field.SetValue(byRef, Delegate.CreateDelegate(ft, getter.Target!, getter.Method));
+                }
+                catch { /* try next field */ }
+            }
+        }
+
+        try
+        {
+            _sendNotificationHandler.Invoke(_parentInstance, new object[] { byRef });
+        }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            throw tie.InnerException;
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Reset all registered handlers. Called between tests.
     /// </summary>
     public static void Reset()
@@ -275,5 +342,6 @@ public static class HandlerRegistry
         _modalPageHandler = null;
         _requestPageHandler = null;
         _reportHandler = null;
+        _sendNotificationHandler = null;
     }
 }

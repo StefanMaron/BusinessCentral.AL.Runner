@@ -45,6 +45,16 @@ All notable changes to this project are documented here. Format based on
   are rewritten to `MockReportHandle.StaticRun/StaticRunModal`. `MockReportHandle.RunModal()`
   and `UseRequestPage(false)` (emitted as `UseRequestForm` property) are now supported.
   Running a report without a handler silently succeeds (no error). (#118)
+- **SendNotificationHandler dispatch** — `HandlerRegistry` now supports
+  `[SendNotificationHandler]` test handlers. `MockNotification.ALSend()` invokes
+  the registered handler (passing a `ByRef<MockNotification>`) so tests can
+  intercept and inspect `Notification.Send()` calls. Without a handler, Send
+  remains a no-op. (#119)
+- **TestPage method stubs** — `MockTestPageHandle` gains `ALEditable` (property,
+  returns `true`), `ALValidationErrorCount()` (returns `0`), `ALLast()` (returns
+  `false`), `ALPrevious()` (returns `false`), `ALExpand(bool)` (no-op), and
+  `ALGetRecord()` (returns empty `MockRecordHandle`). These prevent CS1061
+  compilation errors for common TestPage member accesses. (#119)
 - **Field metadata infrastructure** — `TableFieldRegistry` now parses and stores
   field-level metadata (name, caption, type, length) and table-level metadata
   (name, caption) from AL source at transpile time. `MockRecordHandle.ALFieldCaption`,

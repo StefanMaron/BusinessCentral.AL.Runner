@@ -298,9 +298,10 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   all return false in standalone mode (no client UI). Compile and run without error.
 - Library - Variable Storage (codeunit 131004) — Enqueue, DequeueText, DequeueInteger,
   DequeueDecimal, DequeueBoolean, DequeueDate, DequeueVariant, AssertEmpty, Clear, IsEmpty
-- TestPage navigation — Caption, First(), GoToKey(), GoToRecord(), Next(), New(), GetPart(),
+- TestPage navigation — Caption, Editable, ValidationErrorCount(), First(), Last(), Previous(),
+  GoToKey(), GoToRecord(), Next(), New(), Expand(), GetPart(), GetRecord(),
   Filter.SetFilter()/GetFilter(), field AsDecimal(), Enabled() (stubs; return true/no-op
-  unless otherwise noted; Next() returns false)
+  unless otherwise noted; Next()/Last()/Previous() return false, ValidationErrorCount() returns 0)
 - Request page handler dispatch — [RequestPageHandler] intercepts Report.RunRequestPage() calls
 - Report handler dispatch — [ReportHandler] intercepts Report.Run()/Report.RunModal() and
   report variable .Run()/.RunModal() calls. Handler receives TestRequestPage parameter.
@@ -331,12 +332,15 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - Partial compilation (skips unsupported object types like XMLport)
 - Coverage reporting via `--coverage` (statement-level, outputs cobertura.xml)
 - Fluent builder pattern: `exit(this)` in codeunit methods returning `Codeunit "Self"`
-- Test handler functions: [ConfirmHandler], [MessageHandler], [ModalPageHandler], [RequestPageHandler]
+- Test handler functions: [ConfirmHandler], [MessageHandler], [ModalPageHandler], [RequestPageHandler],
+  [SendNotificationHandler]
   - ConfirmHandler intercepts Confirm() calls, receives question text, sets reply
   - MessageHandler intercepts Message() calls, receives message text
   - ModalPageHandler intercepts Page.RunModal() calls, receives a TestPage handle,
     can set field values and invoke OK/Cancel actions; returns FormResult to caller
   - RequestPageHandler intercepts Report.RunRequestPage() calls
+  - SendNotificationHandler intercepts Notification.Send() calls, receives notification
+    (Message, GetData, HasData, Id accessible in handler)
 - Query variables — declaring Query variables compiles; Close/SetFilter/SetRange/
   TopNumberOfRows are no-ops; Open/Read/SaveAs throw NotSupportedException.
   Inject query dependencies via an AL interface for unit-testable code.
@@ -345,8 +349,8 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   throw NotSupportedException with actionable guidance.
   Use AL interface injection to abstract XmlPort I/O for testing.
 - Notification — Message, Send, Recall, SetData/GetData/HasData, AddAction, Id, Scope.
-  Send/Recall are no-ops; data store is in-memory; Id auto-generates a Guid.
-  Note: [SendNotificationHandler] dispatch is NOT implemented; use direct Notification methods.
+  Send dispatches to [SendNotificationHandler] if registered; otherwise no-op.
+  Data store is in-memory; Id auto-generates a Guid.
 - BigText — MockBigText replaces NavBigText. AddText, GetSubText, TextPos, Length
   all work via in-memory StringBuilder. Note: TextPos is 1-based in AL.
 - TaskScheduler — CreateTask (dispatches codeunit synchronously, invokes

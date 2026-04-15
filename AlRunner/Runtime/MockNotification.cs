@@ -23,16 +23,16 @@ public class MockNotification
     /// <summary>Notification scope (LocalScope or GlobalScope). Stored but not enforced.</summary>
     public NotificationScope ALScope { get; set; } = NotificationScope.LocalScope;
 
-    /// <summary>Send — no-op in standalone mode (no UI to display to).</summary>
+    /// <summary>Send — dispatches to SendNotificationHandler if registered, otherwise no-op.</summary>
     public void ALSend(DataError errorLevel)
     {
-        // No-op: standalone mode has no notification UI.
+        HandlerRegistry.InvokeSendNotificationHandler(this);
     }
 
     /// <summary>Send without DataError parameter.</summary>
     public void ALSend()
     {
-        // No-op
+        HandlerRegistry.InvokeSendNotificationHandler(this);
     }
 
     /// <summary>Recall — no-op in standalone mode.</summary>
