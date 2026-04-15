@@ -1100,6 +1100,18 @@ public void ClearApplicationMemberVariables() { }
         if (text == "NavTextBuilder")
             return node.WithIdentifier(SyntaxFactory.Identifier("MockTextBuilder"));
 
+        // NavNotification -> MockNotification
+        // NavNotification.ALSend/ALRecall/ALAddAction require NavSession and the BC
+        // service tier. MockNotification stores state locally and makes I/O calls no-ops.
+        if (text == "NavNotification")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockNotification"));
+
+        // NavDataTransfer -> MockDataTransfer
+        // NavDataTransfer constructor loads Microsoft.Dynamics.Nav.CodeAnalysis at runtime.
+        // MockDataTransfer stores config but CopyRows/CopyFields are no-ops.
+        if (text == "NavDataTransfer")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockDataTransfer"));
+
         // NavEventScope -> object (event scope type used for static fields)
         // Use PredefinedType to emit the C# keyword "object" properly, avoiding
         // namespace resolution issues where "object" as an IdentifierName fails.
@@ -1875,6 +1887,37 @@ public void ClearApplicationMemberVariables() { }
                         SyntaxFactory.IdentifierName("Sleep")));
             }
 
+            // ErrorCollection.ALClearCollectedErrors() -> AlScope.ClearCollectedErrors()
+            // ErrorCollection.ALGetCollectedErrors(bool) -> AlScope.GetCollectedErrors(bool)
+            // The real ErrorCollection depends on NavSession; redirect to AlScope's
+            // thread-static collected-errors list.
+            if ((exprText == "ErrorCollection" || exprText.EndsWith(".ErrorCollection", StringComparison.Ordinal)) &&
+                (methodName == "ALClearCollectedErrors" || methodName == "ALGetCollectedErrors"))
+            {
+                var targetMethod = methodName == "ALClearCollectedErrors"
+                    ? "ClearCollectedErrors"
+                    : "GetCollectedErrors";
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlScope"),
+                        SyntaxFactory.IdentifierName(targetMethod)));
+            }
+
+            // ALTaskScheduler.ALCreateTask/ALTaskExists/ALCancelTask/ALSetTaskReady -> MockTaskScheduler
+            // TaskScheduler APIs require the BC service tier. MockTaskScheduler dispatches
+            // CreateTask synchronously via MockCodeunitHandle (same pattern as MockSession).
+            if (exprText == "ALTaskScheduler" &&
+                (methodName == "ALCreateTask" || methodName == "ALTaskExists" ||
+                 methodName == "ALCancelTask" || methodName == "ALSetTaskReady"))
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("MockTaskScheduler"),
+                        SyntaxFactory.IdentifierName(methodName)));
+            }
+
             // ALSession.ALApplicationArea(session) -> AlCompat.ApplicationArea()
             // Requires NavSession which doesn't exist in standalone mode.
             if (exprText == "ALSession" && methodName == "ALApplicationArea")
@@ -2579,6 +2622,27 @@ public void ClearApplicationMemberVariables() { }
                     SyntaxKind.SimpleMemberAccessExpression,
                     SyntaxFactory.IdentifierName("AlScope"),
                     SyntaxFactory.IdentifierName("LastErrorText"));
+            }
+        }
+
+        // Pattern: ErrorCollection.ALHasCollectedErrors -> AlScope.HasCollectedErrors
+        //          ErrorCollection.ALIsCollectingErrors -> AlScope.IsCollectingErrors
+        // ErrorCollection depends on NavSession; redirect to AlScope's thread-static state.
+        // Handles both short (`ErrorCollection`) and fully-qualified
+        // (`Microsoft.Dynamics.Nav.Runtime.ErrorCollection`) forms.
+        {
+            var exprStr = visited.Expression.ToString();
+            if ((exprStr == "ErrorCollection" || exprStr.EndsWith(".ErrorCollection", StringComparison.Ordinal)) &&
+                (visited.Name.Identifier.Text == "ALHasCollectedErrors" || visited.Name.Identifier.Text == "ALIsCollectingErrors"))
+            {
+                var targetProp = visited.Name.Identifier.Text == "ALHasCollectedErrors"
+                    ? "HasCollectedErrors"
+                    : "IsCollectingErrors";
+                return SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("AlScope"),
+                    SyntaxFactory.IdentifierName(targetProp))
+                    .WithTriviaFrom(visited);
             }
         }
 

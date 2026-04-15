@@ -410,12 +410,13 @@ public class MockRecordHandle
 
     /// <summary>
     /// Create a snapshot of the current field bag (for xRec) before a mutation.
-    /// Returns a new MockRecordHandle sharing the same table store but with
-    /// a copy of the current field values.
+    /// Returns a new MockRecordHandle with a copy of the current field values.
+    /// The temporary flag is preserved so that <c>xRec.IsTemporary()</c> returns
+    /// the same value as the original record.
     /// </summary>
     private MockRecordHandle SnapshotForXRec()
     {
-        var xRec = new MockRecordHandle(_tableId);
+        var xRec = new MockRecordHandle(_tableId, _isTemporary);
         foreach (var kv in _fields)
             xRec._fields[kv.Key] = kv.Value;
         return xRec;
@@ -1044,8 +1045,15 @@ public class MockRecordHandle
     /// <summary>
     /// AL's CALCFIELDS — calculates FlowFields by consulting the
     /// transpile-time <see cref="CalcFormulaRegistry"/> and evaluating
-    /// <c>exist(...)</c> formulas against the in-memory tables.
-    /// Other formula kinds (min/max/average) remain no-ops.
+    /// formulas against the in-memory tables. Supported kinds:
+    /// <list type="bullet">
+    ///   <item><c>exist(...)</c> — sets the field to <c>true</c> if any matching row exists.</item>
+    ///   <item><c>count(...)</c> — sets the field to the number of matching rows.</item>
+    ///   <item><c>sum(...)</c> — sets the field to the aggregate decimal sum of the target field.</item>
+    ///   <item><c>lookup(...)</c> — sets the field to the target field value of the first matching row,
+    ///     or clears it to default when no rows match.</item>
+    /// </list>
+    /// Other formula kinds (<c>min</c>/<c>max</c>/<c>average</c>) remain no-ops.
     /// </summary>
     public void ALCalcFields(DataError errorLevel, params int[] fieldNos)
     {
@@ -1098,6 +1106,11 @@ public class MockRecordHandle
                         rows[0].TryGetValue(aggFieldId.Value, out var lookupVal))
                     {
                         _fields[fieldNo] = lookupVal;
+                    }
+                    else
+                    {
+                        // No matching rows — clear the field so stale values don't persist
+                        _fields.Remove(fieldNo);
                     }
                     break;
                 }
@@ -1179,20 +1192,6 @@ public class MockRecordHandle
     }
 
     /// <summary>
-    /// Extract a decimal value from a NavValue (handles NavDecimal, NavInteger, etc.).
-    /// </summary>
-    private static decimal NavValueToDecimal(NavValue value)
-    {
-        if (value is NavDecimal nd) return (decimal)nd.Value;
-        if (value is NavInteger ni) return ni.Value;
-        if (decimal.TryParse(NavValueToString(value),
-                System.Globalization.NumberStyles.Any,
-                System.Globalization.CultureInfo.InvariantCulture, out var d))
-            return d;
-        return 0m;
-    }
-
-    /// <summary>
     /// AL's CALCSUMS — calculates sum of specified fields across filtered records.
     /// Returns true; the actual sum is not computed (would need field metadata to know types).
     /// </summary>
@@ -1200,6 +1199,47 @@ public class MockRecordHandle
     {
         // No-op stub: real implementation would sum over filtered records
         return true;
+    }
+
+    /// <summary>
+    /// Calculate the sum of a single field across all filtered records.
+    /// Used by MockFieldRef.ALCalcSum to implement FieldRef.CalcSum().
+    /// </summary>
+    internal decimal CalcSumField(int fieldNo)
+    {
+        var rows = GetFilteredRecords();
+        decimal sum = 0;
+        foreach (var row in rows)
+        {
+            if (!row.TryGetValue(fieldNo, out var val)) continue;
+            sum += NavValueToDecimal(val);
+        }
+        return sum;
+    }
+
+    private static decimal NavValueToDecimal(NavValue value)
+    {
+        switch (value)
+        {
+            case NavInteger ni: return (int)ni;
+            case NavBigInteger nbi: return (long)nbi;
+            default: break;
+        }
+        // NavDecimal wraps Decimal18; extract via reflection (same pattern as NavValueToString)
+        if (value is NavDecimal nd)
+        {
+            try
+            {
+                var raw = _navDecimalValueProp?.GetValue(nd);
+                if (raw != null) return Convert.ToDecimal(raw);
+            }
+            catch { }
+        }
+        if (decimal.TryParse(NavValueToString(value),
+            System.Globalization.NumberStyles.Any,
+            System.Globalization.CultureInfo.InvariantCulture, out var d))
+            return d;
+        return 0;
     }
 
     // -----------------------------------------------------------------------

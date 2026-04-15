@@ -142,4 +142,30 @@ codeunit 56242 "FlowField Formula Tests"
         Assert.AreEqual(0, Header2."Line Count", 'H2 should have 0 lines');
         Assert.AreEqual(0.0, Header2."Total Amount", 'H2 total should be 0');
     end;
+
+    [Test]
+    procedure DuplicateLineInsertThrowsError()
+    var
+        Header: Record "FF Order Header";
+        Line: Record "FF Order Line";
+    begin
+        Header.Init();
+        Header."No." := 'DUP-HDR';
+        Header.Insert();
+
+        Line.Init();
+        Line."Order No." := 'DUP-HDR';
+        Line."Line No." := 10000;
+        Line.Amount := 50.00;
+        Line.Insert();
+
+        asserterror begin
+            Line.Init();
+            Line."Order No." := 'DUP-HDR';
+            Line."Line No." := 10000;
+            Line.Amount := 75.00;
+            Line.Insert();
+        end;
+        Assert.ExpectedError('already exists');
+    end;
 }

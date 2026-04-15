@@ -26,10 +26,22 @@ public static class TableFieldRegistry
         @"\bkey\s*\(\s*[^;]+;\s*([^)]+)\)",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    // field(id; name; type) — extended regex capturing the type token after the second semicolon
+    private static readonly Regex FieldDeclWithType = new(
+        @"\bfield\s*\(\s*(\d+)\s*;\s*(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))\s*;\s*(?:Enum\s+(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*)))",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     // tableId -> (fieldName -> fieldId)
     private static readonly Dictionary<int, Dictionary<string, int>> _byTable = new();
 
-    public static void Clear() => _byTable.Clear();
+    // (tableId, fieldNo) -> enum name (for fields declared as Enum "XYZ")
+    private static readonly Dictionary<(int TableId, int FieldNo), string> _enumFields = new();
+
+    public static void Clear()
+    {
+        _byTable.Clear();
+        _enumFields.Clear();
+    }
 
     public static void ParseAndRegister(string alSource)
     {
@@ -58,6 +70,14 @@ public static class TableFieldRegistry
                 if (!int.TryParse(fm.Groups[1].Value, out var fieldId)) continue;
                 var name = fm.Groups[2].Success ? fm.Groups[2].Value : fm.Groups[3].Value;
                 fields[name] = fieldId;
+            }
+
+            // Extract enum field type info: field(id; name; Enum "EnumName")
+            foreach (Match em in FieldDeclWithType.Matches(body))
+            {
+                if (!int.TryParse(em.Groups[1].Value, out var fieldId)) continue;
+                var enumName = em.Groups[4].Success ? em.Groups[4].Value : em.Groups[5].Value;
+                _enumFields[(tableId, fieldId)] = enumName;
             }
 
             // Extract the first declared key (typically Clustered PK) and
@@ -89,5 +109,14 @@ public static class TableFieldRegistry
             fields.TryGetValue(fieldName, out var id))
             return id;
         return null;
+    }
+
+    /// <summary>
+    /// Returns the AL enum name for a field declared as <c>Enum "X"</c>, or null
+    /// if the field is not an enum type.
+    /// </summary>
+    public static string? GetEnumName(int tableId, int fieldNo)
+    {
+        return _enumFields.TryGetValue((tableId, fieldNo), out var name) ? name : null;
     }
 }

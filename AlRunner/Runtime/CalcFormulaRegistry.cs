@@ -7,12 +7,14 @@ namespace AlRunner.Runtime;
 /// Transpile-time registry of FlowField <c>CalcFormula</c> declarations
 /// parsed from AL table sources. Consulted by
 /// <see cref="MockRecordHandle.ALCalcFields"/> so tests that exercise
-/// <c>exist()</c>-style FlowFields can see real in-memory results.
+/// FlowFields can see real in-memory results.
 ///
-/// Minimal surface: supports <c>exist</c> only, with <c>where(...)</c>
-/// conditions keyed on <c>field(SelfField)</c> references or
-/// <c>const(Literal)</c> values. Enough to cover the common
-/// "Has Child" / "Is Empty" idioms seen in BC tests.
+/// Supported formula kinds: <c>exist</c>, <c>count</c>, <c>sum</c>,
+/// <c>lookup</c>. <c>min</c>, <c>max</c>, and <c>average</c> are parsed
+/// but remain no-ops at evaluation time.
+/// Where-clause conditions support <c>field(SelfField)</c> references and
+/// <c>const(Literal)</c> values. Sum and Lookup also parse a
+/// <c>"Table"."Field"</c> dot-notation aggregate target.
 /// </summary>
 public static class CalcFormulaRegistry
 {

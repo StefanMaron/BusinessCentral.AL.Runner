@@ -68,4 +68,23 @@ codeunit 56241 "Temp Record Tests"
     begin
         Assert.IsFalse(Item.IsTemporary(), 'Non-temp record should return IsTemporary = false');
     end;
+
+    [Test]
+    procedure TempRecordDuplicateInsertThrowsError()
+    var
+        TempItem: Record "Temp Test Item" temporary;
+    begin
+        TempItem.Init();
+        TempItem.Id := 99;
+        TempItem.Name := 'First';
+        TempItem.Insert();
+
+        asserterror begin
+            TempItem.Init();
+            TempItem.Id := 99;
+            TempItem.Name := 'Duplicate';
+            TempItem.Insert();
+        end;
+        Assert.ExpectedError('already exists');
+    end;
 }
