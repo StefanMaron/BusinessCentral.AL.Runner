@@ -708,7 +708,8 @@ lookup_formula:
 table_relation_expression:
   layer: syntax
   category: table
-  status: gap
+  status: covered
+  tests: tests/bucket-1/49-tablerelation
   notes: Table relations are parsed but not enforced at runtime
 
 # ── page ────────────────────────────────────────────────────────
