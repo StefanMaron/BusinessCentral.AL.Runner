@@ -13,6 +13,15 @@ All notable changes to this project are documented here. Format based on
   (XmlPort) or "Record operations" (Query) as actionable alternatives. (#124)
 
 ### Added
+- **RecordRef/FieldRef API completeness** — Mark/MarkedOnly/ClearMarks are now
+  functional (in-memory HashSet tracking). FieldRef.GetFilter returns the active
+  filter expression. FieldRef.GetRangeMin/GetRangeMax return the active range
+  bounds. RecordRef.Ascending setter wires through to the handle's sort direction.
+  FieldRef.Record() returns the owning RecordRef. RecordRef.KeyCount/KeyIndex/
+  CurrentKeyIndex provide basic key metadata. (#115)
+- **KeyRef support** — New `MockKeyRef` class replacing `NavKeyRef`. Provides
+  FieldCount, FieldIndex(n), Record, Active, and ALAssign. The RoslynRewriter
+  maps `NavKeyRef` → `MockKeyRef` with constructor arg stripping. (#115)
 - **Field metadata infrastructure** — `TableFieldRegistry` now parses and stores
   field-level metadata (name, caption, type, length) and table-level metadata
   (name, caption) from AL source at transpile time. `MockRecordHandle.ALFieldCaption`,
@@ -80,6 +89,11 @@ All notable changes to this project are documented here. Format based on
   on report extensions (which cast `ParentObject` from the removed base) and injects
   `CurrReport => this` as a self-referencing stub so `CurrReport.Skip()` /
   `CurrReport.Break()` still compile. (#177, #178, #179, #181)
+- **Codeunit-not-found diagnostics** — When `Codeunit.Run(id)` fails because
+  the target codeunit is absent from the assembly, the error message now:
+  identifies system (1–9999) and test-toolkit (130000–139999) ranges, lists
+  available codeunit IDs (up to 20), and suggests `--stubs` / `--generate-stubs`
+  as resolution. (#176)
 
 ## [1.0.14] - 2026-04-14
 

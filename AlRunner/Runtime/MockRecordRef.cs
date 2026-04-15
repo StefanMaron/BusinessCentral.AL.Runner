@@ -134,24 +134,24 @@ public class MockRecordRef
     public int Count() => _handle?.ALCount ?? 0;
     public int ALCount => Count();
 
-    public bool FindFirst() => TryFind(() => _handle?.ALFindFirst() ?? false);
+    public bool FindFirst() => TryFind(() => MarkedOnlyFind(() => _handle?.ALFindFirst() ?? false));
     public bool ALFindFirst() => FindFirst();
-    public bool ALFindFirst(DataError errorLevel) => _handle != null && _handle.ALFindFirst(errorLevel);
+    public bool ALFindFirst(DataError errorLevel) => _handle != null && MarkedOnlyFind(() => _handle.ALFindFirst(errorLevel));
 
-    public bool FindLast() => TryFind(() => _handle?.ALFindLast() ?? false);
+    public bool FindLast() => TryFind(() => MarkedOnlyFindReverse(() => _handle?.ALFindLast() ?? false));
     public bool ALFindLast() => FindLast();
-    public bool ALFindLast(DataError errorLevel) => _handle != null && _handle.ALFindLast(errorLevel);
+    public bool ALFindLast(DataError errorLevel) => _handle != null && MarkedOnlyFindReverse(() => _handle.ALFindLast(errorLevel));
 
-    public bool FindSet() => TryFind(() => _handle?.ALFindSet() ?? false);
+    public bool FindSet() => TryFind(() => MarkedOnlyFind(() => _handle?.ALFindSet() ?? false));
     public bool ALFindSet() => FindSet();
-    public bool ALFindSet(DataError errorLevel) => _handle != null && _handle.ALFindSet(errorLevel);
-    public bool ALFindSet(DataError errorLevel, bool forUpdate) => _handle != null && _handle.ALFindSet(errorLevel, forUpdate);
+    public bool ALFindSet(DataError errorLevel) => _handle != null && MarkedOnlyFind(() => _handle.ALFindSet(errorLevel));
+    public bool ALFindSet(DataError errorLevel, bool forUpdate) => _handle != null && MarkedOnlyFind(() => _handle.ALFindSet(errorLevel, forUpdate));
 
-    public bool Find(string which) => TryFind(() => _handle?.ALFind(DataError.ThrowError, which) ?? false);
+    public bool Find(string which) => TryFind(() => MarkedOnlyFind(() => _handle?.ALFind(DataError.ThrowError, which) ?? false));
     public bool Find() => Find("=");
     public bool ALFind(string which) => Find(which);
     public bool ALFind(DataError errorLevel) => Find("=");
-    public bool ALFind(DataError errorLevel, string which) => _handle != null && _handle.ALFind(errorLevel, which);
+    public bool ALFind(DataError errorLevel, string which) => _handle != null && MarkedOnlyFind(() => _handle.ALFind(errorLevel, which));
 
     /// <summary>
     /// Try a find operation, catching exceptions for no-DataError callers.
@@ -164,8 +164,68 @@ public class MockRecordRef
         catch { return false; }
     }
 
-    public bool Next() => _handle != null && _handle.ALNext() != 0;
-    public int ALNext() => _handle?.ALNext() ?? 0;
+    /// <summary>
+    /// When MarkedOnly is true, advance forward from the initial find position
+    /// until we land on a marked record (or run out of records).
+    /// </summary>
+    private bool MarkedOnlyFind(Func<bool> findAction)
+    {
+        if (!findAction()) return false;
+        if (!_markedOnly) return true;
+        // Already on a marked record?
+        if (ALMark()) return true;
+        // Advance until we find a marked one
+        while (_handle != null && _handle.ALNext() != 0)
+        {
+            if (ALMark()) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// MarkedOnly-aware reverse find (for FindLast which should scan backwards).
+    /// MockRecordHandle has no ALPrev, so we do a two-pass forward scan:
+    /// Pass 1 — walk the entire filtered set from the first record and record the
+    ///          index of the last marked record.
+    /// Pass 2 — restart from the first record and advance to that saved index.
+    /// </summary>
+    private bool MarkedOnlyFindReverse(Func<bool> findAction)
+    {
+        if (!findAction()) return false;
+        if (!_markedOnly) return true;
+        if (_handle == null) return false;
+
+        // If the reverse-find already landed on a marked record, we're done.
+        if (ALMark()) return true;
+
+        // Pass 1: scan the filtered set forward and remember the index of the
+        // last marked record.
+        if (!_handle.ALFindFirst()) return false;
+
+        int currentIndex = 0;
+        int lastMarkedIndex = ALMark() ? 0 : -1;
+
+        while (_handle.ALNext() != 0)
+        {
+            currentIndex++;
+            if (ALMark())
+                lastMarkedIndex = currentIndex;
+        }
+
+        if (lastMarkedIndex < 0) return false;
+
+        // Pass 2: reposition on the last marked record.
+        if (!_handle.ALFindFirst()) return false;
+        for (int i = 0; i < lastMarkedIndex; i++)
+        {
+            if (_handle.ALNext() == 0) return false;
+        }
+
+        return true;
+    }
+
+    public bool Next() => MarkedOnlyNext(() => _handle != null && _handle.ALNext() != 0);
+    public int ALNext() => MarkedOnlyNext(() => (_handle?.ALNext() ?? 0) != 0) ? 1 : 0;
 
     /// <summary>ALNext(steps) — advance N records forward (RecRef.Next(N) in AL).</summary>
     public int ALNext(int steps)
@@ -174,10 +234,23 @@ public class MockRecordRef
         int moved = 0;
         for (int i = 0; i < steps; i++)
         {
-            if (_handle.ALNext() == 0) break;
+            if (!MarkedOnlyNext(() => _handle.ALNext() != 0)) break;
             moved++;
         }
         return moved;
+    }
+
+    /// <summary>
+    /// When MarkedOnly is true, keep advancing until we land on a marked record.
+    /// </summary>
+    private bool MarkedOnlyNext(Func<bool> nextAction)
+    {
+        if (!_markedOnly) return nextAction();
+        while (nextAction())
+        {
+            if (ALMark()) return true;
+        }
+        return false;
     }
 
     /// <summary>ALGetView — delegates to the underlying record handle's view text.</summary>
@@ -319,15 +392,63 @@ public class MockRecordRef
     public void ALLockTable(DataError errorLevel = DataError.ThrowError) { }
     public void ALSetRecFilter() => _handle?.ALSetRecFilter();
 
-    // -- Mark / MarkedOnly (stubs) --
-    public bool ALMark() => false;
-    public void ALMark(bool mark) { }
+    // -- Mark / MarkedOnly --
+    private readonly HashSet<string> _markedRecords = new();
+    private bool _markedOnly;
+
+    /// <summary>
+    /// ALMark() — returns whether the current record is marked.
+    /// </summary>
+    public bool ALMark()
+    {
+        return _markedRecords.Contains(GetCurrentPkKey());
+    }
+
+    /// <summary>
+    /// ALMark(bool) — marks or unmarks the current record.
+    /// </summary>
+    public void ALMark(bool mark)
+    {
+        var key = GetCurrentPkKey();
+        if (mark)
+            _markedRecords.Add(key);
+        else
+            _markedRecords.Remove(key);
+    }
+
+    /// <summary>
+    /// ALMarkedOnly — when true, iteration (FindSet/Next) returns only marked records.
+    /// </summary>
     public bool ALMarkedOnly
     {
-        get => false;
-        set { /* No-op */ }
+        get => _markedOnly;
+        set => _markedOnly = value;
     }
-    public void ALClearMarks() { }
+
+    /// <summary>ALClearMarks — removes all marks.</summary>
+    public void ALClearMarks()
+    {
+        _markedRecords.Clear();
+    }
+
+    /// <summary>
+    /// Build a string key from the current record's PK field values for marking.
+    /// Uses the handle's registered PK fields, falling back to field 1.
+    /// </summary>
+    private string GetCurrentPkKey()
+    {
+        if (_handle == null) return "";
+        var pkFields = _handle.GetPrimaryKeyFieldNos();
+        var parts = new List<string>();
+        foreach (var fno in pkFields)
+        {
+            // Use NavType.Integer as a dummy — GetFieldValueSafe returns the stored value
+            // regardless of expectedType; it only matters for the default fallback.
+            var val = _handle.GetFieldValueSafe(fno, NavType.Integer);
+            parts.Add(AlCompat.Format(val));
+        }
+        return string.Join("|", parts);
+    }
 
     // -- ChangeCompany (no-op in standalone — single company) --
     public bool ALChangeCompany(string companyName) => true;
@@ -335,16 +456,16 @@ public class MockRecordRef
     public bool ALChangeCompany() => true;
     public bool ALChangeCompany(DataError errorLevel) => true;
 
-    // -- Ascending --
+    // -- Ascending (delegates to handle) --
     public bool ALAscending
     {
-        get => true;
-        set { /* No-op in mock */ }
+        get => _handle?.ALAscending ?? true;
+        set => _handle?.SetOverallAscending(value);
     }
 
     // -- HasFilter / GetFilters --
     public bool ALHasFilter => _handle?.FiltersActive ?? false;
-    public string ALGetFilters => "";
+    public string ALGetFilters => _handle?.ALGetFilters ?? "";
 
     // -- GetPosition / SetPosition --
     public string ALGetPosition()
@@ -375,8 +496,24 @@ public class MockRecordRef
     public void ALModifyAll(int fieldNo, NavValue newValue) => _handle?.ALModifyAllSafe(fieldNo, NavType.Text, newValue);
     public void ALModifyAll(int fieldNo, NavValue newValue, bool runTrigger) => _handle?.ALModifyAllSafe(fieldNo, NavType.Text, newValue, runTrigger);
 
-    // -- GetFilter (per-field) --
-    public string ALGetFilter(int fieldNo) => "";
+    // -- GetFilter (per-field — delegates to handle) --
+    public string ALGetFilter(int fieldNo) => _handle?.ALGetFilter(fieldNo) ?? "";
+
+    // -- CurrentKey / CurrentKeyIndex --
+    public string ALCurrentKey => _handle?.ALCurrentKey ?? "";
+    public int ALCurrentKeyIndex => 1;
+
+    // -- KeyCount / KeyIndex --
+    public int ALKeyCount => 1;
+    public MockKeyRef ALKeyIndex(int index)
+    {
+        if (index == 1 && _handle != null)
+        {
+            var pkFields = _handle.GetPrimaryKeyFieldNos();
+            return new MockKeyRef(Number, pkFields, this);
+        }
+        throw new Exception($"RecordRef.KeyIndex: index {index} out of range (only 1 key available)");
+    }
 
     // -- CurrentCompany --
     public string ALCurrentCompany => "";
@@ -436,6 +573,20 @@ public class MockRecordRef
         }
     }
 
+    /// <summary>
+    /// ALAssign(MockFieldRef) — BC emits <c>recRef.ALAssign(fldRef)</c> when AL
+    /// code does <c>RecRef := FldRef.Record()</c>. The compiler inlines the
+    /// .Record() call, so we extract the owner RecordRef from the FieldRef.
+    /// </summary>
+    public void ALAssign(MockFieldRef fieldRef)
+    {
+        var owner = fieldRef.ALRecord();
+        ALAssign(owner);
+    }
+
+    // -- KeyIndex (with compilation target stripped) --
+    public MockKeyRef ALKeyIndex(object compilationTarget, int index) => ALKeyIndex(index);
+
     // -- Copy --
     public void ALCopy(MockRecordRef source, bool shareFilters = false)
     {
@@ -489,6 +640,23 @@ public class MockRecordRef
     internal void TestField(int fieldNo, NavValue expectedValue)
     {
         _handle?.ALTestFieldSafe(fieldNo, NavType.Text, expectedValue);
+    }
+
+    // -- Internal helpers for MockFieldRef filter/range access --
+
+    internal string GetFieldFilter(int fieldNo)
+    {
+        return _handle?.ALGetFilter(fieldNo) ?? "";
+    }
+
+    internal NavValue? GetFieldRangeMin(int fieldNo)
+    {
+        return _handle?.GetRangeMin(fieldNo);
+    }
+
+    internal NavValue? GetFieldRangeMax(int fieldNo)
+    {
+        return _handle?.GetRangeMax(fieldNo);
     }
 
     /// <summary>Expose the table ID for MockFieldRef enum lookups.</summary>

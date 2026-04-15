@@ -355,10 +355,11 @@ public class RoslynRewriter : CSharpSyntaxRewriter
                 SyntaxFactory.ParseMemberDeclaration(
                     "public void Break() { }")!);
 
-            // For report extensions: inject ParentObject stub.
-            // NavReportExtension.ParentObject returns the parent report instance.
-            // After stripping the base class, ParentObject is undefined. Inject it
-            // as a no-op so CurrReport and any other references compile.
+            // For report extensions: inject a CurrReport stub.
+            // BC generates a CurrReport property that casts this.ParentObject to the
+            // report type. After stripping the NavReportExtension base class, ParentObject
+            // is undefined and that cast fails. Inject a self-referencing stub so that
+            // CurrReport.Skip() / CurrReport.Break() still compile.
             if (isReportExtension)
             {
                 preservedMembers.Add(
@@ -1056,6 +1057,12 @@ public void ClearApplicationMemberVariables() { }
         if (text == "NavFieldRef")
             return node.WithIdentifier(SyntaxFactory.Identifier("MockFieldRef"));
 
+        // NavKeyRef -> MockKeyRef
+        // NavKeyRef is used by RecordRef.KeyIndex(). MockKeyRef provides
+        // ALActive, ALFieldCount, ALFieldIndex, ALRecord for key inspection.
+        if (text == "NavKeyRef")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockKeyRef"));
+
         // NavBLOB -> MockBlob
         // NavBLOB's ALCreateInStream/ALCreateOutStream pass ITreeObject to
         // NavStream ctor which crashes with null in standalone mode.
@@ -1430,6 +1437,14 @@ public void ClearApplicationMemberVariables() { }
         // Strip the ITreeObject 'this' argument.
         if (typeText == "MockFieldRef" && visited.ArgumentList != null &&
             visited.ArgumentList.Arguments.Count == 1)
+        {
+            return visited.WithArgumentList(SyntaxFactory.ArgumentList());
+        }
+
+        // new MockKeyRef(this, ...) -> new MockKeyRef()
+        // After VisitIdentifierName, NavKeyRef is now MockKeyRef.
+        // Strip all constructor args (ITreeObject dependency).
+        if (typeText == "MockKeyRef" && visited.ArgumentList != null)
         {
             return visited.WithArgumentList(SyntaxFactory.ArgumentList());
         }

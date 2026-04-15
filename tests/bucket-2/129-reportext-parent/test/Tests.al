@@ -12,11 +12,4 @@ codeunit 56291 "ReportExt Parent Tests"
         // must compile successfully (proves CS1061 'Parent' is resolved)
         Assert.IsTrue(Probe.CompilationSucceeded(), 'ReportExtension should compile with Parent access in scope classes');
     end;
-
-    [Test]
-    procedure ReportExtCompilationNotFalsePositive()
-    begin
-        // Negative: verify the probe actually returns true, not just any truthy value
-        Assert.AreEqual(true, Probe.CompilationSucceeded(), 'CompilationSucceeded should return true');
-    end;
 }

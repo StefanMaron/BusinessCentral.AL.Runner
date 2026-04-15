@@ -3,7 +3,7 @@
 // These scope classes reference `.Parent` to access variables defined on the
 // reportextension. After the rewriter strips NavReportExtension base, the
 // Parent property must still be available to avoid CS1061.
-reportextension 56290 "TestCustExt" extends "TestReportWithColumns"
+reportextension 56290 "TestCustExt" extends "TestReportWithColumnsExt"
 {
     dataset
     {

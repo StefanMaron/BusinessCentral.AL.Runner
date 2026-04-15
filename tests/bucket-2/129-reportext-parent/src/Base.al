@@ -1,5 +1,5 @@
 // Base report and table needed for the report extension to compile.
-report 70400 "TestReportWithColumns"
+report 70401 "TestReportWithColumnsExt"
 {
     DefaultLayout = RDLC;
     dataset
