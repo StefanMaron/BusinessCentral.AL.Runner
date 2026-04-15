@@ -691,7 +691,10 @@ keys_section:
 lookup_formula:
   layer: syntax
   category: table
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/38-lookup-formula
+    - tests/bucket-2/124-temp-records-flowfields
 
 table_relation_expression:
   layer: syntax

@@ -7,6 +7,12 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **CalcField `lookup` formula coverage (#231)** — the `lookup(...)` CalcFormula
+  kind in `MockRecordHandle.ALCalcFields` now has dedicated proving tests. New
+  suite `tests/bucket-1/38-lookup-formula` exercises text lookup, decimal
+  lookup, first-match disambiguation, and the no-match default path (empty
+  text / zero decimal). Coverage map: `lookup_formula` moved from `gap` to
+  `covered`.
 - **Multi-token decimal format strings (#225)** — `Format(decimal, 0, '<Precision,2:2><Standard Format,0>')`
   now parses every `<...>` token in the picture string instead of only the
   first. For decimals, `<Precision,min:max>` wins over `<Standard Format,N>`
