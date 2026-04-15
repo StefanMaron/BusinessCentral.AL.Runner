@@ -22,6 +22,10 @@ table 56260 "Metadata Test Item"
         field(5; Active; Boolean)
         {
         }
+        field(6; "Vendor Name"; Text[50])
+        {
+            Caption = 'Vendor''s Name';
+        }
     }
     keys { key(PK; "Entry No.") { Clustered = true; } }
 }

@@ -84,7 +84,63 @@ codeunit 56261 "Metadata Tests"
     [Test]
     procedure RecRefFieldCountReturnsSchemaCount()
     begin
-        // Table 56260 has 5 declared fields
-        Assert.AreEqual(5, Probe.GetRecRefFieldCount(56260), 'FieldCount should return number of declared fields');
+        // Table 56260 has 6 declared fields
+        Assert.AreEqual(6, Probe.GetRecRefFieldCount(56260), 'FieldCount should return number of declared fields');
+    end;
+
+    [Test]
+    procedure CaptionWithEmbeddedApostropheIsUnescaped()
+    begin
+        // field 6 has Caption = 'Vendor''s Name' — the doubled apostrophe should be unescaped
+        Assert.AreEqual('Vendor''s Name', Probe.GetFieldCaption(56260, 6), 'Embedded apostrophe should be unescaped');
+    end;
+
+    [Test]
+    procedure UnknownFieldFallsBackToFieldNNCaption()
+    begin
+        // Field 999 is not declared in table 56260 — caption should fall back to 'Field999'
+        Assert.AreEqual('Field999', Probe.GetFieldCaption(56260, 999), 'Unknown field should fall back to FieldNN');
+    end;
+
+    [Test]
+    procedure UnknownTableFallsBackToTableNNName()
+    begin
+        // Table 99999 is not registered — RecRef.Name should fall back to 'Table99999'
+        Assert.AreEqual('Table99999', Probe.GetTableName(99999), 'Unknown table should fall back to TableNN');
+    end;
+
+    [Test]
+    procedure IntegerFieldTypeIsInteger()
+    begin
+        // field 1 (Entry No.) is Integer
+        Assert.AreEqual('Integer', Probe.GetFieldType(56260, 1), 'Integer field should report type Integer');
+    end;
+
+    [Test]
+    procedure DecimalFieldTypeIsDecimal()
+    begin
+        // field 3 (Amount) is Decimal
+        Assert.AreEqual('Decimal', Probe.GetFieldType(56260, 3), 'Decimal field should report type Decimal');
+    end;
+
+    [Test]
+    procedure BooleanFieldTypeIsBoolean()
+    begin
+        // field 5 (Active) is Boolean
+        Assert.AreEqual('Boolean', Probe.GetFieldType(56260, 5), 'Boolean field should report type Boolean');
+    end;
+
+    [Test]
+    procedure TextFieldTypeIsText()
+    begin
+        // field 2 (Description) is Text[100]
+        Assert.AreEqual('Text', Probe.GetFieldType(56260, 2), 'Text field should report type Text');
+    end;
+
+    [Test]
+    procedure CodeFieldTypeIsCode()
+    begin
+        // field 4 (Item Code) is Code[20]
+        Assert.AreEqual('Code', Probe.GetFieldType(56260, 4), 'Code field should report type Code');
     end;
 }
