@@ -1,4 +1,4 @@
-codeunit 54901 "Test InitValue"
+codeunit 55101 "Test InitValue"
 {
     Subtype = Test;
 

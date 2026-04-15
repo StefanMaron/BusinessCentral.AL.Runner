@@ -1,4 +1,4 @@
-table 54900 "Init Value Table"
+table 55100 "Init Value Table"
 {
     DataClassification = CustomerContent;
 
