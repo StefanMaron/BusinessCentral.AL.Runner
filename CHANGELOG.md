@@ -13,6 +13,14 @@ All notable changes to this project are documented here. Format based on
   filtered set returns filtered last, filter with no matches returns false,
   `SetFilter('<>Z')` proves filters are honoured (returns M, not Z), and
   `FindFirst`/`FindLast` return different records.
+- **Record.Count with filters coverage (#257)** — `MockRecordHandle.ALCount`
+  already honoured active filters via `GetFilteredAndMarkedRecords`, but had
+  no dedicated proving test. New suite `tests/bucket-1/44-count-filtered`
+  covers empty table (0), total count (5), filtered subset (3 for Status=1,
+  2 for Status=2), zero-match filter, restoration after `Reset`, and range
+  filter (`Amount` in 20..40). RED confirmed by temporarily pointing
+  `ALCount` at the unfiltered row count. Coverage map: `Table.Count` moved
+  from `gap` to `covered`.
 - **Test coverage: `Record.IsTemporary()` (#254)** — `MockRecordHandle.ALIsTemporary`
   was already implemented; new suite `tests/bucket-1/254-record-istemporary`
   adds 5 proving tests: normal Record → false, `temporary` Record → true,
