@@ -1,4 +1,21 @@
-# Copilot Code Review Instructions
+# Copilot Instructions
+
+## Role: Implementation agent or reviewer
+
+When you receive an **issue assignment**, you are acting as an **implementation agent**. Read the `agent:` label on the assigned issue — that is your identity (`impl-1` or `impl-2`). Follow the agent workflow in `AGENTS.md`.
+
+**Implementation agent quick reference:**
+1. Create branch `agent/<your-id>/issue-<N>`
+2. Implement following TDD rules below — failing test first, then fix
+3. Open PR with `Closes #N` in the body. Add labels `agent: <your-id>` and `status: review-ready` to the PR
+4. Fix any CI failures or review comments that come back
+5. Auto-merge fires once approved and CI is green — you are done
+
+When you receive a **PR review request**, you are acting as a **code reviewer**. Apply the checklist below.
+
+---
+
+# Code Review Checklist
 
 These instructions apply to every pull request in this repository. Review each PR against the requirements below and flag anything that is missing or incorrect.
 
