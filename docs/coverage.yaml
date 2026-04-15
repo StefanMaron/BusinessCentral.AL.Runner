@@ -492,7 +492,8 @@ text_type:
 type_declaration:
   layer: syntax
   category: type
-  status: gap
+  status: out-of-scope
+  notes: .NET type alias (nested in dotnet/assembly blocks) — requires BC runtime .NET interop
 
 type_specification:
   layer: syntax

@@ -6,6 +6,14 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Changed
+- **Coverage: `type_declaration` reclassified as out-of-scope (#232)** — this
+  tree-sitter-al node is the `.NET` type alias declared inside
+  `dotnet { assembly { type(...) {} } }` blocks (required field `dotnet_type`),
+  not a general user-defined type alias. It requires BC runtime .NET interop,
+  which is an architectural limit like `assembly_declaration`. Moved from
+  `gap` to `out-of-scope` in `docs/coverage.yaml`.
+
 ### Added
 - **CalcField `lookup` formula coverage (#231)** — the `lookup(...)` CalcFormula
   kind in `MockRecordHandle.ALCalcFields` now has dedicated proving tests. New

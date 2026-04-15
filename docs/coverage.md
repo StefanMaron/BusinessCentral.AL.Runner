@@ -7,9 +7,9 @@ Auto-generated from `docs/coverage.yaml`. Do not edit directly.
 | Status | Count |
 |--------|-------|
 | ✅ Covered | 98 |
-| 🔲 Gap | 47 |
+| 🔲 Gap | 46 |
 | ❌ Not possible | 3 |
-| ⬜ Out of scope | 6 |
+| ⬜ Out of scope | 7 |
 | **Total** | **154** |
 
 ## Summary — runtime-api
@@ -108,7 +108,7 @@ Auto-generated from `docs/coverage.yaml`. Do not edit directly.
 | `option_type` | ✅ covered | `20-option-fields` |  |
 | `record_type` | ✅ covered | `02-record-operations`, `112-codeunit-onrun-record` |  |
 | `text_type` | ✅ covered | `01-pure-function`, `17-text-builder` |  |
-| `type_declaration` | 🔲 gap | — |  |
+| `type_declaration` | ⬜ out-of-scope | — | .NET type alias (nested in dotnet/assembly blocks) — requires BC runtime .NET interop |
 | `type_specification` | ✅ covered | `01-pure-function` |  |
 
 ## Procedure
