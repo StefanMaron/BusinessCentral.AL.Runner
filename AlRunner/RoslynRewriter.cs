@@ -1158,16 +1158,19 @@ public void ClearApplicationMemberVariables() { }
         var visited = (ObjectCreationExpressionSyntax)base.VisitObjectCreationExpression(node)!;
         var typeText = visited.Type.ToString();
 
-        // new NavRecordHandle(this, NNN, false, SecurityFiltering.XXX) -> new MockRecordHandle(NNN)
+        // new NavRecordHandle(this, NNN, temp, SecurityFiltering.XXX) -> new MockRecordHandle(NNN, temp)
         // After identifier replacement, this is already MockRecordHandle
         if (typeText == "MockRecordHandle" && visited.ArgumentList != null &&
             visited.ArgumentList.Arguments.Count >= 4)
         {
-            // The second argument is the table ID
             var tableIdArg = visited.ArgumentList.Arguments[1];
+            var tempArg = visited.ArgumentList.Arguments[2];
             var newArgs = SyntaxFactory.ArgumentList(
-                SyntaxFactory.SingletonSeparatedList(
-                    SyntaxFactory.Argument(tableIdArg.Expression)));
+                SyntaxFactory.SeparatedList(new[]
+                {
+                    SyntaxFactory.Argument(tableIdArg.Expression),
+                    SyntaxFactory.Argument(tempArg.Expression)
+                }));
             return visited.WithArgumentList(newArgs);
         }
 

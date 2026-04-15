@@ -7,6 +7,16 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Temporary records** — `Record "X" temporary` variables now use an isolated in-memory
+  store per handle instance, fully separated from non-temporary records of the same table.
+  `IsTemporary()` returns the correct value. `RecordRef.Open(tableId, true)` creates a
+  temporary RecordRef. (#120)
+- **FlowField CalcFormula: count, sum, lookup** — `CalcFields` now evaluates `count(...)`,
+  `sum(...)`, and `lookup(...)` formulas in addition to the existing `exist(...)` support.
+  Count returns the number of matching rows, Sum aggregates a decimal field, and Lookup
+  returns the target field value from the first matching row. (#120)
+
+### Added
 - **System, Database & Session utility stubs** — `Session.LogMessage()` (no-op),
   `Session.ApplicationArea()` (returns empty string), `Session.GetExecutionContext()` /
   `GetModuleExecutionContext()` (return `ExecutionContext.Normal`),

@@ -243,11 +243,16 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 
 - Pure-logic codeunits (arithmetic, string ops, record CRUD, enums, options)
 - In-memory table store: Insert, Modify, Get, Delete, FindSet, FindFirst, FindLast, Next
+- Temporary records — `Record "X" temporary` uses an isolated in-memory store per variable,
+  separate from non-temporary records. `IsTemporary()` returns the correct value.
+  `RecordRef.Open(tableId, true)` opens a temporary RecordRef.
 - TransferFields, CountApprox, Consistent (no-op), FieldActive (true), AddLink/HasLinks/DeleteLinks
 - WritePermission/ReadPermission (true), SetPermissionFilter (no-op), LockTable (no-op)
 - Composite primary keys, sort ordering (SetCurrentKey / SetAscending), CurrentKey, Ascending
 - SETRANGE / SETFILTER filtering (=, <>, <, <=, >, >=, wildcards, OR via |)
 - GetFilter(field), GetFilters, HasFilter — return active filter expressions
+- FlowField CalcFormula — CalcFields evaluates exist(), count(), sum(), and lookup() formulas
+  against the in-memory table store. Where-clause conditions support field() and const() references.
 - Cross-codeunit dispatch (Codeunit.Run, Codeunit.Run(id, Rec) with record parameter, direct codeunit variable calls)
 - AL interfaces for dependency injection
 - `asserterror` blocks + `GetLastErrorText()`

@@ -25,19 +25,12 @@ public static class CalcFormulaRegistry
         @"\bfield\s*\(\s*(\d+)\s*;\s*(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))\s*;\s*([^)]+?)\)\s*\{([^}]*)\}",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-    // `CalcFormula = exist(...)` — the argument list can contain nested
-    // parens (e.g. `where(C1 = field(Code1), C2 = field(Code2))`), so regex
-    // alone can't capture the full body. We locate the `exist(` keyword
-    // and then walk parens manually.
-    private static readonly Regex ExistKeyword = new(
-        @"\bCalcFormula\s*=\s*exist\s*\(",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
-    // Inner head of the exist body: target table name, optionally followed
-    // by `where(...)`. `([\s\S]*)` is a catch-all — we hand-carve the
-    // where body off the end so this only needs to match the target name.
-    private static readonly Regex ExistBodyHead = new(
-        @"^\s*(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))\s*(?:where\s*\(([\s\S]*)\))?\s*$",
+    // `CalcFormula = exist|count|sum|lookup(...)` — the argument list can
+    // contain nested parens (e.g. `where(C1 = field(Code1))`), so regex
+    // alone can't capture the full body. We locate the keyword and then
+    // walk parens manually.
+    private static readonly Regex FormulaKeyword = new(
+        @"\bCalcFormula\s*=\s*(exist|count|sum|lookup|min|max|average)\s*\(",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     // Single condition: ChildField = field(SelfField)  | ChildField = const(Value)
@@ -94,33 +87,55 @@ public static class CalcFormulaRegistry
             {
                 if (!int.TryParse(fm.Groups[1].Value, out var fieldId)) continue;
                 var fieldBody = fm.Groups[5].Value;
-                var ek = ExistKeyword.Match(fieldBody);
-                if (!ek.Success) continue;
+                var fk = FormulaKeyword.Match(fieldBody);
+                if (!fk.Success) continue;
 
-                // Walk parens from the `(` of `exist(` to the matching `)`.
-                int openParen = ek.Index + ek.Length - 1; // points at the `(`
+                var kindText = fk.Groups[1].Value.ToLowerInvariant();
+                var kind = kindText switch
+                {
+                    "exist"   => FormulaKind.Exist,
+                    "count"   => FormulaKind.Count,
+                    "sum"     => FormulaKind.Sum,
+                    "lookup"  => FormulaKind.Lookup,
+                    "min"     => FormulaKind.Min,
+                    "max"     => FormulaKind.Max,
+                    "average" => FormulaKind.Average,
+                    _         => FormulaKind.Exist,
+                };
+
+                // Walk parens from the `(` of `keyword(` to the matching `)`.
+                int openParen = fk.Index + fk.Length - 1;
                 int close = FindMatchingParen(fieldBody, openParen);
                 if (close < 0) continue;
-                var existBody = fieldBody.Substring(openParen + 1, close - openParen - 1);
+                var formulaBody = fieldBody.Substring(openParen + 1, close - openParen - 1);
 
-                // Split off a trailing `where(...)` clause if present.
+                // For sum/lookup/min/max/average the body is:
+                //   "Table"."Field" where(...)
+                // For exist/count it's just:
+                //   "Table" where(...)
                 string targetTable;
+                string? targetField = null;
                 string whereText = "";
-                var whereIdx = FindTopLevelKeyword(existBody, "where");
+
+                // Split off a trailing `where(...)` clause first.
+                string preWhere;
+                var whereIdx = FindTopLevelKeyword(formulaBody, "where");
                 if (whereIdx >= 0)
                 {
-                    targetTable = existBody.Substring(0, whereIdx).Trim().Trim('"');
-                    // `where(` then match parens.
-                    int whereOpen = existBody.IndexOf('(', whereIdx);
+                    preWhere = formulaBody.Substring(0, whereIdx).Trim();
+                    int whereOpen = formulaBody.IndexOf('(', whereIdx);
                     if (whereOpen < 0) continue;
-                    int whereClose = FindMatchingParen(existBody, whereOpen);
+                    int whereClose = FindMatchingParen(formulaBody, whereOpen);
                     if (whereClose < 0) continue;
-                    whereText = existBody.Substring(whereOpen + 1, whereClose - whereOpen - 1);
+                    whereText = formulaBody.Substring(whereOpen + 1, whereClose - whereOpen - 1);
                 }
                 else
                 {
-                    targetTable = existBody.Trim().Trim('"');
+                    preWhere = formulaBody.Trim();
                 }
+
+                // Parse "Table"."Field" or "Table" from preWhere.
+                ParseTableAndField(preWhere, out targetTable, out targetField);
 
                 var clauses = new List<WhereClause>();
                 foreach (var cond in SplitTopLevelCommas(whereText))
@@ -133,11 +148,33 @@ public static class CalcFormulaRegistry
                     clauses.Add(new WhereClause(childField, opKind, val.Trim()));
                 }
 
-                var formula = new Formula(tableId, fieldId, FormulaKind.Exist, targetTable, null, clauses);
+                var formula = new Formula(tableId, fieldId, kind, targetTable, targetField, clauses);
                 if (!_byTable.TryGetValue(tableId, out var list))
                     _byTable[tableId] = list = new List<Formula>();
                 list.Add(formula);
             }
+        }
+    }
+
+    /// <summary>
+    /// Parse "Table"."Field" or "Table" from the pre-where portion of a formula body.
+    /// Handles quoted and unquoted identifiers.
+    /// </summary>
+    private static void ParseTableAndField(string text, out string tableName, out string? fieldName)
+    {
+        fieldName = null;
+        // Pattern: "Table"."Field" or Table."Field" etc.
+        // Split on a dot that separates two quoted or unquoted identifiers.
+        var dotMatch = Regex.Match(text,
+            @"^\s*(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_ ]*))\s*\.\s*(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_ ]*))\s*$");
+        if (dotMatch.Success)
+        {
+            tableName = (dotMatch.Groups[1].Success ? dotMatch.Groups[1].Value : dotMatch.Groups[2].Value).Trim();
+            fieldName = (dotMatch.Groups[3].Success ? dotMatch.Groups[3].Value : dotMatch.Groups[4].Value).Trim();
+        }
+        else
+        {
+            tableName = text.Trim().Trim('"');
         }
     }
 

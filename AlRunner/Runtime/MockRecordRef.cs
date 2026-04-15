@@ -30,7 +30,7 @@ public class MockRecordRef
     public void Open(int tableId, bool temporary, string? companyName)
     {
         Number = tableId;
-        _handle = new MockRecordHandle(tableId);
+        _handle = new MockRecordHandle(tableId, temporary);
     }
 
     public void Close()

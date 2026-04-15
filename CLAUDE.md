@@ -139,7 +139,7 @@ dotnet run --project AlRunner -- ./src ./test
 | `AlRunner/PackageScanner.cs` | .app file scanning and deduplication |
 | `AlRunner/StubGenerator.cs` | `--generate-stubs` command |
 | `AlRunner/Runtime/AlScope.cs` | Base scope, AlDialog, AlCompat (Format, RoundDateTime, utility stubs), MockDialog |
-| `AlRunner/Runtime/MockRecordHandle.cs` | In-memory record store (filtering, composite PKs, sort, triggers) |
+| `AlRunner/Runtime/MockRecordHandle.cs` | In-memory record store (filtering, composite PKs, sort, triggers, temp records, CalcFields) |
 | `AlRunner/Runtime/MockCodeunitHandle.cs` | Cross-codeunit dispatch via reflection |
 | `AlRunner/Runtime/EventSubscriberRegistry.cs` | Event subscriber discovery + dispatch |
 | `AlRunner/Runtime/HandlerRegistry.cs` | Test handler dispatch (ConfirmHandler, MessageHandler, ModalPageHandler, RequestPageHandler) |
