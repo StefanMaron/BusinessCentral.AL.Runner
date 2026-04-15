@@ -69,4 +69,13 @@ codeunit 50930 "BigText Tests"
         // [THEN] TextPos should return 0 for empty search
         Assert.AreEqual(0, Helper.FindPosition('Some Text', ''), 'Empty needle should return 0');
     end;
+
+    [Test]
+    procedure TestRequireTextMismatchErrors()
+    begin
+        // [WHEN] BigText content does not match the expected value
+        // [THEN] The helper should raise an error containing the mismatch details
+        asserterror Helper.RequireText('Hello', 'Goodbye');
+        Assert.ExpectedError('does not match expected');
+    end;
 }

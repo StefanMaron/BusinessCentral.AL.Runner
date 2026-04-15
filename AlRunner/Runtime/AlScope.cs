@@ -1440,13 +1440,23 @@ public static class AlCompat
                 break;
         }
 
-        // Already aligned to precision boundary — no adjustment needed.
         if (diffTicks == 0) return dt;
 
-        // Use NavDateTime + Int64 (milliseconds) instead of NavDateTime.Create(DateTime).
-        // NavDateTime.Create(DateTime) in BC 28+ triggers Telemetry.Abstractions loading
-        // which is unavailable outside the service tier.
-        long diffMs = diffTicks / TimeSpan.TicksPerMillisecond;
-        return dt + diffMs;
+        return CreateNavDateTime(new DateTime(ticks + diffTicks, dateTime.Kind));
+    }
+
+    // Cache the backing field for NavDateTime construction via reflection.
+    // NavDateTime.Create(DateTime) and operator+(Int64) both trigger loading of
+    // Telemetry.Abstractions in BC 28+, which is unavailable outside the service tier.
+    // Constructing via Activator + field set bypasses all such dependencies.
+    private static readonly System.Reflection.FieldInfo? NavDateTimeValueField =
+        typeof(NavDateTime).BaseType?.GetField("value",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+    internal static NavDateTime CreateNavDateTime(DateTime dateTime)
+    {
+        var result = (NavDateTime)System.Activator.CreateInstance(typeof(NavDateTime), nonPublic: true)!;
+        NavDateTimeValueField?.SetValue(result, dateTime);
+        return result;
     }
 }

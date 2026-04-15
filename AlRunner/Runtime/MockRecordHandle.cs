@@ -993,8 +993,14 @@ public class MockRecordHandle
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public |
             System.Reflection.BindingFlags.Instance))
         {
-            var attr = method.GetCustomAttributes(false)
-                .FirstOrDefault(a => a.GetType().Name == "FieldTriggerHandlerAttribute");
+            object? attr;
+            try
+            {
+                attr = method.GetCustomAttributes(false)
+                    .FirstOrDefault(a => a.GetType().Name == "FieldTriggerHandlerAttribute");
+            }
+            catch (System.IO.FileNotFoundException) { continue; }
+            catch (TypeLoadException) { continue; }
             if (attr == null) continue;
 
             var triggerType = attr.GetType().GetProperty("TriggerType")?.GetValue(attr);
