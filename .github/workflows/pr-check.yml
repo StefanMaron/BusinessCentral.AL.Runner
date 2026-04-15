@@ -63,5 +63,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Run coverage-gen unit tests
+        run: node scripts/tests/coverage-gen.test.js
+
       - name: Validate docs/coverage.yaml
         run: node scripts/coverage-gen.js --validate

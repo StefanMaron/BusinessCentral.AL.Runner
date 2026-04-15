@@ -1,0 +1,5562 @@
+{
+  "generated": "2026-04-15T16:09:53Z",
+  "compiler_dll": "Microsoft.Dynamics.Nav.CodeAnalysis.dll",
+  "types": {
+    "BigInteger": {
+      "methods": [
+        {
+          "name": "ToText",
+          "overloads": 1
+        }
+      ]
+    },
+    "BigText": {
+      "methods": [
+        {
+          "name": "AddText",
+          "overloads": 2
+        },
+        {
+          "name": "GetSubText",
+          "overloads": 2
+        },
+        {
+          "name": "Length",
+          "overloads": 1
+        },
+        {
+          "name": "Read",
+          "overloads": 1
+        },
+        {
+          "name": "TextPos",
+          "overloads": 1
+        },
+        {
+          "name": "Write",
+          "overloads": 1
+        }
+      ]
+    },
+    "Blob": {
+      "methods": [
+        {
+          "name": "CreateInStream",
+          "overloads": 1
+        },
+        {
+          "name": "CreateOutStream",
+          "overloads": 1
+        },
+        {
+          "name": "Export",
+          "overloads": 1
+        },
+        {
+          "name": "HasValue",
+          "overloads": 1
+        },
+        {
+          "name": "Import",
+          "overloads": 1
+        },
+        {
+          "name": "Length",
+          "overloads": 1
+        }
+      ]
+    },
+    "Boolean": {
+      "methods": [
+        {
+          "name": "ToText",
+          "overloads": 2
+        }
+      ]
+    },
+    "Byte": {
+      "methods": [
+        {
+          "name": "ToText",
+          "overloads": 2
+        }
+      ]
+    },
+    "Codeunit": {
+      "methods": [
+        {
+          "name": "Run",
+          "overloads": 1
+        }
+      ]
+    },
+    "CodeunitInstance": {
+      "methods": [
+        {
+          "name": "Run",
+          "overloads": 1
+        }
+      ]
+    },
+    "CompanyProperty": {
+      "methods": [
+        {
+          "name": "DisplayName",
+          "overloads": 1
+        },
+        {
+          "name": "ID",
+          "overloads": 1
+        },
+        {
+          "name": "UrlName",
+          "overloads": 1
+        }
+      ]
+    },
+    "Cookie": {
+      "methods": [
+        {
+          "name": "Domain",
+          "overloads": 1
+        },
+        {
+          "name": "Expires",
+          "overloads": 1
+        },
+        {
+          "name": "HttpOnly",
+          "overloads": 1
+        },
+        {
+          "name": "Name",
+          "overloads": 1
+        },
+        {
+          "name": "Path",
+          "overloads": 1
+        },
+        {
+          "name": "Secure",
+          "overloads": 1
+        },
+        {
+          "name": "Value",
+          "overloads": 1
+        }
+      ]
+    },
+    "DataTransfer": {
+      "methods": [
+        {
+          "name": "AddConstantValue",
+          "overloads": 1
+        },
+        {
+          "name": "AddFieldValue",
+          "overloads": 1
+        },
+        {
+          "name": "AddJoin",
+          "overloads": 1
+        },
+        {
+          "name": "AddSourceFilter",
+          "overloads": 1
+        },
+        {
+          "name": "CopyFields",
+          "overloads": 1
+        },
+        {
+          "name": "CopyRows",
+          "overloads": 1
+        },
+        {
+          "name": "SetTables",
+          "overloads": 1
+        },
+        {
+          "name": "UpdateAuditFields",
+          "overloads": 1
+        }
+      ]
+    },
+    "Database": {
+      "methods": [
+        {
+          "name": "AlterKey",
+          "overloads": 1
+        },
+        {
+          "name": "ChangeUserPassword",
+          "overloads": 1
+        },
+        {
+          "name": "CheckLicenseFile",
+          "overloads": 1
+        },
+        {
+          "name": "Commit",
+          "overloads": 1
+        },
+        {
+          "name": "CompanyName",
+          "overloads": 1
+        },
+        {
+          "name": "CopyCompany",
+          "overloads": 1
+        },
+        {
+          "name": "CurrentTransactionType",
+          "overloads": 1
+        },
+        {
+          "name": "DataFileInformation",
+          "overloads": 1
+        },
+        {
+          "name": "ExportData",
+          "overloads": 1
+        },
+        {
+          "name": "GetDefaultTableConnection",
+          "overloads": 1
+        },
+        {
+          "name": "HasTableConnection",
+          "overloads": 1
+        },
+        {
+          "name": "ImportData",
+          "overloads": 1
+        },
+        {
+          "name": "IsInWriteTransaction",
+          "overloads": 1
+        },
+        {
+          "name": "LastUsedRowVersion",
+          "overloads": 1
+        },
+        {
+          "name": "LockTimeout",
+          "overloads": 1
+        },
+        {
+          "name": "LockTimeoutDuration",
+          "overloads": 1
+        },
+        {
+          "name": "MinimumActiveRowVersion",
+          "overloads": 1
+        },
+        {
+          "name": "RegisterTableConnection",
+          "overloads": 1
+        },
+        {
+          "name": "SID",
+          "overloads": 1
+        },
+        {
+          "name": "SelectLatestVersion",
+          "overloads": 2
+        },
+        {
+          "name": "SerialNumber",
+          "overloads": 1
+        },
+        {
+          "name": "ServiceInstanceId",
+          "overloads": 1
+        },
+        {
+          "name": "SessionId",
+          "overloads": 1
+        },
+        {
+          "name": "SetDefaultTableConnection",
+          "overloads": 1
+        },
+        {
+          "name": "SetUserPassword",
+          "overloads": 1
+        },
+        {
+          "name": "TenantId",
+          "overloads": 1
+        },
+        {
+          "name": "UnregisterTableConnection",
+          "overloads": 1
+        },
+        {
+          "name": "UserId",
+          "overloads": 1
+        },
+        {
+          "name": "UserSecurityId",
+          "overloads": 1
+        }
+      ]
+    },
+    "Date": {
+      "methods": [
+        {
+          "name": "Day",
+          "overloads": 1
+        },
+        {
+          "name": "DayOfWeek",
+          "overloads": 1
+        },
+        {
+          "name": "Month",
+          "overloads": 1
+        },
+        {
+          "name": "ToText",
+          "overloads": 1
+        },
+        {
+          "name": "WeekNo",
+          "overloads": 1
+        },
+        {
+          "name": "Year",
+          "overloads": 1
+        }
+      ]
+    },
+    "DateTime": {
+      "methods": [
+        {
+          "name": "Date",
+          "overloads": 1
+        },
+        {
+          "name": "Time",
+          "overloads": 1
+        },
+        {
+          "name": "ToText",
+          "overloads": 1
+        }
+      ]
+    },
+    "Debugger": {
+      "methods": [
+        {
+          "name": "Activate",
+          "overloads": 1
+        },
+        {
+          "name": "Attach",
+          "overloads": 1
+        },
+        {
+          "name": "Break",
+          "overloads": 1
+        },
+        {
+          "name": "BreakOnError",
+          "overloads": 1
+        },
+        {
+          "name": "BreakOnRecordChanges",
+          "overloads": 1
+        },
+        {
+          "name": "Continue",
+          "overloads": 1
+        },
+        {
+          "name": "Deactivate",
+          "overloads": 1
+        },
+        {
+          "name": "DebuggedSessionID",
+          "overloads": 1
+        },
+        {
+          "name": "DebuggingSessionID",
+          "overloads": 1
+        },
+        {
+          "name": "EnableSqlTrace",
+          "overloads": 1
+        },
+        {
+          "name": "GetLastErrorText",
+          "overloads": 1
+        },
+        {
+          "name": "IsActive",
+          "overloads": 1
+        },
+        {
+          "name": "IsAttached",
+          "overloads": 1
+        },
+        {
+          "name": "IsBreakpointHit",
+          "overloads": 1
+        },
+        {
+          "name": "SkipSystemTriggers",
+          "overloads": 1
+        },
+        {
+          "name": "StepInto",
+          "overloads": 1
+        },
+        {
+          "name": "StepOut",
+          "overloads": 1
+        },
+        {
+          "name": "StepOver",
+          "overloads": 1
+        },
+        {
+          "name": "Stop",
+          "overloads": 1
+        }
+      ]
+    },
+    "Decimal": {
+      "methods": [
+        {
+          "name": "ToText",
+          "overloads": 2
+        }
+      ]
+    },
+    "Dialog": {
+      "methods": [
+        {
+          "name": "Close",
+          "overloads": 1
+        },
+        {
+          "name": "Confirm",
+          "overloads": 1
+        },
+        {
+          "name": "Error",
+          "overloads": 2
+        },
+        {
+          "name": "HideSubsequentDialogs",
+          "overloads": 1
+        },
+        {
+          "name": "LogInternalError",
+          "overloads": 2
+        },
+        {
+          "name": "Message",
+          "overloads": 1
+        },
+        {
+          "name": "Open",
+          "overloads": 1
+        },
+        {
+          "name": "StrMenu",
+          "overloads": 1
+        },
+        {
+          "name": "Update",
+          "overloads": 1
+        }
+      ]
+    },
+    "Duration": {
+      "methods": [
+        {
+          "name": "ToText",
+          "overloads": 1
+        }
+      ]
+    },
+    "EnumType": {
+      "methods": [
+        {
+          "name": "AsInteger",
+          "overloads": 1
+        },
+        {
+          "name": "FromInteger",
+          "overloads": 1
+        },
+        {
+          "name": "Names",
+          "overloads": 2
+        },
+        {
+          "name": "Ordinals",
+          "overloads": 2
+        }
+      ]
+    },
+    "ErrorInfo": {
+      "methods": [
+        {
+          "name": "AddAction",
+          "overloads": 2
+        },
+        {
+          "name": "AddNavigationAction",
+          "overloads": 2
+        },
+        {
+          "name": "Callstack",
+          "overloads": 1
+        },
+        {
+          "name": "Collectible",
+          "overloads": 1
+        },
+        {
+          "name": "ControlName",
+          "overloads": 1
+        },
+        {
+          "name": "Create",
+          "overloads": 2
+        },
+        {
+          "name": "CustomDimensions",
+          "overloads": 1
+        },
+        {
+          "name": "DataClassification",
+          "overloads": 1
+        },
+        {
+          "name": "DetailedMessage",
+          "overloads": 1
+        },
+        {
+          "name": "ErrorType",
+          "overloads": 1
+        },
+        {
+          "name": "FieldNo",
+          "overloads": 1
+        },
+        {
+          "name": "Message",
+          "overloads": 1
+        },
+        {
+          "name": "PageNo",
+          "overloads": 1
+        },
+        {
+          "name": "RecordId",
+          "overloads": 1
+        },
+        {
+          "name": "SystemId",
+          "overloads": 1
+        },
+        {
+          "name": "TableId",
+          "overloads": 1
+        },
+        {
+          "name": "Title",
+          "overloads": 1
+        },
+        {
+          "name": "Verbosity",
+          "overloads": 1
+        }
+      ]
+    },
+    "FieldRef": {
+      "methods": [
+        {
+          "name": "Active",
+          "overloads": 1
+        },
+        {
+          "name": "CalcField",
+          "overloads": 1
+        },
+        {
+          "name": "CalcSum",
+          "overloads": 1
+        },
+        {
+          "name": "Caption",
+          "overloads": 1
+        },
+        {
+          "name": "Class",
+          "overloads": 1
+        },
+        {
+          "name": "EnumValueCount",
+          "overloads": 1
+        },
+        {
+          "name": "FieldError",
+          "overloads": 2
+        },
+        {
+          "name": "GetEnumValueCaption",
+          "overloads": 1
+        },
+        {
+          "name": "GetEnumValueCaptionFromOrdinalValue",
+          "overloads": 1
+        },
+        {
+          "name": "GetEnumValueName",
+          "overloads": 1
+        },
+        {
+          "name": "GetEnumValueNameFromOrdinalValue",
+          "overloads": 1
+        },
+        {
+          "name": "GetEnumValueOrdinal",
+          "overloads": 1
+        },
+        {
+          "name": "GetFilter",
+          "overloads": 1
+        },
+        {
+          "name": "GetRangeMax",
+          "overloads": 1
+        },
+        {
+          "name": "GetRangeMin",
+          "overloads": 1
+        },
+        {
+          "name": "IsEnum",
+          "overloads": 1
+        },
+        {
+          "name": "IsOptimizedForTextSearch",
+          "overloads": 1
+        },
+        {
+          "name": "Length",
+          "overloads": 1
+        },
+        {
+          "name": "Name",
+          "overloads": 1
+        },
+        {
+          "name": "Number",
+          "overloads": 1
+        },
+        {
+          "name": "OptionCaption",
+          "overloads": 1
+        },
+        {
+          "name": "OptionMembers",
+          "overloads": 1
+        },
+        {
+          "name": "OptionString",
+          "overloads": 1
+        },
+        {
+          "name": "Record",
+          "overloads": 1
+        },
+        {
+          "name": "Relation",
+          "overloads": 1
+        },
+        {
+          "name": "SetFilter",
+          "overloads": 1
+        },
+        {
+          "name": "SetRange",
+          "overloads": 1
+        },
+        {
+          "name": "TestField",
+          "overloads": 38
+        },
+        {
+          "name": "Type",
+          "overloads": 1
+        },
+        {
+          "name": "Validate",
+          "overloads": 1
+        },
+        {
+          "name": "Value",
+          "overloads": 1
+        }
+      ]
+    },
+    "File": {
+      "methods": [
+        {
+          "name": "Close",
+          "overloads": 1
+        },
+        {
+          "name": "Copy",
+          "overloads": 1
+        },
+        {
+          "name": "Create",
+          "overloads": 1
+        },
+        {
+          "name": "CreateInStream",
+          "overloads": 1
+        },
+        {
+          "name": "CreateOutStream",
+          "overloads": 1
+        },
+        {
+          "name": "CreateTempFile",
+          "overloads": 1
+        },
+        {
+          "name": "Download",
+          "overloads": 1
+        },
+        {
+          "name": "DownloadFromStream",
+          "overloads": 1
+        },
+        {
+          "name": "Erase",
+          "overloads": 1
+        },
+        {
+          "name": "Exists",
+          "overloads": 1
+        },
+        {
+          "name": "GetStamp",
+          "overloads": 1
+        },
+        {
+          "name": "IsPathTemporary",
+          "overloads": 1
+        },
+        {
+          "name": "Len",
+          "overloads": 1
+        },
+        {
+          "name": "Name",
+          "overloads": 1
+        },
+        {
+          "name": "Open",
+          "overloads": 1
+        },
+        {
+          "name": "Pos",
+          "overloads": 1
+        },
+        {
+          "name": "Read",
+          "overloads": 1
+        },
+        {
+          "name": "Rename",
+          "overloads": 1
+        },
+        {
+          "name": "Seek",
+          "overloads": 1
+        },
+        {
+          "name": "SetStamp",
+          "overloads": 1
+        },
+        {
+          "name": "TextMode",
+          "overloads": 1
+        },
+        {
+          "name": "Trunc",
+          "overloads": 1
+        },
+        {
+          "name": "Upload",
+          "overloads": 1
+        },
+        {
+          "name": "UploadIntoStream",
+          "overloads": 2
+        },
+        {
+          "name": "View",
+          "overloads": 1
+        },
+        {
+          "name": "ViewFromStream",
+          "overloads": 1
+        },
+        {
+          "name": "Write",
+          "overloads": 21
+        },
+        {
+          "name": "WriteMode",
+          "overloads": 1
+        }
+      ]
+    },
+    "FileUpload": {
+      "methods": [
+        {
+          "name": "CreateInStream",
+          "overloads": 2
+        },
+        {
+          "name": "FileName",
+          "overloads": 1
+        }
+      ]
+    },
+    "FilterPageBuilder": {
+      "methods": [
+        {
+          "name": "AddField",
+          "overloads": 2
+        },
+        {
+          "name": "AddFieldNo",
+          "overloads": 1
+        },
+        {
+          "name": "AddRecord",
+          "overloads": 1
+        },
+        {
+          "name": "AddRecordRef",
+          "overloads": 1
+        },
+        {
+          "name": "AddTable",
+          "overloads": 1
+        },
+        {
+          "name": "Count",
+          "overloads": 1
+        },
+        {
+          "name": "GetView",
+          "overloads": 1
+        },
+        {
+          "name": "Name",
+          "overloads": 1
+        },
+        {
+          "name": "PageCaption",
+          "overloads": 1
+        },
+        {
+          "name": "RunModal",
+          "overloads": 1
+        },
+        {
+          "name": "SetView",
+          "overloads": 1
+        }
+      ]
+    },
+    "Guid": {
+      "methods": [
+        {
+          "name": "CreateGuid",
+          "overloads": 1
+        },
+        {
+          "name": "CreateSequentialGuid",
+          "overloads": 1
+        },
+        {
+          "name": "ToText",
+          "overloads": 2
+        }
+      ]
+    },
+    "HttpClient": {
+      "methods": [
+        {
+          "name": "AddCertificate",
+          "overloads": 2
+        },
+        {
+          "name": "Clear",
+          "overloads": 1
+        },
+        {
+          "name": "DefaultRequestHeaders",
+          "overloads": 1
+        },
+        {
+          "name": "Delete",
+          "overloads": 1
+        },
+        {
+          "name": "Get",
+          "overloads": 1
+        },
+        {
+          "name": "GetBaseAddress",
+          "overloads": 1
+        },
+        {
+          "name": "Patch",
+          "overloads": 1
+        },
+        {
+          "name": "Post",
+          "overloads": 1
+        },
+        {
+          "name": "Put",
+          "overloads": 1
+        },
+        {
+          "name": "Send",
+          "overloads": 1
+        },
+        {
+          "name": "SetBaseAddress",
+          "overloads": 1
+        },
+        {
+          "name": "Timeout",
+          "overloads": 1
+        },
+        {
+          "name": "UseDefaultNetworkWindowsAuthentication",
+          "overloads": 1
+        },
+        {
+          "name": "UseResponseCookies",
+          "overloads": 1
+        },
+        {
+          "name": "UseServerCertificateValidation",
+          "overloads": 1
+        },
+        {
+          "name": "UseWindowsAuthentication",
+          "overloads": 2
+        }
+      ]
+    },
+    "HttpContent": {
+      "methods": [
+        {
+          "name": "Clear",
+          "overloads": 1
+        },
+        {
+          "name": "GetHeaders",
+          "overloads": 1
+        },
+        {
+          "name": "IsSecretContent",
+          "overloads": 1
+        },
+        {
+          "name": "ReadAs",
+          "overloads": 3
+        },
+        {
+          "name": "WriteFrom",
+          "overloads": 3
+        }
+      ]
+    },
+    "HttpHeaders": {
+      "methods": [
+        {
+          "name": "Add",
+          "overloads": 2
+        },
+        {
+          "name": "Clear",
+          "overloads": 1
+        },
+        {
+          "name": "Contains",
+          "overloads": 1
+        },
+        {
+          "name": "ContainsSecret",
+          "overloads": 1
+        },
+        {
+          "name": "GetSecretValues",
+          "overloads": 2
+        },
+        {
+          "name": "GetValues",
+          "overloads": 2
+        },
+        {
+          "name": "Keys",
+          "overloads": 1
+        },
+        {
+          "name": "Remove",
+          "overloads": 1
+        },
+        {
+          "name": "TryAddWithoutValidation",
+          "overloads": 2
+        }
+      ]
+    },
+    "HttpRequestMessage": {
+      "methods": [
+        {
+          "name": "Content",
+          "overloads": 1
+        },
+        {
+          "name": "GetCookie",
+          "overloads": 1
+        },
+        {
+          "name": "GetCookieNames",
+          "overloads": 1
+        },
+        {
+          "name": "GetHeaders",
+          "overloads": 1
+        },
+        {
+          "name": "GetRequestUri",
+          "overloads": 1
+        },
+        {
+          "name": "GetSecretRequestUri",
+          "overloads": 1
+        },
+        {
+          "name": "Method",
+          "overloads": 1
+        },
+        {
+          "name": "RemoveCookie",
+          "overloads": 1
+        },
+        {
+          "name": "SetCookie",
+          "overloads": 2
+        },
+        {
+          "name": "SetRequestUri",
+          "overloads": 1
+        },
+        {
+          "name": "SetSecretRequestUri",
+          "overloads": 1
+        }
+      ]
+    },
+    "HttpResponseMessage": {
+      "methods": [
+        {
+          "name": "Content",
+          "overloads": 1
+        },
+        {
+          "name": "GetCookie",
+          "overloads": 1
+        },
+        {
+          "name": "GetCookieNames",
+          "overloads": 1
+        },
+        {
+          "name": "Headers",
+          "overloads": 1
+        },
+        {
+          "name": "HttpStatusCode",
+          "overloads": 1
+        },
+        {
+          "name": "IsBlockedByEnvironment",
+          "overloads": 1
+        },
+        {
+          "name": "IsSuccessStatusCode",
+          "overloads": 1
+        },
+        {
+          "name": "ReasonPhrase",
+          "overloads": 1
+        }
+      ]
+    },
+    "InStream": {
+      "methods": [
+        {
+          "name": "EOS",
+          "overloads": 1
+        },
+        {
+          "name": "Length",
+          "overloads": 1
+        },
+        {
+          "name": "Position",
+          "overloads": 1
+        },
+        {
+          "name": "Read",
+          "overloads": 9
+        },
+        {
+          "name": "ReadText",
+          "overloads": 1
+        },
+        {
+          "name": "ResetPosition",
+          "overloads": 1
+        }
+      ]
+    },
+    "Integer": {
+      "methods": [
+        {
+          "name": "ToText",
+          "overloads": 1
+        }
+      ]
+    },
+    "IsolatedStorage": {
+      "methods": [
+        {
+          "name": "Contains",
+          "overloads": 2
+        },
+        {
+          "name": "Delete",
+          "overloads": 1
+        },
+        {
+          "name": "Get",
+          "overloads": 4
+        },
+        {
+          "name": "Set",
+          "overloads": 2
+        },
+        {
+          "name": "SetEncrypted",
+          "overloads": 2
+        }
+      ]
+    },
+    "JsonArray": {
+      "methods": [
+        {
+          "name": "Add",
+          "overloads": 16
+        },
+        {
+          "name": "AsToken",
+          "overloads": 1
+        },
+        {
+          "name": "Clone",
+          "overloads": 1
+        },
+        {
+          "name": "Count",
+          "overloads": 1
+        },
+        {
+          "name": "Get",
+          "overloads": 1
+        },
+        {
+          "name": "GetArray",
+          "overloads": 1
+        },
+        {
+          "name": "GetBigInteger",
+          "overloads": 1
+        },
+        {
+          "name": "GetBoolean",
+          "overloads": 1
+        },
+        {
+          "name": "GetByte",
+          "overloads": 1
+        },
+        {
+          "name": "GetChar",
+          "overloads": 1
+        },
+        {
+          "name": "GetDate",
+          "overloads": 1
+        },
+        {
+          "name": "GetDateTime",
+          "overloads": 1
+        },
+        {
+          "name": "GetDecimal",
+          "overloads": 1
+        },
+        {
+          "name": "GetDuration",
+          "overloads": 1
+        },
+        {
+          "name": "GetInteger",
+          "overloads": 1
+        },
+        {
+          "name": "GetObject",
+          "overloads": 1
+        },
+        {
+          "name": "GetOption",
+          "overloads": 1
+        },
+        {
+          "name": "GetText",
+          "overloads": 1
+        },
+        {
+          "name": "GetTime",
+          "overloads": 1
+        },
+        {
+          "name": "IndexOf",
+          "overloads": 16
+        },
+        {
+          "name": "Insert",
+          "overloads": 16
+        },
+        {
+          "name": "Path",
+          "overloads": 1
+        },
+        {
+          "name": "ReadFrom",
+          "overloads": 2
+        },
+        {
+          "name": "RemoveAt",
+          "overloads": 1
+        },
+        {
+          "name": "SelectToken",
+          "overloads": 1
+        },
+        {
+          "name": "Set",
+          "overloads": 16
+        },
+        {
+          "name": "WriteTo",
+          "overloads": 2
+        }
+      ]
+    },
+    "JsonObject": {
+      "methods": [
+        {
+          "name": "Add",
+          "overloads": 16
+        },
+        {
+          "name": "AsToken",
+          "overloads": 1
+        },
+        {
+          "name": "Clone",
+          "overloads": 1
+        },
+        {
+          "name": "Contains",
+          "overloads": 1
+        },
+        {
+          "name": "Get",
+          "overloads": 1
+        },
+        {
+          "name": "GetArray",
+          "overloads": 1
+        },
+        {
+          "name": "GetBigInteger",
+          "overloads": 1
+        },
+        {
+          "name": "GetBoolean",
+          "overloads": 1
+        },
+        {
+          "name": "GetByte",
+          "overloads": 1
+        },
+        {
+          "name": "GetChar",
+          "overloads": 1
+        },
+        {
+          "name": "GetDate",
+          "overloads": 1
+        },
+        {
+          "name": "GetDateTime",
+          "overloads": 1
+        },
+        {
+          "name": "GetDecimal",
+          "overloads": 1
+        },
+        {
+          "name": "GetDuration",
+          "overloads": 1
+        },
+        {
+          "name": "GetInteger",
+          "overloads": 1
+        },
+        {
+          "name": "GetObject",
+          "overloads": 1
+        },
+        {
+          "name": "GetOption",
+          "overloads": 1
+        },
+        {
+          "name": "GetText",
+          "overloads": 1
+        },
+        {
+          "name": "GetTime",
+          "overloads": 1
+        },
+        {
+          "name": "Keys",
+          "overloads": 1
+        },
+        {
+          "name": "Path",
+          "overloads": 1
+        },
+        {
+          "name": "ReadFrom",
+          "overloads": 2
+        },
+        {
+          "name": "ReadFromYaml",
+          "overloads": 2
+        },
+        {
+          "name": "Remove",
+          "overloads": 1
+        },
+        {
+          "name": "Replace",
+          "overloads": 16
+        },
+        {
+          "name": "SelectToken",
+          "overloads": 1
+        },
+        {
+          "name": "Values",
+          "overloads": 1
+        },
+        {
+          "name": "WriteTo",
+          "overloads": 2
+        },
+        {
+          "name": "WriteToYaml",
+          "overloads": 2
+        },
+        {
+          "name": "WriteWithSecretsTo",
+          "overloads": 2
+        }
+      ]
+    },
+    "JsonToken": {
+      "methods": [
+        {
+          "name": "AsArray",
+          "overloads": 1
+        },
+        {
+          "name": "AsObject",
+          "overloads": 1
+        },
+        {
+          "name": "AsValue",
+          "overloads": 1
+        },
+        {
+          "name": "Clone",
+          "overloads": 1
+        },
+        {
+          "name": "IsArray",
+          "overloads": 1
+        },
+        {
+          "name": "IsObject",
+          "overloads": 1
+        },
+        {
+          "name": "IsValue",
+          "overloads": 1
+        },
+        {
+          "name": "Path",
+          "overloads": 1
+        },
+        {
+          "name": "ReadFrom",
+          "overloads": 2
+        },
+        {
+          "name": "SelectToken",
+          "overloads": 1
+        },
+        {
+          "name": "WriteTo",
+          "overloads": 2
+        }
+      ]
+    },
+    "JsonValue": {
+      "methods": [
+        {
+          "name": "AsBigInteger",
+          "overloads": 1
+        },
+        {
+          "name": "AsBoolean",
+          "overloads": 1
+        },
+        {
+          "name": "AsByte",
+          "overloads": 1
+        },
+        {
+          "name": "AsChar",
+          "overloads": 1
+        },
+        {
+          "name": "AsCode",
+          "overloads": 1
+        },
+        {
+          "name": "AsDate",
+          "overloads": 1
+        },
+        {
+          "name": "AsDateTime",
+          "overloads": 1
+        },
+        {
+          "name": "AsDecimal",
+          "overloads": 1
+        },
+        {
+          "name": "AsDuration",
+          "overloads": 1
+        },
+        {
+          "name": "AsInteger",
+          "overloads": 1
+        },
+        {
+          "name": "AsOption",
+          "overloads": 1
+        },
+        {
+          "name": "AsText",
+          "overloads": 1
+        },
+        {
+          "name": "AsTime",
+          "overloads": 1
+        },
+        {
+          "name": "AsToken",
+          "overloads": 1
+        },
+        {
+          "name": "Clone",
+          "overloads": 1
+        },
+        {
+          "name": "IsNull",
+          "overloads": 1
+        },
+        {
+          "name": "IsUndefined",
+          "overloads": 1
+        },
+        {
+          "name": "Path",
+          "overloads": 1
+        },
+        {
+          "name": "ReadFrom",
+          "overloads": 2
+        },
+        {
+          "name": "SelectToken",
+          "overloads": 1
+        },
+        {
+          "name": "SetValue",
+          "overloads": 12
+        },
+        {
+          "name": "SetValueToNull",
+          "overloads": 1
+        },
+        {
+          "name": "SetValueToUndefined",
+          "overloads": 1
+        },
+        {
+          "name": "WriteTo",
+          "overloads": 2
+        }
+      ]
+    },
+    "KeyRef": {
+      "methods": [
+        {
+          "name": "Active",
+          "overloads": 1
+        },
+        {
+          "name": "FieldCount",
+          "overloads": 1
+        },
+        {
+          "name": "FieldIndex",
+          "overloads": 1
+        },
+        {
+          "name": "Record",
+          "overloads": 1
+        }
+      ]
+    },
+    "Label": {
+      "methods": [
+        {
+          "name": "Contains",
+          "overloads": 1
+        },
+        {
+          "name": "EndsWith",
+          "overloads": 1
+        },
+        {
+          "name": "IndexOf",
+          "overloads": 1
+        },
+        {
+          "name": "IndexOfAny",
+          "overloads": 2
+        },
+        {
+          "name": "LastIndexOf",
+          "overloads": 1
+        },
+        {
+          "name": "PadLeft",
+          "overloads": 1
+        },
+        {
+          "name": "PadRight",
+          "overloads": 1
+        },
+        {
+          "name": "Remove",
+          "overloads": 1
+        },
+        {
+          "name": "Replace",
+          "overloads": 1
+        },
+        {
+          "name": "Split",
+          "overloads": 3
+        },
+        {
+          "name": "StartsWith",
+          "overloads": 1
+        },
+        {
+          "name": "Substring",
+          "overloads": 1
+        },
+        {
+          "name": "ToLower",
+          "overloads": 1
+        },
+        {
+          "name": "ToUpper",
+          "overloads": 1
+        },
+        {
+          "name": "Trim",
+          "overloads": 1
+        },
+        {
+          "name": "TrimEnd",
+          "overloads": 1
+        },
+        {
+          "name": "TrimStart",
+          "overloads": 1
+        }
+      ]
+    },
+    "Media": {
+      "methods": [
+        {
+          "name": "ExportFile",
+          "overloads": 1
+        },
+        {
+          "name": "ExportStream",
+          "overloads": 1
+        },
+        {
+          "name": "FindOrphans",
+          "overloads": 1
+        },
+        {
+          "name": "HasValue",
+          "overloads": 1
+        },
+        {
+          "name": "ImportFile",
+          "overloads": 1
+        },
+        {
+          "name": "ImportStream",
+          "overloads": 2
+        },
+        {
+          "name": "MediaId",
+          "overloads": 1
+        }
+      ]
+    },
+    "MediaSet": {
+      "methods": [
+        {
+          "name": "Count",
+          "overloads": 1
+        },
+        {
+          "name": "ExportFile",
+          "overloads": 1
+        },
+        {
+          "name": "FindOrphans",
+          "overloads": 1
+        },
+        {
+          "name": "ImportFile",
+          "overloads": 1
+        },
+        {
+          "name": "ImportStream",
+          "overloads": 1
+        },
+        {
+          "name": "Insert",
+          "overloads": 1
+        },
+        {
+          "name": "Item",
+          "overloads": 1
+        },
+        {
+          "name": "MediaId",
+          "overloads": 1
+        },
+        {
+          "name": "Remove",
+          "overloads": 1
+        }
+      ]
+    },
+    "ModuleDependencyInfo": {
+      "methods": [
+        {
+          "name": "Id",
+          "overloads": 1
+        },
+        {
+          "name": "Name",
+          "overloads": 1
+        },
+        {
+          "name": "Publisher",
+          "overloads": 1
+        }
+      ]
+    },
+    "ModuleInfo": {
+      "methods": [
+        {
+          "name": "AppVersion",
+          "overloads": 1
+        },
+        {
+          "name": "DataVersion",
+          "overloads": 1
+        },
+        {
+          "name": "Dependencies",
+          "overloads": 1
+        },
+        {
+          "name": "Id",
+          "overloads": 1
+        },
+        {
+          "name": "Name",
+          "overloads": 1
+        },
+        {
+          "name": "PackageId",
+          "overloads": 1
+        },
+        {
+          "name": "Publisher",
+          "overloads": 1
+        }
+      ]
+    },
+    "NavApp": {
+      "methods": [
+        {
+          "name": "DeleteArchiveData",
+          "overloads": 1
+        },
+        {
+          "name": "GetArchiveRecordRef",
+          "overloads": 1
+        },
+        {
+          "name": "GetArchiveVersion",
+          "overloads": 1
+        },
+        {
+          "name": "GetCallerCallstackModuleInfos",
+          "overloads": 1
+        },
+        {
+          "name": "GetCallerModuleInfo",
+          "overloads": 1
+        },
+        {
+          "name": "GetCurrentModuleInfo",
+          "overloads": 1
+        },
+        {
+          "name": "GetModuleInfo",
+          "overloads": 1
+        },
+        {
+          "name": "GetResource",
+          "overloads": 1
+        },
+        {
+          "name": "GetResourceAsJson",
+          "overloads": 1
+        },
+        {
+          "name": "GetResourceAsText",
+          "overloads": 1
+        },
+        {
+          "name": "IsEntitled",
+          "overloads": 1
+        },
+        {
+          "name": "IsInstalling",
+          "overloads": 1
+        },
+        {
+          "name": "IsUnlicensed",
+          "overloads": 1
+        },
+        {
+          "name": "ListResources",
+          "overloads": 1
+        },
+        {
+          "name": "LoadPackageData",
+          "overloads": 1
+        },
+        {
+          "name": "RestoreArchiveData",
+          "overloads": 1
+        }
+      ]
+    },
+    "Notification": {
+      "methods": [
+        {
+          "name": "AddAction",
+          "overloads": 2
+        },
+        {
+          "name": "GetData",
+          "overloads": 1
+        },
+        {
+          "name": "HasData",
+          "overloads": 1
+        },
+        {
+          "name": "Id",
+          "overloads": 1
+        },
+        {
+          "name": "Message",
+          "overloads": 1
+        },
+        {
+          "name": "Recall",
+          "overloads": 1
+        },
+        {
+          "name": "Scope",
+          "overloads": 1
+        },
+        {
+          "name": "Send",
+          "overloads": 1
+        },
+        {
+          "name": "SetData",
+          "overloads": 1
+        }
+      ]
+    },
+    "NumberSequence": {
+      "methods": [
+        {
+          "name": "Current",
+          "overloads": 1
+        },
+        {
+          "name": "Delete",
+          "overloads": 1
+        },
+        {
+          "name": "Exists",
+          "overloads": 1
+        },
+        {
+          "name": "Insert",
+          "overloads": 1
+        },
+        {
+          "name": "Next",
+          "overloads": 1
+        },
+        {
+          "name": "Range",
+          "overloads": 2
+        },
+        {
+          "name": "Restart",
+          "overloads": 1
+        }
+      ]
+    },
+    "OutStream": {
+      "methods": [
+        {
+          "name": "Write",
+          "overloads": 23
+        },
+        {
+          "name": "WriteText",
+          "overloads": 1
+        }
+      ]
+    },
+    "Page": {
+      "methods": [
+        {
+          "name": "Activate",
+          "overloads": 1
+        },
+        {
+          "name": "CancelBackgroundTask",
+          "overloads": 1
+        },
+        {
+          "name": "Caption",
+          "overloads": 1
+        },
+        {
+          "name": "Close",
+          "overloads": 1
+        },
+        {
+          "name": "Editable",
+          "overloads": 1
+        },
+        {
+          "name": "EnqueueBackgroundTask",
+          "overloads": 1
+        },
+        {
+          "name": "GetBackgroundParameters",
+          "overloads": 1
+        },
+        {
+          "name": "GetRecord",
+          "overloads": 1
+        },
+        {
+          "name": "LookupMode",
+          "overloads": 1
+        },
+        {
+          "name": "ObjectId",
+          "overloads": 1
+        },
+        {
+          "name": "PromptMode",
+          "overloads": 1
+        },
+        {
+          "name": "Run",
+          "overloads": 3
+        },
+        {
+          "name": "RunModal",
+          "overloads": 4
+        },
+        {
+          "name": "SaveRecord",
+          "overloads": 1
+        },
+        {
+          "name": "SetBackgroundTaskResult",
+          "overloads": 1
+        },
+        {
+          "name": "SetRecord",
+          "overloads": 1
+        },
+        {
+          "name": "SetSelectionFilter",
+          "overloads": 1
+        },
+        {
+          "name": "SetTableView",
+          "overloads": 1
+        },
+        {
+          "name": "Update",
+          "overloads": 1
+        }
+      ]
+    },
+    "ProductName": {
+      "methods": [
+        {
+          "name": "Full",
+          "overloads": 1
+        },
+        {
+          "name": "Marketing",
+          "overloads": 1
+        },
+        {
+          "name": "Short",
+          "overloads": 1
+        }
+      ]
+    },
+    "Query": {
+      "methods": [
+        {
+          "name": "SaveAsCsv",
+          "overloads": 2
+        },
+        {
+          "name": "SaveAsJson",
+          "overloads": 1
+        },
+        {
+          "name": "SaveAsXml",
+          "overloads": 2
+        }
+      ]
+    },
+    "QueryInstance": {
+      "methods": [
+        {
+          "name": "Close",
+          "overloads": 1
+        },
+        {
+          "name": "ColumnCaption",
+          "overloads": 1
+        },
+        {
+          "name": "ColumnName",
+          "overloads": 1
+        },
+        {
+          "name": "ColumnNo",
+          "overloads": 1
+        },
+        {
+          "name": "GetFilter",
+          "overloads": 1
+        },
+        {
+          "name": "GetFilters",
+          "overloads": 1
+        },
+        {
+          "name": "Open",
+          "overloads": 1
+        },
+        {
+          "name": "Read",
+          "overloads": 1
+        },
+        {
+          "name": "SaveAsCsv",
+          "overloads": 2
+        },
+        {
+          "name": "SaveAsJson",
+          "overloads": 1
+        },
+        {
+          "name": "SaveAsXml",
+          "overloads": 2
+        },
+        {
+          "name": "SecurityFiltering",
+          "overloads": 1
+        },
+        {
+          "name": "SetFilter",
+          "overloads": 1
+        },
+        {
+          "name": "SetRange",
+          "overloads": 1
+        },
+        {
+          "name": "TopNumberOfRows",
+          "overloads": 1
+        }
+      ]
+    },
+    "RecordId": {
+      "methods": [
+        {
+          "name": "GetRecord",
+          "overloads": 1
+        },
+        {
+          "name": "TableNo",
+          "overloads": 1
+        }
+      ]
+    },
+    "RecordRef": {
+      "methods": [
+        {
+          "name": "AddLink",
+          "overloads": 1
+        },
+        {
+          "name": "AddLoadFields",
+          "overloads": 1
+        },
+        {
+          "name": "AreFieldsLoaded",
+          "overloads": 1
+        },
+        {
+          "name": "Ascending",
+          "overloads": 1
+        },
+        {
+          "name": "Caption",
+          "overloads": 1
+        },
+        {
+          "name": "ChangeCompany",
+          "overloads": 1
+        },
+        {
+          "name": "ClearMarks",
+          "overloads": 1
+        },
+        {
+          "name": "Close",
+          "overloads": 1
+        },
+        {
+          "name": "Copy",
+          "overloads": 2
+        },
+        {
+          "name": "CopyLinks",
+          "overloads": 3
+        },
+        {
+          "name": "Count",
+          "overloads": 1
+        },
+        {
+          "name": "CountApprox",
+          "overloads": 1
+        },
+        {
+          "name": "CurrentCompany",
+          "overloads": 1
+        },
+        {
+          "name": "CurrentKey",
+          "overloads": 1
+        },
+        {
+          "name": "CurrentKeyIndex",
+          "overloads": 1
+        },
+        {
+          "name": "Delete",
+          "overloads": 1
+        },
+        {
+          "name": "DeleteAll",
+          "overloads": 1
+        },
+        {
+          "name": "DeleteLink",
+          "overloads": 1
+        },
+        {
+          "name": "DeleteLinks",
+          "overloads": 1
+        },
+        {
+          "name": "Duplicate",
+          "overloads": 1
+        },
+        {
+          "name": "Field",
+          "overloads": 2
+        },
+        {
+          "name": "FieldCount",
+          "overloads": 1
+        },
+        {
+          "name": "FieldExist",
+          "overloads": 2
+        },
+        {
+          "name": "FieldIndex",
+          "overloads": 1
+        },
+        {
+          "name": "FilterGroup",
+          "overloads": 1
+        },
+        {
+          "name": "Find",
+          "overloads": 1
+        },
+        {
+          "name": "FindFirst",
+          "overloads": 1
+        },
+        {
+          "name": "FindLast",
+          "overloads": 1
+        },
+        {
+          "name": "FindSet",
+          "overloads": 2
+        },
+        {
+          "name": "Get",
+          "overloads": 1
+        },
+        {
+          "name": "GetBySystemId",
+          "overloads": 1
+        },
+        {
+          "name": "GetFilters",
+          "overloads": 1
+        },
+        {
+          "name": "GetPosition",
+          "overloads": 1
+        },
+        {
+          "name": "GetTable",
+          "overloads": 1
+        },
+        {
+          "name": "GetView",
+          "overloads": 1
+        },
+        {
+          "name": "HasFilter",
+          "overloads": 1
+        },
+        {
+          "name": "HasLinks",
+          "overloads": 1
+        },
+        {
+          "name": "Init",
+          "overloads": 1
+        },
+        {
+          "name": "Insert",
+          "overloads": 3
+        },
+        {
+          "name": "IsDirty",
+          "overloads": 1
+        },
+        {
+          "name": "IsEmpty",
+          "overloads": 1
+        },
+        {
+          "name": "IsTemporary",
+          "overloads": 1
+        },
+        {
+          "name": "KeyCount",
+          "overloads": 1
+        },
+        {
+          "name": "KeyIndex",
+          "overloads": 1
+        },
+        {
+          "name": "LoadFields",
+          "overloads": 1
+        },
+        {
+          "name": "LockTable",
+          "overloads": 1
+        },
+        {
+          "name": "Mark",
+          "overloads": 1
+        },
+        {
+          "name": "MarkedOnly",
+          "overloads": 1
+        },
+        {
+          "name": "Modify",
+          "overloads": 1
+        },
+        {
+          "name": "Name",
+          "overloads": 1
+        },
+        {
+          "name": "Next",
+          "overloads": 1
+        },
+        {
+          "name": "Number",
+          "overloads": 1
+        },
+        {
+          "name": "Open",
+          "overloads": 1
+        },
+        {
+          "name": "ReadConsistency",
+          "overloads": 1
+        },
+        {
+          "name": "ReadIsolation",
+          "overloads": 1
+        },
+        {
+          "name": "ReadPermission",
+          "overloads": 1
+        },
+        {
+          "name": "RecordId",
+          "overloads": 1
+        },
+        {
+          "name": "RecordLevelLocking",
+          "overloads": 1
+        },
+        {
+          "name": "Rename",
+          "overloads": 1
+        },
+        {
+          "name": "Reset",
+          "overloads": 1
+        },
+        {
+          "name": "SecurityFiltering",
+          "overloads": 1
+        },
+        {
+          "name": "SetAutoCalcFields",
+          "overloads": 1
+        },
+        {
+          "name": "SetLoadFields",
+          "overloads": 1
+        },
+        {
+          "name": "SetPermissionFilter",
+          "overloads": 1
+        },
+        {
+          "name": "SetPosition",
+          "overloads": 1
+        },
+        {
+          "name": "SetRecFilter",
+          "overloads": 1
+        },
+        {
+          "name": "SetTable",
+          "overloads": 2
+        },
+        {
+          "name": "SetView",
+          "overloads": 1
+        },
+        {
+          "name": "SystemCreatedAtNo",
+          "overloads": 1
+        },
+        {
+          "name": "SystemCreatedByNo",
+          "overloads": 1
+        },
+        {
+          "name": "SystemIdNo",
+          "overloads": 1
+        },
+        {
+          "name": "SystemModifiedAtNo",
+          "overloads": 1
+        },
+        {
+          "name": "SystemModifiedByNo",
+          "overloads": 1
+        },
+        {
+          "name": "Truncate",
+          "overloads": 1
+        },
+        {
+          "name": "WritePermission",
+          "overloads": 1
+        }
+      ]
+    },
+    "Report": {
+      "methods": [
+        {
+          "name": "DefaultLayout",
+          "overloads": 1
+        },
+        {
+          "name": "ExcelLayout",
+          "overloads": 1
+        },
+        {
+          "name": "Execute",
+          "overloads": 1
+        },
+        {
+          "name": "GetSubstituteReportId",
+          "overloads": 1
+        },
+        {
+          "name": "Print",
+          "overloads": 1
+        },
+        {
+          "name": "RdlcLayout",
+          "overloads": 1
+        },
+        {
+          "name": "Run",
+          "overloads": 1
+        },
+        {
+          "name": "RunModal",
+          "overloads": 1
+        },
+        {
+          "name": "RunRequestPage",
+          "overloads": 1
+        },
+        {
+          "name": "SaveAs",
+          "overloads": 1
+        },
+        {
+          "name": "SaveAsExcel",
+          "overloads": 1
+        },
+        {
+          "name": "SaveAsHtml",
+          "overloads": 1
+        },
+        {
+          "name": "SaveAsPdf",
+          "overloads": 1
+        },
+        {
+          "name": "SaveAsWord",
+          "overloads": 1
+        },
+        {
+          "name": "SaveAsXml",
+          "overloads": 1
+        },
+        {
+          "name": "ValidateAndPrepareLayout",
+          "overloads": 1
+        },
+        {
+          "name": "WordLayout",
+          "overloads": 1
+        },
+        {
+          "name": "WordXmlPart",
+          "overloads": 1
+        }
+      ]
+    },
+    "ReportInstance": {
+      "methods": [
+        {
+          "name": "Break",
+          "overloads": 1
+        },
+        {
+          "name": "CreateTotals",
+          "overloads": 2
+        },
+        {
+          "name": "DefaultLayout",
+          "overloads": 1
+        },
+        {
+          "name": "ExcelLayout",
+          "overloads": 1
+        },
+        {
+          "name": "Execute",
+          "overloads": 1
+        },
+        {
+          "name": "FormatRegion",
+          "overloads": 1
+        },
+        {
+          "name": "IsReadOnly",
+          "overloads": 1
+        },
+        {
+          "name": "Language",
+          "overloads": 1
+        },
+        {
+          "name": "NewPage",
+          "overloads": 1
+        },
+        {
+          "name": "NewPagePerRecord",
+          "overloads": 1
+        },
+        {
+          "name": "ObjectId",
+          "overloads": 1
+        },
+        {
+          "name": "PageNo",
+          "overloads": 1
+        },
+        {
+          "name": "PaperSource",
+          "overloads": 1
+        },
+        {
+          "name": "Preview",
+          "overloads": 1
+        },
+        {
+          "name": "Print",
+          "overloads": 1
+        },
+        {
+          "name": "PrintOnlyIfDetail",
+          "overloads": 1
+        },
+        {
+          "name": "Quit",
+          "overloads": 1
+        },
+        {
+          "name": "RDLCLayout",
+          "overloads": 1
+        },
+        {
+          "name": "Run",
+          "overloads": 1
+        },
+        {
+          "name": "RunModal",
+          "overloads": 1
+        },
+        {
+          "name": "RunRequestPage",
+          "overloads": 1
+        },
+        {
+          "name": "SaveAs",
+          "overloads": 1
+        },
+        {
+          "name": "SaveAsExcel",
+          "overloads": 1
+        },
+        {
+          "name": "SaveAsHtml",
+          "overloads": 1
+        },
+        {
+          "name": "SaveAsPdf",
+          "overloads": 1
+        },
+        {
+          "name": "SaveAsWord",
+          "overloads": 1
+        },
+        {
+          "name": "SaveAsXml",
+          "overloads": 1
+        },
+        {
+          "name": "SetTableView",
+          "overloads": 1
+        },
+        {
+          "name": "ShowOutput",
+          "overloads": 2
+        },
+        {
+          "name": "Skip",
+          "overloads": 1
+        },
+        {
+          "name": "TargetFormat",
+          "overloads": 1
+        },
+        {
+          "name": "TotalsCausedBy",
+          "overloads": 1
+        },
+        {
+          "name": "UseRequestPage",
+          "overloads": 1
+        },
+        {
+          "name": "ValidateAndPrepareLayout",
+          "overloads": 1
+        },
+        {
+          "name": "WordLayout",
+          "overloads": 1
+        },
+        {
+          "name": "WordXmlPart",
+          "overloads": 1
+        }
+      ]
+    },
+    "RequestPage": {
+      "methods": [
+        {
+          "name": "Activate",
+          "overloads": 1
+        },
+        {
+          "name": "Caption",
+          "overloads": 1
+        },
+        {
+          "name": "Close",
+          "overloads": 1
+        },
+        {
+          "name": "Editable",
+          "overloads": 1
+        },
+        {
+          "name": "LookupMode",
+          "overloads": 1
+        },
+        {
+          "name": "ObjectId",
+          "overloads": 1
+        },
+        {
+          "name": "SaveRecord",
+          "overloads": 1
+        },
+        {
+          "name": "SetSelectionFilter",
+          "overloads": 1
+        },
+        {
+          "name": "Update",
+          "overloads": 1
+        }
+      ]
+    },
+    "SecretText": {
+      "methods": [
+        {
+          "name": "IsEmpty",
+          "overloads": 1
+        },
+        {
+          "name": "SecretStrSubstNo",
+          "overloads": 1
+        },
+        {
+          "name": "Unwrap",
+          "overloads": 1
+        }
+      ]
+    },
+    "Session": {
+      "methods": [
+        {
+          "name": "ApplicationArea",
+          "overloads": 1
+        },
+        {
+          "name": "ApplicationIdentifier",
+          "overloads": 1
+        },
+        {
+          "name": "BindSubscription",
+          "overloads": 1
+        },
+        {
+          "name": "CurrentClientType",
+          "overloads": 1
+        },
+        {
+          "name": "CurrentExecutionMode",
+          "overloads": 1
+        },
+        {
+          "name": "DefaultClientType",
+          "overloads": 1
+        },
+        {
+          "name": "EnableVerboseTelemetry",
+          "overloads": 1
+        },
+        {
+          "name": "GetCurrentModuleExecutionContext",
+          "overloads": 1
+        },
+        {
+          "name": "GetExecutionContext",
+          "overloads": 1
+        },
+        {
+          "name": "GetModuleExecutionContext",
+          "overloads": 1
+        },
+        {
+          "name": "IsSessionActive",
+          "overloads": 1
+        },
+        {
+          "name": "LogAuditMessage",
+          "overloads": 1
+        },
+        {
+          "name": "LogMessage",
+          "overloads": 2
+        },
+        {
+          "name": "LogSecurityAudit",
+          "overloads": 1
+        },
+        {
+          "name": "SendTraceTag",
+          "overloads": 1
+        },
+        {
+          "name": "SetDocumentServiceToken",
+          "overloads": 1
+        },
+        {
+          "name": "StartSession",
+          "overloads": 3
+        },
+        {
+          "name": "StopSession",
+          "overloads": 1
+        },
+        {
+          "name": "UnbindSubscription",
+          "overloads": 1
+        }
+      ]
+    },
+    "SessionInformation": {
+      "methods": [
+        {
+          "name": "AITokensUsed",
+          "overloads": 1
+        },
+        {
+          "name": "Callstack",
+          "overloads": 1
+        },
+        {
+          "name": "SqlRowsRead",
+          "overloads": 1
+        },
+        {
+          "name": "SqlStatementsExecuted",
+          "overloads": 1
+        }
+      ]
+    },
+    "SessionSettings": {
+      "methods": [
+        {
+          "name": "Company",
+          "overloads": 1
+        },
+        {
+          "name": "Init",
+          "overloads": 1
+        },
+        {
+          "name": "LanguageId",
+          "overloads": 1
+        },
+        {
+          "name": "LocaleId",
+          "overloads": 1
+        },
+        {
+          "name": "ProfileAppId",
+          "overloads": 1
+        },
+        {
+          "name": "ProfileId",
+          "overloads": 1
+        },
+        {
+          "name": "ProfileSystemScope",
+          "overloads": 1
+        },
+        {
+          "name": "RequestSessionUpdate",
+          "overloads": 1
+        },
+        {
+          "name": "TimeZone",
+          "overloads": 1
+        }
+      ]
+    },
+    "System": {
+      "methods": [
+        {
+          "name": "Abs",
+          "overloads": 1
+        },
+        {
+          "name": "ApplicationPath",
+          "overloads": 1
+        },
+        {
+          "name": "ArrayLen",
+          "overloads": 1
+        },
+        {
+          "name": "CalcDate",
+          "overloads": 2
+        },
+        {
+          "name": "CanLoadType",
+          "overloads": 1
+        },
+        {
+          "name": "CaptionClassTranslate",
+          "overloads": 1
+        },
+        {
+          "name": "Clear",
+          "overloads": 3
+        },
+        {
+          "name": "ClearAll",
+          "overloads": 1
+        },
+        {
+          "name": "ClearCollectedErrors",
+          "overloads": 1
+        },
+        {
+          "name": "ClearLastError",
+          "overloads": 1
+        },
+        {
+          "name": "ClosingDate",
+          "overloads": 1
+        },
+        {
+          "name": "CodeCoverageInclude",
+          "overloads": 1
+        },
+        {
+          "name": "CodeCoverageLoad",
+          "overloads": 1
+        },
+        {
+          "name": "CodeCoverageLog",
+          "overloads": 1
+        },
+        {
+          "name": "CodeCoverageRefresh",
+          "overloads": 1
+        },
+        {
+          "name": "CompressArray",
+          "overloads": 1
+        },
+        {
+          "name": "CopyArray",
+          "overloads": 1
+        },
+        {
+          "name": "CopyStream",
+          "overloads": 1
+        },
+        {
+          "name": "CreateDateTime",
+          "overloads": 1
+        },
+        {
+          "name": "CreateEncryptionKey",
+          "overloads": 1
+        },
+        {
+          "name": "CreateGuid",
+          "overloads": 1
+        },
+        {
+          "name": "CurrentDateTime",
+          "overloads": 1
+        },
+        {
+          "name": "DMY2Date",
+          "overloads": 1
+        },
+        {
+          "name": "DT2Date",
+          "overloads": 1
+        },
+        {
+          "name": "DT2Time",
+          "overloads": 1
+        },
+        {
+          "name": "DWY2Date",
+          "overloads": 1
+        },
+        {
+          "name": "DaTi2Variant",
+          "overloads": 1
+        },
+        {
+          "name": "Date2DMY",
+          "overloads": 1
+        },
+        {
+          "name": "Date2DWY",
+          "overloads": 1
+        },
+        {
+          "name": "Decrypt",
+          "overloads": 1
+        },
+        {
+          "name": "DeleteEncryptionKey",
+          "overloads": 1
+        },
+        {
+          "name": "Encrypt",
+          "overloads": 1
+        },
+        {
+          "name": "EncryptionEnabled",
+          "overloads": 1
+        },
+        {
+          "name": "EncryptionKeyExists",
+          "overloads": 1
+        },
+        {
+          "name": "Evaluate",
+          "overloads": 1
+        },
+        {
+          "name": "ExportEncryptionKey",
+          "overloads": 1
+        },
+        {
+          "name": "ExportObjects",
+          "overloads": 1
+        },
+        {
+          "name": "Format",
+          "overloads": 2
+        },
+        {
+          "name": "GetCollectedErrors",
+          "overloads": 1
+        },
+        {
+          "name": "GetDocumentUrl",
+          "overloads": 1
+        },
+        {
+          "name": "GetDotNetType",
+          "overloads": 1
+        },
+        {
+          "name": "GetLastErrorCallStack",
+          "overloads": 1
+        },
+        {
+          "name": "GetLastErrorCode",
+          "overloads": 1
+        },
+        {
+          "name": "GetLastErrorObject",
+          "overloads": 1
+        },
+        {
+          "name": "GetLastErrorText",
+          "overloads": 2
+        },
+        {
+          "name": "GetUrl",
+          "overloads": 4
+        },
+        {
+          "name": "GlobalLanguage",
+          "overloads": 1
+        },
+        {
+          "name": "GuiAllowed",
+          "overloads": 1
+        },
+        {
+          "name": "HasCollectedErrors",
+          "overloads": 1
+        },
+        {
+          "name": "Hyperlink",
+          "overloads": 1
+        },
+        {
+          "name": "ImportEncryptionKey",
+          "overloads": 1
+        },
+        {
+          "name": "ImportObjects",
+          "overloads": 1
+        },
+        {
+          "name": "ImportStreamWithUrlAccess",
+          "overloads": 1
+        },
+        {
+          "name": "IsCollectingErrors",
+          "overloads": 1
+        },
+        {
+          "name": "IsNull",
+          "overloads": 1
+        },
+        {
+          "name": "IsNullGuid",
+          "overloads": 1
+        },
+        {
+          "name": "IsServiceTier",
+          "overloads": 1
+        },
+        {
+          "name": "NormalDate",
+          "overloads": 1
+        },
+        {
+          "name": "Power",
+          "overloads": 1
+        },
+        {
+          "name": "Random",
+          "overloads": 1
+        },
+        {
+          "name": "Randomize",
+          "overloads": 1
+        },
+        {
+          "name": "Round",
+          "overloads": 1
+        },
+        {
+          "name": "RoundDateTime",
+          "overloads": 1
+        },
+        {
+          "name": "Sleep",
+          "overloads": 1
+        },
+        {
+          "name": "TemporaryPath",
+          "overloads": 1
+        },
+        {
+          "name": "Time",
+          "overloads": 1
+        },
+        {
+          "name": "Today",
+          "overloads": 1
+        },
+        {
+          "name": "Variant2Date",
+          "overloads": 1
+        },
+        {
+          "name": "Variant2Time",
+          "overloads": 1
+        },
+        {
+          "name": "WindowsLanguage",
+          "overloads": 1
+        },
+        {
+          "name": "WorkDate",
+          "overloads": 1
+        }
+      ]
+    },
+    "Table": {
+      "methods": [
+        {
+          "name": "AddLink",
+          "overloads": 1
+        },
+        {
+          "name": "AddLoadFields",
+          "overloads": 1
+        },
+        {
+          "name": "AreFieldsLoaded",
+          "overloads": 1
+        },
+        {
+          "name": "Ascending",
+          "overloads": 1
+        },
+        {
+          "name": "CalcFields",
+          "overloads": 1
+        },
+        {
+          "name": "CalcSums",
+          "overloads": 1
+        },
+        {
+          "name": "ChangeCompany",
+          "overloads": 1
+        },
+        {
+          "name": "ClearMarks",
+          "overloads": 1
+        },
+        {
+          "name": "Consistent",
+          "overloads": 1
+        },
+        {
+          "name": "Copy",
+          "overloads": 1
+        },
+        {
+          "name": "CopyFilter",
+          "overloads": 1
+        },
+        {
+          "name": "CopyFilters",
+          "overloads": 1
+        },
+        {
+          "name": "CopyLinks",
+          "overloads": 2
+        },
+        {
+          "name": "Count",
+          "overloads": 1
+        },
+        {
+          "name": "CountApprox",
+          "overloads": 1
+        },
+        {
+          "name": "CurrentCompany",
+          "overloads": 1
+        },
+        {
+          "name": "CurrentKey",
+          "overloads": 1
+        },
+        {
+          "name": "Delete",
+          "overloads": 1
+        },
+        {
+          "name": "DeleteAll",
+          "overloads": 1
+        },
+        {
+          "name": "DeleteLink",
+          "overloads": 1
+        },
+        {
+          "name": "DeleteLinks",
+          "overloads": 1
+        },
+        {
+          "name": "FieldActive",
+          "overloads": 1
+        },
+        {
+          "name": "FieldCaption",
+          "overloads": 1
+        },
+        {
+          "name": "FieldError",
+          "overloads": 2
+        },
+        {
+          "name": "FieldName",
+          "overloads": 1
+        },
+        {
+          "name": "FieldNo",
+          "overloads": 1
+        },
+        {
+          "name": "FilterGroup",
+          "overloads": 1
+        },
+        {
+          "name": "Find",
+          "overloads": 1
+        },
+        {
+          "name": "FindFirst",
+          "overloads": 1
+        },
+        {
+          "name": "FindLast",
+          "overloads": 1
+        },
+        {
+          "name": "FindSet",
+          "overloads": 2
+        },
+        {
+          "name": "Get",
+          "overloads": 1
+        },
+        {
+          "name": "GetAscending",
+          "overloads": 1
+        },
+        {
+          "name": "GetBySystemId",
+          "overloads": 1
+        },
+        {
+          "name": "GetFilter",
+          "overloads": 1
+        },
+        {
+          "name": "GetFilters",
+          "overloads": 1
+        },
+        {
+          "name": "GetPosition",
+          "overloads": 1
+        },
+        {
+          "name": "GetRangeMax",
+          "overloads": 1
+        },
+        {
+          "name": "GetRangeMin",
+          "overloads": 1
+        },
+        {
+          "name": "GetView",
+          "overloads": 1
+        },
+        {
+          "name": "HasFilter",
+          "overloads": 1
+        },
+        {
+          "name": "HasLinks",
+          "overloads": 1
+        },
+        {
+          "name": "Init",
+          "overloads": 1
+        },
+        {
+          "name": "Insert",
+          "overloads": 3
+        },
+        {
+          "name": "IsEmpty",
+          "overloads": 1
+        },
+        {
+          "name": "IsTemporary",
+          "overloads": 1
+        },
+        {
+          "name": "LoadFields",
+          "overloads": 1
+        },
+        {
+          "name": "LockTable",
+          "overloads": 1
+        },
+        {
+          "name": "Mark",
+          "overloads": 1
+        },
+        {
+          "name": "MarkedOnly",
+          "overloads": 1
+        },
+        {
+          "name": "Modify",
+          "overloads": 1
+        },
+        {
+          "name": "ModifyAll",
+          "overloads": 1
+        },
+        {
+          "name": "Next",
+          "overloads": 1
+        },
+        {
+          "name": "ReadConsistency",
+          "overloads": 1
+        },
+        {
+          "name": "ReadIsolation",
+          "overloads": 1
+        },
+        {
+          "name": "ReadPermission",
+          "overloads": 1
+        },
+        {
+          "name": "RecordId",
+          "overloads": 1
+        },
+        {
+          "name": "RecordLevelLocking",
+          "overloads": 1
+        },
+        {
+          "name": "Relation",
+          "overloads": 1
+        },
+        {
+          "name": "Rename",
+          "overloads": 1
+        },
+        {
+          "name": "Reset",
+          "overloads": 1
+        },
+        {
+          "name": "SecurityFiltering",
+          "overloads": 1
+        },
+        {
+          "name": "SetAscending",
+          "overloads": 1
+        },
+        {
+          "name": "SetAutoCalcFields",
+          "overloads": 1
+        },
+        {
+          "name": "SetBaseLoadFields",
+          "overloads": 1
+        },
+        {
+          "name": "SetCurrentKey",
+          "overloads": 1
+        },
+        {
+          "name": "SetFilter",
+          "overloads": 1
+        },
+        {
+          "name": "SetLoadFields",
+          "overloads": 1
+        },
+        {
+          "name": "SetPermissionFilter",
+          "overloads": 1
+        },
+        {
+          "name": "SetPosition",
+          "overloads": 1
+        },
+        {
+          "name": "SetRange",
+          "overloads": 1
+        },
+        {
+          "name": "SetRecFilter",
+          "overloads": 1
+        },
+        {
+          "name": "SetView",
+          "overloads": 1
+        },
+        {
+          "name": "TableCaption",
+          "overloads": 1
+        },
+        {
+          "name": "TableName",
+          "overloads": 1
+        },
+        {
+          "name": "TestField",
+          "overloads": 26
+        },
+        {
+          "name": "TransferFields",
+          "overloads": 2
+        },
+        {
+          "name": "Truncate",
+          "overloads": 1
+        },
+        {
+          "name": "Validate",
+          "overloads": 1
+        },
+        {
+          "name": "WritePermission",
+          "overloads": 1
+        }
+      ]
+    },
+    "TaskScheduler": {
+      "methods": [
+        {
+          "name": "CanCreateTask",
+          "overloads": 1
+        },
+        {
+          "name": "CancelTask",
+          "overloads": 1
+        },
+        {
+          "name": "CreateTask",
+          "overloads": 2
+        },
+        {
+          "name": "SetTaskReady",
+          "overloads": 1
+        },
+        {
+          "name": "TaskExists",
+          "overloads": 1
+        }
+      ]
+    },
+    "TestAction": {
+      "methods": [
+        {
+          "name": "Enabled",
+          "overloads": 1
+        },
+        {
+          "name": "Invoke",
+          "overloads": 1
+        },
+        {
+          "name": "Visible",
+          "overloads": 1
+        }
+      ]
+    },
+    "TestField": {
+      "methods": [
+        {
+          "name": "Activate",
+          "overloads": 1
+        },
+        {
+          "name": "AsBoolean",
+          "overloads": 1
+        },
+        {
+          "name": "AsDate",
+          "overloads": 1
+        },
+        {
+          "name": "AsDateTime",
+          "overloads": 1
+        },
+        {
+          "name": "AsDecimal",
+          "overloads": 1
+        },
+        {
+          "name": "AsInteger",
+          "overloads": 1
+        },
+        {
+          "name": "AsTime",
+          "overloads": 1
+        },
+        {
+          "name": "AssertEquals",
+          "overloads": 1
+        },
+        {
+          "name": "AssistEdit",
+          "overloads": 1
+        },
+        {
+          "name": "Caption",
+          "overloads": 1
+        },
+        {
+          "name": "Drilldown",
+          "overloads": 1
+        },
+        {
+          "name": "Editable",
+          "overloads": 1
+        },
+        {
+          "name": "Enabled",
+          "overloads": 1
+        },
+        {
+          "name": "GetOption",
+          "overloads": 1
+        },
+        {
+          "name": "GetValidationError",
+          "overloads": 1
+        },
+        {
+          "name": "HideValue",
+          "overloads": 1
+        },
+        {
+          "name": "Invoke",
+          "overloads": 1
+        },
+        {
+          "name": "Lookup",
+          "overloads": 2
+        },
+        {
+          "name": "OptionCount",
+          "overloads": 1
+        },
+        {
+          "name": "SetValue",
+          "overloads": 1
+        },
+        {
+          "name": "ShowMandatory",
+          "overloads": 1
+        },
+        {
+          "name": "ValidationErrorCount",
+          "overloads": 1
+        },
+        {
+          "name": "Value",
+          "overloads": 1
+        },
+        {
+          "name": "Visible",
+          "overloads": 1
+        }
+      ]
+    },
+    "TestFilter": {
+      "methods": [
+        {
+          "name": "Ascending",
+          "overloads": 1
+        },
+        {
+          "name": "CurrentKey",
+          "overloads": 1
+        },
+        {
+          "name": "GetFilter",
+          "overloads": 1
+        },
+        {
+          "name": "SetCurrentKey",
+          "overloads": 1
+        },
+        {
+          "name": "SetFilter",
+          "overloads": 1
+        }
+      ]
+    },
+    "TestHttpRequestMessage": {
+      "methods": [
+        {
+          "name": "HasSecretUri",
+          "overloads": 1
+        },
+        {
+          "name": "Path",
+          "overloads": 1
+        },
+        {
+          "name": "QueryParameters",
+          "overloads": 1
+        },
+        {
+          "name": "RequestType",
+          "overloads": 1
+        }
+      ]
+    },
+    "TestHttpResponseMessage": {
+      "methods": [
+        {
+          "name": "Content",
+          "overloads": 1
+        },
+        {
+          "name": "Headers",
+          "overloads": 1
+        },
+        {
+          "name": "HttpStatusCode",
+          "overloads": 1
+        },
+        {
+          "name": "IsBlockedByEnvironment",
+          "overloads": 1
+        },
+        {
+          "name": "IsSuccessfulRequest",
+          "overloads": 1
+        },
+        {
+          "name": "ReasonPhrase",
+          "overloads": 1
+        }
+      ]
+    },
+    "TestPage": {
+      "methods": [
+        {
+          "name": "Cancel",
+          "overloads": 1
+        },
+        {
+          "name": "Caption",
+          "overloads": 1
+        },
+        {
+          "name": "Close",
+          "overloads": 1
+        },
+        {
+          "name": "Edit",
+          "overloads": 1
+        },
+        {
+          "name": "Editable",
+          "overloads": 1
+        },
+        {
+          "name": "Expand",
+          "overloads": 1
+        },
+        {
+          "name": "FindFirstField",
+          "overloads": 1
+        },
+        {
+          "name": "FindNextField",
+          "overloads": 1
+        },
+        {
+          "name": "FindPreviousField",
+          "overloads": 1
+        },
+        {
+          "name": "First",
+          "overloads": 1
+        },
+        {
+          "name": "GetField",
+          "overloads": 1
+        },
+        {
+          "name": "GetValidationError",
+          "overloads": 1
+        },
+        {
+          "name": "GoToKey",
+          "overloads": 1
+        },
+        {
+          "name": "GoToRecord",
+          "overloads": 1
+        },
+        {
+          "name": "IsExpanded",
+          "overloads": 1
+        },
+        {
+          "name": "Last",
+          "overloads": 1
+        },
+        {
+          "name": "New",
+          "overloads": 1
+        },
+        {
+          "name": "Next",
+          "overloads": 1
+        },
+        {
+          "name": "No",
+          "overloads": 1
+        },
+        {
+          "name": "OK",
+          "overloads": 1
+        },
+        {
+          "name": "OpenEdit",
+          "overloads": 1
+        },
+        {
+          "name": "OpenNew",
+          "overloads": 1
+        },
+        {
+          "name": "OpenView",
+          "overloads": 1
+        },
+        {
+          "name": "Prev",
+          "overloads": 1
+        },
+        {
+          "name": "Previous",
+          "overloads": 1
+        },
+        {
+          "name": "RunPageBackgroundTask",
+          "overloads": 1
+        },
+        {
+          "name": "Trap",
+          "overloads": 1
+        },
+        {
+          "name": "ValidationErrorCount",
+          "overloads": 1
+        },
+        {
+          "name": "View",
+          "overloads": 1
+        },
+        {
+          "name": "Yes",
+          "overloads": 1
+        }
+      ]
+    },
+    "TestPart": {
+      "methods": [
+        {
+          "name": "Caption",
+          "overloads": 1
+        },
+        {
+          "name": "Editable",
+          "overloads": 1
+        },
+        {
+          "name": "Enabled",
+          "overloads": 1
+        },
+        {
+          "name": "Expand",
+          "overloads": 1
+        },
+        {
+          "name": "FindFirstField",
+          "overloads": 1
+        },
+        {
+          "name": "FindNextField",
+          "overloads": 1
+        },
+        {
+          "name": "FindPreviousField",
+          "overloads": 1
+        },
+        {
+          "name": "First",
+          "overloads": 1
+        },
+        {
+          "name": "GetField",
+          "overloads": 1
+        },
+        {
+          "name": "GetValidationError",
+          "overloads": 1
+        },
+        {
+          "name": "GoToKey",
+          "overloads": 1
+        },
+        {
+          "name": "GoToRecord",
+          "overloads": 1
+        },
+        {
+          "name": "IsExpanded",
+          "overloads": 1
+        },
+        {
+          "name": "Last",
+          "overloads": 1
+        },
+        {
+          "name": "New",
+          "overloads": 1
+        },
+        {
+          "name": "Next",
+          "overloads": 1
+        },
+        {
+          "name": "Prev",
+          "overloads": 1
+        },
+        {
+          "name": "Previous",
+          "overloads": 1
+        },
+        {
+          "name": "ValidationErrorCount",
+          "overloads": 1
+        },
+        {
+          "name": "Visible",
+          "overloads": 1
+        }
+      ]
+    },
+    "TestRequestPage": {
+      "methods": [
+        {
+          "name": "Cancel",
+          "overloads": 1
+        },
+        {
+          "name": "Caption",
+          "overloads": 1
+        },
+        {
+          "name": "Editable",
+          "overloads": 1
+        },
+        {
+          "name": "Expand",
+          "overloads": 1
+        },
+        {
+          "name": "FindFirstField",
+          "overloads": 1
+        },
+        {
+          "name": "FindNextField",
+          "overloads": 1
+        },
+        {
+          "name": "FindPreviousField",
+          "overloads": 1
+        },
+        {
+          "name": "First",
+          "overloads": 1
+        },
+        {
+          "name": "GetValidationError",
+          "overloads": 1
+        },
+        {
+          "name": "GoToKey",
+          "overloads": 1
+        },
+        {
+          "name": "GoToRecord",
+          "overloads": 1
+        },
+        {
+          "name": "IsExpanded",
+          "overloads": 1
+        },
+        {
+          "name": "Last",
+          "overloads": 1
+        },
+        {
+          "name": "New",
+          "overloads": 1
+        },
+        {
+          "name": "Next",
+          "overloads": 1
+        },
+        {
+          "name": "OK",
+          "overloads": 1
+        },
+        {
+          "name": "Preview",
+          "overloads": 1
+        },
+        {
+          "name": "Previous",
+          "overloads": 1
+        },
+        {
+          "name": "Print",
+          "overloads": 1
+        },
+        {
+          "name": "SaveAsExcel",
+          "overloads": 1
+        },
+        {
+          "name": "SaveAsPdf",
+          "overloads": 1
+        },
+        {
+          "name": "SaveAsWord",
+          "overloads": 1
+        },
+        {
+          "name": "SaveAsXml",
+          "overloads": 1
+        },
+        {
+          "name": "Schedule",
+          "overloads": 1
+        },
+        {
+          "name": "ValidationErrorCount",
+          "overloads": 1
+        }
+      ]
+    },
+    "Text": {
+      "methods": [
+        {
+          "name": "Contains",
+          "overloads": 1
+        },
+        {
+          "name": "ConvertStr",
+          "overloads": 1
+        },
+        {
+          "name": "CopyStr",
+          "overloads": 1
+        },
+        {
+          "name": "DelChr",
+          "overloads": 1
+        },
+        {
+          "name": "DelStr",
+          "overloads": 1
+        },
+        {
+          "name": "EndsWith",
+          "overloads": 1
+        },
+        {
+          "name": "IncStr",
+          "overloads": 2
+        },
+        {
+          "name": "IndexOf",
+          "overloads": 1
+        },
+        {
+          "name": "IndexOfAny",
+          "overloads": 2
+        },
+        {
+          "name": "InsStr",
+          "overloads": 1
+        },
+        {
+          "name": "LastIndexOf",
+          "overloads": 1
+        },
+        {
+          "name": "LowerCase",
+          "overloads": 1
+        },
+        {
+          "name": "MaxStrLen",
+          "overloads": 2
+        },
+        {
+          "name": "PadLeft",
+          "overloads": 1
+        },
+        {
+          "name": "PadRight",
+          "overloads": 1
+        },
+        {
+          "name": "PadStr",
+          "overloads": 1
+        },
+        {
+          "name": "Remove",
+          "overloads": 1
+        },
+        {
+          "name": "Replace",
+          "overloads": 1
+        },
+        {
+          "name": "SelectStr",
+          "overloads": 1
+        },
+        {
+          "name": "Split",
+          "overloads": 3
+        },
+        {
+          "name": "StartsWith",
+          "overloads": 1
+        },
+        {
+          "name": "StrCheckSum",
+          "overloads": 1
+        },
+        {
+          "name": "StrLen",
+          "overloads": 1
+        },
+        {
+          "name": "StrPos",
+          "overloads": 1
+        },
+        {
+          "name": "StrSubstNo",
+          "overloads": 1
+        },
+        {
+          "name": "Substring",
+          "overloads": 1
+        },
+        {
+          "name": "ToLower",
+          "overloads": 1
+        },
+        {
+          "name": "ToUpper",
+          "overloads": 1
+        },
+        {
+          "name": "Trim",
+          "overloads": 1
+        },
+        {
+          "name": "TrimEnd",
+          "overloads": 1
+        },
+        {
+          "name": "TrimStart",
+          "overloads": 1
+        },
+        {
+          "name": "UpperCase",
+          "overloads": 1
+        }
+      ]
+    },
+    "TextBuilder": {
+      "methods": [
+        {
+          "name": "Append",
+          "overloads": 1
+        },
+        {
+          "name": "AppendLine",
+          "overloads": 1
+        },
+        {
+          "name": "Capacity",
+          "overloads": 1
+        },
+        {
+          "name": "Clear",
+          "overloads": 1
+        },
+        {
+          "name": "EnsureCapacity",
+          "overloads": 1
+        },
+        {
+          "name": "Insert",
+          "overloads": 1
+        },
+        {
+          "name": "Length",
+          "overloads": 1
+        },
+        {
+          "name": "MaxCapacity",
+          "overloads": 1
+        },
+        {
+          "name": "Remove",
+          "overloads": 1
+        },
+        {
+          "name": "Replace",
+          "overloads": 2
+        },
+        {
+          "name": "ToText",
+          "overloads": 2
+        }
+      ]
+    },
+    "TextConst": {
+      "methods": [
+        {
+          "name": "Contains",
+          "overloads": 1
+        },
+        {
+          "name": "EndsWith",
+          "overloads": 1
+        },
+        {
+          "name": "IndexOf",
+          "overloads": 1
+        },
+        {
+          "name": "IndexOfAny",
+          "overloads": 2
+        },
+        {
+          "name": "LastIndexOf",
+          "overloads": 1
+        },
+        {
+          "name": "PadLeft",
+          "overloads": 1
+        },
+        {
+          "name": "PadRight",
+          "overloads": 1
+        },
+        {
+          "name": "Remove",
+          "overloads": 1
+        },
+        {
+          "name": "Replace",
+          "overloads": 1
+        },
+        {
+          "name": "Split",
+          "overloads": 3
+        },
+        {
+          "name": "StartsWith",
+          "overloads": 1
+        },
+        {
+          "name": "Substring",
+          "overloads": 1
+        },
+        {
+          "name": "ToLower",
+          "overloads": 1
+        },
+        {
+          "name": "ToUpper",
+          "overloads": 1
+        },
+        {
+          "name": "Trim",
+          "overloads": 1
+        },
+        {
+          "name": "TrimEnd",
+          "overloads": 1
+        },
+        {
+          "name": "TrimStart",
+          "overloads": 1
+        }
+      ]
+    },
+    "Time": {
+      "methods": [
+        {
+          "name": "Hour",
+          "overloads": 1
+        },
+        {
+          "name": "Millisecond",
+          "overloads": 1
+        },
+        {
+          "name": "Minute",
+          "overloads": 1
+        },
+        {
+          "name": "Second",
+          "overloads": 1
+        },
+        {
+          "name": "ToText",
+          "overloads": 1
+        }
+      ]
+    },
+    "Variant": {
+      "methods": [
+        {
+          "name": "IsAction",
+          "overloads": 1
+        },
+        {
+          "name": "IsAutomation",
+          "overloads": 1
+        },
+        {
+          "name": "IsBigInteger",
+          "overloads": 1
+        },
+        {
+          "name": "IsBinary",
+          "overloads": 1
+        },
+        {
+          "name": "IsBoolean",
+          "overloads": 1
+        },
+        {
+          "name": "IsByte",
+          "overloads": 1
+        },
+        {
+          "name": "IsChar",
+          "overloads": 1
+        },
+        {
+          "name": "IsClientType",
+          "overloads": 1
+        },
+        {
+          "name": "IsCode",
+          "overloads": 1
+        },
+        {
+          "name": "IsCodeunit",
+          "overloads": 1
+        },
+        {
+          "name": "IsDataClassification",
+          "overloads": 1
+        },
+        {
+          "name": "IsDataClassificationType",
+          "overloads": 1
+        },
+        {
+          "name": "IsDate",
+          "overloads": 1
+        },
+        {
+          "name": "IsDateFormula",
+          "overloads": 1
+        },
+        {
+          "name": "IsDateTime",
+          "overloads": 1
+        },
+        {
+          "name": "IsDecimal",
+          "overloads": 1
+        },
+        {
+          "name": "IsDefaultLayout",
+          "overloads": 1
+        },
+        {
+          "name": "IsDictionary",
+          "overloads": 1
+        },
+        {
+          "name": "IsDotNet",
+          "overloads": 1
+        },
+        {
+          "name": "IsDuration",
+          "overloads": 1
+        },
+        {
+          "name": "IsExecutionMode",
+          "overloads": 1
+        },
+        {
+          "name": "IsFieldRef",
+          "overloads": 1
+        },
+        {
+          "name": "IsFile",
+          "overloads": 1
+        },
+        {
+          "name": "IsFilterPageBuilder",
+          "overloads": 1
+        },
+        {
+          "name": "IsGuid",
+          "overloads": 1
+        },
+        {
+          "name": "IsInStream",
+          "overloads": 1
+        },
+        {
+          "name": "IsInteger",
+          "overloads": 1
+        },
+        {
+          "name": "IsJsonArray",
+          "overloads": 1
+        },
+        {
+          "name": "IsJsonObject",
+          "overloads": 1
+        },
+        {
+          "name": "IsJsonToken",
+          "overloads": 1
+        },
+        {
+          "name": "IsJsonValue",
+          "overloads": 1
+        },
+        {
+          "name": "IsList",
+          "overloads": 1
+        },
+        {
+          "name": "IsNotification",
+          "overloads": 1
+        },
+        {
+          "name": "IsObjectType",
+          "overloads": 1
+        },
+        {
+          "name": "IsOption",
+          "overloads": 1
+        },
+        {
+          "name": "IsOutStream",
+          "overloads": 1
+        },
+        {
+          "name": "IsPromptMode",
+          "overloads": 1
+        },
+        {
+          "name": "IsRecord",
+          "overloads": 1
+        },
+        {
+          "name": "IsRecordId",
+          "overloads": 1
+        },
+        {
+          "name": "IsRecordRef",
+          "overloads": 1
+        },
+        {
+          "name": "IsReportFormat",
+          "overloads": 1
+        },
+        {
+          "name": "IsSecurityFiltering",
+          "overloads": 1
+        },
+        {
+          "name": "IsTableConnectionType",
+          "overloads": 1
+        },
+        {
+          "name": "IsTestPermissions",
+          "overloads": 1
+        },
+        {
+          "name": "IsText",
+          "overloads": 1
+        },
+        {
+          "name": "IsTextBuilder",
+          "overloads": 1
+        },
+        {
+          "name": "IsTextConstant",
+          "overloads": 1
+        },
+        {
+          "name": "IsTextEncoding",
+          "overloads": 1
+        },
+        {
+          "name": "IsTime",
+          "overloads": 1
+        },
+        {
+          "name": "IsTransactionType",
+          "overloads": 1
+        },
+        {
+          "name": "IsWideChar",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlAttribute",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlAttributeCollection",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlCData",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlComment",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlDeclaration",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlDocument",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlDocumentType",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlElement",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlNameTable",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlNamespaceManager",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlNode",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlNodeList",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlProcessingInstruction",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlReadOptions",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlText",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlWriteOptions",
+          "overloads": 1
+        }
+      ]
+    },
+    "Version": {
+      "methods": [
+        {
+          "name": "Build",
+          "overloads": 1
+        },
+        {
+          "name": "Create",
+          "overloads": 2
+        },
+        {
+          "name": "Major",
+          "overloads": 1
+        },
+        {
+          "name": "Minor",
+          "overloads": 1
+        },
+        {
+          "name": "Revision",
+          "overloads": 1
+        },
+        {
+          "name": "ToText",
+          "overloads": 1
+        }
+      ]
+    },
+    "WebServiceActionContext": {
+      "methods": [
+        {
+          "name": "AddEntityKey",
+          "overloads": 1
+        },
+        {
+          "name": "GetObjectId",
+          "overloads": 1
+        },
+        {
+          "name": "GetObjectType",
+          "overloads": 1
+        },
+        {
+          "name": "GetResultCode",
+          "overloads": 1
+        },
+        {
+          "name": "SetObjectId",
+          "overloads": 1
+        },
+        {
+          "name": "SetObjectType",
+          "overloads": 1
+        },
+        {
+          "name": "SetResultCode",
+          "overloads": 1
+        }
+      ]
+    },
+    "XmlAttribute": {
+      "methods": [
+        {
+          "name": "AddAfterSelf",
+          "overloads": 1
+        },
+        {
+          "name": "AddBeforeSelf",
+          "overloads": 1
+        },
+        {
+          "name": "AsXmlNode",
+          "overloads": 1
+        },
+        {
+          "name": "Create",
+          "overloads": 2
+        },
+        {
+          "name": "CreateNamespaceDeclaration",
+          "overloads": 1
+        },
+        {
+          "name": "GetDocument",
+          "overloads": 1
+        },
+        {
+          "name": "GetParent",
+          "overloads": 1
+        },
+        {
+          "name": "IsNamespaceDeclaration",
+          "overloads": 1
+        },
+        {
+          "name": "LocalName",
+          "overloads": 1
+        },
+        {
+          "name": "Name",
+          "overloads": 1
+        },
+        {
+          "name": "NamespacePrefix",
+          "overloads": 1
+        },
+        {
+          "name": "NamespaceUri",
+          "overloads": 1
+        },
+        {
+          "name": "Remove",
+          "overloads": 1
+        },
+        {
+          "name": "ReplaceWith",
+          "overloads": 1
+        },
+        {
+          "name": "SelectNodes",
+          "overloads": 2
+        },
+        {
+          "name": "SelectSingleNode",
+          "overloads": 2
+        },
+        {
+          "name": "Value",
+          "overloads": 1
+        },
+        {
+          "name": "WriteTo",
+          "overloads": 4
+        }
+      ]
+    },
+    "XmlAttributeCollection": {
+      "methods": [
+        {
+          "name": "Count",
+          "overloads": 1
+        },
+        {
+          "name": "Get",
+          "overloads": 3
+        },
+        {
+          "name": "Remove",
+          "overloads": 3
+        },
+        {
+          "name": "RemoveAll",
+          "overloads": 1
+        },
+        {
+          "name": "Set",
+          "overloads": 2
+        }
+      ]
+    },
+    "XmlCData": {
+      "methods": [
+        {
+          "name": "AddAfterSelf",
+          "overloads": 1
+        },
+        {
+          "name": "AddBeforeSelf",
+          "overloads": 1
+        },
+        {
+          "name": "AsXmlNode",
+          "overloads": 1
+        },
+        {
+          "name": "Create",
+          "overloads": 1
+        },
+        {
+          "name": "GetDocument",
+          "overloads": 1
+        },
+        {
+          "name": "GetParent",
+          "overloads": 1
+        },
+        {
+          "name": "Remove",
+          "overloads": 1
+        },
+        {
+          "name": "ReplaceWith",
+          "overloads": 1
+        },
+        {
+          "name": "SelectNodes",
+          "overloads": 2
+        },
+        {
+          "name": "SelectSingleNode",
+          "overloads": 2
+        },
+        {
+          "name": "Value",
+          "overloads": 1
+        },
+        {
+          "name": "WriteTo",
+          "overloads": 4
+        }
+      ]
+    },
+    "XmlComment": {
+      "methods": [
+        {
+          "name": "AddAfterSelf",
+          "overloads": 1
+        },
+        {
+          "name": "AddBeforeSelf",
+          "overloads": 1
+        },
+        {
+          "name": "AsXmlNode",
+          "overloads": 1
+        },
+        {
+          "name": "Create",
+          "overloads": 1
+        },
+        {
+          "name": "GetDocument",
+          "overloads": 1
+        },
+        {
+          "name": "GetParent",
+          "overloads": 1
+        },
+        {
+          "name": "Remove",
+          "overloads": 1
+        },
+        {
+          "name": "ReplaceWith",
+          "overloads": 1
+        },
+        {
+          "name": "SelectNodes",
+          "overloads": 2
+        },
+        {
+          "name": "SelectSingleNode",
+          "overloads": 2
+        },
+        {
+          "name": "Value",
+          "overloads": 1
+        },
+        {
+          "name": "WriteTo",
+          "overloads": 4
+        }
+      ]
+    },
+    "XmlDeclaration": {
+      "methods": [
+        {
+          "name": "AddAfterSelf",
+          "overloads": 1
+        },
+        {
+          "name": "AddBeforeSelf",
+          "overloads": 1
+        },
+        {
+          "name": "AsXmlNode",
+          "overloads": 1
+        },
+        {
+          "name": "Create",
+          "overloads": 1
+        },
+        {
+          "name": "Encoding",
+          "overloads": 1
+        },
+        {
+          "name": "GetDocument",
+          "overloads": 1
+        },
+        {
+          "name": "GetParent",
+          "overloads": 1
+        },
+        {
+          "name": "Remove",
+          "overloads": 1
+        },
+        {
+          "name": "ReplaceWith",
+          "overloads": 1
+        },
+        {
+          "name": "SelectNodes",
+          "overloads": 2
+        },
+        {
+          "name": "SelectSingleNode",
+          "overloads": 2
+        },
+        {
+          "name": "Standalone",
+          "overloads": 1
+        },
+        {
+          "name": "Version",
+          "overloads": 1
+        },
+        {
+          "name": "WriteTo",
+          "overloads": 4
+        }
+      ]
+    },
+    "XmlDocument": {
+      "methods": [
+        {
+          "name": "Add",
+          "overloads": 1
+        },
+        {
+          "name": "AddAfterSelf",
+          "overloads": 1
+        },
+        {
+          "name": "AddBeforeSelf",
+          "overloads": 1
+        },
+        {
+          "name": "AddFirst",
+          "overloads": 1
+        },
+        {
+          "name": "AsXmlNode",
+          "overloads": 1
+        },
+        {
+          "name": "Create",
+          "overloads": 2
+        },
+        {
+          "name": "GetChildElements",
+          "overloads": 3
+        },
+        {
+          "name": "GetChildNodes",
+          "overloads": 1
+        },
+        {
+          "name": "GetDeclaration",
+          "overloads": 1
+        },
+        {
+          "name": "GetDescendantElements",
+          "overloads": 3
+        },
+        {
+          "name": "GetDescendantNodes",
+          "overloads": 1
+        },
+        {
+          "name": "GetDocument",
+          "overloads": 1
+        },
+        {
+          "name": "GetDocumentType",
+          "overloads": 1
+        },
+        {
+          "name": "GetParent",
+          "overloads": 1
+        },
+        {
+          "name": "GetRoot",
+          "overloads": 1
+        },
+        {
+          "name": "NameTable",
+          "overloads": 1
+        },
+        {
+          "name": "ReadFrom",
+          "overloads": 4
+        },
+        {
+          "name": "Remove",
+          "overloads": 1
+        },
+        {
+          "name": "RemoveNodes",
+          "overloads": 1
+        },
+        {
+          "name": "ReplaceNodes",
+          "overloads": 1
+        },
+        {
+          "name": "ReplaceWith",
+          "overloads": 1
+        },
+        {
+          "name": "SelectNodes",
+          "overloads": 2
+        },
+        {
+          "name": "SelectSingleNode",
+          "overloads": 2
+        },
+        {
+          "name": "SetDeclaration",
+          "overloads": 1
+        },
+        {
+          "name": "WriteTo",
+          "overloads": 4
+        }
+      ]
+    },
+    "XmlDocumentType": {
+      "methods": [
+        {
+          "name": "AddAfterSelf",
+          "overloads": 1
+        },
+        {
+          "name": "AddBeforeSelf",
+          "overloads": 1
+        },
+        {
+          "name": "AsXmlNode",
+          "overloads": 1
+        },
+        {
+          "name": "Create",
+          "overloads": 4
+        },
+        {
+          "name": "GetDocument",
+          "overloads": 1
+        },
+        {
+          "name": "GetInternalSubset",
+          "overloads": 1
+        },
+        {
+          "name": "GetName",
+          "overloads": 1
+        },
+        {
+          "name": "GetParent",
+          "overloads": 1
+        },
+        {
+          "name": "GetPublicId",
+          "overloads": 1
+        },
+        {
+          "name": "GetSystemId",
+          "overloads": 1
+        },
+        {
+          "name": "Remove",
+          "overloads": 1
+        },
+        {
+          "name": "ReplaceWith",
+          "overloads": 1
+        },
+        {
+          "name": "SelectNodes",
+          "overloads": 2
+        },
+        {
+          "name": "SelectSingleNode",
+          "overloads": 2
+        },
+        {
+          "name": "SetInternalSubset",
+          "overloads": 1
+        },
+        {
+          "name": "SetName",
+          "overloads": 1
+        },
+        {
+          "name": "SetPublicId",
+          "overloads": 1
+        },
+        {
+          "name": "SetSystemId",
+          "overloads": 1
+        },
+        {
+          "name": "WriteTo",
+          "overloads": 4
+        }
+      ]
+    },
+    "XmlElement": {
+      "methods": [
+        {
+          "name": "Add",
+          "overloads": 1
+        },
+        {
+          "name": "AddAfterSelf",
+          "overloads": 1
+        },
+        {
+          "name": "AddBeforeSelf",
+          "overloads": 1
+        },
+        {
+          "name": "AddFirst",
+          "overloads": 1
+        },
+        {
+          "name": "AsXmlNode",
+          "overloads": 1
+        },
+        {
+          "name": "Attributes",
+          "overloads": 1
+        },
+        {
+          "name": "Create",
+          "overloads": 4
+        },
+        {
+          "name": "GetChildElements",
+          "overloads": 3
+        },
+        {
+          "name": "GetChildNodes",
+          "overloads": 1
+        },
+        {
+          "name": "GetDescendantElements",
+          "overloads": 3
+        },
+        {
+          "name": "GetDescendantNodes",
+          "overloads": 1
+        },
+        {
+          "name": "GetDocument",
+          "overloads": 1
+        },
+        {
+          "name": "GetNamespaceOfPrefix",
+          "overloads": 1
+        },
+        {
+          "name": "GetParent",
+          "overloads": 1
+        },
+        {
+          "name": "GetPrefixOfNamespace",
+          "overloads": 1
+        },
+        {
+          "name": "HasAttributes",
+          "overloads": 1
+        },
+        {
+          "name": "HasElements",
+          "overloads": 1
+        },
+        {
+          "name": "InnerText",
+          "overloads": 1
+        },
+        {
+          "name": "InnerXml",
+          "overloads": 1
+        },
+        {
+          "name": "IsEmpty",
+          "overloads": 1
+        },
+        {
+          "name": "LocalName",
+          "overloads": 1
+        },
+        {
+          "name": "Name",
+          "overloads": 1
+        },
+        {
+          "name": "NamespaceUri",
+          "overloads": 1
+        },
+        {
+          "name": "Remove",
+          "overloads": 1
+        },
+        {
+          "name": "RemoveAllAttributes",
+          "overloads": 1
+        },
+        {
+          "name": "RemoveAttribute",
+          "overloads": 3
+        },
+        {
+          "name": "RemoveNodes",
+          "overloads": 1
+        },
+        {
+          "name": "ReplaceNodes",
+          "overloads": 1
+        },
+        {
+          "name": "ReplaceWith",
+          "overloads": 1
+        },
+        {
+          "name": "SelectNodes",
+          "overloads": 2
+        },
+        {
+          "name": "SelectSingleNode",
+          "overloads": 2
+        },
+        {
+          "name": "SetAttribute",
+          "overloads": 2
+        },
+        {
+          "name": "WriteTo",
+          "overloads": 4
+        }
+      ]
+    },
+    "XmlNameTable": {
+      "methods": [
+        {
+          "name": "Add",
+          "overloads": 1
+        },
+        {
+          "name": "Get",
+          "overloads": 1
+        }
+      ]
+    },
+    "XmlNamespaceManager": {
+      "methods": [
+        {
+          "name": "AddNamespace",
+          "overloads": 1
+        },
+        {
+          "name": "HasNamespace",
+          "overloads": 1
+        },
+        {
+          "name": "LookupNamespace",
+          "overloads": 1
+        },
+        {
+          "name": "LookupPrefix",
+          "overloads": 1
+        },
+        {
+          "name": "NameTable",
+          "overloads": 1
+        },
+        {
+          "name": "PopScope",
+          "overloads": 1
+        },
+        {
+          "name": "PushScope",
+          "overloads": 1
+        },
+        {
+          "name": "RemoveNamespace",
+          "overloads": 1
+        }
+      ]
+    },
+    "XmlNode": {
+      "methods": [
+        {
+          "name": "AddAfterSelf",
+          "overloads": 1
+        },
+        {
+          "name": "AddBeforeSelf",
+          "overloads": 1
+        },
+        {
+          "name": "AsXmlAttribute",
+          "overloads": 1
+        },
+        {
+          "name": "AsXmlCData",
+          "overloads": 1
+        },
+        {
+          "name": "AsXmlComment",
+          "overloads": 1
+        },
+        {
+          "name": "AsXmlDeclaration",
+          "overloads": 1
+        },
+        {
+          "name": "AsXmlDocument",
+          "overloads": 1
+        },
+        {
+          "name": "AsXmlDocumentType",
+          "overloads": 1
+        },
+        {
+          "name": "AsXmlElement",
+          "overloads": 1
+        },
+        {
+          "name": "AsXmlProcessingInstruction",
+          "overloads": 1
+        },
+        {
+          "name": "AsXmlText",
+          "overloads": 1
+        },
+        {
+          "name": "GetDocument",
+          "overloads": 1
+        },
+        {
+          "name": "GetParent",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlAttribute",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlCData",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlComment",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlDeclaration",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlDocument",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlDocumentType",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlElement",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlProcessingInstruction",
+          "overloads": 1
+        },
+        {
+          "name": "IsXmlText",
+          "overloads": 1
+        },
+        {
+          "name": "Remove",
+          "overloads": 1
+        },
+        {
+          "name": "ReplaceWith",
+          "overloads": 1
+        },
+        {
+          "name": "SelectNodes",
+          "overloads": 2
+        },
+        {
+          "name": "SelectSingleNode",
+          "overloads": 2
+        },
+        {
+          "name": "WriteTo",
+          "overloads": 4
+        }
+      ]
+    },
+    "XmlNodeList": {
+      "methods": [
+        {
+          "name": "Count",
+          "overloads": 1
+        },
+        {
+          "name": "Get",
+          "overloads": 1
+        }
+      ]
+    },
+    "XmlProcessingInstruction": {
+      "methods": [
+        {
+          "name": "AddAfterSelf",
+          "overloads": 1
+        },
+        {
+          "name": "AddBeforeSelf",
+          "overloads": 1
+        },
+        {
+          "name": "AsXmlNode",
+          "overloads": 1
+        },
+        {
+          "name": "Create",
+          "overloads": 1
+        },
+        {
+          "name": "GetData",
+          "overloads": 1
+        },
+        {
+          "name": "GetDocument",
+          "overloads": 1
+        },
+        {
+          "name": "GetParent",
+          "overloads": 1
+        },
+        {
+          "name": "GetTarget",
+          "overloads": 1
+        },
+        {
+          "name": "Remove",
+          "overloads": 1
+        },
+        {
+          "name": "ReplaceWith",
+          "overloads": 1
+        },
+        {
+          "name": "SelectNodes",
+          "overloads": 2
+        },
+        {
+          "name": "SelectSingleNode",
+          "overloads": 2
+        },
+        {
+          "name": "SetData",
+          "overloads": 1
+        },
+        {
+          "name": "SetTarget",
+          "overloads": 1
+        },
+        {
+          "name": "WriteTo",
+          "overloads": 4
+        }
+      ]
+    },
+    "XmlReadOptions": {
+      "methods": [
+        {
+          "name": "PreserveWhitespace",
+          "overloads": 1
+        }
+      ]
+    },
+    "XmlText": {
+      "methods": [
+        {
+          "name": "AddAfterSelf",
+          "overloads": 1
+        },
+        {
+          "name": "AddBeforeSelf",
+          "overloads": 1
+        },
+        {
+          "name": "AsXmlNode",
+          "overloads": 1
+        },
+        {
+          "name": "Create",
+          "overloads": 1
+        },
+        {
+          "name": "GetDocument",
+          "overloads": 1
+        },
+        {
+          "name": "GetParent",
+          "overloads": 1
+        },
+        {
+          "name": "Remove",
+          "overloads": 1
+        },
+        {
+          "name": "ReplaceWith",
+          "overloads": 1
+        },
+        {
+          "name": "SelectNodes",
+          "overloads": 2
+        },
+        {
+          "name": "SelectSingleNode",
+          "overloads": 2
+        },
+        {
+          "name": "Value",
+          "overloads": 1
+        },
+        {
+          "name": "WriteTo",
+          "overloads": 4
+        }
+      ]
+    },
+    "XmlWriteOptions": {
+      "methods": [
+        {
+          "name": "PreserveWhitespace",
+          "overloads": 1
+        }
+      ]
+    },
+    "Xmlport": {
+      "methods": [
+        {
+          "name": "Export",
+          "overloads": 1
+        },
+        {
+          "name": "Import",
+          "overloads": 1
+        },
+        {
+          "name": "Run",
+          "overloads": 1
+        }
+      ]
+    },
+    "XmlportInstance": {
+      "methods": [
+        {
+          "name": "Break",
+          "overloads": 1
+        },
+        {
+          "name": "BreakUnbound",
+          "overloads": 1
+        },
+        {
+          "name": "CurrentPath",
+          "overloads": 1
+        },
+        {
+          "name": "Export",
+          "overloads": 1
+        },
+        {
+          "name": "FieldDelimiter",
+          "overloads": 1
+        },
+        {
+          "name": "FieldSeparator",
+          "overloads": 1
+        },
+        {
+          "name": "Filename",
+          "overloads": 1
+        },
+        {
+          "name": "Import",
+          "overloads": 1
+        },
+        {
+          "name": "ImportFile",
+          "overloads": 1
+        },
+        {
+          "name": "Quit",
+          "overloads": 1
+        },
+        {
+          "name": "RecordSeparator",
+          "overloads": 1
+        },
+        {
+          "name": "Run",
+          "overloads": 1
+        },
+        {
+          "name": "SetDestination",
+          "overloads": 1
+        },
+        {
+          "name": "SetSource",
+          "overloads": 1
+        },
+        {
+          "name": "SetTableView",
+          "overloads": 1
+        },
+        {
+          "name": "Skip",
+          "overloads": 1
+        },
+        {
+          "name": "TableSeparator",
+          "overloads": 1
+        },
+        {
+          "name": "TextEncoding",
+          "overloads": 1
+        }
+      ]
+    }
+  }
+}
