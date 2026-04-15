@@ -249,7 +249,38 @@ codeunit 56270 "API Probe"
         RecRef.Open(Database::"API Test Entry");
         FldRef := RecRef.Field(FieldNo);
         FldRef.SetRange(5, 15);
-        // Use FieldRef.GetFilter to verify the filter expression
+        // Use FieldRef.GetFilter to verify the filter expression (exercises MockRecordRef.GetFieldFilter delegation)
         exit(FldRef.GetFilter());
+    end;
+
+    procedure GetRecRefGetFilterNoFilter(FieldNo: Integer): Text
+    var
+        RecRef: RecordRef;
+        FldRef: FieldRef;
+    begin
+        // No filter set — verify delegation returns empty string
+        RecRef.Open(Database::"API Test Entry");
+        FldRef := RecRef.Field(FieldNo);
+        exit(FldRef.GetFilter());
+    end;
+
+    procedure FindLastEntryNoWithMarkedOnly(): Text
+    var
+        RecRef: RecordRef;
+        FldRef: FieldRef;
+    begin
+        RecRef.Open(Database::"API Test Entry");
+        // Mark only entry 2 (the middle one)
+        FldRef := RecRef.Field(1);
+        FldRef.SetRange(2);
+        if RecRef.FindFirst() then
+            RecRef.Mark(true);
+        RecRef.Reset();
+        RecRef.MarkedOnly(true);
+        if RecRef.FindLast() then begin
+            FldRef := RecRef.Field(1);
+            exit(Format(FldRef.Value));
+        end;
+        exit('');
     end;
 }

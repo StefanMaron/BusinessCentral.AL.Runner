@@ -176,11 +176,44 @@ public class MockRecordRef
 
     /// <summary>
     /// MarkedOnly-aware reverse find (for FindLast which should scan backwards).
-    /// Since MockRecordHandle doesn't have ALPrev, we just use forward scan after find.
+    /// MockRecordHandle has no ALPrev, so we do a two-pass forward scan:
+    /// Pass 1 — walk the entire filtered set from the first record and record the
+    ///          index of the last marked record.
+    /// Pass 2 — restart from the first record and advance to that saved index.
     /// </summary>
     private bool MarkedOnlyFindReverse(Func<bool> findAction)
     {
-        return MarkedOnlyFind(findAction);
+        if (!findAction()) return false;
+        if (!_markedOnly) return true;
+        if (_handle == null) return false;
+
+        // If the reverse-find already landed on a marked record, we're done.
+        if (ALMark()) return true;
+
+        // Pass 1: scan the filtered set forward and remember the index of the
+        // last marked record.
+        if (!_handle.ALFindFirst()) return false;
+
+        int currentIndex = 0;
+        int lastMarkedIndex = ALMark() ? 0 : -1;
+
+        while (_handle.ALNext() != 0)
+        {
+            currentIndex++;
+            if (ALMark())
+                lastMarkedIndex = currentIndex;
+        }
+
+        if (lastMarkedIndex < 0) return false;
+
+        // Pass 2: reposition on the last marked record.
+        if (!_handle.ALFindFirst()) return false;
+        for (int i = 0; i < lastMarkedIndex; i++)
+        {
+            if (_handle.ALNext() == 0) return false;
+        }
+
+        return true;
     }
 
     public bool Next() => MarkedOnlyNext(() => _handle != null && _handle.ALNext() != 0);

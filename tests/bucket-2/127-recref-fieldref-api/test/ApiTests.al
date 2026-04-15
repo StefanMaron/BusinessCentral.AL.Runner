@@ -223,9 +223,31 @@ codeunit 56271 "API Tests"
     procedure RecRefGetFilterDelegatesToHandle()
     begin
         // [WHEN] SetRange on a field via FieldRef, then read via FieldRef.GetFilter
-        // [THEN] Returns the same range expression
+        // [THEN] Returns the same range expression — exercises MockRecordRef's delegation to handle
         Assert.AreEqual('5..15', Probe.GetRecRefGetFilter(1),
             'FieldRef.GetFilter must return the range set on the field');
+    end;
+
+    [Test]
+    procedure RecRefGetFilterReturnsEmptyWhenNoFilter()
+    begin
+        // [GIVEN] No filter set on the field
+        // [THEN] FieldRef.GetFilter returns empty string (via MockRecordRef delegation)
+        Assert.AreEqual('', Probe.GetRecRefGetFilterNoFilter(1),
+            'FieldRef.GetFilter must return empty string when no filter is set');
+    end;
+
+    [Test]
+    procedure FindLastWithMarkedOnlyReturnsLastMarkedRecord()
+    begin
+        // [GIVEN] 3 entries exist; only entry 2 (in the middle) is marked
+        Probe.InsertEntry(1, 'A', 'Alpha', 10.0, true);
+        Probe.InsertEntry(2, 'B', 'Bravo', 20.0, false);
+        Probe.InsertEntry(3, 'C', 'Charlie', 30.0, true);
+        // [WHEN] FindLast with MarkedOnly=true
+        // [THEN] Returns entry 2 (the only marked record), not empty
+        Assert.AreEqual('2', Probe.FindLastEntryNoWithMarkedOnly(),
+            'FindLast with MarkedOnly must return the last marked record');
     end;
 
     [Test]

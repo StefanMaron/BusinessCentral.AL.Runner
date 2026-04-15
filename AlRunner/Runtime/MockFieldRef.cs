@@ -209,6 +209,11 @@ public class MockFieldRef
 
     // -- Internal helpers --
 
+    // Cached PropertyInfo for NavDecimal.Value — resolved once at type-init,
+    // matching the same pattern used in MockRecordHandle.NavValueToString.
+    private static readonly System.Reflection.PropertyInfo? _navDecimalValueProp =
+        typeof(NavDecimal).GetProperty("Value");
+
     /// <summary>
     /// Extract the underlying CLR value from a NavValue so that Convert.ToInt32 etc. work.
     /// BC compiler emits <c>Convert.ToInt32(fldRef.ALGetRangeMin)</c> which fails on NavValue
@@ -231,9 +236,7 @@ public class MockFieldRef
         {
             try
             {
-                var prop = typeof(NavDecimal).GetProperty("Value",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                var raw = prop?.GetValue(nd);
+                var raw = _navDecimalValueProp?.GetValue(nd);
                 if (raw != null) return Convert.ToDecimal(raw);
             }
             catch { }
