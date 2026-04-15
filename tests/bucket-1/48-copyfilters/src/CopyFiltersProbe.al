@@ -1,4 +1,4 @@
-table 55200 "CopyFilters Probe"
+table 55300 "CopyFilters Probe"
 {
     DataClassification = ToBeClassified;
 
