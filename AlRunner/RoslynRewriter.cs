@@ -1100,6 +1100,18 @@ public void ClearApplicationMemberVariables() { }
         if (text == "NavTextBuilder")
             return node.WithIdentifier(SyntaxFactory.Identifier("MockTextBuilder"));
 
+        // NavNotification -> MockNotification
+        // NavNotification.ALSend/ALRecall/ALAddAction require NavSession and the BC
+        // service tier. MockNotification stores state locally and makes I/O calls no-ops.
+        if (text == "NavNotification")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockNotification"));
+
+        // NavDataTransfer -> MockDataTransfer
+        // NavDataTransfer constructor loads Microsoft.Dynamics.Nav.CodeAnalysis at runtime.
+        // MockDataTransfer stores config but CopyRows/CopyFields are no-ops.
+        if (text == "NavDataTransfer")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockDataTransfer"));
+
         // NavEventScope -> object (event scope type used for static fields)
         // Use PredefinedType to emit the C# keyword "object" properly, avoiding
         // namespace resolution issues where "object" as an IdentifierName fails.
@@ -1870,6 +1882,20 @@ public void ClearApplicationMemberVariables() { }
                         SyntaxKind.SimpleMemberAccessExpression,
                         SyntaxFactory.IdentifierName("MockSession"),
                         SyntaxFactory.IdentifierName("Sleep")));
+            }
+
+            // ALTaskScheduler.ALCreateTask/ALTaskExists/ALCancelTask/ALSetTaskReady -> MockTaskScheduler
+            // TaskScheduler APIs require the BC service tier. MockTaskScheduler dispatches
+            // CreateTask synchronously via MockCodeunitHandle (same pattern as MockSession).
+            if (exprText == "ALTaskScheduler" &&
+                (methodName == "ALCreateTask" || methodName == "ALTaskExists" ||
+                 methodName == "ALCancelTask" || methodName == "ALSetTaskReady"))
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("MockTaskScheduler"),
+                        SyntaxFactory.IdentifierName(methodName)));
             }
 
             // ALSession.ALApplicationArea(session) -> AlCompat.ApplicationArea()

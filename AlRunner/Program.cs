@@ -312,6 +312,16 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - Query variables — declaring Query variables compiles; Close/SetFilter/SetRange/
   TopNumberOfRows are no-ops; Open/Read/SaveAs throw NotSupportedException.
   Inject query dependencies via an AL interface for unit-testable code.
+- Notification — Message, Send, Recall, SetData/GetData/HasData, AddAction, Id, Scope.
+  Send/Recall are no-ops; data store is in-memory; Id auto-generates a Guid.
+  Note: [SendNotificationHandler] dispatch is NOT implemented; use direct Notification methods.
+- BigText — uses the real BC NavBigText type. AddText, GetSubText, TextPos, Length
+  all work as-is (no session dependency). Note: TextPos is 1-based in AL.
+- TaskScheduler — CreateTask (dispatches codeunit synchronously, invokes
+  failureCodeunitId on exception, returns Guid), TaskExists (returns false),
+  CancelTask (no-op), SetTaskReady (no-op)
+- DataTransfer — SetTables, AddFieldValue, AddConstantValue, AddJoin, AddSourceFilter,
+  CopyFields, CopyRows (all no-ops; requires real database for actual transfer)
 
 ### What al-runner does NOT support
 
