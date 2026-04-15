@@ -135,17 +135,20 @@ public static class EnumRegistry
 
     /// <summary>
     /// Resolve an AL Option member name (e.g. "Red") to its ordinal.
-    /// Searches both the <c>enum</c> object registry and the inline
-    /// <c>OptionMembers = ...</c> pool populated from table fields.
+    /// Searches inline <c>OptionMembers = ...</c> first (field-level declarations
+    /// take priority), then falls back to the <c>enum</c> object registry.
     /// </summary>
     public static int? FindOrdinalByMemberName(string memberName)
     {
+        // Inline OptionMembers (from table field declarations) take priority over
+        // named enum objects, because the caller is resolving a filter literal for
+        // a specific Option field whose members are the inline ones.
+        if (_inlineOptionMembers.TryGetValue(memberName, out var inlineOrd))
+            return inlineOrd;
         foreach (var members in _byId.Values)
             foreach (var (ord, name) in members)
                 if (string.Equals(name, memberName, StringComparison.OrdinalIgnoreCase))
                     return ord;
-        if (_inlineOptionMembers.TryGetValue(memberName, out var inlineOrd))
-            return inlineOrd;
         return null;
     }
 
