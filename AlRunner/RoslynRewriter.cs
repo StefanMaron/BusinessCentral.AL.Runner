@@ -278,6 +278,9 @@ public class RoslynRewriter : CSharpSyntaxRewriter
                 t => t.Type.ToString() is "NavReport" or "NavReportExtension"
                     or "RequestPageBase" or "NavRequestPageExtension"))
         {
+            bool isReportExtension = node.BaseList.Types.Any(
+                t => t.Type.ToString() == "NavReportExtension");
+
             var preservedMembers = new List<MemberDeclarationSyntax>();
 
             foreach (var member in node.Members)
@@ -319,6 +322,11 @@ public class RoslynRewriter : CSharpSyntaxRewriter
                     // Skip properties referencing RequestOptionsPage (removed base member).
                     if (prop.Identifier.Text == "RequestOptionsPage")
                         continue;
+                    // Skip CurrReport on report extensions — it casts
+                    // ParentObject to NavReport which is gone after stripping base.
+                    // We inject a stub CurrReport below.
+                    if (isReportExtension && prop.Identifier.Text == "CurrReport")
+                        continue;
                     if (Visit(member) is MemberDeclarationSyntax visitedMember)
                         preservedMembers.Add(visitedMember);
                 }
@@ -346,6 +354,17 @@ public class RoslynRewriter : CSharpSyntaxRewriter
             preservedMembers.Add(
                 SyntaxFactory.ParseMemberDeclaration(
                     "public void Break() { }")!);
+
+            // For report extensions: inject ParentObject stub.
+            // NavReportExtension.ParentObject returns the parent report instance.
+            // After stripping the base class, ParentObject is undefined. Inject it
+            // as a no-op so CurrReport and any other references compile.
+            if (isReportExtension)
+            {
+                preservedMembers.Add(
+                    SyntaxFactory.ParseMemberDeclaration(
+                        $"public {node.Identifier.Text} CurrReport => this;")!);
+            }
 
             var stubClass = node
                 .WithBaseList(null)
@@ -447,7 +466,11 @@ public class RoslynRewriter : CSharpSyntaxRewriter
 
         visited = visited.WithMembers(membersToKeep);
 
-        // For scope classes: add a _parent field of the enclosing class type
+        // For scope classes: add a _parent field and public Parent property of the enclosing class type.
+        // BC scope classes inherit Parent from NavMethodScope<T>. After replacing with AlScope,
+        // we inject both the backing field (_parent, used by the base.Parent → _parent rewrite)
+        // and a public property (Parent, used when BC emits bare Parent access in
+        // report/reportextension scope classes). This fixes CS1061 'Parent' errors.
         if (isScopeClass && enclosingClassName != null)
         {
             var parentField = SyntaxFactory.FieldDeclaration(
@@ -459,8 +482,14 @@ public class RoslynRewriter : CSharpSyntaxRewriter
                 .WithModifiers(SyntaxFactory.TokenList(
                     SyntaxFactory.Token(SyntaxKind.PrivateKeyword)));
 
-            // Insert the _parent field at the beginning
-            visited = visited.WithMembers(visited.Members.Insert(0, parentField));
+            var parentProperty = SyntaxFactory.ParseMemberDeclaration(
+                $"public {enclosingClassName} Parent => _parent;")!;
+
+            // Insert _parent field and Parent property at the beginning
+            visited = visited.WithMembers(
+                visited.Members
+                    .Insert(0, parentProperty)
+                    .Insert(0, parentField));
         }
 
         // For Record classes: add delegating methods that forward to Rec (MockRecordHandle).

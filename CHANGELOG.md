@@ -73,6 +73,13 @@ All notable changes to this project are documented here. Format based on
   values directly by casting to `DateTime`, avoiding the `NullReferenceException` in
   `NavDateTimeFormatter.GetStandardFormat` that occurred when `NavSession` was null.
   This fixes `Assert.AreEqual`/`AreNotEqual` comparisons involving DateTime values.
+- **ReportExtension scope class `Parent` property** — The rewriter now injects a
+  public `Parent` property on scope classes (alongside the existing `_parent` field),
+  fixing CS1061 errors when BC-generated report extension trigger scopes access
+  `Parent` without the `base.` prefix. Also strips the broken `CurrReport` property
+  on report extensions (which cast `ParentObject` from the removed base) and injects
+  `CurrReport => this` as a self-referencing stub so `CurrReport.Skip()` /
+  `CurrReport.Break()` still compile. (#177, #178, #179, #181)
 
 ## [1.0.14] - 2026-04-14
 
