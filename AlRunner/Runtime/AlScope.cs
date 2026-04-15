@@ -1303,9 +1303,9 @@ public static class AlCompat
 
     /// <summary>
     /// Session.GetExecutionContext() / GetModuleExecutionContext() stub.
-    /// Returns default ExecutionContext enum value in standalone mode.
+    /// Returns ExecutionContext.Normal in standalone mode.
     /// </summary>
-    public static Microsoft.Dynamics.Nav.Types.ExecutionContext GetExecutionContext() => default;
+    public static Microsoft.Dynamics.Nav.Types.ExecutionContext GetExecutionContext() => Microsoft.Dynamics.Nav.Types.ExecutionContext.Normal;
 
     /// <summary>
     /// CompanyProperty.DisplayName() stub — returns a default company name.

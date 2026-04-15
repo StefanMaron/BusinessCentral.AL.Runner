@@ -294,7 +294,7 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   - Session.ApplicationArea() — returns empty string
   - Session.GetExecutionContext() / GetModuleExecutionContext() — returns ExecutionContext.Normal
   - Database.LockTimeout(bool) — no-op (no real database)
-  - CompanyProperty.DisplayName() / UrlName() — returns empty string
+  - CompanyProperty.DisplayName() / UrlName() — returns stub company name (""My Company"" / ""My%20Company"")
   - ProductName.Full() / Short() / Marketing() — returns real BC product names
   - RoundDateTime(dt [, precision] [, direction]) — rounds DateTime with ms precision;
     direction: '>' (up), '<' (down), '=' (nearest, default). Default precision 1000ms.

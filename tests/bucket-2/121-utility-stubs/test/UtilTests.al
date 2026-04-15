@@ -43,7 +43,7 @@ codeunit 96002 "Util Tests"
         name: Text;
     begin
         name := Helper.GetProductNameFull();
-        Assert.AreNotEqual('', name, 'ProductName.Full() should return non-empty text');
+        Assert.IsTrue(name.Contains('Business Central'), 'ProductName.Full() should contain Business Central');
     end;
 
     [Test]
@@ -52,16 +52,16 @@ codeunit 96002 "Util Tests"
         name: Text;
     begin
         name := Helper.GetProductNameShort();
-        Assert.AreNotEqual('', name, 'ProductName.Short() should return non-empty text');
+        Assert.IsTrue(name.Contains('Business Central'), 'ProductName.Short() should contain Business Central');
     end;
 
     [Test]
-    procedure ProductNameMarketingReturnsText()
+    procedure ProductNameMarketingContainsBC()
     var
         name: Text;
     begin
         name := Helper.GetProductNameMarketing();
-        Assert.AreNotEqual('', name, 'ProductName.Marketing() should return non-empty text');
+        Assert.IsTrue(name.Contains('Business Central'), 'ProductName.Marketing() should contain Business Central');
     end;
 
     [Test]
@@ -70,8 +70,7 @@ codeunit 96002 "Util Tests"
         name: Text;
     begin
         name := Helper.GetCompanyPropertyDisplayName();
-        // In standalone mode, can be empty string — just verify no crash
-        Assert.IsTrue(true, 'CompanyProperty.DisplayName() should not crash');
+        Assert.AreEqual('My Company', name, 'CompanyProperty.DisplayName() should return stub company name');
     end;
 
     [Test]
@@ -80,117 +79,128 @@ codeunit 96002 "Util Tests"
         name: Text;
     begin
         name := Helper.GetCompanyPropertyUrlName();
-        Assert.IsTrue(true, 'CompanyProperty.UrlName() should not crash');
+        Assert.AreEqual('My%20Company', name, 'CompanyProperty.UrlName() should return URL-encoded stub name');
     end;
 
     [Test]
-    procedure LogMessageDoesNotCrash()
+    procedure LogMessageIsNoOp()
     begin
+        // LogMessage is a no-op (telemetry not available without service tier)
+        // Verify it executes without error
         Helper.CallLogMessage();
-        Assert.IsTrue(true, 'Session.LogMessage should not crash');
+        Assert.IsTrue(true, 'Session.LogMessage should execute as no-op without error');
     end;
 
     [Test]
-    procedure LogMessageWarningDoesNotCrash()
+    procedure LogMessageWarningIsNoOp()
     begin
         Helper.CallLogMessageWarning();
-        Assert.IsTrue(true, 'Session.LogMessage with Warning verbosity should not crash');
+        Assert.IsTrue(true, 'Session.LogMessage with Warning verbosity should execute as no-op');
     end;
 
     [Test]
-    procedure RoundDateTimeNoArgsReturnsDateTime()
+    procedure RoundDateTimeNoArgsReturnsSameDateTime()
     var
         dt: DateTime;
         rounded: DateTime;
     begin
-        dt := CreateDateTime(20240115D, 120000T);
+        dt := CreateDateTime(20240115D, 123456T);
         rounded := Helper.GetRoundedDateTime(dt);
-        Assert.AreNotEqual(0DT, rounded, 'RoundDateTime should return a non-zero datetime');
+        Assert.AreEqual(dt, rounded, 'RoundDateTime with no precision should return the same datetime');
     end;
 
     [Test]
-    procedure RoundDateTimeWithPrecision()
+    procedure RoundDateTimeWithPrecisionRoundsToNearestMinute()
     var
         dt: DateTime;
         rounded: DateTime;
+        expected: DateTime;
     begin
         dt := CreateDateTime(20240115D, 123456T);
         rounded := Helper.GetRoundedDateTimePrecision(dt, 60000);
-        Assert.AreNotEqual(0DT, rounded, 'RoundDateTime with precision should return non-zero datetime');
+        expected := CreateDateTime(20240115D, 123500T);
+        Assert.AreEqual(expected, rounded, 'RoundDateTime(dt, 60000) should round 12:34:56 to 12:35:00');
     end;
 
     [Test]
-    procedure RoundDateTimeDirectionUp()
+    procedure RoundDateTimeDirectionUpRoundsUp()
     var
         dt: DateTime;
         rounded: DateTime;
+        expected: DateTime;
     begin
         dt := CreateDateTime(20240115D, 123456T);
         rounded := Helper.GetRoundedDateTimeDirection(dt, 60000, '>');
-        Assert.AreNotEqual(0DT, rounded, 'RoundDateTime with direction > should return non-zero');
+        expected := CreateDateTime(20240115D, 123500T);
+        Assert.AreEqual(expected, rounded, 'RoundDateTime with > should round 12:34:56 up to 12:35:00');
     end;
 
     [Test]
-    procedure RoundDateTimeDirectionDown()
+    procedure RoundDateTimeDirectionDownRoundsDown()
     var
         dt: DateTime;
         rounded: DateTime;
+        expected: DateTime;
     begin
         dt := CreateDateTime(20240115D, 123456T);
         rounded := Helper.GetRoundedDateTimeDirection(dt, 60000, '<');
-        Assert.AreNotEqual(0DT, rounded, 'RoundDateTime with direction < should return non-zero');
+        expected := CreateDateTime(20240115D, 123400T);
+        Assert.AreEqual(expected, rounded, 'RoundDateTime with < should round 12:34:56 down to 12:34:00');
     end;
 
     [Test]
-    procedure RoundDateTimeDirectionNearest()
+    procedure RoundDateTimeDirectionNearestRoundsToNearest()
     var
         dt: DateTime;
         rounded: DateTime;
+        expected: DateTime;
     begin
         dt := CreateDateTime(20240115D, 123456T);
         rounded := Helper.GetRoundedDateTimeDirection(dt, 60000, '=');
-        Assert.AreNotEqual(0DT, rounded, 'RoundDateTime with direction = should return non-zero');
+        expected := CreateDateTime(20240115D, 123500T);
+        Assert.AreEqual(expected, rounded, 'RoundDateTime with = should round 12:34:56 to nearest minute 12:35:00');
     end;
 
     [Test]
-    procedure ApplicationAreaDoesNotCrash()
+    procedure ApplicationAreaReturnsEmpty()
     var
         appArea: Text;
     begin
         appArea := Helper.GetApplicationArea();
-        Assert.IsTrue(true, 'Session.ApplicationArea should not crash');
+        Assert.AreEqual('', appArea, 'Session.ApplicationArea() should return empty string in standalone mode');
     end;
 
     [Test]
-    procedure LockTimeoutTrueDoesNotCrash()
+    procedure LockTimeoutTrueIsNoOp()
     begin
+        // LockTimeout is a no-op (no real database)
         Helper.CallLockTimeout(true);
-        Assert.IsTrue(true, 'Database.LockTimeout(true) should not crash');
+        Assert.IsTrue(true, 'Database.LockTimeout(true) should execute as no-op');
     end;
 
     [Test]
-    procedure LockTimeoutFalseDoesNotCrash()
+    procedure LockTimeoutFalseIsNoOp()
     begin
         Helper.CallLockTimeout(false);
-        Assert.IsTrue(true, 'Database.LockTimeout(false) should not crash');
+        Assert.IsTrue(true, 'Database.LockTimeout(false) should execute as no-op');
     end;
 
     [Test]
-    procedure GetExecutionContextDoesNotCrash()
+    procedure GetExecutionContextReturnsNormal()
     var
         ctx: ExecutionContext;
     begin
         ctx := Helper.GetExecutionContext();
-        Assert.IsTrue(true, 'Session.GetExecutionContext should not crash');
+        Assert.AreEqual(ExecutionContext::Normal, ctx, 'Session.GetExecutionContext should return Normal');
     end;
 
     [Test]
-    procedure GetModuleExecutionContextDoesNotCrash()
+    procedure GetModuleExecutionContextReturnsNormal()
     var
         ctx: ExecutionContext;
     begin
         ctx := Helper.GetModuleExecutionContext();
-        Assert.IsTrue(true, 'Session.GetModuleExecutionContext should not crash');
+        Assert.AreEqual(ExecutionContext::Normal, ctx, 'Session.GetModuleExecutionContext should return Normal');
     end;
 
     [Test]
