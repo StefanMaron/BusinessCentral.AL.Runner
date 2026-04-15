@@ -119,7 +119,6 @@ the exact value will see different results.
 | `IsSessionActive(id)` | True while session runs | Always `false` |
 | `GuiAllowed()` | False in background sessions | `false` |
 | `GetFilter(field)` | Serialised filter expression | Returns serialised filter expression (functional) |
-| `Record.FieldCount` via RecordRef | Schema field count | Count of fields written at runtime |
 | Field `InitValue` | Applied on `Init()` | Not applied — type default only |
 | `FieldRef.Caption` / `.Name` | Field metadata from schema | Real values when parsed from AL source; `"FieldNN"` stub otherwise |
 | `Commit()` | Commits current transaction | No-op |

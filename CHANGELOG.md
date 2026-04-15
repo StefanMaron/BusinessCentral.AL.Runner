@@ -6,6 +6,16 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+- **RecordRef.FieldCount coverage (#238)** — `MockRecordRef.ALFieldCount` and
+  `MockRecordHandle.FieldCount` already preferred the schema field count
+  (from `TableFieldRegistry`) over the runtime written-field count, but this
+  behaviour was listed as a limitation and had no proving test. New suite
+  `tests/bucket-1/40-recordref-fieldcount` covers fresh RecordRef (3 schema
+  fields), invariance after writing, a different 5-field table, and the
+  negative case that FieldCount is not the write count. Removed the
+  `Record.FieldCount via RecordRef` row from `docs/limitations.md`.
+
 ### Changed
 - **Coverage: `type_declaration` reclassified as out-of-scope (#232)** — this
   tree-sitter-al node is the `.NET` type alias declared inside
