@@ -15,6 +15,13 @@ All notable changes to this project are documented here. Format based on
   and source is not mutated by the copy. RED confirmed by temporarily no-oping
   `ALCopyFilters`. Coverage map: `Table.CopyFilters` moved from `gap` to
   `covered`.
+- **`Record.Rename` coverage (#281)** — `MockRecordHandle.ALRename` was already
+  fully implemented but `Table.Rename` remained `status: gap` in coverage.yaml
+  because the existing `tests/bucket-2/107-rename` suite was not registered.
+  That suite provides 9 proving tests: single-field PK update + old-key removal,
+  composite PK rename, duplicate-key error, non-existent-record error, return-value
+  (false) variants, and count-preservation. Coverage map: `Table.Rename` moved
+  from `gap` to `covered`.
 - **`fieldgroups` section syntax coverage (#279)** — tables with `fieldgroups`
   declarations (e.g. `DropDown`, `Brick`) compile and all record operations
   work correctly. New suite `tests/bucket-1/48-fieldgroups`: 5 positive tests
