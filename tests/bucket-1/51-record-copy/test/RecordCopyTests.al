@@ -125,20 +125,24 @@ codeunit 55902 "Record Copy Tests"
         Source: Record "RC Test Table" temporary;
         Target: Record "RC Test Table" temporary;
     begin
-        // [GIVEN] Source temp has one row, copy with ShareTable=false
+        // [GIVEN] Source temp has one row; Copy with ShareTable=false gives Target
+        //         its own independent empty temp table (rows are NOT shared)
         Source.Init();
         Source."No." := 'U01';
         Source.Insert();
         Target.Copy(Source, false);
 
-        // [WHEN] Insert another row via Target
-        Target.Init();
-        Target."No." := 'U02';
-        Target.Insert();
+        // [THEN] Target has 0 rows — it got an independent empty temp table
+        Assert.AreEqual(0, Target.Count(), 'ShareTable=false: Target has its own empty temp table, not Source rows');
 
-        // [THEN] Source still only sees 1 row (independent)
-        Assert.AreEqual(1, Source.Count(), 'ShareTable=false: Target inserts must not affect Source');
-        Assert.AreEqual(2, Target.Count(), 'Target must see its own row');
+        // [WHEN] Insert another row into Source
+        Source.Init();
+        Source."No." := 'U02';
+        Source.Insert();
+
+        // [THEN] Target still sees 0 rows (insert not propagated across independent tables)
+        Assert.AreEqual(2, Source.Count(), 'Source must have 2 rows after second insert');
+        Assert.AreEqual(0, Target.Count(), 'ShareTable=false: Source inserts must not be visible in Target');
     end;
 
     // -----------------------------------------------------------------------
