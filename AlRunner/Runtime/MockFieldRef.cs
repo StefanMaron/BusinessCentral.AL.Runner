@@ -12,6 +12,7 @@ public class MockFieldRef
 {
     private MockRecordRef? _owner;
     private int _fieldNo;
+    private NavValue? _calcSumResult;
 
     public MockFieldRef() { }
 
@@ -33,12 +34,19 @@ public class MockFieldRef
     {
         get
         {
+            if (_calcSumResult != null)
+            {
+                var result = _calcSumResult;
+                _calcSumResult = null;
+                return result;
+            }
             if (_owner == null)
                 return NavText.Default(0);
             return _owner.GetFieldValue(_fieldNo);
         }
         set
         {
+            _calcSumResult = null;
             if (_owner != null)
                 _owner.SetFieldValue(_fieldNo, value);
         }
@@ -47,17 +55,62 @@ public class MockFieldRef
     /// <summary>ALNumber — property returning the field number.</summary>
     public int ALNumber => _fieldNo;
 
-    /// <summary>ALName — property returning the field name (stub: "FieldNN").</summary>
-    public NavText ALName => new NavText($"Field{_fieldNo}");
+    /// <summary>ALName — property returning the field name from metadata, or "FieldNN" fallback.</summary>
+    public NavText ALName
+    {
+        get
+        {
+            if (_owner != null)
+            {
+                var name = TableFieldRegistry.GetFieldName(_owner.Number, _fieldNo);
+                if (name != null) return new NavText(name);
+            }
+            return new NavText($"Field{_fieldNo}");
+        }
+    }
 
-    /// <summary>ALCaption — property returning the field caption (stub: "FieldNN").</summary>
-    public NavText ALCaption => new NavText($"Field{_fieldNo}");
+    /// <summary>ALCaption — property returning the field caption from metadata, or "FieldNN" fallback.</summary>
+    public NavText ALCaption
+    {
+        get
+        {
+            if (_owner != null)
+            {
+                var caption = TableFieldRegistry.GetFieldCaption(_owner.Number, _fieldNo);
+                if (caption != null) return new NavText(caption);
+            }
+            return new NavText($"Field{_fieldNo}");
+        }
+    }
 
-    /// <summary>ALLength — property returning field length (stub: 0).</summary>
-    public int ALLength => 0;
+    /// <summary>ALLength — property returning field length from metadata (for Text[N]/Code[N]), or 0.</summary>
+    public int ALLength
+    {
+        get
+        {
+            if (_owner != null)
+            {
+                var length = TableFieldRegistry.GetFieldLength(_owner.Number, _fieldNo);
+                if (length.HasValue) return length.Value;
+            }
+            return 0;
+        }
+    }
 
-    /// <summary>ALType — property returning field type (stub: NavType.Text).</summary>
-    public NavType ALType => NavType.Text;
+    /// <summary>ALType — property returning field type from metadata, or NavType.Text fallback.</summary>
+    public NavType ALType
+    {
+        get
+        {
+            if (_owner != null)
+            {
+                var typeName = TableFieldRegistry.GetFieldTypeName(_owner.Number, _fieldNo);
+                if (typeName != null)
+                    return MapAlTypeToNavType(typeName);
+            }
+            return NavType.Text;
+        }
+    }
 
     /// <summary>ALClass — field class (Normal/FlowField/FlowFilter). Stub: always Normal.</summary>
     public FieldClass ALClass => FieldClass.Normal;
@@ -175,6 +228,72 @@ public class MockFieldRef
     /// <summary>ALCalcField with DataError — no-op in standalone mode.</summary>
     public void ALCalcField(DataError errorLevel) { }
 
+    // -- Enum introspection --
+
+    /// <summary>
+    /// Helper to look up enum members for this field via TableFieldRegistry + EnumRegistry.
+    /// Returns null if the field is not an enum type.
+    /// </summary>
+    private IReadOnlyList<(int Ordinal, string Name)>? GetEnumMembers()
+    {
+        if (_owner == null) return null;
+        var enumName = TableFieldRegistry.GetEnumName(_owner.TableId, _fieldNo);
+        if (enumName == null) return null;
+        var members = EnumRegistry.GetMembersByName(enumName);
+        return members.Count > 0 ? members : null;
+    }
+
+    /// <summary>ALIsEnum — whether this field is an enum type.</summary>
+    public bool ALIsEnum => GetEnumMembers() != null;
+
+    /// <summary>ALOptionValueCount — number of enum values for this field.</summary>
+    public int ALOptionValueCount() => GetEnumMembers()?.Count ?? 0;
+
+    /// <summary>ALGetOptionValueName — returns the enum value name at a 1-based index.</summary>
+    public string ALGetOptionValueName(int index)
+    {
+        var members = GetEnumMembers();
+        if (members == null || index < 1 || index > members.Count)
+            throw new Exception($"Index {index} is out of range. The enum has {members?.Count ?? 0} values.");
+        return members![index - 1].Name;
+    }
+
+    /// <summary>ALGetOptionValueCaption — returns the enum value caption at a 1-based index (same as name; no caption infrastructure).</summary>
+    public string ALGetOptionValueCaption(int index)
+    {
+        var members = GetEnumMembers();
+        if (members == null || index < 1 || index > members.Count)
+            throw new Exception($"Index {index} is out of range. The enum has {members?.Count ?? 0} values.");
+        return members![index - 1].Name;
+    }
+
+    /// <summary>ALGetOptionValueOrdinal — returns the enum ordinal at a 1-based index.</summary>
+    public int ALGetOptionValueOrdinal(int index)
+    {
+        var members = GetEnumMembers();
+        if (members == null || index < 1 || index > members.Count)
+            throw new Exception($"Index {index} is out of range. The enum has {members?.Count ?? 0} values.");
+        return members![index - 1].Ordinal;
+    }
+
+    // -- CalcSum --
+
+    /// <summary>
+    /// ALCalcSum — sums this field's values across all filtered records in the
+    /// underlying table. The result is stored and returned via the next ALValue read.
+    /// Always stores as NavDecimal (matching BC behavior where sums are always Decimal).
+    /// </summary>
+    public void ALCalcSum(DataError errorLevel = DataError.ThrowError)
+    {
+        if (_owner?.Handle == null)
+        {
+            _calcSumResult = NavDecimal.Default;
+            return;
+        }
+        decimal sum = _owner.Handle.CalcSumField(_fieldNo);
+        _calcSumResult = NavDecimal.Create(new Decimal18(sum));
+    }
+
     /// <summary>ALFieldError — throws a field-level error.</summary>
     public void ALFieldError(string message)
     {
@@ -248,5 +367,28 @@ public class MockFieldRef
     {
         _owner = owner;
         _fieldNo = fieldNo;
+    }
+
+    private static NavType MapAlTypeToNavType(string typeName)
+    {
+        return typeName.ToLowerInvariant() switch
+        {
+            "integer" => NavType.Integer,
+            "decimal" => NavType.Decimal,
+            "text" => NavType.Text,
+            "code" => NavType.Code,
+            "boolean" => NavType.Boolean,
+            "date" => NavType.Date,
+            "time" => NavType.Time,
+            "datetime" => NavType.DateTime,
+            "option" => NavType.Option,
+            "biginteger" => NavType.BigInteger,
+            "guid" => NavType.GUID,
+            "blob" => NavType.BLOB,
+            "recordid" => NavType.RecordID,
+            "duration" => NavType.Duration,
+            "dateformula" => NavType.DateFormula,
+            _ => NavType.Text, // fallback for enum, interface, etc.
+        };
     }
 }

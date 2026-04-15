@@ -243,11 +243,16 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 
 - Pure-logic codeunits (arithmetic, string ops, record CRUD, enums, options)
 - In-memory table store: Insert, Modify, Get, Delete, FindSet, FindFirst, FindLast, Next
+- Temporary records — `Record "X" temporary` uses an isolated in-memory store per variable,
+  separate from non-temporary records. `IsTemporary()` returns the correct value.
+  `RecordRef.Open(tableId, true)` opens a temporary RecordRef.
 - TransferFields, CountApprox, Consistent (no-op), FieldActive (true), AddLink/HasLinks/DeleteLinks
 - WritePermission/ReadPermission (true), SetPermissionFilter (no-op), LockTable (no-op)
 - Composite primary keys, sort ordering (SetCurrentKey / SetAscending), CurrentKey, Ascending
 - SETRANGE / SETFILTER filtering (=, <>, <, <=, >, >=, wildcards, OR via |)
 - GetFilter(field), GetFilters, HasFilter — return active filter expressions
+- FlowField CalcFormula — CalcFields evaluates exist(), count(), sum(), and lookup() formulas
+  against the in-memory table store. Where-clause conditions support field() and const() references.
 - Cross-codeunit dispatch (Codeunit.Run, Codeunit.Run(id, Rec) with record parameter, direct codeunit variable calls)
 - AL interfaces for dependency injection
 - `asserterror` blocks + `GetLastErrorText()`
@@ -267,8 +272,20 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   Rename, FieldExists, FieldCount, HasFilter, GetFilters, GetPosition,
   SetPosition, Ascending (get/set), ChangeCompany (no-op), ModifyAll, CurrentCompany,
   FieldRef.GetFilter, FieldRef.GetRangeMin, FieldRef.GetRangeMax, FieldRef.Record,
-  KeyCount, KeyIndex(n), CurrentKeyIndex
+  KeyCount, KeyIndex(n), CurrentKeyIndex,
+  RecRef.Name (real table name from AL source metadata),
+  SystemIdNo, SystemCreatedAtNo, SystemCreatedByNo, SystemModifiedAtNo,
+  SystemModifiedByNo (return well-known BC system field numbers).
+  FieldRef also supports: IsEnum, EnumValueCount(), GetEnumValueName(index),
+  GetEnumValueCaption(index), GetEnumValueOrdinal(index) — enum introspection
+  using registered enum metadata. CalcSum() — sums a decimal field across all
+  filtered records; result is available via the next Value read.
 - KeyRef — FieldCount, FieldIndex(n), Record, Active (basic key metadata via KeyRef variable)
+- Field metadata — Record.FieldCaption, Record.TableCaption, Record.TableName,
+  FieldRef.Name, FieldRef.Caption, FieldRef.Type, FieldRef.Length return real values
+  parsed from AL source table declarations (Caption property, field type, Text[N]/Code[N]
+  length). Captions with embedded apostrophes (e.g. 'Vendor''s Name') are unescaped.
+  Falls back to stub defaults for tables not parsed from source.
 - JSON types: JsonObject, JsonArray, JsonToken, JsonValue — Add, Get, Contains,
   Remove, Replace, Count, WriteTo, ReadFrom, SelectToken, AsValue, AsText, AsInteger, etc.
 - BLOB / InStream / OutStream — CreateInStream/CreateOutStream, HasValue, ReadText/WriteText
@@ -319,6 +336,10 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - Query variables — declaring Query variables compiles; Close/SetFilter/SetRange/
   TopNumberOfRows are no-ops; Open/Read/SaveAs throw NotSupportedException.
   Inject query dependencies via an AL interface for unit-testable code.
+- XmlPort variables — declaring XmlPort variables compiles; Source/Destination
+  properties and Invoke() work without error. Import/Export (instance and static)
+  throw NotSupportedException with actionable guidance.
+  Use AL interface injection to abstract XmlPort I/O for testing.
 - Notification — Message, Send, Recall, SetData/GetData/HasData, AddAction, Id, Scope.
   Send/Recall are no-ops; data store is in-memory; Id auto-generates a Guid.
   Note: [SendNotificationHandler] dispatch is NOT implemented; use direct Notification methods.
@@ -333,8 +354,11 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 ### What al-runner does NOT support
 
 - Pages, Reports — stub them via `--stubs <dir>` or inject via AL interface
+- XmlPort I/O (Import/Export) — XmlPort variables compile and properties work,
+  but Import/Export require the BC service tier. Use AL interface injection to
+  abstract XmlPort dependencies for testing.
 - Query data access (Open/Read) — queries require the BC service tier (SQL views);
-  use AL interfaces to inject query results for testing
+  use Record operations instead, or inject the query behind an AL interface
 - HTTP / REST calls — inject via AL interface
 - Event subscribers — Custom IntegrationEvent/BusinessEvent dispatch works with
   IncludeSender support. Implicit DB trigger events (OnBefore/AfterInsert/Modify/

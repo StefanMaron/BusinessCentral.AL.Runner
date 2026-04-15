@@ -30,7 +30,7 @@ public class MockRecordRef
     public void Open(int tableId, bool temporary, string? companyName)
     {
         Number = tableId;
-        _handle = new MockRecordHandle(tableId);
+        _handle = new MockRecordHandle(tableId, temporary);
     }
 
     public void Close()
@@ -58,10 +58,18 @@ public class MockRecordRef
     // -- Name --
 
     /// <summary>
-    /// ALName — returns the table name. Stub: "TableN" where N is the table ID.
+    /// ALName — returns the table name from metadata, or "TableN" fallback.
     /// Returns empty string when no table is open.
     /// </summary>
-    public NavText ALName => Number == 0 ? new NavText("") : new NavText($"Table{Number}");
+    public NavText ALName
+    {
+        get
+        {
+            if (Number == 0) return new NavText("");
+            var name = TableFieldRegistry.GetTableName(Number);
+            return new NavText(name ?? $"Table{Number}");
+        }
+    }
 
     // -- SetLoadFields (no-op) --
 
@@ -369,7 +377,16 @@ public class MockRecordRef
 
     // -- FieldCount --
 
-    public int ALFieldCount => _handle?.FieldCount ?? 0;
+    public int ALFieldCount
+    {
+        get
+        {
+            // Prefer schema field count from metadata registry
+            var schemaCount = TableFieldRegistry.GetFieldCount(Number);
+            if (schemaCount > 0) return schemaCount;
+            return _handle?.FieldCount ?? 0;
+        }
+    }
 
     // -- LockTable (no-op) --
     public void ALLockTable(DataError errorLevel = DataError.ThrowError) { }
@@ -508,7 +525,10 @@ public class MockRecordRef
     // -- IsTemporary --
     public bool ALIsTemporary => false;
     public int ALSystemIdNo => 2000000000;
+    public int ALSystemCreatedAtNo => 2000000001;
+    public int ALSystemCreatedByNo => 2000000002;
     public int ALSystemModifiedAtNo => 2000000003;
+    public int ALSystemModifiedByNo => 2000000004;
 
     // -- ReadIsolation (no-op in standalone mode) --
     /// <summary>
@@ -638,4 +658,10 @@ public class MockRecordRef
     {
         return _handle?.GetRangeMax(fieldNo);
     }
+
+    /// <summary>Expose the table ID for MockFieldRef enum lookups.</summary>
+    internal int TableId => Number;
+
+    /// <summary>Expose the underlying handle for MockFieldRef.CalcSum.</summary>
+    internal MockRecordHandle? Handle => _handle;
 }
