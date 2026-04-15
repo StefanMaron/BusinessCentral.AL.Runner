@@ -486,4 +486,29 @@ namespace AlRunnerGenerated {
         Assert.Contains("AL0197", result.StdErr);
         Assert.Contains("PageExtension", result.StdErr);
     }
+
+    [Fact]
+    public void UserId_DefaultIsEmptyString()
+    {
+        var pipeline = new AlRunnerPipeline();
+        var result = pipeline.Run(new PipelineOptions
+        {
+            InputPaths = { TestPath("45-userid", "test") }
+        });
+        Assert.Equal(0, result.ExitCode);
+        Assert.True(result.Passed > 0);
+        Assert.Equal(0, result.Failed);
+    }
+
+    [Fact]
+    public void UserId_ReturnsConfiguredValue()
+    {
+        var pipeline = new AlRunnerPipeline();
+        var result = pipeline.Run(new PipelineOptions
+        {
+            UserId = "TESTUSER123",
+            InlineCode = "if UserId() <> 'TESTUSER123' then error('UserId() returned wrong value: ' + UserId());"
+        });
+        Assert.Equal(0, result.ExitCode);
+    }
 }

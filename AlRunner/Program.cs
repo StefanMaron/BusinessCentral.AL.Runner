@@ -51,6 +51,7 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("  --no-telemetry        Disable crash reporting prompt on unexpected errors");
     Console.Error.WriteLine("  --strict              Fail on runner limitations (exit 1 instead of 2)");
     Console.Error.WriteLine("  --company-name <name> Default value returned by CompanyName() (empty string otherwise)");
+    Console.Error.WriteLine("  --user-id <value>     Set the value returned by UserId() (default: empty string)");
     Console.Error.WriteLine("  -h, --help            Show this help");
     Console.Error.WriteLine();
     Console.Error.WriteLine("Examples:");
@@ -189,6 +190,12 @@ while (argIdx < args.Length)
             argIdx++;
             if (argIdx >= args.Length) { Console.Error.WriteLine("Error: --company-name requires a value"); return 1; }
             AlRunner.Runtime.MockSession.DefaultCompanyName = args[argIdx] ?? string.Empty;
+            argIdx++;
+            break;
+        case "--user-id":
+            argIdx++;
+            if (argIdx >= args.Length) { Console.Error.WriteLine("Error: --user-id requires a value argument"); return 1; }
+            options.UserId = args[argIdx];
             argIdx++;
             break;
         case "--stubs":
@@ -340,11 +347,12 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   - Time picture strings applied to Time variables (e.g. `Format(T, 0, '<Hours24,2>:<Minutes,2>')`)
 - Session API: StartSession (dispatches codeunit synchronously, returns true), StopSession (no-op),
   IsSessionActive (returns false), Sleep (no-op)
-- Built-in session functions: UserId, TenantId, SerialNumber (return empty string)
+- Built-in session functions: TenantId, SerialNumber (return empty string)
 - CompanyName() — configurable: defaults to empty string, overridable via the `--company-name <name>`
   CLI flag, and AL tests can set it at runtime by calling
   `codeunit 131100 "AL Runner Config"` → `SetCompanyName(Name: Text)`.
   Reset back to the CLI default between tests.
+- UserId() — configurable via `--user-id <value>` CLI flag (default: empty string)
 - System & Session utilities:
   - Session.LogMessage() — no-op (telemetry not available without service tier)
   - Session.ApplicationArea() — returns empty string

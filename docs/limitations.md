@@ -118,7 +118,7 @@ the exact value will see different results.
 | AL call | Real BC | al-runner |
 |---|---|---|
 | `CompanyName()` | Active company name | `""` (or `--company-name <name>` / `"AL Runner Config".SetCompanyName()`) |
-| `UserId()` | Authenticated user | `""` |
+| `UserId()` | Authenticated user | `""` (configurable via `--user-id <value>` / `PipelineOptions.UserId`) |
 | `IsSessionActive(id)` | True while session runs | Always `false` |
 | `GuiAllowed()` | False in background sessions | `false` |
 | `GetFilter(field)` | Serialised filter expression | Returns serialised filter expression (functional) |
