@@ -6039,8 +6039,10 @@ Table.SetRange:
 Table.SetRecFilter:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1 (single-field and composite PK)
+  tests:
+    - tests/bucket-1/49-setrecfilter
 
 Table.SetView:
   layer: runtime-api

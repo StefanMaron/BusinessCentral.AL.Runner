@@ -1490,20 +1490,25 @@ public class MockRecordHandle
     // -----------------------------------------------------------------------
 
     /// <summary>
-    /// AL's SETRECFILTER — sets a filter based on the current record's primary key values.
-    /// In standalone mode, sets a range filter on field 1 using the current PK value.
+    /// AL's SETRECFILTER — sets a range filter on every primary-key field to the
+    /// current record's PK values, restricting subsequent operations to exactly
+    /// this record. Handles both single-field and composite PKs.
     /// </summary>
     public void ALSetRecFilter()
     {
-        if (_fields.TryGetValue(1, out var pkValue))
+        var pkFields = GetPrimaryKeyFields();
+        foreach (var fieldNo in pkFields)
         {
-            _filters[1] = new FieldFilter
+            if (_fields.TryGetValue(fieldNo, out var pkValue))
             {
-                FieldNo = 1,
-                FromValue = pkValue,
-                ToValue = pkValue,
-                IsRangeFilter = true,
-            };
+                _filters[fieldNo] = new FieldFilter
+                {
+                    FieldNo = fieldNo,
+                    FromValue = pkValue,
+                    ToValue = pkValue,
+                    IsRangeFilter = true,
+                };
+            }
         }
     }
 

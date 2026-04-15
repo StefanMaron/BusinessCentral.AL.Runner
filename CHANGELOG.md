@@ -26,6 +26,14 @@ All notable changes to this project are documented here. Format based on
   already existing in `tests/bucket-1/18-validate-trigger` (OnValidate fires
   on name-uppercase, computed amount, direct-Validate, direct-assign-skips,
   zero-quantity). Corrected status to `covered`.
+- **`Record.SetRecFilter` composite-PK fix + coverage (#286)** — `ALSetRecFilter`
+  previously only filtered on field 1 of the PK, leaving composite-PK records
+  under-filtered. Fixed to iterate all PK fields via `GetPrimaryKeyFields()` and
+  set a range filter on each. New suite `tests/bucket-1/49-setrecfilter` adds 7
+  proving tests: single-field PK (Count=1, FindSet iterates only current record,
+  correct field data returned), composite PK (Count=1, correct row isolated),
+  Reset clears the filter, and SetRecFilter on one variable does not affect
+  another variable. Coverage map: `Table.SetRecFilter` moved from `gap` to `covered`.
 - **`Table.CopyFilters` coverage (#274)** — `ALCopyFilters` was already
   implemented in `MockRecordHandle` but had no proving tests. New suite
   `tests/bucket-1/48-copyfilters` adds 7 tests: SetRange transfer, SetFilter
@@ -41,13 +49,6 @@ All notable changes to this project are documented here. Format based on
   composite PK rename, duplicate-key error, non-existent-record error, return-value
   (false) variants, and count-preservation. Coverage map: `Table.Rename` moved
   from `gap` to `covered`.
-- **Variable attribute syntax coverage (#278)** — AL variables declared with
-  `[Protected]` or `[InternallyVisible]` attributes now compile and run correctly.
-  The BC compiler emits these as standard C# attributes which are stripped by the
-  existing `BcAttributeNames` filter in `RoslynRewriter`. New suite
-  `tests/bucket-1/49-var-attributes` proves `[Protected]` and `[InternallyVisible]`
-  variables assign/read correctly and default to type zeros. Coverage map:
-  `var_attribute_item` and `var_attribute_open` moved from `gap` to `covered`.
 - **`fieldgroups` section syntax coverage (#279)** — tables with `fieldgroups`
   declarations (e.g. `DropDown`, `Brick`) compile and all record operations
   work correctly. New suite `tests/bucket-1/48-fieldgroups`: 5 positive tests
