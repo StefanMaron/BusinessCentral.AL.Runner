@@ -3,7 +3,7 @@
 //
 // Modes:
 //   DownloadArtifacts service-tier <bc-version> <output-dir>
-//     Downloads ~55 Microsoft.Dynamics.Nav.*.dll from the BC platform artifact (~11 MB).
+//     Downloads Microsoft.Dynamics.Nav.*.dll and Microsoft.BusinessCentral.*.dll from the BC platform artifact.
 //
 //   DownloadArtifacts al-compiler <tool-version> <output-dir>
 //     Downloads the AL compiler NuGet package and extracts the needed DLLs (~57 MB).
@@ -148,7 +148,7 @@ static int DownloadServiceTier(string version, string outputDir)
         var lower = name.ToLowerInvariant();
         var bn = Path.GetFileName(lower);
         if (lower.Contains("servicetier/") && lower.Contains("/service/") &&
-            bn.StartsWith("microsoft.dynamics.nav.") && bn.EndsWith(".dll") && cs > 0 &&
+            (bn.StartsWith("microsoft.dynamics.nav.") || bn.StartsWith("microsoft.businesscentral.")) && bn.EndsWith(".dll") && cs > 0 &&
             !lower.Split("/service/").Last().Contains('/'))
             matching.Add((name, cm, cs, lo));
         pos += 46 + nl + el + cl;

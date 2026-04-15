@@ -1132,6 +1132,12 @@ public void ClearApplicationMemberVariables() { }
             return node.WithIdentifier(SyntaxFactory.Identifier("MockDialog"));
         }
 
+        // NavBigText -> MockBigText
+        // In BC 28+, NavBigText's static initializer loads Telemetry.Abstractions
+        // which is unavailable outside the service tier, causing TypeInitializationException.
+        if (text == "NavBigText")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockBigText"));
+
         // NavTextBuilder -> MockTextBuilder (avoids NavEnvironment/TrappableOperationExecutor crashes)
         if (text == "NavTextBuilder")
             return node.WithIdentifier(SyntaxFactory.Identifier("MockTextBuilder"));
