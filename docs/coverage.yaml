@@ -593,12 +593,16 @@ parameter_list:
 var_attribute_item:
   layer: syntax
   category: variable
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/49-var-attributes
 
 var_attribute_open:
   layer: syntax
   category: variable
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/49-var-attributes
 
 var_section:
   layer: syntax

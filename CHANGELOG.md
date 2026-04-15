@@ -27,6 +27,13 @@ All notable changes to this project are documented here. Format based on
   composite PK rename, duplicate-key error, non-existent-record error, return-value
   (false) variants, and count-preservation. Coverage map: `Table.Rename` moved
   from `gap` to `covered`.
+- **Variable attribute syntax coverage (#278)** — AL variables declared with
+  `[Protected]` or `[InternallyVisible]` attributes now compile and run correctly.
+  The BC compiler emits these as standard C# attributes which are stripped by the
+  existing `BcAttributeNames` filter in `RoslynRewriter`. New suite
+  `tests/bucket-1/49-var-attributes` proves `[Protected]` and `[InternallyVisible]`
+  variables assign/read correctly and default to type zeros. Coverage map:
+  `var_attribute_item` and `var_attribute_open` moved from `gap` to `covered`.
 - **`fieldgroups` section syntax coverage (#279)** — tables with `fieldgroups`
   declarations (e.g. `DropDown`, `Brick`) compile and all record operations
   work correctly. New suite `tests/bucket-1/48-fieldgroups`: 5 positive tests

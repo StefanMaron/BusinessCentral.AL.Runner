@@ -537,4 +537,17 @@ namespace AlRunnerGenerated {
         Assert.True(result.Passed > 0);
         Assert.Equal(0, result.Failed);
     }
+
+    [Fact]
+    public void VarAttributes_ProtectedAndInternallyVisibleCompileAndRun()
+    {
+        var pipeline = new AlRunnerPipeline();
+        var result = pipeline.Run(new PipelineOptions
+        {
+            InputPaths = { TestPath("49-var-attributes", "src"), TestPath("49-var-attributes", "test") }
+        });
+        Assert.Equal(0, result.ExitCode);
+        Assert.True(result.Passed > 0);
+        Assert.Equal(0, result.Failed);
+    }
 }
