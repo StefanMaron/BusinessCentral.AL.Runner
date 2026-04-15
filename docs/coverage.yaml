@@ -5790,7 +5790,9 @@ Table.GetFilter:
 Table.GetFilters:
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/41-getfilters
   notes: overloads=1
 
 Table.GetPosition:
