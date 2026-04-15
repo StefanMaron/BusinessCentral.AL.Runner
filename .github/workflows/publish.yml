@@ -26,7 +26,8 @@ jobs:
       - name: Resolve BC versions
         id: resolve
         run: |
-          BC_PREFIXES="26.0 26.3 26.5 27.0 27.3 27.5"
+          # Read version prefixes from the single-source-of-truth config file
+          BC_PREFIXES=$(cat .github/bc-versions.txt | grep -v '^#' | tr '\n' ' ')
           VERSIONS="[]"
           for prefix in $BC_PREFIXES; do
             FULL=$(dotnet run --project tools/DownloadArtifacts -- resolve-version "$prefix" dummy 2>/dev/null)
@@ -62,27 +63,31 @@ jobs:
       - name: Run C# tests (net9.0)
         run: dotnet test AlRunner.Tests/AlRunner.Tests.csproj --no-build --framework net9.0 --verbosity minimal
 
-      - name: Run all AL tests (net8.0)
+      - name: Run AL test buckets (net8.0)
         run: |
-          # 06- = intentional failure fixture
-          # 39- = stubs scenario — run separately with --stubs
-          # 46- = missing-dep namespace-mismatch fixture — intentionally
-          #        fails without --stubs; covered by C# MissingDepHintTests
-          for s in $(ls -d tests/*/src | sed 's|tests/||;s|/src||' | grep -v '06-' | grep -v '39-' | grep -v '46-' | sort); do
-            echo "--- $s ---"
-            dotnet run --no-build --project AlRunner --framework net8.0 -- "tests/$s/src" "tests/$s/test" || {
-              exit_code=$?
-              [ $exit_code -eq 2 ] || exit $exit_code
+          for bucket in tests/bucket-*/; do
+            args=""
+            for suite in "$bucket"*/; do
+              [ -d "${suite}src"  ] && args="$args ${suite}src"
+              [ -d "${suite}test" ] && args="$args ${suite}test"
+            done
+            echo "=== $bucket ==="
+            dotnet run --no-build --project AlRunner --framework net8.0 -- $args || {
+              exit_code=$?; [ $exit_code -eq 2 ] || exit $exit_code
             }
           done
 
-      - name: Run all AL tests (net9.0)
+      - name: Run AL test buckets (net9.0)
         run: |
-          for s in $(ls -d tests/*/src | sed 's|tests/||;s|/src||' | grep -v '06-' | grep -v '39-' | grep -v '46-' | sort); do
-            echo "--- $s ---"
-            dotnet run --no-build --project AlRunner --framework net9.0 -- "tests/$s/src" "tests/$s/test" || {
-              exit_code=$?
-              [ $exit_code -eq 2 ] || exit $exit_code
+          for bucket in tests/bucket-*/; do
+            args=""
+            for suite in "$bucket"*/; do
+              [ -d "${suite}src"  ] && args="$args ${suite}src"
+              [ -d "${suite}test" ] && args="$args ${suite}test"
+            done
+            echo "=== $bucket ==="
+            dotnet run --no-build --project AlRunner --framework net9.0 -- $args || {
+              exit_code=$?; [ $exit_code -eq 2 ] || exit $exit_code
             }
           done
 
@@ -93,6 +98,20 @@ jobs:
       - name: Run stubs test (net9.0)
         run: |
           dotnet run --no-build --project AlRunner --framework net9.0 -- --stubs tests/stubs/39-stubs/stubs tests/stubs/39-stubs/src tests/stubs/39-stubs/test
+
+      - name: Verify intentional-failure fixture (net8.0)
+        run: |
+          dotnet run --no-build --project AlRunner --framework net8.0 -- \
+            tests/excluded/06-intentional-failure/src tests/excluded/06-intentional-failure/test \
+            || rc=$?
+          [ "${rc:-0}" -eq 1 ] || { echo "Expected exit 1, got ${rc:-0}"; exit 1; }
+
+      - name: Verify intentional-failure fixture (net9.0)
+        run: |
+          dotnet run --no-build --project AlRunner --framework net9.0 -- \
+            tests/excluded/06-intentional-failure/src tests/excluded/06-intentional-failure/test \
+            || rc=$?
+          [ "${rc:-0}" -eq 1 ] || { echo "Expected exit 1, got ${rc:-0}"; exit 1; }
 
   publish:
     needs: test
