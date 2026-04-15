@@ -56,3 +56,12 @@ jobs:
           echo "$TESTS_CHANGED"
           echo ""
           echo "Test presence check passed. Copilot review will assess test quality."
+
+  validate-coverage:
+    name: Coverage manifest valid
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate docs/coverage.yaml
+        run: node scripts/coverage-gen.js --validate

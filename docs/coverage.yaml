@@ -1,0 +1,962 @@
+# AL Language Coverage Map
+# Generated from SShadowS/tree-sitter-al node-types.json
+# Last updated: 2026-04-15
+#
+# Status values:
+#   covered       — supported with proof test suites
+#   not-possible  — architectural limits prevent support
+#   gap           — in-scope but not yet implemented
+#   out-of-scope  — grammar node not relevant to runner testing
+#
+# Each construct lists its most focused test suites (not every suite that
+# happens to use the construct). A codeunit_declaration test is one that
+# exercises codeunit-specific behavior, not merely one that contains a codeunit.
+
+# ── object ──────────────────────────────────────────────────────
+
+assembly_declaration:
+  category: object
+  status: out-of-scope
+  notes: .NET interop — requires BC runtime
+
+codeunit_declaration:
+  category: object
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/10-cross-codeunit
+    - tests/bucket-1/112-codeunit-onrun-record
+    - tests/bucket-1/15-codeunit-assign
+    - tests/bucket-1/128-codeunit-not-found
+    - tests/bucket-2/75-codeunit-run-bool
+    - tests/bucket-2/76-navscope-dispatch
+
+controladdin_declaration:
+  category: object
+  status: out-of-scope
+  notes: UI rendering — requires BC client
+
+dotnet_declaration:
+  category: object
+  status: out-of-scope
+  notes: .NET interop — requires BC runtime
+
+entitlement_declaration:
+  category: object
+  status: not-possible
+  notes: Permission system — requires BC service tier
+
+enum_declaration:
+  category: object
+  status: covered
+  tests:
+    - tests/bucket-1/20-option-fields
+    - tests/bucket-2/50-enum-ordinals
+    - tests/bucket-2/53-enum-interface
+    - tests/bucket-2/61-enum-names
+    - tests/bucket-2/123-fieldref-enum
+
+interface_declaration:
+  category: object
+  status: covered
+  tests:
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/31-interface-return
+    - tests/bucket-1/32-interface-param
+    - tests/bucket-2/42-list-of-interface
+    - tests/bucket-2/53-enum-interface
+
+page_declaration:
+  category: object
+  status: covered
+  tests:
+    - tests/bucket-1/71-testpage
+    - tests/bucket-2/40-page-run-record
+    - tests/bucket-2/48-page-variable
+    - tests/bucket-2/65-page-helper
+    - tests/bucket-2/73-modal-handler
+
+permissionset_declaration:
+  category: object
+  status: not-possible
+  notes: Permission system — requires BC service tier
+
+profile_declaration:
+  category: object
+  status: out-of-scope
+  notes: UI profile — requires BC client
+
+query_declaration:
+  category: object
+  status: covered
+  tests:
+    - tests/bucket-2/90-query-object
+    - tests/bucket-2/125-xmlport-query-diagnostics
+
+report_declaration:
+  category: object
+  status: covered
+  tests:
+    - tests/bucket-2/112-report-dataset-columns
+    - tests/bucket-2/113-report-labels
+    - tests/bucket-2/119-report-skip
+    - tests/bucket-2/133-report-handler
+    - tests/bucket-2/91-report-handle
+
+table_declaration:
+  category: object
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/07-composite-pk
+    - tests/bucket-1/18-validate-trigger
+    - tests/bucket-1/19-table-procedures
+    - tests/bucket-2/62-pk-unique
+    - tests/bucket-2/63-oninsert-trigger
+
+xmlport_declaration:
+  category: object
+  status: covered
+  tests:
+    - tests/bucket-2/84-xmlport
+    - tests/bucket-2/125-xmlport-query-diagnostics
+
+# ── extension ───────────────────────────────────────────────────
+
+enumextension_declaration:
+  category: extension
+  status: gap
+
+pagecustomization_declaration:
+  category: extension
+  status: gap
+
+pageextension_declaration:
+  category: extension
+  status: covered
+  tests:
+    - tests/bucket-2/36-page-ext-no-cascade
+    - tests/bucket-2/38-page-ext-currpage
+
+permissionsetextension_declaration:
+  category: extension
+  status: not-possible
+  notes: Permission system — requires BC service tier
+
+profileextension_declaration:
+  category: extension
+  status: out-of-scope
+  notes: UI profile — requires BC client
+
+reportextension_declaration:
+  category: extension
+  status: covered
+  tests:
+    - tests/bucket-2/129-reportext-parent
+
+tableextension_declaration:
+  category: extension
+  status: covered
+  tests:
+    - tests/bucket-1/28-table-extension-fields
+    - tests/bucket-2/33-extension-validate
+    - tests/bucket-2/34-extension-parent-object
+    - tests/bucket-2/130-cross-ext-al0275
+
+# ── statement ───────────────────────────────────────────────────
+
+asserterror_statement:
+  category: statement
+  status: covered
+  tests:
+    - tests/bucket-1/04-asserterror
+    - tests/bucket-1/21-expected-error-substring
+    - tests/bucket-1/25-expected-error-code
+
+assignment_statement:
+  category: statement
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/15-codeunit-assign
+
+break_statement:
+  category: statement
+  status: covered
+  tests:
+    - tests/bucket-2/67-iteration-tracking
+
+case_branch:
+  category: statement
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+
+case_else_branch:
+  category: statement
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+
+case_statement:
+  category: statement
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+
+continue_statement:
+  category: statement
+  status: covered
+  tests:
+    - tests/bucket-2/67-iteration-tracking
+
+empty_statement:
+  category: statement
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+
+exit_statement:
+  category: statement
+  status: covered
+  tests:
+    - tests/bucket-2/79-exit-this
+
+for_statement:
+  category: statement
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-2/67-iteration-tracking
+
+foreach_statement:
+  category: statement
+  status: covered
+  tests:
+    - tests/bucket-2/42-list-of-interface
+    - tests/bucket-2/83-list-byref
+    - tests/bucket-1/77-json-types
+
+if_statement:
+  category: statement
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/09-setfilter-expressions
+
+repeat_statement:
+  category: statement
+  status: covered
+  tests:
+    - tests/bucket-1/08-sort-ordering
+    - tests/bucket-2/67-iteration-tracking
+
+using_statement:
+  category: statement
+  status: covered
+  tests:
+    - tests/bucket-2/45-unknown-namespace-using
+
+while_statement:
+  category: statement
+  status: covered
+  tests:
+    - tests/bucket-2/67-iteration-tracking
+
+with_statement:
+  category: statement
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+  notes: Deprecated in AL but still parsed
+
+# ── expression ──────────────────────────────────────────────────
+
+additive_expression:
+  category: expression
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+
+assignment_expression:
+  category: expression
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+
+call_expression:
+  category: expression
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/10-cross-codeunit
+
+comparison_expression:
+  category: expression
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/09-setfilter-expressions
+
+database_reference:
+  category: expression
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+
+logical_expression:
+  category: expression
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+
+member_expression:
+  category: expression
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/77-json-types
+
+multiplicative_expression:
+  category: expression
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+
+parenthesized_expression:
+  category: expression
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+
+qualified_enum_value:
+  category: expression
+  status: covered
+  tests:
+    - tests/bucket-2/50-enum-ordinals
+    - tests/bucket-2/53-enum-interface
+
+range_expression:
+  category: expression
+  status: covered
+  tests:
+    - tests/bucket-1/09-setfilter-expressions
+    - tests/bucket-2/87-fieldref-setrange-types
+
+subscript_expression:
+  category: expression
+  status: covered
+  tests:
+    - tests/bucket-1/77-json-types
+
+ternary_expression:
+  category: expression
+  status: gap
+
+unary_expression:
+  category: expression
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+
+# ── type ────────────────────────────────────────────────────────
+
+array_type:
+  category: type
+  status: covered
+  tests:
+    - tests/bucket-2/83-list-byref
+
+basic_type:
+  category: type
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/12-format-string
+    - tests/bucket-1/26-time-format
+    - tests/bucket-2/60-guid-text-get
+
+code_type:
+  category: type
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+
+dictionary_type:
+  category: type
+  status: gap
+
+list_type:
+  category: type
+  status: covered
+  tests:
+    - tests/bucket-2/42-list-of-interface
+    - tests/bucket-2/83-list-byref
+
+object_reference_type:
+  category: type
+  status: covered
+  tests:
+    - tests/bucket-1/15-codeunit-assign
+    - tests/bucket-2/48-page-variable
+
+option_type:
+  category: type
+  status: covered
+  tests:
+    - tests/bucket-1/20-option-fields
+
+record_type:
+  category: type
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/112-codeunit-onrun-record
+
+text_type:
+  category: type
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/17-text-builder
+
+type_declaration:
+  category: type
+  status: gap
+
+type_specification:
+  category: type
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+
+# ── procedure ───────────────────────────────────────────────────
+
+event_declaration:
+  category: procedure
+  status: covered
+  tests:
+    - tests/bucket-2/66-event-subscribers
+    - tests/bucket-2/100-bind-subscription
+    - tests/bucket-2/97-event-params
+    - tests/bucket-2/37-event-scope
+
+interface_procedure:
+  category: procedure
+  status: covered
+  tests:
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/31-interface-return
+
+interface_procedure_suffix:
+  category: procedure
+  status: covered
+  tests:
+    - tests/bucket-1/03-interface-injection
+
+procedure:
+  category: procedure
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/10-cross-codeunit
+    - tests/bucket-1/19-table-procedures
+    - tests/bucket-2/41-try-function
+
+procedure_modifier:
+  category: procedure
+  status: covered
+  tests:
+    - tests/bucket-2/41-try-function
+  notes: local, internal, [TryFunction] modifiers
+
+trigger_declaration:
+  category: procedure
+  status: covered
+  tests:
+    - tests/bucket-1/18-validate-trigger
+    - tests/bucket-2/63-oninsert-trigger
+    - tests/bucket-2/98-db-trigger-events
+    - tests/bucket-2/99-validate-events
+
+# ── variable ────────────────────────────────────────────────────
+
+label_attribute:
+  category: variable
+  status: covered
+  tests:
+    - tests/bucket-2/113-report-labels
+
+label_declaration:
+  category: variable
+  status: covered
+  tests:
+    - tests/bucket-2/113-report-labels
+    - tests/bucket-1/12-format-string
+
+parameter:
+  category: variable
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/32-interface-param
+    - tests/bucket-2/83-list-byref
+
+parameter_list:
+  category: variable
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+
+var_attribute_item:
+  category: variable
+  status: gap
+
+var_attribute_open:
+  category: variable
+  status: gap
+
+var_section:
+  category: variable
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+
+variable_declaration:
+  category: variable
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+
+# ── table ───────────────────────────────────────────────────────
+
+aggregate_formula:
+  category: table
+  status: covered
+  tests:
+    - tests/bucket-2/55-flowfield-exist
+    - tests/bucket-2/56-flowfield-multi
+
+aggregate_function:
+  category: table
+  status: covered
+  tests:
+    - tests/bucket-2/55-flowfield-exist
+    - tests/bucket-2/56-flowfield-multi
+
+calc_field_reference:
+  category: table
+  status: covered
+  tests:
+    - tests/bucket-2/55-flowfield-exist
+    - tests/bucket-2/56-flowfield-multi
+    - tests/bucket-2/124-temp-records-flowfields
+
+field_declaration:
+  category: table
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/07-composite-pk
+    - tests/bucket-1/20-option-fields
+    - tests/bucket-2/126-field-metadata
+
+fieldgroup_declaration:
+  category: table
+  status: gap
+
+fields_section:
+  category: table
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+
+fieldgroups_section:
+  category: table
+  status: gap
+
+fixed_section:
+  category: table
+  status: gap
+
+key_declaration:
+  category: table
+  status: covered
+  tests:
+    - tests/bucket-1/07-composite-pk
+    - tests/bucket-1/08-sort-ordering
+    - tests/bucket-2/109-currentkey
+
+keys_section:
+  category: table
+  status: covered
+  tests:
+    - tests/bucket-1/07-composite-pk
+
+lookup_formula:
+  category: table
+  status: gap
+
+table_relation_expression:
+  category: table
+  status: gap
+  notes: Table relations are parsed but not enforced at runtime
+
+# ── page ────────────────────────────────────────────────────────
+
+action_area_section:
+  category: page
+  status: covered
+  tests:
+    - tests/bucket-1/71-testpage
+    - tests/bucket-2/74-testpage-navigation
+
+action_declaration:
+  category: page
+  status: covered
+  tests:
+    - tests/bucket-1/71-testpage
+    - tests/bucket-2/74-testpage-navigation
+
+action_group_section:
+  category: page
+  status: covered
+  tests:
+    - tests/bucket-2/74-testpage-navigation
+
+actionref_declaration:
+  category: page
+  status: gap
+
+actions_section:
+  category: page
+  status: covered
+  tests:
+    - tests/bucket-1/71-testpage
+
+area_section:
+  category: page
+  status: covered
+  tests:
+    - tests/bucket-1/71-testpage
+    - tests/bucket-2/36-page-ext-no-cascade
+
+cuegroup_section:
+  category: page
+  status: gap
+
+customaction_declaration:
+  category: page
+  status: gap
+
+fileuploadaction_declaration:
+  category: page
+  status: gap
+
+grid_section:
+  category: page
+  status: gap
+
+group_section:
+  category: page
+  status: covered
+  tests:
+    - tests/bucket-1/71-testpage
+    - tests/bucket-2/36-page-ext-no-cascade
+
+layout_section:
+  category: page
+  status: covered
+  tests:
+    - tests/bucket-1/71-testpage
+    - tests/bucket-2/36-page-ext-no-cascade
+
+page_field:
+  category: page
+  status: covered
+  tests:
+    - tests/bucket-1/71-testpage
+    - tests/bucket-2/132-testpage-stubs
+    - tests/bucket-2/90-testpage-extended
+
+part_section:
+  category: page
+  status: gap
+  notes: Page parts require UI composition
+
+repeater_section:
+  category: page
+  status: covered
+  tests:
+    - tests/bucket-2/74-testpage-navigation
+
+separator_action:
+  category: page
+  status: gap
+
+systemaction_declaration:
+  category: page
+  status: gap
+
+systempart_section:
+  category: page
+  status: gap
+  notes: System parts require BC client
+
+usercontrol_section:
+  category: page
+  status: out-of-scope
+  notes: User controls require BC client rendering
+
+view_definition:
+  category: page
+  status: gap
+
+views_section:
+  category: page
+  status: gap
+
+# ── report ──────────────────────────────────────────────────────
+
+dataset_section:
+  category: report
+  status: covered
+  tests:
+    - tests/bucket-2/112-report-dataset-columns
+
+rendering_layout:
+  category: report
+  status: covered
+  tests:
+    - tests/bucket-2/95-rendering-strip
+
+rendering_section:
+  category: report
+  status: covered
+  tests:
+    - tests/bucket-2/95-rendering-strip
+
+report_column:
+  category: report
+  status: covered
+  tests:
+    - tests/bucket-2/112-report-dataset-columns
+
+report_dataitem:
+  category: report
+  status: covered
+  tests:
+    - tests/bucket-2/112-report-dataset-columns
+    - tests/bucket-2/119-report-skip
+
+requestpage_section:
+  category: report
+  status: covered
+  tests:
+    - tests/bucket-2/92-request-page-handler
+
+# ── query ───────────────────────────────────────────────────────
+
+query_column:
+  category: query
+  status: covered
+  tests:
+    - tests/bucket-2/90-query-object
+
+query_dataitem:
+  category: query
+  status: covered
+  tests:
+    - tests/bucket-2/90-query-object
+
+query_filter:
+  category: query
+  status: covered
+  tests:
+    - tests/bucket-2/90-query-object
+
+# ── xmlport ─────────────────────────────────────────────────────
+
+elements_section:
+  category: xmlport
+  status: covered
+  tests:
+    - tests/bucket-2/84-xmlport
+
+schema_section:
+  category: xmlport
+  status: gap
+
+xmlport_attribute:
+  category: xmlport
+  status: gap
+
+xmlport_element:
+  category: xmlport
+  status: covered
+  tests:
+    - tests/bucket-2/84-xmlport
+
+# ── enum ────────────────────────────────────────────────────────
+
+enum_value_declaration:
+  category: enum
+  status: covered
+  tests:
+    - tests/bucket-1/20-option-fields
+    - tests/bucket-2/50-enum-ordinals
+    - tests/bucket-2/61-enum-names
+
+implements_clause:
+  category: enum
+  status: covered
+  tests:
+    - tests/bucket-2/53-enum-interface
+
+# ── modification ────────────────────────────────────────────────
+
+add_dataset_modification:
+  category: modification
+  status: gap
+
+addafter_action_modification:
+  category: modification
+  status: gap
+
+addafter_dataset_modification:
+  category: modification
+  status: gap
+
+addafter_modification:
+  category: modification
+  status: gap
+
+addafter_views_modification:
+  category: modification
+  status: gap
+
+addbefore_action_modification:
+  category: modification
+  status: gap
+
+addbefore_dataset_modification:
+  category: modification
+  status: gap
+
+addbefore_modification:
+  category: modification
+  status: gap
+
+addbefore_views_modification:
+  category: modification
+  status: gap
+
+addfirst_action_modification:
+  category: modification
+  status: gap
+
+addfirst_dataset_modification:
+  category: modification
+  status: gap
+
+addfirst_fieldgroup_modification:
+  category: modification
+  status: gap
+
+addfirst_modification:
+  category: modification
+  status: covered
+  tests:
+    - tests/bucket-2/36-page-ext-no-cascade
+
+addfirst_views_modification:
+  category: modification
+  status: gap
+
+addlast_action_modification:
+  category: modification
+  status: gap
+
+addlast_dataset_modification:
+  category: modification
+  status: gap
+
+addlast_fieldgroup_modification:
+  category: modification
+  status: gap
+
+addlast_modification:
+  category: modification
+  status: covered
+  tests:
+    - tests/bucket-2/36-page-ext-no-cascade
+    - tests/bucket-2/38-page-ext-currpage
+
+addlast_views_modification:
+  category: modification
+  status: gap
+
+modify_action_modification:
+  category: modification
+  status: gap
+
+modify_modification:
+  category: modification
+  status: covered
+  tests:
+    - tests/bucket-2/33-extension-validate
+    - tests/bucket-2/34-extension-parent-object
+
+moveafter_modification:
+  category: modification
+  status: gap
+
+movebefore_modification:
+  category: modification
+  status: gap
+
+movefirst_modification:
+  category: modification
+  status: gap
+
+movelast_modification:
+  category: modification
+  status: gap
+
+# ── label ───────────────────────────────────────────────────────
+
+label_section:
+  category: label
+  status: covered
+  tests:
+    - tests/bucket-2/113-report-labels
+
+labels_section:
+  category: label
+  status: covered
+  tests:
+    - tests/bucket-2/113-report-labels
+
+# ── namespace ───────────────────────────────────────────────────
+
+namespace_declaration:
+  category: namespace
+  status: covered
+  tests:
+    - tests/bucket-2/45-unknown-namespace-using
+
+namespace_name:
+  category: namespace
+  status: covered
+  tests:
+    - tests/bucket-2/45-unknown-namespace-using
+
+# ── attribute ───────────────────────────────────────────────────
+
+attribute_item:
+  category: attribute
+  status: covered
+  tests:
+    - tests/bucket-2/41-try-function
+    - tests/bucket-2/66-event-subscribers
+    - tests/bucket-2/100-bind-subscription
