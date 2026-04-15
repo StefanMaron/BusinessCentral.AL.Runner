@@ -145,7 +145,8 @@ dotnet run --project AlRunner -- ./src ./test
 | `AlRunner/Runtime/HandlerRegistry.cs` | Test handler dispatch (ConfirmHandler, MessageHandler, ModalPageHandler, RequestPageHandler) |
 | `AlRunner/Runtime/MockTestPageHandle.cs` | TestPage mock with full lifecycle, field access, navigation |
 | `AlRunner/Runtime/MockRecordRef.cs` | RecordRef backed by MockRecordHandle; Mark/ClearMarks (stubs), Rename, FieldExists, HasFilter, GetPosition, Ascending, ModifyAll |
-| `AlRunner/Runtime/MockFieldRef.cs` | FieldRef with value get/set, range/filter, ALSetTable (no-op stub for BC compiler page API extensions) |
+| `AlRunner/Runtime/MockFieldRef.cs` | FieldRef with value get/set, range/filter, Name/Caption/Type/Length from metadata, ALSetTable (no-op stub) |
+| `AlRunner/Runtime/TableFieldRegistry.cs` | Transpile-time AL field metadata registry (field name/caption/type/length, table name/caption, PK extraction) |
 | `AlRunner/stubs/LibraryAssert.al` | AL stub for codeunit 130 (auto-loaded) |
 | `AlRunner/stubs/LibraryVariableStorage.al` | AL stub for codeunit 131004 (auto-loaded) |
 | `docs/limitations.md` | Full breakdown of architectural limits and behavioral differences |

@@ -7,6 +7,14 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Field metadata infrastructure** — `TableFieldRegistry` now parses and stores
+  field-level metadata (name, caption, type, length) and table-level metadata
+  (name, caption) from AL source at transpile time. `MockRecordHandle.ALFieldCaption`,
+  `ALTableCaption`, `ALTableName` return real values from the registry (falling back
+  to stub defaults for unregistered tables). `MockFieldRef.ALName`, `ALCaption`,
+  `ALType`, `ALLength` use the registry. `MockRecordRef.ALName` and `ALFieldCount`
+  return schema-based values. `MockRecordHandle.FieldCount` returns the schema field
+  count when metadata is available. (#114)
 - **System, Database & Session utility stubs** — `Session.LogMessage()` (no-op),
   `Session.ApplicationArea()` (returns empty string), `Session.GetExecutionContext()` /
   `GetModuleExecutionContext()` (return `ExecutionContext.Normal`),

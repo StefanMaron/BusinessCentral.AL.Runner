@@ -58,10 +58,18 @@ public class MockRecordRef
     // -- Name --
 
     /// <summary>
-    /// ALName — returns the table name. Stub: "TableN" where N is the table ID.
+    /// ALName — returns the table name from metadata, or "TableN" fallback.
     /// Returns empty string when no table is open.
     /// </summary>
-    public NavText ALName => Number == 0 ? new NavText("") : new NavText($"Table{Number}");
+    public NavText ALName
+    {
+        get
+        {
+            if (Number == 0) return new NavText("");
+            var name = TableFieldRegistry.GetTableName(Number);
+            return new NavText(name ?? $"Table{Number}");
+        }
+    }
 
     // -- SetLoadFields (no-op) --
 
@@ -296,7 +304,16 @@ public class MockRecordRef
 
     // -- FieldCount --
 
-    public int ALFieldCount => _handle?.FieldCount ?? 0;
+    public int ALFieldCount
+    {
+        get
+        {
+            // Prefer schema field count from metadata registry
+            var schemaCount = TableFieldRegistry.GetFieldCount(Number);
+            if (schemaCount > 0) return schemaCount;
+            return _handle?.FieldCount ?? 0;
+        }
+    }
 
     // -- LockTable (no-op) --
     public void ALLockTable(DataError errorLevel = DataError.ThrowError) { }

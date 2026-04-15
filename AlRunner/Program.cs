@@ -261,7 +261,12 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   Delete, DeleteAll, FindSet+Next iteration, GetTable/SetTable, SetRange/SetFilter,
   RecRef := OtherRecRef assignment, SetLoadFields (no-op), Mark/MarkedOnly/ClearMarks
   (no-op stubs), Rename, FieldExists, FieldCount, HasFilter, GetFilters, GetPosition,
-  SetPosition, Ascending, ChangeCompany (no-op), ModifyAll, CurrentCompany
+  SetPosition, Ascending, ChangeCompany (no-op), ModifyAll, CurrentCompany,
+  RecRef.Name (real table name from AL source metadata)
+- Field metadata — Record.FieldCaption, Record.TableCaption, Record.TableName,
+  FieldRef.Name, FieldRef.Caption, FieldRef.Type, FieldRef.Length return real values
+  parsed from AL source table declarations (Caption property, field type, Text[N]/Code[N]
+  length). Falls back to stub defaults for tables not parsed from source.
 - JSON types: JsonObject, JsonArray, JsonToken, JsonValue — Add, Get, Contains,
   Remove, Replace, Count, WriteTo, ReadFrom, SelectToken, AsValue, AsText, AsInteger, etc.
 - BLOB / InStream / OutStream — CreateInStream/CreateOutStream, HasValue, ReadText/WriteText

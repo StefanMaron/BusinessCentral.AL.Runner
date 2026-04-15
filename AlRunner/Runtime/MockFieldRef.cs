@@ -47,17 +47,62 @@ public class MockFieldRef
     /// <summary>ALNumber — property returning the field number.</summary>
     public int ALNumber => _fieldNo;
 
-    /// <summary>ALName — property returning the field name (stub: "FieldNN").</summary>
-    public NavText ALName => new NavText($"Field{_fieldNo}");
+    /// <summary>ALName — property returning the field name from metadata, or "FieldNN" fallback.</summary>
+    public NavText ALName
+    {
+        get
+        {
+            if (_owner != null)
+            {
+                var name = TableFieldRegistry.GetFieldName(_owner.Number, _fieldNo);
+                if (name != null) return new NavText(name);
+            }
+            return new NavText($"Field{_fieldNo}");
+        }
+    }
 
-    /// <summary>ALCaption — property returning the field caption (stub: "FieldNN").</summary>
-    public NavText ALCaption => new NavText($"Field{_fieldNo}");
+    /// <summary>ALCaption — property returning the field caption from metadata, or "FieldNN" fallback.</summary>
+    public NavText ALCaption
+    {
+        get
+        {
+            if (_owner != null)
+            {
+                var caption = TableFieldRegistry.GetFieldCaption(_owner.Number, _fieldNo);
+                if (caption != null) return new NavText(caption);
+            }
+            return new NavText($"Field{_fieldNo}");
+        }
+    }
 
-    /// <summary>ALLength — property returning field length (stub: 0).</summary>
-    public int ALLength => 0;
+    /// <summary>ALLength — property returning field length from metadata (for Text[N]/Code[N]), or 0.</summary>
+    public int ALLength
+    {
+        get
+        {
+            if (_owner != null)
+            {
+                var length = TableFieldRegistry.GetFieldLength(_owner.Number, _fieldNo);
+                if (length.HasValue) return length.Value;
+            }
+            return 0;
+        }
+    }
 
-    /// <summary>ALType — property returning field type (stub: NavType.Text).</summary>
-    public NavType ALType => NavType.Text;
+    /// <summary>ALType — property returning field type from metadata, or NavType.Text fallback.</summary>
+    public NavType ALType
+    {
+        get
+        {
+            if (_owner != null)
+            {
+                var typeName = TableFieldRegistry.GetFieldTypeName(_owner.Number, _fieldNo);
+                if (typeName != null)
+                    return MapAlTypeToNavType(typeName);
+            }
+            return NavType.Text;
+        }
+    }
 
     /// <summary>ALClass — field class (Normal/FlowField/FlowFilter). Stub: always Normal.</summary>
     public FieldClass ALClass => FieldClass.Normal;
@@ -211,5 +256,28 @@ public class MockFieldRef
     {
         _owner = owner;
         _fieldNo = fieldNo;
+    }
+
+    private static NavType MapAlTypeToNavType(string typeName)
+    {
+        return typeName.ToLowerInvariant() switch
+        {
+            "integer" => NavType.Integer,
+            "decimal" => NavType.Decimal,
+            "text" => NavType.Text,
+            "code" => NavType.Code,
+            "boolean" => NavType.Boolean,
+            "date" => NavType.Date,
+            "time" => NavType.Time,
+            "datetime" => NavType.DateTime,
+            "option" => NavType.Option,
+            "biginteger" => NavType.BigInteger,
+            "guid" => NavType.GUID,
+            "blob" => NavType.BLOB,
+            "recordid" => NavType.RecordID,
+            "duration" => NavType.Duration,
+            "dateformula" => NavType.DateFormula,
+            _ => NavType.Text, // fallback for enum, interface, etc.
+        };
     }
 }

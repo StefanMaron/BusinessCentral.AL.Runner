@@ -813,8 +813,18 @@ public class MockRecordHandle
 
     public bool ALIsEmpty => GetFilteredRecords().Count == 0;
 
-    /// <summary>Number of fields that have been set on this record handle.</summary>
-    public int FieldCount => _fields.Count;
+    /// <summary>
+    /// Number of fields that have been set on this record handle.
+    /// When table schema metadata is available, returns the schema field count instead.
+    /// </summary>
+    public int FieldCount
+    {
+        get
+        {
+            var schemaCount = TableFieldRegistry.GetFieldCount(_tableId);
+            return schemaCount > 0 ? schemaCount : _fields.Count;
+        }
+    }
 
     /// <summary>Whether any filters are currently active on this record handle.</summary>
     public bool FiltersActive => _filters.Count > 0;
@@ -1152,12 +1162,13 @@ public class MockRecordHandle
     // -----------------------------------------------------------------------
 
     /// <summary>
-    /// AL's FIELDCAPTION — returns the caption of a field. Returns a placeholder
-    /// since we don't have metadata infrastructure.
+    /// AL's FIELDCAPTION — returns the caption of a field. Looks up metadata
+    /// from TableFieldRegistry; falls back to field name, then to "FieldNN".
     /// </summary>
     public NavText ALFieldCaption(int fieldNo)
     {
-        return new NavText($"Field{fieldNo}");
+        var caption = TableFieldRegistry.GetFieldCaption(_tableId, fieldNo);
+        return new NavText(caption ?? $"Field{fieldNo}");
     }
 
     // -----------------------------------------------------------------------
@@ -1277,10 +1288,19 @@ public class MockRecordHandle
     }
 
     /// <summary>
-    /// AL's TABLECAPTION — returns the caption of the table.
-    /// Returns a placeholder since we don't have metadata.
+    /// AL's TABLECAPTION — returns the caption of the table. Looks up metadata
+    /// from TableFieldRegistry; falls back to table name, then to "TableNN".
     /// </summary>
-    public string ALTableCaption => $"Table{_tableId}";
+    public string ALTableCaption
+    {
+        get
+        {
+            var caption = TableFieldRegistry.GetTableCaption(_tableId);
+            if (caption != null) return caption;
+            var name = TableFieldRegistry.GetTableName(_tableId);
+            return name ?? $"Table{_tableId}";
+        }
+    }
 
     /// <summary>
     /// AL's ISTEMPORARY — returns whether this is a temporary record.
@@ -1289,9 +1309,10 @@ public class MockRecordHandle
     public bool ALIsTemporary => false;
 
     /// <summary>
-    /// AL's TABLENAME — returns the name of the table.
+    /// AL's TABLENAME — returns the name of the table. Looks up metadata
+    /// from TableFieldRegistry; falls back to "TableNN".
     /// </summary>
-    public string ALTableName => $"Table{_tableId}";
+    public string ALTableName => TableFieldRegistry.GetTableName(_tableId) ?? $"Table{_tableId}";
 
     public bool ALRename(DataError errorLevel, params NavValue[] newKeyValues)
     {
