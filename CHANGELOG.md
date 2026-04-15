@@ -7,6 +7,13 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Record.LockTable coverage (#250)** — `ALLockTable` in `MockRecordHandle`
+  is a correct no-op (the runner has no SQL transaction isolation) but
+  previously had no proving test. New suite `tests/bucket-1/42-locktable`
+  covers: LockTable does not throw on an empty table, subsequent Modify /
+  Insert / Delete succeed, and repeated LockTable calls are idempotent. RED
+  confirmed by temporarily making ALLockTable throw. Coverage map:
+  `Table.LockTable` moved from `gap` to `covered`.
 - **`CompanyName()` configurable (#242)** — was hard-coded to empty string.
   Now three-way configurable:
     * `--company-name <name>` CLI flag sets the default returned between tests.

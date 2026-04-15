@@ -5864,7 +5864,9 @@ Table.LoadFields:
 Table.LockTable:
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/42-locktable
   notes: overloads=1
 
 Table.Mark:
