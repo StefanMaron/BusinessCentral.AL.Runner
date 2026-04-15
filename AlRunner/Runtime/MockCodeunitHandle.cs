@@ -144,7 +144,7 @@ public class MockCodeunitHandle
         var codeunitType = FindCodeunitType(assembly);
         if (codeunitType == null)
         {
-            throw new InvalidOperationException($"Codeunit {_codeunitId} not found in assembly");
+            throw new InvalidOperationException(BuildCodeunitNotFoundMessage(_codeunitId, assembly));
         }
 
         EnsureInstance(codeunitType);
@@ -304,7 +304,7 @@ public class MockCodeunitHandle
         var codeunitType = handle.FindCodeunitType(assembly);
         if (codeunitType == null)
         {
-            throw new InvalidOperationException($"Codeunit {codeunitId} not found in assembly");
+            throw new InvalidOperationException(BuildCodeunitNotFoundMessage(codeunitId, assembly));
         }
 
         var instance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(codeunitType);
@@ -613,6 +613,44 @@ public class MockCodeunitHandle
     {
         var expectedName = $"Codeunit{_codeunitId}";
         return assembly.GetTypes().FirstOrDefault(t => t.Name == expectedName);
+    }
+
+    /// <summary>
+    /// Build a descriptive error message when a codeunit is not found in the assembly.
+    /// Includes the codeunit ID, a hint about common causes, and suggestions for
+    /// --stubs or --generate-stubs to resolve the issue.
+    /// </summary>
+    private static string BuildCodeunitNotFoundMessage(int codeunitId, Assembly assembly)
+    {
+        var msg = $"Codeunit {codeunitId} not found in assembly.";
+
+        // Classify the codeunit range for targeted hints
+        if (codeunitId is >= 130000 and <= 139999)
+            msg += $" Codeunit {codeunitId} appears to be from the BC test toolkit.";
+        else if (codeunitId is >= 1 and <= 9999)
+            msg += $" Codeunit {codeunitId} appears to be a system/base-app codeunit.";
+
+        // List available codeunits to help debugging
+        var available = assembly.GetTypes()
+            .Where(t => t.Name.StartsWith("Codeunit") && t.Name.Length > "Codeunit".Length)
+            .Select(t =>
+            {
+                var idStr = t.Name.Substring("Codeunit".Length);
+                return int.TryParse(idStr, out var id) ? id : -1;
+            })
+            .Where(id => id >= 0)
+            .OrderBy(id => id)
+            .ToList();
+
+        if (available.Count > 0 && available.Count <= 20)
+            msg += $" Available codeunits: {string.Join(", ", available)}.";
+        else if (available.Count > 20)
+            msg += $" {available.Count} codeunits available in assembly (use --dump-rewritten to inspect).";
+
+        msg += " Hint: include the codeunit's AL source in your source paths,"
+             + " use --stubs to provide a stub, or use --generate-stubs to auto-scaffold stubs from .app packages.";
+
+        return msg;
     }
 
     /// <summary>

@@ -38,6 +38,11 @@ All notable changes to this project are documented here. Format based on
   values directly by casting to `DateTime`, avoiding the `NullReferenceException` in
   `NavDateTimeFormatter.GetStandardFormat` that occurred when `NavSession` was null.
   This fixes `Assert.AreEqual`/`AreNotEqual` comparisons involving DateTime values.
+- **Codeunit-not-found diagnostics** — When `Codeunit.Run(id)` fails because
+  the target codeunit is absent from the assembly, the error message now:
+  identifies system (1–9999) and test-toolkit (130000–139999) ranges, lists
+  available codeunit IDs (up to 20), and suggests `--stubs` / `--generate-stubs`
+  as resolution. (#176)
 
 ## [1.0.14] - 2026-04-14
 
