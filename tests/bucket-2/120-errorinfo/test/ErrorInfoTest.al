@@ -16,10 +16,18 @@ codeunit 50951 "ErrorInfo Test"
 
     [Test]
     procedure ErrorInfoDetailedMessage()
+    var
+        Errors: List of [ErrorInfo];
+        CollectedError: ErrorInfo;
     begin
-        // Positive: DetailedMessage can be set alongside Message
-        asserterror Lib.RaiseDetailedErrorInfo('Main error', 'Detailed info');
-        Assert.AreEqual('Main error', GetLastErrorText(), 'GetLastErrorText should return the main message');
+        // Positive: DetailedMessage is preserved on collected errors
+        Lib.CollectDetailedError('Main error', 'Detailed info');
+        Assert.IsTrue(HasCollectedErrors(), 'Should have collected the error');
+        Errors := GetCollectedErrors(true);
+        Assert.AreEqual(1, Errors.Count(), 'Should have exactly 1 collected error');
+        CollectedError := Errors.Get(1);
+        Assert.AreEqual('Main error', CollectedError.Message, 'Collected error should preserve the main message');
+        Assert.AreEqual('Detailed info', CollectedError.DetailedMessage, 'Collected error should preserve the detailed message');
     end;
 
     [Test]
@@ -43,12 +51,21 @@ codeunit 50951 "ErrorInfo Test"
     procedure CollectMultipleErrors()
     var
         Errors: List of [ErrorInfo];
+        CollectedError: ErrorInfo;
     begin
-        // Positive: multiple collectible errors accumulate
+        // Positive: multiple collectible errors accumulate with correct messages and ordering
         Lib.CollectMultipleErrors('err1', 'err2', 'err3');
         Assert.IsTrue(HasCollectedErrors(), 'Should have collected errors');
         Errors := GetCollectedErrors(true);
         Assert.AreEqual(3, Errors.Count(), 'Should have 3 collected errors');
+        CollectedError := Errors.Get(1);
+        Assert.AreEqual('err1', CollectedError.Message, 'First error message preserved');
+        CollectedError := Errors.Get(2);
+        Assert.AreEqual('err2', CollectedError.Message, 'Second error message preserved');
+        CollectedError := Errors.Get(3);
+        Assert.AreEqual('err3', CollectedError.Message, 'Third error message preserved');
+        // GetCollectedErrors(true) should have cleared the store
+        Assert.IsFalse(HasCollectedErrors(), 'GetCollectedErrors(true) should clear the backing store');
     end;
 
     [Test]

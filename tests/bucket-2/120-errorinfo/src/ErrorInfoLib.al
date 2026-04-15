@@ -84,6 +84,18 @@ codeunit 50950 "ErrorInfo Lib"
     end;
 
     [ErrorBehavior(ErrorBehavior::Collect)]
+    procedure CollectDetailedError(Msg: Text; Detail: Text)
+    var
+        ErrInfo: ErrorInfo;
+    begin
+        ErrInfo := ErrorInfo.Create();
+        ErrInfo.Message := Msg;
+        ErrInfo.DetailedMessage := Detail;
+        ErrInfo.Collectible := true;
+        Error(ErrInfo);
+    end;
+
+    [ErrorBehavior(ErrorBehavior::Collect)]
     procedure NonCollectibleInCollectMode(Msg: Text)
     var
         ErrInfo: ErrorInfo;
