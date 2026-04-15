@@ -15,6 +15,14 @@ All notable changes to this project are documented here. Format based on
   and descending Name order via `SetAscending`. RED confirmed by temporarily
   setting `if (false && _currentKeyFields ...)` — all four new tests fail.
   Coverage map: `Table.SetCurrentKey` moved from `gap` to `covered`.
+- **`Enum.Names` / `Enum.Ordinals` coverage (#271)** — both were `status: gap`
+  in coverage.yaml despite having basic suites. Extended `tests/bucket-2/61-enum-names`
+  with 4 new proving tests: second/third name by index, `Contains` positive, type-qualifier
+  syntax (`Enum::"T".Names()`), and 2 negative tests (unknown name not contained,
+  count ≠ 2). Extended `tests/bucket-2/50-enum-ordinals` with 6 new proving tests:
+  all 4 ordinals by index, `Contains` positive, instance-variable syntax, and 2 negative
+  tests (ordinal 9 not contained, count ≠ 3). Coverage map: `EnumType.Names` and
+  `EnumType.Ordinals` moved from `gap` to `covered`.
 - **Record.Count with SetFilter expressions coverage (#260)** — `Count` with
   SetFilter comparators / OR-lists / range expressions was already honoured
   in `MockRecordHandle.ALCount` but had no dedicated proving test. New suite
