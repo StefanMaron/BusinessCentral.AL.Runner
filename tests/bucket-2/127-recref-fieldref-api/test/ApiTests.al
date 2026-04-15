@@ -240,12 +240,13 @@ codeunit 56271 "API Tests"
     [Test]
     procedure FindLastWithMarkedOnlyReturnsLastMarkedRecord()
     begin
-        // [GIVEN] 3 entries exist; only entry 2 (in the middle) is marked
+        // [GIVEN] 3 entries (Entry No. 1, 2, 3); the probe marks only entry 2 via RecordRef.Mark
+        // Note: the last parameter to InsertEntry is the 'Active' field, not the mark flag
         Probe.InsertEntry(1, 'A', 'Alpha', 10.0, true);
         Probe.InsertEntry(2, 'B', 'Bravo', 20.0, false);
         Probe.InsertEntry(3, 'C', 'Charlie', 30.0, true);
-        // [WHEN] FindLast with MarkedOnly=true
-        // [THEN] Returns entry 2 (the only marked record), not empty
+        // [WHEN] FindLast with MarkedOnly=true (probe internally marks entry 2)
+        // [THEN] FindLast returns entry 2 — the only (and thus last) marked record
         Assert.AreEqual('2', Probe.FindLastEntryNoWithMarkedOnly(),
             'FindLast with MarkedOnly must return the last marked record');
     end;
