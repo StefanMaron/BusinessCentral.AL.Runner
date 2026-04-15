@@ -38,6 +38,13 @@ All notable changes to this project are documented here. Format based on
 - **KeyRef support** — New `MockKeyRef` class replacing `NavKeyRef`. Provides
   FieldCount, FieldIndex(n), Record, Active, and ALAssign. The RoslynRewriter
   maps `NavKeyRef` → `MockKeyRef` with constructor arg stripping. (#115)
+- **ReportHandler dispatch** — `[ReportHandler]` procedures now intercept `Report.Run()`,
+  `Report.RunModal()`, and report variable `.Run()`/`.RunModal()` calls. The handler
+  receives a `TestRequestPage` parameter, matching BC's test framework semantics.
+  Static `Report.Run(id)` / `Report.RunModal(id)` calls (emitted as `NavReport.Run/RunModal`)
+  are rewritten to `MockReportHandle.StaticRun/StaticRunModal`. `MockReportHandle.RunModal()`
+  and `UseRequestPage(false)` (emitted as `UseRequestForm` property) are now supported.
+  Running a report without a handler silently succeeds (no error). (#118)
 - **Field metadata infrastructure** — `TableFieldRegistry` now parses and stores
   field-level metadata (name, caption, type, length) and table-level metadata
   (name, caption) from AL source at transpile time. `MockRecordHandle.ALFieldCaption`,

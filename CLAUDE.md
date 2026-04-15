@@ -142,7 +142,7 @@ dotnet run --project AlRunner -- ./src ./test
 | `AlRunner/Runtime/MockRecordHandle.cs` | In-memory record store (filtering, composite PKs, sort, triggers, temp records, CalcFields) |
 | `AlRunner/Runtime/MockCodeunitHandle.cs` | Cross-codeunit dispatch via reflection |
 | `AlRunner/Runtime/EventSubscriberRegistry.cs` | Event subscriber discovery + dispatch |
-| `AlRunner/Runtime/HandlerRegistry.cs` | Test handler dispatch (ConfirmHandler, MessageHandler, ModalPageHandler, RequestPageHandler) |
+| `AlRunner/Runtime/HandlerRegistry.cs` | Test handler dispatch (ConfirmHandler, MessageHandler, ModalPageHandler, RequestPageHandler, ReportHandler) |
 | `AlRunner/Runtime/MockTestPageHandle.cs` | TestPage mock with full lifecycle, field access, navigation |
 | `AlRunner/Runtime/MockRecordRef.cs` | RecordRef backed by MockRecordHandle; Mark/MarkedOnly/ClearMarks (functional), Rename, FieldExists, HasFilter, GetPosition, Ascending (get/set), ModifyAll, KeyCount/KeyIndex/CurrentKeyIndex, system-field number accessors |
 | `AlRunner/Runtime/MockFieldRef.cs` | FieldRef with value get/set, range/filter, GetFilter, GetRangeMin/Max, Record(), Name/Caption/Type/Length from metadata, enum introspection (IsEnum, EnumValueCount, GetEnumValueName/Caption/Ordinal), CalcSum, ALSetTable (no-op stub) |
