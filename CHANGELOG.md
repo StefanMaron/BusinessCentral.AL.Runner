@@ -12,6 +12,13 @@ All notable changes to this project are documented here. Format based on
   adds 5 proving tests: normal Record → false, `temporary` Record → true,
   stays temporary after Insert, temp store is isolated from the persisted
   table, and normal Record stays non-temporary after Insert.
+- **Record.HasFilter coverage (#253)** — `MockRecordHandle.ALHasFilter`
+  (`_filters.Count > 0`) now has dedicated proving tests. New suite
+  `tests/bucket-1/43-hasfilter` covers fresh record (false), `SetRange`
+  (true), `SetFilter` (true), `Reset()` (false), and clearing filters
+  one-by-one (remains true until last cleared). RED confirmed by
+  temporarily stubbing `ALHasFilter` to always return false. Coverage map:
+  `Table.HasFilter` moved from `gap` to `covered`.
 - **Record.LockTable coverage (#250)** — `ALLockTable` in `MockRecordHandle`
   is a correct no-op (the runner has no SQL transaction isolation) but
   previously had no proving test. New suite `tests/bucket-1/42-locktable`

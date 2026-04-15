@@ -5822,7 +5822,9 @@ Table.GetView:
 Table.HasFilter:
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/43-hasfilter
   notes: overloads=1
 
 Table.HasLinks:
