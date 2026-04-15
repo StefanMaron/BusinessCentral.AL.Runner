@@ -1413,13 +1413,16 @@ public static class AlCompat
     /// <summary>
     /// RoundDateTime(dt, precision, direction) — rounds a DateTime value.
     /// Precision is in milliseconds. Direction: '>' (up), '&lt;' (down), '=' (nearest).
+    /// All NavDateTime access uses reflection to avoid BC 28+ Telemetry.Abstractions
+    /// loading — the == operator, explicit (DateTime) cast, and Create() methods all
+    /// trigger assembly resolution that fails outside the service tier.
     /// </summary>
     public static NavDateTime RoundDateTime(NavDateTime dt, long precision, string direction)
     {
-        if (dt == NavDateTime.Default) return NavDateTime.Default;
+        var dateTime = GetNavDateTimeValue(dt);
+        if (dateTime == default) return NavDateTime.Default;
         if (precision <= 0) precision = 1;
 
-        var dateTime = (DateTime)dt;
         long ticksPrecision = precision * TimeSpan.TicksPerMillisecond;
         long ticks = dateTime.Ticks;
         long remainder = ticks % ticksPrecision;
@@ -1458,5 +1461,17 @@ public static class AlCompat
         var result = (NavDateTime)System.Activator.CreateInstance(typeof(NavDateTime), nonPublic: true)!;
         NavDateTimeValueField?.SetValue(result, dateTime);
         return result;
+    }
+
+    /// <summary>
+    /// Read the backing DateTime value from a NavDateTime via reflection.
+    /// Avoids using the explicit (DateTime) cast operator which triggers
+    /// Telemetry.Abstractions loading in BC 28+.
+    /// </summary>
+    internal static DateTime GetNavDateTimeValue(NavDateTime dt)
+    {
+        if (NavDateTimeValueField == null) return default;
+        var val = NavDateTimeValueField.GetValue(dt);
+        return val is DateTime d ? d : default;
     }
 }
