@@ -37,8 +37,8 @@ codeunit 59981 "Notification Handler Tests"
     begin
         // Negative: Sending without a handler should not crash — it is a no-op
         Sender.SendSimple('No handler registered');
-        // If we reach here without error, the test passes
-        Assert.IsTrue(true, 'Send without handler should not throw');
+        // Prove no handler was invoked by checking variable storage is still empty
+        LibraryVariableStorage.AssertEmpty();
     end;
 
     [SendNotificationHandler]

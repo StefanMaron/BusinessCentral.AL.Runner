@@ -58,20 +58,23 @@ codeunit 59982 "TestPage Stub Tests"
         tp.OpenEdit();
         tp.Expand(true);
         tp.Expand(false);
-        Assert.IsTrue(true, 'TestPage.Expand should not throw');
+        // Assert observable state is unchanged after Expand calls
+        Assert.IsTrue(tp.Editable(), 'TestPage.Editable should still be true after Expand');
         tp.Close();
     end;
 
     [Test]
-    procedure GetRecordViaRecordRef()
+    procedure OpenClosePreservesEditable()
     var
         tp: TestPage "TestPage Stub Card";
     begin
-        // Positive: TestPage stubs execute without crashing
-        // GetRecord is only available in C# (generated code); AL-level test
-        // covers the other stubs. This just confirms no crash on open/close.
+        // Positive: Page state is consistent across open/close cycle
         tp.OpenEdit();
+        Assert.IsTrue(tp.Editable(), 'Page should be editable after OpenEdit');
         tp.Close();
-        Assert.IsTrue(true, 'Open/Close cycle should succeed');
+        // Re-open to verify no state corruption
+        tp.OpenEdit();
+        Assert.IsTrue(tp.Editable(), 'Page should be editable after re-open');
+        tp.Close();
     end;
 }
