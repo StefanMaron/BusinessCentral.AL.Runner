@@ -326,6 +326,7 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - Format() / Evaluate() type conversions, including picture strings:
   - Date tokens: `<Year4>`, `<Month,2>`, `<Day,2>`, `<Hours24,2>`, `<Minutes,2>`, `<Seconds,2>`
   - Decimal tokens: `<Precision,min:max>` (round/pad decimals), `<Standard Format,N>` (N=0 default, N=1 integer)
+  - Multi-token decimal picture strings (e.g. `<Precision,2:2><Standard Format,0>`) — Precision wins when both are present
   - Time picture strings applied to Time variables (e.g. `Format(T, 0, '<Hours24,2>:<Minutes,2>')`)
 - Session API: StartSession (dispatches codeunit synchronously, returns true), StopSession (no-op),
   IsSessionActive (returns false), Sleep (no-op)
