@@ -150,6 +150,7 @@ dotnet run --project AlRunner -- ./src ./test
 | `AlRunner/Runtime/TableFieldRegistry.cs` | Transpile-time AL field metadata registry (field name/caption/type/length, table name/caption, enum field names, PK extraction) |
 | `AlRunner/Runtime/MockNotification.cs` | In-memory Notification mock: Message, Send, Recall, SetData/GetData/HasData, AddAction, Id, Scope |
 | `AlRunner/Runtime/MockTaskScheduler.cs` | TaskScheduler stubs: CreateTask (sync dispatch), TaskExists, CancelTask, SetTaskReady |
+| `AlRunner/Runtime/MockBigText.cs` | BigText mock: ALAddText, ALGetSubText, ALTextPos, ALLength, ALWrite, ALRead (StringBuilder-backed) |
 | `AlRunner/Runtime/MockDataTransfer.cs` | DataTransfer stubs: SetTables, AddFieldValue, AddConstantValue, CopyFields, CopyRows (no-ops) |
 | `AlRunner/stubs/LibraryAssert.al` | AL stub for codeunit 130 (auto-loaded) |
 | `AlRunner/stubs/LibraryVariableStorage.al` | AL stub for codeunit 131004 (auto-loaded) |

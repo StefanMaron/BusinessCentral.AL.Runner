@@ -230,17 +230,12 @@ The full BC service tier pipeline:
 | `2` | Runner limitations only (no assertion failures; all blocked tests are due to Roslyn compilation gaps or missing mock support) |
 | `3` | AL compilation error (the AL source itself does not compile) |
 
-Use exit codes in CI to tolerate runner gaps without hiding real failures:
+Use exit codes in CI to distinguish failure modes:
 
 ```bash
 al-runner --packages .alpackages ./src ./test
-rc=$?
-if [ $rc -eq 2 ]; then
-  echo "Runner limitations only — not a build failure"
-  exit 0
-elif [ $rc -ne 0 ]; then
-  exit $rc
-fi
+# Exit 0 = all pass, non-zero = failure
+# Exit 2 specifically indicates runner limitations (blocked tests)
 ```
 
 ## How It Works
