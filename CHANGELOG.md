@@ -7,6 +7,15 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Record.GetFilters coverage & field-name fix (#246)** — `Record.GetFilters()`
+  now emits real AL field names (e.g. `"Status: 1"`) instead of positional
+  stubs (`"Field2: 1"`). `MockRecordHandle.GetFieldNameByNo` now prefers the
+  transpile-time `TableFieldRegistry` metadata before falling back to the
+  runtime-registered name dictionary. New suite
+  `tests/bucket-1/41-getfilters` covers the empty case, single-field filter,
+  combined multi-field filter, post-`Reset` clearing, and range-filter
+  rendering (`1..5`). Coverage map: `Table.GetFilters` moved from `gap` to
+  `covered`.
 - **RecordRef.FieldCount coverage (#238)** — `MockRecordRef.ALFieldCount` and
   `MockRecordHandle.FieldCount` already preferred the schema field count
   (from `TableFieldRegistry`) over the runtime written-field count, but this

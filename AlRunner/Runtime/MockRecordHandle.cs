@@ -2229,6 +2229,11 @@ public class MockRecordHandle
 
     private string GetFieldNameByNo(int fieldNo)
     {
+        // Prefer transpile-time metadata (populated from AL source by PackageScanner)
+        var fromRegistry = TableFieldRegistry.GetFieldName(_tableId, fieldNo);
+        if (!string.IsNullOrEmpty(fromRegistry))
+            return fromRegistry;
+
         if (_fieldNames.TryGetValue(_tableId, out var names))
         {
             foreach (var kv in names)
