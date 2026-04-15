@@ -47,12 +47,15 @@ codeunit 59830 "Unstubbed Types Tests"
     end;
 
     [Test]
-    procedure NotificationRecallNoError()
+    procedure NotificationRecallPreservesId()
     var
         Helper: Codeunit "Notification Helper";
+        Id: Guid;
+        EmptyGuid: Guid;
     begin
-        // Positive: Recall completes without error
-        Helper.RecallNotification();
+        // Positive: Recall completes and Id is still accessible
+        Id := Helper.RecallNotification();
+        Assert.AreNotEqual(EmptyGuid, Id, 'Notification.Id should be non-empty after Recall');
     end;
 
     [Test]
@@ -65,21 +68,24 @@ codeunit 59830 "Unstubbed Types Tests"
     end;
 
     [Test]
-    procedure NotificationScopeNoError()
+    procedure NotificationScopePreservesId()
     var
         Helper: Codeunit "Notification Helper";
+        Id: Guid;
+        EmptyGuid: Guid;
     begin
-        // Positive: Setting Scope and sending does not error
-        Helper.SetScope();
+        // Positive: Setting Scope and sending preserves Id
+        Id := Helper.SetScopeAndGetId();
+        Assert.AreNotEqual(EmptyGuid, Id, 'Notification with Scope should have non-empty Id after Send');
     end;
 
     [Test]
-    procedure NotificationAddActionNoError()
+    procedure NotificationAddActionPreservesMessage()
     var
         Helper: Codeunit "Notification Helper";
     begin
-        // Positive: AddAction + Send does not error
-        Helper.AddActionNoError();
+        // Positive: AddAction + Send preserves the message
+        Assert.AreEqual('With action', Helper.AddActionAndGetMessage(), 'Notification.Message should be preserved after AddAction + Send');
     end;
 
     // === BigText Tests ===
@@ -153,58 +159,58 @@ codeunit 59830 "Unstubbed Types Tests"
     end;
 
     [Test]
-    procedure TaskSchedulerTaskExistsReturnsBool()
+    procedure TaskSchedulerTaskExistsReturnsFalse()
     var
         Helper: Codeunit "TaskScheduler Helper";
     begin
-        // Positive: TaskExists returns a boolean (no crash)
-        Helper.TaskExistsReturnsBool();
+        // Positive: TaskExists returns false (task ran synchronously, no longer active)
+        Assert.IsFalse(Helper.TaskExistsReturnsBool(), 'TaskExists should return false for a completed synchronous task');
     end;
 
     [Test]
-    procedure TaskSchedulerCancelTaskNoError()
+    procedure TaskSchedulerCancelTaskReturnsTrue()
     var
         Helper: Codeunit "TaskScheduler Helper";
     begin
-        // Positive: CancelTask completes without error
-        Helper.CancelTaskNoError();
+        // Positive: CancelTask returns true (no-op success)
+        Assert.IsTrue(Helper.CancelTaskReturnsTrue(), 'CancelTask should return true');
     end;
 
     [Test]
-    procedure TaskSchedulerSetTaskReadyNoError()
+    procedure TaskSchedulerSetTaskReadyReturnsTrue()
     var
         Helper: Codeunit "TaskScheduler Helper";
     begin
-        // Positive: SetTaskReady completes without error
-        Helper.SetTaskReadyNoError();
+        // Positive: SetTaskReady returns true (no-op success)
+        Assert.IsTrue(Helper.SetTaskReadyReturnsTrue(), 'SetTaskReady should return true');
     end;
 
     // === DataTransfer Tests ===
 
     [Test]
-    procedure DataTransferCopyRowsNoError()
+    procedure DataTransferCopyRowsIsNoOp()
     var
         Helper: Codeunit "DataTransfer Helper";
     begin
-        // Positive: SetTables + AddFieldValue + CopyRows completes
-        Helper.CopyRowsNoError();
+        // Positive: CopyRows is a no-op — target table remains empty
+        Assert.IsTrue(Helper.CopyRowsLeavesTargetEmpty(), 'CopyRows should be a no-op: target must remain empty');
     end;
 
     [Test]
-    procedure DataTransferCopyFieldsNoError()
+    procedure DataTransferCopyFieldsIsNoOp()
     var
         Helper: Codeunit "DataTransfer Helper";
     begin
-        // Positive: CopyFields completes without error
-        Helper.CopyFieldsNoError();
+        // Positive: CopyFields is a no-op — target table remains empty
+        Assert.IsTrue(Helper.CopyFieldsLeavesTargetEmpty(), 'CopyFields should be a no-op: target must remain empty');
     end;
 
     [Test]
-    procedure DataTransferAddConstantValueNoError()
+    procedure DataTransferAddConstantValueIsNoOp()
     var
         Helper: Codeunit "DataTransfer Helper";
     begin
-        // Positive: AddConstantValue + CopyRows completes
-        Helper.AddConstantValueNoError();
+        // Positive: AddConstantValue + CopyRows is a no-op
+        Assert.IsTrue(Helper.AddConstantValueNoError(), 'AddConstantValue + CopyRows should be a no-op: target must remain empty');
     end;
 }

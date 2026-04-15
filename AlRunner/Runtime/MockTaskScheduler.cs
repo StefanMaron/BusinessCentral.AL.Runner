@@ -24,7 +24,17 @@ public static class MockTaskScheduler
         }
         catch
         {
-            // Swallow: in BC, task failures are logged, not thrown
+            if (failureCodeunitId != 0)
+            {
+                try
+                {
+                    MockCodeunitHandle.RunCodeunit(failureCodeunitId);
+                }
+                catch
+                {
+                    // Preserve original task failure if failure handler also fails
+                }
+            }
         }
         return taskId;
     }

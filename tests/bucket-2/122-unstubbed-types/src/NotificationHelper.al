@@ -32,13 +32,14 @@ codeunit 59820 "Notification Helper"
         exit(N.HasData('nonexistent'));
     end;
 
-    procedure RecallNotification()
+    procedure RecallNotification(): Guid
     var
         N: Notification;
     begin
         N.Message := 'To recall';
         N.Send();
         N.Recall();
+        exit(N.Id);
     end;
 
     procedure GetMessage(): Text
@@ -49,21 +50,24 @@ codeunit 59820 "Notification Helper"
         exit(N.Message);
     end;
 
-    procedure SetScope()
+    procedure SetScopeAndGetId(): Guid
     var
         N: Notification;
     begin
         N.Scope := NotificationScope::LocalScope;
+        N.Message := 'Scoped notification';
         N.Send();
+        exit(N.Id);
     end;
 
-    procedure AddActionNoError()
+    procedure AddActionAndGetMessage(): Text
     var
         N: Notification;
     begin
         N.Message := 'With action';
         N.AddAction('Click', Codeunit::"Notification Helper", 'HandleAction');
         N.Send();
+        exit(N.Message);
     end;
 
     procedure HandleAction(N: Notification)

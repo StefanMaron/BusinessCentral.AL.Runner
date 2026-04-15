@@ -13,19 +13,19 @@ codeunit 59822 "TaskScheduler Helper"
         exit(TaskScheduler.TaskExists(TaskId));
     end;
 
-    procedure CancelTaskNoError()
+    procedure CancelTaskReturnsTrue(): Boolean
     var
         TaskId: Guid;
     begin
         TaskId := TaskScheduler.CreateTask(Codeunit::"TaskScheduler Helper", 0, true);
-        TaskScheduler.CancelTask(TaskId);
+        exit(TaskScheduler.CancelTask(TaskId));
     end;
 
-    procedure SetTaskReadyNoError()
+    procedure SetTaskReadyReturnsTrue(): Boolean
     var
         TaskId: Guid;
     begin
         TaskId := TaskScheduler.CreateTask(Codeunit::"TaskScheduler Helper", 0, true);
-        TaskScheduler.SetTaskReady(TaskId);
+        exit(TaskScheduler.SetTaskReady(TaskId));
     end;
 }
