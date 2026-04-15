@@ -13,6 +13,13 @@ All notable changes to this project are documented here. Format based on
   `tests/bucket-1/46-count-setfilter` covers `'>1'`, `'<2'`, `'<>2'`,
   `'1|3'`, `'2..3'`, no-match (0), and restoration after `Reset`. RED
   confirmed by pointing `ALCount` at the unfiltered row list.
+- **Field `InitValue` property applied on `Record.Init()` (#237)** — `MockRecordHandle.ALInit()`
+  now calls `TableInitValueRegistry.ApplyInitValues` which parses `InitValue = X` attributes
+  from AL field declarations and applies them when `Init()` is called. Supports Integer,
+  Text, Boolean, Decimal, and Enum field types. Fields without `InitValue` continue to
+  receive type defaults (0, empty string, false). New suite `tests/bucket-1/47-initvalue`
+  covers Integer/Text/Boolean/Decimal InitValue application, fields-without-InitValue
+  staying at defaults, and `Init()` overwriting previously-set values.
 - **`Record.Next(Steps)` overload (#262)** — `MockRecordHandle.ALNext(int)` is
   new (previously only the parameterless `ALNext()` existed). Positive steps
   move forward, negative steps move backward, and the return value is the

@@ -511,4 +511,17 @@ namespace AlRunnerGenerated {
         });
         Assert.Equal(0, result.ExitCode);
     }
+
+    [Fact]
+    public void InitValue_AppliedOnRecordInit()
+    {
+        var pipeline = new AlRunnerPipeline();
+        var result = pipeline.Run(new PipelineOptions
+        {
+            InputPaths = { TestPath("46-initvalue", "src"), TestPath("46-initvalue", "test") }
+        });
+        Assert.Equal(0, result.ExitCode);
+        Assert.True(result.Passed > 0);
+        Assert.Equal(0, result.Failed);
+    }
 }
