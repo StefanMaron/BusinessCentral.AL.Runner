@@ -7,6 +7,13 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Record.TransferFields coverage (#224)** — `ALTransferFields` in
+  `MockRecordHandle` now has dedicated proving tests. New suite
+  `tests/bucket-1/39-transferfields` verifies matching fields are copied by
+  field number (not name), the default overload copies the PK, the
+  `TransferFields(src, false)` overload preserves the target's PK, and
+  target-only fields (no counterpart on source) remain untouched. Coverage
+  map: `Table.TransferFields` moved from `gap` to `covered`.
 - **CalcField `lookup` formula coverage (#231)** — the `lookup(...)` CalcFormula
   kind in `MockRecordHandle.ALCalcFields` now has dedicated proving tests. New
   suite `tests/bucket-1/38-lookup-formula` exercises text lookup, decimal
