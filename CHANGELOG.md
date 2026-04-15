@@ -7,6 +7,11 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **`Table.ModifyAll` coverage.yaml fix (#292)** — `ALModifyAllSafe` was already
+  implemented in `MockRecordHandle`; coverage map incorrectly listed it as `gap`.
+  Existing suite `tests/bucket-1/30-modify-all` has 4 proving tests (update all,
+  filter-scoped update, empty table no-op, runTrigger overload). Coverage map:
+  `Table.ModifyAll` moved from `gap` to `covered`.
 - **`Record.CalcSums` implementation (#293)** — `ALCalcSums` was a no-op stub; now
   sums each requested field across all records matching the current filters and writes
   the result back into the record's fields. Integer fields stay `NavInteger`; Decimal
