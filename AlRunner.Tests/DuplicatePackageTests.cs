@@ -142,7 +142,7 @@ public class DuplicatePackageTests
 
             var specs = PackageScanner.ScanForSpecs(new[] { dir1, dir2 });
 
-            Assert.Single(specs.Where(s => s.Name == "My App"));
+            Assert.Single(specs, s => s.Name == "My App");
         }
         finally
         {

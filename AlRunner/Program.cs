@@ -959,7 +959,7 @@ public static class AlTranspiler
                         target: CompilationTarget.OnPrem,
                         generateOptions: CompilationGenerationOptions.Code | CompilationGenerationOptions.Navigation
                     ))
-                    .WithReferenceLoader(refLoader)
+                    .WithReferenceLoader(refLoader!)
                     .AddReferences(dedupedSpecs);
 
                 // Re-check declaration diagnostics
@@ -1015,7 +1015,7 @@ public static class AlTranspiler
                             target: CompilationTarget.OnPrem,
                             generateOptions: CompilationGenerationOptions.Code | CompilationGenerationOptions.Navigation
                         ))
-                        .WithReferenceLoader(refLoader)
+                        .WithReferenceLoader(refLoader!)
                         .AddReferences(filteredSpecs);
 
                     // Re-check declaration diagnostics
