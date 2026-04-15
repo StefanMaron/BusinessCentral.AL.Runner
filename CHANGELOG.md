@@ -42,6 +42,12 @@ All notable changes to this project are documented here. Format based on
   other. Rewriter maps `ALDatabase.ALCompanyName` to `MockSession.GetCompanyName()`.
   New suite `tests/bucket-1/242-company-name` covers default, set, clear,
   per-test reset, and composition with `StrSubstNo`.
+- **`SetFilter` format-placeholder tests (#245)** — added proving tests for
+  `SetFilter` with `%1`, `%2` substitution arguments: single placeholder (`>%1`),
+  two-placeholder AND expression (`>%1&<%2`), wildcard suffix (`%1*`), exact
+  equality, and integer field range. New suite
+  `tests/bucket-1/42-setfilter-placeholder` confirms positive matches and
+  negative exclusion.
 - **Record.GetFilters coverage & field-name fix (#246)** — `Record.GetFilters()`
   now emits real AL field names (e.g. `"Status: 1"`) instead of positional
   stubs (`"Field2: 1"`). `MockRecordHandle.GetFieldNameByNo` now prefers the
