@@ -7,6 +7,10 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **`Record.FieldError` (#228)** — raises a field-level validation error
+  (`"<FieldCaption> <Message> in <TableCaption>: <PK>"`). Supports both
+  `FieldError(Field)` (default `"must have a value"` message) and
+  `FieldError(Field, Text)`. Errors are catchable via `asserterror`.
 - **Enum extension test coverage (#227)** — new suite
   `tests/bucket-1/36-enum-extension` confirms that `enumextension` objects
   transpile and run correctly: base enum values retain their ordinals,

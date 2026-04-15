@@ -1093,6 +1093,37 @@ public class MockRecordHandle
     }
 
     // -----------------------------------------------------------------------
+    // FieldError — raise a field-level validation error
+    // -----------------------------------------------------------------------
+
+    /// <summary>AL's FIELDERROR(FieldNo) — raises the default "must have a value" error.</summary>
+    public void ALFieldError(int fieldNo)
+    {
+        throw new Exception(FormatFieldError(fieldNo, "must have a value"));
+    }
+
+    /// <summary>AL's FIELDERROR(FieldNo, Text) — raises "&lt;field&gt; &lt;text&gt; in &lt;table&gt;: &lt;pk&gt;".</summary>
+    public void ALFieldError(int fieldNo, string message)
+    {
+        throw new Exception(FormatFieldError(fieldNo, message));
+    }
+
+    private string FormatFieldError(int fieldNo, string message)
+    {
+        string fieldName = TableFieldRegistry.GetFieldCaption(_tableId, fieldNo)
+                           ?? TableFieldRegistry.GetFieldName(_tableId, fieldNo)
+                           ?? $"Field {fieldNo}";
+        string tableName = TableFieldRegistry.GetTableCaption(_tableId)
+                           ?? TableFieldRegistry.GetTableName(_tableId)
+                           ?? $"Table {_tableId}";
+        var pkFields = GetPrimaryKeyFields();
+        var pk = string.Join(",", pkFields.Select(f =>
+            $"{TableFieldRegistry.GetFieldName(_tableId, f) ?? ("Field " + f)}='" +
+            (_fields.TryGetValue(f, out var v) ? NavValueToString(v) : "") + "'"));
+        return $"{fieldName} {message} in {tableName}: {pk}";
+    }
+
+    // -----------------------------------------------------------------------
     // CalcFields / CalcSums — stubs (no SQL aggregation available)
     // -----------------------------------------------------------------------
 

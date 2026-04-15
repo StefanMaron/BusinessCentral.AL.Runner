@@ -252,6 +252,8 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   separate from non-temporary records. `IsTemporary()` returns the correct value.
   `RecordRef.Open(tableId, true)` opens a temporary RecordRef.
 - TransferFields, CountApprox, Consistent (no-op), FieldActive (true), AddLink/HasLinks/DeleteLinks
+- FieldError(Field) / FieldError(Field, Text) — raise a field-level error message
+  formatted as "<FieldCaption> <Message> in <TableCaption>: <PK>", catchable via asserterror
 - WritePermission/ReadPermission (true), SetPermissionFilter (no-op), LockTable (no-op)
 - Composite primary keys, sort ordering (SetCurrentKey / SetAscending), CurrentKey, Ascending
 - SETRANGE / SETFILTER filtering (=, <>, <, <=, >, >=, wildcards, OR via |)
