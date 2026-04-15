@@ -7,6 +7,14 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **`Table.CopyFilters` coverage (#274)** — `ALCopyFilters` was already
+  implemented in `MockRecordHandle` but had no proving tests. New suite
+  `tests/bucket-1/48-copyfilters` adds 7 tests: SetRange transfer, SetFilter
+  expression transfer, multi-field transfer, overwrite of existing target
+  filters, Count respects copied filter, empty source clears target filters,
+  and source is not mutated by the copy. RED confirmed by temporarily no-oping
+  `ALCopyFilters`. Coverage map: `Table.CopyFilters` moved from `gap` to
+  `covered`.
 - **`fieldgroups` section syntax coverage (#279)** — tables with `fieldgroups`
   declarations (e.g. `DropDown`, `Brick`) compile and all record operations
   work correctly. New suite `tests/bucket-1/48-fieldgroups`: 5 positive tests
