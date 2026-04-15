@@ -1,4 +1,4 @@
-codeunit 55502 "SetRecFilter Tests"
+codeunit 55602 "SetRecFilter Tests"
 {
     Subtype = Test;
 
