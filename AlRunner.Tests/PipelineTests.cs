@@ -493,7 +493,7 @@ namespace AlRunnerGenerated {
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
-            InputPaths = { TestPath("43-userid", "test") }
+            InputPaths = { TestPath("45-userid", "test") }
         });
         Assert.Equal(0, result.ExitCode);
         Assert.True(result.Passed > 0);
