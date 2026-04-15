@@ -6,6 +6,12 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Improved
+- **XmlPort & Query runtime error messages** — `MockXmlPortHandle.Import/Export`
+  and `MockQueryHandle.Open/Read` now throw descriptive `NotSupportedException`
+  messages that mention "BC service tier" and suggest "AL interface injection"
+  (XmlPort) or "Record operations" (Query) as actionable alternatives. (#124)
+
 ### Added
 - **System, Database & Session utility stubs** — `Session.LogMessage()` (no-op),
   `Session.ApplicationArea()` (returns empty string), `Session.GetExecutionContext()` /

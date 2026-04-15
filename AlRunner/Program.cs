@@ -312,12 +312,19 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - Query variables — declaring Query variables compiles; Close/SetFilter/SetRange/
   TopNumberOfRows are no-ops; Open/Read/SaveAs throw NotSupportedException.
   Inject query dependencies via an AL interface for unit-testable code.
+- XmlPort variables — declaring XmlPort variables compiles; Source/Destination
+  properties and Invoke() work without error. Import/Export (instance and static)
+  throw NotSupportedException with actionable guidance.
+  Use AL interface injection to abstract XmlPort I/O for testing.
 
 ### What al-runner does NOT support
 
 - Pages, Reports — stub them via `--stubs <dir>` or inject via AL interface
+- XmlPort I/O (Import/Export) — XmlPort variables compile and properties work,
+  but Import/Export require the BC service tier. Use AL interface injection to
+  abstract XmlPort dependencies for testing.
 - Query data access (Open/Read) — queries require the BC service tier (SQL views);
-  use AL interfaces to inject query results for testing
+  use Record operations instead, or inject the query behind an AL interface
 - HTTP / REST calls — inject via AL interface
 - Event subscribers — Custom IntegrationEvent/BusinessEvent dispatch works with
   IncludeSender support. Implicit DB trigger events (OnBefore/AfterInsert/Modify/

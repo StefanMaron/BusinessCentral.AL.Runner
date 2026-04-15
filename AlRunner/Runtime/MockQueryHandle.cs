@@ -63,9 +63,8 @@ public class MockQueryHandle
     /// </summary>
     public bool ALOpen(DataError errorLevel = default)
         => throw new NotSupportedException(
-            $"Query.Open (Query {QueryId}) is not supported in al-runner standalone mode. " +
-            "Query data access requires the BC service tier. " +
-            "Inject the query dependency via an AL interface to make this code unit-testable.");
+            "Query Open/Read requires the BC service tier and is not supported by al-runner. " +
+            "Use Record operations instead, or inject the query behind an AL interface.");
 
     /// <summary>
     /// <c>Q.Read()</c> — reads the next row from the query result set.
@@ -73,9 +72,8 @@ public class MockQueryHandle
     /// </summary>
     public bool ALRead(DataError errorLevel = default)
         => throw new NotSupportedException(
-            $"Query.Read (Query {QueryId}) is not supported in al-runner standalone mode. " +
-            "Query data access requires the BC service tier. " +
-            "Inject the query dependency via an AL interface to make this code unit-testable.");
+            "Query Open/Read requires the BC service tier and is not supported by al-runner. " +
+            "Use Record operations instead, or inject the query behind an AL interface.");
 
     /// <summary>
     /// <c>Q.Close()</c> — closes the query. No-op in standalone mode.
