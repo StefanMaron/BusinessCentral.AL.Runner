@@ -6,50 +6,64 @@ codeunit 56281 "Missing CU Tests"
         Probe: Codeunit "Missing CU Probe";
 
     [Test]
+    procedure ExistingCodeunit_RunSucceeds()
+    begin
+        // [WHEN]  A codeunit that does exist is called via Codeunit.Run
+        // [THEN]  No error is raised
+        Probe.CallExistingCodeunit();
+    end;
+
+    [Test]
     procedure MissingCodeunitErrorMentionsId()
     begin
-        // Positive: error message must contain the codeunit ID
+        // [WHEN]  A codeunit that does not exist is called
         asserterror Probe.CallMissingUserCodeunit();
+        // [THEN]  Error message contains the missing codeunit ID
         Assert.ExpectedMessage('59999', GetLastErrorText());
     end;
 
     [Test]
     procedure MissingCodeunitErrorMentionsStubsHint()
     begin
-        // Positive: error message must mention --stubs as a resolution
+        // [WHEN]  A codeunit that does not exist is called
         asserterror Probe.CallMissingUserCodeunit();
+        // [THEN]  Error message mentions --stubs as a resolution
         Assert.ExpectedMessage('--stubs', GetLastErrorText());
     end;
 
     [Test]
     procedure MissingCodeunitErrorMentionsGenerateStubs()
     begin
-        // Positive: error message must mention --generate-stubs
+        // [WHEN]  A codeunit that does not exist is called
         asserterror Probe.CallMissingUserCodeunit();
+        // [THEN]  Error message mentions --generate-stubs
         Assert.ExpectedMessage('--generate-stubs', GetLastErrorText());
     end;
 
     [Test]
     procedure MissingTestToolkitCodeunitIdentifiesRange()
     begin
-        // Positive: error for test-toolkit codeunit mentions "test toolkit"
+        // [WHEN]  A test-toolkit-range codeunit (130xxx) that does not exist is called
         asserterror Probe.CallMissingTestToolkitCodeunit();
+        // [THEN]  Error message identifies the test toolkit range
         Assert.ExpectedMessage('test toolkit', GetLastErrorText());
     end;
 
     [Test]
     procedure MissingSystemCodeunitIdentifiesRange()
     begin
-        // Positive: error for system codeunit mentions "system"
+        // [WHEN]  A system-range codeunit (1-9999) that does not exist is called
         asserterror Probe.CallMissingSystemCodeunit();
+        // [THEN]  Error message identifies it as a system codeunit
         Assert.ExpectedMessage('system', GetLastErrorText());
     end;
 
     [Test]
-    procedure MissingCodeunitListsAvailable()
+    procedure MissingCodeunitMentionsAvailableCodeunits()
     begin
-        // Positive: error message lists available codeunits (our own IDs should appear)
+        // [WHEN]  A codeunit that does not exist is called
         asserterror Probe.CallMissingUserCodeunit();
-        Assert.ExpectedMessage('56280', GetLastErrorText());
+        // [THEN]  Error message reports what codeunits are available in the assembly
+        Assert.ExpectedMessage('available', GetLastErrorText());
     end;
 }

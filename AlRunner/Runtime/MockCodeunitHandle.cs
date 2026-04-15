@@ -628,7 +628,7 @@ public class MockCodeunitHandle
         if (codeunitId is >= 130000 and <= 139999)
             msg += $" Codeunit {codeunitId} appears to be from the BC test toolkit.";
         else if (codeunitId is >= 1 and <= 9999)
-            msg += $" Codeunit {codeunitId} appears to be a system/base-app codeunit.";
+            msg += $" Codeunit {codeunitId} appears to be a system codeunit.";
 
         // List available codeunits to help debugging
         var available = assembly.GetTypes()

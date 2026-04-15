@@ -17,4 +17,10 @@ codeunit 56280 "Missing CU Probe"
         // Call a system-range codeunit (1-9999) that doesn't exist
         Codeunit.Run(9999);
     end;
+
+    procedure CallExistingCodeunit()
+    begin
+        // Call a codeunit that does exist in the assembly (positive path)
+        Codeunit.Run(56282);
+    end;
 }
