@@ -78,10 +78,29 @@ codeunit 59970 "Test Http Mocks"
     end;
 
     [Test]
-    procedure TestBuildRequest()
+    procedure TestBuildRequestMethod()
     var
         Logic: Codeunit "Http Test Logic";
     begin
-        Logic.BuildRequest();
+        Assert.AreEqual('POST', Logic.BuildRequestGetMethod(),
+            'Request method should be POST');
+    end;
+
+    [Test]
+    procedure TestBuildRequestContent()
+    var
+        Logic: Codeunit "Http Test Logic";
+    begin
+        Assert.AreEqual('test body', Logic.BuildRequestReadContent(),
+            'Request content should round-trip');
+    end;
+
+    [Test]
+    procedure TestStreamWriteRead()
+    var
+        Logic: Codeunit "Http Test Logic";
+    begin
+        Assert.AreEqual('stream data', Logic.StreamRoundTrip('stream data'),
+            'InStream->HttpContent->ReadAs should round-trip text');
     end;
 }

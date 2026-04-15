@@ -17,6 +17,11 @@ using Microsoft.Dynamics.Nav.Types;
 /// </summary>
 public class MockHttpClient
 {
+    private const string HttpNotSupportedMessage =
+        "HTTP calls are not supported by al-runner. " +
+        "Use AL interface injection to mock HTTP dependencies. " +
+        "See: https://github.com/StefanMaron/BusinessCentral.AL.Runner/blob/main/docs/limitations.md#http--partial-support";
+
     public MockHttpClient() { }
 
     /// <summary>
@@ -26,10 +31,7 @@ public class MockHttpClient
     public bool ALSend(DataError errorLevel, MockHttpRequestMessage request,
         ByRef<MockHttpResponseMessage> response)
     {
-        throw new NotSupportedException(
-            "HTTP calls are not supported by al-runner. " +
-            "Use AL interface injection to mock HTTP dependencies. " +
-            "See: https://github.com/StefanMaron/BusinessCentral.AL.Runner#http-mocking");
+        throw new NotSupportedException(HttpNotSupportedMessage);
     }
 
     /// <summary>
@@ -39,10 +41,7 @@ public class MockHttpClient
     public bool ALGet(DataError errorLevel, string url,
         ByRef<MockHttpResponseMessage> response)
     {
-        throw new NotSupportedException(
-            "HTTP calls are not supported by al-runner. " +
-            "Use AL interface injection to mock HTTP dependencies. " +
-            "See: https://github.com/StefanMaron/BusinessCentral.AL.Runner#http-mocking");
+        throw new NotSupportedException(HttpNotSupportedMessage);
     }
 
     /// <summary>
@@ -52,9 +51,7 @@ public class MockHttpClient
     public bool ALPost(DataError errorLevel, string url, MockHttpContent content,
         ByRef<MockHttpResponseMessage> response)
     {
-        throw new NotSupportedException(
-            "HTTP calls are not supported by al-runner. " +
-            "Use AL interface injection to mock HTTP dependencies.");
+        throw new NotSupportedException(HttpNotSupportedMessage);
     }
 
     /// <summary>
@@ -64,9 +61,7 @@ public class MockHttpClient
     public bool ALPut(DataError errorLevel, string url, MockHttpContent content,
         ByRef<MockHttpResponseMessage> response)
     {
-        throw new NotSupportedException(
-            "HTTP calls are not supported by al-runner. " +
-            "Use AL interface injection to mock HTTP dependencies.");
+        throw new NotSupportedException(HttpNotSupportedMessage);
     }
 
     /// <summary>
@@ -76,9 +71,7 @@ public class MockHttpClient
     public bool ALDelete(DataError errorLevel, string url,
         ByRef<MockHttpResponseMessage> response)
     {
-        throw new NotSupportedException(
-            "HTTP calls are not supported by al-runner. " +
-            "Use AL interface injection to mock HTTP dependencies.");
+        throw new NotSupportedException(HttpNotSupportedMessage);
     }
 
     /// <summary>
@@ -88,9 +81,7 @@ public class MockHttpClient
     public bool ALPatch(DataError errorLevel, string url, MockHttpContent content,
         ByRef<MockHttpResponseMessage> response)
     {
-        throw new NotSupportedException(
-            "HTTP calls are not supported by al-runner. " +
-            "Use AL interface injection to mock HTTP dependencies.");
+        throw new NotSupportedException(HttpNotSupportedMessage);
     }
 
     /// <summary>Timeout property stub (seconds). No-op in standalone mode.</summary>
@@ -103,6 +94,6 @@ public class MockHttpClient
     /// <summary>UseDefaultNetworkWindowsAuthentication property stub.</summary>
     public bool ALUseDefaultNetworkWindowsAuthentication { get; set; }
 
-    /// <summary>No-op Clear — resets nothing since no real connection exists.</summary>
+    /// <summary>No-op — resets nothing since no real connection exists.</summary>
     public void Clear() { }
 }

@@ -10,9 +10,11 @@ using Microsoft.Dynamics.Nav.Types;
 /// The real ctor takes an ITreeObject parent whose <c>.Tree</c> must not be null.
 /// The rewriter rewrites the type to <c>MockHttpContent</c> and strips the arg.
 ///
-/// Stores text content in memory. WriteFrom stores text; ReadAs retrieves it.
-/// The stream overloads are redirected by the rewriter through
-/// <c>AlCompat.HttpContentLoadFrom</c> / <c>AlCompat.HttpContentReadAs</c>.
+/// Stores text-only content in memory. WriteFrom stores text; ReadAs retrieves it.
+/// Binary data written via InStream will be UTF-8 decoded on load and re-encoded
+/// on read, which may not preserve raw bytes. The stream overloads are redirected
+/// by the rewriter through <c>AlCompat.HttpContentLoadFrom</c> /
+/// <c>AlCompat.HttpContentReadAs</c>.
 /// </summary>
 public class MockHttpContent
 {

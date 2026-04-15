@@ -41,15 +41,6 @@ codeunit 56370 "Http Test Logic"
         exit(not Headers.Contains('X-Test'));
     end;
 
-    procedure HeaderCount(): Integer
-    var
-        Headers: HttpHeaders;
-    begin
-        Headers.Add('A', '1');
-        Headers.Add('B', '2');
-        exit(2);
-    end;
-
     procedure SendRequestFails()
     var
         Client: HttpClient;
@@ -59,7 +50,7 @@ codeunit 56370 "Http Test Logic"
         Client.Send(Request, Response);
     end;
 
-    procedure BuildRequest()
+    procedure BuildRequestGetMethod(): Text
     var
         Request: HttpRequestMessage;
         Content: HttpContent;
@@ -68,6 +59,36 @@ codeunit 56370 "Http Test Logic"
         Request.SetRequestUri('https://example.com/api');
         Content.WriteFrom('test body');
         Request.Content(Content);
+        exit(Request.Method());
+    end;
+
+    procedure BuildRequestReadContent(): Text
+    var
+        Request: HttpRequestMessage;
+        Content: HttpContent;
+        Result: Text;
+    begin
+        Request.Method('POST');
+        Content.WriteFrom('test body');
+        Request.Content(Content);
+        Content.ReadAs(Result);
+        exit(Result);
+    end;
+
+    procedure StreamRoundTrip(Input: Text): Text
+    var
+        BlobRec: Record "Http Test Blob";
+        Content: HttpContent;
+        OutStr: OutStream;
+        InStr: InStream;
+        Result: Text;
+    begin
+        BlobRec.Data.CreateOutStream(OutStr);
+        OutStr.WriteText(Input);
+        BlobRec.Data.CreateInStream(InStr);
+        Content.WriteFrom(InStr);
+        Content.ReadAs(Result);
+        exit(Result);
     end;
 
     procedure GetRequestFails()

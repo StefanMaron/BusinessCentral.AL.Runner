@@ -1333,6 +1333,8 @@ public static class AlCompat
     /// BC emits content.ALReadAs(this, DataError.ThrowError, stream) for
     /// HttpContent.ReadAs(var Stream: InStream). Returns a MockInStream whose data
     /// is the stored text content (round-trip from WriteFrom).
+    /// Note: This is a text-only round-trip. Binary data written via InStream will be
+    /// UTF-8 decoded on load and re-encoded on read, which may not preserve raw bytes.
     /// </summary>
     public static void HttpContentReadAs(MockHttpContent content, object? scope, DataError errorLevel, ByRef<MockInStream> stream)
     {

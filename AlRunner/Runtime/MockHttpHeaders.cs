@@ -70,7 +70,7 @@ public class MockHttpHeaders
     /// <summary>Number of distinct header names.</summary>
     public int ALCount => _headers.Count;
 
-    /// <summary>No-op Clear — removes all headers.</summary>
+    /// <summary>Removes all headers.</summary>
     public void Clear()
     {
         _headers.Clear();
