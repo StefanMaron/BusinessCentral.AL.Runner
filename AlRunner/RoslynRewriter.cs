@@ -2744,11 +2744,22 @@ public void ClearApplicationMemberVariables() { }
 
         // Pattern: ALDatabase.ALCompanyName / ALDatabase.ALUserID / ALDatabase.ALTenantID / ALDatabase.ALSerialNumber
         // These static property accesses crash because ALDatabase requires a live BC session.
-        // Rewrite to empty-string literals — standalone mode has no company/user/tenant context.
+        // ALCompanyName routes to MockSession.GetCompanyName() (configurable via --company-name
+        // CLI flag and the Library - AL Runner Config codeunit). The others stay as empty
+        // literals — standalone mode has no user/tenant context.
         if (visited.Expression is IdentifierNameSyntax dbId &&
             dbId.Identifier.Text == "ALDatabase" &&
             ALDatabaseStringProps.Contains(visited.Name.Identifier.Text))
         {
+            if (visited.Name.Identifier.Text == "ALCompanyName")
+            {
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("MockSession"),
+                        SyntaxFactory.IdentifierName("GetCompanyName")))
+                    .WithTriviaFrom(visited);
+            }
             return SyntaxFactory.LiteralExpression(
                 SyntaxKind.StringLiteralExpression,
                 SyntaxFactory.Literal(""))

@@ -12,13 +12,33 @@ using Microsoft.Dynamics.Nav.Types;
 public static class MockSession
 {
     private static int _nextSessionId = 1;
+    private static string _companyName = string.Empty;
 
     /// <summary>
-    /// Resets the session counter between tests.
+    /// Default company name applied between tests (settable via the
+    /// <c>--company-name</c> CLI flag). Empty by default so the runner stays
+    /// backwards-compatible.
+    /// </summary>
+    public static string DefaultCompanyName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Value returned by the AL <c>CompanyName()</c> built-in.
+    /// </summary>
+    public static string GetCompanyName() => _companyName;
+
+    /// <summary>
+    /// Sets the value returned by the AL <c>CompanyName()</c> built-in.
+    /// Reset back to <see cref="DefaultCompanyName"/> before each test.
+    /// </summary>
+    public static void SetCompanyName(string name) => _companyName = name ?? string.Empty;
+
+    /// <summary>
+    /// Resets the session counter and company name between tests.
     /// </summary>
     public static void Reset()
     {
         _nextSessionId = 1;
+        _companyName = DefaultCompanyName;
     }
 
     /// <summary>

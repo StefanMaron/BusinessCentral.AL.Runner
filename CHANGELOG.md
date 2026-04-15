@@ -7,6 +7,16 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **`CompanyName()` configurable (#242)** — was hard-coded to empty string.
+  Now three-way configurable:
+    * `--company-name <name>` CLI flag sets the default returned between tests.
+    * AL tests can set it at runtime via the new stub codeunit
+      `131100 "AL Runner Config"` → `SetCompanyName(Name: Text)`.
+    * Defaults to empty string when neither is used (backwards-compatible).
+  Per-test reset restores the CLI default so tests don't leak across each
+  other. Rewriter maps `ALDatabase.ALCompanyName` to `MockSession.GetCompanyName()`.
+  New suite `tests/bucket-1/242-company-name` covers default, set, clear,
+  per-test reset, and composition with `StrSubstNo`.
 - **Record.GetFilters coverage & field-name fix (#246)** — `Record.GetFilters()`
   now emits real AL field names (e.g. `"Status: 1"`) instead of positional
   stubs (`"Field2: 1"`). `MockRecordHandle.GetFieldNameByNo` now prefers the

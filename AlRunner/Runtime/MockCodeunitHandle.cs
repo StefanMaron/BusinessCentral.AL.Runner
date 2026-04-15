@@ -140,6 +140,10 @@ public class MockCodeunitHandle
         if (_codeunitId is 131004)
             return InvokeVariableStorage(memberId, args);
 
+        // Route codeunit 131100 (AL Runner Config) — exposes CompanyName configuration to AL
+        if (_codeunitId is 131100)
+            return InvokeRunnerConfig(memberId, args);
+
         var assembly = CurrentAssembly ?? Assembly.GetExecutingAssembly();
         var codeunitType = FindCodeunitType(assembly);
         if (codeunitType == null)
@@ -552,6 +556,34 @@ public class MockCodeunitHandle
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Routes "AL Runner Config" (131100) method calls to MockSession.
+    /// Exposes runner-only configuration — currently CompanyName — to AL code.
+    /// </summary>
+    private static object? InvokeRunnerConfig(int memberId, object[] args)
+    {
+        var methodName = FindMethodName(memberId, "Codeunit131100");
+
+        if (methodName != null && methodName.Equals("SetCompanyName", StringComparison.OrdinalIgnoreCase))
+        {
+            var name = args.Length >= 1 ? (args[0]?.ToString() ?? string.Empty) : string.Empty;
+            MockSession.SetCompanyName(name);
+            return null;
+        }
+        if (methodName != null && methodName.Equals("GetCompanyName", StringComparison.OrdinalIgnoreCase))
+        {
+            return new NavText(MockSession.GetCompanyName());
+        }
+
+        // Fallback: 1 string arg = SetCompanyName, 0 args = GetCompanyName
+        if (args.Length >= 1)
+        {
+            MockSession.SetCompanyName(args[0]?.ToString() ?? string.Empty);
+            return null;
+        }
+        return new NavText(MockSession.GetCompanyName());
     }
 
     /// <summary>

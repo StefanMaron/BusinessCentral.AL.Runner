@@ -18,8 +18,11 @@ the BC runtime environment:
 
 - **Permissions and entitlements** — there is no permission system. All field/table
   access succeeds unconditionally.
-- **Company context** — `CompanyName()` returns an empty string. Code that branches
-  on company name will take the "empty" branch.
+- **Company context** — no active BC company. `CompanyName()` defaults to empty
+  string but is configurable: pass `--company-name <name>` on the CLI, or call
+  codeunit 131100 `"AL Runner Config".SetCompanyName(Name)` from AL tests.
+  Code that only branches on whether the name is empty still takes the "empty"
+  branch by default.
 - **Base app data** — no standard BC tables are populated. Code that reads
   `G/L Account`, `Customer`, `Vendor`, or any other base app table finds them empty
   unless your test inserts data.
@@ -114,7 +117,7 @@ the exact value will see different results.
 
 | AL call | Real BC | al-runner |
 |---|---|---|
-| `CompanyName()` | Active company name | `""` |
+| `CompanyName()` | Active company name | `""` (or `--company-name <name>` / `"AL Runner Config".SetCompanyName()`) |
 | `UserId()` | Authenticated user | `""` |
 | `IsSessionActive(id)` | True while session runs | Always `false` |
 | `GuiAllowed()` | False in background sessions | `false` |
