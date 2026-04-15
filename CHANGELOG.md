@@ -7,6 +7,11 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **`Table.Validate` coverage.yaml fix (#270)** — `Table.Validate` was
+  listed as `status: gap` in `docs/coverage.yaml` despite 5 proving tests
+  already existing in `tests/bucket-1/18-validate-trigger` (OnValidate fires
+  on name-uppercase, computed amount, direct-Validate, direct-assign-skips,
+  zero-quantity). Corrected status to `covered`.
 - **`Table.CopyFilters` coverage (#274)** — `ALCopyFilters` was already
   implemented in `MockRecordHandle` but had no proving tests. New suite
   `tests/bucket-1/48-copyfilters` adds 7 tests: SetRange transfer, SetFilter
