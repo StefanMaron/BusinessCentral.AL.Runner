@@ -654,12 +654,16 @@ field_declaration:
 fieldgroup_declaration:
   layer: syntax
   category: table
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/48-fieldgroups
 
 fieldgroups_section:
   layer: syntax
   category: table
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/48-fieldgroups
 
 fields_section:
   layer: syntax
