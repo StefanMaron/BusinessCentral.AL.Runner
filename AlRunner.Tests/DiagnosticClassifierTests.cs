@@ -229,6 +229,32 @@ public class DiagnosticClassifierTests
     }
 
     [Fact]
+    public void IsCrossExtensionDuplicateDeclaration_PageCustomizationType_ReturnsTrue()
+    {
+        // PageCustomization is also an extension object type
+        var msg = "An application object of type 'PageCustomization' with name 'CardCustom' " +
+                  "is already declared by the extension 'Ext by Publisher (1.0.0.0)'";
+        Assert.True(DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration(msg));
+    }
+
+    [Fact]
+    public void IsCrossExtensionDuplicateDeclaration_InterfaceType_ReturnsFalse()
+    {
+        // Interface is NOT an extension type — must NOT be suppressed
+        var msg = "An application object of type 'Interface' with name 'IMyService' " +
+                  "is already declared by the extension 'Ext by Publisher (1.0.0.0)'";
+        Assert.False(DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration(msg));
+    }
+
+    [Fact]
+    public void IsCrossExtensionDuplicateDeclaration_XmlPortType_ReturnsFalse()
+    {
+        var msg = "An application object of type 'XmlPort' with name 'MyXmlPort' " +
+                  "is already declared by the extension 'Ext by Publisher (1.0.0.0)'";
+        Assert.False(DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration(msg));
+    }
+
+    [Fact]
     public void IsCrossExtensionDuplicateDeclaration_UnrelatedMessage_ReturnsFalse()
     {
         Assert.False(DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration("some other error"));

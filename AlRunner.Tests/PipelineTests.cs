@@ -462,4 +462,28 @@ namespace AlRunnerGenerated {
         Assert.Contains("AL0197", result.StdErr);
         Assert.Contains("Codeunit", result.StdErr);
     }
+
+    [Fact]
+    public void SameExtension_DuplicatePageExtensionName_NotSuppressed()
+    {
+        // Same extension defines two pageextensions with the same name "DuplicatedExt"
+        // but different IDs. AL0197 fires with a single extension identity.
+        // The two-pass grouping requires 2+ identities, so this must NOT be suppressed.
+        var testCase = CliRunner.FindTestCase("135-same-ext-pageext-duplicate");
+        var pipeline = new AlRunnerPipeline();
+        var result = pipeline.Run(new PipelineOptions
+        {
+            InputPaths =
+            {
+                Path.Combine(testCase, "src"),
+                Path.Combine(testCase, "test")
+            },
+            Verbose = true
+        });
+
+        // AL0197 for same-extension duplicate must NOT be suppressed
+        Assert.DoesNotContain("Cross-extension name collisions suppressed", result.StdErr);
+        Assert.Contains("AL0197", result.StdErr);
+        Assert.Contains("PageExtension", result.StdErr);
+    }
 }
