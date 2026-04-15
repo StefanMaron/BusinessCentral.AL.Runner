@@ -144,8 +144,9 @@ dotnet run --project AlRunner -- ./src ./test
 | `AlRunner/Runtime/EventSubscriberRegistry.cs` | Event subscriber discovery + dispatch |
 | `AlRunner/Runtime/HandlerRegistry.cs` | Test handler dispatch (ConfirmHandler, MessageHandler, ModalPageHandler, RequestPageHandler) |
 | `AlRunner/Runtime/MockTestPageHandle.cs` | TestPage mock with full lifecycle, field access, navigation |
-| `AlRunner/Runtime/MockRecordRef.cs` | RecordRef backed by MockRecordHandle; Mark/ClearMarks (stubs), Rename, FieldExists, HasFilter, GetPosition, Ascending, ModifyAll |
-| `AlRunner/Runtime/MockFieldRef.cs` | FieldRef with value get/set, range/filter, ALSetTable (no-op stub for BC compiler page API extensions) |
+| `AlRunner/Runtime/MockRecordRef.cs` | RecordRef backed by MockRecordHandle; Mark/MarkedOnly/ClearMarks (functional), Rename, FieldExists, HasFilter, GetPosition, Ascending (get/set), ModifyAll, KeyCount/KeyIndex/CurrentKeyIndex |
+| `AlRunner/Runtime/MockFieldRef.cs` | FieldRef with value get/set, range/filter, GetFilter, GetRangeMin/Max, Record(), ALSetTable (no-op stub) |
+| `AlRunner/Runtime/MockKeyRef.cs` | KeyRef mock: FieldCount, FieldIndex(n), Record, Active, ALAssign |
 | `AlRunner/Runtime/MockNotification.cs` | In-memory Notification mock: Message, Send, Recall, SetData/GetData/HasData, AddAction, Id, Scope |
 | `AlRunner/Runtime/MockTaskScheduler.cs` | TaskScheduler stubs: CreateTask (sync dispatch), TaskExists, CancelTask, SetTaskReady |
 | `AlRunner/Runtime/MockDataTransfer.cs` | DataTransfer stubs: SetTables, AddFieldValue, AddConstantValue, CopyFields, CopyRows (no-ops) |

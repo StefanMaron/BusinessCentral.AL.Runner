@@ -68,14 +68,16 @@ public class MockFieldRef
     /// <summary>ALActive — whether the field is active. Stub: always true.</summary>
     public bool ALActive => true;
 
-    /// <summary>ALGetFilter — returns filter string on this field. Stub: empty string.</summary>
-    public string ALGetFilter => "";
+    /// <summary>ALGetFilter — returns the active filter expression for this field.</summary>
+    public string ALGetFilter => _owner?.GetFieldFilter(_fieldNo) ?? "";
 
-    /// <summary>ALGetRangeMin — returns range min. Stub: NavText.Default(0).</summary>
-    public NavValue ALGetRangeMin => NavText.Default(0);
+    /// <summary>ALGetRangeMin — returns the range minimum value for this field.
+    /// Returns the unwrapped CLR value (int, string, etc.) so Convert.ToInt32 etc. work.</summary>
+    public object ALGetRangeMin => UnwrapNavValue(_owner?.GetFieldRangeMin(_fieldNo));
 
-    /// <summary>ALGetRangeMax — returns range max. Stub: NavText.Default(0).</summary>
-    public NavValue ALGetRangeMax => NavText.Default(0);
+    /// <summary>ALGetRangeMax — returns the range maximum value for this field.
+    /// Returns the unwrapped CLR value (int, string, etc.) so Convert.ToInt32 etc. work.</summary>
+    public object ALGetRangeMax => UnwrapNavValue(_owner?.GetFieldRangeMax(_fieldNo));
 
     /// <summary>ALOptionCaption — option caption string. Stub: empty.</summary>
     public string ALOptionCaption => "";
@@ -205,7 +207,39 @@ public class MockFieldRef
     /// <summary>Static Default factory — mirrors NavFieldRef.Default(ITreeObject).</summary>
     public static MockFieldRef Default() => new MockFieldRef();
 
-    // -- Internal wiring --
+    // -- Internal helpers --
+
+    /// <summary>
+    /// Extract the underlying CLR value from a NavValue so that Convert.ToInt32 etc. work.
+    /// BC compiler emits <c>Convert.ToInt32(fldRef.ALGetRangeMin)</c> which fails on NavValue
+    /// because NavValue doesn't implement IConvertible.
+    /// </summary>
+    private static object UnwrapNavValue(NavValue? value)
+    {
+        if (value == null) return 0;
+        switch (value)
+        {
+            case NavInteger ni: return (int)ni;
+            case NavText nt: return (string)nt;
+            case NavCode nc: return (string)nc;
+            case NavBoolean nb: return (bool)nb;
+            case NavBigInteger nbi: return (long)nbi;
+            case NavGuid ng: return (Guid)ng;
+            case NavOption nopt: return nopt.Value;
+        }
+        if (value is NavDecimal nd)
+        {
+            try
+            {
+                var prop = typeof(NavDecimal).GetProperty("Value",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                var raw = prop?.GetValue(nd);
+                if (raw != null) return Convert.ToDecimal(raw);
+            }
+            catch { }
+        }
+        return 0;
+    }
 
     internal void Bind(MockRecordRef owner, int fieldNo)
     {

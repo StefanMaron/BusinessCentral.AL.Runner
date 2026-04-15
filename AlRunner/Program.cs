@@ -263,9 +263,12 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - Dialog variable (Open, Update, Close — all no-ops in standalone mode)
 - RecordRef / FieldRef — Open, Close, Field(n).Value get/set, Insert, Modify,
   Delete, DeleteAll, FindSet+Next iteration, GetTable/SetTable, SetRange/SetFilter,
-  RecRef := OtherRecRef assignment, SetLoadFields (no-op), Mark/MarkedOnly/ClearMarks
-  (no-op stubs), Rename, FieldExists, FieldCount, HasFilter, GetFilters, GetPosition,
-  SetPosition, Ascending, ChangeCompany (no-op), ModifyAll, CurrentCompany
+  RecRef := OtherRecRef assignment, SetLoadFields (no-op), Mark/MarkedOnly/ClearMarks,
+  Rename, FieldExists, FieldCount, HasFilter, GetFilters, GetPosition,
+  SetPosition, Ascending (get/set), ChangeCompany (no-op), ModifyAll, CurrentCompany,
+  FieldRef.GetFilter, FieldRef.GetRangeMin, FieldRef.GetRangeMax, FieldRef.Record,
+  KeyCount, KeyIndex(n), CurrentKeyIndex
+- KeyRef — FieldCount, FieldIndex(n), Record, Active (basic key metadata via KeyRef variable)
 - JSON types: JsonObject, JsonArray, JsonToken, JsonValue — Add, Get, Contains,
   Remove, Replace, Count, WriteTo, ReadFrom, SelectToken, AsValue, AsText, AsInteger, etc.
 - BLOB / InStream / OutStream — CreateInStream/CreateOutStream, HasValue, ReadText/WriteText

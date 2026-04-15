@@ -1027,6 +1027,12 @@ public void ClearApplicationMemberVariables() { }
         if (text == "NavFieldRef")
             return node.WithIdentifier(SyntaxFactory.Identifier("MockFieldRef"));
 
+        // NavKeyRef -> MockKeyRef
+        // NavKeyRef is used by RecordRef.KeyIndex(). MockKeyRef provides
+        // ALActive, ALFieldCount, ALFieldIndex, ALRecord for key inspection.
+        if (text == "NavKeyRef")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockKeyRef"));
+
         // NavBLOB -> MockBlob
         // NavBLOB's ALCreateInStream/ALCreateOutStream pass ITreeObject to
         // NavStream ctor which crashes with null in standalone mode.
@@ -1398,6 +1404,14 @@ public void ClearApplicationMemberVariables() { }
         // Strip the ITreeObject 'this' argument.
         if (typeText == "MockFieldRef" && visited.ArgumentList != null &&
             visited.ArgumentList.Arguments.Count == 1)
+        {
+            return visited.WithArgumentList(SyntaxFactory.ArgumentList());
+        }
+
+        // new MockKeyRef(this, ...) -> new MockKeyRef()
+        // After VisitIdentifierName, NavKeyRef is now MockKeyRef.
+        // Strip all constructor args (ITreeObject dependency).
+        if (typeText == "MockKeyRef" && visited.ArgumentList != null)
         {
             return visited.WithArgumentList(SyntaxFactory.ArgumentList());
         }
