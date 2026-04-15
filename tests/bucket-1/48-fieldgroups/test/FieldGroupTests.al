@@ -1,4 +1,4 @@
-codeunit 55201 "FieldGroup Tests"
+codeunit 55401 "FieldGroup Tests"
 {
     Subtype = Test;
 
