@@ -293,6 +293,16 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - Session API: StartSession (dispatches codeunit synchronously, returns true), StopSession (no-op),
   IsSessionActive (returns false), Sleep (no-op)
 - Built-in session functions: CompanyName, UserId, TenantId, SerialNumber (return empty string)
+- System & Session utilities:
+  - Session.LogMessage() — no-op (telemetry not available without service tier)
+  - Session.ApplicationArea() — returns empty string
+  - Session.GetExecutionContext() / GetModuleExecutionContext() — returns ExecutionContext.Normal
+  - Database.LockTimeout(bool) — no-op (no real database)
+  - CompanyProperty.DisplayName() / UrlName() — returns stub company name (""My Company"" / ""My%20Company"")
+  - ProductName.Full() / Short() / Marketing() — returns real BC product names
+  - RoundDateTime(dt [, precision] [, direction]) — rounds DateTime with ms precision;
+    direction: '>' (up), '<' (down), '=' (nearest, default). Default precision 1000ms.
+  - NormalDate(date) / ClosingDate(date) — work natively via BC types
 - GlobalLanguage() — returns and sets an in-memory language ID (default 1033 = ENU); reset between tests
 - Partial compilation (skips unsupported object types like XMLport)
 - Coverage reporting via `--coverage` (statement-level, outputs cobertura.xml)
@@ -306,6 +316,16 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - Query variables — declaring Query variables compiles; Close/SetFilter/SetRange/
   TopNumberOfRows are no-ops; Open/Read/SaveAs throw NotSupportedException.
   Inject query dependencies via an AL interface for unit-testable code.
+- Notification — Message, Send, Recall, SetData/GetData/HasData, AddAction, Id, Scope.
+  Send/Recall are no-ops; data store is in-memory; Id auto-generates a Guid.
+  Note: [SendNotificationHandler] dispatch is NOT implemented; use direct Notification methods.
+- BigText — uses the real BC NavBigText type. AddText, GetSubText, TextPos, Length
+  all work as-is (no session dependency). Note: TextPos is 1-based in AL.
+- TaskScheduler — CreateTask (dispatches codeunit synchronously, invokes
+  failureCodeunitId on exception, returns Guid), TaskExists (returns false),
+  CancelTask (no-op), SetTaskReady (no-op)
+- DataTransfer — SetTables, AddFieldValue, AddConstantValue, AddJoin, AddSourceFilter,
+  CopyFields, CopyRows (all no-ops; requires real database for actual transfer)
 
 ### What al-runner does NOT support
 
