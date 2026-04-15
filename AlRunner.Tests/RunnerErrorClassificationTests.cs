@@ -705,6 +705,122 @@ public class RunnerErrorClassificationTests
     }
 
     // ---------------------------------------------------------------------------
+    // ExitCode() strict mode tests (#201)
+    // ---------------------------------------------------------------------------
+
+    /// <summary>All tests pass → exit 0, regardless of strict mode.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ExitCode_AllPass_Returns0_RegardlessOfStrict(bool strict)
+    {
+        var results = new List<TestResult>
+        {
+            new() { Name = "T1", Status = TestStatus.Pass },
+            new() { Name = "T2", Status = TestStatus.Pass }
+        };
+        Assert.Equal(0, Executor.ExitCode(results, strict));
+    }
+
+    /// <summary>Any Fail → exit 1, regardless of strict mode.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ExitCode_Fail_Returns1_RegardlessOfStrict(bool strict)
+    {
+        var results = new List<TestResult>
+        {
+            new() { Name = "T1", Status = TestStatus.Pass },
+            new() { Name = "T2", Status = TestStatus.Fail, Message = "Expected 1, got 2" }
+        };
+        Assert.Equal(1, Executor.ExitCode(results, strict));
+    }
+
+    /// <summary>Empty results → exit 1, regardless of strict mode.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ExitCode_Empty_Returns1_RegardlessOfStrict(bool strict)
+    {
+        Assert.Equal(1, Executor.ExitCode(new List<TestResult>(), strict));
+    }
+
+    /// <summary>Runner errors with strict=false → exit 2 (lenient).</summary>
+    [Fact]
+    public void ExitCode_RunnerError_NotStrict_Returns2()
+    {
+        var results = new List<TestResult>
+        {
+            new() { Name = "T1", Status = TestStatus.Pass },
+            new() { Name = "T2", Status = TestStatus.Error, IsRunnerBug = true, Message = "not found" }
+        };
+        Assert.Equal(2, Executor.ExitCode(results, strict: false));
+    }
+
+    /// <summary>Runner errors with strict=true → exit 1 (promoted).</summary>
+    [Fact]
+    public void ExitCode_RunnerError_Strict_Returns1()
+    {
+        var results = new List<TestResult>
+        {
+            new() { Name = "T1", Status = TestStatus.Pass },
+            new() { Name = "T2", Status = TestStatus.Error, IsRunnerBug = true, Message = "not found" }
+        };
+        Assert.Equal(1, Executor.ExitCode(results, strict: true));
+    }
+
+    // ---------------------------------------------------------------------------
+    // Pipeline strict mode — rewriter & compilation gaps (#201)
+    // ---------------------------------------------------------------------------
+
+    /// <summary>Rewriter gap with strict=true → exit 1 (not 2).</summary>
+    [Fact]
+    public void RewriterGap_Strict_ReturnsExitCode1()
+    {
+        var pipeline = new AlRunnerPipeline();
+        var result = pipeline.Run(new PipelineOptions
+        {
+            InlineCode = "Message('hello');",
+            Strict = true,
+            RewriterFactory = _ => throw new InvalidOperationException("simulated rewriter gap")
+        });
+
+        Assert.Equal(1, result.ExitCode);
+    }
+
+    /// <summary>Compilation gap with strict=true → exit 1 (not 2).</summary>
+    [Fact]
+    public void CompilationGap_Strict_ReturnsExitCode1()
+    {
+        var pipeline = new AlRunnerPipeline();
+        var result = pipeline.Run(new PipelineOptions
+        {
+            InlineCode = "Message('hello');",
+            Strict = true,
+            RewriterFactory = _ =>
+                Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(
+                    "namespace AlRunner { public class Broken { NonExistentType_XYZ _f; } }")
+        });
+
+        Assert.Equal(1, result.ExitCode);
+    }
+
+    /// <summary>Rewriter gap without strict → still exit 2 (unchanged behaviour).</summary>
+    [Fact]
+    public void RewriterGap_NotStrict_StillReturnsExitCode2()
+    {
+        var pipeline = new AlRunnerPipeline();
+        var result = pipeline.Run(new PipelineOptions
+        {
+            InlineCode = "Message('hello');",
+            Strict = false,
+            RewriterFactory = _ => throw new InvalidOperationException("simulated rewriter gap")
+        });
+
+        Assert.Equal(2, result.ExitCode);
+    }
+
+    // ---------------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------------
 

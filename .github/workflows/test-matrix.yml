@@ -84,11 +84,7 @@ jobs:
               [ -d "${suite}test" ] && args="$args ${suite}test"
             done
             echo "=== $bucket ==="
-            # Exit 0 = all pass, Exit 2 = runner limitation (expected on some BC versions)
-            # Exit 1 = real test failure, Exit 3 = AL compile error — both block CI
-            dotnet run --no-build --project AlRunner --framework net8.0 -- $args || {
-              exit_code=$?; [ $exit_code -eq 2 ] || exit $exit_code
-            }
+            dotnet run --no-build --project AlRunner --framework net8.0 -- --strict $args
           done
 
       - name: Run AL test buckets (net9.0)
@@ -103,9 +99,7 @@ jobs:
               [ -d "${suite}test" ] && args="$args ${suite}test"
             done
             echo "=== $bucket ==="
-            dotnet run --no-build --project AlRunner --framework net9.0 -- $args || {
-              exit_code=$?; [ $exit_code -eq 2 ] || exit $exit_code
-            }
+            dotnet run --no-build --project AlRunner --framework net9.0 -- --strict $args
           done
 
       - name: Run stubs test (net8.0)

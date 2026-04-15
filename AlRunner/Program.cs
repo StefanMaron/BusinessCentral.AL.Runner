@@ -49,6 +49,7 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("                                                  referenced in those dirs are emitted");
     Console.Error.WriteLine("  --guide               Print test-writing guide for AI coding agents");
     Console.Error.WriteLine("  --no-telemetry        Disable crash reporting prompt on unexpected errors");
+    Console.Error.WriteLine("  --strict              Fail on runner limitations (exit 1 instead of 2)");
     Console.Error.WriteLine("  -h, --help            Show this help");
     Console.Error.WriteLine();
     Console.Error.WriteLine("Examples:");
@@ -70,7 +71,7 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("Exit codes:");
     Console.Error.WriteLine("  0  All tests passed");
     Console.Error.WriteLine("  1  Test assertion failures (real bugs in code) or usage error");
-    Console.Error.WriteLine("  2  Runner limitations only (no real failures; compilation gaps or missing mocks)");
+    Console.Error.WriteLine("  2  Runner limitations only (not with --strict; use in CI to catch regressions)");
     Console.Error.WriteLine("  3  AL compilation error (the AL source itself does not compile)");
     Console.Error.WriteLine();
     Console.Error.WriteLine("For AI agents: run `al-runner --guide` for a complete test-writing reference.");
@@ -179,6 +180,10 @@ while (argIdx < args.Length)
             noTelemetry = true;
             argIdx++;
             break;
+        case "--strict":
+            options.Strict = true;
+            argIdx++;
+            break;
         case "--stubs":
             argIdx++;
             if (argIdx >= args.Length) { Console.Error.WriteLine("Error: --stubs requires a directory argument"); return 1; }
@@ -214,7 +219,7 @@ catch (Exception ex)
 {
     await AlRunner.TelemetryReporter.TryReportAsync(ex, options.OutputJson, noTelemetry);
     Console.Error.WriteLine($"Fatal: {ex.GetType().Name}: {ex.Message}");
-    return 2;
+    return 1;
 }
 
 // Forward captured output to actual console
@@ -623,10 +628,17 @@ Optional fields: `packagePaths`, `stubPaths`.
 |------|---------|
 | 0 | All tests passed |
 | 1 | Test assertion failures (real bugs in the code) or usage error |
-| 2 | Runner limitations only (no real failures — all blocked tests are due to compilation gaps or missing mocks) |
+| 2 | Runner limitations only (not with --strict; use in CI to catch regressions) |
 | 3 | AL compilation error (the AL source itself does not compile) |
 
-Use exit codes in CI to distinguish runner gaps from real failures:
+Use `--strict` in CI to treat runner limitations as failures:
+
+```bash
+al-runner --strict --packages .alpackages ./src ./test
+# Exit 0 = all pass, Exit 1 = any failure (including runner limitations)
+```
+
+Without `--strict`, exit code 2 indicates runner limitations only:
 
 ```bash
 al-runner --packages .alpackages ./src ./test
@@ -683,8 +695,9 @@ runtime errors, or behave differently from a real BC service tier, that is likel
 a gap in the runner rather than a problem with the AL code.
 
 When this happens:
-1. Check the exit code — code 2 means the runner hit a known limitation; code 1
-   or 3 means a real failure or compile error that may still be a runner bug.
+1. Check the exit code — code 2 means the runner hit a known limitation (with
+   `--strict`, this becomes code 1); code 1 or 3 means a real failure or compile
+   error that may still be a runner bug.
 2. Try a workaround if one is available (stub file, AL interface injection, or
    simplifying the affected AL construct).
 3. Report the issue at https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues
@@ -2430,12 +2443,13 @@ public static class Executor
     /// <summary>
     /// Compute exit code from test results.
     /// 0 = all passed; 1 = assertion failures (real bugs); 2 = runner limitations only (no failures).
+    /// When strict is true, runner limitations also return 1 instead of 2.
     /// </summary>
-    public static int ExitCode(List<AlRunner.TestResult> results)
+    public static int ExitCode(List<AlRunner.TestResult> results, bool strict = false)
     {
         if (results.Count == 0) return 1;
         if (results.Any(r => r.Status == AlRunner.TestStatus.Fail)) return 1;
-        if (results.Any(r => r.Status != AlRunner.TestStatus.Pass)) return 2;
+        if (results.Any(r => r.Status != AlRunner.TestStatus.Pass)) return strict ? 1 : 2;
         return 0;
     }
 

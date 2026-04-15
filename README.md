@@ -182,6 +182,9 @@ al-runner -e 'codeunit 99 X { trigger OnRun() begin Message('"'"'hi'"'"'); end; 
 # Print test-writing guide for AI agents
 al-runner --guide
 
+# Strict mode: fail on runner limitations (exit 1 instead of 2)
+al-runner --strict ./src ./test
+
 # Debug: dump generated C# before and after rewriting
 al-runner --dump-csharp ./src
 al-runner --dump-rewritten ./src
@@ -227,10 +230,17 @@ The full BC service tier pipeline:
 |------|---------|
 | `0` | All tests passed |
 | `1` | Test assertion failures (real bugs in code) or usage/argument error |
-| `2` | Runner limitations only (no assertion failures; all blocked tests are due to Roslyn compilation gaps or missing mock support) |
+| `2` | Runner limitations only (not with `--strict`; use in CI to catch regressions) |
 | `3` | AL compilation error (the AL source itself does not compile) |
 
-Use exit codes in CI to distinguish failure modes:
+Use `--strict` in CI to treat runner limitations as failures:
+
+```bash
+al-runner --strict --packages .alpackages ./src ./test
+# Exit 0 = all pass, Exit 1 = any failure (including runner limitations)
+```
+
+Without `--strict`, exit code 2 indicates runner limitations only:
 
 ```bash
 al-runner --packages .alpackages ./src ./test

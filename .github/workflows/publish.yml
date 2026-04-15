@@ -69,12 +69,13 @@ jobs:
             args=""
             for suite in "$bucket"*/; do
               [ -d "${suite}src"  ] && args="$args ${suite}src"
+              for appdir in "${suite}"app*/; do
+                [ -d "$appdir" ] && args="$args $appdir"
+              done
               [ -d "${suite}test" ] && args="$args ${suite}test"
             done
             echo "=== $bucket ==="
-            dotnet run --no-build --project AlRunner --framework net8.0 -- $args || {
-              exit_code=$?; [ $exit_code -eq 2 ] || exit $exit_code
-            }
+            dotnet run --no-build --project AlRunner --framework net8.0 -- --strict $args
           done
 
       - name: Run AL test buckets (net9.0)
@@ -83,12 +84,13 @@ jobs:
             args=""
             for suite in "$bucket"*/; do
               [ -d "${suite}src"  ] && args="$args ${suite}src"
+              for appdir in "${suite}"app*/; do
+                [ -d "$appdir" ] && args="$args $appdir"
+              done
               [ -d "${suite}test" ] && args="$args ${suite}test"
             done
             echo "=== $bucket ==="
-            dotnet run --no-build --project AlRunner --framework net9.0 -- $args || {
-              exit_code=$?; [ $exit_code -eq 2 ] || exit $exit_code
-            }
+            dotnet run --no-build --project AlRunner --framework net9.0 -- --strict $args
           done
 
       - name: Run stubs test (net8.0)

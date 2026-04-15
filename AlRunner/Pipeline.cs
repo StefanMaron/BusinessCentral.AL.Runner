@@ -23,6 +23,8 @@ public class PipelineOptions
     public string? RunProcedure { get; set; }
     /// <summary>If set, write a JUnit XML test report to this path after test execution.</summary>
     public string? OutputJunitPath { get; set; }
+    /// <summary>When true, promote exit code 2 (runner limitations) to exit code 1 (failure).</summary>
+    public bool Strict { get; set; }
 
     /// <summary>
     /// Optional override for the C# rewriter step, intended for unit-testing the pipeline's
@@ -593,7 +595,7 @@ public class AlRunnerPipeline
             stderr.WriteLine("  You may be prompted to report this via telemetry in interactive mode (run with --no-telemetry to opt out).");
             _rewriterErrors = failures;
             Timer.EndStage("Roslyn rewriting");
-            return 2;
+            return options.Strict ? 1 : 2;
         }
 
         if (rewriteHits > 0)
@@ -648,7 +650,7 @@ public class AlRunnerPipeline
                 }
             }
             Timer.EndStage("Roslyn compilation");
-            return 2;
+            return options.Strict ? 1 : 2;
         }
         _compileResult = compileResult;
         Timer.EndStage("Roslyn compilation");
@@ -687,7 +689,7 @@ public class AlRunnerPipeline
                 stderr.WriteLine($"Error: Procedure '{options.RunProcedure}' not found in the generated code.");
             if (!options.OutputJson)
                 Executor.PrintResults(results, runSw.ElapsedMilliseconds, options.Verbose);
-            exitCode = Executor.ExitCode(results);
+            exitCode = Executor.ExitCode(results, options.Strict);
 
             if (options.CaptureValues)
                 Runtime.ValueCapture.Disable();
