@@ -1,4 +1,4 @@
-codeunit 54800 "Test Next Steps"
+codeunit 54802 "Test Next Steps"
 {
     Subtype = Test;
 
