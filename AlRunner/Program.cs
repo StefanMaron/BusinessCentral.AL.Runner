@@ -1002,7 +1002,37 @@ public static class AlTranspiler
                     declErrors = declDiags
                         .Where(d => d.Severity == DiagnosticSeverity.Error && !ignoredErrorIds.Contains(d.Id))
                         .ToList();
+
+                    // Refresh for case 3 below
+                    al0275Errors = declErrors.Where(d => d.Id is "AL0275" or "AL0197").ToList();
                 }
+            }
+        }
+
+        // Case 3 (independent of packages): cross-extension collision on extension objects.
+        // When multiple extensions are compiled together in a single pass,
+        // independently-valid extension objects (pageextension, tableextension, etc.)
+        // with the same name from different extensions cause false AL0275/AL0197 errors.
+        // In production BC these compile independently and never collide. Since
+        // extension objects are never referenced by name in AL code, we suppress these.
+        // AL0275 format: "ambiguous reference between ... defined by extension A ... and extension B"
+        // AL0197 format: "already declared by the extension 'A'"
+        {
+            var crossExtErrors = declErrors
+                .Where(d => d.Id is "AL0275" or "AL0197")
+                .Where(d =>
+                {
+                    var msg = d.GetMessage();
+                    return DiagnosticClassifier.IsCrossExtensionAmbiguity(msg)
+                        || DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration(msg);
+                })
+                .ToList();
+            if (crossExtErrors.Count > 0)
+            {
+                Log.Info($"Cross-extension name collisions suppressed ({crossExtErrors.Count} AL0275/AL0197 errors from different extensions compiled together).");
+                declErrors = declErrors
+                    .Where(d => !crossExtErrors.Contains(d))
+                    .ToList();
             }
         }
 

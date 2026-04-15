@@ -97,4 +97,49 @@ public class DiagnosticClassifierTests
         Assert.Null(DiagnosticClassifier.ExtractAmbiguityExtensionIds("unrelated error"));
         Assert.Null(DiagnosticClassifier.ExtractAmbiguityExtensionIds(""));
     }
+
+    // --- IsCrossExtensionAmbiguity ---
+
+    [Fact]
+    public void IsCrossExtensionAmbiguity_DifferentExtensions_ReturnsTrue()
+    {
+        Assert.True(DiagnosticClassifier.IsCrossExtensionAmbiguity(GenuineAmbiguityMessage));
+    }
+
+    [Fact]
+    public void IsCrossExtensionAmbiguity_SameExtension_ReturnsFalse()
+    {
+        Assert.False(DiagnosticClassifier.IsCrossExtensionAmbiguity(SelfDuplicateMessage));
+    }
+
+    [Fact]
+    public void IsCrossExtensionAmbiguity_SameNameDifferentVersion_ReturnsTrue()
+    {
+        // Different version counts as different extension
+        Assert.True(DiagnosticClassifier.IsCrossExtensionAmbiguity(SameNameDifferentVersionMessage));
+    }
+
+    [Fact]
+    public void IsCrossExtensionAmbiguity_MalformedMessage_ReturnsFalse()
+    {
+        Assert.False(DiagnosticClassifier.IsCrossExtensionAmbiguity("unrelated error"));
+        Assert.False(DiagnosticClassifier.IsCrossExtensionAmbiguity(""));
+    }
+
+    // --- IsCrossExtensionDuplicateDeclaration ---
+
+    [Fact]
+    public void IsCrossExtensionDuplicateDeclaration_AlreadyDeclaredBy_ReturnsTrue()
+    {
+        var msg = "An application object of type 'PageExtension' with name 'ItemCardExt' " +
+                  "is already declared by the extension 'AppAlpha by Publisher A (1.0.0.0)'";
+        Assert.True(DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration(msg));
+    }
+
+    [Fact]
+    public void IsCrossExtensionDuplicateDeclaration_UnrelatedMessage_ReturnsFalse()
+    {
+        Assert.False(DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration("some other error"));
+        Assert.False(DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration(SelfDuplicateMessage));
+    }
 }

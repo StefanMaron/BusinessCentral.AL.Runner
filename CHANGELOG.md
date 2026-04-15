@@ -127,6 +127,12 @@ All notable changes to this project are documented here. Format based on
   identifies system (1–9999) and test-toolkit (130000–139999) ranges, lists
   available codeunit IDs (up to 20), and suggests `--stubs` / `--generate-stubs`
   as resolution. (#176)
+- **Cross-extension AL0275/AL0197 suppression** — When multiple AL source directories
+  are compiled together (e.g., two extensions), false "ambiguous reference" (AL0275)
+  and "already declared" (AL0197) errors from name collisions between different
+  extensions are now suppressed. The classifier only suppresses extension object types
+  (PageExtension, TableExtension, etc.) and uses a two-pass approach to avoid hiding
+  genuine codeunit/table name collisions. (#182)
 
 ## [1.0.14] - 2026-04-14
 

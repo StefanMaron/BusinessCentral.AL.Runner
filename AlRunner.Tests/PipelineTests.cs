@@ -414,4 +414,27 @@ namespace AlRunnerGenerated {
         Assert.True(result.CompilationErrors == null || result.CompilationErrors.Count == 0,
             "CompilationErrors should be null or empty on successful compilation");
     }
+
+    [Fact]
+    public void CrossExtension_SameNamePageExtensions_Suppressed()
+    {
+        // Two extensions (appA, appB) define a pageextension with the same name
+        // "ItemCardExt" — valid in production BC where extensions compile independently.
+        // The runner compiles them together and must suppress the false AL0275/AL0197.
+        var testCase = CliRunner.FindTestCase("130-cross-ext-al0275");
+        var pipeline = new AlRunnerPipeline();
+        var result = pipeline.Run(new PipelineOptions
+        {
+            InputPaths =
+            {
+                Path.Combine(testCase, "appA"),
+                Path.Combine(testCase, "appB"),
+                Path.Combine(testCase, "test")
+            }
+        });
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.True(result.Passed > 0, "Should have passing tests");
+        Assert.Equal(0, result.Failed);
+    }
 }
