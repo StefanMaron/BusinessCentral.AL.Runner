@@ -11,6 +11,15 @@ All notable changes to this project are documented here. Format based on
   (`"<FieldCaption> <Message> in <TableCaption>: <PK>"`). Supports both
   `FieldError(Field)` (default `"must have a value"` message) and
   `FieldError(Field, Text)`. Errors are catchable via `asserterror`.
+- **Record.Mark / Record.MarkedOnly / Record.ClearMarks (#226)** — the
+  record-variable marking surface is now functional (previously no-ops).
+  `Mark(true/false)` flips the mark for the current record, `Mark()` returns
+  the current state, `MarkedOnly(true)` filters subsequent `FindSet` /
+  `FindFirst` / `FindLast` / `Next` / `Count` / `IsEmpty` iteration to the
+  marked subset, and `ClearMarks()` wipes all marks. Marks are per
+  record-variable instance, keyed on primary key values. New suite
+  `tests/bucket-1/37-record-mark` exercises positive (marked subset),
+  negative (MarkedOnly off), and reset (ClearMarks) paths.
 - **Enum extension test coverage (#227)** — new suite
   `tests/bucket-1/36-enum-extension` confirms that `enumextension` objects
   transpile and run correctly: base enum values retain their ordinals,

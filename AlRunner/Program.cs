@@ -258,6 +258,9 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - Composite primary keys, sort ordering (SetCurrentKey / SetAscending), CurrentKey, Ascending
 - SETRANGE / SETFILTER filtering (=, <>, <, <=, >, >=, wildcards, OR via |)
 - GetFilter(field), GetFilters, HasFilter — return active filter expressions
+- Record marking: `Rec.Mark(true/false)`, `Rec.Mark()` getter, `Rec.MarkedOnly(true)`,
+  `Rec.ClearMarks()`. Marks are per record-variable; MarkedOnly gates FindSet/FindFirst/
+  FindLast/Next/Count/IsEmpty to the marked subset.
 - FlowField CalcFormula — CalcFields evaluates exist(), count(), sum(), and lookup() formulas
   against the in-memory table store. Where-clause conditions support field() and const() references.
 - Cross-codeunit dispatch (Codeunit.Run, Codeunit.Run(id, Rec) with record parameter, direct codeunit variable calls)

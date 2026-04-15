@@ -89,7 +89,7 @@ public class RoslynRewriter : CSharpSyntaxRewriter
         "ALLockTable", "ALCalcSums", "ALSetLoadFields", "ALFieldCaption", "ALSetRecFilter",
         "ALTableCaption", "ALTableName", "ALTestFieldNavValueSafe",
         "ALFilterGroup", "ALSetRangeSafe", "ALReadIsolation",
-        "ALTransferFields", "ALMark", "ALMarkedOnly",
+        "ALTransferFields", "ALMark", "ALMarkedOnly", "ALClearMarks",
         "ALGetFilters", "ALGetRangeMinSafe", "ALGetRangeMaxSafe",
         "ALHasFilter", "ALCurrentKey", "ALAscending", "ALCountApprox",
         "ALConsistent", "ALFieldActive", "ALAddLink", "ALDeleteLink", "ALDeleteLinks",
@@ -561,7 +561,9 @@ public int ALFilterGroup { get => Rec.ALFilterGroup; set => Rec.ALFilterGroup = 
 public object ALReadIsolation { get => Rec.ALReadIsolation; set => Rec.ALReadIsolation = value; }
 public void Clear() => Rec.Clear();
 public void ALTransferFields(MockRecordHandle source, bool initPrimaryKey = true) => Rec.ALTransferFields(source, initPrimaryKey);
-public void ALMark(bool mark = true) => Rec.ALMark(mark);
+public void ALMark(bool mark) => Rec.ALMark(mark);
+public bool ALMark() => Rec.ALMark();
+public void ALClearMarks() => Rec.ALClearMarks();
 public bool ALMarkedOnly { get => Rec.ALMarkedOnly; set => Rec.ALMarkedOnly = value; }
 public int CurrFieldNo { get; set; }
 public string ALGetFilters => Rec.ALGetFilters;

@@ -599,7 +599,7 @@ public class MockRecordHandle
 
     public bool ALFind(DataError errorLevel, string searchMethod = "-")
     {
-        var filtered = GetFilteredRecords();
+        var filtered = GetFilteredAndMarkedRecords();
         if (filtered.Count == 0)
         {
             _currentResultSet = filtered;
@@ -636,7 +636,7 @@ public class MockRecordHandle
 
     public bool ALFindLast(DataError errorLevel = DataError.ThrowError)
     {
-        var filtered = GetFilteredRecords();
+        var filtered = GetFilteredAndMarkedRecords();
         if (filtered.Count == 0)
         {
             _currentResultSet = filtered;
@@ -869,9 +869,9 @@ public class MockRecordHandle
     // Count / IsEmpty — respect active filters
     // -----------------------------------------------------------------------
 
-    public int ALCount => GetFilteredRecords().Count;
+    public int ALCount => GetFilteredAndMarkedRecords().Count;
 
-    public bool ALIsEmpty => GetFilteredRecords().Count == 0;
+    public bool ALIsEmpty => GetFilteredAndMarkedRecords().Count == 0;
 
     /// <summary>
     /// Number of fields that have been set on this record handle.
@@ -2099,24 +2099,59 @@ public class MockRecordHandle
         }
     }
 
-    /// <summary>
-    /// AL's MARK — marks or unmarks the current record.
-    /// In standalone mode, no-op (marking is used for filtered iteration).
-    /// </summary>
-    public void ALMark(bool mark = true)
+    // -- Mark / MarkedOnly / ClearMarks --
+    // Marks are per record-variable (per handle instance). Keyed by PK string.
+    private readonly HashSet<string> _markedRecords = new();
+    private bool _markedOnly;
+
+    /// <summary>AL Mark() — returns whether the current record is marked.</summary>
+    public bool ALMark() => _markedRecords.Contains(GetCurrentPkKey());
+
+    /// <summary>AL Mark(bool) — marks or unmarks the current record.</summary>
+    public void ALMark(bool mark)
     {
-        // No-op: record marking not implemented in standalone mode
+        var key = GetCurrentPkKey();
+        if (mark) _markedRecords.Add(key);
+        else _markedRecords.Remove(key);
     }
 
     /// <summary>
-    /// AL's MARKEDONLY — sets/gets whether to only iterate over marked records.
-    /// Exposed as both a property (for assignment: rec.ALMarkedOnly = true) and a method.
-    /// In standalone mode, no-op.
+    /// AL MarkedOnly — when true, iteration (FindSet/Next/Count) returns only marked records.
+    /// Exposed as a property; AL's MarkedOnly(true) setter syntax and MarkedOnly() getter syntax
+    /// are both routed through the BC compiler to the same underlying property.
     /// </summary>
     public bool ALMarkedOnly
     {
-        get => false;
-        set { /* No-op: record marking not implemented in standalone mode */ }
+        get => _markedOnly;
+        set => _markedOnly = value;
+    }
+
+    /// <summary>AL ClearMarks — removes all marks on this record variable.</summary>
+    public void ALClearMarks() => _markedRecords.Clear();
+
+    private string GetCurrentPkKey()
+    {
+        var pk = GetPrimaryKeyFields();
+        var parts = new List<string>(pk.Length);
+        foreach (var f in pk)
+            parts.Add(_fields.TryGetValue(f, out var v) ? NavValueToString(v) : "");
+        return string.Join("|", parts);
+    }
+
+    private string GetRowPkKey(Dictionary<int, NavValue> row)
+    {
+        var pk = GetPrimaryKeyFields();
+        var parts = new List<string>(pk.Length);
+        foreach (var f in pk)
+            parts.Add(row.TryGetValue(f, out var v) ? NavValueToString(v) : "");
+        return string.Join("|", parts);
+    }
+
+    private List<Dictionary<int, NavValue>> GetFilteredAndMarkedRecords()
+    {
+        var rows = GetFilteredRecords();
+        if (!_markedOnly) return rows;
+        return rows.Where(r => _markedRecords.Contains(GetRowPkKey(r))).ToList();
     }
 
     /// <summary>

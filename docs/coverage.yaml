@@ -5616,7 +5616,9 @@ Table.ChangeCompany:
 Table.ClearMarks:
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/37-record-mark
   notes: overloads=1
 
 Table.Consistent:
@@ -5862,13 +5864,17 @@ Table.LockTable:
 Table.Mark:
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/37-record-mark
   notes: overloads=1
 
 Table.MarkedOnly:
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/37-record-mark
   notes: overloads=1
 
 Table.Modify:
