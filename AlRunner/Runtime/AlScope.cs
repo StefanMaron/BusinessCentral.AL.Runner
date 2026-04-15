@@ -1440,6 +1440,7 @@ public static class AlCompat
                 break;
         }
 
+        // Already aligned to precision boundary — no adjustment needed.
         if (diffTicks == 0) return dt;
 
         // Use NavDateTime + Int64 (milliseconds) instead of NavDateTime.Create(DateTime).

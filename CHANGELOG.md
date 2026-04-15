@@ -13,11 +13,10 @@ All notable changes to this project are documented here. Format based on
   the service tier, causing `TypeInitializationException`. `MockBigText` provides
   the same API surface (`ALAddText`, `ALGetSubText`, `ALTextPos`, `ALLength`,
   `ALWrite`, `ALRead`) using a plain `StringBuilder`.
-- **Artifact downloader fetches `Microsoft.BusinessCentral.*` DLLs** — The service
-  tier DLL downloader now also fetches `Microsoft.BusinessCentral.*` assemblies
-  (e.g. `Telemetry.Abstractions` introduced in BC 28) in addition to the existing
-  `Microsoft.Dynamics.Nav.*` DLLs. This prevents `FileNotFoundException` at runtime
-  when BC types reference these assemblies.
+- **RoundDateTime avoids Telemetry.Abstractions** — `AlCompat.RoundDateTime` now
+  uses `NavDateTime + Int64` (milliseconds) arithmetic instead of
+  `NavDateTime.Create(DateTime)` which triggers `Telemetry.Abstractions` loading
+  in BC 28+.
 - **CI pipeline strict mode** — The test matrix no longer tolerates exit code 2
   (runner limitations). Any non-zero exit code now fails the CI pipeline. If tests
   are blocked, warned, or errored, the pipeline reports failure — only a fully
