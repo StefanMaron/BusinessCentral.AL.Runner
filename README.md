@@ -57,7 +57,7 @@ AL Runner is designed to run **before** the full BC service tier pipeline as a f
 - TestPage navigation — Caption, First(), GoToKey(), GoToRecord(), Next(), New(), GetPart(), Filter.SetFilter()/GetFilter()
 - Request page handler dispatch (`[RequestPageHandler]`)
 - Limited report-handle support — `SetTableView()`, helper-procedure dispatch, `Run()`, `RunRequestPage()`
-- Built-in session functions: CompanyName, UserId, TenantId, SerialNumber (return empty string)
+- Built-in session functions: CompanyName, TenantId, SerialNumber (return empty string); `UserId()` configurable via `--user-id` flag (default: empty string)
 - Input from .al files, directories, or .app packages
 - Partial compilation (skips unsupported object types like XMLport)
 - Stub files (`--stubs <dir>`) for replacing unsupported dependencies

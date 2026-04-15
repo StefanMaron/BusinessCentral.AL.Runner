@@ -26,6 +26,9 @@ public class PipelineOptions
     /// <summary>When true, promote exit code 2 (runner limitations) to exit code 1 (failure).</summary>
     public bool Strict { get; set; }
 
+    /// <summary>Configures the value returned by UserId() — defaults to empty string.</summary>
+    public string? UserId { get; set; }
+
     /// <summary>
     /// Optional override for the C# rewriter step, intended for unit-testing the pipeline's
     /// rewriter-error-handling path. When set, replaces <see cref="RoslynRewriter.RewriteToTree"/>
@@ -301,6 +304,9 @@ public class AlRunnerPipeline
     {
         if (options.Verbose)
             Log.Verbose = true;
+
+        // Apply configurable session properties
+        Runtime.AlScope.UserId = options.UserId ?? "";
 
         var alSources = new List<string>();
         var sourceFilePaths = new List<string?>(); // parallel to alSources: file path or null
