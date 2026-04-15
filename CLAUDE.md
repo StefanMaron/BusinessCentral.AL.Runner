@@ -29,6 +29,8 @@ Every test must cover **both directions**:
 
 A test that only proves the happy path is incomplete — a mock that always returns a default value would also pass.
 
+**Tests must prove, not just pass.** Before marking a test complete, ask: "would this catch a broken or no-op mock?" If the test would pass even if the implementation always returned a default value, it is not a proving test — it is noise. Assert specific expected values, not just absence of errors. See issue #203.
+
 ---
 
 ## Filing Issues for Gaps
@@ -162,3 +164,15 @@ dotnet run --project AlRunner -- ./src ./test
 ## `--guide` Flag
 
 `al-runner --guide` prints a comprehensive test-writing reference for AI agents. It is the primary discovery mechanism for external agents. **Always update `PrintGuide()` in `Program.cs` when runner capabilities change.**
+
+---
+
+## Agent workflow
+
+This repository uses a multi-agent workflow. See `AGENTS.md` for the full contract. The short version:
+
+- **Implementation agents** (`agent: impl-1`, `agent: impl-2`): pick up issues labeled for them, implement with TDD, open a PR labeled `status: review-ready`, wait for orchestrator review and auto-merge.
+- **Orchestrator** (`agent: orchestrator`): assigns issues to idle impl agents, reviews PRs, enables auto-merge, replenishes the issue queue.
+- **Branch naming**: `agent/<agent-id>/issue-<N>` — always
+- **Never push directly to `main`** — always via PR
+- **Never self-assign** — impl agents only work on issues the orchestrator has labeled for them
