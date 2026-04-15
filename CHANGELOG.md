@@ -7,6 +7,11 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Test coverage: `Record.IsTemporary()` (#254)** — `MockRecordHandle.ALIsTemporary`
+  was already implemented; new suite `tests/bucket-1/254-record-istemporary`
+  adds 5 proving tests: normal Record → false, `temporary` Record → true,
+  stays temporary after Insert, temp store is isolated from the persisted
+  table, and normal Record stays non-temporary after Insert.
 - **Record.LockTable coverage (#250)** — `ALLockTable` in `MockRecordHandle`
   is a correct no-op (the runner has no SQL transaction isolation) but
   previously had no proving test. New suite `tests/bucket-1/42-locktable`
