@@ -5699,7 +5699,8 @@ Table.Delete:
 Table.DeleteAll:
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  tests: tests/bucket-1/50-deleteall
   notes: overloads=1
 
 Table.DeleteLink:

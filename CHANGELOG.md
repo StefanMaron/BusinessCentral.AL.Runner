@@ -7,6 +7,13 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **`Record.DeleteAll` coverage (#289)** — `ALDeleteAll` was already fully
+  implemented in `MockRecordHandle` (no-filter variant clears all rows; filter
+  variant removes only matching rows). New suite `tests/bucket-1/50-deleteall`
+  adds 6 proving tests: delete all, SetRange partial delete, SetFilter partial
+  delete, empty table (no error), non-matching filter on empty table, and
+  count-after-partial-delete. Coverage map: `Table.DeleteAll` moved from `gap`
+  to `covered`.
 - **`Table.Validate` coverage.yaml fix (#270)** — `Table.Validate` was
   listed as `status: gap` in `docs/coverage.yaml` despite 5 proving tests
   already existing in `tests/bucket-1/18-validate-trigger` (OnValidate fires
