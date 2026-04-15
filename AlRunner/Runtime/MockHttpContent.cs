@@ -59,7 +59,7 @@ public class MockHttpContent
     /// <summary>Returns the currently stored text content.</summary>
     public string GetText() => _textContent;
 
-    /// <summary>No-op Clear.</summary>
+    /// <summary>Resets content to empty.</summary>
     public void Clear()
     {
         _textContent = "";
