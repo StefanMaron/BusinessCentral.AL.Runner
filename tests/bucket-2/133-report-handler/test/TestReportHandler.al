@@ -60,23 +60,40 @@ codeunit 59960 "Test Report Handler"
     var
         Logic: Codeunit "Report Handler Logic";
     begin
+        // [GIVEN] No ReportHandler is registered
+        HandlerInvoked := false;
+
         // [WHEN] Report.Run is called without a handler
-        // [THEN] It should not crash (report runs silently)
         Logic.RunReportVar();
+
+        // [THEN] The report runs silently and no handler was dispatched
+        Assert.IsFalse(HandlerInvoked, 'HandlerInvoked should remain false when no handler is registered');
     end;
 
     [Test]
+    [HandlerFunctions('RequestPageFlagHandler')]
     procedure TestReportUseRequestPage()
     var
         Logic: Codeunit "Report Handler Logic";
     begin
-        // [WHEN] UseRequestPage(false) is set
-        // [THEN] Run should succeed without needing a RequestPageHandler
+        // [GIVEN] A RequestPageHandler is registered
+        HandlerInvoked := false;
+
+        // [WHEN] UseRequestPage(false) is set before Run
         Logic.RunReportVarUseRequestPage();
+
+        // [THEN] The RequestPageHandler should NOT be invoked
+        Assert.IsFalse(HandlerInvoked, 'RequestPageHandler should not be invoked when UseRequestPage is false');
     end;
 
     [ReportHandler]
     procedure TestReportStaticRunHandler(var TestRequestPage: TestRequestPage "Test Report Handler")
+    begin
+        HandlerInvoked := true;
+    end;
+
+    [RequestPageHandler]
+    procedure RequestPageFlagHandler(var TestRequestPage: TestRequestPage "Test Report Handler")
     begin
         HandlerInvoked := true;
     end;

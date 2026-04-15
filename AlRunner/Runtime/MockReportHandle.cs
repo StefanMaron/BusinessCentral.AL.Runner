@@ -68,7 +68,8 @@ public class MockReportHandle
 
     public string RunRequestPage()
     {
-        HandlerRegistry.InvokeRequestPageHandler(ReportId);
+        if (UseRequestForm)
+            HandlerRegistry.InvokeRequestPageHandler(ReportId);
         return "<RequestPage />";
     }
 
