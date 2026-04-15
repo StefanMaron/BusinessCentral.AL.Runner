@@ -2373,7 +2373,7 @@ public static class Executor
     }
 
     /// <summary>Print human-readable test results to console.</summary>
-    public static void PrintResults(List<AlRunner.TestResult> results, long? totalMs = null, bool verbose = false)
+    public static void PrintResults(List<AlRunner.TestResult> results, long? totalMs = null, bool verbose = false, bool strict = false)
     {
         // Deduplicate repeated error messages: show each unique message once as a WARN block,
         // then print compact "ERROR TestName (blocked)" lines for affected tests.
@@ -2424,6 +2424,26 @@ public static class Executor
                         if (r.StackTrace != null) Console.Write(r.StackTrace);
                     }
                     break;
+            }
+        }
+
+        // In strict mode, print a consolidated blocked-test summary right before the
+        // final line so CI logs clearly show WHY the run failed.
+        var blockedResults = results
+            .Where(r => r.Status == AlRunner.TestStatus.Error)
+            .ToList();
+        if (strict && blockedResults.Count > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine($"--- Blocked tests ({blockedResults.Count}) — failing CI with --strict ---");
+            var groups = blockedResults
+                .GroupBy(r => r.Message ?? "(unknown)")
+                .OrderBy(g => g.Key);
+            foreach (var group in groups)
+            {
+                Console.WriteLine($"  Cause: {group.Key}");
+                foreach (var r in group)
+                    Console.WriteLine($"    × {r.Name}");
             }
         }
 

@@ -424,6 +424,74 @@ public class RunnerErrorClassificationTests
     }
 
     // ---------------------------------------------------------------------------
+    // PrintResults --strict blocked-test summary
+    // ---------------------------------------------------------------------------
+
+    /// <summary>
+    /// In strict mode, a consolidated blocked-test summary section should appear
+    /// right before the final summary line, grouping blocked tests by root cause.
+    /// </summary>
+    [Fact]
+    public void PrintResults_Strict_BlockedTestSummarySection()
+    {
+        var sharedMessage = "FileNotFoundException: Could not load some.dll";
+        var tests = new List<TestResult>
+        {
+            new() { Name = "PassA", Status = TestStatus.Pass, DurationMs = 1 },
+            new() { Name = "BlockedA", Status = TestStatus.Error, Message = sharedMessage, IsRunnerBug = true },
+            new() { Name = "BlockedB", Status = TestStatus.Error, Message = sharedMessage, IsRunnerBug = true },
+            new() { Name = "BlockedC", Status = TestStatus.Error, Message = "OtherError", IsRunnerBug = true },
+        };
+
+        var output = CaptureStdOut(() => Executor.PrintResults(tests, strict: true));
+
+        // Should contain the strict blocked-test summary section
+        Assert.Contains("Blocked tests (3)", output);
+        Assert.Contains("failing CI with --strict", output);
+        // Both root causes listed
+        Assert.Contains("Cause: FileNotFoundException: Could not load some.dll", output);
+        Assert.Contains("Cause: OtherError", output);
+        // All blocked test names listed
+        Assert.Contains("× BlockedA", output);
+        Assert.Contains("× BlockedB", output);
+        Assert.Contains("× BlockedC", output);
+    }
+
+    /// <summary>
+    /// Without strict mode, no blocked-test summary section should appear.
+    /// </summary>
+    [Fact]
+    public void PrintResults_NoStrict_NoBlockedSummarySection()
+    {
+        var tests = new List<TestResult>
+        {
+            new() { Name = "BlockedA", Status = TestStatus.Error, Message = "SomeError", IsRunnerBug = true },
+        };
+
+        var output = CaptureStdOut(() => Executor.PrintResults(tests, strict: false));
+
+        Assert.DoesNotContain("Blocked tests", output);
+        Assert.DoesNotContain("failing CI with --strict", output);
+    }
+
+    /// <summary>
+    /// In strict mode with no blocked tests (all pass), no summary section should appear.
+    /// </summary>
+    [Fact]
+    public void PrintResults_Strict_AllPass_NoBlockedSummarySection()
+    {
+        var tests = new List<TestResult>
+        {
+            new() { Name = "PassA", Status = TestStatus.Pass, DurationMs = 1 },
+        };
+
+        var output = CaptureStdOut(() => Executor.PrintResults(tests, strict: true));
+
+        Assert.DoesNotContain("Blocked tests", output);
+        Assert.DoesNotContain("failing CI with --strict", output);
+    }
+
+    // ---------------------------------------------------------------------------
     // IsMissingBcRuntimeDll — unit tests for the new classification helper
     // ---------------------------------------------------------------------------
 

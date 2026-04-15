@@ -148,7 +148,7 @@ static int DownloadServiceTier(string version, string outputDir)
         var lower = name.ToLowerInvariant();
         var bn = Path.GetFileName(lower);
         if (lower.Contains("servicetier/") && lower.Contains("/service/") &&
-            bn.StartsWith("microsoft.dynamics.nav.") && bn.EndsWith(".dll") && cs > 0 &&
+            (bn.StartsWith("microsoft.dynamics.nav.") || bn.StartsWith("microsoft.businesscentral.")) && bn.EndsWith(".dll") && cs > 0 &&
             !lower.Split("/service/").Last().Contains('/'))
             matching.Add((name, cm, cs, lo));
         pos += 46 + nl + el + cl;
