@@ -268,9 +268,11 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - Dialog variable (Open, Update, Close — all no-ops in standalone mode)
 - RecordRef / FieldRef — Open, Close, Field(n).Value get/set, Insert, Modify,
   Delete, DeleteAll, FindSet+Next iteration, GetTable/SetTable, SetRange/SetFilter,
-  RecRef := OtherRecRef assignment, SetLoadFields (no-op), Mark/MarkedOnly/ClearMarks
-  (no-op stubs), Rename, FieldExists, FieldCount, HasFilter, GetFilters, GetPosition,
-  SetPosition, Ascending, ChangeCompany (no-op), ModifyAll, CurrentCompany,
+  RecRef := OtherRecRef assignment, SetLoadFields (no-op), Mark/MarkedOnly/ClearMarks,
+  Rename, FieldExists, FieldCount, HasFilter, GetFilters, GetPosition,
+  SetPosition, Ascending (get/set), ChangeCompany (no-op), ModifyAll, CurrentCompany,
+  FieldRef.GetFilter, FieldRef.GetRangeMin, FieldRef.GetRangeMax, FieldRef.Record,
+  KeyCount, KeyIndex(n), CurrentKeyIndex,
   RecRef.Name (real table name from AL source metadata),
   SystemIdNo, SystemCreatedAtNo, SystemCreatedByNo, SystemModifiedAtNo,
   SystemModifiedByNo (return well-known BC system field numbers).
@@ -278,6 +280,7 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   GetEnumValueCaption(index), GetEnumValueOrdinal(index) — enum introspection
   using registered enum metadata. CalcSum() — sums a decimal field across all
   filtered records; result is available via the next Value read.
+- KeyRef — FieldCount, FieldIndex(n), Record, Active (basic key metadata via KeyRef variable)
 - Field metadata — Record.FieldCaption, Record.TableCaption, Record.TableName,
   FieldRef.Name, FieldRef.Caption, FieldRef.Type, FieldRef.Length return real values
   parsed from AL source table declarations (Caption property, field type, Text[N]/Code[N]

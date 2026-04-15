@@ -108,6 +108,44 @@ public class MockRecordHandle
         return new[] { 1 };
     }
 
+    /// <summary>Get the PK field numbers for this table (public accessor for MockRecordRef/KeyRef).</summary>
+    public int[] GetPrimaryKeyFieldNos() => GetPrimaryKeyFields();
+
+    /// <summary>
+    /// Set the ascending direction for all current key fields (or PK fields if none set).
+    /// Used by MockRecordRef.Ascending setter which operates on the overall iteration direction.
+    /// </summary>
+    public void SetOverallAscending(bool ascending)
+    {
+        var fields = _currentKeyFields ?? GetPrimaryKeyFields();
+        // Ensure current key fields are set so GetFilteredRecords applies sorting
+        _currentKeyFields ??= GetPrimaryKeyFields();
+        foreach (var f in fields)
+            _ascending[f] = ascending;
+    }
+
+    /// <summary>
+    /// Get the range minimum value for a field. Returns null if no range filter is active.
+    /// Used by MockFieldRef.ALGetRangeMin via MockRecordRef.
+    /// </summary>
+    public NavValue? GetRangeMin(int fieldNo)
+    {
+        if (_filters.TryGetValue(fieldNo, out var filter) && filter.IsRangeFilter)
+            return filter.FromValue;
+        return null;
+    }
+
+    /// <summary>
+    /// Get the range maximum value for a field. Returns null if no range filter is active.
+    /// Used by MockFieldRef.ALGetRangeMax via MockRecordRef.
+    /// </summary>
+    public NavValue? GetRangeMax(int fieldNo)
+    {
+        if (_filters.TryGetValue(fieldNo, out var filter) && filter.IsRangeFilter)
+            return filter.ToValue;
+        return null;
+    }
+
     public void ALInit()
     {
         _fields = new Dictionary<int, NavValue>();

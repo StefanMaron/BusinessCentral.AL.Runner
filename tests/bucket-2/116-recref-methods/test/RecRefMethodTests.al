@@ -40,12 +40,12 @@ codeunit 50917 "RecRef Method Tests"
     end;
 
     [Test]
-    procedure TestMarkReturnsFalseAsStub()
+    procedure TestMarkReturnsTrueAfterMarking()
     var
         Helper: Codeunit "RecRef Method Helper";
     begin
-        // Mark is a no-op stub — Mark() always returns false
-        Assert.IsFalse(Helper.TestMark(), 'Mark() stub should return false');
+        // Mark(true) marks the record, then Mark() returns true
+        Assert.IsTrue(Helper.TestMark(), 'Mark() should return true after Mark(true)');
     end;
 
     [Test]
