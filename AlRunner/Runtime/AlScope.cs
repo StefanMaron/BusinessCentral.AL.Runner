@@ -149,6 +149,12 @@ public class AlScope : IDisposable, ITreeObject
     /// </summary>
     public static string LastErrorText { get; set; } = "";
 
+    /// <summary>
+    /// Configurable user ID returned by UserId() — defaults to empty string.
+    /// Set via --user-id CLI flag or PipelineOptions.UserId before running.
+    /// </summary>
+    public static string UserId { get; set; } = "";
+
     // NavMethodScope static fields/methods — the BC compiler can emit static
     // references to these on scope classes that inherit from AlScope.
     public static int ExitStatementNumber { get; set; }
@@ -1358,12 +1364,6 @@ public static class AlCompat
             stream.Value = ms;
         }
     }
-
-    /// <summary>
-    /// Configurable user ID returned by UserId() — defaults to empty string.
-    /// Set via --user-id CLI flag or PipelineOptions.UserId before running.
-    /// </summary>
-    public static string UserId { get; set; } = "";
 
     /// <summary>
     /// Session.ApplicationArea() stub — returns empty string in standalone mode.
