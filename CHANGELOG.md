@@ -7,6 +7,12 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Multi-token decimal format strings (#225)** — `Format(decimal, 0, '<Precision,2:2><Standard Format,0>')`
+  now parses every `<...>` token in the picture string instead of only the
+  first. For decimals, `<Precision,min:max>` wins over `<Standard Format,N>`
+  when both are present. Single-token strings are unchanged. New suite
+  `tests/bucket-1/225-format-multi-token` covers integer, fractional, and
+  rounding cases.
 - **`Record.FieldError` (#228)** — raises a field-level validation error
   (`"<FieldCaption> <Message> in <TableCaption>: <PK>"`). Supports both
   `FieldError(Field)` (default `"must have a value"` message) and

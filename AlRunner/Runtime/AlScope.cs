@@ -1015,60 +1015,68 @@ public static class AlCompat
     /// </summary>
     private static string? ApplyDecimalFormatString(decimal value, string formatString)
     {
-        // Strip outer whitespace and angle-brackets to get the token content
         var fs = formatString.Trim();
-        if (!fs.StartsWith('<') || !fs.EndsWith('>'))
+        if (!fs.Contains('<') || !fs.Contains('>'))
             return null;
-        // Only handle single-token picture strings for now
-        // (multi-token strings like '<Precision,1:2><some other>' are not standard for decimals)
-        var token = fs.Substring(1, fs.Length - 2).Trim();
 
-        // <Precision,min:max>
-        if (token.StartsWith("Precision,", StringComparison.OrdinalIgnoreCase))
+        // Extract each <...> token. For decimals, multi-token strings like
+        // '<Precision,2:2><Standard Format,0>' are valid — Precision takes precedence,
+        // otherwise Standard Format applies.
+        string? precisionToken = null;
+        string? standardFormatToken = null;
+        int i = 0;
+        while (i < fs.Length)
         {
-            var rest = token.Substring("Precision,".Length);
+            int start = fs.IndexOf('<', i);
+            if (start < 0) break;
+            int end = fs.IndexOf('>', start);
+            if (end < 0) break;
+            var token = fs.Substring(start + 1, end - start - 1).Trim();
+            if (precisionToken == null && token.StartsWith("Precision,", StringComparison.OrdinalIgnoreCase))
+                precisionToken = token;
+            else if (standardFormatToken == null && token.StartsWith("Standard Format,", StringComparison.OrdinalIgnoreCase))
+                standardFormatToken = token;
+            i = end + 1;
+        }
+
+        if (precisionToken != null)
+        {
+            var rest = precisionToken.Substring("Precision,".Length);
             var colonPos = rest.IndexOf(':');
-            if (colonPos >= 0)
+            if (colonPos >= 0 &&
+                int.TryParse(rest.Substring(0, colonPos).Trim(), out int minDec) &&
+                int.TryParse(rest.Substring(colonPos + 1).Trim(), out int maxDec))
             {
-                if (int.TryParse(rest.Substring(0, colonPos).Trim(), out int minDec) &&
-                    int.TryParse(rest.Substring(colonPos + 1).Trim(), out int maxDec))
+                var rounded = Math.Round(value, maxDec, MidpointRounding.AwayFromZero);
+                if (maxDec <= 0)
+                    return rounded.ToString("0", System.Globalization.CultureInfo.InvariantCulture);
+                var fullFmt = "0." + new string('0', maxDec);
+                var full = rounded.ToString(fullFmt, System.Globalization.CultureInfo.InvariantCulture);
+                if (full.Contains('.'))
                 {
-                    // Round to maxDec decimal places
-                    var rounded = Math.Round(value, maxDec, MidpointRounding.AwayFromZero);
-                    if (maxDec <= 0)
-                        return rounded.ToString("0", System.Globalization.CultureInfo.InvariantCulture);
-                    // Format to maxDec places (fixed), then strip trailing zeros down to minDec
-                    var fullFmt = "0." + new string('0', maxDec);
-                    var full = rounded.ToString(fullFmt, System.Globalization.CultureInfo.InvariantCulture);
-                    // Strip trailing zeros but keep at least minDec decimal digits
-                    if (full.Contains('.'))
-                    {
-                        int dotPos = full.IndexOf('.');
-                        int end = full.Length;
-                        int minEnd = dotPos + 1 + minDec;
-                        while (end > minEnd && full[end - 1] == '0')
-                            end--;
-                        // If minDec == 0 and result ends with '.', remove the dot
-                        if (end == dotPos + 1 && minDec == 0)
-                            end = dotPos;
-                        full = full.Substring(0, end);
-                    }
-                    return full;
+                    int dotPos = full.IndexOf('.');
+                    int endPos = full.Length;
+                    int minEnd = dotPos + 1 + minDec;
+                    while (endPos > minEnd && full[endPos - 1] == '0')
+                        endPos--;
+                    if (endPos == dotPos + 1 && minDec == 0)
+                        endPos = dotPos;
+                    full = full.Substring(0, endPos);
                 }
+                return full;
             }
         }
 
-        // <Standard Format,N>
-        if (token.StartsWith("Standard Format,", StringComparison.OrdinalIgnoreCase))
+        if (standardFormatToken != null)
         {
-            var rest = token.Substring("Standard Format,".Length).Trim();
+            var rest = standardFormatToken.Substring("Standard Format,".Length).Trim();
             if (int.TryParse(rest, out int formatNo))
             {
                 return formatNo switch
                 {
                     1 => Math.Round(value, 0, MidpointRounding.AwayFromZero)
                              .ToString("0", System.Globalization.CultureInfo.InvariantCulture),
-                    _ => FormatDecimal(value), // Format 0 and unknown: default AL decimal formatting
+                    _ => FormatDecimal(value),
                 };
             }
         }
