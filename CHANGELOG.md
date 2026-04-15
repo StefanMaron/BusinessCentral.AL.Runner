@@ -7,6 +7,12 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Record.Count with SetFilter expressions coverage (#260)** — `Count` with
+  SetFilter comparators / OR-lists / range expressions was already honoured
+  in `MockRecordHandle.ALCount` but had no dedicated proving test. New suite
+  `tests/bucket-1/46-count-setfilter` covers `'>1'`, `'<2'`, `'<>2'`,
+  `'1|3'`, `'2..3'`, no-match (0), and restoration after `Reset`. RED
+  confirmed by pointing `ALCount` at the unfiltered row list.
 - **`Record.Next(Steps)` overload (#262)** — `MockRecordHandle.ALNext(int)` is
   new (previously only the parameterless `ALNext()` existed). Positive steps
   move forward, negative steps move backward, and the return value is the
