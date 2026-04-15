@@ -490,13 +490,11 @@ namespace AlRunnerGenerated {
     [Fact]
     public void UserId_DefaultIsEmptyString()
     {
-        // Negative: UserId() returns empty string when no --user-id option is set
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
-            InputPaths = { TestPath("40-userid", "test") }
+            InputPaths = { TestPath("43-userid", "test") }
         });
-
         Assert.Equal(0, result.ExitCode);
         Assert.True(result.Passed > 0);
         Assert.Equal(0, result.Failed);
@@ -505,14 +503,12 @@ namespace AlRunnerGenerated {
     [Fact]
     public void UserId_ReturnsConfiguredValue()
     {
-        // Positive: UserId() returns the value set via PipelineOptions.UserId
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
             UserId = "TESTUSER123",
             InlineCode = "if UserId() <> 'TESTUSER123' then error('UserId() returned wrong value: ' + UserId());"
         });
-
         Assert.Equal(0, result.ExitCode);
     }
 }
