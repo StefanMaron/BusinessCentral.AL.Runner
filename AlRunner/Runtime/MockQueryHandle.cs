@@ -63,7 +63,7 @@ public class MockQueryHandle
     /// </summary>
     public bool ALOpen(DataError errorLevel = default)
         => throw new NotSupportedException(
-            "Query Open/Read requires the BC service tier and is not supported by al-runner. " +
+            $"Query {QueryId} Open requires the BC service tier and is not supported by al-runner. " +
             "Use Record operations instead, or inject the query behind an AL interface.");
 
     /// <summary>
@@ -72,7 +72,7 @@ public class MockQueryHandle
     /// </summary>
     public bool ALRead(DataError errorLevel = default)
         => throw new NotSupportedException(
-            "Query Open/Read requires the BC service tier and is not supported by al-runner. " +
+            $"Query {QueryId} Read requires the BC service tier and is not supported by al-runner. " +
             "Use Record operations instead, or inject the query behind an AL interface.");
 
     /// <summary>

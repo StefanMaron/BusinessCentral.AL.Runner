@@ -24,8 +24,8 @@ codeunit 56254 "XmlPort Query Diag Tests"
     procedure XmlPortInvokeDoesNotCrash()
     begin
         // [GIVEN] A codeunit with an XmlPort variable
-        // [WHEN]  Invoke() is called (custom trigger dispatch)
-        // [THEN]  No error — Invoke returns null silently
+        // [WHEN]  A custom procedure on the XmlPort is called (exercises Invoke dispatch)
+        // [THEN]  No error — MockXmlPortHandle.Invoke returns null silently
         Logic.XmlPortInvoke();
     end;
 

@@ -28,6 +28,11 @@ xmlport 56251 "Diag XmlPort"
             }
         }
     }
+
+    procedure GetPortName(): Text
+    begin
+        exit('Diag XmlPort');
+    end;
 }
 
 query 56252 "Diag Item Query"
@@ -62,7 +67,10 @@ codeunit 56253 "Diag Logic"
     var
         XP: XmlPort "Diag XmlPort";
     begin
-        // Invoke() returns null — no crash expected.
+        // Call a custom procedure on the XmlPort to exercise Invoke() dispatch.
+        // BC compiles XP.GetPortName() as xP.Invoke(memberId, args);
+        // MockXmlPortHandle.Invoke() returns null — no crash expected.
+        XP.GetPortName();
     end;
 
     // ---- XmlPort operations that MUST throw ----

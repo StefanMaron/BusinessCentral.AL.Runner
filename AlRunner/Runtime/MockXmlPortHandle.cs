@@ -39,7 +39,7 @@ public class MockXmlPortHandle
     /// </summary>
     public void Import(object? errorLevel = null)
         => throw new NotSupportedException(
-            "XmlPort Import/Export requires the BC service tier and is not supported by al-runner. " +
+            $"XmlPort {XmlPortId} Import requires the BC service tier and is not supported by al-runner. " +
             "Use AL interface injection to abstract XmlPort dependencies for testing.");
 
     /// <summary>
@@ -48,7 +48,7 @@ public class MockXmlPortHandle
     /// </summary>
     public void Export(object? errorLevel = null)
         => throw new NotSupportedException(
-            "XmlPort Import/Export requires the BC service tier and is not supported by al-runner. " +
+            $"XmlPort {XmlPortId} Export requires the BC service tier and is not supported by al-runner. " +
             "Use AL interface injection to abstract XmlPort dependencies for testing.");
 
     /// <summary>
@@ -69,7 +69,7 @@ public class MockXmlPortHandle
     /// </summary>
     public static void StaticImport(object? errorLevel, int xmlPortId, object? stream, object? rec = null)
         => throw new NotSupportedException(
-            $"XmlPort Import/Export requires the BC service tier and is not supported by al-runner. " +
+            $"XmlPort {xmlPortId} Import requires the BC service tier and is not supported by al-runner. " +
             "Use AL interface injection to abstract XmlPort dependencies for testing.");
 
     /// <summary>
@@ -78,6 +78,6 @@ public class MockXmlPortHandle
     /// </summary>
     public static void StaticExport(object? errorLevel, int xmlPortId, object? stream, object? rec = null)
         => throw new NotSupportedException(
-            $"XmlPort Import/Export requires the BC service tier and is not supported by al-runner. " +
+            $"XmlPort {xmlPortId} Export requires the BC service tier and is not supported by al-runner. " +
             "Use AL interface injection to abstract XmlPort dependencies for testing.");
 }
