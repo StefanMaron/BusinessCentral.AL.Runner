@@ -437,4 +437,29 @@ namespace AlRunnerGenerated {
         Assert.True(result.Passed > 0, "Should have passing tests");
         Assert.Equal(0, result.Failed);
     }
+
+    [Fact]
+    public void CrossExtension_SameNameCodeunits_NotSuppressed()
+    {
+        // Two extensions define a codeunit with the same name "Shared Helper" —
+        // Codeunit is NOT an extension type, so the collision must NOT be suppressed.
+        // Verify the AL0197 error appears in verbose output (not silently eaten).
+        var testCase = CliRunner.FindTestCase("131-genuine-codeunit-collision");
+        var pipeline = new AlRunnerPipeline();
+        var result = pipeline.Run(new PipelineOptions
+        {
+            InputPaths =
+            {
+                Path.Combine(testCase, "appA"),
+                Path.Combine(testCase, "appB"),
+                Path.Combine(testCase, "test")
+            },
+            Verbose = true
+        });
+
+        // The AL0197 for Codeunit type must NOT be suppressed
+        Assert.DoesNotContain("Cross-extension name collisions suppressed", result.StdErr);
+        Assert.Contains("AL0197", result.StdErr);
+        Assert.Contains("Codeunit", result.StdErr);
+    }
 }

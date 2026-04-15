@@ -1003,8 +1003,6 @@ public static class AlTranspiler
                         .Where(d => d.Severity == DiagnosticSeverity.Error && !ignoredErrorIds.Contains(d.Id))
                         .ToList();
 
-                    // Refresh for case 3 below
-                    al0275Errors = declErrors.Where(d => d.Id is "AL0275" or "AL0197").ToList();
                 }
             }
         }
@@ -1015,18 +1013,38 @@ public static class AlTranspiler
         // with the same name from different extensions cause false AL0275/AL0197 errors.
         // In production BC these compile independently and never collide. Since
         // extension objects are never referenced by name in AL code, we suppress these.
-        // AL0275 format: "ambiguous reference between ... defined by extension A ... and extension B"
-        // AL0197 format: "already declared by the extension 'A'"
+        //
+        // Two-pass approach: first suppress AL0197 for extension types only and collect
+        // their object names, then suppress AL0275 only for those collected names.
+        // Non-extension types (Codeunit, Table, Page, etc.) are never suppressed.
         {
-            var crossExtErrors = declErrors
-                .Where(d => d.Id is "AL0275" or "AL0197")
+            // Pass 1: AL0197 — only suppress extension-type duplicates
+            var al0197CrossExt = declErrors
+                .Where(d => d.Id == "AL0197")
+                .Where(d => DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration(d.GetMessage()))
+                .ToList();
+
+            var suppressedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var d in al0197CrossExt)
+            {
+                var info = DiagnosticClassifier.ExtractDuplicateDeclarationInfo(d.GetMessage());
+                if (info != null)
+                    suppressedNames.Add(info.Value.ObjectName);
+            }
+
+            // Pass 2: AL0275 — only suppress if the object name is a known extension object
+            var al0275CrossExt = declErrors
+                .Where(d => d.Id == "AL0275")
                 .Where(d =>
                 {
                     var msg = d.GetMessage();
-                    return DiagnosticClassifier.IsCrossExtensionAmbiguity(msg)
-                        || DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration(msg);
+                    if (!DiagnosticClassifier.IsCrossExtensionAmbiguity(msg)) return false;
+                    var name = DiagnosticClassifier.ExtractAmbiguousObjectName(msg);
+                    return name != null && suppressedNames.Contains(name);
                 })
                 .ToList();
+
+            var crossExtErrors = al0197CrossExt.Concat(al0275CrossExt).ToList();
             if (crossExtErrors.Count > 0)
             {
                 Log.Info($"Cross-extension name collisions suppressed ({crossExtErrors.Count} AL0275/AL0197 errors from different extensions compiled together).");

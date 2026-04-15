@@ -129,9 +129,51 @@ public class DiagnosticClassifierTests
     // --- IsCrossExtensionDuplicateDeclaration ---
 
     [Fact]
-    public void IsCrossExtensionDuplicateDeclaration_AlreadyDeclaredBy_ReturnsTrue()
+    public void IsCrossExtensionDuplicateDeclaration_PageExtensionType_ReturnsTrue()
     {
         var msg = "An application object of type 'PageExtension' with name 'ItemCardExt' " +
+                  "is already declared by the extension 'AppAlpha by Publisher A (1.0.0.0)'";
+        Assert.True(DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration(msg));
+    }
+
+    [Fact]
+    public void IsCrossExtensionDuplicateDeclaration_TableExtensionType_ReturnsTrue()
+    {
+        var msg = "An application object of type 'TableExtension' with name 'ItemExt' " +
+                  "is already declared by the extension 'AppAlpha by Publisher A (1.0.0.0)'";
+        Assert.True(DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration(msg));
+    }
+
+    [Fact]
+    public void IsCrossExtensionDuplicateDeclaration_CodeunitType_ReturnsFalse()
+    {
+        // Codeunit is NOT an extension type — must NOT be suppressed
+        var msg = "An application object of type 'Codeunit' with name 'MyHelper' " +
+                  "is already declared by the extension 'AppAlpha by Publisher A (1.0.0.0)'";
+        Assert.False(DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration(msg));
+    }
+
+    [Fact]
+    public void IsCrossExtensionDuplicateDeclaration_TableType_ReturnsFalse()
+    {
+        // Table is NOT an extension type — must NOT be suppressed
+        var msg = "An application object of type 'Table' with name 'My Table' " +
+                  "is already declared by the extension 'AppAlpha by Publisher A (1.0.0.0)'";
+        Assert.False(DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration(msg));
+    }
+
+    [Fact]
+    public void IsCrossExtensionDuplicateDeclaration_PageType_ReturnsFalse()
+    {
+        var msg = "An application object of type 'Page' with name 'My Page' " +
+                  "is already declared by the extension 'AppAlpha by Publisher A (1.0.0.0)'";
+        Assert.False(DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration(msg));
+    }
+
+    [Fact]
+    public void IsCrossExtensionDuplicateDeclaration_EnumExtensionType_ReturnsTrue()
+    {
+        var msg = "An application object of type 'EnumExtension' with name 'StatusExt' " +
                   "is already declared by the extension 'AppAlpha by Publisher A (1.0.0.0)'";
         Assert.True(DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration(msg));
     }
@@ -141,5 +183,44 @@ public class DiagnosticClassifierTests
     {
         Assert.False(DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration("some other error"));
         Assert.False(DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration(SelfDuplicateMessage));
+    }
+
+    // --- ExtractDuplicateDeclarationInfo ---
+
+    [Fact]
+    public void ExtractDuplicateDeclarationInfo_ParsesAllFields()
+    {
+        var msg = "An application object of type 'PageExtension' with name 'ItemCardExt' " +
+                  "is already declared by the extension 'AppAlpha by Publisher A (1.0.0.0)'";
+        var info = DiagnosticClassifier.ExtractDuplicateDeclarationInfo(msg);
+        Assert.NotNull(info);
+        Assert.Equal("PageExtension", info!.Value.ObjectType);
+        Assert.Equal("ItemCardExt", info.Value.ObjectName);
+        Assert.Equal("AppAlpha by Publisher A (1.0.0.0)", info.Value.ExtensionId);
+    }
+
+    [Fact]
+    public void ExtractDuplicateDeclarationInfo_MalformedMessage_ReturnsNull()
+    {
+        Assert.Null(DiagnosticClassifier.ExtractDuplicateDeclarationInfo("unrelated error"));
+        Assert.Null(DiagnosticClassifier.ExtractDuplicateDeclarationInfo(""));
+    }
+
+    // --- ExtractAmbiguousObjectName ---
+
+    [Fact]
+    public void ExtractAmbiguousObjectName_ExtractsName()
+    {
+        var msg = "'ItemCardExt' is an ambiguous reference between " +
+                  "'ItemCardExt' defined by the extension 'App A (1.0)' and " +
+                  "'ItemCardExt' defined by the extension 'App B (1.0)'.";
+        Assert.Equal("ItemCardExt", DiagnosticClassifier.ExtractAmbiguousObjectName(msg));
+    }
+
+    [Fact]
+    public void ExtractAmbiguousObjectName_MalformedMessage_ReturnsNull()
+    {
+        Assert.Null(DiagnosticClassifier.ExtractAmbiguousObjectName("unrelated error"));
+        Assert.Null(DiagnosticClassifier.ExtractAmbiguousObjectName(""));
     }
 }

@@ -19,13 +19,28 @@ public static class DiagnosticClassifier
     private static readonly Regex ExtensionIdPattern =
         new(@"defined by the extension '([^']+)'", RegexOptions.Compiled);
 
-    // Matches AL0197 "already declared by" messages that indicate a cross-extension
-    // duplicate object name. These only fire when two different extensions in the
-    // same compilation define an object with the same type and name.
+    // Matches AL0197 "already declared by" messages and extracts object type, name,
+    // and declaring extension. Only fires when two different extensions in the same
+    // compilation define an object with the same type and name.
     // Example: "An application object of type 'PageExtension' with name 'ItemCardExt'
     //           is already declared by the extension 'AppAlpha by Publisher A (1.0.0.0)'"
-    private static readonly Regex DeclaredByExtensionPattern =
-        new(@"already declared by the extension '([^']+)'", RegexOptions.Compiled);
+    private static readonly Regex DeclaredByPattern =
+        new(@"An application object of type '([^']+)' with name '([^']+)' is already declared by the extension '([^']+)'",
+            RegexOptions.Compiled);
+
+    // Extracts the first quoted name from an AL0275 "ambiguous reference" message.
+    // Example: "'ItemCardExt' is an ambiguous reference between ..."
+    private static readonly Regex AmbiguousNamePattern =
+        new(@"^'([^']+)' is an ambiguous reference", RegexOptions.Compiled);
+
+    // Object types that are extension objects — these compile independently in
+    // production BC and can legitimately share names across extensions.
+    private static readonly HashSet<string> ExtensionObjectTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "PageExtension", "TableExtension", "ReportExtension",
+        "EnumExtension", "PermissionSetExtension", "ProfileExtension",
+        "PageCustomization"
+    };
 
     /// <summary>
     /// Returns true when an AL0275 diagnostic message describes a self-duplicate:
@@ -56,13 +71,37 @@ public static class DiagnosticClassifier
 
     /// <summary>
     /// Returns true when an AL0197 message indicates a cross-extension duplicate
-    /// object declaration. The "already declared by the extension" format fires
-    /// when two different extensions compiled together define an object with the
-    /// same type and name. This is always a cross-extension collision.
+    /// declaration of an extension object type (PageExtension, TableExtension, etc.).
+    /// Non-extension types (Codeunit, Table, Page, etc.) are never suppressed
+    /// because same-name collisions on those types are genuine errors.
     /// </summary>
     public static bool IsCrossExtensionDuplicateDeclaration(string message)
     {
-        return DeclaredByExtensionPattern.IsMatch(message);
+        var info = ExtractDuplicateDeclarationInfo(message);
+        if (info is null) return false;
+        return ExtensionObjectTypes.Contains(info.Value.ObjectType);
+    }
+
+    /// <summary>
+    /// Parses object type, object name, and declaring extension from an AL0197
+    /// "already declared by the extension" message. Returns null if the message
+    /// doesn't match the expected format.
+    /// </summary>
+    public static (string ObjectType, string ObjectName, string ExtensionId)? ExtractDuplicateDeclarationInfo(string message)
+    {
+        var match = DeclaredByPattern.Match(message);
+        if (!match.Success) return null;
+        return (match.Groups[1].Value, match.Groups[2].Value, match.Groups[3].Value);
+    }
+
+    /// <summary>
+    /// Extracts the object name from an AL0275 "ambiguous reference" message.
+    /// Returns null if the message doesn't match the expected format.
+    /// </summary>
+    public static string? ExtractAmbiguousObjectName(string message)
+    {
+        var match = AmbiguousNamePattern.Match(message);
+        return match.Success ? match.Groups[1].Value : null;
     }
 
     /// <summary>
