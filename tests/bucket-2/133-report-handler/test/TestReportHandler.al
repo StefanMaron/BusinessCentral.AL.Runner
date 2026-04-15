@@ -1,4 +1,4 @@
-codeunit 59960 "Test Report Handler"
+codeunit 59983 "Test Report Handler"
 {
     Subtype = Test;
 
