@@ -77,6 +77,10 @@ jobs:
             args=""
             for suite in "$bucket"*/; do
               [ -d "${suite}src"  ] && args="$args ${suite}src"
+              # Multi-app suites (e.g. cross-extension tests) use appA/, appB/, etc.
+              for appdir in "${suite}"app*/; do
+                [ -d "$appdir" ] && args="$args $appdir"
+              done
               [ -d "${suite}test" ] && args="$args ${suite}test"
             done
             echo "=== $bucket ==="
@@ -93,6 +97,9 @@ jobs:
             args=""
             for suite in "$bucket"*/; do
               [ -d "${suite}src"  ] && args="$args ${suite}src"
+              for appdir in "${suite}"app*/; do
+                [ -d "$appdir" ] && args="$args $appdir"
+              done
               [ -d "${suite}test" ] && args="$args ${suite}test"
             done
             echo "=== $bucket ==="
