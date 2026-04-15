@@ -659,6 +659,40 @@ public class MockRecordHandle
         return 1;
     }
 
+    /// <summary>
+    /// AL Next(Steps) — moves the cursor forward (Steps &gt; 0) or backward
+    /// (Steps &lt; 0) within the current result set. Returns the signed number
+    /// of steps actually moved; if the requested count exceeds the remaining
+    /// records, the absolute return value is smaller than the request.
+    /// </summary>
+    public int ALNext(int steps)
+    {
+        if (_currentResultSet == null || steps == 0) return 0;
+
+        if (steps > 0)
+        {
+            int remaining = _currentResultSet.Count - 1 - _cursorPosition;
+            int moved = Math.Min(steps, Math.Max(0, remaining));
+            if (moved > 0)
+            {
+                _cursorPosition += moved;
+                _fields = new Dictionary<int, NavValue>(_currentResultSet[_cursorPosition]);
+            }
+            return moved;
+        }
+        else
+        {
+            int remaining = _cursorPosition;
+            int moved = Math.Min(-steps, Math.Max(0, remaining));
+            if (moved > 0)
+            {
+                _cursorPosition -= moved;
+                _fields = new Dictionary<int, NavValue>(_currentResultSet[_cursorPosition]);
+            }
+            return -moved;
+        }
+    }
+
     public bool ALDelete(DataError errorLevel, bool runTrigger = false)
     {
         var table = GetRows();

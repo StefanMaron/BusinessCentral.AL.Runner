@@ -7,6 +7,16 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **`Record.Next(Steps)` overload (#262)** — `MockRecordHandle.ALNext(int)` is
+  new (previously only the parameterless `ALNext()` existed). Positive steps
+  move forward, negative steps move backward, and the return value is the
+  signed number of steps actually moved — clamped to the remaining records
+  at either end so the absolute return may be less than the request. Honors
+  active filters (advances within the filtered result set). New suite
+  `tests/bucket-1/45-next-steps` covers Next(1), Next(N) skip, past-end,
+  at-end (returns 0), negative-step backward, past-start, and filter
+  traversal. RED confirmed by compile error (overload missing). Coverage
+  map: `Table.Next` moved from `gap` to `covered`.
 - **Test coverage: `Record.FindLast()` (#258)** — `MockRecordHandle.ALFindLast`
   was already implemented; new suite `tests/bucket-1/258-findlast` adds 6
   proving tests: unfiltered positions to last PK, empty table returns false,

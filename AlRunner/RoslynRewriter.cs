@@ -515,6 +515,7 @@ public bool ALFindSet(DataError errorLevel = DataError.ThrowError, bool forUpdat
 public bool ALFindFirst(DataError errorLevel = DataError.ThrowError) => Rec.ALFindFirst(errorLevel);
 public bool ALFindLast(DataError errorLevel = DataError.ThrowError) => Rec.ALFindLast(errorLevel);
 public int ALNext() => Rec.ALNext();
+public int ALNext(int steps) => Rec.ALNext(steps);
 public bool ALDelete(DataError errorLevel, bool runTrigger = false) => Rec.ALDelete(errorLevel, runTrigger);
 public void ALDeleteAll(bool runTrigger) => Rec.ALDeleteAll(runTrigger);
 public void ALDeleteAll(DataError errorLevel = DataError.ThrowError, bool runTrigger = false) => Rec.ALDeleteAll(errorLevel, runTrigger);

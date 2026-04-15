@@ -5904,7 +5904,9 @@ Table.ModifyAll:
 Table.Next:
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/45-next-steps
   notes: overloads=1
 
 Table.ReadConsistency:
