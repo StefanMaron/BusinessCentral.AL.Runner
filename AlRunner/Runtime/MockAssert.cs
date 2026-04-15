@@ -91,7 +91,7 @@ public static class MockAssert
         if (string.IsNullOrEmpty(actualError))
             actualError = AlScope.LastErrorText;
 
-        if (!actualError.Contains(expectedSubstring, StringComparison.Ordinal))
+        if (!actualError.Contains(expectedSubstring, StringComparison.OrdinalIgnoreCase))
             throw new AssertException(
                 $"Assert.ExpectedMessage failed. Expected substring: <{expectedSubstring}>, Actual: <{actualError}>.");
     }

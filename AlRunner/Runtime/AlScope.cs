@@ -1413,35 +1413,65 @@ public static class AlCompat
     /// <summary>
     /// RoundDateTime(dt, precision, direction) — rounds a DateTime value.
     /// Precision is in milliseconds. Direction: '>' (up), '&lt;' (down), '=' (nearest).
+    /// All NavDateTime access uses reflection to avoid BC 28+ Telemetry.Abstractions
+    /// loading — the == operator, explicit (DateTime) cast, and Create() methods all
+    /// trigger assembly resolution that fails outside the service tier.
     /// </summary>
     public static NavDateTime RoundDateTime(NavDateTime dt, long precision, string direction)
     {
-        if (dt == NavDateTime.Default) return NavDateTime.Default;
+        var dateTime = GetNavDateTimeValue(dt);
+        if (dateTime == default) return NavDateTime.Default;
         if (precision <= 0) precision = 1;
 
-        var dateTime = (DateTime)dt;
         long ticksPrecision = precision * TimeSpan.TicksPerMillisecond;
         long ticks = dateTime.Ticks;
         long remainder = ticks % ticksPrecision;
 
-        long roundedTicks;
+        long diffTicks;
         switch (direction)
         {
             case ">":
-                roundedTicks = remainder == 0 ? ticks : ticks + (ticksPrecision - remainder);
+                diffTicks = remainder == 0 ? 0 : ticksPrecision - remainder;
                 break;
             case "<":
-                roundedTicks = ticks - remainder;
+                diffTicks = -remainder;
                 break;
             default: // "=" or nearest
-                roundedTicks = remainder >= ticksPrecision / 2
-                    ? ticks + (ticksPrecision - remainder)
-                    : ticks - remainder;
+                diffTicks = remainder >= ticksPrecision / 2
+                    ? ticksPrecision - remainder
+                    : -remainder;
                 break;
         }
 
-        #pragma warning disable CS0618 // NavDateTime.Create(DateTime) is marked obsolete but is the only session-free overload
-        return NavDateTime.Create(new DateTime(roundedTicks, dateTime.Kind));
-        #pragma warning restore CS0618
+        if (diffTicks == 0) return dt;
+
+        return CreateNavDateTime(new DateTime(ticks + diffTicks, dateTime.Kind));
+    }
+
+    // Cache the backing field for NavDateTime construction via reflection.
+    // NavDateTime.Create(DateTime) and operator+(Int64) both trigger loading of
+    // Telemetry.Abstractions in BC 28+, which is unavailable outside the service tier.
+    // Constructing via Activator + field set bypasses all such dependencies.
+    private static readonly System.Reflection.FieldInfo? NavDateTimeValueField =
+        typeof(NavDateTime).BaseType?.GetField("value",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+    internal static NavDateTime CreateNavDateTime(DateTime dateTime)
+    {
+        var result = (NavDateTime)System.Activator.CreateInstance(typeof(NavDateTime), nonPublic: true)!;
+        NavDateTimeValueField?.SetValue(result, dateTime);
+        return result;
+    }
+
+    /// <summary>
+    /// Read the backing DateTime value from a NavDateTime via reflection.
+    /// Avoids using the explicit (DateTime) cast operator which triggers
+    /// Telemetry.Abstractions loading in BC 28+.
+    /// </summary>
+    internal static DateTime GetNavDateTimeValue(NavDateTime dt)
+    {
+        if (NavDateTimeValueField == null) return default;
+        var val = NavDateTimeValueField.GetValue(dt);
+        return val is DateTime d ? d : default;
     }
 }

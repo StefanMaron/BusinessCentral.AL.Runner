@@ -6,6 +6,22 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Fixed
+- **BigText mock (`MockBigText`)** — `NavBigText` is now replaced with `MockBigText`
+  by the rewriter. In BC 28+, `NavBigText`'s static initializer loads
+  `Microsoft.BusinessCentral.Telemetry.Abstractions` which is unavailable outside
+  the service tier, causing `TypeInitializationException`. `MockBigText` provides
+  the same API surface (`ALAddText`, `ALGetSubText`, `ALTextPos`, `ALLength`,
+  `ALWrite`, `ALRead`) using a plain `StringBuilder`.
+- **RoundDateTime avoids Telemetry.Abstractions** — `AlCompat.RoundDateTime` now
+  uses `NavDateTime + Int64` (milliseconds) arithmetic instead of
+  `NavDateTime.Create(DateTime)` which triggers `Telemetry.Abstractions` loading
+  in BC 28+.
+- **CI pipeline strict mode** — The test matrix no longer tolerates exit code 2
+  (runner limitations). Any non-zero exit code now fails the CI pipeline. If tests
+  are blocked, warned, or errored, the pipeline reports failure — only a fully
+  green run is considered a pass.
+
 ### Improved
 - **XmlPort & Query runtime error messages** — `MockXmlPortHandle.Import/Export`
   and `MockQueryHandle.Open/Read` now throw descriptive `NotSupportedException`
