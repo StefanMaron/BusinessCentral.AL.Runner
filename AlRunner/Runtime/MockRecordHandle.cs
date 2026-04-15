@@ -989,36 +989,41 @@ public class MockRecordHandle
     private bool TryFireOnValidateInType(Type type, int fieldNo)
     {
         // Find the method with [FieldTriggerHandler(FieldTriggerType.OnValidate, fieldNo)]
+        // Use CustomAttributeData to read attribute metadata without instantiating the attribute,
+        // which avoids loading BC dependencies (e.g. Telemetry.Abstractions in BC 28+).
         foreach (var method in type.GetMethods(
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public |
             System.Reflection.BindingFlags.Instance))
         {
-            var attr = method.GetCustomAttributes(false)
-                .FirstOrDefault(a => a.GetType().Name == "FieldTriggerHandlerAttribute");
-            if (attr == null) continue;
-
-            var triggerType = attr.GetType().GetProperty("TriggerType")?.GetValue(attr);
-            var triggerFieldNo = attr.GetType().GetProperty("FieldNo")?.GetValue(attr);
-
-            // FieldTriggerType.OnValidate == 0
-            if (triggerType?.ToString() == "OnValidate" && triggerFieldNo is int fno && fno == fieldNo)
+            foreach (var attrData in method.CustomAttributes)
             {
-                // Create instance and wire Rec to this MockRecordHandle
-                var instance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(type);
-                var backingField = type.GetField("<Rec>k__BackingField",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                backingField?.SetValue(instance, this);
+                if (attrData.AttributeType.Name != "FieldTriggerHandlerAttribute") continue;
+                if (attrData.ConstructorArguments.Count < 2) continue;
 
-                try
+                // FieldTriggerHandler(FieldTriggerType triggerType, int fieldNo)
+                // FieldTriggerType.OnValidate == 0
+                var triggerTypeVal = attrData.ConstructorArguments[0].Value;
+                var fieldNoVal = attrData.ConstructorArguments[1].Value;
+
+                if (triggerTypeVal is int ttInt && ttInt == 0 && fieldNoVal is int fno && fno == fieldNo)
                 {
-                    method.Invoke(instance, null);
+                    // Create instance and wire Rec to this MockRecordHandle
+                    var instance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(type);
+                    var backingField = type.GetField("<Rec>k__BackingField",
+                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                    backingField?.SetValue(instance, this);
+
+                    try
+                    {
+                        method.Invoke(instance, null);
+                    }
+                    catch (System.Reflection.TargetInvocationException tie)
+                    {
+                        if (tie.InnerException != null) throw tie.InnerException;
+                        throw;
+                    }
+                    return true;
                 }
-                catch (System.Reflection.TargetInvocationException tie)
-                {
-                    if (tie.InnerException != null) throw tie.InnerException;
-                    throw;
-                }
-                return true;
             }
         }
         return false;

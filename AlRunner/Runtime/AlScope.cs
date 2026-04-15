@@ -1424,24 +1424,28 @@ public static class AlCompat
         long ticks = dateTime.Ticks;
         long remainder = ticks % ticksPrecision;
 
-        long roundedTicks;
+        long diffTicks;
         switch (direction)
         {
             case ">":
-                roundedTicks = remainder == 0 ? ticks : ticks + (ticksPrecision - remainder);
+                diffTicks = remainder == 0 ? 0 : ticksPrecision - remainder;
                 break;
             case "<":
-                roundedTicks = ticks - remainder;
+                diffTicks = -remainder;
                 break;
             default: // "=" or nearest
-                roundedTicks = remainder >= ticksPrecision / 2
-                    ? ticks + (ticksPrecision - remainder)
-                    : ticks - remainder;
+                diffTicks = remainder >= ticksPrecision / 2
+                    ? ticksPrecision - remainder
+                    : -remainder;
                 break;
         }
 
-        #pragma warning disable CS0618 // NavDateTime.Create(DateTime) is marked obsolete but is the only session-free overload
-        return NavDateTime.Create(new DateTime(roundedTicks, dateTime.Kind));
-        #pragma warning restore CS0618
+        if (diffTicks == 0) return dt;
+
+        // Use NavDateTime + Int64 (milliseconds) instead of NavDateTime.Create(DateTime).
+        // NavDateTime.Create(DateTime) in BC 28+ triggers Telemetry.Abstractions loading
+        // which is unavailable outside the service tier.
+        long diffMs = diffTicks / TimeSpan.TicksPerMillisecond;
+        return dt + diffMs;
     }
 }
