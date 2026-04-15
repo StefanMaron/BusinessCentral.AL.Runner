@@ -1,0 +1,2145 @@
+- construct: codeunit_declaration
+  category: objects
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/03-interface-injection
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+    - tests/excluded/46-missing-dep-hint
+    - tests/excluded/pipeline-gap-fixture
+  notes: null
+
+- construct: controladdin_declaration
+  category: objects
+  status: gap
+  tests: []
+  notes: null
+
+- construct: dotnet_declaration
+  category: objects
+  status: gap
+  tests: []
+  notes: null
+
+- construct: entitlement_declaration
+  category: objects
+  status: gap
+  tests: []
+  notes: null
+
+- construct: enum_declaration
+  category: objects
+  status: covered
+  tests:
+    - tests/bucket-1/20-option-fields
+    - tests/bucket-2/123-fieldref-enum
+    - tests/bucket-2/50-enum-ordinals
+    - tests/bucket-2/51-init-value
+    - tests/bucket-2/53-enum-interface
+    - tests/bucket-2/61-enum-names
+  notes: null
+
+- construct: interface_declaration
+  category: objects
+  status: covered
+  tests:
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/31-interface-return
+    - tests/bucket-1/32-interface-param
+    - tests/bucket-2/42-list-of-interface
+    - tests/bucket-2/53-enum-interface
+  notes: null
+
+- construct: page_declaration
+  category: objects
+  status: covered
+  tests:
+    - tests/bucket-1/71-testpage
+    - tests/bucket-2/130-cross-ext-al0275
+    - tests/bucket-2/132-testpage-stubs
+    - tests/bucket-2/36-page-ext-no-cascade
+    - tests/bucket-2/38-page-ext-currpage
+    - tests/bucket-2/40-page-run-record
+    - tests/bucket-2/48-page-variable
+    - tests/bucket-2/65-page-helper
+  notes: null
+
+- construct: permissionset_declaration
+  category: objects
+  status: gap
+  tests: []
+  notes: null
+
+- construct: profile_declaration
+  category: objects
+  status: gap
+  tests: []
+  notes: null
+
+- construct: query_declaration
+  category: objects
+  status: covered
+  tests:
+    - tests/bucket-2/125-xmlport-query-diagnostics
+    - tests/bucket-2/90-query-object
+  notes: null
+
+- construct: report_declaration
+  category: objects
+  status: covered
+  tests:
+    - tests/bucket-2/112-report-dataset-columns
+    - tests/bucket-2/113-report-labels
+    - tests/bucket-2/119-report-skip
+    - tests/bucket-2/129-reportext-parent
+    - tests/bucket-2/133-report-handler
+    - tests/bucket-2/91-report-handle
+    - tests/bucket-2/92-request-page-handler
+    - tests/bucket-2/95-rendering-strip
+  notes: null
+
+- construct: table_declaration
+  category: objects
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/05-known-limitation
+    - tests/bucket-1/07-composite-pk
+    - tests/bucket-1/08-sort-ordering
+    - tests/bucket-1/09-setfilter-expressions
+    - tests/bucket-1/112-codeunit-onrun-record
+    - tests/bucket-1/13-partial-compile
+    - tests/bucket-1/18-validate-trigger
+  notes: null
+
+- construct: xmlport_declaration
+  category: objects
+  status: covered
+  tests:
+    - tests/bucket-2/125-xmlport-query-diagnostics
+    - tests/bucket-2/84-xmlport
+  notes: null
+
+- construct: enumextension_declaration
+  category: object_extensions
+  status: gap
+  tests: []
+  notes: null
+
+- construct: pagecustomization_declaration
+  category: object_extensions
+  status: gap
+  tests: []
+  notes: null
+
+- construct: pageextension_declaration
+  category: object_extensions
+  status: covered
+  tests:
+    - tests/bucket-2/130-cross-ext-al0275
+    - tests/bucket-2/36-page-ext-no-cascade
+    - tests/bucket-2/38-page-ext-currpage
+    - tests/excluded/135-same-ext-pageext-duplicate
+  notes: null
+
+- construct: permissionsetextension_declaration
+  category: object_extensions
+  status: gap
+  tests: []
+  notes: null
+
+- construct: profileextension_declaration
+  category: object_extensions
+  status: gap
+  tests: []
+  notes: null
+
+- construct: reportextension_declaration
+  category: object_extensions
+  status: covered
+  tests:
+    - tests/bucket-2/129-reportext-parent
+  notes: null
+
+- construct: tableextension_declaration
+  category: object_extensions
+  status: covered
+  tests:
+    - tests/bucket-1/28-table-extension-fields
+    - tests/bucket-2/33-extension-validate
+    - tests/bucket-2/34-extension-parent-object
+  notes: null
+
+- construct: assembly_declaration
+  category: declarations
+  status: gap
+  tests: []
+  notes: null
+
+- construct: enum_value_declaration
+  category: declarations
+  status: covered
+  tests:
+    - tests/bucket-1/20-option-fields
+    - tests/bucket-2/123-fieldref-enum
+    - tests/bucket-2/50-enum-ordinals
+    - tests/bucket-2/51-init-value
+    - tests/bucket-2/53-enum-interface
+    - tests/bucket-2/61-enum-names
+    - tests/stubs/39-stubs
+  notes: null
+
+- construct: event_declaration
+  category: declarations
+  status: covered
+  tests:
+    - tests/bucket-2/100-bind-subscription
+    - tests/bucket-2/101-multi-subscribers
+    - tests/bucket-2/102-sender-pattern
+    - tests/bucket-2/105-subscriber-error
+    - tests/bucket-2/37-event-scope
+    - tests/bucket-2/66-event-subscribers
+    - tests/bucket-2/97-event-params
+  notes: null
+
+- construct: field_declaration
+  category: declarations
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/05-known-limitation
+    - tests/bucket-1/07-composite-pk
+    - tests/bucket-1/08-sort-ordering
+    - tests/bucket-1/09-setfilter-expressions
+    - tests/bucket-1/112-codeunit-onrun-record
+    - tests/bucket-1/13-partial-compile
+    - tests/bucket-1/18-validate-trigger
+  notes: null
+
+- construct: fieldgroup_declaration
+  category: declarations
+  status: gap
+  tests: []
+  notes: null
+
+- construct: interface_procedure
+  category: declarations
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/04-asserterror
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+    - tests/excluded/46-missing-dep-hint
+  notes: null
+
+- construct: key_declaration
+  category: declarations
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/05-known-limitation
+    - tests/bucket-1/07-composite-pk
+    - tests/bucket-1/08-sort-ordering
+    - tests/bucket-1/09-setfilter-expressions
+    - tests/bucket-1/13-partial-compile
+    - tests/bucket-1/18-validate-trigger
+    - tests/bucket-1/19-table-procedures
+  notes: null
+
+- construct: label_declaration
+  category: declarations
+  status: covered
+  tests:
+    - tests/bucket-2/113-report-labels
+  notes: null
+
+- construct: namespace_declaration
+  category: declarations
+  status: covered
+  tests:
+    - tests/bucket-2/45-unknown-namespace-using
+    - tests/excluded/46-missing-dep-hint
+  notes: null
+
+- construct: parameter
+  category: declarations
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+    - tests/excluded/46-missing-dep-hint
+  notes: null
+
+- construct: parameter_list
+  category: declarations
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+    - tests/excluded/46-missing-dep-hint
+  notes: null
+
+- construct: procedure
+  category: declarations
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+    - tests/excluded/46-missing-dep-hint
+  notes: null
+
+- construct: property
+  category: declarations
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/02-record-operations
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+  notes: null
+
+- construct: trigger_declaration
+  category: declarations
+  status: covered
+  tests:
+    - tests/bucket-1/05-known-limitation
+    - tests/bucket-1/112-codeunit-onrun-record
+    - tests/bucket-1/18-validate-trigger
+    - tests/bucket-2/103-before-db-events
+    - tests/bucket-2/105-subscriber-error
+    - tests/bucket-2/119-report-skip
+    - tests/bucket-2/129-reportext-parent
+    - tests/excluded/pipeline-gap-fixture
+  notes: null
+
+- construct: type_declaration
+  category: declarations
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/04-asserterror
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+    - tests/excluded/46-missing-dep-hint
+  notes: null
+
+- construct: type_specification
+  category: declarations
+  status: covered
+  tests:
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+    - tests/excluded/46-missing-dep-hint
+    - tests/excluded/pipeline-gap-fixture
+  notes: null
+
+- construct: variable_declaration
+  category: declarations
+  status: covered
+  tests:
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+    - tests/excluded/46-missing-dep-hint
+    - tests/excluded/pipeline-gap-fixture
+  notes: null
+
+- construct: asserterror_statement
+  category: statements
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/04-asserterror
+    - tests/bucket-1/112-codeunit-onrun-record
+    - tests/bucket-1/128-codeunit-not-found
+    - tests/bucket-1/130-bigtext
+    - tests/excluded/06-intentional-failure
+  notes: null
+
+- construct: assignment_expression
+  category: statements
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/05-known-limitation
+    - tests/excluded/06-intentional-failure
+  notes: null
+
+- construct: assignment_statement
+  category: statements
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/05-known-limitation
+    - tests/excluded/06-intentional-failure
+  notes: null
+
+- construct: break_statement
+  category: statements
+  status: gap
+  tests: []
+  notes: null
+
+- construct: case_branch
+  category: statements
+  status: covered
+  tests:
+    - tests/bucket-1/09-setfilter-expressions
+    - tests/bucket-1/18-validate-trigger
+  notes: null
+
+- construct: case_else_branch
+  category: statements
+  status: covered
+  tests:
+    - tests/bucket-1/05-known-limitation
+    - tests/bucket-1/71-testpage
+    - tests/bucket-2/100-bind-subscription
+    - tests/bucket-2/33-extension-validate
+    - tests/bucket-2/34-extension-parent-object
+    - tests/bucket-2/63-oninsert-trigger
+    - tests/bucket-2/66-event-subscribers
+    - tests/bucket-2/67-iteration-tracking
+  notes: null
+
+- construct: case_statement
+  category: statements
+  status: covered
+  tests:
+    - tests/bucket-1/09-setfilter-expressions
+    - tests/bucket-1/18-validate-trigger
+  notes: null
+
+- construct: code_block
+  category: statements
+  status: covered
+  tests:
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+    - tests/excluded/46-missing-dep-hint
+    - tests/excluded/pipeline-gap-fixture
+  notes: null
+
+- construct: continue_statement
+  category: statements
+  status: gap
+  tests: []
+  notes: null
+
+- construct: empty_statement
+  category: statements
+  status: gap
+  tests: []
+  notes: null
+
+- construct: exit_statement
+  category: statements
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/07-composite-pk
+    - tests/bucket-1/08-sort-ordering
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/46-missing-dep-hint
+  notes: null
+
+- construct: for_statement
+  category: statements
+  status: covered
+  tests:
+    - tests/bucket-1/10-cross-codeunit
+    - tests/bucket-1/14-assert-130000
+    - tests/bucket-2/129-reportext-parent
+    - tests/bucket-2/67-iteration-tracking
+    - tests/bucket-2/85-dialog
+  notes: null
+
+- construct: foreach_statement
+  category: statements
+  status: covered
+  tests:
+    - tests/bucket-2/42-list-of-interface
+    - tests/bucket-2/83-list-byref
+  notes: null
+
+- construct: if_statement
+  category: statements
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/04-asserterror
+    - tests/bucket-1/05-known-limitation
+    - tests/bucket-1/07-composite-pk
+    - tests/bucket-1/08-sort-ordering
+    - tests/excluded/06-intentional-failure
+  notes: null
+
+- construct: repeat_statement
+  category: statements
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/07-composite-pk
+    - tests/bucket-1/08-sort-ordering
+    - tests/bucket-1/13-partial-compile
+    - tests/bucket-1/22-record-persistence
+    - tests/bucket-1/23-error-line-mapping
+    - tests/bucket-2/127-recref-fieldref-api
+    - tests/bucket-2/69-recref-fieldref
+  notes: null
+
+- construct: using_statement
+  category: statements
+  status: covered
+  tests:
+    - tests/bucket-2/102-sender-pattern
+    - tests/bucket-2/106-dataerror-suppress
+    - tests/bucket-2/117-file-stream
+    - tests/bucket-2/38-page-ext-currpage
+    - tests/bucket-2/45-unknown-namespace-using
+    - tests/bucket-2/79-stream-surface
+    - tests/excluded/46-missing-dep-hint
+    - tests/stubs/39-stubs
+  notes: null
+
+- construct: while_statement
+  category: statements
+  status: covered
+  tests:
+    - tests/bucket-2/90-query-object
+    - tests/bucket-2/96-httpcontent-stream
+  notes: null
+
+- construct: with_statement
+  category: statements
+  status: gap
+  tests: []
+  notes: null
+
+- construct: additive_expression
+  category: expressions
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/04-asserterror
+    - tests/bucket-1/05-known-limitation
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/pipeline-gap-fixture
+  notes: null
+
+- construct: call_expression
+  category: expressions
+  status: covered
+  tests:
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+    - tests/excluded/46-missing-dep-hint
+    - tests/excluded/pipeline-gap-fixture
+  notes: null
+
+- construct: comparison_expression
+  category: expressions
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/02-record-operations
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+  notes: null
+
+- construct: logical_expression
+  category: expressions
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/04-asserterror
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+    - tests/excluded/46-missing-dep-hint
+    - tests/excluded/pipeline-gap-fixture
+  notes: null
+
+- construct: member_expression
+  category: expressions
+  status: covered
+  tests:
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+    - tests/excluded/46-missing-dep-hint
+    - tests/excluded/pipeline-gap-fixture
+  notes: null
+
+- construct: multiplicative_expression
+  category: expressions
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/05-known-limitation
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+    - tests/excluded/46-missing-dep-hint
+    - tests/excluded/pipeline-gap-fixture
+  notes: null
+
+- construct: parenthesized_expression
+  category: expressions
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/03-interface-injection
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+    - tests/excluded/46-missing-dep-hint
+    - tests/excluded/pipeline-gap-fixture
+  notes: null
+
+- construct: qualified_enum_value
+  category: expressions
+  status: covered
+  tests:
+    - tests/bucket-1/24-secret-text
+    - tests/bucket-1/79-gui-fieldclass
+    - tests/bucket-2/100-bind-subscription
+    - tests/bucket-2/101-multi-subscribers
+    - tests/bucket-2/102-sender-pattern
+    - tests/bucket-2/103-before-db-events
+    - tests/bucket-2/104-xrec-behavior
+    - tests/bucket-2/105-subscriber-error
+  notes: null
+
+- construct: range_expression
+  category: expressions
+  status: covered
+  tests:
+    - tests/bucket-1/09-setfilter-expressions
+    - tests/bucket-2/108-getfilter
+    - tests/bucket-2/123-fieldref-enum
+    - tests/bucket-2/127-recref-fieldref-api
+    - tests/bucket-2/52-setfilter-and
+    - tests/bucket-2/67-iteration-tracking
+    - tests/bucket-2/85-dialog
+    - tests/bucket-2/85-picture-format
+  notes: null
+
+- construct: subscript_expression
+  category: expressions
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/04-asserterror
+    - tests/bucket-1/05-known-limitation
+    - tests/bucket-1/07-composite-pk
+    - tests/bucket-1/08-sort-ordering
+    - tests/bucket-1/09-setfilter-expressions
+    - tests/excluded/06-intentional-failure
+  notes: null
+
+- construct: ternary_expression
+  category: expressions
+  status: covered
+  tests:
+    - tests/bucket-1/71-testpage
+    - tests/bucket-2/58-hyperlink
+  notes: null
+
+- construct: unary_expression
+  category: expressions
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/03-interface-injection
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+    - tests/excluded/46-missing-dep-hint
+    - tests/excluded/pipeline-gap-fixture
+  notes: null
+
+- construct: array_type
+  category: types
+  status: gap
+  tests: []
+  notes: null
+
+- construct: basic_type
+  category: types
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/04-asserterror
+    - tests/bucket-1/05-known-limitation
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/46-missing-dep-hint
+  notes: null
+
+- construct: code_type
+  category: types
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/05-known-limitation
+    - tests/bucket-1/07-composite-pk
+    - tests/bucket-1/08-sort-ordering
+    - tests/bucket-1/09-setfilter-expressions
+    - tests/bucket-1/112-codeunit-onrun-record
+    - tests/bucket-1/13-partial-compile
+  notes: null
+
+- construct: dictionary_type
+  category: types
+  status: gap
+  tests: []
+  notes: null
+
+- construct: list_type
+  category: types
+  status: covered
+  tests:
+    - tests/bucket-2/120-errorinfo
+    - tests/bucket-2/42-list-of-interface
+    - tests/bucket-2/50-enum-ordinals
+    - tests/bucket-2/61-enum-names
+    - tests/bucket-2/83-list-byref
+  notes: null
+
+- construct: object_reference_type
+  category: types
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/04-asserterror
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+    - tests/excluded/46-missing-dep-hint
+  notes: null
+
+- construct: option_type
+  category: types
+  status: covered
+  tests:
+    - tests/bucket-1/20-option-fields
+    - tests/bucket-2/33-extension-validate
+    - tests/bucket-2/34-extension-parent-object
+    - tests/bucket-2/52-setfilter-and
+    - tests/bucket-2/87-fieldref-setrange-types
+  notes: null
+
+- construct: text_type
+  category: types
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/04-asserterror
+    - tests/bucket-1/05-known-limitation
+    - tests/bucket-1/08-sort-ordering
+    - tests/bucket-1/09-setfilter-expressions
+    - tests/bucket-1/112-codeunit-onrun-record
+    - tests/bucket-1/13-partial-compile
+    - tests/excluded/06-intentional-failure
+  notes: null
+
+- construct: biginteger_literal
+  category: literals
+  status: covered
+  tests:
+    - tests/bucket-2/121-utility-stubs
+    - tests/bucket-2/54-numbersequence
+  notes: null
+
+- construct: boolean
+  category: literals
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/05-known-limitation
+    - tests/excluded/135-same-ext-pageext-duplicate
+    - tests/excluded/46-missing-dep-hint
+  notes: null
+
+- construct: date_literal
+  category: literals
+  status: covered
+  tests:
+    - tests/bucket-1/12-format-string
+    - tests/bucket-2/121-utility-stubs
+    - tests/bucket-2/75-library-variable-storage
+  notes: null
+
+- construct: datetime_literal
+  category: literals
+  status: gap
+  tests: []
+  notes: null
+
+- construct: decimal
+  category: literals
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/05-known-limitation
+    - tests/bucket-1/07-composite-pk
+    - tests/bucket-1/09-setfilter-expressions
+    - tests/bucket-1/11-variant-type
+    - tests/bucket-1/13-partial-compile
+    - tests/bucket-1/28-table-extension-fields
+  notes: null
+
+- construct: integer
+  category: literals
+  status: covered
+  tests:
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+    - tests/excluded/46-missing-dep-hint
+    - tests/excluded/pipeline-gap-fixture
+  notes: null
+
+- construct: list_literal
+  category: literals
+  status: covered
+  tests:
+    - tests/bucket-2/100-bind-subscription
+    - tests/bucket-2/101-multi-subscribers
+    - tests/bucket-2/102-sender-pattern
+    - tests/bucket-2/103-before-db-events
+    - tests/bucket-2/104-xrec-behavior
+    - tests/bucket-2/105-subscriber-error
+    - tests/bucket-2/37-event-scope
+    - tests/bucket-2/66-event-subscribers
+  notes: null
+
+- construct: string_literal
+  category: literals
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+    - tests/excluded/pipeline-gap-fixture
+  notes: null
+
+- construct: time_literal
+  category: literals
+  status: covered
+  tests:
+    - tests/bucket-1/26-time-format
+    - tests/bucket-2/121-utility-stubs
+    - tests/bucket-2/85-picture-format
+  notes: null
+
+- construct: verbatim_string
+  category: literals
+  status: gap
+  tests: []
+  notes: null
+
+- construct: action_area_section
+  category: sections
+  status: covered
+  tests:
+    - tests/bucket-2/79-form-handle-stubs
+  notes: null
+
+- construct: action_group_section
+  category: sections
+  status: gap
+  tests: []
+  notes: null
+
+- construct: actions_section
+  category: sections
+  status: covered
+  tests:
+    - tests/bucket-2/79-form-handle-stubs
+  notes: null
+
+- construct: area_section
+  category: sections
+  status: covered
+  tests:
+    - tests/bucket-1/71-testpage
+    - tests/bucket-2/130-cross-ext-al0275
+    - tests/bucket-2/132-testpage-stubs
+    - tests/bucket-2/36-page-ext-no-cascade
+    - tests/bucket-2/38-page-ext-currpage
+    - tests/bucket-2/73-modal-handler
+    - tests/bucket-2/74-mock-stubs
+    - tests/bucket-2/74-testpage-navigation
+  notes: null
+
+- construct: cuegroup_section
+  category: sections
+  status: gap
+  tests: []
+  notes: null
+
+- construct: dataset_section
+  category: sections
+  status: covered
+  tests:
+    - tests/bucket-2/112-report-dataset-columns
+    - tests/bucket-2/113-report-labels
+    - tests/bucket-2/119-report-skip
+    - tests/bucket-2/129-reportext-parent
+    - tests/bucket-2/133-report-handler
+    - tests/bucket-2/91-report-handle
+    - tests/bucket-2/92-request-page-handler
+    - tests/bucket-2/95-rendering-strip
+  notes: null
+
+- construct: elements_section
+  category: sections
+  status: covered
+  tests:
+    - tests/bucket-2/125-xmlport-query-diagnostics
+    - tests/bucket-2/90-query-object
+  notes: null
+
+- construct: fieldgroups_section
+  category: sections
+  status: gap
+  tests: []
+  notes: null
+
+- construct: fields_section
+  category: sections
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/05-known-limitation
+    - tests/bucket-1/07-composite-pk
+    - tests/bucket-1/08-sort-ordering
+    - tests/bucket-1/09-setfilter-expressions
+    - tests/bucket-1/112-codeunit-onrun-record
+    - tests/bucket-1/13-partial-compile
+    - tests/bucket-1/18-validate-trigger
+  notes: null
+
+- construct: fixed_section
+  category: sections
+  status: gap
+  tests: []
+  notes: null
+
+- construct: grid_section
+  category: sections
+  status: gap
+  tests: []
+  notes: null
+
+- construct: group_section
+  category: sections
+  status: gap
+  tests: []
+  notes: null
+
+- construct: keys_section
+  category: sections
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/05-known-limitation
+    - tests/bucket-1/07-composite-pk
+    - tests/bucket-1/08-sort-ordering
+    - tests/bucket-1/09-setfilter-expressions
+    - tests/bucket-1/13-partial-compile
+    - tests/bucket-1/18-validate-trigger
+    - tests/bucket-1/19-table-procedures
+  notes: null
+
+- construct: labels_section
+  category: sections
+  status: gap
+  tests: []
+  notes: null
+
+- construct: layout_section
+  category: sections
+  status: covered
+  tests:
+    - tests/bucket-1/71-testpage
+    - tests/bucket-2/130-cross-ext-al0275
+    - tests/bucket-2/132-testpage-stubs
+    - tests/bucket-2/36-page-ext-no-cascade
+    - tests/bucket-2/38-page-ext-currpage
+    - tests/bucket-2/73-modal-handler
+    - tests/bucket-2/74-mock-stubs
+    - tests/bucket-2/74-testpage-navigation
+  notes: null
+
+- construct: part_section
+  category: sections
+  status: covered
+  tests:
+    - tests/bucket-2/90-testpage-extended
+  notes: null
+
+- construct: rendering_section
+  category: sections
+  status: covered
+  tests:
+    - tests/bucket-2/95-rendering-strip
+  notes: null
+
+- construct: repeater_section
+  category: sections
+  status: gap
+  tests: []
+  notes: null
+
+- construct: requestpage_section
+  category: sections
+  status: covered
+  tests:
+    - tests/bucket-2/133-report-handler
+  notes: null
+
+- construct: schema_section
+  category: sections
+  status: covered
+  tests:
+    - tests/bucket-2/125-xmlport-query-diagnostics
+    - tests/bucket-2/84-xmlport
+  notes: null
+
+- construct: systempart_section
+  category: sections
+  status: gap
+  tests: []
+  notes: null
+
+- construct: usercontrol_section
+  category: sections
+  status: gap
+  tests: []
+  notes: null
+
+- construct: var_section
+  category: sections
+  status: covered
+  tests:
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+    - tests/excluded/46-missing-dep-hint
+    - tests/excluded/pipeline-gap-fixture
+  notes: null
+
+- construct: views_section
+  category: sections
+  status: gap
+  tests: []
+  notes: null
+
+- construct: add_dataset_modification
+  category: modifications
+  status: gap
+  tests: []
+  notes: null
+
+- construct: addafter_action_modification
+  category: modifications
+  status: gap
+  tests: []
+  notes: null
+
+- construct: addafter_dataset_modification
+  category: modifications
+  status: gap
+  tests: []
+  notes: null
+
+- construct: addafter_modification
+  category: modifications
+  status: covered
+  tests:
+    - tests/bucket-2/130-cross-ext-al0275
+  notes: null
+
+- construct: addafter_views_modification
+  category: modifications
+  status: gap
+  tests: []
+  notes: null
+
+- construct: addbefore_action_modification
+  category: modifications
+  status: gap
+  tests: []
+  notes: null
+
+- construct: addbefore_dataset_modification
+  category: modifications
+  status: gap
+  tests: []
+  notes: null
+
+- construct: addbefore_modification
+  category: modifications
+  status: gap
+  tests: []
+  notes: null
+
+- construct: addbefore_views_modification
+  category: modifications
+  status: gap
+  tests: []
+  notes: null
+
+- construct: addfirst_action_modification
+  category: modifications
+  status: gap
+  tests: []
+  notes: null
+
+- construct: addfirst_dataset_modification
+  category: modifications
+  status: gap
+  tests: []
+  notes: null
+
+- construct: addfirst_fieldgroup_modification
+  category: modifications
+  status: gap
+  tests: []
+  notes: null
+
+- construct: addfirst_modification
+  category: modifications
+  status: gap
+  tests: []
+  notes: null
+
+- construct: addfirst_views_modification
+  category: modifications
+  status: gap
+  tests: []
+  notes: null
+
+- construct: addlast_action_modification
+  category: modifications
+  status: gap
+  tests: []
+  notes: null
+
+- construct: addlast_dataset_modification
+  category: modifications
+  status: gap
+  tests: []
+  notes: null
+
+- construct: addlast_fieldgroup_modification
+  category: modifications
+  status: gap
+  tests: []
+  notes: null
+
+- construct: addlast_modification
+  category: modifications
+  status: covered
+  tests:
+    - tests/bucket-2/36-page-ext-no-cascade
+  notes: null
+
+- construct: addlast_views_modification
+  category: modifications
+  status: gap
+  tests: []
+  notes: null
+
+- construct: modify_action_modification
+  category: modifications
+  status: gap
+  tests: []
+  notes: null
+
+- construct: modify_modification
+  category: modifications
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/05-known-limitation
+    - tests/bucket-1/07-composite-pk
+    - tests/bucket-1/112-codeunit-onrun-record
+    - tests/bucket-1/18-validate-trigger
+    - tests/bucket-1/20-option-fields
+    - tests/bucket-2/100-bind-subscription
+    - tests/bucket-2/103-before-db-events
+  notes: null
+
+- construct: moveafter_modification
+  category: modifications
+  status: gap
+  tests: []
+  notes: null
+
+- construct: movebefore_modification
+  category: modifications
+  status: gap
+  tests: []
+  notes: null
+
+- construct: movefirst_modification
+  category: modifications
+  status: gap
+  tests: []
+  notes: null
+
+- construct: movelast_modification
+  category: modifications
+  status: gap
+  tests: []
+  notes: null
+
+- construct: action_declaration
+  category: page_elements
+  status: covered
+  tests:
+    - tests/bucket-2/79-form-handle-stubs
+  notes: null
+
+- construct: actionref_declaration
+  category: page_elements
+  status: gap
+  tests: []
+  notes: null
+
+- construct: customaction_declaration
+  category: page_elements
+  status: gap
+  tests: []
+  notes: null
+
+- construct: fileuploadaction_declaration
+  category: page_elements
+  status: gap
+  tests: []
+  notes: null
+
+- construct: page_field
+  category: page_elements
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/05-known-limitation
+    - tests/bucket-1/07-composite-pk
+    - tests/bucket-1/08-sort-ordering
+    - tests/bucket-1/09-setfilter-expressions
+    - tests/bucket-1/112-codeunit-onrun-record
+    - tests/bucket-1/13-partial-compile
+    - tests/bucket-1/18-validate-trigger
+  notes: null
+
+- construct: separator_action
+  category: page_elements
+  status: gap
+  tests: []
+  notes: null
+
+- construct: systemaction_declaration
+  category: page_elements
+  status: gap
+  tests: []
+  notes: null
+
+- construct: report_column
+  category: report_elements
+  status: covered
+  tests:
+    - tests/bucket-2/112-report-dataset-columns
+    - tests/bucket-2/125-xmlport-query-diagnostics
+    - tests/bucket-2/129-reportext-parent
+    - tests/bucket-2/90-query-object
+  notes: null
+
+- construct: report_dataitem
+  category: report_elements
+  status: covered
+  tests:
+    - tests/bucket-2/112-report-dataset-columns
+    - tests/bucket-2/125-xmlport-query-diagnostics
+    - tests/bucket-2/129-reportext-parent
+    - tests/bucket-2/90-query-object
+    - tests/bucket-2/91-report-handle
+    - tests/bucket-2/92-request-page-handler
+    - tests/bucket-2/95-rendering-strip
+  notes: null
+
+- construct: query_column
+  category: query_elements
+  status: covered
+  tests:
+    - tests/bucket-2/112-report-dataset-columns
+    - tests/bucket-2/125-xmlport-query-diagnostics
+    - tests/bucket-2/129-reportext-parent
+    - tests/bucket-2/90-query-object
+  notes: null
+
+- construct: query_dataitem
+  category: query_elements
+  status: covered
+  tests:
+    - tests/bucket-2/112-report-dataset-columns
+    - tests/bucket-2/125-xmlport-query-diagnostics
+    - tests/bucket-2/129-reportext-parent
+    - tests/bucket-2/90-query-object
+    - tests/bucket-2/91-report-handle
+    - tests/bucket-2/92-request-page-handler
+    - tests/bucket-2/95-rendering-strip
+  notes: null
+
+- construct: query_filter
+  category: query_elements
+  status: gap
+  tests: []
+  notes: null
+
+- construct: xmlport_attribute
+  category: xmlport_elements
+  status: gap
+  tests: []
+  notes: null
+
+- construct: xmlport_element
+  category: xmlport_elements
+  status: covered
+  tests:
+    - tests/bucket-2/125-xmlport-query-diagnostics
+    - tests/bucket-2/84-xmlport
+  notes: null
+
+- construct: aggregate_formula
+  category: table_features
+  status: covered
+  tests:
+    - tests/bucket-2/124-temp-records-flowfields
+  notes: null
+
+- construct: aggregate_function
+  category: table_features
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/05-known-limitation
+    - tests/bucket-1/07-composite-pk
+    - tests/bucket-1/09-setfilter-expressions
+    - tests/bucket-1/10-cross-codeunit
+    - tests/bucket-1/22-record-persistence
+    - tests/bucket-1/30-modify-all
+    - tests/bucket-1/77-json-types
+  notes: null
+
+- construct: calc_field_reference
+  category: table_features
+  status: covered
+  tests:
+    - tests/bucket-2/124-temp-records-flowfields
+    - tests/bucket-2/55-flowfield-exist
+    - tests/bucket-2/56-flowfield-multi
+  notes: null
+
+- construct: else_table_relation_fragment
+  category: table_features
+  status: gap
+  tests: []
+  notes: null
+
+- construct: if_table_relation
+  category: table_features
+  status: gap
+  tests: []
+  notes: null
+
+- construct: lookup_formula
+  category: table_features
+  status: covered
+  tests:
+    - tests/bucket-2/124-temp-records-flowfields
+  notes: null
+
+- construct: simple_table_relation
+  category: table_features
+  status: gap
+  tests: []
+  notes: null
+
+- construct: table_relation_expression
+  category: table_features
+  status: gap
+  tests: []
+  notes: null
+
+- construct: table_relation_value
+  category: table_features
+  status: gap
+  tests: []
+  notes: null
+
+- construct: pragma
+  category: preprocessor
+  status: gap
+  tests: []
+  notes: null
+
+- construct: preproc_elif
+  category: preprocessor
+  status: gap
+  tests: []
+  notes: null
+
+- construct: preproc_else
+  category: preprocessor
+  status: gap
+  tests: []
+  notes: null
+
+- construct: preproc_endif
+  category: preprocessor
+  status: gap
+  tests: []
+  notes: null
+
+- construct: preproc_endregion
+  category: preprocessor
+  status: gap
+  tests: []
+  notes: null
+
+- construct: preproc_if
+  category: preprocessor
+  status: gap
+  tests: []
+  notes: null
+
+- construct: preproc_region
+  category: preprocessor
+  status: gap
+  tests: []
+  notes: null
+
+- construct: attribute_argument_list
+  category: attributes
+  status: covered
+  tests:
+    - tests/bucket-1/71-testpage
+    - tests/bucket-2/100-bind-subscription
+    - tests/bucket-2/101-multi-subscribers
+    - tests/bucket-2/102-sender-pattern
+    - tests/bucket-2/103-before-db-events
+    - tests/bucket-2/104-xrec-behavior
+    - tests/bucket-2/105-subscriber-error
+    - tests/bucket-2/120-errorinfo
+  notes: null
+
+- construct: attribute_arguments
+  category: attributes
+  status: covered
+  tests:
+    - tests/bucket-1/71-testpage
+    - tests/bucket-2/100-bind-subscription
+    - tests/bucket-2/101-multi-subscribers
+    - tests/bucket-2/102-sender-pattern
+    - tests/bucket-2/103-before-db-events
+    - tests/bucket-2/104-xrec-behavior
+    - tests/bucket-2/105-subscriber-error
+    - tests/bucket-2/120-errorinfo
+  notes: null
+
+- construct: attribute_content
+  category: attributes
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/04-asserterror
+    - tests/bucket-1/05-known-limitation
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+  notes: null
+
+- construct: attribute_item
+  category: attributes
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/04-asserterror
+    - tests/bucket-1/05-known-limitation
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+  notes: null
+
+- construct: assert_library
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/04-asserterror
+    - tests/bucket-1/05-known-limitation
+    - tests/excluded/06-intentional-failure
+    - tests/excluded/131-genuine-codeunit-collision
+    - tests/excluded/135-same-ext-pageext-duplicate
+  notes: null
+
+- construct: base_app_data
+  category: runtime
+  status: not-possible
+  tests: []
+  notes: No standard BC tables are populated unless tests insert data.
+
+- construct: big_text
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-1/130-bigtext
+    - tests/bucket-2/122-unstubbed-types
+  notes: null
+
+- construct: blob_stream
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-2/114-instream-methods
+    - tests/bucket-2/117-file-stream
+    - tests/bucket-2/125-xmlport-query-diagnostics
+    - tests/bucket-2/134-http-mocks
+    - tests/bucket-2/78-blob-stream
+    - tests/bucket-2/79-stream-surface
+    - tests/bucket-2/80-recref-isolation
+    - tests/bucket-2/84-xmlport
+  notes: null
+
+- construct: codeunit_dispatch
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-1/112-codeunit-onrun-record
+    - tests/bucket-1/128-codeunit-not-found
+    - tests/bucket-2/119-report-skip
+    - tests/bucket-2/133-report-handler
+    - tests/bucket-2/40-page-run-record
+    - tests/bucket-2/42-list-of-interface
+    - tests/bucket-2/48-page-variable
+    - tests/bucket-2/75-codeunit-run-bool
+  notes: null
+
+- construct: company_context
+  category: runtime
+  status: not-possible
+  tests: []
+  notes: CompanyName() returns empty string. No company context.
+
+- construct: date_formula
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-2/44-single-arg-validate
+    - tests/bucket-2/59-dateformula-validate
+  notes: null
+
+- construct: dialog
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-1/25-expected-error-code
+    - tests/bucket-1/71-testpage
+    - tests/bucket-2/117-file-stream
+    - tests/bucket-2/67-iteration-tracking
+    - tests/bucket-2/85-dialog
+    - tests/excluded/pipeline-gap-fixture
+  notes: null
+
+- construct: enum_operations
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-1/20-option-fields
+    - tests/bucket-1/24-secret-text
+    - tests/bucket-1/79-gui-fieldclass
+    - tests/bucket-2/100-bind-subscription
+    - tests/bucket-2/101-multi-subscribers
+    - tests/bucket-2/102-sender-pattern
+    - tests/bucket-2/103-before-db-events
+    - tests/bucket-2/104-xrec-behavior
+  notes: null
+
+- construct: error_handling
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-1/01-pure-function
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/04-asserterror
+    - tests/bucket-1/112-codeunit-onrun-record
+    - tests/bucket-1/128-codeunit-not-found
+    - tests/bucket-1/13-partial-compile
+    - tests/excluded/06-intentional-failure
+  notes: null
+
+- construct: error_info
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-2/120-errorinfo
+  notes: null
+
+- construct: event_subscribers
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-2/100-bind-subscription
+    - tests/bucket-2/101-multi-subscribers
+    - tests/bucket-2/102-sender-pattern
+    - tests/bucket-2/103-before-db-events
+    - tests/bucket-2/104-xrec-behavior
+    - tests/bucket-2/105-subscriber-error
+    - tests/bucket-2/66-event-subscribers
+    - tests/bucket-2/97-event-params
+  notes: Partial support. Zero-arg subscribers work; parameter passing is limited.
+
+- construct: format_evaluate
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-1/11-variant-type
+    - tests/bucket-1/12-format-string
+    - tests/bucket-1/13-partial-compile
+    - tests/bucket-1/17-text-builder
+    - tests/bucket-1/23-error-line-mapping
+    - tests/bucket-1/29-record-id
+    - tests/bucket-2/123-fieldref-enum
+    - tests/bucket-2/126-field-metadata
+  notes: null
+
+- construct: guid_type
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-2/122-unstubbed-types
+    - tests/bucket-2/57-navapp-moduleinfo
+    - tests/bucket-2/60-guid-text-get
+    - tests/bucket-2/93-record-getbysystemid
+  notes: null
+
+- construct: http_mock
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-2/134-http-mocks
+    - tests/bucket-2/89-nav-type-constructors
+    - tests/bucket-2/96-httpcontent-stream
+  notes: Mock types available. HttpClient.Send/Get/Post throw NotSupportedException.
+
+- construct: http_send
+  category: runtime
+  status: not-possible
+  tests: []
+  notes: HttpClient.Send/Get/Post/Put/Delete/Patch throw NotSupportedException. Mock types available for header/content manipulation.
+
+- construct: interface_dispatch
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/31-interface-return
+    - tests/bucket-1/32-interface-param
+    - tests/bucket-2/125-xmlport-query-diagnostics
+    - tests/bucket-2/42-list-of-interface
+    - tests/bucket-2/53-enum-interface
+  notes: null
+
+- construct: isolated_storage
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-1/16-isolated-storage
+    - tests/bucket-1/24-secret-text
+  notes: null
+
+- construct: json_operations
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-1/77-json-types
+    - tests/bucket-2/83-list-byref
+  notes: null
+
+- construct: notification
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-2/122-unstubbed-types
+    - tests/bucket-2/131-send-notification-handler
+    - tests/excluded/pipeline-gap-fixture
+  notes: null
+
+- construct: number_sequence
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-2/54-numbersequence
+  notes: null
+
+- construct: page_rendering
+  category: runtime
+  status: not-possible
+  tests: []
+  notes: No layout engine. TestPage and handler dispatch work, but field visibility/editability are not evaluated.
+
+- construct: parallel_sessions
+  category: runtime
+  status: not-possible
+  tests: []
+  notes: StartSession runs synchronously; no parallel execution or cross-session isolation.
+
+- construct: permission_enforcement
+  category: runtime
+  status: not-possible
+  tests: []
+  notes: No permission system; all access succeeds unconditionally.
+
+- construct: query_stub
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-1/09-setfilter-expressions
+    - tests/bucket-2/125-xmlport-query-diagnostics
+    - tests/bucket-2/90-query-object
+  notes: null
+
+- construct: record_filtering
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/07-composite-pk
+    - tests/bucket-1/08-sort-ordering
+    - tests/bucket-1/09-setfilter-expressions
+    - tests/bucket-1/30-modify-all
+    - tests/bucket-2/103-before-db-events
+    - tests/bucket-2/108-getfilter
+    - tests/bucket-2/109-currentkey
+  notes: null
+
+- construct: record_operations
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/05-known-limitation
+    - tests/bucket-1/07-composite-pk
+    - tests/bucket-1/08-sort-ordering
+    - tests/bucket-1/09-setfilter-expressions
+    - tests/bucket-1/112-codeunit-onrun-record
+    - tests/bucket-1/13-partial-compile
+    - tests/bucket-1/16-isolated-storage
+  notes: null
+
+- construct: record_ref
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-1/79-gui-fieldclass
+    - tests/bucket-2/116-recref-methods
+    - tests/bucket-2/118-fieldref-settable
+    - tests/bucket-2/123-fieldref-enum
+    - tests/bucket-2/126-field-metadata
+    - tests/bucket-2/127-recref-fieldref-api
+    - tests/bucket-2/43-recordref-local
+    - tests/bucket-2/49-recordref-open
+  notes: null
+
+- construct: report_rendering
+  category: runtime
+  status: not-possible
+  tests: []
+  notes: No report layout engine or dataset rendering. Report variables support limited standalone helpers only.
+
+- construct: session_api
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-1/112-codeunit-onrun-record
+    - tests/bucket-2/79-startsession
+  notes: StartSession runs synchronously; IsSessionActive returns false.
+
+- construct: temporary_records
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-2/124-temp-records-flowfields
+    - tests/bucket-2/49-recordref-open
+  notes: null
+
+- construct: test_handlers
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-1/71-testpage
+    - tests/bucket-2/131-send-notification-handler
+    - tests/bucket-2/133-report-handler
+    - tests/bucket-2/73-modal-handler
+    - tests/bucket-2/82-recref-fieldindex
+    - tests/bucket-2/92-request-page-handler
+  notes: null
+
+- construct: test_page
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-1/71-testpage
+    - tests/bucket-2/132-testpage-stubs
+    - tests/bucket-2/73-modal-handler
+    - tests/bucket-2/74-mock-stubs
+    - tests/bucket-2/74-testpage-navigation
+    - tests/bucket-2/79-form-handle-stubs
+    - tests/bucket-2/82-recref-fieldindex
+    - tests/bucket-2/90-testpage-extended
+  notes: null
+
+- construct: text_builder
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-1/17-text-builder
+  notes: null
+
+- construct: transaction_semantics
+  category: runtime
+  status: not-possible
+  tests: []
+  notes: Commit/Rollback are no-ops; no transaction isolation.
+
+- construct: try_function
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-2/41-try-function
+  notes: null
+
+- construct: variable_storage
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-2/131-send-notification-handler
+    - tests/bucket-2/75-library-variable-storage
+  notes: null
+
+- construct: variant_type
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-1/11-variant-type
+    - tests/bucket-1/79-gui-fieldclass
+    - tests/bucket-2/82-recref-fieldindex
+    - tests/bucket-2/84-variant-to-record
+    - tests/bucket-2/87-fieldref-setrange-types
+    - tests/excluded/46-missing-dep-hint
+  notes: null
+
+- construct: xmlport_stub
+  category: runtime
+  status: covered
+  tests:
+    - tests/bucket-2/125-xmlport-query-diagnostics
+    - tests/bucket-2/84-json-compilation-error
+    - tests/bucket-2/84-xmlport
+    - tests/stubs/39-stubs
+  notes: Compile-time stub. Import/Export throw NotSupportedException at runtime.
+
+- construct: caption_value
+  category: other
+  status: covered
+  tests:
+    - tests/bucket-2/126-field-metadata
+    - tests/bucket-2/133-report-handler
+    - tests/bucket-2/82-recref-fieldindex
+    - tests/bucket-2/95-rendering-strip
+  notes: null
+
+- construct: database_reference
+  category: other
+  status: covered
+  tests:
+    - tests/bucket-1/05-known-limitation
+    - tests/bucket-2/103-before-db-events
+    - tests/bucket-2/104-xrec-behavior
+    - tests/bucket-2/116-recref-methods
+    - tests/bucket-2/118-fieldref-settable
+    - tests/bucket-2/122-unstubbed-types
+    - tests/bucket-2/127-recref-fieldref-api
+    - tests/bucket-2/69-recref-fieldref
+  notes: null
+
+- construct: decimal_range_value
+  category: other
+  status: gap
+  tests: []
+  notes: null
+
+- construct: filter_value
+  category: other
+  status: gap
+  tests: []
+  notes: null
+
+- construct: implementation_value
+  category: other
+  status: covered
+  tests:
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/31-interface-return
+    - tests/bucket-1/32-interface-param
+    - tests/bucket-2/42-list-of-interface
+    - tests/bucket-2/53-enum-interface
+  notes: null
+
+- construct: implementation_value_list
+  category: other
+  status: covered
+  tests:
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/31-interface-return
+    - tests/bucket-1/32-interface-param
+    - tests/bucket-2/42-list-of-interface
+    - tests/bucket-2/53-enum-interface
+  notes: null
+
+- construct: implements_clause
+  category: other
+  status: covered
+  tests:
+    - tests/bucket-1/03-interface-injection
+    - tests/bucket-1/31-interface-return
+    - tests/bucket-1/32-interface-param
+    - tests/bucket-2/42-list-of-interface
+    - tests/bucket-2/53-enum-interface
+  notes: null
+
+- construct: label_attribute
+  category: other
+  status: covered
+  tests:
+    - tests/bucket-2/113-report-labels
+  notes: null
+
+- construct: label_section
+  category: other
+  status: gap
+  tests: []
+  notes: null
+
+- construct: link_value
+  category: other
+  status: gap
+  tests: []
+  notes: null
+
+- construct: link_value_list
+  category: other
+  status: gap
+  tests: []
+  notes: null
+
+- construct: ml_value_list
+  category: other
+  status: gap
+  tests: []
+  notes: null
+
+- construct: ml_value_pair
+  category: other
+  status: gap
+  tests: []
+  notes: null
+
+- construct: object_reference_value
+  category: other
+  status: gap
+  tests: []
+  notes: null
+
+- construct: option_member
+  category: other
+  status: covered
+  tests:
+    - tests/bucket-2/33-extension-validate
+    - tests/bucket-2/34-extension-parent-object
+    - tests/bucket-2/52-setfilter-and
+    - tests/bucket-2/87-fieldref-setrange-types
+  notes: null
+
+- construct: option_member_list
+  category: other
+  status: covered
+  tests:
+    - tests/bucket-2/33-extension-validate
+    - tests/bucket-2/34-extension-parent-object
+    - tests/bucket-2/52-setfilter-and
+    - tests/bucket-2/87-fieldref-setrange-types
+  notes: null
+
+- construct: order_by_item
+  category: other
+  status: gap
+  tests: []
+  notes: null
+
+- construct: order_by_list
+  category: other
+  status: gap
+  tests: []
+  notes: null
+
+- construct: permission_type
+  category: other
+  status: gap
+  tests: []
+  notes: null
+
+- construct: preproc_conditional
+  category: other
+  status: gap
+  tests: []
+  notes: null
+
+- construct: procedure_modifier
+  category: other
+  status: covered
+  tests:
+    - tests/bucket-1/02-record-operations
+    - tests/bucket-1/07-composite-pk
+    - tests/bucket-1/08-sort-ordering
+    - tests/bucket-1/09-setfilter-expressions
+    - tests/bucket-2/100-bind-subscription
+    - tests/bucket-2/101-multi-subscribers
+    - tests/bucket-2/102-sender-pattern
+    - tests/bucket-2/103-before-db-events
+  notes: null
+
+- construct: rendering_layout
+  category: other
+  status: covered
+  tests:
+    - tests/bucket-2/95-rendering-strip
+  notes: null
+
+- construct: signed_integer_list
+  category: other
+  status: gap
+  tests: []
+  notes: null
+
+- construct: sorting_value
+  category: other
+  status: gap
+  tests: []
+  notes: null
+
+- construct: tabledata_permission
+  category: other
+  status: gap
+  tests: []
+  notes: null
+
+- construct: tabledata_permission_list
+  category: other
+  status: gap
+  tests: []
+  notes: null
+
+- construct: view_definition
+  category: other
+  status: gap
+  tests: []
+  notes: null
+
+- construct: where_clause
+  category: other
+  status: covered
+  tests:
+    - tests/bucket-2/124-temp-records-flowfields
+    - tests/bucket-2/55-flowfield-exist
+    - tests/bucket-2/56-flowfield-multi
+  notes: null
+
+- construct: where_condition
+  category: other
+  status: covered
+  tests:
+    - tests/bucket-2/124-temp-records-flowfields
+    - tests/bucket-2/55-flowfield-exist
+    - tests/bucket-2/56-flowfield-multi
+  notes: null
+
+- construct: where_conditions
+  category: other
+  status: covered
+  tests:
+    - tests/bucket-2/124-temp-records-flowfields
+    - tests/bucket-2/55-flowfield-exist
+    - tests/bucket-2/56-flowfield-multi
+  notes: null
+
