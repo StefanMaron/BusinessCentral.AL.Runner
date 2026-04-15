@@ -5984,7 +5984,8 @@ Table.SetBaseLoadFields:
 Table.SetCurrentKey:
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  tests: tests/bucket-2/109-currentkey
   notes: overloads=1
 
 Table.SetFilter:

@@ -7,6 +7,14 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **`Table.SetCurrentKey` iteration-order coverage (#223)** — `ALSetCurrentKey`
+  was already implemented in `MockRecordHandle` but had no proving tests that
+  verify `FindSet`/`Next` actually returns records in the specified field order.
+  Adds four new tests to `tests/bucket-2/109-currentkey`: sort by Name
+  (ascending), sort by Sequence (ascending), default PK sort (no SetCurrentKey),
+  and descending Name order via `SetAscending`. RED confirmed by temporarily
+  setting `if (false && _currentKeyFields ...)` — all four new tests fail.
+  Coverage map: `Table.SetCurrentKey` moved from `gap` to `covered`.
 - **Record.Count with SetFilter expressions coverage (#260)** — `Count` with
   SetFilter comparators / OR-lists / range expressions was already honoured
   in `MockRecordHandle.ALCount` but had no dedicated proving test. New suite
