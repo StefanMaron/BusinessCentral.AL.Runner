@@ -13,13 +13,33 @@ All notable changes to this project are documented here. Format based on
   (XmlPort) or "Record operations" (Query) as actionable alternatives. (#124)
 
 ### Added
+- **ErrorInfo type & collectible errors** — `Error(ErrorInfo)` now uses
+  `ErrorInfo.Message` for the error text (previously used `.ToString()` which
+  included internal field metadata). Collectible errors are fully supported:
+  mark `ErrorInfo.Collectible := true` and annotate procedures with
+  `[ErrorBehavior(ErrorBehavior::Collect)]` to collect errors instead of
+  throwing. Global functions `HasCollectedErrors()`, `GetCollectedErrors()`,
+  `ClearCollectedErrors()`, and `IsCollectingErrors()` all work. (#117)
+- **MockNotification** — In-memory replacement for `NavNotification`. Message,
+  Send, Recall, SetData/GetData/HasData, AddAction, Id, Scope. Send and Recall
+  are no-ops; data store is in-memory; Id auto-generates a Guid. (#121)
+- **BigText support** — `NavBigText` works as-is (real BC type, no session
+  dependency). AddText, GetSubText, TextPos, Length all function correctly. (#121)
+- **MockTaskScheduler** — CreateTask dispatches codeunit synchronously via
+  MockCodeunitHandle (same pattern as MockSession.StartSession), returns a Guid.
+  TaskExists returns false, CancelTask/SetTaskReady are no-ops. (#121)
+- **MockDataTransfer** — Minimal stub so code using DataTransfer compiles and
+  runs without error. SetTables, AddFieldValue, AddConstantValue, AddJoin,
+  AddSourceFilter, CopyFields, CopyRows are all no-ops. (#121)
+- Test suite `tests/bucket-2/122-unstubbed-types/` with 21 test cases covering
+  all four types.
 - **System, Database & Session utility stubs** — `Session.LogMessage()` (no-op),
   `Session.ApplicationArea()` (returns empty string), `Session.GetExecutionContext()` /
   `GetModuleExecutionContext()` (return `ExecutionContext.Normal`),
   `Database.LockTimeout(bool)` (no-op), `CompanyProperty.DisplayName()` / `UrlName()`
   (return stub company values), `RoundDateTime(dt, precision, direction)` (full implementation
   with ms precision and direction rounding). `ProductName.Full/Short/Marketing` use
-  real BC types. `NormalDate/ClosingDate` wrappers added with explicit 0D handling. (#122)
+  real BC types. `NormalDate/ClosingDate` wrappers added with explicit 0D handling. (#185)
 - **NavDateTime formatting fix** — `AlCompat.Format()` now handles `NavDateTime`
   values directly by casting to `DateTime`, avoiding the `NullReferenceException` in
   `NavDateTimeFormatter.GetStandardFormat` that occurred when `NavSession` was null.

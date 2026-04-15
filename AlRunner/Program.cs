@@ -251,6 +251,10 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - Cross-codeunit dispatch (Codeunit.Run, Codeunit.Run(id, Rec) with record parameter, direct codeunit variable calls)
 - AL interfaces for dependency injection
 - `asserterror` blocks + `GetLastErrorText()`
+- ErrorInfo type — `ErrorInfo.Create()`, set `Message`, `DetailedMessage`, `FieldNo`, `Collectible`, etc.
+  `Error(ErrorInfo)` throws with the message text. Collectible errors: mark `ErrorInfo.Collectible := true`
+  and wrap the calling procedure with `[ErrorBehavior(ErrorBehavior::Collect)]` to collect instead of throw.
+  `HasCollectedErrors()`, `GetCollectedErrors(clear)`, `ClearCollectedErrors()`, `IsCollectingErrors()` all work.
 - Assert codeunit: AreEqual, AreNotEqual, IsTrue, IsFalse, ExpectedError, RecordIsEmpty, etc.
 - OnValidate triggers on table fields
 - Table procedures (custom procedures on table objects)
@@ -316,6 +320,16 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   properties and Invoke() work without error. Import/Export (instance and static)
   throw NotSupportedException with actionable guidance.
   Use AL interface injection to abstract XmlPort I/O for testing.
+- Notification — Message, Send, Recall, SetData/GetData/HasData, AddAction, Id, Scope.
+  Send/Recall are no-ops; data store is in-memory; Id auto-generates a Guid.
+  Note: [SendNotificationHandler] dispatch is NOT implemented; use direct Notification methods.
+- BigText — uses the real BC NavBigText type. AddText, GetSubText, TextPos, Length
+  all work as-is (no session dependency). Note: TextPos is 1-based in AL.
+- TaskScheduler — CreateTask (dispatches codeunit synchronously, invokes
+  failureCodeunitId on exception, returns Guid), TaskExists (returns false),
+  CancelTask (no-op), SetTaskReady (no-op)
+- DataTransfer — SetTables, AddFieldValue, AddConstantValue, AddJoin, AddSourceFilter,
+  CopyFields, CopyRows (all no-ops; requires real database for actual transfer)
 
 ### What al-runner does NOT support
 
@@ -2073,6 +2087,7 @@ public static class Executor
             AlRunner.Runtime.MockIsolatedStorage.ResetAll();
             AlRunner.Runtime.MockVariableStorage.Reset();
             AlRunner.Runtime.AlScope.ResetLastStatement();
+            AlRunner.Runtime.AlScope.ResetCollectedErrors();
             AlRunner.Runtime.HandlerRegistry.Reset();
             AlRunner.Runtime.MockSession.Reset();
             AlRunner.Runtime.MockLanguage.Reset();
