@@ -1656,25 +1656,27 @@ public class MockRecordHandle
             }
         }
 
-        // Apply sort ordering if a current key is set
-        if (_currentKeyFields != null && _currentKeyFields.Length > 0)
+        // Sort by current key when set, or fall back to PK order (matches BC behaviour:
+        // FindFirst/FindSet/FindLast always operate on a defined sort order).
+        var sortFields = (_currentKeyFields != null && _currentKeyFields.Length > 0)
+            ? _currentKeyFields
+            : GetPrimaryKeyFields();
+
+        result.Sort((a, b) =>
         {
-            result.Sort((a, b) =>
+            foreach (var fieldNo in sortFields)
             {
-                foreach (var fieldNo in _currentKeyFields)
+                var aVal = a.TryGetValue(fieldNo, out var av) ? NavValueToString(av) : "";
+                var bVal = b.TryGetValue(fieldNo, out var bv) ? NavValueToString(bv) : "";
+                var cmp = StringCompareOp(aVal, bVal, false);
+                if (cmp != 0)
                 {
-                    var aVal = a.TryGetValue(fieldNo, out var av) ? NavValueToString(av) : "";
-                    var bVal = b.TryGetValue(fieldNo, out var bv) ? NavValueToString(bv) : "";
-                    var cmp = StringCompareOp(aVal, bVal, false);
-                    if (cmp != 0)
-                    {
-                        bool asc = !_ascending.TryGetValue(fieldNo, out var isAsc) || isAsc;
-                        return asc ? cmp : -cmp;
-                    }
+                    bool asc = !_ascending.TryGetValue(fieldNo, out var isAsc) || isAsc;
+                    return asc ? cmp : -cmp;
                 }
-                return 0;
-            });
-        }
+            }
+            return 0;
+        });
 
         return result;
     }
