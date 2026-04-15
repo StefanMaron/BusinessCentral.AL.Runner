@@ -15,6 +15,12 @@ All notable changes to this project are documented here. Format based on
   `gap` to `out-of-scope` in `docs/coverage.yaml`.
 
 ### Added
+- **Test coverage: `Record.SetRange(Field)` clears field filter (#240)** — new
+  suite `tests/bucket-1/240-setrange-clear` proves that calling
+  `SetRange(Field)` with no value argument removes only that field's filter
+  while leaving other field filters intact, and that `FindSet()` iterates
+  the full record set afterwards. Behaviour was already implemented in
+  `MockRecordHandle.ALSetRangeSafe`; this adds the proving tests.
 - **Record.TransferFields coverage (#224)** — `ALTransferFields` in
   `MockRecordHandle` now has dedicated proving tests. New suite
   `tests/bucket-1/39-transferfields` verifies matching fields are copied by
