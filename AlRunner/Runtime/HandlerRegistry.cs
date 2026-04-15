@@ -33,6 +33,9 @@ public static class HandlerRegistry
     // Registered request page handler: method that takes (MockTestPageHandle testPage)
     private static MethodInfo? _requestPageHandler;
 
+    // Registered report handler: method that takes (MockTestPageHandle testPage)
+    private static MethodInfo? _reportHandler;
+
     /// <summary>
     /// Register handlers for the current test. Called by the Executor before each test.
     /// </summary>
@@ -75,6 +78,8 @@ public static class HandlerRegistry
                         _modalPageHandler = method;
                     else if (handlerTypeName == "RequestPage" || handlerTypeName == "Page")
                         _requestPageHandler = method;
+                    else if (handlerTypeName == "Report")
+                        _reportHandler = method;
                 }
             }
         }
@@ -216,6 +221,35 @@ public static class HandlerRegistry
     }
 
     /// <summary>
+    /// Invoke the registered report handler for the given report ID.
+    /// Creates a MockTestPageHandle, passes it to the handler, and returns.
+    /// If no handler is registered, silently returns (Report.Run without handler is valid).
+    /// </summary>
+    public static bool InvokeReportHandler(int reportId)
+    {
+        if (_reportHandler == null || _parentInstance == null)
+            return false;
+
+        var testPage = new MockTestPageHandle(reportId);
+
+        try
+        {
+            _reportHandler.Invoke(_parentInstance, new object[] { testPage });
+        }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            throw tie.InnerException;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Check if a report handler is registered.
+    /// </summary>
+    public static bool HasReportHandler => _reportHandler != null;
+
+    /// <summary>
     /// Check if a confirm handler is registered.
     /// </summary>
     public static bool HasConfirmHandler => _confirmHandler != null;
@@ -240,5 +274,6 @@ public static class HandlerRegistry
         _messageHandler = null;
         _modalPageHandler = null;
         _requestPageHandler = null;
+        _reportHandler = null;
     }
 }

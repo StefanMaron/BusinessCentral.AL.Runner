@@ -1822,6 +1822,22 @@ public void ClearApplicationMemberVariables() { }
                     visited.ArgumentList);
             }
 
+            // NavReport.Run(reportId) -> MockReportHandle.StaticRun(reportId)
+            // NavReport.RunModal(reportId) -> MockReportHandle.StaticRunModal(reportId)
+            // BC emits these static calls for Report.Run(Report::"X") / Report.RunModal(Report::"X").
+            // NavReport requires the service tier; forward to MockReportHandle which dispatches
+            // to the ReportHandler if registered, or silently runs the report class.
+            if (exprText == "NavReport" && (methodName == "Run" || methodName == "RunModal"))
+            {
+                var stubMethod = methodName == "Run" ? "StaticRun" : "StaticRunModal";
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("MockReportHandle"),
+                        SyntaxFactory.IdentifierName(stubMethod)),
+                    visited.ArgumentList);
+            }
+
             // NavQuery.ALSaveAsCsv/ALSaveAsXml/ALSaveAsJson/ALSaveAsExcel -> MockQueryHandle statics
             // BC emits these static calls for Query.SaveAsCsv(queryId, ...) etc.
             // NavQuery requires the service tier; forward to MockQueryHandle stubs.

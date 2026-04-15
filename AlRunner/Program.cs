@@ -302,7 +302,11 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   Filter.SetFilter()/GetFilter(), field AsDecimal(), Enabled() (stubs; return true/no-op
   unless otherwise noted; Next() returns false)
 - Request page handler dispatch — [RequestPageHandler] intercepts Report.RunRequestPage() calls
-- Report variables — SetTableView(), Run() (no-op), RunRequestPage() (dispatches handler).
+- Report handler dispatch — [ReportHandler] intercepts Report.Run()/Report.RunModal() and
+  report variable .Run()/.RunModal() calls. Handler receives TestRequestPage parameter.
+  Reports run silently when no handler is registered.
+- Report variables — SetTableView(), Run(), RunModal(), RunRequestPage() (dispatches handler),
+  UseRequestPage(false) suppresses request page handler.
   CurrReport.Skip() and CurrReport.Break() are available inside report triggers.
   Report rendering and layout evaluation are not available.
   Report label fields and properties are preserved (accessible in generated code).

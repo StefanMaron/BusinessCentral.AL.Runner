@@ -15,6 +15,13 @@ public class MockReportHandle
     private object? _reportInstance;
     private MockRecordHandle? _tableView;
 
+    /// <summary>
+    /// UseRequestForm property — maps to UseRequestPage(bool) in AL.
+    /// BC emits: rep.Target.UseRequestForm = false;
+    /// When false, Run/RunModal skip request page handler invocation.
+    /// </summary>
+    public bool UseRequestForm { get; set; } = true;
+
     public MockReportHandle() { }
 
     public MockReportHandle(int reportId)
@@ -29,6 +36,26 @@ public class MockReportHandle
 
     public void Run()
     {
+        // If a ReportHandler is registered, invoke it instead of running the report class
+        if (HandlerRegistry.InvokeReportHandler(ReportId))
+            return;
+
+        var report = EnsureReportInstance();
+        if (report == null)
+            return;
+
+        var runMethod = report.GetType().GetMethod("Run",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            null, Type.EmptyTypes, null);
+        runMethod?.Invoke(report, null);
+    }
+
+    public void RunModal()
+    {
+        // If a ReportHandler is registered, invoke it instead of running the report class
+        if (HandlerRegistry.InvokeReportHandler(ReportId))
+            return;
+
         var report = EnsureReportInstance();
         if (report == null)
             return;
@@ -41,7 +68,8 @@ public class MockReportHandle
 
     public string RunRequestPage()
     {
-        HandlerRegistry.InvokeRequestPageHandler(ReportId);
+        if (UseRequestForm)
+            HandlerRegistry.InvokeRequestPageHandler(ReportId);
         return "<RequestPage />";
     }
 
@@ -124,4 +152,24 @@ public class MockReportHandle
 
     private static int ScoreMethodMatch(MethodInfo method, object[] args)
         => MockCodeunitHandle.ScoreMethodMatch(method, args);
+
+    /// <summary>
+    /// Static Report.Run(reportId) — redirected from NavReport.Run() by the rewriter.
+    /// If a ReportHandler is registered, invoke it; otherwise create an instance and Run().
+    /// </summary>
+    public static void StaticRun(int reportId)
+    {
+        var handle = new MockReportHandle(reportId);
+        handle.Run();
+    }
+
+    /// <summary>
+    /// Static Report.RunModal(reportId) — redirected from NavReport.RunModal() by the rewriter.
+    /// If a ReportHandler is registered, invoke it; otherwise create an instance and RunModal().
+    /// </summary>
+    public static void StaticRunModal(int reportId)
+    {
+        var handle = new MockReportHandle(reportId);
+        handle.RunModal();
+    }
 }
