@@ -209,6 +209,19 @@ public class MockFile
     public void ALViewFromStream(object? parent, MockInStream inStream) { }
 
     /// <summary>ALUploadIntoStream — standalone function; always returns false (no UI).</summary>
+    public static bool ALUploadIntoStream(object? scope, DataError errorLevel, string dialogTitle, string fromFolder, string fromFilter, ref NavText fileName, MockInStream inStream)
+    {
+        fileName = NavText.Empty;
+        return false;
+    }
+
+    public static bool ALUploadIntoStream(object? scope, DataError errorLevel, string dialogTitle, string fromFolder, string fromFilter, ref NavText fileName, ref MockInStream inStream)
+    {
+        fileName = NavText.Empty;
+        return false;
+    }
+
+    // Fallback overloads without scope/DataError in case BC version differs
     public static bool ALUploadIntoStream(string dialogTitle, string fromFolder, string fromFilter, ref NavText fileName, MockInStream inStream)
     {
         fileName = NavText.Empty;
@@ -221,19 +234,14 @@ public class MockFile
         return false;
     }
 
-    public static bool ALUploadIntoStream(string dialogTitle, string fromFolder, string fromFilter, ref NavText fileName, ref MockInStream inStream)
-    {
-        fileName = NavText.Empty;
-        return false;
-    }
-
-    public static bool ALUploadIntoStream(DataError errorLevel, string dialogTitle, string fromFolder, string fromFilter, ref NavText fileName, ref MockInStream inStream)
-    {
-        fileName = NavText.Empty;
-        return false;
-    }
-
     /// <summary>ALDownloadFromStream — standalone function; no-op (no UI in standalone mode).</summary>
+    public static bool ALDownloadFromStream(object? scope, DataError errorLevel, MockInStream inStream, string dialogTitle, string toFolder, string toFilter, ref NavText fileName)
+    {
+        fileName = NavText.Empty;
+        return false;
+    }
+
+    // Fallback overloads without scope/DataError
     public static bool ALDownloadFromStream(MockInStream inStream, string dialogTitle, string toFolder, string toFilter, ref NavText fileName)
     {
         fileName = NavText.Empty;
