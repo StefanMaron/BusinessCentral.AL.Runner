@@ -832,6 +832,10 @@ public static class AlCompat
             }
             catch { }
         }
+        // NavGuid: checked BEFORE NavValue to avoid the try/catch swallowing cast failures.
+        // NavGuid.ToGuid() is the correct API — explicit (Guid) cast throws InvalidCastException.
+        // Format "B" = {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX} (38 chars, uppercase, braces).
+        if (value is Microsoft.Dynamics.Nav.Runtime.NavGuid ng0) return ng0.ToGuid().ToString("B").ToUpperInvariant();
         // Handle NavValue subtypes — use ToText() where available, avoid ToString() which may need NavSession
         if (value is Microsoft.Dynamics.Nav.Runtime.NavValue nv)
         {
@@ -841,9 +845,6 @@ public static class AlCompat
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavBoolean nb) return (bool)nb ? "Yes" : "No";
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavInteger ni) return ((int)ni).ToString();
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavBigInteger nbi) return ((long)nbi).ToString();
-                // NavGuid: AL's ToText() returns {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx} (format "B", 38 chars).
-                // .NET ToString() without format gives "D" (36 chars, no braces) — fix to "B".
-                if (value is Microsoft.Dynamics.Nav.Runtime.NavGuid ng) return ((Guid)ng).ToString("B").ToUpperInvariant();
                 // NavByte.ToText() — BCL routes through NCLManagedAdapter.ByteToTextChar (OEM native code)
                 // which fails without the BC service tier. Return the numeric string (0-255) instead.
                 if (typeName == "NavByte")
@@ -1528,7 +1529,7 @@ public static class AlCompat
     {
         g = UnwrapVariant(g);
         var format = withBraces ? "B" : "N";
-        if (g is NavGuid ng) return new NavText(((Guid)ng).ToString(format).ToUpperInvariant());
+        if (g is NavGuid ng) return new NavText(ng.ToGuid().ToString(format).ToUpperInvariant());
         if (g is Guid guid) return new NavText(guid.ToString(format).ToUpperInvariant());
         // MockTextBuilder.ALToText() is also routed here — delegate back to preserve correct text.
         if (g is MockTextBuilder mtb) return mtb.ALToText();

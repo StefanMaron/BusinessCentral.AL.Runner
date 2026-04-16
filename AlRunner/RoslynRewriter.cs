@@ -1900,10 +1900,6 @@ public void ClearApplicationMemberVariables() { }
         // Now recurse into children first
         var visited = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
 
-        // DIAGNOSTIC: log all ToText/ALToText invocations — remove after debugging #612
-        if (visited.Expression is MemberAccessExpressionSyntax _diagMa &&
-            (_diagMa.Name.Identifier.Text == "ToText" || _diagMa.Name.Identifier.Text == "ALToText"))
-            Console.Error.WriteLine($"[DIAG-612] cls={_currentClassName} expr={visited.Expression} args={visited.ArgumentList.Arguments.Count} parent={node.Parent?.GetType().Name}");
 
         // `<expr>.ToText(...)` -> `AlCompat.Format(<expr>)` or `AlCompat.GuidToText(<expr>, false)`
         // BC lowers AL's `xVar.ToText()` to either an instance `navX.ToText(...)` call
@@ -2491,16 +2487,31 @@ public void ClearApplicationMemberVariables() { }
                     .WithTriviaFrom(visited);
             }
 
-            // ALCompiler.ToText(session, value) -> AlCompat.Format(value)
+            // ALCompiler.ToText(session, value[, withBraces]) -> AlCompat.Format(value) or AlCompat.GuidToText(value, false)
             // BC lowers `byteVar.ToText()` (and other scalar ToText calls) to the static
-            // ALCompiler.ToText(session, value) form. For Byte, this routes through
-            // NavValueFormatter -> NavByteFormatter -> NCLManagedAdapter (OEM native DLLs)
-            // which fails without the BC service tier. AlCompat.Format handles all BC value
-            // types without session access. We take the second argument (value).
+            // ALCompiler.ToText(session, value) form. We take the second argument (value).
+            // 3-arg form: ALCompiler.ToText(session, navGuid, false) for Guid.ToText(false) →
+            //   3rd arg literal false = no-delimiter form → GuidToText(value, false).
             if (exprText == "ALCompiler" && methodName == "ToText"
                 && visited.ArgumentList.Arguments.Count >= 2)
             {
                 var valueArg = visited.ArgumentList.Arguments[1];
+                bool isFalseThirdArg = visited.ArgumentList.Arguments.Count >= 3 &&
+                    visited.ArgumentList.Arguments[2].Expression.IsKind(SyntaxKind.FalseLiteralExpression);
+                if (isFalseThirdArg)
+                {
+                    return SyntaxFactory.InvocationExpression(
+                        SyntaxFactory.MemberAccessExpression(
+                            SyntaxKind.SimpleMemberAccessExpression,
+                            SyntaxFactory.IdentifierName("AlCompat"),
+                            SyntaxFactory.IdentifierName("GuidToText")),
+                        SyntaxFactory.ArgumentList(
+                            SyntaxFactory.SeparatedList(new[] {
+                                valueArg,
+                                SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(SyntaxKind.FalseLiteralExpression))
+                            })))
+                        .WithTriviaFrom(visited);
+                }
                 return SyntaxFactory.InvocationExpression(
                     SyntaxFactory.MemberAccessExpression(
                         SyntaxKind.SimpleMemberAccessExpression,
