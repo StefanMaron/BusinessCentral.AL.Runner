@@ -2740,6 +2740,18 @@ public void ClearApplicationMemberVariables() { }
                         SyntaxFactory.IdentifierName("ALIsNullGuid")));
             }
 
+            // ALDatabase.ALDataFileInformation() -> "STANDALONE"
+            // The real implementation queries the BC data file path from NavSession, which
+            // is unavailable in the runner. Return a fixed non-empty string so AL code that
+            // tests for non-empty (the normal guard) behaves correctly standalone.
+            if (exprText == "ALDatabase" && methodName == "ALDataFileInformation")
+            {
+                return SyntaxFactory.LiteralExpression(
+                    SyntaxKind.StringLiteralExpression,
+                    SyntaxFactory.Literal("STANDALONE"))
+                    .WithTriviaFrom(visited);
+            }
+
             // ALSystemDate.ALWorkDate(null!) -> ALSystemDate.ALWorkDate(NavDate.Default)
             // The rewriter turns this.Session -> null!, which makes ALWorkDate ambiguous between
             // the NavSession and NavDate overloads. We disambiguate to the NavDate overload.

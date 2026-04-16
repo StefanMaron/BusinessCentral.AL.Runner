@@ -1558,8 +1558,8 @@ Database.CurrentTransactionType:
 Database.DataFileInformation:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: returns fixed "STANDALONE" stub; RoslynRewriter rewrites ALDatabase.ALDataFileInformation() to string literal; tests/bucket-2/154-datafileinformation
 
 Database.ExportData:
   layer: runtime-api
