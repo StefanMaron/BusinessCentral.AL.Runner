@@ -7366,8 +7366,9 @@ Text.SelectStr:
 Text.Split:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=3
+  status: covered
+  tests: tests/bucket-2/184-text-split
+  notes: overloads=3 (Char, Text, List of [Char]). Covered via NavText native — preserves empty entries, no-separator returns single-element, multi-char separator not mistaken for single-char, List-of-Char splits on any of the supplied chars.
 
 Text.StartsWith:
   layer: runtime-api
