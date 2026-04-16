@@ -7091,122 +7091,122 @@ TestPage.Yes:
 TestPart.Caption:
   layer: runtime-api
   category: TestPart
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/185-testpart-methods
 
 TestPart.Editable:
   layer: runtime-api
   category: TestPart
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/185-testpart-methods
 
 TestPart.Enabled:
   layer: runtime-api
   category: TestPart
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/185-testpart-methods
 
 TestPart.Expand:
   layer: runtime-api
   category: TestPart
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/185-testpart-methods
 
 TestPart.FindFirstField:
   layer: runtime-api
   category: TestPart
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/185-testpart-methods
 
 TestPart.FindNextField:
   layer: runtime-api
   category: TestPart
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/185-testpart-methods
 
 TestPart.FindPreviousField:
   layer: runtime-api
   category: TestPart
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/185-testpart-methods
 
 TestPart.First:
   layer: runtime-api
   category: TestPart
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/185-testpart-methods
 
 TestPart.GetField:
   layer: runtime-api
   category: TestPart
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/185-testpart-methods
 
 TestPart.GetValidationError:
   layer: runtime-api
   category: TestPart
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/185-testpart-methods
 
 TestPart.GoToKey:
   layer: runtime-api
   category: TestPart
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/185-testpart-methods
 
 TestPart.GoToRecord:
   layer: runtime-api
   category: TestPart
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/185-testpart-methods
 
 TestPart.IsExpanded:
   layer: runtime-api
   category: TestPart
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/185-testpart-methods
 
 TestPart.Last:
   layer: runtime-api
   category: TestPart
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/185-testpart-methods
 
 TestPart.New:
   layer: runtime-api
   category: TestPart
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/185-testpart-methods
 
 TestPart.Next:
   layer: runtime-api
   category: TestPart
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/185-testpart-methods
 
 TestPart.Prev:
   layer: runtime-api
   category: TestPart
-  status: gap
-  notes: overloads=1
+  status: n/a
+  notes: removed in BC runtime 13.0 (AL0666); not available in BC 26+
 
 TestPart.Previous:
   layer: runtime-api
   category: TestPart
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/185-testpart-methods
 
 TestPart.ValidationErrorCount:
   layer: runtime-api
   category: TestPart
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/185-testpart-methods
 
 TestPart.Visible:
   layer: runtime-api
   category: TestPart
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/185-testpart-methods
 
 # ── TestRequestPage ─────────────────────────────────────────────
 

@@ -101,6 +101,58 @@ public class MockTestPageHandle
     public void ALExpand(bool expand) { }
 
     /// <summary>
+    /// Returns whether the node is currently expanded. Stub returns false.
+    /// BC emits <c>tP.Target.GetPart(hash).ALIsExpanded</c> as a property access
+    /// (not a method call) for <c>TestPart.IsExpanded()</c>.
+    /// </summary>
+    public bool ALIsExpanded => false;
+
+    /// <summary>
+    /// Returns whether the part is enabled. Stub returns true.
+    /// BC emits <c>tP.Target.GetPart(hash).ALEnabled()</c> for <c>TestPart.Enabled()</c>.
+    /// Note: ALEditable is a page-handle property; ALEnabled is the part-level method.
+    /// </summary>
+    public bool ALEnabled() => true;
+
+    /// <summary>
+    /// Returns whether the part is visible. Stub returns true.
+    /// BC emits <c>tP.Target.GetPart(hash).ALVisible()</c> for <c>TestPart.Visible()</c>.
+    /// </summary>
+    public bool ALVisible() => true;
+
+    /// <summary>
+    /// Returns the text of the nth validation error on the part. Stub returns empty string.
+    /// BC emits <c>tP.Target.GetPart(hash).ALGetValidationError(n)</c> for
+    /// <c>TestPart.GetValidationError(n)</c>.
+    /// </summary>
+    public string ALGetValidationError(int index) => string.Empty;
+    public string ALGetValidationError(DataError errorLevel, int index) => ALGetValidationError(index);
+
+    /// <summary>
+    /// Finds the first record where the field (by hash) equals value. Stub returns true.
+    /// BC emits <c>tP.Target.GetPart(hash).ALFindFirstField(DataError, int fieldHash, value)</c>
+    /// for <c>TestPart.FindFirstField(field, value)</c>.
+    /// </summary>
+    public bool ALFindFirstField(int fieldHash, object value) => true;
+    public bool ALFindFirstField(DataError errorLevel, int fieldHash, object value) => true;
+
+    /// <summary>
+    /// Finds the next record where the field (by hash) equals value. Stub returns false (end of set).
+    /// BC emits <c>tP.Target.GetPart(hash).ALFindNextField(DataError, int fieldHash, value)</c>
+    /// for <c>TestPart.FindNextField(field, value)</c>.
+    /// </summary>
+    public bool ALFindNextField(int fieldHash, object value) => false;
+    public bool ALFindNextField(DataError errorLevel, int fieldHash, object value) => false;
+
+    /// <summary>
+    /// Finds the previous record where the field (by hash) equals value. Stub returns false (end of set).
+    /// BC emits <c>tP.Target.GetPart(hash).ALFindPreviousField(DataError, int fieldHash, value)</c>
+    /// for <c>TestPart.FindPreviousField(field, value)</c>.
+    /// </summary>
+    public bool ALFindPreviousField(int fieldHash, object value) => false;
+    public bool ALFindPreviousField(DataError errorLevel, int fieldHash, object value) => false;
+
+    /// <summary>
     /// Returns a MockRecordHandle representing the underlying record of the page.
     /// Stub returns an unbound empty record handle (table 0). In BC, GetRecord
     /// returns the page's source table record, but we lack source-table metadata
