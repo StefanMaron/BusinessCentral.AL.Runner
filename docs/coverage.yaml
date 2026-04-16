@@ -7698,20 +7698,26 @@ TextBuilder.ToText:
 TextConst.Contains:
   layer: runtime-api
   category: TextConst
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite.
+  tests:
+    - tests/bucket-1/87-textconst-methods
 
 TextConst.EndsWith:
   layer: runtime-api
   category: TextConst
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite.
+  tests:
+    - tests/bucket-1/87-textconst-methods
 
 TextConst.IndexOf:
   layer: runtime-api
   category: TextConst
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite.
+  tests:
+    - tests/bucket-1/87-textconst-methods
 
 TextConst.IndexOfAny:
   layer: runtime-api
@@ -7722,80 +7728,106 @@ TextConst.IndexOfAny:
 TextConst.LastIndexOf:
   layer: runtime-api
   category: TextConst
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite.
+  tests:
+    - tests/bucket-1/87-textconst-methods
 
 TextConst.PadLeft:
   layer: runtime-api
   category: TextConst
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite.
+  tests:
+    - tests/bucket-1/87-textconst-methods
 
 TextConst.PadRight:
   layer: runtime-api
   category: TextConst
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite.
+  tests:
+    - tests/bucket-1/87-textconst-methods
 
 TextConst.Remove:
   layer: runtime-api
   category: TextConst
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite.
+  tests:
+    - tests/bucket-1/87-textconst-methods
 
 TextConst.Replace:
   layer: runtime-api
   category: TextConst
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite.
+  tests:
+    - tests/bucket-1/87-textconst-methods
 
 TextConst.Split:
   layer: runtime-api
   category: TextConst
-  status: gap
-  notes: overloads=3
+  status: covered
+  notes: overloads=3; BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite.
+  tests:
+    - tests/bucket-1/87-textconst-methods
 
 TextConst.StartsWith:
   layer: runtime-api
   category: TextConst
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite.
+  tests:
+    - tests/bucket-1/87-textconst-methods
 
 TextConst.Substring:
   layer: runtime-api
   category: TextConst
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite.
+  tests:
+    - tests/bucket-1/87-textconst-methods
 
 TextConst.ToLower:
   layer: runtime-api
   category: TextConst
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite.
+  tests:
+    - tests/bucket-1/87-textconst-methods
 
 TextConst.ToUpper:
   layer: runtime-api
   category: TextConst
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite.
+  tests:
+    - tests/bucket-1/87-textconst-methods
 
 TextConst.Trim:
   layer: runtime-api
   category: TextConst
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite.
+  tests:
+    - tests/bucket-1/87-textconst-methods
 
 TextConst.TrimEnd:
   layer: runtime-api
   category: TextConst
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite.
+  tests:
+    - tests/bucket-1/87-textconst-methods
 
 TextConst.TrimStart:
   layer: runtime-api
   category: TextConst
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite.
+  tests:
+    - tests/bucket-1/87-textconst-methods
 
 # ── Time ────────────────────────────────────────────────────────
 
