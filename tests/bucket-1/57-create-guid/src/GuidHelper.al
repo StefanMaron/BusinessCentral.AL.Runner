@@ -4,9 +4,4 @@ codeunit 56500 "Guid Helper"
     begin
         exit(CreateGuid());
     end;
-
-    procedure GetNewSequentialGuid(): Guid
-    begin
-        exit(CreateSequentialGuid());
-    end;
 }

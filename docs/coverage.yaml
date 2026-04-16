@@ -2388,8 +2388,7 @@ Guid.CreateGuid:
 Guid.CreateSequentialGuid:
   layer: runtime-api
   category: Guid
-  status: covered
-  tests: tests/bucket-1/57-create-guid
+  status: gap
   notes: overloads=1
 
 Guid.ToText:

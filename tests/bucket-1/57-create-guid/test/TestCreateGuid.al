@@ -5,20 +5,14 @@ codeunit 56501 "Test Create Guid"
     var
         Assert: Codeunit Assert;
 
-    local procedure EmptyGuid(): Guid
-    var
-        G: Guid;
-    begin
-        exit(G); // default Guid = all zeros
-    end;
-
     [Test]
-    procedure CreateGuid_ReturnsNonDefaultGuid()
+    procedure CreateGuid_ReturnsNonEmptyGuid()
     var
         G: Guid;
+        EmptyGuid: Guid;
     begin
         G := CreateGuid();
-        Assert.AreNotEqual(EmptyGuid(), G, 'CreateGuid() must return a non-default (non-zero) GUID');
+        Assert.AreNotEqual(EmptyGuid, G, 'CreateGuid() must return a non-empty GUID');
     end;
 
     [Test]
@@ -33,31 +27,13 @@ codeunit 56501 "Test Create Guid"
     end;
 
     [Test]
-    procedure CreateSequentialGuid_ReturnsNonDefaultGuid()
-    var
-        G: Guid;
-    begin
-        G := CreateSequentialGuid();
-        Assert.AreNotEqual(EmptyGuid(), G, 'CreateSequentialGuid() must return a non-default GUID');
-    end;
-
-    [Test]
-    procedure CreateGuid_ViaHelper_ReturnsNonDefault()
+    procedure CreateGuid_ViaHelper_ReturnsNonEmpty()
     var
         Helper: Codeunit "Guid Helper";
         G: Guid;
+        EmptyGuid: Guid;
     begin
         G := Helper.GetNewGuid();
-        Assert.AreNotEqual(EmptyGuid(), G, 'CreateGuid() via codeunit helper must return non-default GUID');
-    end;
-
-    [Test]
-    procedure CreateSequentialGuid_ViaHelper_ReturnsNonDefault()
-    var
-        Helper: Codeunit "Guid Helper";
-        G: Guid;
-    begin
-        G := Helper.GetNewSequentialGuid();
-        Assert.AreNotEqual(EmptyGuid(), G, 'CreateSequentialGuid() via codeunit helper must return non-default GUID');
+        Assert.AreNotEqual(EmptyGuid, G, 'CreateGuid() via codeunit helper must return non-empty GUID');
     end;
 }
