@@ -1954,6 +1954,7 @@ FieldRef.Active:
   layer: runtime-api
   category: FieldRef
   status: covered
+  tests: tests/bucket-1/62-fieldref-active
   notes: overloads=1
 
 FieldRef.CalcField:
