@@ -2849,7 +2849,7 @@ HttpHeaders.Add:
 HttpHeaders.Clear:
   layer: runtime-api
   category: HttpHeaders
-  status: gap
+  status: covered
   notes: overloads=1
 
 HttpHeaders.Contains:
@@ -2861,13 +2861,13 @@ HttpHeaders.Contains:
 HttpHeaders.ContainsSecret:
   layer: runtime-api
   category: HttpHeaders
-  status: gap
+  status: covered
   notes: overloads=1
 
 HttpHeaders.GetSecretValues:
   layer: runtime-api
   category: HttpHeaders
-  status: gap
+  status: covered
   notes: overloads=2
 
 HttpHeaders.GetValues:
@@ -2879,7 +2879,7 @@ HttpHeaders.GetValues:
 HttpHeaders.Keys:
   layer: runtime-api
   category: HttpHeaders
-  status: gap
+  status: covered
   notes: overloads=1
 
 HttpHeaders.Remove:
@@ -2891,7 +2891,7 @@ HttpHeaders.Remove:
 HttpHeaders.TryAddWithoutValidation:
   layer: runtime-api
   category: HttpHeaders
-  status: gap
+  status: covered
   notes: overloads=2
 
 # ── HttpRequestMessage ──────────────────────────────────────────

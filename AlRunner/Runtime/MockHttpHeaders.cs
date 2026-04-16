@@ -84,9 +84,41 @@ public class MockHttpHeaders
     /// <summary>Number of distinct header names.</summary>
     public int ALCount => _headers.Count;
 
+    /// <summary>Exposes stored header names for MockJsonHelper.Keys() interception.</summary>
+    public IEnumerable<string> HeaderNames => _headers.Keys;
+
     /// <summary>Removes all headers.</summary>
-    public void Clear()
+    public void Clear() => _headers.Clear();
+
+    /// <summary>
+    /// BC emits: <c>headers.ALClear()</c>
+    /// for <c>HttpHeaders.Clear()</c>.
+    /// </summary>
+    public void ALClear() => _headers.Clear();
+
+    /// <summary>
+    /// BC emits: <c>headers.ALTryAddWithoutValidation(DataError, name, value)</c>
+    /// for <c>HttpHeaders.TryAddWithoutValidation(name, value)</c>.
+    /// Adds the header without format validation; always succeeds.
+    /// </summary>
+    public bool ALTryAddWithoutValidation(DataError errorLevel, NavText name, NavText value)
     {
-        _headers.Clear();
+        ALAdd(errorLevel, (string)name, (string)value);
+        return true;
     }
+
+    /// <summary>
+    /// BC emits: <c>headers.ALIsHeaderValueSecret(name)</c>
+    /// for <c>HttpHeaders.ContainsSecret(name)</c>.
+    /// Plain in-memory headers are never secret — always returns false.
+    /// </summary>
+    public bool ALIsHeaderValueSecret(NavText name) => false;
+
+    /// <summary>
+    /// Overload for <c>HttpHeaders.GetSecretValues(name, secrets)</c>:
+    /// BC emits <c>ALGetValues(DataError, NavText, NavList&lt;NavSecretText&gt;)</c>.
+    /// Plain headers have no secret values; the list is left empty.
+    /// </summary>
+    public bool ALGetValues(DataError errorLevel, NavText key, NavList<NavSecretText> values)
+        => false;
 }
