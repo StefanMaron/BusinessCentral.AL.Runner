@@ -1120,7 +1120,9 @@ addfirst_dataset_modification:
 addfirst_fieldgroup_modification:
   layer: syntax
   category: modification
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/262-addfirst-fieldgroup
 
 addfirst_modification:
   layer: syntax
