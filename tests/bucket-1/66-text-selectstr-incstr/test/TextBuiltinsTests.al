@@ -36,9 +36,9 @@ codeunit 58101 "TBI Text Builtins Tests"
     begin
         // [GIVEN] 2-token string
         // [WHEN] index 3 requested
-        // [THEN] error is raised
+        // [THEN] BC error: "The SELECTSTR comma-string ... does not contain a value for index N."
         asserterror Helper.SelectStrToken(3, 'A,B');
-        Assert.ExpectedError('out of range');
+        Assert.ExpectedError('does not contain a value for index');
     end;
 
     // -----------------------------------------------------------------------

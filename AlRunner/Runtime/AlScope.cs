@@ -1552,7 +1552,7 @@ public static class AlCompat
     {
         var parts = (s ?? "").Split(',');
         if (n < 1 || n > parts.Length)
-            throw new Exception($"The index ({n}) in SelectStr is out of range (1..{parts.Length}).");
+            throw new Exception($"The SELECTSTR comma-string {s} does not contain a value for index {n}.");
         return parts[n - 1];
     }
 
