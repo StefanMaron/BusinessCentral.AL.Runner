@@ -805,7 +805,9 @@ fileuploadaction_declaration:
 grid_section:
   layer: syntax
   category: page
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/74-grid-section
 
 group_section:
   layer: syntax
