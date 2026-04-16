@@ -5818,6 +5818,7 @@ Table.Count:
   tests:
     - tests/bucket-1/44-count-filtered
     - tests/bucket-1/66-record-count
+    - tests/bucket-2/140-record-count
   notes: overloads=1
 
 Table.CountApprox:
@@ -6031,6 +6032,7 @@ Table.IsEmpty:
   notes: overloads=1
   tests:
     - tests/bucket-1/56-isempty
+    - tests/bucket-2/140-record-count
 
 Table.IsTemporary:
   layer: runtime-api
