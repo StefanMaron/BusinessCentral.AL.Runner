@@ -2155,8 +2155,10 @@ ErrorInfo.PageNo:
 ErrorInfo.RecordId:
   layer: runtime-api
   category: ErrorInfo
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; getter works standalone (fresh ErrorInfo returns default RecordId with TableNo 0). Setter (`ei.RecordId := rec.RecordId()`) does not persist — NavALErrorInfo.ALRecordId is tied to an internal NavRecord that requires a live session. Getter coverage is what works today.
+  tests:
+    - tests/bucket-2/174-errorinfo-recordid
 
 ErrorInfo.SystemId:
   layer: runtime-api
