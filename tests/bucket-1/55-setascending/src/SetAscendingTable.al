@@ -1,4 +1,4 @@
-table 56200 "SA Item"
+table 56300 "SA Item"
 {
     DataClassification = ToBeClassified;
 
