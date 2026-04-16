@@ -540,15 +540,23 @@ public class MockTestPageAction
 }
 
 /// <summary>
-/// Mock for TestPage.Filter property. BC emits:
+/// Mock for TestPage.Filter property. BC emits method calls for all TestFilter
+/// operations:
 ///   tP.ALFilter.ALSetFilter(fieldNo, filterValue)
+///   tP.ALFilter.ALGetFilter(fieldNo) → string
+///   tP.ALFilter.ALAscending(value)   (setter)
+///   tP.ALFilter.ALAscending()        (getter) → bool
+///   tP.ALFilter.ALSetCurrentKey(fieldNo, ...)
+///   tP.ALFilter.ALCurrentKey()       → string
 ///
-/// Tracks per-field filter expressions in memory so that <see cref="ALGetFilter"/>
-/// can return the last value set for a given field.
+/// Tracks per-field filter expressions, sort direction, and current key in
+/// memory so that GetFilter / Ascending / CurrentKey return what was last set.
 /// </summary>
 public class MockTestPageFilter
 {
     private readonly Dictionary<int, string> _filters = new();
+    private bool _ascending = true;
+    private int[] _currentKeyFields = Array.Empty<int>();
 
     /// <summary>
     /// Sets a filter on the given field.
@@ -561,9 +569,49 @@ public class MockTestPageFilter
 
     /// <summary>
     /// Returns the last filter set for a field.
+    /// BC emits: ALGetFilter(fieldNo) → string
     /// </summary>
     public string ALGetFilter(int fieldNo)
     {
         return _filters.TryGetValue(fieldNo, out var filter) ? filter : "";
+    }
+
+    /// <summary>
+    /// Sets the sort direction.
+    /// BC emits: ALAscending(value) when AL code calls Filter.Ascending(false/true).
+    /// </summary>
+    public void ALAscending(bool value)
+    {
+        _ascending = value;
+    }
+
+    /// <summary>
+    /// Gets the sort direction. Defaults to true (ascending).
+    /// BC emits: ALAscending() when AL code reads Filter.Ascending().
+    /// </summary>
+    public bool ALAscending()
+    {
+        return _ascending;
+    }
+
+    /// <summary>
+    /// Sets the current sort key by field numbers.
+    /// BC emits: ALSetCurrentKey(fieldNo, ...) for Filter.SetCurrentKey(Field1, ...).
+    /// </summary>
+    public void ALSetCurrentKey(params int[] fieldNos)
+    {
+        _currentKeyFields = fieldNos ?? Array.Empty<int>();
+    }
+
+    /// <summary>
+    /// Returns the current sort key as a comma-separated list of field numbers.
+    /// Returns empty string when no key has been set.
+    /// BC emits: ALCurrentKey() for Filter.CurrentKey().
+    /// </summary>
+    public string ALCurrentKey()
+    {
+        if (_currentKeyFields.Length == 0)
+            return string.Empty;
+        return string.Join(",", _currentKeyFields);
     }
 }

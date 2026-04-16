@@ -6935,32 +6935,37 @@ TestField.Visible:
 TestFilter.Ascending:
   layer: runtime-api
   category: TestFilter
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/93-testfilter
+  notes: overloads=2 (getter ALAscending() + setter ALAscending(bool)); defaults to true
 
 TestFilter.CurrentKey:
   layer: runtime-api
   category: TestFilter
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/93-testfilter
+  notes: overloads=1; ALCurrentKey() returns comma-separated field numbers set via SetCurrentKey
 
 TestFilter.GetFilter:
   layer: runtime-api
   category: TestFilter
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/93-testfilter
+  notes: overloads=1; ALGetFilter(int fieldNo) returns last filter set for that field
 
 TestFilter.SetCurrentKey:
   layer: runtime-api
   category: TestFilter
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/93-testfilter
+  notes: overloads=1; ALSetCurrentKey(params int[] fieldNos) stores field numbers for CurrentKey
 
 TestFilter.SetFilter:
   layer: runtime-api
   category: TestFilter
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/93-testfilter
+  notes: overloads=1; ALSetFilter(int fieldNo, string filterExpression) stores per-field filters
 
 # ── TestHttpRequestMessage ──────────────────────────────────────
 
