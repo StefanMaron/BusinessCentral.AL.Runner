@@ -15,6 +15,11 @@ public class MockCookie
 {
     public MockCookie() { }
 
+    /// <summary>Default instance returned when BC emits <c>NavCookie.Default</c>
+    /// (variable initialisation before any property is set).
+    /// Returns a fresh instance each call to avoid cross-test mutation.</summary>
+    public static MockCookie Default => new MockCookie();
+
     /// <summary>Cookie name. BC emits <c>cookie.ALName</c> get/set.</summary>
     public string ALName { get; set; } = "";
 
@@ -33,8 +38,11 @@ public class MockCookie
     /// <summary>JavaScript-access flag. BC emits <c>cookie.ALHttpOnly</c> get/set.</summary>
     public bool ALHttpOnly { get; set; } = false;
 
-    /// <summary>Expiration timestamp. BC emits <c>cookie.ALExpires</c> get/set.</summary>
+    /// <summary>Expiration timestamp. BC emits <c>cookie.GetALExpires()</c> for the getter.</summary>
     public NavDateTime ALExpires { get; set; } = NavDateTime.Default;
+
+    /// <summary>BC transpiler generates <c>GetALExpires()</c> for DateTime property reads.</summary>
+    public NavDateTime GetALExpires() => ALExpires;
 
     /// <summary>ALAssign for the ByRef pattern.</summary>
     public void ALAssign(MockCookie other)
