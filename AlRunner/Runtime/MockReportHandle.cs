@@ -197,4 +197,32 @@ public class MockReportHandle
         var handle = new MockReportHandle(reportId);
         handle.RunModal();
     }
+
+    // Report.Execute / Report.Print — no-ops in standalone mode
+    public static void StaticExecute(int reportId) { }
+    public static void StaticPrint(int reportId) { }
+
+    // Report.SaveAs* — no-ops (no real file I/O in standalone mode)
+    public static void StaticSaveAs(int reportId, string format, string path) { }
+    public static void StaticSaveAsPdf(int reportId, string path) { }
+    public static void StaticSaveAsWord(int reportId, string path) { }
+    public static void StaticSaveAsExcel(int reportId, string path) { }
+    public static void StaticSaveAsHtml(int reportId, string path) { }
+    public static void StaticSaveAsXml(int reportId, string path) { }
+
+    // Report.DefaultLayout / layout enum methods — return 0 (default enum ordinal)
+    public static int StaticDefaultLayout(int reportId) => 0;
+    public static int StaticRdlcLayout(int reportId) => 0;
+    public static int StaticWordLayout(int reportId) => 0;
+    public static int StaticExcelLayout(int reportId) => 0;
+
+    // Report.GetSubstituteReportId — no substitution in standalone mode
+    public static int StaticGetSubstituteReportId(int reportId) => reportId;
+
+    // Report.RunRequestPage — no request page UI in standalone mode
+    public static string StaticRunRequestPage(int reportId) => string.Empty;
+
+    // Report.ValidateAndPrepareLayout / Report.WordXmlPart — no-ops
+    public static void StaticValidateAndPrepareLayout(int reportId) { }
+    public static string StaticWordXmlPart(int reportId) => string.Empty;
 }

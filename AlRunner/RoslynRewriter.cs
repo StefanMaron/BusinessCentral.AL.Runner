@@ -2204,15 +2204,37 @@ public void ClearApplicationMemberVariables()
             // BC emits these static calls for Report.Run(Report::"X") / Report.RunModal(Report::"X").
             // NavReport requires the service tier; forward to MockReportHandle which dispatches
             // to the ReportHandler if registered, or silently runs the report class.
-            if (exprText == "NavReport" && (methodName == "Run" || methodName == "RunModal"))
+            if (exprText == "NavReport")
             {
-                var stubMethod = methodName == "Run" ? "StaticRun" : "StaticRunModal";
-                return SyntaxFactory.InvocationExpression(
-                    SyntaxFactory.MemberAccessExpression(
-                        SyntaxKind.SimpleMemberAccessExpression,
-                        SyntaxFactory.IdentifierName("MockReportHandle"),
-                        SyntaxFactory.IdentifierName(stubMethod)),
-                    visited.ArgumentList);
+                string? stubMethod = methodName switch
+                {
+                    "Run"                     => "StaticRun",
+                    "RunModal"                => "StaticRunModal",
+                    "Execute"                 => "StaticExecute",
+                    "Print"                   => "StaticPrint",
+                    "SaveAs"                  => "StaticSaveAs",
+                    "SaveAsPdf"               => "StaticSaveAsPdf",
+                    "SaveAsWord"              => "StaticSaveAsWord",
+                    "SaveAsExcel"             => "StaticSaveAsExcel",
+                    "SaveAsHtml"              => "StaticSaveAsHtml",
+                    "SaveAsXml"               => "StaticSaveAsXml",
+                    "DefaultLayout"           => "StaticDefaultLayout",
+                    "RdlcLayout"              => "StaticRdlcLayout",
+                    "WordLayout"              => "StaticWordLayout",
+                    "ExcelLayout"             => "StaticExcelLayout",
+                    "GetSubstituteReportId"   => "StaticGetSubstituteReportId",
+                    "RunRequestPage"          => "StaticRunRequestPage",
+                    "ValidateAndPrepareLayout"=> "StaticValidateAndPrepareLayout",
+                    "WordXmlPart"             => "StaticWordXmlPart",
+                    _                         => null
+                };
+                if (stubMethod != null)
+                    return SyntaxFactory.InvocationExpression(
+                        SyntaxFactory.MemberAccessExpression(
+                            SyntaxKind.SimpleMemberAccessExpression,
+                            SyntaxFactory.IdentifierName("MockReportHandle"),
+                            SyntaxFactory.IdentifierName(stubMethod)),
+                        visited.ArgumentList);
             }
 
             // NavXmlPort.Run(portId [, showPage, showXml]) -> MockXmlPortHandle.StaticRun(...)

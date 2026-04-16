@@ -5018,110 +5018,146 @@ RecordRef.WritePermission:
 Report.DefaultLayout:
   layer: runtime-api
   category: Report
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; NavReport.DefaultLayout → MockReportHandle.StaticDefaultLayout (returns 0).
+  tests:
+    - tests/bucket-1/90-report-static
 
 Report.ExcelLayout:
   layer: runtime-api
   category: Report
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; NavReport.ExcelLayout → MockReportHandle.StaticExcelLayout (returns 0).
+  tests:
+    - tests/bucket-1/90-report-static
 
 Report.Execute:
   layer: runtime-api
   category: Report
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; NavReport.Execute → MockReportHandle.StaticExecute (no-op).
+  tests:
+    - tests/bucket-1/90-report-static
 
 Report.GetSubstituteReportId:
   layer: runtime-api
   category: Report
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; NavReport.GetSubstituteReportId → MockReportHandle.StaticGetSubstituteReportId (returns input id).
+  tests:
+    - tests/bucket-1/90-report-static
 
 Report.Print:
   layer: runtime-api
   category: Report
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; NavReport.Print → MockReportHandle.StaticPrint (no-op).
+  tests:
+    - tests/bucket-1/90-report-static
 
 Report.RdlcLayout:
   layer: runtime-api
   category: Report
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; NavReport.RdlcLayout → MockReportHandle.StaticRdlcLayout (returns 0).
+  tests:
+    - tests/bucket-1/90-report-static
 
 Report.Run:
   layer: runtime-api
   category: Report
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; NavReport.Run → MockReportHandle.StaticRun (no-op/handler dispatch).
+  tests:
+    - tests/bucket-1/90-report-static
 
 Report.RunModal:
   layer: runtime-api
   category: Report
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; NavReport.RunModal → MockReportHandle.StaticRunModal (no-op/handler dispatch).
+  tests:
+    - tests/bucket-1/90-report-static
 
 Report.RunRequestPage:
   layer: runtime-api
   category: Report
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; NavReport.RunRequestPage → MockReportHandle.StaticRunRequestPage (returns empty string).
+  tests:
+    - tests/bucket-1/90-report-static
 
 Report.SaveAs:
   layer: runtime-api
   category: Report
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; NavReport.SaveAs → MockReportHandle.StaticSaveAs (no-op).
+  tests:
+    - tests/bucket-1/90-report-static
 
 Report.SaveAsExcel:
   layer: runtime-api
   category: Report
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; NavReport.SaveAsExcel → MockReportHandle.StaticSaveAsExcel (no-op).
+  tests:
+    - tests/bucket-1/90-report-static
 
 Report.SaveAsHtml:
   layer: runtime-api
   category: Report
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; NavReport.SaveAsHtml → MockReportHandle.StaticSaveAsHtml (no-op).
+  tests:
+    - tests/bucket-1/90-report-static
 
 Report.SaveAsPdf:
   layer: runtime-api
   category: Report
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; NavReport.SaveAsPdf → MockReportHandle.StaticSaveAsPdf (no-op).
+  tests:
+    - tests/bucket-1/90-report-static
 
 Report.SaveAsWord:
   layer: runtime-api
   category: Report
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; NavReport.SaveAsWord → MockReportHandle.StaticSaveAsWord (no-op).
+  tests:
+    - tests/bucket-1/90-report-static
 
 Report.SaveAsXml:
   layer: runtime-api
   category: Report
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; NavReport.SaveAsXml → MockReportHandle.StaticSaveAsXml (no-op).
+  tests:
+    - tests/bucket-1/90-report-static
 
 Report.ValidateAndPrepareLayout:
   layer: runtime-api
   category: Report
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; NavReport.ValidateAndPrepareLayout → MockReportHandle.StaticValidateAndPrepareLayout (no-op).
+  tests:
+    - tests/bucket-1/90-report-static
 
 Report.WordLayout:
   layer: runtime-api
   category: Report
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; NavReport.WordLayout → MockReportHandle.StaticWordLayout (returns 0).
+  tests:
+    - tests/bucket-1/90-report-static
 
 Report.WordXmlPart:
   layer: runtime-api
   category: Report
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; NavReport.WordXmlPart → MockReportHandle.StaticWordXmlPart (returns empty string).
+  tests:
+    - tests/bucket-1/90-report-static
 
 # ── ReportInstance ──────────────────────────────────────────────
 
