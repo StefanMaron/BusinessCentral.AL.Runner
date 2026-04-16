@@ -121,26 +121,31 @@ public class MockTestPageHandle
     /// <summary>
     /// Finds the first field matching the given value. Stub returns false.
     /// BC emits <c>tP.Target.ALFindFirstField(field, value)</c>.
+    /// Overloads cover: (field, NavValue), (field, object), (DataError, field, NavValue),
+    /// (DataError, field, object) to handle all BC codegen patterns.
     /// </summary>
     public bool ALFindFirstField(MockTestPageField field, NavValue value) => false;
-    public bool ALFindFirstField(MockTestPageField field, object value) => false;
+    public bool ALFindFirstField(MockTestPageField field, object? value) => false;
     public bool ALFindFirstField(DataError errorLevel, MockTestPageField field, NavValue value) => false;
+    public bool ALFindFirstField(DataError errorLevel, MockTestPageField field, object? value) => false;
 
     /// <summary>
     /// Finds the next field matching the given value. Stub returns false.
     /// BC emits <c>tP.Target.ALFindNextField(field, value)</c>.
     /// </summary>
     public bool ALFindNextField(MockTestPageField field, NavValue value) => false;
-    public bool ALFindNextField(MockTestPageField field, object value) => false;
+    public bool ALFindNextField(MockTestPageField field, object? value) => false;
     public bool ALFindNextField(DataError errorLevel, MockTestPageField field, NavValue value) => false;
+    public bool ALFindNextField(DataError errorLevel, MockTestPageField field, object? value) => false;
 
     /// <summary>
     /// Finds the previous field matching the given value. Stub returns false.
     /// BC emits <c>tP.Target.ALFindPreviousField(field, value)</c>.
     /// </summary>
     public bool ALFindPreviousField(MockTestPageField field, NavValue value) => false;
-    public bool ALFindPreviousField(MockTestPageField field, object value) => false;
+    public bool ALFindPreviousField(MockTestPageField field, object? value) => false;
     public bool ALFindPreviousField(DataError errorLevel, MockTestPageField field, NavValue value) => false;
+    public bool ALFindPreviousField(DataError errorLevel, MockTestPageField field, object? value) => false;
 
     /// <summary>
     /// Navigates to the first record on the page. Stub returns true.
