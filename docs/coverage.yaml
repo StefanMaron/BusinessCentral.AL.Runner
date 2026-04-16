@@ -8772,8 +8772,10 @@ XmlElement.Remove:
 XmlElement.RemoveAllAttributes:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone. Preserves element name + children; only attributes are cleared.
+  tests:
+    - tests/bucket-2/159-xml-removeallattrs
 
 XmlElement.RemoveAttribute:
   layer: runtime-api
