@@ -790,8 +790,9 @@ public static class AlCompat
         if (value is float f) return FormatDecimal((decimal)f);
         if (value is int or long or short or byte) return value.ToString()!;
         // System.Guid — BC 26.x compiles AL Guid variables as System.Guid (not NavGuid).
-        // Default AL format is "B" = {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX} (38 chars, uppercase).
-        if (value is Guid sysGuid) return sysGuid.ToString("B").ToUpperInvariant();
+        // AL Format(Guid) outputs "D" format = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX (36 chars, no braces).
+        // Note: Guid.ToText() uses braces ("B" format); Format() does not.
+        if (value is Guid sysGuid) return sysGuid.ToString("D").ToUpperInvariant();
         // Handle Decimal18 and other BC numeric types — convert to decimal
         var typeName = value.GetType().Name;
         if (typeName == "Decimal18")
@@ -836,9 +837,8 @@ public static class AlCompat
             catch { }
         }
         // NavGuid — check by type name (version-independent) and extract the Guid value.
-        // Pattern-match on Microsoft.Dynamics.Nav.Runtime.NavGuid is unreliable across BC versions.
-        // Try multiple extraction strategies; last resort parses ToString() which NavGuid always
-        // returns in "D" (36-char) format. Format "B" = {XXXXXXXX-...} (38 chars, braces).
+        // AL Format(Guid) outputs "D" format = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX (36 chars, no braces).
+        // Note: Guid.ToText() uses braces ("B" format); Format() does not.
         if (typeName == "NavGuid")
         {
             try
@@ -846,7 +846,7 @@ public static class AlCompat
                 // Try parameterless ToGuid() method
                 var toGuidMethod = value.GetType().GetMethod("ToGuid", Type.EmptyTypes);
                 if (toGuidMethod != null)
-                    return ((Guid)toGuidMethod.Invoke(value, null)!).ToString("B").ToUpperInvariant();
+                    return ((Guid)toGuidMethod.Invoke(value, null)!).ToString("D").ToUpperInvariant();
             }
             catch { }
             try
@@ -854,12 +854,12 @@ public static class AlCompat
                 // Try Value property of type Guid
                 var valueProp = value.GetType().GetProperty("Value");
                 if (valueProp?.PropertyType == typeof(Guid))
-                    return ((Guid)valueProp.GetValue(value)!).ToString("B").ToUpperInvariant();
+                    return ((Guid)valueProp.GetValue(value)!).ToString("D").ToUpperInvariant();
             }
             catch { }
             // Last resort: NavGuid.ToString() always returns a parseable Guid string ("D" format).
             if (Guid.TryParse(value.ToString(), out var parsedGuid))
-                return parsedGuid.ToString("B").ToUpperInvariant();
+                return parsedGuid.ToString("D").ToUpperInvariant();
         }
         // Handle NavValue subtypes — use ToText() where available, avoid ToString() which may need NavSession
         if (value is Microsoft.Dynamics.Nav.Runtime.NavValue nv)
