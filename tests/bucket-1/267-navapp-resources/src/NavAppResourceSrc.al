@@ -6,7 +6,7 @@ codeunit 85000 "NavApp Resource Src"
         exit(NavApp.GetResourceAsText(ResourceName));
     end;
 
-    procedure GetJsonResource(ResourceName: Text): JsonToken
+    procedure GetJsonResource(ResourceName: Text): JsonObject
     begin
         exit(NavApp.GetResourceAsJson(ResourceName));
     end;

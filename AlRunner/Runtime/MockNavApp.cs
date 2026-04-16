@@ -56,14 +56,14 @@ public static class MockNavApp
         => NavText.Empty;
 
     /// <summary>
-    /// NavApp.GetResourceAsJson(ResourceName [, TextEncoding]) : JsonToken — function
-    /// returning the resource as a JSON token. No .app in standalone mode; returns default.
-    /// BC emits: ALNavApp.ALGetResourceAsJson(DataError, NavText [, object?]) → NavJsonToken
+    /// NavApp.GetResourceAsJson(ResourceName [, TextEncoding]) : JsonObject — function
+    /// returning the resource as a JSON object. No .app in standalone mode; returns default.
+    /// BC emits: ALNavApp.ALGetResourceAsJson(DataError, NavText [, object?]) → NavJsonObject
     /// </summary>
-    public static NavJsonToken ALGetResourceAsJson(DataError errorLevel, NavText resourceName)
+    public static NavJsonObject ALGetResourceAsJson(DataError errorLevel, NavText resourceName)
         => default;
 
-    public static NavJsonToken ALGetResourceAsJson(DataError errorLevel, NavText resourceName, object? encoding)
+    public static NavJsonObject ALGetResourceAsJson(DataError errorLevel, NavText resourceName, object? encoding)
         => default;
 
     /// <summary>
