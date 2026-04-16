@@ -2382,15 +2382,18 @@ public void ClearApplicationMemberVariables() { }
                         SyntaxFactory.IdentifierName("HasTableConnection")));
             }
 
-            // ALDatabase.ALCurrentTransactionType() -> AlCompat.ALCurrentTransactionType()
+            // ALDatabase.ALCurrentTransactionType([session]) -> AlCompat.ALCurrentTransactionType()
             // The real implementation requires NavSession; our stub returns TransactionType::Update (ordinal 2).
+            // Replace the entire invocation (including args) to drop any session argument BC may pass.
             if (exprText == "ALDatabase" && methodName == "ALCurrentTransactionType")
             {
-                return visited.WithExpression(
+                return SyntaxFactory.InvocationExpression(
                     SyntaxFactory.MemberAccessExpression(
                         SyntaxKind.SimpleMemberAccessExpression,
                         SyntaxFactory.IdentifierName("AlCompat"),
-                        SyntaxFactory.IdentifierName("ALCurrentTransactionType")));
+                        SyntaxFactory.IdentifierName("ALCurrentTransactionType")),
+                    SyntaxFactory.ArgumentList())
+                    .WithTriviaFrom(visited);
             }
 
             // ALDatabase.ALCreateGuid() -> AlCompat.ALCreateGuid()
