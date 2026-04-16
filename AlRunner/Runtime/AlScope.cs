@@ -259,14 +259,16 @@ public class AlScope : IDisposable, ITreeObject
 public class MockCurrPage
 {
     public bool Editable { get; set; }
-    public NavText Caption { get; set; }
+    // BC compiler maps CurrPage.Caption → C# property PageCaption
+    public NavText PageCaption { get; set; }
     public bool LookupMode { get; set; }
 
     /// <summary>
     /// CurrPage.ObjectId(UseCaptionName) — returns the page's object identifier.
+    /// BC compiler maps CurrPage.ObjectId → C# ObjectID (capital D).
     /// In standalone mode there is no running page, so return an empty string.
     /// </summary>
-    public NavText ObjectId(bool useCaptionName) => NavText.Empty;
+    public NavText ObjectID(bool useCaptionName) => NavText.Empty;
 
     /// <summary>
     /// CurrPage.SetSelectionFilter(var Rec) — applies the UI row selection as
