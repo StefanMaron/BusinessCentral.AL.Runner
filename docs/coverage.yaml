@@ -2637,9 +2637,8 @@ Guid.CreateGuid:
 Guid.CreateSequentialGuid:
   layer: runtime-api
   category: Guid
-  status: covered
-  tests: tests/bucket-1/265-guid-createsequentialguid
-  notes: overloads=1; rewriter routes ALDatabase.ALCreateSequentialGuid() to AlCompat.ALCreateSequentialGuid() which returns System.Guid.NewGuid() — non-null and distinct across calls
+  status: gap
+  notes: overloads=1; AL0118 on BC 26-28 — CreateSequentialGuid() does not exist as a standalone AL function in these BC versions (language gap); rewriter rule exists for ALDatabase.ALCreateSequentialGuid() in case a newer BC version adds support
 
 Guid.ToText:
   layer: runtime-api
