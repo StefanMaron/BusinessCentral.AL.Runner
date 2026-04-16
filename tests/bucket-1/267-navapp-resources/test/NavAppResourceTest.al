@@ -27,12 +27,12 @@ codeunit 85101 "NavApp Resource Test"
     procedure GetResourceAsJson_MissingResource_ReturnsDefault()
     var
         Src: Codeunit "NavApp Resource Src";
-        Token: JsonToken;
+        Obj: JsonObject;
     begin
         // [GIVEN] No .app is loaded
         // [WHEN] GetResourceAsJson is called for a non-existent resource
-        Token := Src.GetJsonResource('nonexistent.json');
-        // [THEN] Returns a default JsonToken — no exception
+        Obj := Src.GetJsonResource('nonexistent.json');
+        // [THEN] Returns a default JsonObject — no exception
         Assert.IsTrue(true, 'GetResourceAsJson must not throw for missing resource in standalone mode');
     end;
 

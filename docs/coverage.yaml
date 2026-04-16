@@ -4006,7 +4006,7 @@ NavApp.GetResourceAsJson:
   layer: runtime-api
   category: NavApp
   status: covered
-  notes: overloads=2 (with/without TextEncoding); MockNavApp.ALGetResourceAsJson() returns default NavJsonToken — no .app in standalone mode
+  notes: overloads=2 (with/without TextEncoding); MockNavApp.ALGetResourceAsJson() returns default NavJsonObject — no .app in standalone mode
   test: tests/bucket-1/267-navapp-resources/test/NavAppResourceTest.al
 
 NavApp.GetResourceAsText:
