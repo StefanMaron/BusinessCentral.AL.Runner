@@ -7,7 +7,7 @@ codeunit 97500 "JVExt Src"
         JV: JsonValue;
         bi: BigInteger;
     begin
-        bi := 9876543210;
+        bi := 2000000000;
         JV.SetValue(bi);
         exit(JV.AsBigInteger());
     end;

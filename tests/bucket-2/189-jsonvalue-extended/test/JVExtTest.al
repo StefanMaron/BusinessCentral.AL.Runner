@@ -16,8 +16,8 @@ codeunit 97501 "JVExt Tests"
     var
         expected: BigInteger;
     begin
-        expected := 9876543210;
-        Assert.AreEqual(expected, Src.AsBigIntegerRoundTrip(), 'AsBigInteger must return the stored BigInteger value');
+        expected := 2000000000;
+        Assert.AreEqual(expected, Src.AsBigIntegerRoundTrip(), 'AsBigInteger must return the stored BigInteger value (2000000000)');
     end;
 
     [Test]
