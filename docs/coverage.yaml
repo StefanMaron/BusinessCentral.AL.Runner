@@ -1052,7 +1052,9 @@ addafter_action_modification:
 addafter_dataset_modification:
   layer: syntax
   category: modification
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/136-addafter-dataset
 
 addafter_modification:
   layer: syntax
