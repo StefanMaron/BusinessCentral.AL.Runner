@@ -132,4 +132,53 @@ codeunit 59000 "Query Logic"
     begin
         Q.SaveAsXml('output.xml');
     end;
+
+    /// Returns Q.GetFilter(ColumnRef) — stub returns '' (no filter stored).
+    procedure TryGetFilter(): Text
+    var
+        Q: Query "Item Ledger Query";
+    begin
+        exit(Q.GetFilter(EntryNo));
+    end;
+
+    /// Returns Q.GetFilters — stub returns '' (no filters stored).
+    procedure TryGetFilters(): Text
+    var
+        Q: Query "Item Ledger Query";
+    begin
+        exit(Q.GetFilters);
+    end;
+
+    /// Returns Q.ColumnCaption(ColumnRef) — stub returns a non-empty caption.
+    procedure TryColumnCaption(): Text
+    var
+        Q: Query "Item Ledger Query";
+    begin
+        exit(Q.ColumnCaption(EntryNo));
+    end;
+
+    /// Returns Q.ColumnName(ColumnRef) — stub returns a non-empty name.
+    procedure TryColumnName(): Text
+    var
+        Q: Query "Item Ledger Query";
+    begin
+        exit(Q.ColumnName(EntryNo));
+    end;
+
+    /// Returns Q.ColumnNo(ColumnRef) — stub returns the column number.
+    procedure TryColumnNo(): Integer
+    var
+        Q: Query "Item Ledger Query";
+    begin
+        exit(Q.ColumnNo(EntryNo));
+    end;
+
+    /// Tries Q.SaveAsJson — must throw NotSupportedException.
+    procedure TrySaveAsJson()
+    var
+        Q: Query "Item Ledger Query";
+        OutStr: OutStream;
+    begin
+        Q.SaveAsJson(OutStr);
+    end;
 }
