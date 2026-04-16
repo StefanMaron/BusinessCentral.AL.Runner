@@ -1226,6 +1226,12 @@ public void ClearApplicationMemberVariables()
         if (text == "NavBigText")
             return node.WithIdentifier(SyntaxFactory.Identifier("MockBigText"));
 
+        // NavVersion -> MockVersion
+        // The real NavVersion reaches into BC service-tier environment for formatting
+        // and version parsing. MockVersion stores major/minor/build/revision in-memory.
+        if (text == "NavVersion")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockVersion"));
+
         // NavTextBuilder -> MockTextBuilder (avoids NavEnvironment/TrappableOperationExecutor crashes)
         if (text == "NavTextBuilder")
             return node.WithIdentifier(SyntaxFactory.Identifier("MockTextBuilder"));
