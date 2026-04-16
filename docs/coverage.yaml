@@ -8825,14 +8825,16 @@ XmlDeclaration.AsXmlNode:
 XmlDeclaration.Create:
   layer: runtime-api
   category: XmlDeclaration
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/198-xmldeclaration
+  notes: overloads=1. Covered via NavXmlDeclaration native — Create(version, encoding, standalone).
 
 XmlDeclaration.Encoding:
   layer: runtime-api
   category: XmlDeclaration
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/198-xmldeclaration
+  notes: overloads=1. Covered via NavXmlDeclaration native — getter and setter round-trip.
 
 XmlDeclaration.GetDocument:
   layer: runtime-api
@@ -8873,14 +8875,16 @@ XmlDeclaration.SelectSingleNode:
 XmlDeclaration.Standalone:
   layer: runtime-api
   category: XmlDeclaration
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/198-xmldeclaration
+  notes: overloads=1. Covered via NavXmlDeclaration native — getter and setter round-trip.
 
 XmlDeclaration.Version:
   layer: runtime-api
   category: XmlDeclaration
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/198-xmldeclaration
+  notes: overloads=1. Covered via NavXmlDeclaration native — getter and setter round-trip.
 
 XmlDeclaration.WriteTo:
   layer: runtime-api
