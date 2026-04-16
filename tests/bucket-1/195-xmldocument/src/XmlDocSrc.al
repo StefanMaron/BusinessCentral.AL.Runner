@@ -123,7 +123,7 @@ codeunit 100200 "XmlDoc Src"
         Root.Add(Child2);
         Doc.Add(Root);
         Root.RemoveNodes();
-        Root.GetChildNodes(Nodes);
+        Nodes := Root.GetChildNodes();
         exit(Nodes.Count());
     end;
 }
