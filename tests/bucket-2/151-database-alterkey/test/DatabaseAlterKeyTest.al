@@ -10,9 +10,9 @@ codeunit 61001 "DAK AlterKey Test"
     var
         Helper: Codeunit "DAK Helper";
     begin
-        // Positive: Database.AlterKey(true, ...) must execute without error (no-op stub).
-        Helper.CallAlterKey(true, 'PK', 'Item');
-        Assert.IsTrue(true, 'AlterKey(true) must complete without error');
+        // Positive: Database.AlterKey(keyRef, true) must execute without error (no-op stub).
+        Helper.CallAlterKeyOnPK(true);
+        Assert.IsTrue(true, 'AlterKey(keyRef, true) must complete without error');
     end;
 
     [Test]
@@ -20,19 +20,20 @@ codeunit 61001 "DAK AlterKey Test"
     var
         Helper: Codeunit "DAK Helper";
     begin
-        // Positive: Database.AlterKey(false, ...) must also be a no-op.
-        Helper.CallAlterKey(false, 'SecondaryKey', 'Customer');
-        Assert.IsTrue(true, 'AlterKey(false) must complete without error');
+        // Positive: Database.AlterKey(keyRef, false) must also be a no-op.
+        Helper.CallAlterKeyOnPK(false);
+        Assert.IsTrue(true, 'AlterKey(keyRef, false) must complete without error');
     end;
 
     [Test]
-    procedure AlterKey_NoOp_EmptyKeyName()
+    procedure AlterKey_CalledTwice_NoError()
     var
         Helper: Codeunit "DAK Helper";
     begin
-        // Edge case: empty key name must still execute without error.
-        Helper.CallAlterKey(false, '', 'Vendor');
-        Assert.IsTrue(true, 'AlterKey with empty key name must complete without error');
+        // Edge case: calling AlterKey multiple times must not error.
+        Helper.CallAlterKeyOnPK(true);
+        Helper.CallAlterKeyOnPK(false);
+        Assert.IsTrue(true, 'AlterKey called twice must complete without error');
     end;
 
     [Test]
