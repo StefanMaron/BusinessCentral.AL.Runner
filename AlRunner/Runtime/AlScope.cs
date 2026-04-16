@@ -789,6 +789,9 @@ public static class AlCompat
         if (value is double dbl) return FormatDecimal((decimal)dbl);
         if (value is float f) return FormatDecimal((decimal)f);
         if (value is int or long or short or byte) return value.ToString()!;
+        // System.Guid — BC 26.x compiles AL Guid variables as System.Guid (not NavGuid).
+        // Default AL format is "B" = {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX} (38 chars, uppercase).
+        if (value is Guid sysGuid) return sysGuid.ToString("B").ToUpperInvariant();
         // Handle Decimal18 and other BC numeric types — convert to decimal
         var typeName = value.GetType().Name;
         if (typeName == "Decimal18")
