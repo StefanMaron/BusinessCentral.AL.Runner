@@ -825,9 +825,9 @@ public static class AlTranspiler
         {
             if (parseDiags.Any(d => d.Severity == DiagnosticSeverity.Error))
             {
-                Log.Info("AL parse errors:");
+                Console.Error.WriteLine("AL parse errors:");
                 foreach (var d in parseDiags.Where(d => d.Severity == DiagnosticSeverity.Error))
-                    Log.Info($"  {d}");
+                    Console.Error.WriteLine($"  {d}");
                 hasErrors = true;
             }
             syntaxTrees.Add(tree);
@@ -1212,12 +1212,12 @@ public static class AlTranspiler
 
         if (outputter.CapturedObjects.Count == 0)
         {
-            Log.Info("No C# code was generated.");
+            Console.Error.WriteLine("AL transpilation: no C# code was generated.");
             if (emitResult != null)
             {
-                Log.Info("Emit diagnostics:");
+                Console.Error.WriteLine("Emit diagnostics:");
                 foreach (var d in emitResult.Diagnostics.Take(30))
-                    Log.Info($"  [{d.Severity}] {d.Id}: {d.GetMessage()}");
+                    Console.Error.WriteLine($"  [{d.Severity}] {d.Id}: {d.GetMessage()}");
             }
             return null;
         }
