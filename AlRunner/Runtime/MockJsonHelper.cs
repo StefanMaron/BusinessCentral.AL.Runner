@@ -287,9 +287,9 @@ public static class MockJsonHelper
                 throw new Exception("The JSON token is not an object.");
             return NavList<NavText>.Default;
         }
-        var list = new NavList<NavText>();
+        var list = NavList<NavText>.Default;
         foreach (var prop in obj.Properties())
-            list.ALAdd(DataError.ThrowError, new NavText(prop.Name));
+            list.ALAdd(new NavText(prop.Name));
         return list;
     }
 
@@ -375,7 +375,7 @@ public static class MockJsonHelper
             throw new Exception("The JSON token is not an object.");
         if (!obj.TryGetValue(key, out var val))
             throw new Exception($"The JSON object does not contain a property with the name '{key}'.");
-        return new NavDecimal(val.Value<decimal>());
+        return NavDecimal.Create(new Decimal18(val.Value<decimal>()));
     }
 
     /// <summary>
