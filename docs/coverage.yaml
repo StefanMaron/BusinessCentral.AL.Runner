@@ -9260,8 +9260,9 @@ XmlElement.AddBeforeSelf:
 XmlElement.AddFirst:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/203-xmlelement-extended
+  notes: overloads=1. Covered via NavXmlElement native — adds first child node and returns the added XmlNode.
 
 XmlElement.AsXmlNode:
   layer: runtime-api
@@ -9294,8 +9295,9 @@ XmlElement.GetChildElements:
 XmlElement.GetChildNodes:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/203-xmlelement-extended
+  notes: overloads=1. Covered via NavXmlElement native — returns XmlNodeList of direct child nodes.
 
 XmlElement.GetDescendantElements:
   layer: runtime-api
@@ -9324,8 +9326,9 @@ XmlElement.GetNamespaceOfPrefix:
 XmlElement.GetParent:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/203-xmlelement-extended
+  notes: overloads=1. Covered via NavXmlElement native — returns parent XmlElement or null if root.
 
 XmlElement.GetPrefixOfNamespace:
   layer: runtime-api
@@ -9392,8 +9395,9 @@ XmlElement.NamespaceUri:
 XmlElement.Remove:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/203-xmlelement-extended
+  notes: overloads=1. Covered via NavXmlElement native — removes element from parent tree.
 
 XmlElement.RemoveAllAttributes:
   layer: runtime-api
@@ -9413,8 +9417,9 @@ XmlElement.RemoveAttribute:
 XmlElement.RemoveNodes:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/203-xmlelement-extended
+  notes: overloads=1. Covered via NavXmlElement native — removes all child nodes from element.
 
 XmlElement.ReplaceNodes:
   layer: runtime-api
@@ -9453,8 +9458,9 @@ XmlElement.SetAttribute:
 XmlElement.WriteTo:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=4
+  status: covered
+  tests: tests/bucket-2/203-xmlelement-extended
+  notes: overloads=4. Covered via NavXmlElement native — writes element to XmlWriter with proper formatting.
 
 # ── XmlNameTable ────────────────────────────────────────────────
 
