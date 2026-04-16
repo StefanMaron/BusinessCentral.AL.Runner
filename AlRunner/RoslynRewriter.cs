@@ -2150,11 +2150,12 @@ public void ClearApplicationMemberVariables() { }
             }
 
             // NavJsonToken/NavJsonObject/NavJsonArray/NavJsonValue: ALWriteTo, ALReadFrom,
-            // ALSelectToken, ALSelectTokens -> MockJsonHelper static methods.
+            // ALSelectToken, ALSelectTokens, ALGetBoolean -> MockJsonHelper static methods.
             // These BC methods go through TrappableOperationExecutor -> NavEnvironment
             // which crashes in standalone mode. MockJsonHelper does the same work
             // using Newtonsoft.Json directly.
-            if (methodName is "ALWriteTo" or "ALReadFrom" or "ALSelectToken" or "ALSelectTokens")
+            if (methodName is "ALWriteTo" or "ALReadFrom" or "ALSelectToken" or "ALSelectTokens"
+                or "ALGetBoolean")
             {
                 var helperMethod = methodName switch
                 {
@@ -2162,11 +2163,12 @@ public void ClearApplicationMemberVariables() { }
                     "ALReadFrom" => "ReadFrom",
                     "ALSelectToken" => "SelectToken",
                     "ALSelectTokens" => "SelectTokens",
+                    "ALGetBoolean" => "GetBoolean",
                     _ => null
                 };
                 if (helperMethod is not null)
                 {
-                    // Rewrite: x.ALWriteTo(args) -> MockJsonHelper.WriteTo(x, args)
+                    // Rewrite: x.ALGetBoolean(args) -> MockJsonHelper.GetBoolean(x, args)
                     var args = visited.ArgumentList.Arguments;
                     var newArgs = new SeparatedSyntaxList<ArgumentSyntax>();
                     newArgs = newArgs.Add(SyntaxFactory.Argument(memberAccess.Expression));

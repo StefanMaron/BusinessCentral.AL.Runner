@@ -3179,8 +3179,10 @@ JsonObject.GetBigInteger:
 JsonObject.GetBoolean:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter redirects ALGetBoolean to MockJsonHelper.GetBoolean (JObject backing token lookup; throws on missing key or wrong type)
+  tests:
+    - tests/bucket-1/62-jsonobject-getboolean
 
 JsonObject.GetByte:
   layer: runtime-api
