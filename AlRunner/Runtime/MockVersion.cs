@@ -39,21 +39,21 @@ public struct MockVersion
         => ALCreate(null, major, minor, build, revision, ref result);
 
     /// <summary>BC lowers <c>ver.Major()</c> to <c>ver.ALMajor()</c>.</summary>
-    public NavInteger ALMajor() => (NavInteger)_major;
+    public NavInteger ALMajor() => NavInteger.Create(_major);
 
     /// <summary>BC lowers <c>ver.Minor()</c> to <c>ver.ALMinor()</c>.</summary>
-    public NavInteger ALMinor() => (NavInteger)_minor;
+    public NavInteger ALMinor() => NavInteger.Create(_minor);
 
     /// <summary>BC lowers <c>ver.Build()</c> to <c>ver.ALBuild()</c>.</summary>
-    public NavInteger ALBuild() => (NavInteger)_build;
+    public NavInteger ALBuild() => NavInteger.Create(_build);
 
     /// <summary>BC lowers <c>ver.Revision()</c> to <c>ver.ALRevision()</c>.</summary>
-    public NavInteger ALRevision() => (NavInteger)_revision;
+    public NavInteger ALRevision() => NavInteger.Create(_revision);
 
     /// <summary>
     /// BC lowers <c>ver.ToText()</c> to <c>ver.ALToText(session)</c> or <c>ver.ALToText()</c>.
     /// Returns <c>"Major.Minor.Build.Revision"</c>.
     /// </summary>
     public NavText ALToText(object? session = null)
-        => (NavText)$"{_major}.{_minor}.{_build}.{_revision}";
+        => new NavText($"{_major}.{_minor}.{_build}.{_revision}");
 }
