@@ -2382,19 +2382,6 @@ public void ClearApplicationMemberVariables() { }
                         SyntaxFactory.IdentifierName("HasTableConnection")));
             }
 
-            // ALDatabase.ALCurrentTransactionType([session]) -> AlCompat.ALCurrentTransactionType()
-            // The real implementation requires NavSession; our stub returns TransactionType::Update (ordinal 2).
-            // Replace the entire invocation (including args) to drop any session argument BC may pass.
-            if (exprText == "ALDatabase" && methodName == "ALCurrentTransactionType")
-            {
-                return SyntaxFactory.InvocationExpression(
-                    SyntaxFactory.MemberAccessExpression(
-                        SyntaxKind.SimpleMemberAccessExpression,
-                        SyntaxFactory.IdentifierName("AlCompat"),
-                        SyntaxFactory.IdentifierName("ALCurrentTransactionType")),
-                    SyntaxFactory.ArgumentList())
-                    .WithTriviaFrom(visited);
-            }
 
             // ALDatabase.ALCreateGuid() -> AlCompat.ALCreateGuid()
             // ALDatabase.ALCreateSequentialGuid() -> AlCompat.ALCreateSequentialGuid()
@@ -2819,6 +2806,24 @@ public void ClearApplicationMemberVariables() { }
                     SyntaxFactory.IdentifierName(targetProp))
                     .WithTriviaFrom(visited);
             }
+        }
+
+        // Pattern: ALDatabase.ALCurrentTransactionType (property get — no parentheses)
+        // BC lowers CurrentTransactionType() to a PROPERTY GETTER on ALDatabase, NOT a method call.
+        // The generated C# is `ALDatabase.ALCurrentTransactionType` (a MemberAccessExpressionSyntax),
+        // not `ALDatabase.ALCurrentTransactionType(...)` (an InvocationExpressionSyntax).
+        // Rewrite to AlCompat.ALCurrentTransactionType() which returns TransactionType::Update.
+        if (visited.Expression is IdentifierNameSyntax txDbId &&
+            txDbId.Identifier.Text == "ALDatabase" &&
+            visited.Name.Identifier.Text == "ALCurrentTransactionType")
+        {
+            return SyntaxFactory.InvocationExpression(
+                SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("AlCompat"),
+                    SyntaxFactory.IdentifierName("ALCurrentTransactionType")),
+                SyntaxFactory.ArgumentList())
+                .WithTriviaFrom(visited);
         }
 
         // Pattern: ALDatabase.ALCompanyName / ALDatabase.ALUserID / ALDatabase.ALTenantID / ALDatabase.ALSerialNumber
