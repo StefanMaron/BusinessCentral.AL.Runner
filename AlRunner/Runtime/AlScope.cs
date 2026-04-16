@@ -911,6 +911,10 @@ public static class AlCompat
         {
             try
             {
+                // NavCode must be checked BEFORE NavText: NavCode extends NavText but its
+                // op_Explicit is the safe one that bypasses NavEnvironment.  Checking NavCode
+                // first avoids NavText.op_Explicit being called on a NavCode instance.
+                if (value is Microsoft.Dynamics.Nav.Runtime.NavCode nc) return (string)nc;
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavText nt) return (string)nt;
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavBoolean nb) return (bool)nb ? "Yes" : "No";
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavInteger ni) return ((int)ni).ToString();
