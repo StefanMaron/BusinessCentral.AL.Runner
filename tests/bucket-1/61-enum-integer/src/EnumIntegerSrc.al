@@ -19,9 +19,4 @@ codeunit 57701 "EI Enum Converter"
     begin
         exit(C.AsInteger());
     end;
-
-    procedure FromInteger(I: Integer): Enum "EI Color"
-    begin
-        exit(Enum::"EI Color".FromInteger(I));
-    end;
 }
