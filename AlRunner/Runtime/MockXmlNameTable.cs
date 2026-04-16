@@ -17,11 +17,23 @@ namespace AlRunner.Runtime;
 /// identifiers to <c>MockXmlNameTable</c> and the implicit conversion operator
 /// discards the real instance (its internal state is not needed for unit tests)
 /// and returns a fresh mock backed by a plain dictionary.</para>
+///
+/// <para>BC also emits <c>NavXmlNameTable.Default</c> for uninitialized
+/// <c>XmlNameTable</c> variables — the <see cref="Default"/> property provides
+/// a fresh empty instance for that case.</para>
 /// </summary>
 public class MockXmlNameTable
 {
     private readonly System.Collections.Generic.Dictionary<string, string> _table
         = new(System.StringComparer.Ordinal);
+
+    // ── Default ──────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// BC emits <c>NavXmlNameTable.Default</c> for uninitialized
+    /// <c>XmlNameTable</c> variables.  Returns a fresh empty mock instance.
+    /// </summary>
+    public static MockXmlNameTable Default => new MockXmlNameTable();
 
     // ── Implicit conversion ──────────────────────────────────────────────────
 
@@ -46,15 +58,13 @@ public class MockXmlNameTable
     /// <summary>Overload for <c>NavText</c> parameters.</summary>
     public void ALAdd(NavText name) => ALAdd((string)name);
 
-    // ── ALGet ────────────────────────────────────────────────────────────────
+    // ── ALGet (2-arg) ────────────────────────────────────────────────────────
 
     /// <summary>
-    /// BC lowers <c>nt.Get(name, var result)</c> to
-    /// <c>nt.ALGet(name, ref result)</c>.
+    /// 2-arg overload: <c>nt.ALGet(name, ref result)</c>.
     /// Returns <c>true</c> and sets <paramref name="result"/> when
     /// <paramref name="name"/> was previously added; otherwise returns
-    /// <c>false</c> and sets <paramref name="result"/> to empty text
-    /// (instead of throwing <c>NavNCLKeyNotFoundException</c>).
+    /// <c>false</c> and sets <paramref name="result"/> to empty text.
     /// </summary>
     public bool ALGet(string name, ref NavText result)
     {
@@ -70,18 +80,31 @@ public class MockXmlNameTable
     /// <summary>Overload for <c>NavText</c> name parameter.</summary>
     public bool ALGet(NavText name, ref NavText result) => ALGet((string)name, ref result);
 
-    // ── ALGet with string result ─────────────────────────────────────────────
-    // Some BC compiler variants emit string/ref string rather than NavText/ref NavText.
-
-    /// <summary>Overload for <c>string</c> result parameter.</summary>
+    /// <summary>Overload with <c>string</c> result (some BC compiler variants).</summary>
     public bool ALGet(string name, ref string result)
     {
-        if (_table.TryGetValue(name, out var v))
-        {
-            result = v;
-            return true;
-        }
+        if (_table.TryGetValue(name, out var v)) { result = v; return true; }
         result = string.Empty;
         return false;
     }
+
+    // ── ALGet (3-arg with session) ───────────────────────────────────────────
+
+    /// <summary>
+    /// BC lowers <c>nt.Get(name, var result)</c> to
+    /// <c>nt.ALGet(session, name, ref result)</c> (passing the scope session
+    /// as the first argument in newer BC compiler variants).
+    /// Returns <c>true</c> and sets <paramref name="result"/> when found;
+    /// otherwise returns <c>false</c> and sets <paramref name="result"/> to empty.
+    /// </summary>
+    public bool ALGet(object? session, string name, ref NavText result)
+        => ALGet(name, ref result);
+
+    /// <summary>Overload for <c>NavText</c> name with session.</summary>
+    public bool ALGet(object? session, NavText name, ref NavText result)
+        => ALGet((string)name, ref result);
+
+    /// <summary>Overload with <c>string</c> result and session.</summary>
+    public bool ALGet(object? session, string name, ref string result)
+        => ALGet(name, ref result);
 }
