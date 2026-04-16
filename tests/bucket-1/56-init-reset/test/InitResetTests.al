@@ -1,4 +1,4 @@
-codeunit 56501 "Init Reset Tests"
+codeunit 57601 "Init Reset Tests"
 {
     Subtype = Test;
 

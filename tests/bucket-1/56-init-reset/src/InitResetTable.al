@@ -1,4 +1,4 @@
-table 56500 "IR Test"
+table 57600 "IR Test"
 {
     DataClassification = ToBeClassified;
 
