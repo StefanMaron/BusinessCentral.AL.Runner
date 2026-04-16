@@ -1142,7 +1142,7 @@ public class MockRecordHandle
     {
         var actual = GetFieldValueSafe(fieldNo, expectedType);
         var actualStr = NavValueToString(actual);
-        var expectedStr = NavValueToString(expectedValue);
+        var expectedStr = NavValueToString(NavDecimal.Create(expectedValue));
         if (actualStr != expectedStr)
             throw new Exception($"TestField failed: field {fieldNo} in table {_tableId} expected '{expectedStr}' but was '{actualStr}'");
     }
@@ -1174,7 +1174,7 @@ public class MockRecordHandle
     /// <summary>Overload: TestField with DataError level and Decimal18 value.</summary>
     public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType, Decimal18 expectedValue)
     {
-        ALTestFieldSafe(fieldNo, expectedType, expectedValue);
+        ALTestFieldSafe(fieldNo, expectedType, expectedValue);  // delegates to Decimal18 overload
     }
 
     /// <summary>
