@@ -1,0 +1,4 @@
+{
+  "description": "JsonToken.Path, NumberSequence.Range, TextConst.IndexOfAny, Time.Millisecond, XmlNodeList.Get, XmlReadOptions/XmlWriteOptions.PreserveWhitespace",
+  "issue": 776
+}

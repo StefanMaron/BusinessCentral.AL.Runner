@@ -3565,8 +3565,10 @@ JsonToken.IsValue:
 JsonToken.Path:
   layer: runtime-api
   category: JsonToken
-  status: gap
-  notes: overloads=1; ALPath property is too broadly named — MockCookie also has ALPath; needs type-aware rewriter support
+  status: covered
+  notes: overloads=1; BC emits ALPath as property access; VisitMemberAccessExpression intercepts ALPath→MockJsonHelper.Path(token) which converts Newtonsoft format to BC $-prefixed format
+  tests:
+    - tests/bucket-1/175-misc-gaps
 
 JsonToken.ReadFrom:
   layer: runtime-api
@@ -4262,8 +4264,10 @@ NumberSequence.Next:
 NumberSequence.Range:
   layer: runtime-api
   category: NumberSequence
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; added ALRange(name, count) and ALRange(name, count, companySpecific) to MockNumberSequence; also added ALInsert 4-arg overload; reserves Count values, returns first
+  tests:
+    - tests/bucket-1/175-misc-gaps
 
 NumberSequence.Restart:
   layer: runtime-api
@@ -7977,8 +7981,10 @@ Time.Hour:
 Time.Millisecond:
   layer: runtime-api
   category: Time
-  status: gap
-  notes: overloads=1; no picture-string token for ms; Time2HMS not available in BC AL
+  status: covered
+  notes: overloads=1; works natively via NavTime; tested with default (0ms) and 000000T+100 (100ms)
+  tests:
+    - tests/bucket-1/175-misc-gaps
 
 Time.Minute:
   layer: runtime-api
@@ -9689,8 +9695,10 @@ XmlNodeList.Count:
 XmlNodeList.Get:
   layer: runtime-api
   category: XmlNodeList
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; works natively via NavXmlNodeList; 1-based index; tested by selecting child element and calling Get(1)
+  tests:
+    - tests/bucket-1/175-misc-gaps
 
 # ── XmlProcessingInstruction ────────────────────────────────────
 
@@ -9794,8 +9802,10 @@ XmlProcessingInstruction.WriteTo:
 XmlReadOptions.PreserveWhitespace:
   layer: runtime-api
   category: XmlReadOptions
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; works natively via NavXmlReadOptions; get and set tested (default false, set to true returns true)
+  tests:
+    - tests/bucket-1/175-misc-gaps
 
 # ── XmlText ─────────────────────────────────────────────────────
 
@@ -9889,7 +9899,10 @@ XmlText.WriteTo:
 XmlWriteOptions.PreserveWhitespace:
   layer: runtime-api
   category: XmlWriteOptions
-  status: gap
+  status: covered
+  notes: overloads=1; works natively via NavXmlWriteOptions; get and set tested (default false, set to true returns true)
+  tests:
+    - tests/bucket-1/175-misc-gaps
   notes: overloads=1
 
 # ── Xmlport ─────────────────────────────────────────────────────

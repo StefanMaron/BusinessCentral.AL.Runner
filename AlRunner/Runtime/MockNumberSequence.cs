@@ -37,6 +37,28 @@ public static class MockNumberSequence
         _sequences[name] = startValue;
     }
 
+    public static void ALInsert(string name, long startValue, long increment, bool companySpecific)
+    {
+        _sequences[name] = startValue;
+    }
+
+    /// <summary>
+    /// AL: NumberSequence.Range(Name, Count [, CompanySpecific]) → BigInteger
+    /// Reserves the next Count values and returns the first value of the range.
+    /// Advances the sequence counter by Count.
+    /// </summary>
+    public static long ALRange(string name, long count)
+    {
+        if (!_sequences.ContainsKey(name))
+            _sequences[name] = 0;
+        var first = _sequences[name] + 1;
+        _sequences[name] += count;
+        return first;
+    }
+
+    public static long ALRange(string name, long count, bool companySpecific)
+        => ALRange(name, count);
+
     public static long ALNext(string name)
     {
         if (!_sequences.ContainsKey(name))

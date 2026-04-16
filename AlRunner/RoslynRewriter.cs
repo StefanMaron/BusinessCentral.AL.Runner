@@ -2331,6 +2331,7 @@ public void ClearApplicationMemberVariables()
                     "ALIsValue" => "IsValue",
                     "ALClone" => "Clone",
                     "ALKeys" => "Keys",
+
                     "ALGetText" => "GetText",
                     "ALGetInteger" => "GetInteger",
                     "ALGetDecimal" => "GetDecimal",
@@ -3730,6 +3731,21 @@ public void ClearApplicationMemberVariables()
                 SyntaxFactory.IdentifierName("MockLanguage"),
                 SyntaxFactory.IdentifierName("ALGlobalLanguage"))
                 .WithTriviaFrom(visited);
+        }
+
+        // Pattern: token.ALPath → MockJsonHelper.Path(token)
+        // NavJsonToken.ALPath is a property (not method) that returns Newtonsoft path format.
+        // We intercept it to convert to BC $-prefixed format.
+        if (memberName == "ALPath")
+        {
+            return SyntaxFactory.InvocationExpression(
+                SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("MockJsonHelper"),
+                    SyntaxFactory.IdentifierName("Path")),
+                SyntaxFactory.ArgumentList(
+                    SyntaxFactory.SingletonSeparatedList(
+                        SyntaxFactory.Argument(visited.Expression))));
         }
 
         return visited;

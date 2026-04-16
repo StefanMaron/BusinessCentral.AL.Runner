@@ -306,6 +306,30 @@ public static class MockJsonHelper
         return val.Value<bool>();
     }
 
+    /// <summary>
+    /// Replacement for NavJsonToken.ALPath(DataError).
+    /// Returns the BC-style JSON path for the token (e.g. "$" for root, "$.foo" for a field).
+    /// Newtonsoft.Json uses "" for root and "foo" for a field — this converts to BC format.
+    /// AL: JsonToken.Path() → MockJsonHelper.Path(token, error)
+    /// </summary>
+    public static NavText Path(NavJsonToken token)
+    {
+        var backingToken = GetBackingToken(token);
+        var newtonsoftPath = backingToken.Path;
+        // Convert Newtonsoft path to BC $ format:
+        //   ""    → "$"
+        //   "[0]" → "$[0]"
+        //   "foo" → "$.foo"
+        string bcPath;
+        if (string.IsNullOrEmpty(newtonsoftPath))
+            bcPath = "$";
+        else if (newtonsoftPath.StartsWith('['))
+            bcPath = "$" + newtonsoftPath;
+        else
+            bcPath = "$." + newtonsoftPath;
+        return new NavText(bcPath);
+    }
+
     /// <summary>Returns true if the token's backing store is a JArray.</summary>
     public static bool IsArray(NavJsonToken token)
         => GetBackingToken(token) is JArray;
