@@ -2995,8 +2995,9 @@ InStream.ResetPosition:
 Integer.ToText:
   layer: runtime-api
   category: Integer
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; RoslynRewriter redirects `<expr>.ToText()` to `AlCompat.Format(expr)`; NavInteger handled in AlScope.cs
+  test: tests/bucket-1/84-integer-totext
 
 # ── IsolatedStorage ─────────────────────────────────────────────
 
