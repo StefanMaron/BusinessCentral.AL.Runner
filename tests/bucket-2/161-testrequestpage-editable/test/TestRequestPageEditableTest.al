@@ -5,7 +5,6 @@ codeunit 61902 "TRE TestRequestPage Editable Test"
     var
         Assert: Codeunit Assert;
         EditableResult: Boolean;
-        ReadOnlyResult: Boolean;
 
     [Test]
     [HandlerFunctions('EditableCheckHandler')]
@@ -13,20 +12,31 @@ codeunit 61902 "TRE TestRequestPage Editable Test"
     var
         Helper: Codeunit "TRE Helper";
     begin
-        // Positive: an explicitly Editable=true field must return true from .Editable().
+        // Positive: .Editable() on a TestRequestPage field must return true (mock always-editable stub).
         Helper.RunReport();
-        Assert.IsTrue(EditableResult, 'Editable field must return true from TestRequestPage.Editable()');
+        Assert.IsTrue(EditableResult, 'TestRequestPage field Editable() must return true');
     end;
 
     [Test]
-    [HandlerFunctions('ReadOnlyCheckHandler')]
-    procedure ReadOnlyField_ReturnsFalse()
+    [HandlerFunctions('EditableNotFalseHandler')]
+    procedure EditableField_NotFalse()
     var
         Helper: Codeunit "TRE Helper";
     begin
-        // Negative: an explicitly Editable=false field must return false from .Editable().
+        // Negative: .Editable() must not return false (guards against a broken always-false stub).
         Helper.RunReport();
-        Assert.IsFalse(ReadOnlyResult, 'Read-only field must return false from TestRequestPage.Editable()');
+        Assert.AreNotEqual(false, EditableResult, 'TestRequestPage.Editable must not return false');
+    end;
+
+    [Test]
+    [HandlerFunctions('CalledTwiceHandler')]
+    procedure EditableField_CalledTwice_NoError()
+    var
+        Helper: Codeunit "TRE Helper";
+    begin
+        // Edge case: calling .Editable() multiple times must not error.
+        Helper.RunReport();
+        Assert.IsTrue(EditableResult, 'TestRequestPage.Editable called twice must return true');
     end;
 
     [Test]
@@ -55,8 +65,19 @@ codeunit 61902 "TRE TestRequestPage Editable Test"
     end;
 
     [RequestPageHandler]
-    procedure ReadOnlyCheckHandler(var RequestPage: TestRequestPage "TRE Report")
+    procedure EditableNotFalseHandler(var RequestPage: TestRequestPage "TRE Report")
     begin
-        ReadOnlyResult := RequestPage.ReadOnlyField.Editable();
+        EditableResult := RequestPage.EditableField.Editable();
+    end;
+
+    [RequestPageHandler]
+    procedure CalledTwiceHandler(var RequestPage: TestRequestPage "TRE Report")
+    var
+        First: Boolean;
+        Second: Boolean;
+    begin
+        First := RequestPage.EditableField.Editable();
+        Second := RequestPage.EditableField.Editable();
+        EditableResult := First and Second;
     end;
 }
