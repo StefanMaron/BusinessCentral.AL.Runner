@@ -43,4 +43,22 @@ public static class MockNavApp
     {
         return NavList<NavModuleInfo>.Default;
     }
+
+    /// <summary>
+    /// Returns false — no installation lifecycle exists in standalone mode.
+    /// BC's real implementation returns true only during app installation on a service tier.
+    /// </summary>
+    public static bool ALIsInstalling() => false;
+
+    /// <summary>
+    /// Returns false — no license enforcement is applied in standalone mode.
+    /// BC's real implementation returns true when the app has no valid license.
+    /// </summary>
+    public static bool ALIsUnlicensed() => false;
+
+    /// <summary>
+    /// Returns true — the runner grants full entitlement so all code paths are reachable.
+    /// BC's real implementation returns false when the app is not entitled on the tenant.
+    /// </summary>
+    public static bool ALIsEntitled() => true;
 }
