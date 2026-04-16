@@ -1419,44 +1419,51 @@ CompanyProperty.UrlName:
 Cookie.Domain:
   layer: runtime-api
   category: Cookie
-  status: gap
+  status: covered
   notes: overloads=1
+  tests: [tests/bucket-2/158-cookie-properties]
 
 Cookie.Expires:
   layer: runtime-api
   category: Cookie
-  status: gap
+  status: covered
   notes: overloads=1
+  tests: [tests/bucket-2/158-cookie-properties]
 
 Cookie.HttpOnly:
   layer: runtime-api
   category: Cookie
-  status: gap
+  status: covered
   notes: overloads=1
+  tests: [tests/bucket-2/158-cookie-properties]
 
 Cookie.Name:
   layer: runtime-api
   category: Cookie
-  status: gap
+  status: covered
   notes: overloads=1
+  tests: [tests/bucket-2/158-cookie-properties]
 
 Cookie.Path:
   layer: runtime-api
   category: Cookie
-  status: gap
+  status: covered
   notes: overloads=1
+  tests: [tests/bucket-2/158-cookie-properties]
 
 Cookie.Secure:
   layer: runtime-api
   category: Cookie
-  status: gap
+  status: covered
   notes: overloads=1
+  tests: [tests/bucket-2/158-cookie-properties]
 
 Cookie.Value:
   layer: runtime-api
   category: Cookie
-  status: gap
+  status: covered
   notes: overloads=1
+  tests: [tests/bucket-2/158-cookie-properties]
 
 # ── DataTransfer ────────────────────────────────────────────────
 
