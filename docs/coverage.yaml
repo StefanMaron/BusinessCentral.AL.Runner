@@ -1599,14 +1599,18 @@ Date.Year:
 DateTime.Date:
   layer: runtime-api
   category: DateTime
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests:
+    - tests/bucket-1/61-datetime-decomposition
+  notes: DT2Date / DT2Time / CreateDateTime — BC runtime types handle these natively
 
 DateTime.Time:
   layer: runtime-api
   category: DateTime
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests:
+    - tests/bucket-1/61-datetime-decomposition
+  notes: DT2Date / DT2Time / CreateDateTime — BC runtime types handle these natively
 
 DateTime.ToText:
   layer: runtime-api
