@@ -1922,14 +1922,20 @@ public void ClearApplicationMemberVariables() { }
                         })))
                     .WithTriviaFrom(visited);
             }
+            // Default: route to GuidToText(expr, true).
+            // GuidToText returns "B" format (38 chars, braces) for Guid/NavGuid values, matching
+            // AL's Guid.ToText() semantics. For all other types (NavDate, NavDateTime, NavOption…)
+            // GuidToText falls back to AlCompat.Format, so behaviour is unchanged for non-Guid types.
             return SyntaxFactory.InvocationExpression(
                 SyntaxFactory.MemberAccessExpression(
                     SyntaxKind.SimpleMemberAccessExpression,
                     SyntaxFactory.IdentifierName("AlCompat"),
-                    SyntaxFactory.IdentifierName("Format")),
+                    SyntaxFactory.IdentifierName("GuidToText")),
                 SyntaxFactory.ArgumentList(
-                    SyntaxFactory.SingletonSeparatedList(
-                        SyntaxFactory.Argument(toTextMa.Expression))))
+                    SyntaxFactory.SeparatedList(new[] {
+                        SyntaxFactory.Argument(toTextMa.Expression),
+                        SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(SyntaxKind.TrueLiteralExpression))
+                    })))
                 .WithTriviaFrom(visited);
         }
 
@@ -2485,45 +2491,34 @@ public void ClearApplicationMemberVariables() { }
                     .WithTriviaFrom(visited);
             }
 
-            // ALCompiler.ToText(session, value[, withBraces]) -> AlCompat.Format(value) or AlCompat.GuidToText(value, bool)
-            // BC lowers `byteVar.ToText()` (and other scalar ToText calls) to the static
-            // ALCompiler.ToText(session, value) form. We take the second argument (value).
-            // 3-arg form: ALCompiler.ToText(session, navGuid, false) for Guid.ToText(false) →
-            //   3rd arg literal false = no-delimiter form → GuidToText(value, false).
-            // 3-arg form: ALCompiler.ToText(session, navGuid, true) for Guid.ToText() (BC 26.x) →
-            //   3rd arg literal true = with-braces form → GuidToText(value, true).
+            // ALCompiler.ToText(session, value[, withBraces]) -> AlCompat.GuidToText(value, bool)
+            // BC lowers scalar .ToText() calls to the static ALCompiler.ToText(session, value) form.
+            // We take the second argument (value). Three dispatch rules:
+            //   • 3-arg, false  → GuidToText(value, false)  [Guid.ToText(false) — no delimiters]
+            //   • 3-arg, true   → GuidToText(value, true)   [Guid.ToText() in BC 26.x — with braces]
+            //   • 2-arg         → GuidToText(value, true)   [Guid.ToText() in BC 26.x default form]
+            // GuidToText returns "B" format (braces) for Guid/NavGuid and falls back to
+            // AlCompat.Format for all other types (NavDate, NavOption, Byte, …) — identical result.
             // Note: Format(Guid) goes through NavValueFormatter.Format → AlCompat.Format → "D" (no braces).
-            //       Guid.ToText() goes through ALCompiler.ToText(s, g, true) → GuidToText(g, true) → "B" (braces).
             if (exprText == "ALCompiler" && methodName == "ToText"
                 && visited.ArgumentList.Arguments.Count >= 2)
             {
                 var valueArg = visited.ArgumentList.Arguments[1];
                 bool isFalseThirdArg = visited.ArgumentList.Arguments.Count >= 3 &&
                     visited.ArgumentList.Arguments[2].Expression.IsKind(SyntaxKind.FalseLiteralExpression);
-                bool isTrueThirdArg = visited.ArgumentList.Arguments.Count >= 3 &&
-                    visited.ArgumentList.Arguments[2].Expression.IsKind(SyntaxKind.TrueLiteralExpression);
-                if (isFalseThirdArg || isTrueThirdArg)
-                {
-                    return SyntaxFactory.InvocationExpression(
-                        SyntaxFactory.MemberAccessExpression(
-                            SyntaxKind.SimpleMemberAccessExpression,
-                            SyntaxFactory.IdentifierName("AlCompat"),
-                            SyntaxFactory.IdentifierName("GuidToText")),
-                        SyntaxFactory.ArgumentList(
-                            SyntaxFactory.SeparatedList(new[] {
-                                valueArg,
-                                SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(
-                                    isFalseThirdArg ? SyntaxKind.FalseLiteralExpression : SyntaxKind.TrueLiteralExpression))
-                            })))
-                        .WithTriviaFrom(visited);
-                }
+                var withBracesLiteral = isFalseThirdArg
+                    ? SyntaxFactory.LiteralExpression(SyntaxKind.FalseLiteralExpression)
+                    : SyntaxFactory.LiteralExpression(SyntaxKind.TrueLiteralExpression);
                 return SyntaxFactory.InvocationExpression(
                     SyntaxFactory.MemberAccessExpression(
                         SyntaxKind.SimpleMemberAccessExpression,
                         SyntaxFactory.IdentifierName("AlCompat"),
-                        SyntaxFactory.IdentifierName("Format")),
+                        SyntaxFactory.IdentifierName("GuidToText")),
                     SyntaxFactory.ArgumentList(
-                        SyntaxFactory.SingletonSeparatedList(valueArg)))
+                        SyntaxFactory.SeparatedList(new[] {
+                            valueArg,
+                            SyntaxFactory.Argument(withBracesLiteral)
+                        })))
                     .WithTriviaFrom(visited);
             }
 
