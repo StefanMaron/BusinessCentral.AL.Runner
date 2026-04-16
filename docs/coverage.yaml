@@ -1078,7 +1078,9 @@ addbefore_action_modification:
 addbefore_dataset_modification:
   layer: syntax
   category: modification
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/136-addbefore-dataset
 
 addbefore_modification:
   layer: syntax
