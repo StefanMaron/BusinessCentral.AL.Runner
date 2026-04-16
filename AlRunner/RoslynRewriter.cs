@@ -1701,25 +1701,6 @@ public void ClearApplicationMemberVariables() { }
                     SyntaxFactory.Literal("S-1-0-0"))
                     .WithTriviaFrom(node);
             }
-            // Diagnostic: log any unhandled ALDatabase method that is NOT already
-            // intercepted above — this appears in CI stderr to identify unknown method names.
-            if (!System.Array.Exists(new[] {
-                    "ALSessionID", "ALSessionId", "ALTenantID", "ALSerialNumber",
-                    "ALServiceInstanceID", "ALServiceInstanceId",
-                    "ALUserSecurityId", "ALIsInWriteTransaction",
-                    "ALGetDefaultTableConnection", "ALLastUsedRowVersion",
-                    "ALMinimumActiveRowVersion", "ALHasTableConnection",
-                    "ALCommit", "ALSelectLatestVersion", "ALAlterKey",
-                    "ALCheckLicenseFile", "ALChangeUserPassword", "ALCopyCompany",
-                    "ALImportData", "ALExportData", "ALDataFileInformation",
-                    "ALRegisterTableConnection", "ALSetDefaultTableConnection",
-                    "ALUnregisterTableConnection", "ALRunCodeunit",
-                    "ALGetLastErrorText", "ALGetLastErrorCallStack",
-                    "ALClearLastError" },
-                    n => n == idName))
-            {
-                Console.Error.WriteLine($"[RoslynRewriter] UNHANDLED ALDatabase.{idName} — add intercept");
-            }
         }
 
         // `NavOption.Create(existing.NavOptionMetadata, V)` — reassignment
