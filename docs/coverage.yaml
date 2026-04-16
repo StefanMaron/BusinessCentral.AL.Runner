@@ -1586,8 +1586,8 @@ Database.HasTableConnection:
 Database.ImportData:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op stub (no file I/O in standalone mode); ALImportData stripped by RoslynRewriter
 
 Database.IsInWriteTransaction:
   layer: runtime-api
