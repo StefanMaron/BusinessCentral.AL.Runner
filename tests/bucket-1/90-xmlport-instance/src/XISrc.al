@@ -1,4 +1,4 @@
-table 91000 "XI Item"
+table 95000 "XI Item"
 {
     fields
     {
@@ -11,7 +11,7 @@ table 91000 "XI Item"
     }
 }
 
-xmlport 91000 "XI Item Port"
+xmlport 95000 "XI Item Port"
 {
     Direction = Both;
     Format = VariableText;
@@ -29,7 +29,7 @@ xmlport 91000 "XI Item Port"
     }
 }
 
-codeunit 91000 "XI Src"
+codeunit 95000 "XI Src"
 {
     procedure CallExport(): Boolean
     var
