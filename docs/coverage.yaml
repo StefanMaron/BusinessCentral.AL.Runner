@@ -679,7 +679,10 @@ fields_section:
 fixed_section:
   layer: syntax
   category: table
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/59-table-fixed-section
+  notes: fieldgroup(Fixed; ...) is handled identically to DropDown/Brick by the BC compiler; no runner changes needed
 
 key_declaration:
   layer: syntax
