@@ -1525,8 +1525,8 @@ Database.ChangeUserPassword:
 Database.CheckLicenseFile:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op stub (no license system standalone); tests/bucket-2/153-database-checklicensefile
 
 Database.Commit:
   layer: runtime-api
