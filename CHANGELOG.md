@@ -7,6 +7,11 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **`Table.SetAscending` coverage (#305)** — New suite `tests/bucket-1/55-setascending`
+  adds 6 proving tests: default PK ascending, `SetAscending(Name, false)` → descending,
+  explicit `SetAscending(Name, true)`, composite key with mixed directions (Priority asc +
+  Code desc), `Reset()` restores default ascending, and `FindLast` with descending key.
+  Coverage map: `Table.SetAscending` moved from `gap` to `covered`.
 - **`Table.TestField` enum coverage (#302)** — New suite `tests/bucket-1/54-testfield-enum`
   adds 6 proving tests for `TestField` with enum fields: matching enum value passes,
   wrong value errors, default-vs-non-zero, non-default passes the no-value check, and
