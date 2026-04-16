@@ -1900,43 +1900,6 @@ public void ClearApplicationMemberVariables() { }
         // Now recurse into children first
         var visited = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
 
-        // `<expr>.ALToText(...)` — Guid.ToText() emitted with the AL-prefix form.
-        // BC emits navGuid.ALToText() or navGuid.ALToText(false) for Guid.ToText() overloads.
-        // Both form routes through NavValueFormatter→NCLManagedAdapter which crashes standalone.
-        // - ALToText(false) → AlCompat.GuidToText(expr, false)  — no braces/hyphens (32 chars)
-        // - ALToText()  or ALToText(true) → AlCompat.Format(expr) — format "B" (38 chars)
-        if (visited.Expression is MemberAccessExpressionSyntax alToTextMa &&
-            alToTextMa.Name.Identifier.Text == "ALToText")
-        {
-            var alToTextReceiver = alToTextMa.Expression;
-            // Check if first arg is literal false
-            bool isFalseLiteral = visited.ArgumentList.Arguments.Count >= 1 &&
-                visited.ArgumentList.Arguments[0].Expression.IsKind(SyntaxKind.FalseLiteralExpression);
-            if (isFalseLiteral)
-            {
-                return SyntaxFactory.InvocationExpression(
-                    SyntaxFactory.MemberAccessExpression(
-                        SyntaxKind.SimpleMemberAccessExpression,
-                        SyntaxFactory.IdentifierName("AlCompat"),
-                        SyntaxFactory.IdentifierName("GuidToText")),
-                    SyntaxFactory.ArgumentList(
-                        SyntaxFactory.SeparatedList(new[] {
-                            SyntaxFactory.Argument(alToTextReceiver),
-                            SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(SyntaxKind.FalseLiteralExpression))
-                        })))
-                    .WithTriviaFrom(visited);
-            }
-            return SyntaxFactory.InvocationExpression(
-                SyntaxFactory.MemberAccessExpression(
-                    SyntaxKind.SimpleMemberAccessExpression,
-                    SyntaxFactory.IdentifierName("AlCompat"),
-                    SyntaxFactory.IdentifierName("Format")),
-                SyntaxFactory.ArgumentList(
-                    SyntaxFactory.SingletonSeparatedList(
-                        SyntaxFactory.Argument(alToTextReceiver))))
-                .WithTriviaFrom(visited);
-        }
-
         // `<expr>.ToText(...)` -> `AlCompat.Format(<expr>)` or `AlCompat.GuidToText(<expr>, false)`
         // BC lowers AL's `xVar.ToText()` to either an instance `navX.ToText(...)` call
         // or a static `ALCompiler.ToText(session, value)` call (the latter is handled
