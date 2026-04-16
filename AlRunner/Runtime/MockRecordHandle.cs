@@ -2507,7 +2507,7 @@ public class MockRecordHandle
     private void ApplyAutoCalcIfNeeded()
     {
         if (_autoCalcFieldNos.Count == 0) return;
-        ALCalcFields(DataError.NoError, _autoCalcFieldNos.ToArray());
+        ALCalcFields(DataError.ThrowError, _autoCalcFieldNos.ToArray());
     }
 
     /// <summary>
