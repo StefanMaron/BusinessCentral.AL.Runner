@@ -3098,6 +3098,20 @@ public void ClearApplicationMemberVariables()
                         SyntaxFactory.IdentifierName("ObjectToBoolean")));
             }
 
+            // ALSystemArray.ALCompressArray(arr) -> AlCompat.ALCompressArray(arr)
+            // ALSystemArray.ALCopyArray(dest, src, fromIdx, count) -> AlCompat.ALCopyArray(...)
+            // ALSystemArray requires NavArray<T>; our MockArray<T> is not a NavArray<T>,
+            // so C# cannot infer T and CS0411 is raised. Redirect to our generic helpers
+            // that accept MockArray<T>.
+            if (exprText == "ALSystemArray" && (methodName == "ALCompressArray" || methodName == "ALCopyArray"))
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName(methodName)));
+            }
+
             // ALSystemNumeric.ALRandomize(seed) -> AlCompat.ALRandomize(seed)
             // ALSystemNumeric.ALRandom(max) -> AlCompat.ALRandom(max)
             // ALRandomize/ALRandom require NavSession; our versions use System.Random.

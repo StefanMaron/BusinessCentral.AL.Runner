@@ -1568,6 +1568,65 @@ public static class AlCompat
     }
 
     // -----------------------------------------------------------------------
+    // ALSystemArray replacements (CompressArray / CopyArray)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Returns true if the value is "blank" for AL CompressArray purposes.
+    /// For Text/Code types: blank = empty string. For all others: blank = default(T).
+    /// </summary>
+    private static bool IsBlankArrayElement<T>(T item)
+    {
+        if (item is null) return true;
+        if (item is NavText nt) return nt.ToString() == "";
+        if (item is NavCode nc) return nc.ToString() == "";
+        return EqualityComparer<T>.Default.Equals(item, default(T)!);
+    }
+
+    /// <summary>
+    /// Returns the blank/default value for type T in AL CompressArray context.
+    /// </summary>
+    private static T GetBlankArrayElement<T>(MockArray<T> arr)
+    {
+        // Grab the last element's "blank" form by checking the type
+        if (typeof(T) == typeof(NavText)) return (T)(object)new NavText("");
+        if (typeof(T) == typeof(NavCode)) return (T)(object)new NavCode(0, "");
+        return default(T)!;
+    }
+
+    /// <summary>
+    /// Replacement for ALSystemArray.ALCompressArray&lt;T&gt;(NavArray&lt;T&gt;) which
+    /// requires NavArray (needs ITreeObject). Shifts all non-blank elements toward
+    /// the beginning of the array, filling the tail with blank/default values.
+    /// BC semantics: blank = empty string for Text/Code, 0 for numeric types.
+    /// </summary>
+    public static void ALCompressArray<T>(MockArray<T> arr)
+    {
+        T blank = GetBlankArrayElement(arr);
+        int writeIdx = 0;
+        for (int i = 0; i < arr.Length; i++)
+        {
+            if (!IsBlankArrayElement(arr[i]))
+                arr[writeIdx++] = arr[i];
+        }
+        while (writeIdx < arr.Length)
+            arr[writeIdx++] = blank;
+    }
+
+    /// <summary>
+    /// Replacement for ALSystemArray.ALCopyArray&lt;T&gt;(NavArray&lt;T&gt;, NavArray&lt;T&gt;, int, int).
+    /// Copies <paramref name="count"/> elements from <paramref name="src"/> starting at
+    /// 1-based <paramref name="fromIndex"/> into the beginning of <paramref name="dest"/>.
+    /// BC emits the fromIndex as-is (1-based) matching AL CopyArray(Dest, Src, FromIdx[, Count]).
+    /// </summary>
+    public static void ALCopyArray<T>(MockArray<T> dest, MockArray<T> src, int fromIndex, int count)
+    {
+        int srcStart = fromIndex - 1;  // AL 1-based → C# 0-based
+        for (int i = 0; i < count; i++)
+            dest[i] = src[srcStart + i];
+    }
+
+    // -----------------------------------------------------------------------
     // GUID creation helpers
     // -----------------------------------------------------------------------
 

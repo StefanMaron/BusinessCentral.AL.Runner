@@ -5794,20 +5794,23 @@ System.CodeCoverageRefresh:
 System.CompressArray:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/199-system-array-random
+  notes: overloads=1. ALSystemArray.ALCompressArray redirected to AlCompat.ALCompressArray; shifts non-blank elements to front, fills tail with default.
 
 System.CopyArray:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/199-system-array-random
+  notes: overloads=1. ALSystemArray.ALCopyArray redirected to AlCompat.ALCopyArray; copies count elements from 1-based fromIndex in src to dest[0..].
 
 System.CopyStream:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/96-httpcontent-stream
+  notes: overloads=1. ALSystemVariable.ALCopyStream redirected to MockStream.ALCopyStream.
 
 System.CreateDateTime:
   layer: runtime-api
@@ -5824,8 +5827,9 @@ System.CreateEncryptionKey:
 System.CreateGuid:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/199-system-array-random
+  notes: overloads=1. ALDatabase.ALCreateGuid redirected to AlCompat.ALCreateGuid; returns new NavGuid(Guid.NewGuid()).
 
 System.CurrentDateTime:
   layer: runtime-api
@@ -6064,14 +6068,16 @@ System.Power:
 System.Random:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/199-system-array-random
+  notes: overloads=1. ALSystemNumeric.ALRandom redirected to AlCompat.ALRandom; returns thread-local System.Random value in [1, maxNumber].
 
 System.Randomize:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/199-system-array-random
+  notes: overloads=1. ALSystemNumeric.ALRandomize redirected to AlCompat.ALRandomize; seeds thread-local System.Random.
 
 System.Round:
   layer: runtime-api
