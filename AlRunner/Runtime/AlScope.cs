@@ -1634,49 +1634,6 @@ public static class AlCompat
     }
 
     // -----------------------------------------------------------------------
-    // SecretText.Unwrap() replacement
-    // NavSecretText.ALUnwrap() requires NavSession in some BC versions.
-    // We extract the underlying string via reflection (same approach as
-    // MockIsolatedStorage.ExtractSecretValue).
-    // The rewriter intercepts <secret>.ALUnwrap() → AlCompat.Unwrap(<secret>).
-    // -----------------------------------------------------------------------
-
-    /// <summary>
-    /// AL <c>SecretText.Unwrap()</c> — extracts the underlying plain-text value.
-    /// NavSecretText.ToString() returns "***"; reflection is used to get the real value.
-    /// </summary>
-    public static string Unwrap(NavSecretText st)
-    {
-        if (st.ALIsEmpty()) return "";
-        var flags = System.Reflection.BindingFlags.Instance |
-                    System.Reflection.BindingFlags.NonPublic |
-                    System.Reflection.BindingFlags.Public;
-        foreach (var field in typeof(NavSecretText).GetFields(flags))
-        {
-            if (field.FieldType == typeof(string))
-            {
-                var val = field.GetValue(st);
-                if (val is string s && !string.IsNullOrEmpty(s))
-                    return s;
-            }
-        }
-        foreach (var prop in typeof(NavSecretText).GetProperties(flags))
-        {
-            if (prop.PropertyType == typeof(string) && prop.CanRead)
-            {
-                try
-                {
-                    var val = prop.GetValue(st);
-                    if (val is string s && !string.IsNullOrEmpty(s))
-                        return s;
-                }
-                catch { }
-            }
-        }
-        return st.ToString() ?? "";
-    }
-
-    // -----------------------------------------------------------------------
     // SecretStrSubstNo() replacement
     // Global AL function SecretStrSubstNo(format, args) → SecretText.
     // BC emits ALSystemString.ALSecretStrSubstNo(format, arg1, ...).

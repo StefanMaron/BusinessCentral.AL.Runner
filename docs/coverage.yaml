@@ -5001,7 +5001,7 @@ SecretText.Unwrap:
   category: SecretText
   status: covered
   tests: tests/bucket-1/67-secret-text-methods
-  notes: overloads=1; intercepted via ALUnwrap() → AlCompat.Unwrap() using reflection
+  notes: overloads=1; NavSecretText.ALUnwrap() works without NavSession (proved by test)
 
 # ── Session ─────────────────────────────────────────────────────
 

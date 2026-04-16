@@ -2419,28 +2419,6 @@ public void ClearApplicationMemberVariables() { }
                         SyntaxFactory.IdentifierName("SecretStrSubstNo")));
             }
 
-            // <secret>.ALUnwrap() -> AlCompat.Unwrap(<secret>)
-            // NavSecretText.ALUnwrap() may crash without NavSession in some BC versions.
-            // AlCompat.Unwrap() extracts the underlying string via reflection.
-            // We intercept based on method name only (NavSecretText is the only type with ALUnwrap).
-            if (methodName == "ALUnwrap" && visited.ArgumentList.Arguments.Count == 0)
-            {
-                var unwrapMemberAccess = visited.Expression as MemberAccessExpressionSyntax;
-                if (unwrapMemberAccess != null)
-                {
-                    var receiver = unwrapMemberAccess.Expression;
-                    return SyntaxFactory.InvocationExpression(
-                        SyntaxFactory.MemberAccessExpression(
-                            SyntaxKind.SimpleMemberAccessExpression,
-                            SyntaxFactory.IdentifierName("AlCompat"),
-                            SyntaxFactory.IdentifierName("Unwrap")),
-                        SyntaxFactory.ArgumentList(
-                            SyntaxFactory.SingletonSeparatedList(
-                                SyntaxFactory.Argument(receiver))))
-                        .WithTriviaFrom(visited);
-                }
-            }
-
             // ALDatabase.ALIsInWriteTransaction() -> false
             // The real ALIsInWriteTransaction calls NavSession.HasWriteTransaction() which crashes
             // with NullReferenceException when NavSession is null (runner context, no DB).
