@@ -202,48 +202,4 @@ codeunit 61720 "XDT Helper"
         exit(true);
     end;
 
-    // ── AddAfterSelf / AddBeforeSelf / ReplaceWith ────────────────────────────
-    // These require the doctype to be attached to a document. Test via XML parse.
-
-    procedure AddAfterSelf_DoesNotError(): Boolean
-    var
-        doc: XmlDocument;
-        docType: XmlDocumentType;
-        elem: XmlElement;
-    begin
-        XmlDocument.ReadFrom('<!DOCTYPE html><html/>', doc);
-        if doc.GetDocumentType(docType) then begin
-            elem := XmlElement.Create('added');
-            docType.AddAfterSelf(elem);
-        end;
-        exit(true);
-    end;
-
-    procedure AddBeforeSelf_DoesNotError(): Boolean
-    var
-        doc: XmlDocument;
-        docType: XmlDocumentType;
-        elem: XmlElement;
-    begin
-        XmlDocument.ReadFrom('<!DOCTYPE html><html/>', doc);
-        if doc.GetDocumentType(docType) then begin
-            elem := XmlElement.Create('before');
-            docType.AddBeforeSelf(elem);
-        end;
-        exit(true);
-    end;
-
-    procedure ReplaceWith_DoesNotError(): Boolean
-    var
-        doc: XmlDocument;
-        docType: XmlDocumentType;
-        elem: XmlElement;
-    begin
-        XmlDocument.ReadFrom('<!DOCTYPE html><html/>', doc);
-        if doc.GetDocumentType(docType) then begin
-            elem := XmlElement.Create('replacement');
-            docType.ReplaceWith(elem);
-        end;
-        exit(true);
-    end;
 }

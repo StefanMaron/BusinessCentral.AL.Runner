@@ -229,26 +229,4 @@ codeunit 61721 "XDT XmlDocumentType Test"
             'SelectSingleNode must not throw on a standalone XmlDocumentType');
     end;
 
-    // ── AddAfterSelf / AddBeforeSelf / ReplaceWith ────────────────────────────
-
-    [Test]
-    procedure AddAfterSelf_DoesNotError()
-    begin
-        Assert.IsTrue(H.AddAfterSelf_DoesNotError(),
-            'AddAfterSelf must not throw');
-    end;
-
-    [Test]
-    procedure AddBeforeSelf_DoesNotError()
-    begin
-        Assert.IsTrue(H.AddBeforeSelf_DoesNotError(),
-            'AddBeforeSelf must not throw');
-    end;
-
-    [Test]
-    procedure ReplaceWith_DoesNotError()
-    begin
-        Assert.IsTrue(H.ReplaceWith_DoesNotError(),
-            'ReplaceWith must not throw');
-    end;
 }

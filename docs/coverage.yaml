@@ -8763,19 +8763,19 @@ XmlDocumentType.AddAfterSelf:
   layer: runtime-api
   category: XmlDocumentType
   status: gap
-  notes: overloads=1
+  notes: overloads=1; signature varies by BC version (var XmlElement in BC 26, var XmlNode in BC 28) — cannot test portably
 
 XmlDocumentType.AddBeforeSelf:
   layer: runtime-api
   category: XmlDocumentType
   status: gap
-  notes: overloads=1
+  notes: overloads=1; signature varies by BC version (var XmlElement in BC 26, var XmlNode in BC 28) — cannot test portably
 
 XmlDocumentType.AsXmlNode:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; AsXmlNode() then IsXmlDocumentType() returns true
 
 XmlDocumentType.Create:
   layer: runtime-api
@@ -8786,14 +8786,14 @@ XmlDocumentType.Create:
 XmlDocumentType.GetDocument:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns true after DOCTYPE attached to document via ReadFrom
 
 XmlDocumentType.GetInternalSubset:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns value passed to Create; empty when not set
 
 XmlDocumentType.GetName:
   layer: runtime-api
@@ -8804,74 +8804,74 @@ XmlDocumentType.GetName:
 XmlDocumentType.GetParent:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns true after DOCTYPE attached to document via ReadFrom
 
 XmlDocumentType.GetPublicId:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns value passed to Create; empty when not set
 
 XmlDocumentType.GetSystemId:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns value passed to Create; empty when not set
 
 XmlDocumentType.Remove:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; Remove() on attached DOCTYPE does not throw
 
 XmlDocumentType.ReplaceWith:
   layer: runtime-api
   category: XmlDocumentType
   status: gap
-  notes: overloads=1
+  notes: overloads=1; AddAfterSelf/AddBeforeSelf/ReplaceWith have version-specific signatures (var XmlElement in BC 26, var XmlNode in BC 28) — cannot test portably
 
 XmlDocumentType.SelectNodes:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; SelectNodes('*', nodeList) on standalone DOCTYPE does not throw
 
 XmlDocumentType.SelectSingleNode:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; SelectSingleNode('*', node) on standalone DOCTYPE does not throw
 
 XmlDocumentType.SetInternalSubset:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; SetInternalSubset then GetInternalSubset returns new value
 
 XmlDocumentType.SetName:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; SetName then GetName returns the new name
 
 XmlDocumentType.SetPublicId:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; SetPublicId then GetPublicId returns new value
 
 XmlDocumentType.SetSystemId:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; SetSystemId then GetSystemId returns new value
 
 XmlDocumentType.WriteTo:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=4
+  status: covered
+  notes: overloads=4; WriteTo(Text) returns non-empty string containing DOCTYPE name
 
 # ── XmlElement ──────────────────────────────────────────────────
 
