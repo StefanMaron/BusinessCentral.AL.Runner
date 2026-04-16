@@ -255,6 +255,127 @@ public class MockTestPageField
     /// BC emits <c>tP.GetField(hash).ALDrilldown()</c>.
     /// </summary>
     public void ALDrilldown() { }
+
+    /// <summary>
+    /// ALActivate — focuses/activates the field on the page. No-op in standalone mode.
+    /// BC emits <c>tP.GetField(hash).ALActivate()</c>.
+    /// </summary>
+    public void ALActivate() { }
+
+    /// <summary>
+    /// ALAssistEdit — triggers the assist-edit action on the field. No-op in standalone mode.
+    /// BC emits <c>tP.GetField(hash).ALAssistEdit()</c>.
+    /// </summary>
+    public void ALAssistEdit() { }
+
+    /// <summary>
+    /// ALInvoke — invokes the field action. No-op in standalone mode.
+    /// BC emits <c>tP.GetField(hash).ALInvoke()</c> for TestField.Invoke().
+    /// </summary>
+    public void ALInvoke() { }
+
+    /// <summary>
+    /// ALHideValue — hides or shows the field value. No-op in standalone mode.
+    /// BC emits <c>tP.GetField(hash).ALHideValue(bool)</c>.
+    /// </summary>
+    public void ALHideValue(bool hide) { }
+
+    /// <summary>
+    /// ALShowMandatory — marks the field as mandatory (or not). No-op in standalone mode.
+    /// BC emits <c>tP.GetField(hash).ALShowMandatory(bool)</c>.
+    /// </summary>
+    public void ALShowMandatory(bool show) { }
+
+    /// <summary>
+    /// ALAsBoolean — converts the stored field value to bool.
+    /// BC emits <c>tP.GetField(hash).ALAsBoolean()</c> for TestField.AsBoolean().
+    /// </summary>
+    public bool ALAsBoolean() => AlCompat.ObjectToBoolean(_value);
+
+    /// <summary>
+    /// ALAsInteger — converts the stored field value to int.
+    /// BC emits <c>tP.GetField(hash).ALAsInteger()</c> for TestField.AsInteger().
+    /// </summary>
+    public int ALAsInteger() => (int)AlCompat.ObjectToDecimal(_value);
+
+    /// <summary>
+    /// ALAsDate — returns the stored field value as a NavDate.
+    /// BC emits <c>tP.GetField(hash).ALAsDate()</c> for TestField.AsDate().
+    /// </summary>
+    public NavDate ALAsDate()
+    {
+        if (_value is NavDate d) return d;
+        if (_value is MockVariant mv && mv.Value is NavDate mvd) return mvd;
+        return NavDate.Default;
+    }
+
+    /// <summary>
+    /// ALAsTime — returns the stored field value as a NavTime.
+    /// BC emits <c>tP.GetField(hash).ALAsTime()</c> for TestField.AsTime().
+    /// </summary>
+    public NavTime ALAsTime()
+    {
+        if (_value is NavTime t) return t;
+        if (_value is MockVariant mv && mv.Value is NavTime mvt) return mvt;
+        return NavTime.Default;
+    }
+
+    /// <summary>
+    /// ALAsDateTime — returns the stored field value as a NavDateTime.
+    /// BC emits <c>tP.GetField(hash).ALAsDateTime()</c> for TestField.AsDateTime().
+    /// </summary>
+    public NavDateTime ALAsDateTime()
+    {
+        if (_value is NavDateTime dt) return dt;
+        if (_value is MockVariant mv && mv.Value is NavDateTime mvdt) return mvdt;
+        return NavDateTime.Default;
+    }
+
+    /// <summary>
+    /// ALAssertEquals — asserts that the stored field value equals the expected value.
+    /// Throws if the values differ (string comparison via AlCompat.Format).
+    /// BC emits <c>tP.GetField(hash).ALAssertEquals(session, expected)</c>.
+    /// </summary>
+    public void ALAssertEquals(object? session, object? expected)
+    {
+        var actual = AlCompat.Format(_value);
+        var exp = AlCompat.Format(expected);
+        if (actual != exp)
+            throw new InvalidOperationException(
+                $"Assert.AreEqual failed. Expected:<{exp}>. Actual:<{actual}>.");
+    }
+
+    /// <summary>Single-arg overload for callers that omit the session argument.</summary>
+    public void ALAssertEquals(object? expected)
+        => ALAssertEquals(null, expected);
+
+    /// <summary>
+    /// ALValidationErrorCount — returns the number of validation errors on the field.
+    /// Stub: no validation errors exist in standalone mode.
+    /// BC emits <c>tP.GetField(hash).ALValidationErrorCount()</c>.
+    /// </summary>
+    public int ALValidationErrorCount() => 0;
+
+    /// <summary>
+    /// ALGetValidationError — returns the validation error text at the given index.
+    /// Stub: returns empty string (no errors in standalone mode).
+    /// BC emits <c>tP.GetField(hash).ALGetValidationError(index)</c>.
+    /// </summary>
+    public NavText ALGetValidationError(int index) => NavText.Empty;
+
+    /// <summary>
+    /// ALOptionCount — returns the number of options for an option field.
+    /// Stub: returns 0 (no option metadata available in standalone mode).
+    /// BC emits <c>tP.GetField(hash).ALOptionCount()</c>.
+    /// </summary>
+    public int ALOptionCount() => 0;
+
+    /// <summary>
+    /// ALGetOption — returns the current option value as an integer index.
+    /// Reads the integer representation of the stored value.
+    /// BC emits <c>tP.GetField(hash).ALGetOption()</c>.
+    /// </summary>
+    public int ALGetOption() => (int)AlCompat.ObjectToDecimal(_value);
 }
 
 /// <summary>

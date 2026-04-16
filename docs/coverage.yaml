@@ -6568,146 +6568,194 @@ TestAction.Visible:
 TestField.Activate:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op in standalone mode
+  tests:
+    - tests/bucket-1/86-testfield-methods
 
 TestField.AsBoolean:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; AlCompat.ObjectToBoolean(_value)
+  tests:
+    - tests/bucket-1/86-testfield-methods
 
 TestField.AsDate:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns stored NavDate or NavDate.Default
+  tests:
+    - tests/bucket-1/86-testfield-methods
 
 TestField.AsDateTime:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns stored NavDateTime or NavDateTime.Default
+  tests:
+    - tests/bucket-1/86-testfield-methods
 
 TestField.AsDecimal:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; AlCompat.ObjectToDecimal(_value)
+  tests:
+    - tests/bucket-1/71-testpage
 
 TestField.AsInteger:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; (int)AlCompat.ObjectToDecimal(_value)
+  tests:
+    - tests/bucket-1/86-testfield-methods
 
 TestField.AssertEquals:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=2; compares via AlCompat.Format, throws on mismatch
+  tests:
+    - tests/bucket-1/86-testfield-methods
 
 TestField.AssistEdit:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op in standalone mode
+  tests:
+    - tests/bucket-1/86-testfield-methods
 
 TestField.AsTime:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns stored NavTime or NavTime.Default
+  tests:
+    - tests/bucket-1/86-testfield-methods
 
 TestField.Caption:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns NavText.Empty
+  tests:
+    - tests/bucket-1/71-testpage
 
 TestField.Drilldown:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op in standalone mode
+  tests:
+    - tests/bucket-1/71-testpage
 
 TestField.Editable:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns true
+  tests:
+    - tests/bucket-1/71-testpage
 
 TestField.Enabled:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns true
+  tests:
+    - tests/bucket-1/71-testpage
 
 TestField.GetOption:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns integer representation of stored value
+  tests:
+    - tests/bucket-1/86-testfield-methods
 
 TestField.GetValidationError:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns NavText.Empty (no errors in standalone mode)
+  tests:
+    - tests/bucket-1/86-testfield-methods
 
 TestField.HideValue:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op in standalone mode
+  tests:
+    - tests/bucket-1/86-testfield-methods
 
 TestField.Invoke:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op in standalone mode
+  tests:
+    - tests/bucket-1/86-testfield-methods
 
 TestField.Lookup:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; no-op in standalone mode
+  tests:
+    - tests/bucket-1/71-testpage
 
 TestField.OptionCount:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns 0 (no option metadata in standalone mode)
+  tests:
+    - tests/bucket-1/86-testfield-methods
 
 TestField.SetValue:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=2; stores value in-memory
+  tests:
+    - tests/bucket-1/71-testpage
 
 TestField.ShowMandatory:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op in standalone mode
+  tests:
+    - tests/bucket-1/86-testfield-methods
 
 TestField.ValidationErrorCount:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns 0 (no errors in standalone mode)
+  tests:
+    - tests/bucket-1/86-testfield-methods
 
 TestField.Value:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALValue property returns stored object?
+  tests:
+    - tests/bucket-1/71-testpage
 
 TestField.Visible:
   layer: runtime-api
   category: TestField
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns true
+  tests:
+    - tests/bucket-1/71-testpage
 
 # ── TestFilter ──────────────────────────────────────────────────
 
