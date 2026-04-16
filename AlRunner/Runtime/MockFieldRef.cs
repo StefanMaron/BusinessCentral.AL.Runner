@@ -138,6 +138,19 @@ public class MockFieldRef
     /// <summary>ALOptionString — option string. Stub: empty.</summary>
     public string ALOptionString => "";
 
+    /// <summary>ALOptionMembers — comma-separated option member names for this field; empty for non-option fields.</summary>
+    public string ALOptionMembers
+    {
+        get
+        {
+            var members = GetEnumMembers();
+            return members != null ? string.Join(",", members.Select(m => m.Name)) : "";
+        }
+    }
+
+    /// <summary>ALIsOptimizedForTextSearch — always false; no full-text index in standalone mode.</summary>
+    public bool ALIsOptimizedForTextSearch => false;
+
     /// <summary>ALRecord — returns the owning record ref. Stub for compile compat.</summary>
     public MockRecordRef ALRecord() => _owner ?? new MockRecordRef();
 

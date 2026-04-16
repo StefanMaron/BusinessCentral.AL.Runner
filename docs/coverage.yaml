@@ -2298,8 +2298,9 @@ FieldRef.IsEnum:
 FieldRef.IsOptimizedForTextSearch:
   layer: runtime-api
   category: FieldRef
-  status: gap
+  status: covered
   notes: overloads=1
+  tests: tests/bucket-1/86-fieldref-option-members
 
 FieldRef.Length:
   layer: runtime-api
@@ -2328,8 +2329,9 @@ FieldRef.OptionCaption:
 FieldRef.OptionMembers:
   layer: runtime-api
   category: FieldRef
-  status: gap
+  status: covered
   notes: overloads=1
+  tests: tests/bucket-1/86-fieldref-option-members
 
 FieldRef.OptionString:
   layer: runtime-api
