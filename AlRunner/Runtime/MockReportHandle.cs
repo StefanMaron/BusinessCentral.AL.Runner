@@ -203,17 +203,18 @@ public class MockReportHandle
     public static void StaticPrint(int reportId) { }
 
     // Report.SaveAs* — no-ops (no real file I/O in standalone mode)
+    // BC emits NavReport.SaveAs*(DataError, int, string) — first arg is a DataError status object
     public static void StaticSaveAs(int reportId, string format, string path) { }
     public static void StaticSaveAsPdf(int reportId, string path) { }
-    public static void StaticSaveAsPdf(int reportId, string path, object recordRef) { }
+    public static void StaticSaveAsPdf(object err, int reportId, string path) { }
     public static void StaticSaveAsWord(int reportId, string path) { }
-    public static void StaticSaveAsWord(int reportId, string path, object recordRef) { }
+    public static void StaticSaveAsWord(object err, int reportId, string path) { }
     public static void StaticSaveAsExcel(int reportId, string path) { }
-    public static void StaticSaveAsExcel(int reportId, string path, object recordRef) { }
+    public static void StaticSaveAsExcel(object err, int reportId, string path) { }
     public static void StaticSaveAsHtml(int reportId, string path) { }
-    public static void StaticSaveAsHtml(int reportId, string path, object recordRef) { }
+    public static void StaticSaveAsHtml(object err, int reportId, string path) { }
     public static void StaticSaveAsXml(int reportId, string path) { }
-    public static void StaticSaveAsXml(int reportId, string path, object recordRef) { }
+    public static void StaticSaveAsXml(object err, int reportId, string path) { }
 
     // Report.DefaultLayout / layout enum methods — return 0 (default enum ordinal)
     public static int StaticDefaultLayout(int reportId) => 0;
