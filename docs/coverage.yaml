@@ -6211,7 +6211,9 @@ Table.SetAscending:
 Table.SetAutoCalcFields:
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/153-setautocalcfields
   notes: overloads=1
 
 Table.SetBaseLoadFields:

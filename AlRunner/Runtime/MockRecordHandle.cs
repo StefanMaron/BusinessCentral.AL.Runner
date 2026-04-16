@@ -553,6 +553,7 @@ public class MockRecordHandle
             if (match)
             {
                 _fields = new Dictionary<int, NavValue>(row);
+                ApplyAutoCalcIfNeeded();
                 return true;
             }
         }
@@ -575,6 +576,7 @@ public class MockRecordHandle
                 navGuid.ToGuid() == systemId)
             {
                 _fields = new Dictionary<int, NavValue>(row);
+                ApplyAutoCalcIfNeeded();
                 return true;
             }
         }
@@ -636,6 +638,7 @@ public class MockRecordHandle
             _cursorPosition = 0;
             _fields = new Dictionary<int, NavValue>(filtered[0]);
         }
+        ApplyAutoCalcIfNeeded();
         return true;
     }
 
@@ -662,6 +665,7 @@ public class MockRecordHandle
         _currentResultSet = filtered;
         _cursorPosition = filtered.Count - 1;
         _fields = new Dictionary<int, NavValue>(filtered[^1]);
+        ApplyAutoCalcIfNeeded();
         return true;
     }
 
@@ -671,6 +675,7 @@ public class MockRecordHandle
             return 0;
         _cursorPosition++;
         _fields = new Dictionary<int, NavValue>(_currentResultSet[_cursorPosition]);
+        ApplyAutoCalcIfNeeded();
         return 1;
     }
 
@@ -692,6 +697,7 @@ public class MockRecordHandle
             {
                 _cursorPosition += moved;
                 _fields = new Dictionary<int, NavValue>(_currentResultSet[_cursorPosition]);
+                ApplyAutoCalcIfNeeded();
             }
             return moved;
         }
@@ -703,6 +709,7 @@ public class MockRecordHandle
             {
                 _cursorPosition -= moved;
                 _fields = new Dictionary<int, NavValue>(_currentResultSet[_cursorPosition]);
+                ApplyAutoCalcIfNeeded();
             }
             return -moved;
         }
@@ -2427,6 +2434,9 @@ public class MockRecordHandle
     private readonly HashSet<string> _markedRecords = new();
     private bool _markedOnly;
 
+    // Field numbers registered for automatic calculation after each Find*/Get/Next.
+    private readonly HashSet<int> _autoCalcFieldNos = new();
+
     /// <summary>AL Mark() — returns whether the current record is marked.</summary>
     public bool ALMark() => _markedRecords.Contains(GetCurrentPkKey());
 
@@ -2478,12 +2488,26 @@ public class MockRecordHandle
     }
 
     /// <summary>
-    /// AL SetAutoCalcFields — stub, no-op in standalone mode.
-    /// In BC, this configures automatic calculation of FlowFields.
+    /// AL SetAutoCalcFields — registers FlowFields for automatic calculation after
+    /// every Find*/Get/Next operation on this record variable.
     /// </summary>
     public void ALSetAutoCalcFields(params object[] fields)
     {
-        // No-op: FlowFields not supported in standalone mode
+        foreach (var field in fields)
+        {
+            if (field is int fieldNo)
+                _autoCalcFieldNos.Add(fieldNo);
+        }
+    }
+
+    /// <summary>
+    /// Runs CalcFields for all fields registered via SetAutoCalcFields.
+    /// Called internally after every successful Find*/Get/Next.
+    /// </summary>
+    private void ApplyAutoCalcIfNeeded()
+    {
+        if (_autoCalcFieldNos.Count == 0) return;
+        ALCalcFields(DataError.NoError, _autoCalcFieldNos.ToArray());
     }
 
     /// <summary>
