@@ -1471,6 +1471,18 @@ public static class AlCompat
         return _random.Next(1, maxNumber + 1);
     }
 
+    /// <summary>
+    /// Replacement for ALSystemNumeric.ALRound(v) single-arg — the BC SDK's 1-arg
+    /// overload defaults precision to 0 (no rounding), which diverges from AL's
+    /// documented behaviour where Round(v) rounds to the nearest integer.
+    /// Uses AwayFromZero so 3.5 -> 4 and -3.5 -> -4, matching AL semantics.
+    /// </summary>
+    public static Decimal18 ALRound(Decimal18 v)
+    {
+        decimal rounded = Math.Round((decimal)v, 0, MidpointRounding.AwayFromZero);
+        return new Decimal18(rounded);
+    }
+
     // -----------------------------------------------------------------------
     // GUID creation helpers
     // -----------------------------------------------------------------------

@@ -5472,8 +5472,9 @@ SessionSettings.TimeZone:
 System.Abs:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/178-math-abs-power-round
+  notes: overloads=1. Covered via ALSystemNumeric.ALAbs (integer + decimal, positive/negative/zero).
 
 System.ApplicationPath:
   layer: runtime-api
@@ -5825,8 +5826,9 @@ System.NormalDate:
 System.Power:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/178-math-abs-power-round
+  notes: overloads=1. Covered via ALSystemNumeric.ALPower (integer exponent, fractional/sqrt, negative base, zero exponent).
 
 System.Random:
   layer: runtime-api
@@ -5843,8 +5845,9 @@ System.Randomize:
 System.Round:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/178-math-abs-power-round
+  notes: overloads=3 (1-arg/2-arg/3-arg). 1-arg form is redirected to AlCompat.ALRound because the BC SDK's 1-arg overload defaults precision to 0 (no rounding), while AL semantics round to nearest integer.
 
 System.RoundDateTime:
   layer: runtime-api
