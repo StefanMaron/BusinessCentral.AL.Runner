@@ -748,7 +748,7 @@ public static class AlCompat
             try
             {
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavText nt) return (string)nt;
-                if (value is Microsoft.Dynamics.Nav.Runtime.NavBoolean nb) return ((bool)nb).ToString();
+                if (value is Microsoft.Dynamics.Nav.Runtime.NavBoolean nb) return (bool)nb ? "Yes" : "No";
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavInteger ni) return ((int)ni).ToString();
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavBigInteger nbi) return ((long)nbi).ToString();
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavGuid ng) return ((Guid)ng).ToString();
@@ -832,6 +832,18 @@ public static class AlCompat
     {
         if (!string.IsNullOrEmpty(formatString) && formatString.Contains('<'))
         {
+            // Handle NavBoolean with <Standard Format,N>: format 2 → "1"/"0", others → "Yes"/"No"
+            var unwrapped = value is MockVariant mv2 ? mv2.Value : value;
+            if (unwrapped is Microsoft.Dynamics.Nav.Runtime.NavBoolean nb2)
+            {
+                bool boolVal = (bool)nb2;
+                var stdMatch = System.Text.RegularExpressions.Regex.Match(
+                    formatString, @"<Standard Format,(\d+)>", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                if (stdMatch.Success && int.TryParse(stdMatch.Groups[1].Value, out int fmt))
+                    return fmt == 2 ? (boolVal ? "1" : "0") : (boolVal ? "Yes" : "No");
+                return boolVal ? "Yes" : "No";
+            }
+
             // Unwrap NavDate / DateTime for date format strings
             DateTime? dt = ExtractDateTime(value);
             if (dt.HasValue)

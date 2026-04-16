@@ -1232,8 +1232,8 @@ Blob.Length:
 Boolean.ToText:
   layer: runtime-api
   category: Boolean
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; Format(B) returns Yes/No; Format(B,0,'<Standard Format,2>') returns 1/0
 
 # ── Byte ────────────────────────────────────────────────────────
 
