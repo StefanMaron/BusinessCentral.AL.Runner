@@ -56,6 +56,7 @@ public class RoslynRewriter : CSharpSyntaxRewriter
         "ALExportData",   // ALDatabase.ALExportData(fileName, ...) — no file I/O standalone; no-op
         "ALDataFileInformation", // ALDatabase.ALDataFileInformation(showDialog, ref name, ...) — queries BC data file; no real DB standalone; no-op
         "ALRegisterTableConnection",  // ALDatabase.ALRegisterTableConnection(target, ct, name, conn) — no external connections standalone; no-op
+        "ALSetDefaultTableConnection",  // ALDatabase.ALSetDefaultTableConnection(ct, name) — no external connections standalone; no-op
     };
 
     private static readonly HashSet<string> StripITreeObjectArgMethods = new(StringComparer.Ordinal)

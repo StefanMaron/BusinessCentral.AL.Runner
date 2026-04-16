@@ -1669,8 +1669,10 @@ Database.SessionId:
 Database.SetDefaultTableConnection:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter strips the entire call (no external connections standalone).
+  tests:
+    - tests/bucket-2/160-set-default-table-connection
 
 Database.SetUserPassword:
   layer: runtime-api
