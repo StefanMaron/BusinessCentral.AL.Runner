@@ -13,6 +13,15 @@ All notable changes to this project are documented here. Format based on
   true, records exist → false, filter excludes all → true, filter matches some →
   false, Reset clears filter → false. Coverage map: `Table.IsEmpty` moved from `gap`
   to `covered`.
+- **`Guid.CreateGuid` / `Guid.CreateSequentialGuid` (#310)** — `CreateGuid()` and
+  `CreateSequentialGuid()` now return unique `NavGuid` values. The BC compiler lowers
+  these global functions to `ALDatabase.ALCreateGuid()` / `ALDatabase.ALCreateSequentialGuid()`.
+  `RoslynRewriter` now redirects those calls to `AlCompat.ALCreateGuid()` /
+  `AlCompat.ALCreateSequentialGuid()`, which wrap `System.Guid.NewGuid()`. New suite
+  `tests/bucket-1/57-create-guid` proves both functions return non-empty GUIDs, that
+  two `CreateGuid()` calls return distinct values, and that calling via a codeunit helper
+  works correctly. Coverage map: `Guid.CreateGuid` and `Guid.CreateSequentialGuid` moved
+  from `gap` to `covered`.
 - **`Database.Commit` coverage (#311)** — `Commit()` was already a no-op (stripped by
   `StripEntireCallMethods` in `RoslynRewriter`) but had no proving tests. New suite
   `tests/bucket-1/56-database-commit` adds 4 tests: commit without error, commit after

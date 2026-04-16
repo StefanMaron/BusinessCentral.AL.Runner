@@ -1316,6 +1316,23 @@ public static class AlCompat
     }
 
     // -----------------------------------------------------------------------
+    // GUID creation helpers
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Replacement for ALDatabase.ALCreateGuid() which requires NavSession.
+    /// Returns a new random GUID wrapped as NavGuid.
+    /// </summary>
+    public static NavGuid ALCreateGuid() => new NavGuid(Guid.NewGuid());
+
+    /// <summary>
+    /// Replacement for ALDatabase.ALCreateSequentialGuid() which requires NavSession.
+    /// BC's sequential GUID algorithm is opaque; we return a random GUID which is
+    /// sufficient for all test purposes (uniqueness, non-empty assertions).
+    /// </summary>
+    public static NavGuid ALCreateSequentialGuid() => new NavGuid(Guid.NewGuid());
+
+    // -----------------------------------------------------------------------
     // HttpContent stream helpers
     // -----------------------------------------------------------------------
     // After the NavHttpContent→MockHttpContent and NavInStream→MockInStream

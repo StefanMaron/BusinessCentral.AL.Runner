@@ -2342,6 +2342,19 @@ public void ClearApplicationMemberVariables() { }
                     .WithTriviaFrom(visited);
             }
 
+            // ALDatabase.ALCreateGuid() -> AlCompat.ALCreateGuid()
+            // ALDatabase.ALCreateSequentialGuid() -> AlCompat.ALCreateSequentialGuid()
+            // The real implementations require NavSession; ours use System.Guid.NewGuid().
+            if (exprText == "ALDatabase" &&
+                (methodName == "ALCreateGuid" || methodName == "ALCreateSequentialGuid"))
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName(methodName)));
+            }
+
             // ALSystemDate.ALWorkDate(null!) -> ALSystemDate.ALWorkDate(NavDate.Default)
             // The rewriter turns this.Session -> null!, which makes ALWorkDate ambiguous between
             // the NavSession and NavDate overloads. We disambiguate to the NavDate overload.
