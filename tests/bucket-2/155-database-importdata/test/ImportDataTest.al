@@ -6,23 +6,23 @@ codeunit 61501 "IDT ImportData Test"
         Assert: Codeunit Assert;
 
     [Test]
-    procedure ImportData_NoOp_TableNumber18()
+    procedure ImportData_NoOp_ShowDialogTrue()
     var
         Helper: Codeunit "IDT Helper";
     begin
-        // Positive: Database.ImportData(18, ...) must execute without error (no-op stub).
-        Helper.CallImportData(18);
-        Assert.IsTrue(true, 'ImportData(18) must complete without error');
+        // Positive: Database.ImportData(true, ...) must execute without error (no-op stub).
+        Helper.CallImportData(true);
+        Assert.IsTrue(true, 'ImportData(true) must complete without error');
     end;
 
     [Test]
-    procedure ImportData_NoOp_TableNumber0()
+    procedure ImportData_NoOp_ShowDialogFalse()
     var
         Helper: Codeunit "IDT Helper";
     begin
-        // Positive: Database.ImportData(0, ...) must also be a no-op.
-        Helper.CallImportData(0);
-        Assert.IsTrue(true, 'ImportData(0) must complete without error');
+        // Positive: Database.ImportData(false, ...) must also be a no-op.
+        Helper.CallImportData(false);
+        Assert.IsTrue(true, 'ImportData(false) must complete without error');
     end;
 
     [Test]
@@ -31,8 +31,8 @@ codeunit 61501 "IDT ImportData Test"
         Helper: Codeunit "IDT Helper";
     begin
         // Edge case: calling ImportData multiple times must not error.
-        Helper.CallImportData(18);
-        Helper.CallImportData(27);
+        Helper.CallImportData(false);
+        Helper.CallImportData(true);
         Assert.IsTrue(true, 'ImportData called twice must complete without error');
     end;
 

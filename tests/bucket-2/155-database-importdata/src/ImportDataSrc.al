@@ -2,14 +2,14 @@
 /// exercise it without calling it inline.
 codeunit 61500 "IDT Helper"
 {
-    /// Call Database.ImportData(tableNumber, path, create) — must be a no-op stub
+    /// Call Database.ImportData(showDialog, path, create) — must be a no-op stub
     /// in standalone mode (no external file I/O).
-    procedure CallImportData(tableNumber: Integer)
+    procedure CallImportData(showDialog: Boolean)
     var
         Path: Text;
         Create: Boolean;
     begin
-        Database.ImportData(tableNumber, Path, Create);
+        Database.ImportData(showDialog, Path, Create);
     end;
 
     /// Proving helper — returns a+b+1 to verify the codeunit is live.
