@@ -2083,7 +2083,7 @@ public void ClearApplicationMemberVariables() { }
                     SyntaxFactory.ArgumentList())
                     .WithTriviaFrom(visited);
             }
-            if (exprText == "ALCompanyProperty" && methodName == "ALID")
+            if (exprText == "ALCompanyProperty" && methodName == "ALId")
             {
                 return SyntaxFactory.InvocationExpression(
                     SyntaxFactory.MemberAccessExpression(
