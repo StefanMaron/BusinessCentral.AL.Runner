@@ -3087,8 +3087,10 @@ JsonArray.Count:
 JsonArray.Get:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native NavJsonArray.ALGet works standalone.
+  tests:
+    - tests/bucket-1/87-jsonarray-get
 
 JsonArray.GetArray:
   layer: runtime-api
