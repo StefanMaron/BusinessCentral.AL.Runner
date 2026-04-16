@@ -1521,8 +1521,8 @@ public static class AlCompat
     /// Guid.ToText([withBraces]) — BC returns uppercase GUID with braces by default.
     /// withBraces=true  → {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX} (38 chars, "B" format, uppercase)
     /// withBraces=false → XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX      (32 chars, "N" format, uppercase)
-    /// AlCompat.Format(NavGuid) handles the default (no-arg) case via the "B" format fix there.
-    /// This method is used when the boolean argument is explicitly false.
+    /// Called for all navGuid.ALToText([bool]) invocations (RoslynRewriter intercepts them).
+    /// MockTextBuilder is also routed here and delegates back to its own ALToText().
     /// </summary>
     public static string GuidToText(object? g, bool withBraces)
     {
@@ -1530,6 +1530,8 @@ public static class AlCompat
         var format = withBraces ? "B" : "N";
         if (g is NavGuid ng) return ((Guid)ng).ToString(format).ToUpperInvariant();
         if (g is Guid guid) return guid.ToString(format).ToUpperInvariant();
+        // MockTextBuilder.ALToText() is also routed here — delegate back to preserve correct text.
+        if (g is MockTextBuilder mtb) return mtb.ALToText().ToString();
         return Format(g); // fallback for non-Guid types
     }
 

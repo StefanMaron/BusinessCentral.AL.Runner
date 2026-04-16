@@ -1945,17 +1945,13 @@ public void ClearApplicationMemberVariables() { }
         }
 
         // `<expr>.ALToText(...)` → `AlCompat.GuidToText(<expr>, true/false)`
-        // BC emits navGuid.ALToText() (with AL prefix) for Guid.ToText() in AL, wrapped in
-        // new NavText(...). We only intercept when inside new NavText(...) to avoid catching
-        // MockTextBuilder.ALToText() (returns NavText directly, not wrapped in new NavText).
-        // The remaining new NavText(...) wrapper stays — GuidToText returns string so
-        // new NavText(string) compiles fine.
+        // BC emits navGuid.ALToText() (with AL prefix) for Guid.ToText() in AL. NavGuid.ALToText()
+        // returns format "D" (36 chars lowercase) but AL spec requires format "B" (38 chars, braces)
+        // for the default and format "N" (32 chars) for ToText(false).
+        // MockTextBuilder.ALToText() is also intercepted — GuidToText delegates non-Guid objects
+        // to their own ALToText() to preserve correct BigText/TextBuilder behavior.
         if (visited.Expression is MemberAccessExpressionSyntax alToTextMa &&
-            alToTextMa.Name.Identifier.Text == "ALToText" &&
-            node.Parent is ArgumentSyntax &&
-            node.Parent?.Parent is ArgumentListSyntax &&
-            node.Parent?.Parent?.Parent is ObjectCreationExpressionSyntax alToTextOc &&
-            alToTextOc.Type.ToString().Contains("NavText"))
+            alToTextMa.Name.Identifier.Text == "ALToText")
         {
             bool isFalseArg = visited.ArgumentList.Arguments.Count >= 1 &&
                 visited.ArgumentList.Arguments[0].Expression.IsKind(SyntaxKind.FalseLiteralExpression);
