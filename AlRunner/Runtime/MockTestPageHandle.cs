@@ -288,15 +288,17 @@ public class MockTestPageField
 
     /// <summary>
     /// ALAsBoolean — converts the stored field value to bool.
+    /// Uses NavIndirectValueToBoolean to handle NavBoolean wrapper types.
     /// BC emits <c>tP.GetField(hash).ALAsBoolean()</c> for TestField.AsBoolean().
     /// </summary>
-    public bool ALAsBoolean() => AlCompat.ObjectToBoolean(_value);
+    public bool ALAsBoolean() => AlCompat.NavIndirectValueToBoolean(_value);
 
     /// <summary>
     /// ALAsInteger — converts the stored field value to int.
+    /// Uses NavIndirectValueToInt32 to handle NavInteger wrapper types.
     /// BC emits <c>tP.GetField(hash).ALAsInteger()</c> for TestField.AsInteger().
     /// </summary>
-    public int ALAsInteger() => (int)AlCompat.ObjectToDecimal(_value);
+    public int ALAsInteger() => AlCompat.NavIndirectValueToInt32(_value);
 
     /// <summary>
     /// ALAsDate — returns the stored field value as a NavDate.
@@ -372,10 +374,10 @@ public class MockTestPageField
 
     /// <summary>
     /// ALGetOption — returns the current option value as an integer index.
-    /// Reads the integer representation of the stored value.
+    /// Uses NavIndirectValueToInt32 to handle NavInteger wrapper types.
     /// BC emits <c>tP.GetField(hash).ALGetOption()</c>.
     /// </summary>
-    public int ALGetOption() => (int)AlCompat.ObjectToDecimal(_value);
+    public int ALGetOption() => AlCompat.NavIndirectValueToInt32(_value);
 }
 
 /// <summary>
