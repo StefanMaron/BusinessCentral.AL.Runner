@@ -541,6 +541,40 @@ public static class MockJsonHelper
         return NavTime.Default;
     }
 
+    // NavDuration construction: BC emits ALCompiler.ToDuration(long) for literal Duration values.
+    // We call that same static method via reflection so the construction matches BC semantics exactly.
+    private static readonly MethodInfo? ALCompilerToDurationMethod =
+        typeof(NavDuration).Assembly
+            .GetType("Microsoft.Dynamics.Nav.Runtime.ALCompiler")
+            ?.GetMethod("ToDuration",
+                BindingFlags.Static | BindingFlags.Public,
+                null, new[] { typeof(long) }, null);
+
+    private static readonly MethodInfo? NavDurationOpImplicitLong =
+        typeof(NavDuration).GetMethod("op_Implicit",
+            BindingFlags.Static | BindingFlags.Public,
+            null, new[] { typeof(long) }, null)
+        ?? typeof(NavDuration).GetMethod("op_Explicit",
+            BindingFlags.Static | BindingFlags.Public,
+            null, new[] { typeof(long) }, null);
+
+    private static NavDuration CreateNavDuration(long ms)
+    {
+        // Strategy 1: ALCompiler.ToDuration(long) — the exact method BC emits for Duration literals.
+        if (ALCompilerToDurationMethod != null)
+        {
+            try { return (NavDuration)ALCompilerToDurationMethod.Invoke(null, new object[] { ms })!; }
+            catch { }
+        }
+        // Strategy 2: Implicit/explicit operator from long on NavDuration.
+        if (NavDurationOpImplicitLong != null)
+        {
+            try { return (NavDuration)NavDurationOpImplicitLong.Invoke(null, new object[] { ms })!; }
+            catch { }
+        }
+        return NavDuration.Default;
+    }
+
     // --- JsonValue typed-getter / utility methods (issue #699) ---
 
     /// <summary>
@@ -632,15 +666,18 @@ public static class MockJsonHelper
 
     /// <summary>
     /// Replacement for NavJsonValue.ALAsDuration().
-    /// Returns the backing numeric value as a Duration (TimeSpan from milliseconds).
+    /// Returns the backing numeric value as a NavDuration (milliseconds).
     /// AL: JsonValue.AsDuration()  →  MockJsonHelper.AsDuration(token)
     /// </summary>
-    public static TimeSpan AsDuration(NavJsonToken token, DataError errorLevel = default)
+    public static NavDuration AsDuration(NavJsonToken token, DataError errorLevel = default)
     {
         var backing = GetBackingToken(token);
+        long ms;
         if (backing.Type == JTokenType.TimeSpan)
-            return backing.Value<TimeSpan>();
-        return TimeSpan.FromMilliseconds(backing.Value<long>());
+            ms = (long)backing.Value<TimeSpan>().TotalMilliseconds;
+        else
+            ms = backing.Value<long>();
+        return CreateNavDuration(ms);
     }
 
     /// <summary>
