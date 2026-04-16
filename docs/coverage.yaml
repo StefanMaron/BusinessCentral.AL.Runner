@@ -9065,20 +9065,26 @@ XmlDocument.WriteTo:
 XmlDocumentType.AddAfterSelf:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1; signature varies by BC version (var XmlElement in BC 26, var XmlNode in BC 28) — cannot test portably
+  status: covered
+  notes: overloads=1; works natively via NavXmlDocumentType; tested by inserting PI sibling after DocType in document
+  tests:
+    - tests/bucket-1/174-xmldocumenttype
 
 XmlDocumentType.AddBeforeSelf:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1; signature varies by BC version (var XmlElement in BC 26, var XmlNode in BC 28) — cannot test portably
+  status: covered
+  notes: overloads=1; works natively via NavXmlDocumentType; tested by inserting PI sibling before DocType in document
+  tests:
+    - tests/bucket-1/174-xmldocumenttype
 
 XmlDocumentType.AsXmlNode:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1; ALWriteTo rewriter collision — RoslynRewriter incorrectly routes XML WriteTo through MockJsonHelper (issue #714)
+  status: covered
+  notes: overloads=1; works natively via NavXmlDocumentType; result satisfies IsXmlDocumentType()
+  tests:
+    - tests/bucket-1/174-xmldocumenttype
 
 XmlDocumentType.Create:
   layer: runtime-api
@@ -9089,8 +9095,10 @@ XmlDocumentType.Create:
 XmlDocumentType.GetDocument:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1; requires XmlDocument.ReadFrom (gap #481) to get doctype attached
+  status: covered
+  notes: overloads=1; works natively; standalone DocType returns false; DocType added to XmlDocument.Create() returns true
+  tests:
+    - tests/bucket-1/174-xmldocumenttype
 
 XmlDocumentType.GetInternalSubset:
   layer: runtime-api
@@ -9107,8 +9115,10 @@ XmlDocumentType.GetName:
 XmlDocumentType.GetParent:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1; requires XmlDocument.ReadFrom (gap #481) to get doctype attached
+  status: covered
+  notes: overloads=1; works natively; standalone DocType returns false (no parent element)
+  tests:
+    - tests/bucket-1/174-xmldocumenttype
 
 XmlDocumentType.GetPublicId:
   layer: runtime-api
@@ -9125,26 +9135,34 @@ XmlDocumentType.GetSystemId:
 XmlDocumentType.Remove:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1; requires XmlDocument.ReadFrom (gap #481) to get doctype attached
+  status: covered
+  notes: overloads=1; works natively; DocType.Remove() detaches it from the document; subsequent GetDocumentType returns false
+  tests:
+    - tests/bucket-1/174-xmldocumenttype
 
 XmlDocumentType.ReplaceWith:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1; signature varies by BC version (var XmlElement in BC 26, var XmlNode in BC 28) — cannot test portably
+  status: covered
+  notes: overloads=1; works natively; ReplaceWith(PI) removes DocType and inserts PI; subsequent GetDocumentType returns false
+  tests:
+    - tests/bucket-1/174-xmldocumenttype
 
 XmlDocumentType.SelectNodes:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=2; AL0133 in BC 28 when calling from XmlDocumentType context
+  status: covered
+  notes: overloads=2; works natively when return value is captured (if ... then); void call form crashes in log path; tested with if-guard pattern
+  tests:
+    - tests/bucket-1/174-xmldocumenttype
 
 XmlDocumentType.SelectSingleNode:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=2; AL0133 in BC 28 when calling from XmlDocumentType context
+  status: covered
+  notes: overloads=2; works natively via NavXmlDocumentType; returns false for xpath with no match
+  tests:
+    - tests/bucket-1/174-xmldocumenttype
 
 XmlDocumentType.SetInternalSubset:
   layer: runtime-api
@@ -9173,8 +9191,10 @@ XmlDocumentType.SetSystemId:
 XmlDocumentType.WriteTo:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=4; ALWriteTo rewriter collision — RoslynRewriter incorrectly routes XML WriteTo through MockJsonHelper (issue #714)
+  status: covered
+  notes: overloads=4; ALWriteTo rewriter routes through MockJsonHelper fallback object overload which calls ALWriteTo natively via reflection; output contains doctype name
+  tests:
+    - tests/bucket-1/174-xmldocumenttype
 
 # ── XmlElement ──────────────────────────────────────────────────
 

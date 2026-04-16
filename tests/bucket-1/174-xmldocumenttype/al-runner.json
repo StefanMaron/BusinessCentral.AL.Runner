@@ -1,0 +1,4 @@
+{
+  "description": "XmlDocumentType — WriteTo, AsXmlNode, GetDocument, GetParent, Remove, SelectNodes, SelectSingleNode, AddAfterSelf, AddBeforeSelf, ReplaceWith",
+  "issue": 769
+}
