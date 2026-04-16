@@ -523,6 +523,18 @@ public class MockTestPageAction
         _result = result;
     }
 
+    /// <summary>
+    /// BC emits: <c>action.ALEnabled()</c> for <c>TestAction.Enabled()</c>.
+    /// Stub: always returns true in standalone mode.
+    /// </summary>
+    public bool ALEnabled() => true;
+
+    /// <summary>
+    /// BC emits: <c>action.ALVisible()</c> for <c>TestAction.Visible()</c>.
+    /// Stub: always returns true in standalone mode.
+    /// </summary>
+    public bool ALVisible() => true;
+
     public void ALInvoke()
     {
         if (_parent != null)

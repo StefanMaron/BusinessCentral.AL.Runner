@@ -4400,19 +4400,19 @@ Page.Update:
 ProductName.Full:
   layer: runtime-api
   category: ProductName
-  status: gap
+  status: covered
   notes: overloads=1
 
 ProductName.Marketing:
   layer: runtime-api
   category: ProductName
-  status: gap
+  status: covered
   notes: overloads=1
 
 ProductName.Short:
   layer: runtime-api
   category: ProductName
-  status: gap
+  status: covered
   notes: overloads=1
 
 # ── Query ───────────────────────────────────────────────────────
@@ -6721,19 +6721,19 @@ TaskScheduler.TaskExists:
 TestAction.Enabled:
   layer: runtime-api
   category: TestAction
-  status: gap
+  status: covered
   notes: overloads=1
 
 TestAction.Invoke:
   layer: runtime-api
   category: TestAction
-  status: gap
+  status: covered
   notes: overloads=1
 
 TestAction.Visible:
   layer: runtime-api
   category: TestAction
-  status: gap
+  status: covered
   notes: overloads=1
 
 # ── TestField ───────────────────────────────────────────────────
