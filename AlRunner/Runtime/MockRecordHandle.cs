@@ -1441,6 +1441,12 @@ public class MockRecordHandle
         // No-op: no SQL transaction isolation needed
     }
 
+    // LockTable(Wait: Boolean) overload — BC compiles this to ALLockTable(bool)
+    public void ALLockTable(bool wait)
+    {
+        // No-op: no SQL transaction isolation needed
+    }
+
     /// <summary>
     /// AL's READISOLATION — sets read isolation level for the record.
     /// No-op in standalone mode since there's no SQL transaction.

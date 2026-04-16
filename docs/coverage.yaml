@@ -5945,7 +5945,7 @@ Table.LockTable:
   status: covered
   tests:
     - tests/bucket-1/42-locktable
-  notes: overloads=1
+  notes: overloads=2 (no-arg; Wait:Boolean)
 
 Table.Mark:
   layer: runtime-api
