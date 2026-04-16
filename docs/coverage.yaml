@@ -1403,8 +1403,8 @@ Database.Commit:
 Database.CompanyName:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; returns "CRONUS" by default; configurable via --company-name CLI flag
 
 Database.CopyCompany:
   layer: runtime-api

@@ -12,14 +12,14 @@ using Microsoft.Dynamics.Nav.Types;
 public static class MockSession
 {
     private static int _nextSessionId = 1;
-    private static string _companyName = string.Empty;
+    private static string _companyName = "CRONUS";
 
     /// <summary>
     /// Default company name applied between tests (settable via the
-    /// <c>--company-name</c> CLI flag). Empty by default so the runner stays
-    /// backwards-compatible.
+    /// <c>--company-name</c> CLI flag). Defaults to "CRONUS" so AL code calling
+    /// CompanyName() gets a stable non-empty value without any CLI flag.
     /// </summary>
-    public static string DefaultCompanyName { get; set; } = string.Empty;
+    public static string DefaultCompanyName { get; set; } = "CRONUS";
 
     /// <summary>
     /// Value returned by the AL <c>CompanyName()</c> built-in.
