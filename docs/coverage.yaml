@@ -1625,14 +1625,18 @@ Database.SelectLatestVersion:
 Database.SerialNumber:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter stubs ALSerialNumber (property and method) to the fixed string "STANDALONE".
+  tests:
+    - tests/bucket-2/148-db-identity
 
 Database.ServiceInstanceId:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter stubs ALServiceInstanceID() to 1 (non-zero instance id).
+  tests:
+    - tests/bucket-2/148-db-identity
 
 Database.SessionId:
   layer: runtime-api
@@ -1661,8 +1665,10 @@ Database.SID:
 Database.TenantId:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter stubs ALTenantID (property and method) to the fixed string "STANDALONE".
+  tests:
+    - tests/bucket-2/148-db-identity
 
 Database.UnregisterTableConnection:
   layer: runtime-api

@@ -1642,6 +1642,35 @@ public void ClearApplicationMemberVariables() { }
                 .WithTriviaFrom(node);
         }
 
+        // ALDatabase.ALTenantID() / ALDatabase.ALSerialNumber() / ALDatabase.ALServiceInstanceID()
+        // BC emits these as method calls on ALDatabase; the real implementations require
+        // NavSession and crash with NullReferenceException standalone. Catch the invocation
+        // before recursion so the member-access rewrite in VisitMemberAccessExpression doesn't
+        // produce an invalid double-call (e.g. ""()).
+        // Stubs return fixed non-empty/non-zero values so consumers that branch on "has tenant
+        // context" see a consistent affirmative — SerialNumber and TenantId are opaque opaque
+        // identifiers (callers just need stability); ServiceInstanceId is traditionally 1.
+        if (node.Expression is MemberAccessExpressionSyntax dbIdMa &&
+            dbIdMa.Expression is IdentifierNameSyntax dbIdIdent &&
+            dbIdIdent.Identifier.Text == "ALDatabase")
+        {
+            var idName = dbIdMa.Name.Identifier.Text;
+            if (idName == "ALTenantID" || idName == "ALSerialNumber")
+            {
+                return SyntaxFactory.LiteralExpression(
+                    SyntaxKind.StringLiteralExpression,
+                    SyntaxFactory.Literal("STANDALONE"))
+                    .WithTriviaFrom(node);
+            }
+            if (idName == "ALServiceInstanceID" || idName == "ALServiceInstanceId")
+            {
+                return SyntaxFactory.LiteralExpression(
+                    SyntaxKind.NumericLiteralExpression,
+                    SyntaxFactory.Literal(1))
+                    .WithTriviaFrom(node);
+            }
+        }
+
         // `NavOption.Create(existing.NavOptionMetadata, V)` — reassignment
         // pattern BC emits when an AL enum variable is re-assigned. Route
         // through AlCompat.CloneTaggedOption so the new instance inherits
@@ -3212,7 +3241,10 @@ public void ClearApplicationMemberVariables() { }
         // These static property accesses crash because ALDatabase requires a live BC session.
         // ALCompanyName routes to MockSession.GetCompanyName() (configurable via --company-name CLI flag).
         // ALUserID redirects to AlScope.UserId (configurable via --user-id CLI flag).
-        // The rest rewrite to empty-string literals — standalone mode has no tenant context.
+        // ALTenantID and ALSerialNumber return a fixed non-empty string ("STANDALONE") so
+        // telemetry / licensing branches that test non-empty behave consistently.
+        // (Note: BC sometimes emits these as method calls instead — see the invocation
+        // handler at the top of VisitInvocationExpression which uses the same placeholder.)
         if (visited.Expression is IdentifierNameSyntax dbId &&
             dbId.Identifier.Text == "ALDatabase" &&
             ALDatabaseStringProps.Contains(visited.Name.Identifier.Text))
@@ -3236,7 +3268,7 @@ public void ClearApplicationMemberVariables() { }
             }
             return SyntaxFactory.LiteralExpression(
                 SyntaxKind.StringLiteralExpression,
-                SyntaxFactory.Literal(""))
+                SyntaxFactory.Literal("STANDALONE"))
                 .WithTriviaFrom(visited);
         }
 
