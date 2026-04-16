@@ -2361,11 +2361,7 @@ public void ClearApplicationMemberVariables()
                 or "ALAsBigInteger" or "ALAsByte" or "ALAsChar" or "ALAsCode"
                 or "ALAsDate" or "ALAsDateTime" or "ALAsDuration"
                 or "ALAsOption" or "ALAsTime" or "ALAsToken"
-                // NOTE: ALIsUndefined and ALSetValueToUndefined are NOT redirected —
-                // they are pure in-memory state operations on NavJsonValue that do not
-                // go through TrappableOperationExecutor. BC's native implementation
-                // correctly tracks the "undefined" flag for fresh and reset values.
-                or "ALPath")
+                or "ALIsUndefined" or "ALPath" or "ALSetValueToUndefined")
             {
                 var helperMethod = methodName switch
                 {
@@ -2397,7 +2393,9 @@ public void ClearApplicationMemberVariables()
                     "ALAsOption" => "AsOption",
                     "ALAsTime" => "AsTime",
                     "ALAsToken" => "AsToken",
+                    "ALIsUndefined" => "IsUndefined",
                     "ALPath" => "Path",
+                    "ALSetValueToUndefined" => "SetValueToUndefined",
                     _ => null
                 };
                 if (helperMethod is not null)

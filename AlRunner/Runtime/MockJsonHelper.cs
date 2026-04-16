@@ -772,9 +772,30 @@ public static class MockJsonHelper
         // depending on the BC version and how NavJsonValue is constructed.
         var backing = BackingTokenProp.GetValue(token) as JToken;
         if (backing == null) return true;
-        return backing.Type == JTokenType.None
+        if (backing.Type == JTokenType.None
             || backing.Type == JTokenType.Undefined
-            || backing.Type == JTokenType.Null;
+            || backing.Type == JTokenType.Null)
+            return true;
+
+        // --- DIAGNOSTIC: expose the actual backing type so we can determine the correct check ---
+        // Look for an internal "_isUndefined" or similar flag on NavJsonValue.
+        var isUndefinedField = token.GetType().GetField("_isUndefined",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? token.GetType().BaseType?.GetField("_isUndefined",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+        var allFields = token.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic)
+            .Concat(token.GetType().BaseType?.GetFields(BindingFlags.Instance | BindingFlags.NonPublic) ?? Array.Empty<FieldInfo>())
+            .Select(f => $"{f.Name}={f.GetValue(token)}")
+            .ToArray();
+        var allProps = token.GetType().GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            .Where(p => p.GetIndexParameters().Length == 0)
+            .Select(p => { try { return $"{p.Name}={p.GetValue(token)}"; } catch { return $"{p.Name}=<err>"; } })
+            .ToArray();
+        throw new InvalidOperationException(
+            $"IsUndefined-diag: type={backing.Type}({(int)backing.Type}) val={backing} " +
+            $"tokenClass={token.GetType().Name} " +
+            $"fields=[{string.Join(", ", allFields)}] " +
+            $"props=[{string.Join(", ", allProps)}]");
     }
 
     /// <summary>
