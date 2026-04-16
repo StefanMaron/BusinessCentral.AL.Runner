@@ -4005,14 +4005,16 @@ NavApp.GetResource:
 NavApp.GetResourceAsJson:
   layer: runtime-api
   category: NavApp
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=2 (with/without TextEncoding); MockNavApp.ALGetResourceAsJson() returns default NavJsonToken — no .app in standalone mode
+  test: tests/bucket-1/267-navapp-resources/test/NavAppResourceTest.al
 
 NavApp.GetResourceAsText:
   layer: runtime-api
   category: NavApp
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=2 (with/without TextEncoding); MockNavApp.ALGetResourceAsText() returns NavText.Empty — no .app in standalone mode
+  test: tests/bucket-1/267-navapp-resources/test/NavAppResourceTest.al
 
 NavApp.IsEntitled:
   layer: runtime-api
@@ -4038,8 +4040,9 @@ NavApp.IsUnlicensed:
 NavApp.ListResources:
   layer: runtime-api
   category: NavApp
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=2 (with/without ResourceType); MockNavApp.ALListResources() returns NavList<NavText>.Default — no .app in standalone mode
+  test: tests/bucket-1/267-navapp-resources/test/NavAppResourceTest.al
 
 NavApp.LoadPackageData:
   layer: runtime-api
