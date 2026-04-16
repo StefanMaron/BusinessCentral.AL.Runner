@@ -475,35 +475,70 @@ public static class MockJsonHelper
     }
 
     // --- NavDate / NavTime construction helpers (avoid Telemetry.Abstractions in BC 28+) ---
-
+    // Search the type itself first, then BaseType, mirroring how CreateNavDateTime works in AlScope.
     private static readonly FieldInfo? NavDateValueField =
-        typeof(NavDate).BaseType?.GetField("value",
-            BindingFlags.Instance | BindingFlags.NonPublic);
+        typeof(NavDate).GetField("value", BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? typeof(NavDate).BaseType?.GetField("value", BindingFlags.Instance | BindingFlags.NonPublic);
 
     private static readonly FieldInfo? NavTimeValueField =
-        typeof(NavTime).BaseType?.GetField("value",
-            BindingFlags.Instance | BindingFlags.NonPublic);
+        typeof(NavTime).GetField("value", BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? typeof(NavTime).BaseType?.GetField("value", BindingFlags.Instance | BindingFlags.NonPublic);
 
     private static NavDate CreateNavDate(DateTime date)
     {
+        // Strategy 1: Activator + reflection (avoids Telemetry.Abstractions crash in BC 28+)
+        if (NavDateValueField != null)
+        {
+            try
+            {
+                var result = (NavDate)System.Activator.CreateInstance(typeof(NavDate), nonPublic: true)!;
+                NavDateValueField.SetValue(result, date.Date);
+                return result;
+            }
+            catch { }
+        }
+        // Strategy 2: Implicit/explicit operator via reflection (may trigger Telemetry.Abstractions
+        //             in BC 28+ but worth trying for older BC versions)
         try
         {
-            var result = (NavDate)System.Activator.CreateInstance(typeof(NavDate), nonPublic: true)!;
-            NavDateValueField?.SetValue(result, date.Date);
-            return result;
+            var op = typeof(NavDate).GetMethod("op_Implicit",
+                         BindingFlags.Static | BindingFlags.Public,
+                         null, new[] { typeof(DateTime) }, null)
+                     ?? typeof(NavDate).GetMethod("op_Explicit",
+                         BindingFlags.Static | BindingFlags.Public,
+                         null, new[] { typeof(DateTime) }, null);
+            if (op != null) return (NavDate)op.Invoke(null, new object[] { date.Date })!;
         }
-        catch { return NavDate.Default; }
+        catch { }
+        return NavDate.Default;
     }
 
     private static NavTime CreateNavTime(DateTime timeAsDateTime)
     {
+        // Strategy 1: Activator + reflection
+        if (NavTimeValueField != null)
+        {
+            try
+            {
+                var result = (NavTime)System.Activator.CreateInstance(typeof(NavTime), nonPublic: true)!;
+                NavTimeValueField.SetValue(result, timeAsDateTime);
+                return result;
+            }
+            catch { }
+        }
+        // Strategy 2: Implicit/explicit operator via reflection
         try
         {
-            var result = (NavTime)System.Activator.CreateInstance(typeof(NavTime), nonPublic: true)!;
-            NavTimeValueField?.SetValue(result, timeAsDateTime);
-            return result;
+            var op = typeof(NavTime).GetMethod("op_Implicit",
+                         BindingFlags.Static | BindingFlags.Public,
+                         null, new[] { typeof(DateTime) }, null)
+                     ?? typeof(NavTime).GetMethod("op_Explicit",
+                         BindingFlags.Static | BindingFlags.Public,
+                         null, new[] { typeof(DateTime) }, null);
+            if (op != null) return (NavTime)op.Invoke(null, new object[] { timeAsDateTime })!;
         }
-        catch { return NavTime.Default; }
+        catch { }
+        return NavTime.Default;
     }
 
     // --- JsonValue typed-getter / utility methods (issue #699) ---
