@@ -1868,24 +1868,4 @@ public static class AlCompat
         return false;
     }
 
-    /// <summary>
-    /// Date parsing for Evaluate(var Date; Text).
-    /// BC accepts dates in formats like "2024-01-31" (ISO), "01/31/2024" (US), etc.
-    /// We attempt invariant then current-culture parse.
-    /// </summary>
-    public static bool Evaluate(ref Microsoft.Dynamics.Nav.Runtime.NavDate result, NavText text)
-        => Evaluate(ref result, text.ToString());
-
-    public static bool Evaluate(ref Microsoft.Dynamics.Nav.Runtime.NavDate result, string text)
-    {
-        if (System.DateTime.TryParse(text.Trim(),
-                System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.None, out var dt))
-        {
-            result = new Microsoft.Dynamics.Nav.Runtime.NavDate(
-                (uint)(dt.Date - new System.DateTime(1753, 1, 1)).Days + 1u);
-            return true;
-        }
-        return false;
-    }
 }
