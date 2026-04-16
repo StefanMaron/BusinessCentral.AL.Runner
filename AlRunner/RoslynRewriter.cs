@@ -63,7 +63,7 @@ public class RoslynRewriter : CSharpSyntaxRewriter
                         // NavALErrorInfo.ALAddAction crashes standalone (null parent in NavApplicationObjectBaseHandle ctor),
                         // and neither interactive ErrorInfo drill-down actions nor Notification action dispatch happen
                         // without a UI. Stripping is safe — MockNotification tests that exist don't assert on stored action state.
-        "ALAddNavigationAction",  // NavALErrorInfo.ALAddNavigationAction(caption, pageId, filters [, desc]) —
+        "ALAddNavigationAction",  // NavALErrorInfo.ALAddNavigationAction(caption [, description]) —
                         // navigation drill-downs require a UI client to open; no-op in standalone mode.
     };
 

@@ -1,23 +1,24 @@
-/// Helper codeunit exercising ErrorInfo.AddNavigationAction() with 3-arg and 4-arg forms.
+/// Helper codeunit exercising ErrorInfo.AddNavigationAction() with 1-arg and 2-arg forms.
+/// The BC AL compiler exposes:
+///   AddNavigationAction(Caption: Text)
+///   AddNavigationAction(Caption: Text; Description: Text)
 /// Uses default-initialised ErrorInfo values — ErrorInfo.Create() hits a separate
 /// DLL-loading gap and is deliberately avoided here.
-/// Page IDs are passed as integer literals to avoid Page:: references that require
-/// base-app objects not present in the test compilation unit.
 codeunit 81250 "EINA Src"
 {
-    procedure AddNavigationAction_3Arg(caption: Text): Boolean
+    procedure AddNavigationAction_1Arg(caption: Text): Boolean
     var
         ei: ErrorInfo;
     begin
-        ei.AddNavigationAction(caption, 22, '');
+        ei.AddNavigationAction(caption);
         exit(true);
     end;
 
-    procedure AddNavigationAction_4Arg(caption: Text; desc: Text): Boolean
+    procedure AddNavigationAction_2Arg(caption: Text; desc: Text): Boolean
     var
         ei: ErrorInfo;
     begin
-        ei.AddNavigationAction(caption, 22, '', desc);
+        ei.AddNavigationAction(caption, desc);
         exit(true);
     end;
 
@@ -26,7 +27,7 @@ codeunit 81250 "EINA Src"
         ei: ErrorInfo;
     begin
         ei.Message('Record not found');
-        ei.AddNavigationAction('Open List', 22, '');
+        ei.AddNavigationAction('Open List');
         exit(ei.Message());
     end;
 
@@ -34,8 +35,8 @@ codeunit 81250 "EINA Src"
     var
         ei: ErrorInfo;
     begin
-        ei.AddNavigationAction('Action 1', 22, '');
-        ei.AddNavigationAction('Action 2', 22, '');
+        ei.AddNavigationAction('Action 1');
+        ei.AddNavigationAction('Action 2');
         exit(true);
     end;
 }

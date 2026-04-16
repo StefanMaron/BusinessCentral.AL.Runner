@@ -2065,7 +2065,7 @@ ErrorInfo.AddNavigationAction:
   layer: runtime-api
   category: ErrorInfo
   status: covered
-  notes: overloads=2 (3-arg + 4-arg with description); rewriter strips the entire call. Navigation drill-downs require a UI client to open; stripping is safe in standalone mode.
+  notes: overloads=2 (1-arg caption-only + 2-arg caption+description); rewriter strips the entire call. Navigation drill-downs require a UI client to open; stripping is safe in standalone mode.
   tests:
     - tests/bucket-1/263-errorinfo-addnavigationaction
 

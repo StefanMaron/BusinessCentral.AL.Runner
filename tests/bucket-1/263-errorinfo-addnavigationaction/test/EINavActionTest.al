@@ -12,19 +12,19 @@ codeunit 81251 "EINA Test"
     // -----------------------------------------------------------------------
 
     [Test]
-    procedure AddNavigationAction_3Arg_NoOp()
+    procedure AddNavigationAction_1Arg_NoOp()
     begin
-        // Positive: 3-arg form (caption, pageId, filters) completes without error.
-        Assert.IsTrue(Src.AddNavigationAction_3Arg('Open List'),
-            'AddNavigationAction 3-arg must complete without throwing');
+        // Positive: 1-arg form AddNavigationAction(caption) completes without error.
+        Assert.IsTrue(Src.AddNavigationAction_1Arg('Open List'),
+            'AddNavigationAction 1-arg must complete without throwing');
     end;
 
     [Test]
-    procedure AddNavigationAction_4Arg_WithDescription()
+    procedure AddNavigationAction_2Arg_WithDescription()
     begin
-        // Positive: 4-arg form (caption, pageId, filters, description) completes.
-        Assert.IsTrue(Src.AddNavigationAction_4Arg('Open List', 'Navigate to related records'),
-            'AddNavigationAction 4-arg must complete without throwing');
+        // Positive: 2-arg form AddNavigationAction(caption, description) completes.
+        Assert.IsTrue(Src.AddNavigationAction_2Arg('Open List', 'Navigate to related records'),
+            'AddNavigationAction 2-arg must complete without throwing');
     end;
 
     [Test]
@@ -44,22 +44,22 @@ codeunit 81251 "EINA Test"
     end;
 
     // -----------------------------------------------------------------------
-    // Negative: empty caption and filter strings are accepted without error.
+    // Negative: empty caption and description are accepted without error.
     // -----------------------------------------------------------------------
 
     [Test]
     procedure AddNavigationAction_EmptyCaption_Accepted()
     begin
         // Negative: empty caption must not throw (no-op accepts any input).
-        Assert.IsTrue(Src.AddNavigationAction_3Arg(''),
+        Assert.IsTrue(Src.AddNavigationAction_1Arg(''),
             'AddNavigationAction with empty caption must not throw');
     end;
 
     [Test]
     procedure AddNavigationAction_EmptyDescription_Accepted()
     begin
-        // Negative: empty description in 4-arg form must not throw.
-        Assert.IsTrue(Src.AddNavigationAction_4Arg('Open', ''),
-            'AddNavigationAction 4-arg with empty description must not throw');
+        // Negative: empty description in 2-arg form must not throw.
+        Assert.IsTrue(Src.AddNavigationAction_2Arg('Open', ''),
+            'AddNavigationAction 2-arg with empty description must not throw');
     end;
 }
