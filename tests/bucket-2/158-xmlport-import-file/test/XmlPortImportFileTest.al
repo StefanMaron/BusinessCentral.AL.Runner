@@ -6,23 +6,13 @@ codeunit 61802 "XIF XmlPortImportFile Test"
         Assert: Codeunit Assert;
 
     [Test]
-    procedure ImportFile_WithFileName_NoError()
+    procedure ImportFile_NoArgs_NoError()
     var
         Helper: Codeunit "XIF Helper";
     begin
-        // Positive: xp.ImportFile(fileName) must be a no-op stub — no error.
-        Helper.CallImportFile('test.xml');
-        Assert.IsTrue(true, 'XmlPort.ImportFile(fileName) must complete without error');
-    end;
-
-    [Test]
-    procedure ImportFile_WithEmptyFileName_NoError()
-    var
-        Helper: Codeunit "XIF Helper";
-    begin
-        // Edge case: empty filename must also be a no-op.
-        Helper.CallImportFile('');
-        Assert.IsTrue(true, 'XmlPort.ImportFile with empty fileName must complete without error');
+        // Positive: xp.ImportFile() must be a no-op stub — no error.
+        Helper.CallImportFile();
+        Assert.IsTrue(true, 'XmlPort.ImportFile() must complete without error');
     end;
 
     [Test]
@@ -31,9 +21,9 @@ codeunit 61802 "XIF XmlPortImportFile Test"
         Helper: Codeunit "XIF Helper";
     begin
         // Edge case: calling ImportFile multiple times must not error.
-        Helper.CallImportFile('first.xml');
-        Helper.CallImportFile('second.xml');
-        Assert.IsTrue(true, 'XmlPort.ImportFile called twice must complete without error');
+        Helper.CallImportFile();
+        Helper.CallImportFile();
+        Assert.IsTrue(true, 'XmlPort.ImportFile() called twice must complete without error');
     end;
 
     [Test]
