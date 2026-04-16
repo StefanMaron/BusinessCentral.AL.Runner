@@ -275,16 +275,16 @@ public class MockTestPageField
     public void ALInvoke() { }
 
     /// <summary>
-    /// ALHideValue — hides the field value on the page. No-op in standalone mode.
-    /// BC emits <c>tP.GetField(hash).ALHideValue()</c>.
+    /// ALHideValue — hides the field value on the page. Returns true in standalone mode.
+    /// BC emits <c>tP.GetField(hash).ALHideValue()</c>; the return value is Boolean.
     /// </summary>
-    public void ALHideValue() { }
+    public bool ALHideValue() => true;
 
     /// <summary>
-    /// ALShowMandatory — marks the field as mandatory on the page. No-op in standalone mode.
-    /// BC emits <c>tP.GetField(hash).ALShowMandatory()</c>.
+    /// ALShowMandatory — marks the field as mandatory on the page. Returns true in standalone mode.
+    /// BC emits <c>tP.GetField(hash).ALShowMandatory()</c>; the return value is Boolean.
     /// </summary>
-    public void ALShowMandatory() { }
+    public bool ALShowMandatory() => true;
 
     /// <summary>
     /// ALAsBoolean — converts the stored field value to bool.

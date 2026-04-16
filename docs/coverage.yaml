@@ -6689,7 +6689,7 @@ TestField.HideValue:
   layer: runtime-api
   category: TestField
   status: covered
-  notes: overloads=1; no-arg, no-op in standalone mode
+  notes: overloads=1; returns bool true in standalone mode
   tests:
     - tests/bucket-1/86-testfield-methods
 
@@ -6729,7 +6729,7 @@ TestField.ShowMandatory:
   layer: runtime-api
   category: TestField
   status: covered
-  notes: overloads=1; no-arg, no-op in standalone mode
+  notes: overloads=1; returns bool true in standalone mode
   tests:
     - tests/bucket-1/86-testfield-methods
 

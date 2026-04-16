@@ -192,10 +192,11 @@ codeunit 86101 "TFM Test"
     procedure HideValue_DoesNotCrash()
     var
         TP: TestPage "TFM Card";
+        Hidden: Boolean;
     begin
         TP.OpenNew();
-        TP.NameField.HideValue();
-        Assert.IsTrue(true, 'HideValue must be a no-op and not raise an error');
+        Hidden := TP.NameField.HideValue();
+        Assert.IsTrue(true, 'HideValue must return a value and not raise an error');
         TP.Close();
     end;
 
@@ -203,10 +204,11 @@ codeunit 86101 "TFM Test"
     procedure ShowMandatory_DoesNotCrash()
     var
         TP: TestPage "TFM Card";
+        Mandatory: Boolean;
     begin
         TP.OpenNew();
-        TP.NameField.ShowMandatory();
-        Assert.IsTrue(true, 'ShowMandatory must be a no-op and not raise an error');
+        Mandatory := TP.NameField.ShowMandatory();
+        Assert.IsTrue(true, 'ShowMandatory must return a value and not raise an error');
         TP.Close();
     end;
 
