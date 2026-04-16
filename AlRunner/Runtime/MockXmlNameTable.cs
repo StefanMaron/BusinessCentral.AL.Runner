@@ -92,19 +92,21 @@ public class MockXmlNameTable
 
     /// <summary>
     /// BC lowers <c>nt.Get(name, var result)</c> to
-    /// <c>nt.ALGet(session, name, ref result)</c> (passing the scope session
+    /// <c>nt.ALGet(session, name, result)</c> (passing the scope session
     /// as the first argument in newer BC compiler variants).
+    /// <c>var Text</c> parameters are lowered to <c>ByRef&lt;NavText&gt;</c> by the
+    /// BC compiler — callers do not use the <c>ref</c> keyword.
     /// Returns <c>true</c> and sets <paramref name="result"/> when found;
     /// otherwise returns <c>false</c> and sets <paramref name="result"/> to empty.
     /// </summary>
-    public bool ALGet(object? session, string name, ref NavText result)
-        => ALGet(name, ref result);
+    public bool ALGet(object? session, string name, ByRef<NavText> result)
+    {
+        if (_table.TryGetValue(name, out var v)) { result.Value = new NavText(v); return true; }
+        result.Value = NavText.Empty;
+        return false;
+    }
 
     /// <summary>Overload for <c>NavText</c> name with session.</summary>
-    public bool ALGet(object? session, NavText name, ref NavText result)
-        => ALGet((string)name, ref result);
-
-    /// <summary>Overload with <c>string</c> result and session.</summary>
-    public bool ALGet(object? session, string name, ref string result)
-        => ALGet(name, ref result);
+    public bool ALGet(object? session, NavText name, ByRef<NavText> result)
+        => ALGet(session, (string)name, result);
 }
