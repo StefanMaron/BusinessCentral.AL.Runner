@@ -4,7 +4,7 @@
 ///
 /// Proof strategy: if MockTestPageFilter is missing any of these methods,
 /// Roslyn compilation fails with CS1061 and ALL tests in this bucket go RED.
-codeunit 96001 "TPF TestFilter Tests"
+codeunit 96100 "TPF TestFilter Tests"
 {
     Subtype = Test;
 

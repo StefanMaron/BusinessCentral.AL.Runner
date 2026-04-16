@@ -6937,14 +6937,14 @@ TestFilter.Ascending:
   category: TestFilter
   status: covered
   tests: tests/bucket-1/93-testfilter
-  notes: overloads=2 (getter ALAscending() + setter ALAscending(bool)); defaults to true
+  notes: property ALAscending (bool); BC lowers Ascending() → property read, Ascending(false) → property assignment; defaults true
 
 TestFilter.CurrentKey:
   layer: runtime-api
   category: TestFilter
   status: covered
   tests: tests/bucket-1/93-testfilter
-  notes: overloads=1; ALCurrentKey() returns comma-separated field numbers set via SetCurrentKey
+  notes: property ALCurrentKey (string); BC lowers CurrentKey() → property read; returns comma-separated field numbers
 
 TestFilter.GetFilter:
   layer: runtime-api
@@ -6958,7 +6958,7 @@ TestFilter.SetCurrentKey:
   category: TestFilter
   status: covered
   tests: tests/bucket-1/93-testfilter
-  notes: overloads=1; ALSetCurrentKey(params int[] fieldNos) stores field numbers for CurrentKey
+  notes: overloads=2 (DataError + fields; fields only); BC prepends DataError to the call
 
 TestFilter.SetFilter:
   layer: runtime-api
