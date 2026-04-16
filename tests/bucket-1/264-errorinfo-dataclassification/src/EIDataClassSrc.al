@@ -26,10 +26,11 @@ codeunit 61950 "EI DataClass Src"
         exit(ei1.DataClassification() <> ei2.DataClassification());
     end;
 
-    procedure DefaultMatchesNone(): Boolean
+    procedure SystemMetadataRoundTrips(): Boolean
     var
         ei: ErrorInfo;
     begin
-        exit(ei.DataClassification() = DataClassification::CustomerContent);
+        ei.DataClassification(DataClassification::SystemMetadata);
+        exit(ei.DataClassification() = DataClassification::SystemMetadata);
     end;
 }

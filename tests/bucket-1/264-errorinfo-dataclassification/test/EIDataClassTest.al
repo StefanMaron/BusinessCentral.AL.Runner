@@ -21,7 +21,7 @@ codeunit 61951 "EI DataClass Test"
     end;
 
     [Test]
-    procedure DataClassification_RoundTrip()
+    procedure DataClassification_CustomerContent_RoundTrips()
     var
         Src: Codeunit "EI DataClass Src";
     begin
@@ -35,23 +35,24 @@ codeunit 61951 "EI DataClass Test"
     var
         Src: Codeunit "EI DataClass Src";
     begin
-        // [THEN] CustomerContent and SystemMetadata are stored independently
+        // [THEN] CustomerContent and SystemMetadata are stored independently and compare unequal
         Assert.IsTrue(Src.TwoValuesAreDistinct(),
-            'Two different DataClassification values must not compare equal');
+            'CustomerContent and SystemMetadata must be distinct values');
     end;
 
     // ------------------------------------------------------------------
-    // Negative: default DataClassification is NOT CustomerContent.
+    // Negative: a second distinct value also round-trips correctly.
     // ------------------------------------------------------------------
 
     [Test]
-    procedure DataClassification_DefaultIsNotCustomerContent()
+    procedure DataClassification_SystemMetadata_RoundTrips()
     var
         Src: Codeunit "EI DataClass Src";
     begin
-        // [GIVEN] An ErrorInfo with no DataClassification set
-        // [THEN]  Default is NOT CustomerContent — a no-op mock would fail this
-        Assert.IsFalse(Src.DefaultMatchesNone(),
-            'Default DataClassification must not equal CustomerContent');
+        // [GIVEN/WHEN] SystemMetadata is set and retrieved
+        // [THEN]  The retrieved value equals SystemMetadata — a mock returning
+        //         CustomerContent unconditionally would fail this
+        Assert.IsTrue(Src.SystemMetadataRoundTrips(),
+            'DataClassification::SystemMetadata must round-trip correctly');
     end;
 }
