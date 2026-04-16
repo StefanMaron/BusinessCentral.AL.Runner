@@ -1274,6 +1274,7 @@ attribute_item:
     - tests/bucket-2/100-bind-subscription
     - tests/bucket-2/41-try-function
     - tests/bucket-2/66-event-subscribers
+    - tests/bucket-1/83-attribute-item
 
 visible_attribute_condition:
   layer: syntax
