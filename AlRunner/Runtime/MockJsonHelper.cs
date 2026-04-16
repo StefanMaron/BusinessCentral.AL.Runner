@@ -739,11 +739,21 @@ public static class MockJsonHelper
 
     /// <summary>
     /// Replacement for NavJsonValue.ALIsUndefined().
-    /// Returns true if the backing value has token type Undefined.
+    /// Returns true if the JsonValue has not been assigned a value.
     /// AL: JsonValue.IsUndefined()  →  MockJsonHelper.IsUndefined(token)
+    ///
+    /// BC initialises a fresh NavJsonValue with a Null backing token (not Undefined).
+    /// SetValueToUndefined() explicitly writes JTokenType.Undefined.
+    /// Both states represent "no value assigned" from AL's perspective, so we
+    /// treat Null, Undefined, and a missing (null) backing token all as undefined.
     /// </summary>
     public static bool IsUndefined(NavJsonToken token, DataError errorLevel = default)
-        => GetBackingToken(token).Type == JTokenType.Undefined;
+    {
+        var backing = BackingTokenProp.GetValue(token) as JToken;
+        return backing == null
+            || backing.Type == JTokenType.Undefined
+            || backing.Type == JTokenType.Null;
+    }
 
     /// <summary>
     /// Replacement for NavJsonValue.ALPath (property / no-arg method).
