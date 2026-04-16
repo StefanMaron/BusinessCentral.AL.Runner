@@ -8397,37 +8397,43 @@ Variant.IsXmlWriteOptions:
 Version.Build:
   layer: runtime-api
   category: Version
-  status: gap
+  status: covered
+  tests: tests/bucket-1/96-version
   notes: overloads=1
 
 Version.Create:
   layer: runtime-api
   category: Version
-  status: gap
+  status: covered
+  tests: tests/bucket-1/96-version
   notes: overloads=2
 
 Version.Major:
   layer: runtime-api
   category: Version
-  status: gap
+  status: covered
+  tests: tests/bucket-1/96-version
   notes: overloads=1
 
 Version.Minor:
   layer: runtime-api
   category: Version
-  status: gap
+  status: covered
+  tests: tests/bucket-1/96-version
   notes: overloads=1
 
 Version.Revision:
   layer: runtime-api
   category: Version
-  status: gap
+  status: covered
+  tests: tests/bucket-1/96-version
   notes: overloads=1
 
 Version.ToText:
   layer: runtime-api
   category: Version
-  status: gap
+  status: covered
+  tests: tests/bucket-1/96-version
   notes: overloads=1
 
 # ── WebServiceActionContext ─────────────────────────────────────
