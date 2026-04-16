@@ -69,8 +69,8 @@ public class MockArray<T> : IEnumerable<T>
     /// </summary>
     public int ArrayLen(int dimension)
     {
-        int idx = dimension - 1; // AL is 1-based
-        return (idx >= 0 && idx < _dimensions.Length) ? _dimensions[idx] : 0;
+        // BC compiler generates 0-based dimension indices in the transpiled C# code
+        return (dimension >= 0 && dimension < _dimensions.Length) ? _dimensions[dimension] : 0;
     }
 
     public void Clear()
