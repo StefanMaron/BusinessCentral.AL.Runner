@@ -94,6 +94,34 @@ public class MockHttpClient
     /// <summary>UseDefaultNetworkWindowsAuthentication property stub.</summary>
     public bool ALUseDefaultNetworkWindowsAuthentication { get; set; }
 
-    /// <summary>No-op — resets nothing since no real connection exists.</summary>
-    public void Clear() { }
+    // ── Configuration methods (issue #732) ────────────────────────────────
+
+    private string _baseAddress = string.Empty;
+
+    /// <summary>GetBaseAddress — returns the stored base URL (property access in generated C#).</summary>
+    public NavText ALGetBaseAddress => new NavText(_baseAddress);
+
+    /// <summary>SetBaseAddress — stores the base URL.</summary>
+    public void ALSetBaseAddress(DataError errorLevel, NavText url) => _baseAddress = (string)url;
+
+    /// <summary>Clear — resets base address and other state.</summary>
+    public void ALClear() => _baseAddress = string.Empty;
+
+    /// <summary>UseResponseCookies — stores the flag (emitted as method, no DataError).</summary>
+    public void ALUseResponseCookies(bool value) { }
+
+    /// <summary>UseServerCertificateValidation — emitted as property setter/getter.</summary>
+    public bool ALUseServerCertificateValidation { get; set; }
+
+    /// <summary>UseWindowsAuthentication(username, password) — no-op stub.</summary>
+    public void ALUseWindowsAuthentication(DataError errorLevel, NavText username, NavText password) { }
+
+    /// <summary>UseWindowsAuthentication(username, password, domain) — no-op stub.</summary>
+    public void ALUseWindowsAuthentication(DataError errorLevel, NavText username, NavText password, NavText domain) { }
+
+    /// <summary>AddCertificate(thumbprint) — no-op stub.</summary>
+    public void ALAddCertificate(DataError errorLevel, NavText thumbprint) { }
+
+    /// <summary>AddCertificate(thumbprint, password) — no-op stub.</summary>
+    public void ALAddCertificate(DataError errorLevel, NavText thumbprint, NavText password) { }
 }

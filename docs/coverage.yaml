@@ -2713,13 +2713,13 @@ Guid.ToText:
 HttpClient.AddCertificate:
   layer: runtime-api
   category: HttpClient
-  status: gap
+  status: covered
   notes: overloads=2
 
 HttpClient.Clear:
   layer: runtime-api
   category: HttpClient
-  status: gap
+  status: covered
   notes: overloads=1
 
 HttpClient.DefaultRequestHeaders:
@@ -2743,7 +2743,7 @@ HttpClient.Get:
 HttpClient.GetBaseAddress:
   layer: runtime-api
   category: HttpClient
-  status: gap
+  status: covered
   notes: overloads=1
 
 HttpClient.Patch:
@@ -2773,7 +2773,7 @@ HttpClient.Send:
 HttpClient.SetBaseAddress:
   layer: runtime-api
   category: HttpClient
-  status: gap
+  status: covered
   notes: overloads=1
 
 HttpClient.Timeout:
@@ -2791,19 +2791,19 @@ HttpClient.UseDefaultNetworkWindowsAuthentication:
 HttpClient.UseResponseCookies:
   layer: runtime-api
   category: HttpClient
-  status: gap
+  status: covered
   notes: overloads=1
 
 HttpClient.UseServerCertificateValidation:
   layer: runtime-api
   category: HttpClient
-  status: gap
+  status: covered
   notes: overloads=1
 
 HttpClient.UseWindowsAuthentication:
   layer: runtime-api
   category: HttpClient
-  status: gap
+  status: covered
   notes: overloads=2
 
 # ── HttpContent ─────────────────────────────────────────────────
