@@ -1051,7 +1051,9 @@ addafter_views_modification:
 addbefore_action_modification:
   layer: syntax
   category: modification
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/75-addbefore-action
 
 addbefore_dataset_modification:
   layer: syntax
