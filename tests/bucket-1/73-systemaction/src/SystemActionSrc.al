@@ -18,8 +18,7 @@ codeunit 73000 "SA Helper"
 /// BC compiler emits C# for them; the runner must accept the output.
 page 73000 "SA Test Page"
 {
-    PageType = Document;
-    SourceTable = Customer;
+    PageType = Card;
 
     actions
     {
@@ -27,14 +26,6 @@ page 73000 "SA Test Page"
         {
             systemaction(Print) { }
             systemaction(SendMail) { }
-        }
-    }
-
-    layout
-    {
-        area(content)
-        {
-            field("No."; Rec."No.") { ApplicationArea = All; }
         }
     }
 }
