@@ -5996,8 +5996,10 @@ Table.SecurityFiltering:
 Table.SetAscending:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests:
+    - tests/bucket-1/55-setascending
+  notes: overloads=1; ascending/descending per key field, composite key, Reset clears direction
 
 Table.SetAutoCalcFields:
   layer: runtime-api
