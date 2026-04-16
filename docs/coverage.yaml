@@ -1267,20 +1267,20 @@ CodeunitInstance.Run:
 CompanyProperty.DisplayName:
   layer: runtime-api
   category: CompanyProperty
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; ALCompanyProperty.ALDisplayName() → AlCompat.CompanyPropertyDisplayName() → "My Company"
 
 CompanyProperty.ID:
   layer: runtime-api
   category: CompanyProperty
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; ALCompanyProperty.ALID() → AlCompat.CompanyPropertyID() → fixed non-empty GUID
 
 CompanyProperty.UrlName:
   layer: runtime-api
   category: CompanyProperty
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; ALCompanyProperty.ALUrlName() → AlCompat.CompanyPropertyUrlName() → "My%20Company"
 
 # ── Cookie ──────────────────────────────────────────────────────
 

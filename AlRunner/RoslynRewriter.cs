@@ -2083,6 +2083,16 @@ public void ClearApplicationMemberVariables() { }
                     SyntaxFactory.ArgumentList())
                     .WithTriviaFrom(visited);
             }
+            if (exprText == "ALCompanyProperty" && methodName == "ALID")
+            {
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("CompanyPropertyID")),
+                    SyntaxFactory.ArgumentList())
+                    .WithTriviaFrom(visited);
+            }
 
             // ALSystemDate.ALRoundDateTime(session, dt, [precision], [direction])
             // -> AlCompat.RoundDateTime(dt, [precision], [direction])

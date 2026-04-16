@@ -1428,6 +1428,12 @@ public static class AlCompat
     public static string CompanyPropertyUrlName() => "My%20Company";
 
     /// <summary>
+    /// CompanyProperty.ID() stub — returns a fixed non-empty GUID representing the company.
+    /// BC lowers this to ALCompanyProperty.ALID() which requires NavEnvironment.
+    /// </summary>
+    public static NavGuid CompanyPropertyID() => new NavGuid(new Guid("5f5f5f5f-5f5f-5f5f-5f5f-5f5f5f5f5f5f"));
+
+    /// <summary>
     /// NormalDate(date) — wraps ALSystemDate.ALNormalDate with 0D handling.
     /// BC runtime throws NavNCLDateInvalidException on 0D; we return 0D.
     /// </summary>
