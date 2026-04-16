@@ -1043,7 +1043,9 @@ implements_clause:
 add_dataset_modification:
   layer: syntax
   category: modification
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/141-add-dataset
 
 addafter_action_modification:
   layer: syntax
