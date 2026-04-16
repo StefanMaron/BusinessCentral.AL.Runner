@@ -2161,9 +2161,12 @@ public void ClearApplicationMemberVariables() { }
                     visited.ArgumentList);
             }
 
-            // ALIsolatedStorage.ALSet/ALGet/ALContains/ALDelete -> MockIsolatedStorage
+            // ALIsolatedStorage.ALSet/ALSetEncrypted/ALGet/ALContains/ALDelete -> MockIsolatedStorage
+            // SetEncrypted is transparent in the mock — no real crypto needed for tests, and
+            // the value must round-trip through Get/Contains like the plain ALSet path.
             if (exprText == "ALIsolatedStorage" &&
-                (methodName == "ALSet" || methodName == "ALGet" || methodName == "ALContains" || methodName == "ALDelete"))
+                (methodName == "ALSet" || methodName == "ALSetEncrypted"
+                 || methodName == "ALGet" || methodName == "ALContains" || methodName == "ALDelete"))
             {
                 return visited.WithExpression(
                     SyntaxFactory.MemberAccessExpression(
