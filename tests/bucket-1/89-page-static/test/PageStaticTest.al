@@ -1,5 +1,4 @@
-/// Tests for static Page.* method stubs.
-/// Verifies that AL code using Page.Run, Page.Update, Page.ObjectId, etc. does not error.
+/// Tests for Page.* method stubs — static (Run, RunModal) and instance (Update, ObjectId, etc.)
 codeunit 89101 "PST Test"
 {
     Subtype = Test;
@@ -9,7 +8,7 @@ codeunit 89101 "PST Test"
         Src: Codeunit "PST Source";
 
     // ------------------------------------------------------------------
-    // Page.Run — no-op
+    // Page.Run — static no-op
     // ------------------------------------------------------------------
 
     [Test]
@@ -22,22 +21,22 @@ codeunit 89101 "PST Test"
     end;
 
     // ------------------------------------------------------------------
-    // Page.RunModal — returns 0 (Action::OK)
+    // Page.RunModal — static, returns Action::None
     // ------------------------------------------------------------------
 
     [Test]
-    procedure PageRunModal_ReturnsNonNegative()
+    procedure PageRunModal_ReturnsAction()
     var
-        Result: Integer;
+        Result: Action;
     begin
         // [WHEN] Page.RunModal is called
         Result := Src.CallPageRunModal(1);
-        // [THEN] Returns a valid integer (0 = OK)
-        Assert.IsTrue(Result >= 0, 'Page.RunModal must return a non-negative action value');
+        // [THEN] Returns Action::None (stub default = 0)
+        Assert.AreEqual(Action::None, Result, 'Page.RunModal must return Action::None from stub');
     end;
 
     // ------------------------------------------------------------------
-    // Page.Activate — no-op
+    // Page variable — Activate
     // ------------------------------------------------------------------
 
     [Test]
@@ -48,7 +47,7 @@ codeunit 89101 "PST Test"
     end;
 
     // ------------------------------------------------------------------
-    // Page.SaveRecord — no-op
+    // Page variable — SaveRecord
     // ------------------------------------------------------------------
 
     [Test]
@@ -59,7 +58,7 @@ codeunit 89101 "PST Test"
     end;
 
     // ------------------------------------------------------------------
-    // Page.Update — no-op
+    // Page variable — Update
     // ------------------------------------------------------------------
 
     [Test]
@@ -78,7 +77,7 @@ codeunit 89101 "PST Test"
     end;
 
     // ------------------------------------------------------------------
-    // Page.SetTableView — no-op
+    // Page variable — SetTableView
     // ------------------------------------------------------------------
 
     [Test]
@@ -91,7 +90,7 @@ codeunit 89101 "PST Test"
     end;
 
     // ------------------------------------------------------------------
-    // Page.SetSelectionFilter — no-op
+    // Page variable — SetSelectionFilter
     // ------------------------------------------------------------------
 
     [Test]
@@ -104,7 +103,7 @@ codeunit 89101 "PST Test"
     end;
 
     // ------------------------------------------------------------------
-    // Page.SetRecord — no-op
+    // Page variable — SetRecord
     // ------------------------------------------------------------------
 
     [Test]
@@ -117,20 +116,22 @@ codeunit 89101 "PST Test"
     end;
 
     // ------------------------------------------------------------------
-    // Page.ObjectId — does not crash
+    // Page variable — ObjectId
     // ------------------------------------------------------------------
 
     [Test]
-    procedure PageObjectId_NoError()
+    procedure PageObjectId_ReturnsText()
+    var
+        T: Text;
     begin
-        // [WHEN] ObjectId(false) is called
-        // [THEN] No error is raised
-        Src.CallPageObjectId();
+        // [WHEN] ObjectId(false) is called on a page variable
+        T := Src.GetPageObjectId();
+        // [THEN] Returns without error (stub returns empty text)
         Assert.IsTrue(true, 'Page.ObjectId must not raise an error');
     end;
 
     // ------------------------------------------------------------------
-    // Page.LookupMode — defaults to false
+    // Page variable — LookupMode get/set
     // ------------------------------------------------------------------
 
     [Test]
@@ -138,59 +139,20 @@ codeunit 89101 "PST Test"
     var
         Mode: Boolean;
     begin
-        // [WHEN] LookupMode is read
+        // [WHEN] LookupMode is read without prior assignment
         Mode := Src.GetPageLookupMode();
         // [THEN] Returns false (default)
         Assert.IsFalse(Mode, 'Page.LookupMode must default to false');
     end;
 
-    // ------------------------------------------------------------------
-    // Page.CancelBackgroundTask — no-op
-    // ------------------------------------------------------------------
-
     [Test]
-    procedure PageCancelBackgroundTask_NoError()
-    begin
-        Src.CallCancelBackgroundTask(0);
-        Assert.IsTrue(true, 'Page.CancelBackgroundTask must be a no-op');
-    end;
-
-    // ------------------------------------------------------------------
-    // Page.SetBackgroundTaskResult — no-op
-    // ------------------------------------------------------------------
-
-    [Test]
-    procedure PageSetBackgroundTaskResult_NoError()
+    procedure PageLookupMode_SetAndGet()
     var
-        Result: Dictionary of [Text, Text];
+        Mode: Boolean;
     begin
-        Src.CallSetBackgroundTaskResult(Result);
-        Assert.IsTrue(true, 'Page.SetBackgroundTaskResult must be a no-op');
-    end;
-
-    // ------------------------------------------------------------------
-    // Page.GetBackgroundParameters — no-op
-    // ------------------------------------------------------------------
-
-    [Test]
-    procedure PageGetBackgroundParameters_NoError()
-    var
-        Params: Dictionary of [Text, Text];
-    begin
-        Src.CallGetBackgroundParameters(Params);
-        Assert.IsTrue(true, 'Page.GetBackgroundParameters must be a no-op');
-    end;
-
-    // ------------------------------------------------------------------
-    // Page.EnqueueBackgroundTask — no-op
-    // ------------------------------------------------------------------
-
-    [Test]
-    procedure PageEnqueueBackgroundTask_NoError()
-    var
-        TaskId: Integer;
-    begin
-        Src.CallEnqueueBackgroundTask(TaskId, 1);
-        Assert.IsTrue(true, 'Page.EnqueueBackgroundTask must be a no-op');
+        // [WHEN] LookupMode is set to true then read back
+        Mode := Src.SetAndGetPageLookupMode(true);
+        // [THEN] Returns true (value was stored)
+        Assert.IsTrue(Mode, 'Page.LookupMode must return the value that was set');
     end;
 }

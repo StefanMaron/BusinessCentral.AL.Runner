@@ -4281,9 +4281,8 @@ Page.Activate:
 Page.CancelBackgroundTask:
   layer: runtime-api
   category: Page
-  status: covered
-  tests: tests/bucket-1/89-page-static
-  notes: overloads=1
+  status: gap
+  notes: overloads=1; AL0161 inaccessible from user AL code
 
 Page.Caption:
   layer: runtime-api
@@ -4306,16 +4305,14 @@ Page.Editable:
 Page.EnqueueBackgroundTask:
   layer: runtime-api
   category: Page
-  status: covered
-  tests: tests/bucket-1/89-page-static
-  notes: overloads=1
+  status: gap
+  notes: overloads=1; complex background task API requires CurrPage context
 
 Page.GetBackgroundParameters:
   layer: runtime-api
   category: Page
-  status: covered
-  tests: tests/bucket-1/89-page-static
-  notes: overloads=1
+  status: gap
+  notes: overloads=1; complex background task API requires CurrPage context
 
 Page.GetRecord:
   layer: runtime-api
@@ -4367,9 +4364,8 @@ Page.SaveRecord:
 Page.SetBackgroundTaskResult:
   layer: runtime-api
   category: Page
-  status: covered
-  tests: tests/bucket-1/89-page-static
-  notes: overloads=1
+  status: gap
+  notes: overloads=1; complex background task API requires CurrPage context
 
 Page.SetRecord:
   layer: runtime-api

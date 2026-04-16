@@ -1,87 +1,94 @@
-/// Source codeunit exercising static Page.* method calls.
-/// Each procedure calls one static Page method so the test can verify no error.
+/// Source codeunit + fixtures exercising Page.* method calls.
+/// Static calls (Page.Run, Page.RunModal) and instance calls on a page variable.
 codeunit 89100 "PST Source"
 {
+    // ------------------------------------------------------------------
+    // Static Page.* calls
+    // ------------------------------------------------------------------
+
     procedure CallPageRun(PageId: Integer)
     begin
         Page.Run(PageId);
     end;
 
-    procedure CallPageRunModal(PageId: Integer): Integer
+    procedure CallPageRunModal(PageId: Integer): Action
     begin
         exit(Page.RunModal(PageId));
     end;
 
+    // ------------------------------------------------------------------
+    // Instance calls on a page variable
+    // ------------------------------------------------------------------
+
     procedure CallPageActivate()
+    var
+        P: Page "PST Card";
     begin
-        Page.Activate();
+        P.Activate();
     end;
 
     procedure CallPageSaveRecord()
+    var
+        P: Page "PST Card";
     begin
-        Page.SaveRecord();
+        P.SaveRecord();
     end;
 
     procedure CallPageUpdate()
+    var
+        P: Page "PST Card";
     begin
-        Page.Update();
+        P.Update();
     end;
 
     procedure CallPageUpdateBool(DoUpdate: Boolean)
+    var
+        P: Page "PST Card";
     begin
-        Page.Update(DoUpdate);
+        P.Update(DoUpdate);
     end;
 
     procedure CallPageSetTableView(var Rec: Record "PST Record")
+    var
+        P: Page "PST Card";
     begin
-        Page.SetTableView(Rec);
+        P.SetTableView(Rec);
     end;
 
     procedure CallPageSetSelectionFilter(var Rec: Record "PST Record")
+    var
+        P: Page "PST Card";
     begin
-        Page.SetSelectionFilter(Rec);
+        P.SetSelectionFilter(Rec);
     end;
 
     procedure CallPageSetRecord(var Rec: Record "PST Record")
+    var
+        P: Page "PST Card";
     begin
-        Page.SetRecord(Rec);
+        P.SetRecord(Rec);
     end;
 
-    procedure CallPageObjectId()
+    procedure GetPageObjectId(): Text
+    var
+        P: Page "PST Card";
     begin
-        Page.ObjectId(false);
+        exit(P.ObjectId(false));
     end;
 
     procedure GetPageLookupMode(): Boolean
-    begin
-        exit(Page.LookupMode);
-    end;
-
-    procedure SetPageLookupMode(Value: Boolean)
-    begin
-        Page.LookupMode := Value;
-    end;
-
-    procedure CallCancelBackgroundTask(TaskId: Integer)
-    begin
-        Page.CancelBackgroundTask(TaskId);
-    end;
-
-    procedure CallSetBackgroundTaskResult(Result: Dictionary of [Text, Text])
-    begin
-        Page.SetBackgroundTaskResult(Result);
-    end;
-
-    procedure CallGetBackgroundParameters(var Params: Dictionary of [Text, Text])
-    begin
-        Page.GetBackgroundParameters(Params);
-    end;
-
-    procedure CallEnqueueBackgroundTask(var TaskId: Integer; PageId: Integer)
     var
-        Params: Dictionary of [Text, Text];
+        P: Page "PST Card";
     begin
-        Page.EnqueueBackgroundTask(TaskId, PageId, Params);
+        exit(P.LookupMode);
+    end;
+
+    procedure SetAndGetPageLookupMode(Value: Boolean): Boolean
+    var
+        P: Page "PST Card";
+    begin
+        P.LookupMode := Value;
+        exit(P.LookupMode);
     end;
 }
 
@@ -93,4 +100,19 @@ table 89100 "PST Record"
         field(2; Name; Text[100]) { }
     }
     keys { key(PK; Id) { Clustered = true; } }
+}
+
+page 89100 "PST Card"
+{
+    PageType = Card;
+    SourceTable = "PST Record";
+
+    layout
+    {
+        area(Content)
+        {
+            field(IdField; Rec.Id) { }
+            field(NameField; Rec.Name) { }
+        }
+    }
 }
