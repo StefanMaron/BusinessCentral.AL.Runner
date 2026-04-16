@@ -23,9 +23,10 @@ codeunit 56691 "Company Name Test"
     var
         Result: Text;
     begin
-        // Positive: UserId should return a text value without crashing
+        // Positive: UserId should return a text value without crashing.
+        // Default is "TESTUSER" when not configured via --user-id.
         Result := Helper.GetUserId();
-        Assert.AreEqual('', Result, 'UserId should return empty string in standalone mode');
+        Assert.AreEqual('TESTUSER', Result, 'UserId should return TESTUSER by default');
     end;
 
     [Test]
