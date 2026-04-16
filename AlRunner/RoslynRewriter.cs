@@ -1143,6 +1143,12 @@ public void ClearApplicationMemberVariables()
         if (text == "NavFileUpload")
             return node.WithIdentifier(SyntaxFactory.Identifier("MockFileUpload"));
 
+        // NavFile -> MockFile
+        // NavFile's real implementation accesses the OS filesystem and requires a
+        // service-tier session. MockFile is a standalone in-memory byte-buffer version.
+        if (text == "NavFile")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockFile"));
+
         // NavBLOB -> MockBlob
         // NavBLOB's ALCreateInStream/ALCreateOutStream pass ITreeObject to
         // NavStream ctor which crashes with null in standalone mode.
