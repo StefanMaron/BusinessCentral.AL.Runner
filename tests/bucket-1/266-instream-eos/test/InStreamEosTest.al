@@ -51,13 +51,13 @@ codeunit 84001 "InStream EOS Test"
     // ------------------------------------------------------------------
 
     [Test]
-    procedure EOS_DriveReadLoop_CountsLines()
+    procedure EOS_DriveReadLoop_CountsChunks()
     var
         Src: Codeunit "InStream EOS Src";
     begin
-        // [GIVEN] A stream with 2 WriteText calls
-        // [WHEN] Loop reads lines until EOS()
-        // [THEN] Exactly 2 iterations
-        Assert.AreEqual(2, Src.CountLinesUsingEOS(), 'EOS() loop must read exactly 2 lines from 2-line stream');
+        // [GIVEN] A 4-byte stream, reading 2 bytes at a time
+        // [WHEN] Loop reads chunks until EOS()
+        // [THEN] Exactly 2 iterations (AA then BB)
+        Assert.AreEqual(2, Src.CountChunksUsingEOS(), 'EOS() loop must iterate exactly twice for 4-byte stream read in 2-byte chunks');
     end;
 }
