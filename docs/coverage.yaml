@@ -1050,7 +1050,8 @@ addafter_modification:
 addafter_views_modification:
   layer: syntax
   category: modification
-  status: gap
+  status: covered
+  test: tests/bucket-1/76-addafter-views
 
 addbefore_action_modification:
   layer: syntax
