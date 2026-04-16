@@ -9204,14 +9204,16 @@ XmlElement.Add:
 XmlElement.AddAfterSelf:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-xmlelement-remaining
+  notes: overloads=1. Covered via NavXmlElement native — AddAfterSelf inserts sibling, parent child count increases to 2.
 
 XmlElement.AddBeforeSelf:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-xmlelement-remaining
+  notes: overloads=1. Covered via NavXmlElement native — AddBeforeSelf inserts sibling, parent child count increases to 2.
 
 XmlElement.AddFirst:
   layer: runtime-api
@@ -9250,32 +9252,37 @@ XmlElement.GetChildElements:
 XmlElement.GetChildNodes:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-xmlelement-remaining
+  notes: overloads=1. Covered via NavXmlElement native — used to verify child counts in ReplaceNodes/ReplaceWith/AddAfterSelf tests.
 
 XmlElement.GetDescendantElements:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=3
+  status: covered
+  tests: tests/bucket-2/200-xmlelement-remaining
+  notes: overloads=3. Covered via NavXmlElement native — 0 for leaf element, 2 for root with child+grandchild.
 
 XmlElement.GetDescendantNodes:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-xmlelement-remaining
+  notes: overloads=1. Covered via NavXmlElement native — 0 for leaf element.
 
 XmlElement.GetDocument:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-xmlelement-remaining
+  notes: overloads=1. Covered via NavXmlElement native — returns false for detached element.
 
 XmlElement.GetNamespaceOfPrefix:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-xmlelement-remaining
+  notes: overloads=1. Covered via NavXmlElement native — 'xml' prefix returns http://www.w3.org/XML/1998/namespace. Note: calling with an unknown prefix triggers NavEnvironment logging and fails at runner limitation.
 
 XmlElement.GetParent:
   layer: runtime-api
@@ -9286,8 +9293,9 @@ XmlElement.GetParent:
 XmlElement.GetPrefixOfNamespace:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-xmlelement-remaining
+  notes: overloads=1. Covered via NavXmlElement native — returns empty string for unknown namespace URI.
 
 XmlElement.HasAttributes:
   layer: runtime-api
@@ -9342,8 +9350,9 @@ XmlElement.Name:
 XmlElement.NamespaceUri:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-xmlelement-remaining
+  notes: overloads=1. Covered via NavXmlElement native — empty for plain element, http://example.com for Create('ns','http://example.com','root').
 
 XmlElement.Remove:
   layer: runtime-api
@@ -9375,14 +9384,16 @@ XmlElement.RemoveNodes:
 XmlElement.ReplaceNodes:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-xmlelement-remaining
+  notes: overloads=1. Covered via NavXmlElement native — ReplaceNodes(newChild) leaves exactly 1 child in element.
 
 XmlElement.ReplaceWith:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-xmlelement-remaining
+  notes: overloads=1. Covered via NavXmlElement native — ReplaceWith swaps element in parent; new element findable by name.
 
 XmlElement.SelectNodes:
   layer: runtime-api
