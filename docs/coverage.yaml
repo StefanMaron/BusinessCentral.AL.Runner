@@ -1025,7 +1025,9 @@ add_dataset_modification:
 addafter_action_modification:
   layer: syntax
   category: modification
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/68-addafter-action
 
 addafter_dataset_modification:
   layer: syntax
