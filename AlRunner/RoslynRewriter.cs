@@ -1944,6 +1944,23 @@ public void ClearApplicationMemberVariables()
         // Now recurse into children first
         var visited = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
 
+        // Strip BC-generated XML type-token arguments (CS0119 fix)
+        // BC emits patterns like NavXmlDocument.ALCreate(scope, NavXmlDocument) or
+        // NavXmlDocument.ALReadFrom(scope, NavXmlDocument, text, byRef) where the type
+        // name is passed as a factory token. This causes CS0119 in Roslyn compilation.
+        // Strip any argument that is a plain NavXml* identifier (type-as-expression).
+        // The runtime methods have overloads without the type-token argument.
+        if (visited.ArgumentList != null)
+        {
+            var argsBefore = visited.ArgumentList.Arguments;
+            var argsAfter = argsBefore.Where(a =>
+                !(a.Expression is IdentifierNameSyntax id &&
+                  id.Identifier.Text.StartsWith("NavXml", StringComparison.Ordinal))).ToList();
+            if (argsAfter.Count < argsBefore.Count)
+                visited = visited.WithArgumentList(
+                    visited.ArgumentList.WithArguments(
+                        SyntaxFactory.SeparatedList(argsAfter)));
+        }
 
         // `<expr>.ToText(...)` -> `AlCompat.Format(<expr>)` or `AlCompat.GuidToText(<expr>, false)`
         // BC lowers AL's `xVar.ToText()` to either an instance `navX.ToText(...)` call
