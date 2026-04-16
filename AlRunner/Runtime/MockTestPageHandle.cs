@@ -128,28 +128,28 @@ public class MockTestPageHandle
     public string ALGetValidationError(DataError errorLevel, int index) => ALGetValidationError(index);
 
     /// <summary>
-    /// Finds the first record where field equals value. Stub returns true.
-    /// BC emits <c>tP.Target.GetPart(hash).ALFindFirstField(field, value)</c> for
-    /// <c>TestPart.FindFirstField(field, value)</c>.
+    /// Finds the first record where the field (by hash) equals value. Stub returns true.
+    /// BC emits <c>tP.Target.GetPart(hash).ALFindFirstField(DataError, int fieldHash, value)</c>
+    /// for <c>TestPart.FindFirstField(field, value)</c>.
     /// </summary>
-    public bool ALFindFirstField(MockTestPageField field, object value) => true;
-    public bool ALFindFirstField(DataError errorLevel, MockTestPageField field, object value) => true;
+    public bool ALFindFirstField(int fieldHash, object value) => true;
+    public bool ALFindFirstField(DataError errorLevel, int fieldHash, object value) => true;
 
     /// <summary>
-    /// Finds the next record where field equals value. Stub returns false (end of set).
-    /// BC emits <c>tP.Target.GetPart(hash).ALFindNextField(field, value)</c> for
-    /// <c>TestPart.FindNextField(field, value)</c>.
+    /// Finds the next record where the field (by hash) equals value. Stub returns false (end of set).
+    /// BC emits <c>tP.Target.GetPart(hash).ALFindNextField(DataError, int fieldHash, value)</c>
+    /// for <c>TestPart.FindNextField(field, value)</c>.
     /// </summary>
-    public bool ALFindNextField(MockTestPageField field, object value) => false;
-    public bool ALFindNextField(DataError errorLevel, MockTestPageField field, object value) => false;
+    public bool ALFindNextField(int fieldHash, object value) => false;
+    public bool ALFindNextField(DataError errorLevel, int fieldHash, object value) => false;
 
     /// <summary>
-    /// Finds the previous record where field equals value. Stub returns false (end of set).
-    /// BC emits <c>tP.Target.GetPart(hash).ALFindPreviousField(field, value)</c> for
-    /// <c>TestPart.FindPreviousField(field, value)</c>.
+    /// Finds the previous record where the field (by hash) equals value. Stub returns false (end of set).
+    /// BC emits <c>tP.Target.GetPart(hash).ALFindPreviousField(DataError, int fieldHash, value)</c>
+    /// for <c>TestPart.FindPreviousField(field, value)</c>.
     /// </summary>
-    public bool ALFindPreviousField(MockTestPageField field, object value) => false;
-    public bool ALFindPreviousField(DataError errorLevel, MockTestPageField field, object value) => false;
+    public bool ALFindPreviousField(int fieldHash, object value) => false;
+    public bool ALFindPreviousField(DataError errorLevel, int fieldHash, object value) => false;
 
     /// <summary>
     /// Returns a MockRecordHandle representing the underlying record of the page.
