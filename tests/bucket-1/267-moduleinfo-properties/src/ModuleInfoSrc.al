@@ -1,5 +1,5 @@
 /// Helper codeunit exercising ModuleInfo property access in standalone mode.
-codeunit 84100 "MI Src"
+codeunit 88000 "MI Src"
 {
     /// Returns AppVersion from a default-initialised ModuleInfo.
     procedure DefaultAppVersion(): Text
