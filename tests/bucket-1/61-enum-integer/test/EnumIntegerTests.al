@@ -15,7 +15,7 @@ codeunit 57702 "EI Enum Integer Tests"
     begin
         // [GIVEN/WHEN] Red enum value converted to integer
         // [THEN] ordinal is 0
-        Assert.AreEqual(0, Converter.ToInteger(Enum::"EI Color"::Red), 'Red.AsInteger() must be 0');
+        Assert.AreEqual(0, Converter.ToInteger(Enum::"EI Color"::"Red"), 'Red.AsInteger() must be 0');
     end;
 
     [Test]
@@ -23,7 +23,7 @@ codeunit 57702 "EI Enum Integer Tests"
     begin
         // [GIVEN/WHEN] Green enum value converted to integer
         // [THEN] ordinal is 1
-        Assert.AreEqual(1, Converter.ToInteger(Enum::"EI Color"::Green), 'Green.AsInteger() must be 1');
+        Assert.AreEqual(1, Converter.ToInteger(Enum::"EI Color"::"Green"), 'Green.AsInteger() must be 1');
     end;
 
     [Test]
@@ -31,7 +31,7 @@ codeunit 57702 "EI Enum Integer Tests"
     begin
         // [GIVEN/WHEN] Blue enum value converted to integer
         // [THEN] ordinal is 2
-        Assert.AreEqual(2, Converter.ToInteger(Enum::"EI Color"::Blue), 'Blue.AsInteger() must be 2');
+        Assert.AreEqual(2, Converter.ToInteger(Enum::"EI Color"::"Blue"), 'Blue.AsInteger() must be 2');
     end;
 
     [Test]
@@ -40,7 +40,7 @@ codeunit 57702 "EI Enum Integer Tests"
         C: Enum "EI Color";
     begin
         // [GIVEN] Enum variable set to Green
-        C := Enum::"EI Color"::Green;
+        C := Enum::"EI Color"::"Green";
 
         // [WHEN] AsInteger called directly on variable
         // [THEN] returns correct ordinal
@@ -56,7 +56,7 @@ codeunit 57702 "EI Enum Integer Tests"
     begin
         // [GIVEN/WHEN] integer 0 converted to enum
         // [THEN] returns Red
-        Assert.AreEqual(Enum::"EI Color"::Red, Converter.FromInteger(0), 'FromInteger(0) must return Red');
+        Assert.AreEqual(Enum::"EI Color"::"Red", Converter.FromInteger(0), 'FromInteger(0) must return Red');
     end;
 
     [Test]
@@ -64,7 +64,7 @@ codeunit 57702 "EI Enum Integer Tests"
     begin
         // [GIVEN/WHEN] integer 1 converted to enum
         // [THEN] returns Green
-        Assert.AreEqual(Enum::"EI Color"::Green, Converter.FromInteger(1), 'FromInteger(1) must return Green');
+        Assert.AreEqual(Enum::"EI Color"::"Green", Converter.FromInteger(1), 'FromInteger(1) must return Green');
     end;
 
     [Test]
@@ -72,7 +72,7 @@ codeunit 57702 "EI Enum Integer Tests"
     begin
         // [GIVEN/WHEN] integer 2 converted to enum
         // [THEN] returns Blue
-        Assert.AreEqual(Enum::"EI Color"::Blue, Converter.FromInteger(2), 'FromInteger(2) must return Blue');
+        Assert.AreEqual(Enum::"EI Color"::"Blue", Converter.FromInteger(2), 'FromInteger(2) must return Blue');
     end;
 
     [Test]
@@ -82,7 +82,7 @@ codeunit 57702 "EI Enum Integer Tests"
         RoundTripped: Enum "EI Color";
     begin
         // [GIVEN] an enum value
-        Original := Enum::"EI Color"::Blue;
+        Original := Enum::"EI Color"::"Blue";
 
         // [WHEN] converted to integer and back
         RoundTripped := Enum::"EI Color".FromInteger(Original.AsInteger());

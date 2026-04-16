@@ -2,9 +2,15 @@ enum 57700 "EI Color"
 {
     Extensible = false;
 
-    value(0; Red) { Caption = 'Red'; }
-    value(1; Green) { Caption = 'Green'; }
-    value(2; Blue) { Caption = 'Blue'; }
+    value(0; "Red")
+    {
+    }
+    value(1; "Green")
+    {
+    }
+    value(2; "Blue")
+    {
+    }
 }
 
 codeunit 57701 "EI Enum Converter"
