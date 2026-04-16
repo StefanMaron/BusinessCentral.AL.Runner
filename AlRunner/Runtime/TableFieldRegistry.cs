@@ -66,6 +66,12 @@ public static class TableFieldRegistry
         @"\bOptionMembers\s*=\s*([^;]+);",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    // Directly captures field ID and OptionMembers from Option field declarations.
+    // Matches: field(id; <name>; Option) { [^{}]* OptionMembers = <value>; }
+    private static readonly Regex OptionFieldMembersRx = new(
+        @"\bfield\s*\(\s*(\d+)\s*;[^;]+;\s*Option\s*\)\s*\{[^{}]*\bOptionMembers\s*=\s*([^;]+);",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     public static void Clear()
     {
         _byTable.Clear();
@@ -159,9 +165,6 @@ public static class TableFieldRegistry
                         var capMatch = CaptionProp.Match(fieldBody);
                         if (capMatch.Success)
                             fieldCaption = DecodeAlSingleQuotedString(capMatch.Groups[1].Value);
-                        var omMatch = OptionMembersProp.Match(fieldBody);
-                        if (omMatch.Success)
-                            _optionMembersFields[(tableId, fieldId)] = omMatch.Groups[1].Value.Trim();
                     }
                 }
 
@@ -174,6 +177,15 @@ public static class TableFieldRegistry
                 if (!int.TryParse(em.Groups[1].Value, out var fieldId)) continue;
                 var enumName = em.Groups[4].Success ? em.Groups[4].Value : em.Groups[5].Value;
                 _enumFields[(tableId, fieldId)] = enumName;
+            }
+
+            // Extract OptionMembers for inline Option fields via a dedicated pass over the body.
+            // This is more reliable than using field body extraction and avoids edge cases
+            // with field body position tracking.
+            foreach (Match om in OptionFieldMembersRx.Matches(body))
+            {
+                if (!int.TryParse(om.Groups[1].Value, out var fieldId)) continue;
+                _optionMembersFields[(tableId, fieldId)] = om.Groups[2].Value.Trim();
             }
 
             // Extract the first declared key (typically Clustered PK) and
