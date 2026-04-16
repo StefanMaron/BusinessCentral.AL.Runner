@@ -14,7 +14,6 @@ page 82000 "TCP Test Card"
 {
     PageType = Card;
     SourceTable = "TCP Test Record";
-    Tooltip = 'Page-level tooltip';
 
     layout
     {
