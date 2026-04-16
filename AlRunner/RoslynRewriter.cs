@@ -121,18 +121,6 @@ public class RoslynRewriter : CSharpSyntaxRewriter
     /// </summary>
     public static SyntaxTree RewriteToTree(string csharp)
     {
-        // TEMPORARY DIAGNOSTIC — remove after diagnosing issue #499 Byte.ToText CI failure
-        if (csharp.Contains("BTT") || csharp.Contains("ByteToText") || csharp.Contains("NavByte"))
-        {
-            Console.Error.WriteLine("[DIAG] BTT/NavByte file — relevant lines:");
-            foreach (var line in csharp.Split('\n'))
-            {
-                var t = line.Trim();
-                if (t.Contains("ToText") || t.Contains("NavByte") || t.Contains("NavValueFormatter") ||
-                    t.Contains("ByteToText") || t.Contains("FormatWith"))
-                    Console.Error.WriteLine($"  {t}");
-            }
-        }
         var tree = CSharpSyntaxTree.ParseText(csharp);
         var root = tree.GetRoot();
 
@@ -1871,18 +1859,16 @@ public void ClearApplicationMemberVariables() { }
         var visited = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
 
         // `<expr>.ToText(...)` -> `AlCompat.Format(<expr>)`
-        // BC lowers AL's `xVar.ToText()` to a `navX.ToText(...)` call where the arguments
-        // vary by type and BC version:
+        // BC lowers AL's `xVar.ToText()` to either an instance `navX.ToText(...)` call
+        // or a static `ALCompiler.ToText(session, value)` call (the latter is handled
+        // separately below). For instance calls the arguments vary by type and BC version:
         //  - `null!` (1 arg)  — most types (NavDateTime, NavDate, …); session passed as null!
         //  - real session ref (1 arg) — some types/versions pass an actual NavSession expression
-        //  - 0 args — NavByte may use a zero-argument overload on some BC versions
         //  - session + format-number (2 args) — extended overloads on some BC versions
-        // All forms end up calling NavValueFormatter → NavByteFormatter → NCLManagedAdapter
-        // (OEM native code) which fails without the BC service tier.
-        // AlCompat.Format handles every BC value type without session access.
-        // We intercept any `expr.ToText(...)` call regardless of argument count and route the
-        // receiver (expr) through AlCompat.Format, discarding all arguments (session,
-        // format-number) since AlCompat.Format does not need them.
+        // All forms end up calling NavValueFormatter → NCLManagedAdapter (OEM native code)
+        // which fails without the BC service tier. AlCompat.Format handles every BC value
+        // type without session access. We route the receiver (expr) through AlCompat.Format,
+        // discarding all arguments since AlCompat.Format does not need them.
         if (visited.Expression is MemberAccessExpressionSyntax toTextMa &&
             toTextMa.Name.Identifier.Text == "ToText")
         {
@@ -2385,6 +2371,26 @@ public void ClearApplicationMemberVariables() { }
             // fail to initialize without the BC service tier. AlCompat.Format handles all BC value
             // types without NavSession. We take the second argument (value) and discard the rest.
             if (exprText == "NavValueFormatter" && methodName == "Format"
+                && visited.ArgumentList.Arguments.Count >= 2)
+            {
+                var valueArg = visited.ArgumentList.Arguments[1];
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("Format")),
+                    SyntaxFactory.ArgumentList(
+                        SyntaxFactory.SingletonSeparatedList(valueArg)))
+                    .WithTriviaFrom(visited);
+            }
+
+            // ALCompiler.ToText(session, value) -> AlCompat.Format(value)
+            // BC lowers `byteVar.ToText()` (and other scalar ToText calls) to the static
+            // ALCompiler.ToText(session, value) form. For Byte, this routes through
+            // NavValueFormatter -> NavByteFormatter -> NCLManagedAdapter (OEM native DLLs)
+            // which fails without the BC service tier. AlCompat.Format handles all BC value
+            // types without session access. We take the second argument (value).
+            if (exprText == "ALCompiler" && methodName == "ToText"
                 && visited.ArgumentList.Arguments.Count >= 2)
             {
                 var valueArg = visited.ArgumentList.Arguments[1];
