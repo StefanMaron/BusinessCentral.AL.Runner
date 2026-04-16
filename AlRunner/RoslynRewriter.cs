@@ -1600,6 +1600,25 @@ public void ClearApplicationMemberVariables() { }
             return base.VisitInvocationExpression(node);
         }
 
+        // ALDatabase.ALSessionID() -> MockSession.GetSessionId()
+        // BC lowers SessionId() to a 0-argument static method call on ALDatabase.
+        // This must be caught before base.VisitInvocationExpression because the MemberAccess
+        // visitor would otherwise replace the callee with MockSession.GetSessionId() and produce
+        // the invalid double-call form MockSession.GetSessionId()().
+        if (node.Expression is MemberAccessExpressionSyntax sessionMa &&
+            sessionMa.Expression is IdentifierNameSyntax sessionDbIdent &&
+            sessionDbIdent.Identifier.Text == "ALDatabase" &&
+            (sessionMa.Name.Identifier.Text == "ALSessionID" || sessionMa.Name.Identifier.Text == "ALSessionId"))
+        {
+            return SyntaxFactory.InvocationExpression(
+                SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("MockSession"),
+                    SyntaxFactory.IdentifierName("GetSessionId")),
+                SyntaxFactory.ArgumentList())
+                .WithTriviaFrom(node);
+        }
+
         // `NavOption.Create(existing.NavOptionMetadata, V)` — reassignment
         // pattern BC emits when an AL enum variable is re-assigned. Route
         // through AlCompat.CloneTaggedOption so the new instance inherits
@@ -1956,24 +1975,6 @@ public void ClearApplicationMemberVariables() { }
                     SyntaxKind.SimpleMemberAccessExpression,
                     SyntaxFactory.IdentifierName("NCLOptionMetadata"),
                     SyntaxFactory.IdentifierName("Default"));
-            }
-
-            // ALSession.ALSessionID(session) / ALDatabase.ALSessionID(session)
-            // -> MockSession.GetSessionId()
-            // SessionId() is a global AL function that returns the current session ID.
-            // BC may lower it to ALSession.ALSessionID or ALDatabase.ALSessionID with a NavSession arg
-            // that becomes null! after the Session→null! rewrite, causing NullReferenceException.
-            // Replace the entire invocation with a 0-arg call to MockSession.GetSessionId().
-            if ((methodName == "ALSessionID" || methodName == "ALSessionId") &&
-                (exprText == "ALSession" || exprText == "ALDatabase"))
-            {
-                return SyntaxFactory.InvocationExpression(
-                    SyntaxFactory.MemberAccessExpression(
-                        SyntaxKind.SimpleMemberAccessExpression,
-                        SyntaxFactory.IdentifierName("MockSession"),
-                        SyntaxFactory.IdentifierName("GetSessionId")),
-                    SyntaxFactory.ArgumentList())
-                    .WithTriviaFrom(visited);
             }
 
             // ALSession.ALStartSession(...) -> MockSession.ALStartSession(...)
@@ -2823,20 +2824,6 @@ public void ClearApplicationMemberVariables() { }
         if (memberName == "IsEventSessionRecorderEnabled")
         {
             return SyntaxFactory.LiteralExpression(SyntaxKind.FalseLiteralExpression)
-                .WithTriviaFrom(visited);
-        }
-        // Pattern: <any>.ALSessionID or <any>.ALSessionId — the BC compiler lowers SessionId() to
-        // a property access on ALDatabase or this.Session. The rewriter turns this.Session → null!,
-        // so null!.ALSessionID throws NullReferenceException. BC follows the ALUserID naming convention
-        // (uppercase "ID"), but we also catch lowercase "Id" for robustness across BC versions.
-        // Catch by member name regardless of receiver and redirect to MockSession.GetSessionId().
-        if (memberName == "ALSessionID" || memberName == "ALSessionId")
-        {
-            return SyntaxFactory.InvocationExpression(
-                SyntaxFactory.MemberAccessExpression(
-                    SyntaxKind.SimpleMemberAccessExpression,
-                    SyntaxFactory.IdentifierName("MockSession"),
-                    SyntaxFactory.IdentifierName("GetSessionId")))
                 .WithTriviaFrom(visited);
         }
         if (memberName.StartsWith("ALIs") && NavVariantTypeCheckProps.Contains(memberName))
