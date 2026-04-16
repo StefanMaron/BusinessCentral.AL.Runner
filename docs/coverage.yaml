@@ -5726,7 +5726,7 @@ System.Sleep:
   layer: runtime-api
   category: System
   status: covered
-  notes: overloads=1; no-op stub in MockSession.Sleep via RoslynRewriter NavSession.Sleep→MockSession.Sleep rewrite; tests in tests/bucket-2/152-sleep
+  notes: overloads=1; no-op stub in MockSession.Sleep via RoslynRewriter NavSession.Sleep→MockSession.Sleep rewrite; tests in tests/bucket-2/153-sleep
 
 System.TemporaryPath:
   layer: runtime-api
