@@ -1361,6 +1361,18 @@ public static class AlCompat
     public static bool NavCodeEquals(NavCode a, NavCode b)
         => string.Equals((string)a, (string)b, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// NavCode ordering comparison that avoids NavEnvironment.
+    /// BC emits <c>Category.CompareTo(new NavCode(N, "A"))</c> for
+    /// <c>case Category of 'A':</c> statements. <c>NavCode.CompareTo</c>
+    /// calls <c>NavStringValue.CompareTo</c> which calls NavEnvironment
+    /// (null in standalone → NullReferenceException). This helper does the
+    /// same comparison via the same safe <c>(string)</c> cast used in
+    /// <see cref="NavCodeEquals"/>.
+    /// </summary>
+    public static int NavCodeCompare(NavCode a, NavCode b)
+        => string.Compare((string)a, (string)b, StringComparison.OrdinalIgnoreCase);
+
     // -----------------------------------------------------------------------
     // ALSystemNumeric replacements (ALRandomize/ALRandom require NavSession)
     // -----------------------------------------------------------------------

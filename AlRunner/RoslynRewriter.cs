@@ -1803,6 +1803,29 @@ public void ClearApplicationMemberVariables() { }
             }
         }
 
+        // <navCodeVar>.CompareTo(<arg>) — BC emits this for case statements on Code[N] fields.
+        // NavCode.CompareTo → NavStringValue.CompareTo calls NavEnvironment (null standalone).
+        // We intercept when the argument is AlCompat.CreateNavCode(...) (the case label after
+        // our VisitObjectCreationExpression rewrite) and route through the safe NavCodeCompare.
+        if (visited.ArgumentList.Arguments.Count == 1 &&
+            visited.Expression is MemberAccessExpressionSyntax compareToMa &&
+            compareToMa.Name.Identifier.Text == "CompareTo" &&
+            IsCreateNavCodeCall(visited.ArgumentList.Arguments[0].Expression))
+        {
+            var receiver = compareToMa.Expression;
+            var compareArg = visited.ArgumentList.Arguments[0].Expression;
+            return SyntaxFactory.InvocationExpression(
+                SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("AlCompat"),
+                    SyntaxFactory.IdentifierName("NavCodeCompare")),
+                SyntaxFactory.ArgumentList(
+                    SyntaxFactory.SeparatedList<ArgumentSyntax>(new[] {
+                        SyntaxFactory.Argument(receiver),
+                        SyntaxFactory.Argument(compareArg)
+                    })));
+        }
+
         // NavText?.ToLowerInvariant() / ?.ToUpperInvariant() -> NavText?.ToString().ToLowerInvariant()
         // NavText implicitly converts to ReadOnlySpan<char>, which picks up the wrong
         // MemoryExtensions.ToLowerInvariant(ReadOnlySpan, Span) overload. Insert .ToString()
