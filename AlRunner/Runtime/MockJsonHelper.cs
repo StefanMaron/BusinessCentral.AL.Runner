@@ -227,14 +227,6 @@ public static class MockJsonHelper
         return NavJsonToken.Create(cloned);
     }
 
-    /// <summary>
-    /// Replacement for NavJsonToken property ALPath (read-only).
-    /// Returns the JSONPath of the backing JToken within its containing structure.
-    /// BC's ALPath property returns NavText; this matches that return type.
-    /// </summary>
-    public static NavText Path(NavJsonToken token)
-        => new NavText(GetBackingToken(token).Path ?? string.Empty);
-
     private static bool IsSupportedTokenType(JToken token)
     {
         return token.Type switch

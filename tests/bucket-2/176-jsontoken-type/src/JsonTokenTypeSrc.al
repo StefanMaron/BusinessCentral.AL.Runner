@@ -44,19 +44,12 @@ codeunit 97100 "JTT Src"
         exit(JObj.Contains(PropName));
     end;
 
-    /// Clone a token and verify the clone is independent.
-    procedure CloneAndModify(JT: JsonToken): Text
+    /// Clone a token and verify the clone has the same value.
+    procedure CloneAndRead(JT: JsonToken): Text
     var
         Cloned: JsonToken;
-        JVal: JsonValue;
     begin
         Cloned := JT.Clone();
         exit(Cloned.AsValue().AsText());
-    end;
-
-    /// Return the Path property of a token retrieved from an object.
-    procedure GetPath(JT: JsonToken): Text
-    begin
-        exit(JT.Path);
     end;
 }

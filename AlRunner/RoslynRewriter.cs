@@ -3465,23 +3465,6 @@ public void ClearApplicationMemberVariables() { }
                 .WithTriviaFrom(visited);
         }
 
-        // Pattern: token.ALPath (property getter — no invocation parentheses)
-        // AL JsonToken.Path is a read-only property; BC generates it as a C# property access.
-        // The real getter goes through NavJsonToken internals that access TrappableOperationExecutor.
-        // Rewrite to: MockJsonHelper.Path(token) which reads BackingToken.Path directly.
-        if (memberName == "ALPath")
-        {
-            return SyntaxFactory.InvocationExpression(
-                SyntaxFactory.MemberAccessExpression(
-                    SyntaxKind.SimpleMemberAccessExpression,
-                    SyntaxFactory.IdentifierName("MockJsonHelper"),
-                    SyntaxFactory.IdentifierName("Path")),
-                SyntaxFactory.ArgumentList(
-                    SyntaxFactory.SingletonSeparatedList(
-                        SyntaxFactory.Argument(visited.Expression))))
-                .WithTriviaFrom(visited);
-        }
-
         return visited;
     }
 

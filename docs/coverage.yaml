@@ -3455,10 +3455,8 @@ JsonToken.IsValue:
 JsonToken.Path:
   layer: runtime-api
   category: JsonToken
-  status: covered
-  notes: overloads=1; property redirected via MockJsonHelper.Path
-  tests:
-    - tests/bucket-2/176-jsontoken-type
+  status: gap
+  notes: overloads=1; ALPath property is too broadly named — MockCookie also has ALPath; needs type-aware rewriter support
 
 JsonToken.ReadFrom:
   layer: runtime-api

@@ -155,20 +155,6 @@ codeunit 97101 "JTT Tests"
     begin
         JArr.Add('original');
         JArr.Get(0, JT);
-        Assert.AreEqual('original', Src.CloneAndModify(JT), 'Clone().AsValue().AsText() must return ''original''');
-    end;
-
-    // --- Path ---
-
-    [Test]
-    procedure Path_TokenFromObject_ReturnsNonEmptyString()
-    var
-        Src: Codeunit "JTT Src";
-        JObj: JsonObject;
-        JT: JsonToken;
-    begin
-        JObj.Add('name', 'Alice');
-        JObj.Get('name', JT);
-        Assert.AreNotEqual('', Src.GetPath(JT), 'Path() must return a non-empty string for a named property');
+        Assert.AreEqual('original', Src.CloneAndRead(JT), 'Clone().AsValue().AsText() must return ''original''');
     end;
 }
