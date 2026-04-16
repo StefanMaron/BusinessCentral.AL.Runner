@@ -784,7 +784,9 @@ area_section:
 cuegroup_section:
   layer: syntax
   category: page
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/71-cuegroup-section
 
 customaction_declaration:
   layer: syntax
