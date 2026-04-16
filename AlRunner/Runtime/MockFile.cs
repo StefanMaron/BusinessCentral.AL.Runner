@@ -121,15 +121,11 @@ public class MockFile
 
     public void ALRead(object? parent, ref NavText value) => ALRead(ref value);
 
-    /// <summary>ALLen — returns the total byte length of the in-memory buffer.</summary>
-    public int ALLen() => _data.Length;
+    /// <summary>ALLen — returns the total byte length of the in-memory buffer (BC emits as property).</summary>
+    public int ALLen { get => _data.Length; }
 
-    public int ALLen(object? parent) => ALLen();
-
-    /// <summary>ALPos — returns the current read/write position.</summary>
-    public int ALPos() => _pos;
-
-    public int ALPos(object? parent) => ALPos();
+    /// <summary>ALPos — returns the current read/write position (BC emits as property).</summary>
+    public int ALPos { get => _pos; }
 
     /// <summary>ALSeek — moves the current position.</summary>
     public void ALSeek(int pos)

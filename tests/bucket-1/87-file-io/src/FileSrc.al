@@ -10,14 +10,15 @@ codeunit 87000 "FIO Src"
     procedure WriteAndReadBack(Content: Text): Text
     var
         f: File;
+        OutStr: OutStream;
+        InStr: InStream;
         ReadBack: Text;
     begin
-        f.TextMode(true);
-        f.WriteMode(true);
         f.Create('test.tmp');
-        f.Write(Content);
-        f.Seek(0);
-        f.Read(ReadBack);
+        f.CreateOutStream(OutStr);
+        OutStr.WriteText(Content);
+        f.CreateInStream(InStr);
+        InStr.ReadText(ReadBack);
         f.Close();
         exit(ReadBack);
     end;
@@ -25,11 +26,11 @@ codeunit 87000 "FIO Src"
     procedure CreateAndLen(Content: Text): Integer
     var
         f: File;
+        OutStr: OutStream;
     begin
-        f.TextMode(true);
-        f.WriteMode(true);
         f.Create('len.tmp');
-        f.Write(Content);
+        f.CreateOutStream(OutStr);
+        OutStr.WriteText(Content);
         exit(f.Len());
     end;
 }
