@@ -27,6 +27,13 @@ public static class MockSession
     public static string GetCompanyName() => _companyName;
 
     /// <summary>
+    /// Value returned by the AL <c>SessionId()</c> built-in.
+    /// Returns a stable non-zero integer (1) — the exact value is not meaningful
+    /// in standalone mode; the only contract is that it is positive and consistent.
+    /// </summary>
+    public static int GetSessionId() => 1;
+
+    /// <summary>
     /// Sets the value returned by the AL <c>CompanyName()</c> built-in.
     /// Reset back to <see cref="DefaultCompanyName"/> before each test.
     /// </summary>

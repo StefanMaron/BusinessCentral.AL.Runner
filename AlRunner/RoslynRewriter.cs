@@ -2756,6 +2756,20 @@ public void ClearApplicationMemberVariables() { }
             }
         }
 
+        // Pattern: ALDatabase.ALSessionId — integer property, crashes without a live BC session.
+        // Rewrite to MockSession.GetSessionId() which returns a stable non-zero stub value (1).
+        if (visited.Expression is IdentifierNameSyntax sessionDbId &&
+            sessionDbId.Identifier.Text == "ALDatabase" &&
+            visited.Name.Identifier.Text == "ALSessionId")
+        {
+            return SyntaxFactory.InvocationExpression(
+                SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("MockSession"),
+                    SyntaxFactory.IdentifierName("GetSessionId")))
+                .WithTriviaFrom(visited);
+        }
+
         // Pattern: ALDatabase.ALCompanyName / ALDatabase.ALUserID / ALDatabase.ALTenantID / ALDatabase.ALSerialNumber
         // These static property accesses crash because ALDatabase requires a live BC session.
         // ALCompanyName routes to MockSession.GetCompanyName() (configurable via --company-name CLI flag).

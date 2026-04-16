@@ -1506,8 +1506,8 @@ Database.ServiceInstanceId:
 Database.SessionId:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; returns 1 (stable non-zero stub)
 
 Database.SetDefaultTableConnection:
   layer: runtime-api

@@ -19,6 +19,11 @@ All notable changes to this project are documented here. Format based on
   without requiring the `--user-id` CLI flag. New suite `tests/bucket-1/57-userid`
   adds 2 proving tests: UserId is non-empty, UserId is consistent across calls.
   Coverage map: `Database.UserId` moved from `gap` to `covered`.
+- **`Database.SessionId` (#316)** — `SessionId()` now returns a stable non-zero integer (1).
+  The BC compiler lowers this global function to `ALDatabase.ALSessionId` (a property access).
+  `RoslynRewriter` now redirects that to `MockSession.GetSessionId()`. New suite
+  `tests/bucket-1/58-database-sessionid` proves: positive call returns > 0, and consecutive
+  calls return the same value. Coverage map: `Database.SessionId` moved from `gap` to `stub`.
 - **`Record.IsEmpty` coverage (#299)** — `ALIsEmpty` was already implemented in
   `MockRecordHandle` (`GetFilteredAndMarkedRecords().Count == 0`) but had no proving
   tests. New suite `tests/bucket-1/56-isempty` adds 5 proving tests: empty table →
