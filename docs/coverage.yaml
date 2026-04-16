@@ -1148,8 +1148,8 @@ attribute_item:
 BigInteger.ToText:
   layer: runtime-api
   category: BigInteger
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; Format(BigInteger) dispatches through AlCompat.Format which handles NavBigInteger via ((long)nbi).ToString()
 
 # ── BigText ─────────────────────────────────────────────────────
 
