@@ -22,19 +22,22 @@ codeunit 84200 "MI Src"
     end;
 
     /// Returns Id (GUID) from a default-initialised ModuleInfo.
+    /// Braces are stripped so the result is stable across BC versions
+    /// (16.2 returns "00000000-..." while 26+ returns "{00000000-...}").
     procedure DefaultId(): Text
     var
         Info: ModuleInfo;
     begin
-        exit(Format(Info.Id));
+        exit(DelChr(Format(Info.Id), '=', '{}'));
     end;
 
     /// Returns PackageId (GUID) from a default-initialised ModuleInfo.
+    /// Braces are stripped — see DefaultId for the cross-version rationale.
     procedure DefaultPackageId(): Text
     var
         Info: ModuleInfo;
     begin
-        exit(Format(Info.PackageId));
+        exit(DelChr(Format(Info.PackageId), '=', '{}'));
     end;
 
     /// Returns Name from a default-initialised ModuleInfo.
