@@ -2644,6 +2644,19 @@ public void ClearApplicationMemberVariables() { }
                     .WithTriviaFrom(visited);
             }
 
+            // ALDatabase.ALUserSecurityId() -> AlCompat.UserSecurityId()
+            // Real impl requires NavSession (crashes with NullReferenceException standalone).
+            // AlCompat.UserSecurityId returns a fixed non-null Guid so stability is preserved
+            // across reads within a test run.
+            if (exprText == "ALDatabase" && methodName == "ALUserSecurityId")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("UserSecurityId")));
+            }
+
             // ALDatabase.ALLastUsedRowVersion() -> 0L
             // ALDatabase.ALMinimumActiveRowVersion() -> 0L
             // BC lowers Database.LastUsedRowVersion / MinimumActiveRowVersion to method

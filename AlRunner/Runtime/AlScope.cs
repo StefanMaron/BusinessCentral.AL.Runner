@@ -1446,6 +1446,17 @@ public static class AlCompat
     public static NavGuid ALCreateSequentialGuid() => new NavGuid(Guid.NewGuid());
 
     /// <summary>
+    /// Replacement for ALDatabase.ALUserSecurityId() which requires NavSession.
+    /// Returns a fixed non-null Guid stable across reads within a process so tests
+    /// that compare two reads observe equality. The exact value is arbitrary; what
+    /// matters is that it is non-null and stable.
+    /// </summary>
+    private static readonly Guid _userSecurityId =
+        new Guid("22222222-2222-2222-2222-222222222222");
+
+    public static Guid UserSecurityId() => _userSecurityId;
+
+    /// <summary>
     /// Replacement for ALDatabase.ALCurrentTransactionType() which requires NavSession.
     /// The runner has no real transaction tracking; returns TransactionType.Update,
     /// the most common real-world value and a predictable stable stub.

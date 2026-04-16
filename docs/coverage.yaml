@@ -1681,8 +1681,10 @@ Database.UserId:
 Database.UserSecurityId:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter routes to AlCompat.UserSecurityId which returns a fixed non-null Guid stable across reads.
+  tests:
+    - tests/bucket-2/147-usersecurityid
 
 # ── Date ────────────────────────────────────────────────────────
 
