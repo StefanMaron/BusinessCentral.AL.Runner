@@ -2407,6 +2407,40 @@ public void ClearApplicationMemberVariables() { }
                         SyntaxFactory.IdentifierName("CopyStr")));
             }
 
+            // ALSystemString.ALSecretStrSubstNo(fmt, arg1, ...) -> AlCompat.SecretStrSubstNo(fmt, arg1, ...)
+            // The BC runtime SecretStrSubstNo creates a NavSecretText that requires NavSession.
+            // AlCompat.SecretStrSubstNo formats the string via StrSubstNo and wraps in NavSecretText.Create().
+            if (exprText == "ALSystemString" && methodName == "ALSecretStrSubstNo")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("SecretStrSubstNo")));
+            }
+
+            // <secret>.ALUnwrap() -> AlCompat.Unwrap(<secret>)
+            // NavSecretText.ALUnwrap() may crash without NavSession in some BC versions.
+            // AlCompat.Unwrap() extracts the underlying string via reflection.
+            // We intercept based on method name only (NavSecretText is the only type with ALUnwrap).
+            if (methodName == "ALUnwrap" && visited.ArgumentList.Arguments.Count == 0)
+            {
+                var memberAccess = visited.Expression as MemberAccessExpressionSyntax;
+                if (memberAccess != null)
+                {
+                    var receiver = memberAccess.Expression;
+                    return SyntaxFactory.InvocationExpression(
+                        SyntaxFactory.MemberAccessExpression(
+                            SyntaxKind.SimpleMemberAccessExpression,
+                            SyntaxFactory.IdentifierName("AlCompat"),
+                            SyntaxFactory.IdentifierName("Unwrap")),
+                        SyntaxFactory.ArgumentList(
+                            SyntaxFactory.SingletonSeparatedList(
+                                SyntaxFactory.Argument(receiver))))
+                        .WithTriviaFrom(visited);
+                }
+            }
+
             // ALDatabase.ALIsInWriteTransaction() -> false
             // The real ALIsInWriteTransaction calls NavSession.HasWriteTransaction() which crashes
             // with NullReferenceException when NavSession is null (runner context, no DB).

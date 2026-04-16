@@ -4985,20 +4985,23 @@ RequestPage.Update:
 SecretText.IsEmpty:
   layer: runtime-api
   category: SecretText
-  status: gap
+  status: covered
+  tests: tests/bucket-1/67-secret-text-methods
   notes: overloads=1
 
 SecretText.SecretStrSubstNo:
   layer: runtime-api
   category: SecretText
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/67-secret-text-methods
+  notes: overloads=1; intercepted via ALSystemString.ALSecretStrSubstNo → AlCompat.SecretStrSubstNo
 
 SecretText.Unwrap:
   layer: runtime-api
   category: SecretText
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/67-secret-text-methods
+  notes: overloads=1; intercepted via ALUnwrap() → AlCompat.Unwrap() using reflection
 
 # ── Session ─────────────────────────────────────────────────────
 
