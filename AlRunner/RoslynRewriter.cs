@@ -53,6 +53,7 @@ public class RoslynRewriter : CSharpSyntaxRewriter
         "ALChangeUserPassword",  // ALDatabase.ALChangeUserPassword(err, old, new) — user system not modeled; no-op standalone
         "ALCopyCompany",  // ALDatabase.ALCopyCompany(src, dest) — no multi-company store standalone; no-op
         "ALImportData",   // ALDatabase.ALImportData(tableNo, path, create) — no file I/O standalone; no-op
+        "ALExportData",   // ALDatabase.ALExportData(fileName, ...) — no file I/O standalone; no-op
     };
 
     private static readonly HashSet<string> StripITreeObjectArgMethods = new(StringComparer.Ordinal)
