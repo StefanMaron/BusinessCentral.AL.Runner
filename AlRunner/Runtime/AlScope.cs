@@ -302,6 +302,22 @@ public class MockDialog
     /// </summary>
     public static void ALLogInternalError(object? session, object? msg, object? dataClassification, object? verbosity) { }
 
+    /// <summary>
+    /// AL's StrMenu(options [, defaultNo [, caption]]) — displays a menu and
+    /// returns the 1-based index of the selected option (or 0 on cancel).
+    /// BC lowers StrMenu to static calls on MockDialog with a leading session
+    /// (null! standalone) and a trailing Guid (dialog-id token).
+    ///
+    /// No UI standalone — we return the `defaultNo` (0 when omitted), matching
+    /// the "unhandled dialog → use default or cancel" convention already used
+    /// for CONFIRM and MESSAGE without handlers.
+    /// </summary>
+    public static int ALStrMenu(object? session, object? options, Guid dialogId) => 0;
+
+    public static int ALStrMenu(object? session, object? options, int defaultNo, Guid dialogId) => defaultNo;
+
+    public static int ALStrMenu(object? session, object? options, int defaultNo, object? caption, Guid dialogId) => defaultNo;
+
     // For ByRef<NavDialog> patterns that access .Value
     public MockDialog Value => this;
 
