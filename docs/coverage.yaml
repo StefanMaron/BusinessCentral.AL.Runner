@@ -2049,8 +2049,10 @@ ErrorInfo.AddNavigationAction:
 ErrorInfo.Callstack:
   layer: runtime-api
   category: ErrorInfo
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone on default-initialised ErrorInfo values. ErrorInfo.Create() itself has a separate DLL-loading gap (loads Microsoft.Dynamics.Nav.CodeAnalysis 16.4.x).
+  tests:
+    - tests/bucket-2/168-errorinfo-callstack
 
 ErrorInfo.Collectible:
   layer: runtime-api
