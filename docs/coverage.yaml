@@ -1923,26 +1923,30 @@ Dialog.Confirm:
 Dialog.Error:
   layer: runtime-api
   category: Dialog
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; AlDialog.Error implemented in Runtime/AlScope.cs (throws NavNCLMessageException). Asserterror-catchable per existing suites.
 
 Dialog.HideSubsequentDialogs:
   layer: runtime-api
   category: Dialog
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; emitted as property-set on MockDialog; no-op standalone.
+  tests:
+    - tests/bucket-2/161-dialog-methods
 
 Dialog.LogInternalError:
   layer: runtime-api
   category: Dialog
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; static MockDialog.ALLogInternalError stub (no telemetry pipeline standalone).
+  tests:
+    - tests/bucket-2/161-dialog-methods
 
 Dialog.Message:
   layer: runtime-api
   category: Dialog
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; AlDialog.Message implemented in Runtime/AlScope.cs, routes to MessageHandler or stdout.
 
 Dialog.Open:
   layer: runtime-api

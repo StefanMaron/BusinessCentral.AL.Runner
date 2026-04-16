@@ -287,6 +287,21 @@ public class MockDialog
     public void ALClose() { }
     public void ALAssign(MockDialog other) { }
 
+    /// <summary>
+    /// AL's Dialog.HideSubsequentDialogs — emitted as a property setter by the
+    /// BC compiler (`dlg.ALHideSubsequentDialogs = true`). No UI standalone;
+    /// the set is a no-op.
+    /// </summary>
+    public bool ALHideSubsequentDialogs { get; set; }
+
+    /// <summary>
+    /// AL's Dialog.LogInternalError(msg, dataClass, verbosity) — static method in AL.
+    /// BC emits `MockDialog.ALLogInternalError(session, msg, DataClassification, Verbosity)`
+    /// with a leading session (null! standalone). No telemetry pipeline standalone;
+    /// no-op stub. `object?` parameter types accept NavText/string + enum ordinals.
+    /// </summary>
+    public static void ALLogInternalError(object? session, object? msg, object? dataClassification, object? verbosity) { }
+
     // For ByRef<NavDialog> patterns that access .Value
     public MockDialog Value => this;
 
