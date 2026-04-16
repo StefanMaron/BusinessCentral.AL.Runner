@@ -1,5 +1,5 @@
 /// Source codeunit exercising the Version built-in type.
-codeunit 96100 "VER Source"
+codeunit 99100 "VER Source"
 {
     procedure CreateVersion(Major: Integer; Minor: Integer; Build: Integer; Revision: Integer): Version
     begin
