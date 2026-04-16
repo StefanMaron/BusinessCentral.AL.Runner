@@ -3992,19 +3992,19 @@ MediaSet.Remove:
 ModuleDependencyInfo.Id:
   layer: runtime-api
   category: ModuleDependencyInfo
-  status: gap
+  status: covered
   notes: overloads=1
 
 ModuleDependencyInfo.Name:
   layer: runtime-api
   category: ModuleDependencyInfo
-  status: gap
+  status: covered
   notes: overloads=1
 
 ModuleDependencyInfo.Publisher:
   layer: runtime-api
   category: ModuleDependencyInfo
-  status: gap
+  status: covered
   notes: overloads=1
 
 # ── ModuleInfo ──────────────────────────────────────────────────
