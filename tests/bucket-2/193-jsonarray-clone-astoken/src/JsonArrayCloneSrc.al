@@ -1,5 +1,5 @@
 /// Source codeunit exercising JsonArray.Clone() and JsonArray.AsToken().
-codeunit 60250 "JAC Src"
+codeunit 62010 "JAC Src"
 {
     /// Clone an array and return the clone as a JsonToken.
     procedure CloneArray(Arr: JsonArray): JsonToken
