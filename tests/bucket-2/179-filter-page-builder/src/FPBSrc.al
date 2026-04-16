@@ -40,13 +40,15 @@ codeunit 97200 "FPB Src"
         exit(FPB.Name(Index));
     end;
 
-    /// RunModal — returns the action result (Action::OK in standalone).
-    procedure RunModalResult(): Action
+    /// RunModal — call and verify it does not throw.
+    /// NOTE: FilterPageBuilder.RunModal() returns Boolean in older BC versions and
+    /// Action in newer ones. We do not capture the return value to stay portable.
+    procedure RunModalDoesNotError()
     var
         FPB: FilterPageBuilder;
     begin
         FPB.AddTable('Items', 27);
-        exit(FPB.RunModal());
+        FPB.RunModal();
     end;
 
     /// PageCaption — set and get the dialog caption.
