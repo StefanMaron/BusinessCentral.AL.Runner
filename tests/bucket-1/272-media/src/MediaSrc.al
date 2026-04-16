@@ -25,7 +25,7 @@ codeunit 84407 "Media Src"
         Storage: Record "Media Test Storage" temporary;
         Ok: Boolean;
     begin
-        Ok := Storage.MediaField.ImportFile(FileName);
+        Ok := Storage.MediaField.ImportFile(FileName, '');
         exit(Ok);
     end;
 
@@ -33,9 +33,11 @@ codeunit 84407 "Media Src"
     procedure HasValueAfterImportFile(FileName: Text): Boolean
     var
         Storage: Record "Media Test Storage" temporary;
+        HasVal: Boolean;
     begin
-        Storage.MediaField.ImportFile(FileName);
-        exit(Storage.MediaField.HasValue());
+        Storage.MediaField.ImportFile(FileName, '');
+        HasVal := Storage.MediaField.HasValue();
+        exit(HasVal);
     end;
 
     // ── ExportFile ───────────────────────────────────────────────────────────────

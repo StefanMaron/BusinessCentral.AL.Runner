@@ -62,6 +62,43 @@ public class MockMedia : NavValue
         return true;
     }
 
+    // BC 16.2 signature: ImportFile(FileName, Description [, MimeType])
+    public bool ALImportFile(DataError errorLevel, NavText fileName, NavText description)
+    {
+        _hasValue = true;
+        return true;
+    }
+
+    public bool ALImportFile(DataError errorLevel, string fileName, string description)
+    {
+        _hasValue = true;
+        return true;
+    }
+
+    public bool ALImportFile(DataError errorLevel, NavText fileName, NavText description, NavText mimeType)
+    {
+        _hasValue = true;
+        return true;
+    }
+
+    public bool ALImportFile(DataError errorLevel, string fileName, string description, string mimeType)
+    {
+        _hasValue = true;
+        return true;
+    }
+
+    public bool ALImportFile(NavText fileName, NavText description)
+    {
+        _hasValue = true;
+        return true;
+    }
+
+    public bool ALImportFile(NavText fileName, NavText description, NavText mimeType)
+    {
+        _hasValue = true;
+        return true;
+    }
+
     // ── ImportStream ─────────────────────────────────────────────────────────────
 
     /// <summary>

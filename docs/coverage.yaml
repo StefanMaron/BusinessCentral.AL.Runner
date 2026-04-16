@@ -3921,7 +3921,7 @@ Media.ImportFile:
   layer: runtime-api
   category: Media
   status: covered
-  notes: overloads=1
+  notes: "overloads=3; BC 16.2 signature requires (FileName, Description[, MimeType]) — Description is required"
   tests:
     - tests/bucket-1/272-media
 
