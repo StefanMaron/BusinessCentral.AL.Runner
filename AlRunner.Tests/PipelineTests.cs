@@ -572,4 +572,32 @@ namespace AlRunnerGenerated {
         Assert.True(result.Passed > 0);
         Assert.Equal(0, result.Failed);
     }
+
+    [Fact]
+    public void CurrentTransactionType_ReturnsStableValue()
+    {
+        // Validates that CurrentTransactionType() is correctly rewritten to AlCompat.CurrentTransactionType().
+        // If this test fails, the dump below shows the exact BC-compiled form (pre-rewrite) and
+        // the rewritten form so the method name and return-type handling can be verified.
+        var dumpPipeline = new AlRunnerPipeline();
+        var dumpResult = dumpPipeline.Run(new PipelineOptions
+        {
+            DumpCSharp = true,
+            InlineCode = "var TxType: TransactionType; TxType := CurrentTransactionType();"
+        });
+        var rewritePipeline = new AlRunnerPipeline();
+        var rewriteResult = rewritePipeline.Run(new PipelineOptions
+        {
+            DumpRewritten = true,
+            InlineCode = "var TxType: TransactionType; TxType := CurrentTransactionType();"
+        });
+
+        var pipeline = new AlRunnerPipeline();
+        var result = pipeline.Run(new PipelineOptions
+        {
+            InlineCode = "var TxType: TransactionType; TxType := CurrentTransactionType(); if TxType <> CurrentTransactionType() then error('not stable');"
+        });
+        Assert.True(result.ExitCode == 0,
+            $"CurrentTransactionType() crashed or was unstable.\nPre-rewrite C#:\n{dumpResult.StdOut}\nRewritten C#:\n{rewriteResult.StdOut}\nRunner output:\n{result.StdOut}\n{result.StdErr}");
+    }
 }
