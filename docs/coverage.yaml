@@ -1844,7 +1844,7 @@ EnumType.FromInteger:
   layer: runtime-api
   category: EnumType
   status: covered
-  notes: overloads=1; RoslynRewriter intercepts NCLEnumMetadata.Create(N).FromInteger(I) → AlCompat.EnumFromInteger(N,I); validates ordinal, throws on invalid
+  notes: overloads=1; RoslynRewriter intercepts NCLEnumMetadata.Create(N).FromInteger(I) → AlCompat.EnumFromInteger(N,I); runtime validates ordinal via EnumRegistry.GetMembers(N), throws on invalid
   tests:
     - tests/bucket-1/101-enum-frominteger
 
