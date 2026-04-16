@@ -35,12 +35,21 @@ public static class EnumRegistry
         @"\bOptionMembers\s*=\s*([^;]+);",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    // `Extensible = false;` inside an enum body
+    private static readonly Regex ExtensibleFalse = new(
+        @"\bExtensible\s*=\s*false\s*;",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     private static readonly Dictionary<int, List<(int Ordinal, string Name)>> _byId = new();
     // Enum AL name (e.g. "IV Mode" or "Simple Enum") -> list of members.
     // Populated alongside _byId so callers that only know the type name
     // (typically via a field InitValue expression) can resolve members.
     private static readonly Dictionary<string, List<(int Ordinal, string Name)>> _byName =
         new(StringComparer.OrdinalIgnoreCase);
+
+    // Tracks enum object IDs that are declared with Extensible = false.
+    // Only these enums have a closed set of ordinals and can be validated.
+    private static readonly HashSet<int> _nonExtensible = new();
 
     // (enumId, ordinal) -> (interfaceName, codeunitName) from
     // `Implementation = "Iface" = "Codeunit"` blocks inside enum value bodies.
@@ -64,6 +73,7 @@ public static class EnumRegistry
         _implsById.Clear();
         _implsByName.Clear();
         _inlineOptionMembers.Clear();
+        _nonExtensible.Clear();
     }
 
     /// <summary>
@@ -259,9 +269,21 @@ public static class EnumRegistry
                 _byName[enumName] = members;
             }
 
+            // Track whether this enum is explicitly non-extensible so
+            // CreateTaggedOption can validate ordinals only when safe to do so.
+            if (ExtensibleFalse.IsMatch(enumBody))
+                _nonExtensible.Add(id);
+
             headerMatch = headerMatch.NextMatch();
         }
     }
+
+    /// <summary>
+    /// Returns true when the enum with the given AL object ID was declared
+    /// with <c>Extensible = false</c> — meaning all valid ordinals are known
+    /// at compile time and runtime validation is safe.
+    /// </summary>
+    public static bool IsNonExtensible(int enumObjectId) => _nonExtensible.Contains(enumObjectId);
 
     public static IReadOnlyList<(int Ordinal, string Name)> GetMembers(int enumObjectId)
     {

@@ -442,14 +442,19 @@ public static class AlCompat
     /// </summary>
     public static NavOption CreateTaggedOption(int enumObjectId, int ordinal)
     {
-        var members = EnumRegistry.GetMembers(enumObjectId);
-        if (members.Count > 0)
+        // Only validate for Extensible = false enums — extensible enums may have
+        // extension ordinals not present in the registry, so validation is unsafe.
+        if (EnumRegistry.IsNonExtensible(enumObjectId))
         {
-            bool valid = false;
-            foreach (var (v, _) in members)
-                if (v == ordinal) { valid = true; break; }
-            if (!valid)
-                throw new Exception($"The value {ordinal} is not a valid ordinal for this enum type.");
+            var members = EnumRegistry.GetMembers(enumObjectId);
+            if (members.Count > 0)
+            {
+                bool valid = false;
+                foreach (var (v, _) in members)
+                    if (v == ordinal) { valid = true; break; }
+                if (!valid)
+                    throw new Exception($"The value {ordinal} is not a valid ordinal for this enum type.");
+            }
         }
         var opt = AlRunner.Runtime.MockRecordHandle.CreateOptionValue(ordinal);
         _optionEnumId.AddOrUpdate(opt, enumObjectId);
@@ -535,15 +540,7 @@ public static class AlCompat
     /// </summary>
     public static NavOption EnumFromInteger(int enumObjectId, int ordinal)
     {
-        var members = EnumRegistry.GetMembers(enumObjectId);
-        if (members.Count > 0)
-        {
-            bool valid = false;
-            foreach (var (v, _) in members)
-                if (v == ordinal) { valid = true; break; }
-            if (!valid)
-                throw new Exception($"The value {ordinal} is not a valid ordinal for this enum type.");
-        }
+        // Delegate to CreateTaggedOption which validates for Extensible = false enums.
         return CreateTaggedOption(enumObjectId, ordinal);
     }
 
