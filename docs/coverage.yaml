@@ -9591,73 +9591,86 @@ XmlReadOptions.PreserveWhitespace:
 XmlText.AddAfterSelf:
   layer: runtime-api
   category: XmlText
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native — no mock needed
+  tests: tests/bucket-1/270-xmltext
 
 XmlText.AddBeforeSelf:
   layer: runtime-api
   category: XmlText
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native — no mock needed
+  tests: tests/bucket-1/270-xmltext
 
 XmlText.AsXmlNode:
   layer: runtime-api
   category: XmlText
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native — no mock needed
+  tests: tests/bucket-1/270-xmltext
 
 XmlText.Create:
   layer: runtime-api
   category: XmlText
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native — no mock needed
+  tests: tests/bucket-1/270-xmltext
 
 XmlText.GetDocument:
   layer: runtime-api
   category: XmlText
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native — no mock needed
+  tests: tests/bucket-1/270-xmltext
 
 XmlText.GetParent:
   layer: runtime-api
   category: XmlText
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native — no mock needed
+  tests: tests/bucket-1/270-xmltext
 
 XmlText.Remove:
   layer: runtime-api
   category: XmlText
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native — no mock needed
+  tests: tests/bucket-1/270-xmltext
 
 XmlText.ReplaceWith:
   layer: runtime-api
   category: XmlText
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native — no mock needed
+  tests: tests/bucket-1/270-xmltext
 
 XmlText.SelectNodes:
   layer: runtime-api
   category: XmlText
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; BC native — no mock needed
+  tests: tests/bucket-1/270-xmltext
 
 XmlText.SelectSingleNode:
   layer: runtime-api
   category: XmlText
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; BC native — no mock needed
+  tests: tests/bucket-1/270-xmltext
 
 XmlText.Value:
   layer: runtime-api
   category: XmlText
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native — no mock needed
+  tests: tests/bucket-1/270-xmltext
 
 XmlText.WriteTo:
   layer: runtime-api
   category: XmlText
-  status: gap
+  status: covered
+  notes: overloads=1; BC native — no mock needed
+  tests: tests/bucket-1/270-xmltext
   notes: overloads=4
 
 # ── XmlWriteOptions ─────────────────────────────────────────────
