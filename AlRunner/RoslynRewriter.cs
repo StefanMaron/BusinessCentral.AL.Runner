@@ -2362,6 +2362,26 @@ public void ClearApplicationMemberVariables() { }
                         SyntaxFactory.IdentifierName("ToSecretText")));
             }
 
+            // NavValueFormatter.Format(session, value, length, formatNumber, formatSettings)
+            // -> AlCompat.Format(value)
+            // BC's NavValueFormatter.Format routes through NCLManagedAdapter for byte/char types
+            // (and other types via NavSession). NCLManagedAdapter requires native OEM DLLs that
+            // fail to initialize without the BC service tier. AlCompat.Format handles all BC value
+            // types without NavSession. We take the second argument (value) and discard the rest.
+            if (exprText == "NavValueFormatter" && methodName == "Format"
+                && visited.ArgumentList.Arguments.Count >= 2)
+            {
+                var valueArg = visited.ArgumentList.Arguments[1];
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("Format")),
+                    SyntaxFactory.ArgumentList(
+                        SyntaxFactory.SingletonSeparatedList(valueArg)))
+                    .WithTriviaFrom(visited);
+            }
+
             // ALCompiler.ToNavValue(x) -> AlCompat.ToNavValue(x)
             // ToNavValue chains through NavValueFormatter -> NavSession -> NavEnvironment
             if (exprText == "ALCompiler" && methodName == "ToNavValue")
