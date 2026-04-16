@@ -2133,8 +2133,10 @@ ErrorInfo.Message:
 ErrorInfo.PageNo:
   layer: runtime-api
   category: ErrorInfo
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; NavALErrorInfo.ALPageNo works via BC runtime DLL without session
+  tests:
+    - tests/bucket-2/170-errorinfo-pageno
 
 ErrorInfo.RecordId:
   layer: runtime-api
