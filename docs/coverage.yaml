@@ -5698,8 +5698,10 @@ Table.Copy:
 Table.CopyFilter:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests:
+    - tests/bucket-1/67-record-filterview
+  notes: overloads=1; copies filter from one field to a field on another record
 
 Table.CopyFilters:
   layer: runtime-api
@@ -5801,8 +5803,10 @@ Table.FieldNo:
 Table.FilterGroup:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests:
+    - tests/bucket-1/67-record-filterview
+  notes: overloads=1; no-op stub in standalone mode (filter groups not isolated)
 
 Table.Find:
   layer: runtime-api
@@ -5855,8 +5859,10 @@ Table.GetBySystemId:
 Table.GetFilter:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests:
+    - tests/bucket-1/67-record-filterview
+  notes: overloads=1; returns filter expression for a specific field
 
 Table.GetFilters:
   layer: runtime-api
@@ -5887,8 +5893,10 @@ Table.GetRangeMin:
 Table.GetView:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests:
+    - tests/bucket-1/67-record-filterview
+  notes: overloads=1; serialises SORTING+WHERE into a roundtrippable view string
 
 Table.HasFilter:
   layer: runtime-api
@@ -6109,8 +6117,10 @@ Table.SetRecFilter:
 Table.SetView:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests:
+    - tests/bucket-1/67-record-filterview
+  notes: overloads=1; parses SORTING+WHERE view string and restores filters
 
 Table.TableCaption:
   layer: runtime-api

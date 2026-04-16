@@ -1411,11 +1411,185 @@ public class MockRecordHandle
         // No-op: all fields always loaded in in-memory store
     }
 
-    public string ALGetView() => _viewText;
+    /// <summary>
+    /// AL GetView([useNames]) — serialises the current sort order and filter state
+    /// into a view string that can be round-tripped through SetView.
+    /// Format: [SORTING(Field1[,Field2...])] [WHERE(Field=FILTER(expr)[,Field=FILTER(expr)...])]
+    /// useNames=true (default) uses field names; false uses field numbers.
+    /// The useNames flag is accepted but we always emit names because MockRecordHandle
+    /// knows field names via TableFieldRegistry.
+    /// </summary>
+    public string ALGetView(bool useNames = true)
+    {
+        var parts = new List<string>();
 
+        // SORTING section
+        var sortFields = _currentKeyFields;
+        if (sortFields != null && sortFields.Length > 0)
+        {
+            var sortParts = new List<string>();
+            foreach (var fieldNo in sortFields)
+            {
+                var name = useNames ? GetFieldNameByNo(fieldNo) : fieldNo.ToString();
+                bool asc = !_ascending.TryGetValue(fieldNo, out var isAsc) || isAsc;
+                sortParts.Add(asc ? name : $"{name} DESC");
+            }
+            parts.Add($"SORTING({string.Join(",", sortParts)})");
+        }
+
+        // WHERE section
+        if (_filters.Count > 0)
+        {
+            var filterParts = new List<string>();
+            foreach (var kv in _filters.OrderBy(f => f.Key))
+            {
+                var name = useNames ? GetFieldNameByNo(kv.Key) : kv.Key.ToString();
+                var expr = SerializeFilter(kv.Value);
+                filterParts.Add($"{name}=FILTER({expr})");
+            }
+            parts.Add($"WHERE({string.Join(",", filterParts)})");
+        }
+
+        return string.Join(" ", parts);
+    }
+
+    /// <summary>
+    /// AL SetView(viewString) — parses a view string previously produced by GetView
+    /// and restores the sort order and filters.
+    /// Resets all existing filters and sort state before applying the view.
+    /// </summary>
     public void ALSetView(string view)
     {
         _viewText = view ?? string.Empty;
+
+        if (string.IsNullOrWhiteSpace(_viewText))
+            return;
+
+        // Parse SORTING(...)
+        var sortingMatch = System.Text.RegularExpressions.Regex.Match(_viewText, @"SORTING\(([^)]*)\)");
+        if (sortingMatch.Success)
+        {
+            _ascending.Clear();
+            var fields = sortingMatch.Groups[1].Value.Split(',');
+            var fieldNos = new List<int>();
+            foreach (var rawField in fields)
+            {
+                var field = rawField.Trim();
+                bool asc = true;
+                if (field.EndsWith(" DESC", StringComparison.OrdinalIgnoreCase))
+                {
+                    asc = false;
+                    field = field[..^5].Trim();
+                }
+                var fieldNo = ResolveFieldName(field);
+                if (fieldNo > 0)
+                {
+                    fieldNos.Add(fieldNo);
+                    _ascending[fieldNo] = asc;
+                }
+            }
+            if (fieldNos.Count > 0)
+                _currentKeyFields = fieldNos.ToArray();
+        }
+
+        // Parse WHERE(...)
+        var whereMatch = System.Text.RegularExpressions.Regex.Match(_viewText, @"WHERE\((.+)\)$");
+        if (whereMatch.Success)
+        {
+            _filters.Clear();
+            // Split on commas that are NOT inside parentheses
+            var filterStr = whereMatch.Groups[1].Value;
+            var filterEntries = SplitFilterEntries(filterStr);
+            foreach (var entry in filterEntries)
+            {
+                // entry: "FieldName=FILTER(expr)"
+                var eqIdx = entry.IndexOf('=');
+                if (eqIdx < 0) continue;
+                var fieldPart = entry[..eqIdx].Trim();
+                var rest = entry[(eqIdx + 1)..].Trim();
+
+                // rest: "FILTER(expr)"
+                var fm = System.Text.RegularExpressions.Regex.Match(rest, @"FILTER\((.+)\)");
+                if (!fm.Success) continue;
+                var expr = fm.Groups[1].Value;
+
+                var fieldNo = ResolveFieldName(fieldPart);
+                if (fieldNo <= 0) continue;
+
+                // Range filter: "from..to"
+                if (expr.Contains(".."))
+                {
+                    var dotIdx = expr.IndexOf("..");
+                    var fromStr = expr[..dotIdx];
+                    var toStr = expr[(dotIdx + 2)..];
+                    var fromVal = ParseNavValue(fromStr);
+                    var toVal = ParseNavValue(toStr);
+                    _filters[fieldNo] = new FieldFilter
+                    {
+                        FieldNo = fieldNo,
+                        IsRangeFilter = true,
+                        FromValue = fromVal,
+                        ToValue = toVal,
+                    };
+                }
+                else
+                {
+                    _filters[fieldNo] = new FieldFilter
+                    {
+                        FieldNo = fieldNo,
+                        IsRangeFilter = false,
+                        FilterExpression = expr,
+                    };
+                }
+            }
+        }
+    }
+
+    /// <summary>Resolves a field name or number string to a field number.</summary>
+    private int ResolveFieldName(string nameOrNo)
+    {
+        if (int.TryParse(nameOrNo, out var no))
+            return no;
+        // Try registry
+        var fromReg = TableFieldRegistry.GetFieldId(_tableId, nameOrNo);
+        if (fromReg.HasValue) return fromReg.Value;
+        // Try _fieldNames fallback
+        if (_fieldNames.TryGetValue(_tableId, out var dict) &&
+            dict.TryGetValue(nameOrNo, out var fieldNo))
+            return fieldNo;
+        return 0;
+    }
+
+    /// <summary>Splits a filter entry list on top-level commas (not inside parentheses).</summary>
+    private static List<string> SplitFilterEntries(string s)
+    {
+        var result = new List<string>();
+        int depth = 0;
+        int start = 0;
+        for (int i = 0; i < s.Length; i++)
+        {
+            if (s[i] == '(') depth++;
+            else if (s[i] == ')') depth--;
+            else if (s[i] == ',' && depth == 0)
+            {
+                result.Add(s[start..i].Trim());
+                start = i + 1;
+            }
+        }
+        if (start < s.Length)
+            result.Add(s[start..].Trim());
+        return result;
+    }
+
+    /// <summary>Parse a simple string into a NavValue for filter restoration.
+    /// Uses NavInteger for integers so that IComparable range matching works correctly.</summary>
+    private static NavValue ParseNavValue(string s)
+    {
+        if (int.TryParse(s, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var i))
+            return NavInteger.Create(i);
+        // Fall back to NavText, which also handles Code fields
+        return new NavText(s);
     }
 
     // -----------------------------------------------------------------------

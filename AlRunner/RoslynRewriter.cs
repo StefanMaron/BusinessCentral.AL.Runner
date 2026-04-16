@@ -89,6 +89,7 @@ public class RoslynRewriter : CSharpSyntaxRewriter
         "ALLockTable", "ALCalcSums", "ALSetLoadFields", "ALFieldCaption", "ALSetRecFilter",
         "ALTableCaption", "ALTableName", "ALTestFieldNavValueSafe",
         "ALFilterGroup", "ALSetRangeSafe", "ALReadIsolation",
+        "ALGetView", "ALSetView", "ALGetFilter",
         "ALTransferFields", "ALMark", "ALMarkedOnly", "ALClearMarks",
         "ALGetFilters", "ALGetRangeMinSafe", "ALGetRangeMaxSafe",
         "ALHasFilter", "ALCurrentKey", "ALAscending", "ALCountApprox",
@@ -556,6 +557,8 @@ public void ALSetLoadFields(params int[] fieldNos) => Rec.ALSetLoadFields(fieldN
 public void ALSetAutoCalcFields(params object[] fields) => Rec.ALSetAutoCalcFields(fields);
 public string ALGetFilter() => Rec.ALGetFilter();
 public string ALGetFilter(int fieldNo) => Rec.ALGetFilter(fieldNo);
+public string ALGetView(bool useNames = true) => Rec.ALGetView(useNames);
+public void ALSetView(string view) => Rec.ALSetView(view);
 public void ALAssign(MockRecordHandle other) => Rec.ALAssign(other);
 public void ClearFieldValue(int fieldNo) => Rec.ClearFieldValue(fieldNo);
 public int ALFilterGroup { get => Rec.ALFilterGroup; set => Rec.ALFilterGroup = value; }
