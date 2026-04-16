@@ -2937,8 +2937,10 @@ JsonArray.Clone:
 JsonArray.Count:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native NavJsonArray.ALCount works standalone.
+  tests:
+    - tests/bucket-2/142-jsonarray-count
 
 JsonArray.Get:
   layer: runtime-api
