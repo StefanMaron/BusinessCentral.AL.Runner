@@ -1503,8 +1503,8 @@ DataTransfer.UpdateAuditFields:
 Database.AlterKey:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op stub (DDL not supported standalone); tests/bucket-2/151-database-alterkey
 
 Database.ChangeUserPassword:
   layer: runtime-api
