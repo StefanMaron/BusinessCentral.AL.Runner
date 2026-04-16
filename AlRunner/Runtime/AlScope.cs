@@ -1353,12 +1353,13 @@ public static class AlCompat
 
     /// <summary>
     /// NavCode equality comparison that avoids NavEnvironment.
-    /// NavCode.op_Equality calls NavEnvironment which crashes in standalone mode.
-    /// Code fields are always stored uppercase, so OrdinalIgnoreCase covers both
-    /// already-uppercased and any raw-string edge cases.
+    /// NavCode.op_Equality and NavCode.ToString() both call NavEnvironment
+    /// which crashes in standalone mode. The explicit <c>(string)</c> cast uses
+    /// NavCode.op_Explicit which extracts the internal string value directly
+    /// (same pattern used in MockRecordHandle and MockFieldRef).
     /// </summary>
     public static bool NavCodeEquals(NavCode a, NavCode b)
-        => string.Equals(a.ToString(), b.ToString(), StringComparison.OrdinalIgnoreCase);
+        => string.Equals((string)a, (string)b, StringComparison.OrdinalIgnoreCase);
 
     // -----------------------------------------------------------------------
     // ALSystemNumeric replacements (ALRandomize/ALRandom require NavSession)
