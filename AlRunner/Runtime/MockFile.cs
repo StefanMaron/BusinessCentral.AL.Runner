@@ -208,6 +208,44 @@ public class MockFile
     /// <summary>ALViewFromStream — no-op; no UI in standalone mode.</summary>
     public void ALViewFromStream(object? parent, MockInStream inStream) { }
 
+    /// <summary>ALUploadIntoStream — standalone function; always returns false (no UI).</summary>
+    public static bool ALUploadIntoStream(string dialogTitle, string fromFolder, string fromFilter, ref NavText fileName, MockInStream inStream)
+    {
+        fileName = NavText.Empty;
+        return false;
+    }
+
+    public static bool ALUploadIntoStream(DataError errorLevel, string dialogTitle, string fromFolder, string fromFilter, ref NavText fileName, MockInStream inStream)
+    {
+        fileName = NavText.Empty;
+        return false;
+    }
+
+    public static bool ALUploadIntoStream(string dialogTitle, string fromFolder, string fromFilter, ref NavText fileName, ref MockInStream inStream)
+    {
+        fileName = NavText.Empty;
+        return false;
+    }
+
+    public static bool ALUploadIntoStream(DataError errorLevel, string dialogTitle, string fromFolder, string fromFilter, ref NavText fileName, ref MockInStream inStream)
+    {
+        fileName = NavText.Empty;
+        return false;
+    }
+
+    /// <summary>ALDownloadFromStream — standalone function; no-op (no UI in standalone mode).</summary>
+    public static bool ALDownloadFromStream(MockInStream inStream, string dialogTitle, string toFolder, string toFilter, ref NavText fileName)
+    {
+        fileName = NavText.Empty;
+        return false;
+    }
+
+    public static bool ALDownloadFromStream(DataError errorLevel, MockInStream inStream, string dialogTitle, string toFolder, string toFilter, ref NavText fileName)
+    {
+        fileName = NavText.Empty;
+        return false;
+    }
+
     /// <summary>ALAssign — copies the backing data and state from another MockFile.</summary>
     public void ALAssign(MockFile other)
     {
