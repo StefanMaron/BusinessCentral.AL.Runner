@@ -3281,6 +3281,7 @@ JsonObject.Add:
   notes: overloads=16; works natively via NavJsonObject (no TrappableOperationExecutor path); used in GetBoolean tests
   tests:
     - tests/bucket-1/268-jsonobject-methods
+    - tests/bucket-2/189-jsonobject-mutations
 
 JsonObject.AsToken:
   layer: runtime-api
@@ -3289,6 +3290,7 @@ JsonObject.AsToken:
   notes: overloads=1; works natively via NavJsonObject; tested
   tests:
     - tests/bucket-1/268-jsonobject-methods
+    - tests/bucket-2/189-jsonobject-mutations
 
 JsonObject.Clone:
   layer: runtime-api
@@ -3297,6 +3299,7 @@ JsonObject.Clone:
   notes: overloads=1; rewriter redirects ALClone to MockJsonHelper.Clone (deep-clone via Newtonsoft.Json)
   tests:
     - tests/bucket-1/268-jsonobject-methods
+    - tests/bucket-2/189-jsonobject-mutations
 
 JsonObject.Contains:
   layer: runtime-api
@@ -3305,6 +3308,7 @@ JsonObject.Contains:
   notes: overloads=1; rewriter redirects ALContains to MockJsonHelper.Contains
   tests:
     - tests/bucket-1/268-jsonobject-methods
+    - tests/bucket-2/189-jsonobject-mutations
 
 JsonObject.Get:
   layer: runtime-api
@@ -3313,6 +3317,7 @@ JsonObject.Get:
   notes: overloads=1; rewriter redirects ALGet to MockJsonHelper.Get (JObject key lookup, returns ByRef NavJsonToken)
   tests:
     - tests/bucket-1/268-jsonobject-methods
+    - tests/bucket-2/189-jsonobject-mutations
 
 JsonObject.GetArray:
   layer: runtime-api
@@ -3417,6 +3422,7 @@ JsonObject.Keys:
   notes: overloads=1; rewriter redirects ALKeys to MockJsonHelper.Keys (returns NavList<NavText>)
   tests:
     - tests/bucket-1/268-jsonobject-methods
+    - tests/bucket-2/189-jsonobject-mutations
 
 JsonObject.Path:
   layer: runtime-api
