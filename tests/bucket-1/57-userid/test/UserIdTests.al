@@ -1,4 +1,4 @@
-codeunit 56701 "UserId Tests"
+codeunit 56800 "UserId Tests"
 {
     Subtype = Test;
 
