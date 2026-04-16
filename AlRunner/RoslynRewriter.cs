@@ -3120,26 +3120,33 @@ public void ClearApplicationMemberVariables()
                         SyntaxFactory.IdentifierName("ALIsNullGuid")));
             }
 
-            // ALSystemDate.ALWorkDate(null!) -> ALSystemDate.ALWorkDate(NavDate.Default)
-            // The rewriter turns this.Session -> null!, which makes ALWorkDate ambiguous between
-            // the NavSession and NavDate overloads. We disambiguate to the NavDate overload.
+            // ALSystemDate.ALWorkDate(...) -> MockLanguage.ALWorkDate / SetWorkDate
+            // The real BC method requires NavSession (null standalone).
+            // Getter (1-arg with null!) → MockLanguage.ALWorkDate
+            // Setter (2-arg: null!, NavDate) → MockLanguage.SetWorkDate(NavDate)
             if (exprText == "ALSystemDate" && methodName == "ALWorkDate")
             {
                 var args = visited.ArgumentList.Arguments;
                 if (args.Count == 1)
                 {
-                    var argText = args[0].Expression.ToString();
-                    // Match null!, default! or similar null patterns from Session rewriting
-                    if (argText.Contains("null"))
-                    {
-                        return SyntaxFactory.InvocationExpression(
-                            visited.Expression,
-                            SyntaxFactory.ArgumentList(
-                                SyntaxFactory.SingletonSeparatedList(
-                                    SyntaxFactory.Argument(
-                                        SyntaxFactory.DefaultExpression(
-                                            SyntaxFactory.ParseTypeName("NavDate"))))));
-                    }
+                    // Getter: ALWorkDate(null!) → MockLanguage.ALWorkDate
+                    return SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("MockLanguage"),
+                        SyntaxFactory.IdentifierName("ALWorkDate"))
+                        .WithTriviaFrom(visited);
+                }
+                if (args.Count == 2)
+                {
+                    // Setter: ALWorkDate(null!, d) → MockLanguage.SetWorkDate(d)
+                    return SyntaxFactory.InvocationExpression(
+                        SyntaxFactory.MemberAccessExpression(
+                            SyntaxKind.SimpleMemberAccessExpression,
+                            SyntaxFactory.IdentifierName("MockLanguage"),
+                            SyntaxFactory.IdentifierName("SetWorkDate")),
+                        SyntaxFactory.ArgumentList(
+                            SyntaxFactory.SingletonSeparatedList(args[1])))
+                        .WithTriviaFrom(visited);
                 }
             }
 
@@ -3801,12 +3808,12 @@ public void ClearApplicationMemberVariables()
         // MockLanguage.ALGlobalLanguage which is a plain static property backed by an int field.
         if (visited.Expression is IdentifierNameSyntax langId &&
             langId.Identifier.Text == "ALSystemLanguage" &&
-            memberName == "ALGlobalLanguage")
+            (memberName == "ALGlobalLanguage" || memberName == "ALWindowsLanguage"))
         {
             return SyntaxFactory.MemberAccessExpression(
                 SyntaxKind.SimpleMemberAccessExpression,
                 SyntaxFactory.IdentifierName("MockLanguage"),
-                SyntaxFactory.IdentifierName("ALGlobalLanguage"))
+                SyntaxFactory.IdentifierName(memberName == "ALGlobalLanguage" ? "ALGlobalLanguage" : "ALWindowsLanguage"))
                 .WithTriviaFrom(visited);
         }
 
