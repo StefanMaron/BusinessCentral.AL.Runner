@@ -1377,8 +1377,10 @@ Codeunit.Run:
 CodeunitInstance.Run:
   layer: runtime-api
   category: CodeunitInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockCodeunitHandle.Run now fires OnRun on the handle's own instance (state mutations persist across calls).
+  tests:
+    - tests/bucket-2/150-codeunit-instance-run
 
 # ── CompanyProperty ─────────────────────────────────────────────
 

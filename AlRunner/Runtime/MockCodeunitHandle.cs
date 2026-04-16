@@ -256,12 +256,23 @@ public class MockCodeunitHandle
     /// Instance method: run the codeunit's OnRun trigger.
     /// Replacement for NavCodeunitHandle.Target.Run(DataError, record).
     /// In BC, this runs the codeunit passing a record parameter.
+    ///
+    /// Unlike the static RunCodeunit, this fires OnRun on the HANDLE'S instance
+    /// (created on first call and reused afterward) so state mutations made by
+    /// OnRun are visible to subsequent method calls on the same handle — matching
+    /// AL's observed semantics when a codeunit variable is used as a mutable bag.
     /// </summary>
     public bool Run(DataError errorLevel, object? record = null)
     {
         try
         {
-            RunCodeunitCore(_codeunitId, record as MockRecordHandle);
+            var assembly = CurrentAssembly ?? Assembly.GetExecutingAssembly();
+            var codeunitType = FindCodeunitType(assembly);
+            if (codeunitType == null)
+                throw new InvalidOperationException(BuildCodeunitNotFoundMessage(_codeunitId, assembly));
+
+            EnsureInstance(codeunitType);
+            InvokeOnRun(codeunitType, _codeunitInstance!, record as MockRecordHandle);
             return true;
         }
         catch
@@ -269,6 +280,31 @@ public class MockCodeunitHandle
             if (errorLevel == DataError.TrapError) return false;
             throw;
         }
+    }
+
+    /// <summary>
+    /// Shared OnRun dispatch: look up OnRun (parameterless or with record parameter)
+    /// via reflection and invoke it on the provided instance. Kept as a helper so
+    /// both Run (instance, state-preserving) and RunCodeunitCore (static, ephemeral)
+    /// share the same trigger-lookup logic.
+    /// </summary>
+    private static void InvokeOnRun(Type codeunitType, object instance, MockRecordHandle? record)
+    {
+        var bindingFlags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+        var onRunMethod = codeunitType.GetMethod("OnRun", bindingFlags, null, Type.EmptyTypes, null);
+        if (onRunMethod != null)
+        {
+            onRunMethod.Invoke(instance, null);
+            return;
+        }
+        var onRunWithRecord = codeunitType.GetMethod("OnRun",
+            bindingFlags, null, new[] { typeof(MockRecordHandle) }, null);
+        if (onRunWithRecord != null)
+        {
+            onRunWithRecord.Invoke(instance, new object?[] { record });
+            return;
+        }
+        // No OnRun → silently do nothing (matches BC behaviour for codeunits with no trigger).
     }
 
     /// <summary>
