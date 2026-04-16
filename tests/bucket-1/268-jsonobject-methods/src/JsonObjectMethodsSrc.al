@@ -1,5 +1,5 @@
 /// Helper codeunit exercising JsonObject methods: Add/Get/Contains/Keys/Remove/Replace/Clone/AsToken/Path and typed getters.
-codeunit 84200 "JOM Src"
+codeunit 84300 "JOM Src"
 {
     /// Add two properties and Get them back as a round-trip.
     procedure AddAndGet_Text(): Text
@@ -69,12 +69,12 @@ codeunit 84200 "JOM Src"
     procedure Replace_Value(): Text
     var
         JObj: JsonObject;
-        NewTok: JsonToken;
+        NewVal: JsonValue;
         JTok: JsonToken;
     begin
         JObj.Add('status', 'old');
-        NewTok.ReadFromText('"new"');
-        JObj.Replace('status', NewTok);
+        NewVal.SetValue('new');
+        JObj.Replace('status', NewVal.AsToken());
         if JObj.Get('status', JTok) then
             exit(JTok.AsValue().AsText());
         exit('<not-found>');
