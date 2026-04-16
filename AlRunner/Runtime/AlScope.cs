@@ -824,6 +824,26 @@ public static class AlCompat
     }
 
     /// <summary>
+    /// AL PadStr(String, Length, Filler): pad or truncate to fixed width.
+    /// Positive Length = right-pad (append filler). Negative Length = left-pad (prepend filler).
+    /// If |Length| &lt;= source length, result is source truncated to |Length| (no padding added).
+    /// The real BC ALSystemString.ALPadStr rejects negative Length with NavNCLOutsidePermittedRangeException,
+    /// so we route through AlCompat to implement AL's documented behavior.
+    /// </summary>
+    public static string PadStr(string? source, int length, string? filler)
+    {
+        var src = source ?? "";
+        var fillCh = string.IsNullOrEmpty(filler) ? ' ' : filler![0];
+        int absLen = length < 0 ? -length : length;
+        if (src.Length >= absLen) return src.Substring(0, absLen);
+        int padCount = absLen - src.Length;
+        var pad = new string(fillCh, padCount);
+        return length < 0 ? pad + src : src + pad;
+    }
+
+    public static string PadStr(string? source, int length) => PadStr(source, length, " ");
+
+    /// <summary>
     /// Format with AL format string (e.g. '&lt;Year4&gt;-&lt;Month,2&gt;-&lt;Day,2&gt;').
     /// The BC transpiler emits NavFormatEvaluateHelper.Format(session, value, length, formatString)
     /// which the rewriter strips the session arg from, producing AlCompat.Format(value, length, formatString).

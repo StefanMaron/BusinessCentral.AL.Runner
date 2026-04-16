@@ -6976,8 +6976,8 @@ Text.IndexOf:
 Text.IndexOfAny:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; BC native NavTextExtensions.ALIndexOfAny works standalone. Tested in bucket-1/67-text-builtins.
 
 Text.InsStr:
   layer: runtime-api
@@ -7018,8 +7018,8 @@ Text.PadRight:
 Text.PadStr:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; negative length = left-pad (rewriter routes ALPadStr -> AlCompat.PadStr; BC native rejects negative length). Tested in bucket-1/67-text-builtins.
 
 Text.Remove:
   layer: runtime-api
@@ -7055,8 +7055,8 @@ Text.StartsWith:
 Text.StrCheckSum:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native ALSystemString.ALStrCheckSum works standalone (default modulus 10). Tested in bucket-1/67-text-builtins.
 
 Text.StrLen:
   layer: runtime-api
@@ -7067,8 +7067,8 @@ Text.StrLen:
 Text.StrPos:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone. Tested in bucket-1/67-text-builtins.
 
 Text.StrSubstNo:
   layer: runtime-api
@@ -7079,20 +7079,20 @@ Text.StrSubstNo:
 Text.Substring:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native NavTextExtensions.ALSubstring works standalone (1-based). Tested in bucket-1/67-text-builtins.
 
 Text.ToLower:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone. Tested in bucket-1/67-text-builtins.
 
 Text.ToUpper:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone. Tested in bucket-1/67-text-builtins.
 
 Text.Trim:
   layer: runtime-api
