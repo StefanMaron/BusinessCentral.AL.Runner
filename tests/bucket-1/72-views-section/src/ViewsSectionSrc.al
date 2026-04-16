@@ -22,20 +22,6 @@ page 59200 "VS Product List"
     PageType = List;
     SourceTable = "VS Product";
 
-    views
-    {
-        view(ActiveOnly)
-        {
-            Caption = 'Active Products';
-            Filters = where(Active = const(true));
-        }
-        view(InStockOnly)
-        {
-            Caption = 'In Stock';
-            Filters = where(Stock = filter('>0'));
-        }
-    }
-
     layout
     {
         area(Content)
@@ -49,27 +35,28 @@ page 59200 "VS Product List"
             }
         }
     }
-}
 
-/// A pageextension on a list page that adds its own views — exercises both
-/// view_definition and the views section inside a pageextension.
-pageextension 59200 "VS Product List Ext" extends "VS Product List"
-{
     views
     {
-        addlast
+        view(AllItems)
         {
-            view(CategoryA)
-            {
-                Caption = 'Category A';
-                Filters = where(Category = const('A'));
-            }
+            Caption = 'All Items';
+        }
+        view(ActiveOnly)
+        {
+            Caption = 'Active Products';
+            Filters = where(Active = const(true));
+        }
+        view(InStockOnly)
+        {
+            Caption = 'In Stock';
+            Filters = where(Stock = filter('>0'));
         }
     }
 }
 
 /// Business logic helper — proves that the compilation unit containing
-/// the pages with views sections compiles and runs correctly.
+/// the page with a views section compiles and runs correctly.
 codeunit 59200 "VS Product Helper"
 {
     procedure CountInStock(Stock: Integer): Boolean

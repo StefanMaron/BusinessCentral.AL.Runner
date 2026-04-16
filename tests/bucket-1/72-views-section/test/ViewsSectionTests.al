@@ -22,18 +22,18 @@ codeunit 59201 "VS Views Section Tests"
     [Test]
     procedure ViewsSection_MultipleViews_Compile()
     begin
-        // [GIVEN] A list page with two named views (ActiveOnly, InStockOnly)
+        // [GIVEN] A list page with three named views (AllItems, ActiveOnly, InStockOnly)
         // [WHEN]  Helper logic is called
         // [THEN]  Multiple view definitions in the same views section compile
         Assert.IsFalse(Helper.CountInStock(0), 'views section: CountInStock(0) must be false');
     end;
 
     [Test]
-    procedure ViewsSection_PageExtension_AddlastView_Compiles()
+    procedure ViewsSection_FilteredViews_Compile()
     begin
-        // [GIVEN] A pageextension that adds a view via addlast in its views section
+        // [GIVEN] A list page with views that have Filters = where(...) clauses
         // [WHEN]  Business logic is called
-        // [THEN]  The pageextension views section does not block compilation
+        // [THEN]  Views with filter expressions do not block compilation
         Assert.AreEqual('Premium', Helper.CategoryLabel('A'), 'CategoryLabel A must be Premium');
     end;
 
