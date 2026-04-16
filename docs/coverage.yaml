@@ -8491,14 +8491,16 @@ WebServiceActionContext.SetResultCode:
 XmlAttribute.AddAfterSelf:
   layer: runtime-api
   category: XmlAttribute
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/174-xmlattribute-nav
+  notes: overloads=1. Covered via NavXmlAttribute native — AddAfterSelf inserts sibling attr into parent element, attr count increases to 2.
 
 XmlAttribute.AddBeforeSelf:
   layer: runtime-api
   category: XmlAttribute
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/174-xmlattribute-nav
+  notes: overloads=1. Covered via NavXmlAttribute native — AddBeforeSelf inserts sibling attr into parent element, attr count increases to 2.
 
 XmlAttribute.AsXmlNode:
   layer: runtime-api
@@ -8517,26 +8519,30 @@ XmlAttribute.Create:
 XmlAttribute.CreateNamespaceDeclaration:
   layer: runtime-api
   category: XmlAttribute
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/174-xmlattribute-nav
+  notes: overloads=1. Covered via NavXmlAttribute native — CreateNamespaceDeclaration(prefix, uri) returns attr with IsNamespaceDeclaration=true and LocalName=prefix.
 
 XmlAttribute.GetDocument:
   layer: runtime-api
   category: XmlAttribute
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/174-xmlattribute-nav
+  notes: overloads=1. Covered via NavXmlAttribute native — GetDocument returns false for detached attribute.
 
 XmlAttribute.GetParent:
   layer: runtime-api
   category: XmlAttribute
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/174-xmlattribute-nav
+  notes: overloads=1. Covered via NavXmlAttribute native — returns false for detached attr, returns true with correct parent name when attr is attached via el.Add(attr).
 
 XmlAttribute.IsNamespaceDeclaration:
   layer: runtime-api
   category: XmlAttribute
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/174-xmlattribute-nav
+  notes: overloads=1. Covered via NavXmlAttribute native — false for plain attr, true for CreateNamespaceDeclaration result.
 
 XmlAttribute.LocalName:
   layer: runtime-api
@@ -8555,8 +8561,9 @@ XmlAttribute.Name:
 XmlAttribute.NamespacePrefix:
   layer: runtime-api
   category: XmlAttribute
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/174-xmlattribute-nav
+  notes: overloads=1. Covered via NavXmlAttribute native — returns empty string for plain (non-namespaced) attribute.
 
 XmlAttribute.NamespaceUri:
   layer: runtime-api
@@ -8568,26 +8575,30 @@ XmlAttribute.NamespaceUri:
 XmlAttribute.Remove:
   layer: runtime-api
   category: XmlAttribute
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/174-xmlattribute-nav
+  notes: overloads=1. Covered via NavXmlAttribute native — Remove() detaches attr from parent; GetParent returns false after removal.
 
 XmlAttribute.ReplaceWith:
   layer: runtime-api
   category: XmlAttribute
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/174-xmlattribute-nav
+  notes: overloads=1. Covered via NavXmlAttribute native — ReplaceWith(newAttr) swaps old attr for new; new attr findable by name on parent element.
 
 XmlAttribute.SelectNodes:
   layer: runtime-api
   category: XmlAttribute
-  status: gap
-  notes: overloads=2
+  status: covered
+  tests: tests/bucket-2/174-xmlattribute-nav
+  notes: overloads=2. Covered via NavXmlAttribute native — SelectNodes('.', nodeList) called without error.
 
 XmlAttribute.SelectSingleNode:
   layer: runtime-api
   category: XmlAttribute
-  status: gap
-  notes: overloads=2
+  status: covered
+  tests: tests/bucket-2/174-xmlattribute-nav
+  notes: overloads=2. Covered via NavXmlAttribute native — SelectSingleNode('.', node) called without error.
 
 XmlAttribute.Value:
   layer: runtime-api
@@ -8599,8 +8610,9 @@ XmlAttribute.Value:
 XmlAttribute.WriteTo:
   layer: runtime-api
   category: XmlAttribute
-  status: gap
-  notes: overloads=4
+  status: covered
+  tests: tests/bucket-2/174-xmlattribute-nav
+  notes: overloads=4. Covered via NavXmlAttribute native — WriteTo(var Text) produces non-empty string containing both attribute name and value.
 
 # ── XmlAttributeCollection ──────────────────────────────────────
 
