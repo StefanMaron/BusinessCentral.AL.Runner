@@ -1562,8 +1562,8 @@ Database.CurrentTransactionType:
 Database.DataFileInformation:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: no-op stub; ALDataFileInformation added to StripEntireCallMethods in RoslynRewriter; var params remain at defaults; tests/bucket-2/154-datafileinformation
 
 Database.ExportData:
   layer: runtime-api
