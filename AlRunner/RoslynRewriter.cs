@@ -1858,19 +1858,20 @@ public void ClearApplicationMemberVariables() { }
         // Now recurse into children first
         var visited = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
 
-        // `<expr>.ToText(session)` -> `AlCompat.Format(<expr>)`
-        // BC lowers AL's `xVar.ToText()` to `navX.ToText(session)` where session is either
-        // `null!` (for most types like DateTime/Date) or a real session reference (for NavByte
-        // and other types that need OEM/locale info). Both forms must be intercepted:
-        //  - `null!` form: crashes with NullReferenceException in NavDateTimeFormatter etc.
-        //  - session form: NavByte.ToText(session) calls NavValueFormatter → NCLManagedAdapter
-        //    (OEM native code) which fails to initialize without the BC service tier.
+        // `<expr>.ToText(...)` -> `AlCompat.Format(<expr>)`
+        // BC lowers AL's `xVar.ToText()` to a `navX.ToText(...)` call where the arguments
+        // vary by type and BC version:
+        //  - `null!` (1 arg)  — most types (NavDateTime, NavDate, …); session passed as null!
+        //  - real session ref (1 arg) — some types/versions pass an actual NavSession expression
+        //  - 0 args — NavByte may use a zero-argument overload on some BC versions
+        //  - session + format-number (2 args) — extended overloads on some BC versions
+        // All forms end up calling NavValueFormatter → NavByteFormatter → NCLManagedAdapter
+        // (OEM native code) which fails without the BC service tier.
         // AlCompat.Format handles every BC value type without session access.
-        // We match exactly 1 argument (session) to avoid catching zero-arg ToString() forms;
-        // BC does not emit ToText(length) in generated code — length is part of the type
-        // declaration, not a runtime argument.
-        if (visited.ArgumentList.Arguments.Count == 1 &&
-            visited.Expression is MemberAccessExpressionSyntax toTextMa &&
+        // We intercept any `expr.ToText(...)` call regardless of argument count and route the
+        // receiver (expr) through AlCompat.Format, discarding all arguments (session,
+        // format-number) since AlCompat.Format does not need them.
+        if (visited.Expression is MemberAccessExpressionSyntax toTextMa &&
             toTextMa.Name.Identifier.Text == "ToText")
         {
             return SyntaxFactory.InvocationExpression(
