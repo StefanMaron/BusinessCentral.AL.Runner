@@ -908,6 +908,14 @@ views_section:
   tests:
     - tests/bucket-1/72-views-section
 
+visible_attribute_condition:
+  layer: syntax
+  category: page
+  status: covered
+  notes: Conditional `Visible = <expression>` on page controls compiles and the referenced page-level variables flow through normally. No UI to render standalone, but compilation path is clean.
+  tests:
+    - tests/bucket-2/167-visible-condition
+
 # ── report ──────────────────────────────────────────────────────
 
 dataset_section:
