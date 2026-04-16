@@ -1,3 +1,4 @@
+/// Tests for NavApp resource method stubs (GetResourceAsText, GetResourceAsJson, ListResources).
 codeunit 85001 "NavApp Resource Test"
 {
     Subtype = Test;
