@@ -2586,68 +2586,79 @@ FileUpload.FileName:
 FilterPageBuilder.AddField:
   layer: runtime-api
   category: FilterPageBuilder
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; MockFilterPageBuilder; DataError overload delegates to base
+  tests: tests/bucket-2/179-filter-page-builder
 
 FilterPageBuilder.AddFieldNo:
   layer: runtime-api
   category: FilterPageBuilder
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFilterPageBuilder
+  tests: tests/bucket-2/179-filter-page-builder
 
 FilterPageBuilder.AddRecord:
   layer: runtime-api
   category: FilterPageBuilder
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFilterPageBuilder
+  tests: tests/bucket-2/179-filter-page-builder
 
 FilterPageBuilder.AddRecordRef:
   layer: runtime-api
   category: FilterPageBuilder
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFilterPageBuilder
+  tests: tests/bucket-2/179-filter-page-builder
 
 FilterPageBuilder.AddTable:
   layer: runtime-api
   category: FilterPageBuilder
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFilterPageBuilder; Count increments per call
+  tests: tests/bucket-2/179-filter-page-builder
 
 FilterPageBuilder.Count:
   layer: runtime-api
   category: FilterPageBuilder
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFilterPageBuilder
+  tests: tests/bucket-2/179-filter-page-builder
 
 FilterPageBuilder.GetView:
   layer: runtime-api
   category: FilterPageBuilder
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFilterPageBuilder; round-trips with SetView
+  tests: tests/bucket-2/179-filter-page-builder
 
 FilterPageBuilder.Name:
   layer: runtime-api
   category: FilterPageBuilder
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFilterPageBuilder; 1-based index into registered captions
+  tests: tests/bucket-2/179-filter-page-builder
 
 FilterPageBuilder.PageCaption:
   layer: runtime-api
   category: FilterPageBuilder
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFilterPageBuilder; get/set property
+  tests: tests/bucket-2/179-filter-page-builder
 
 FilterPageBuilder.RunModal:
   layer: runtime-api
   category: FilterPageBuilder
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFilterPageBuilder; returns FormResult.OK (Action::OK) — no UI
+  tests: tests/bucket-2/179-filter-page-builder
 
 FilterPageBuilder.SetView:
   layer: runtime-api
   category: FilterPageBuilder
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFilterPageBuilder; stores view string per caption
+  tests: tests/bucket-2/179-filter-page-builder
 
 # ── Guid ────────────────────────────────────────────────────────
 
