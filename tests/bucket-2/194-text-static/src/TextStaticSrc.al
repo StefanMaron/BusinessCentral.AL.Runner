@@ -1,5 +1,5 @@
 /// Helper codeunit exercising the static Text.* built-in forms.
-codeunit 60200 "TXST Src"
+codeunit 60210 "TXST Src"
 {
     procedure DelChrIt(v: Text; where: Text; chars: Text): Text
     begin
