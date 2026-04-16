@@ -2874,6 +2874,27 @@ public void ClearApplicationMemberVariables() { }
                 }
             }
 
+            // NavFormatEvaluateHelper.Evaluate(this.Session, ref variable, text) -> AlCompat.Evaluate(ref variable, text)
+            // BC lowers AL Evaluate(var Var; Text) to a call on NavFormatEvaluateHelper with the session as the first arg.
+            // Strip the session and redirect to AlCompat.Evaluate which provides type-specific overloads.
+            if (exprText == "NavFormatEvaluateHelper" && methodName == "Evaluate")
+            {
+                var args = visited.ArgumentList.Arguments;
+                // Skip the first 'this.Session' argument; keep ref variable + text
+                if (args.Count >= 3)
+                {
+                    var keptArgs = new SeparatedSyntaxList<ArgumentSyntax>();
+                    for (int i = 1; i < args.Count; i++)
+                        keptArgs = keptArgs.Add(args[i]);
+                    return SyntaxFactory.InvocationExpression(
+                        SyntaxFactory.MemberAccessExpression(
+                            SyntaxKind.SimpleMemberAccessExpression,
+                            SyntaxFactory.IdentifierName("AlCompat"),
+                            SyntaxFactory.IdentifierName("Evaluate")),
+                        SyntaxFactory.ArgumentList(keptArgs));
+                }
+            }
+
             // ALSystemVariable.ALCopyStream(dataError, outStream, inStream)
             // -> MockStream.ALCopyStream(dataError, outStream, inStream)
             // BC emits COPYSTREAM as a call to ALSystemVariable.ALCopyStream which takes

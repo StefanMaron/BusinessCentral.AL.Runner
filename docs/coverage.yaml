@@ -5548,8 +5548,10 @@ System.EncryptionKeyExists:
 System.Evaluate:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests:
+    - tests/bucket-2/140-evaluate
+  notes: overloads=1; supports Integer, Boolean, Decimal, Text, BigInteger, Date
 
 System.ExportEncryptionKey:
   layer: runtime-api

@@ -1809,4 +1809,63 @@ public static class AlCompat
         // Last resort — ToString() returns the value in BC 26.x; may not in 27.x.
         return new NavText(st.ToString() ?? "");
     }
+
+    // -----------------------------------------------------------------------
+    // Evaluate(var Variable; Text): Boolean
+    // BC lowers AL Evaluate() to NavFormatEvaluateHelper.Evaluate(session, ref var, text).
+    // The rewriter strips the session arg, leaving AlCompat.Evaluate(ref var, text).
+    // Type-specific overloads handle the common AL variable types. Returns true on
+    // success (variable is set), false on failure (variable is unchanged).
+    // -----------------------------------------------------------------------
+
+    public static bool Evaluate(ref int result, NavText text)
+        => Evaluate(ref result, text.ToString());
+
+    public static bool Evaluate(ref int result, string text)
+    {
+        if (int.TryParse(text.Trim(), System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var v))
+        { result = v; return true; }
+        return false;
+    }
+
+    public static bool Evaluate(ref bool result, NavText text)
+        => Evaluate(ref result, text.ToString());
+
+    public static bool Evaluate(ref bool result, string text)
+    {
+        var t = text.Trim().ToLowerInvariant();
+        if (t == "true" || t == "yes" || t == "1") { result = true; return true; }
+        if (t == "false" || t == "no" || t == "0") { result = false; return true; }
+        return false;
+    }
+
+    public static bool Evaluate(ref Decimal18 result, NavText text)
+        => Evaluate(ref result, text.ToString());
+
+    public static bool Evaluate(ref Decimal18 result, string text)
+    {
+        if (decimal.TryParse(text.Trim(), System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.InvariantCulture, out var v))
+        { result = new Decimal18(v); return true; }
+        return false;
+    }
+
+    public static bool Evaluate(ref NavText result, NavText text)
+    { result = text; return true; }
+
+    public static bool Evaluate(ref NavText result, string text)
+    { result = new NavText(text); return true; }
+
+    public static bool Evaluate(ref long result, NavText text)
+        => Evaluate(ref result, text.ToString());
+
+    public static bool Evaluate(ref long result, string text)
+    {
+        if (long.TryParse(text.Trim(), System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var v))
+        { result = v; return true; }
+        return false;
+    }
+
 }
