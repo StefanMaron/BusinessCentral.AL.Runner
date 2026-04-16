@@ -3400,7 +3400,7 @@ JsonToken.AsArray:
   layer: runtime-api
   category: JsonToken
   status: covered
-  notes: overloads=1; redirected via MockJsonHelper.AsArray
+  notes: overloads=1; works natively via BC runtime (no mock needed)
   tests:
     - tests/bucket-2/176-jsontoken-type
 
@@ -3408,7 +3408,7 @@ JsonToken.AsObject:
   layer: runtime-api
   category: JsonToken
   status: covered
-  notes: overloads=1; redirected via MockJsonHelper.AsObject
+  notes: overloads=1; works natively via BC runtime (no mock needed)
   tests:
     - tests/bucket-2/176-jsontoken-type
 
@@ -3416,7 +3416,7 @@ JsonToken.AsValue:
   layer: runtime-api
   category: JsonToken
   status: covered
-  notes: overloads=1; redirected via MockJsonHelper.AsValue
+  notes: overloads=1; works natively via BC runtime (no mock needed)
   tests:
     - tests/bucket-2/176-jsontoken-type
 

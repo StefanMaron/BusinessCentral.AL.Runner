@@ -217,45 +217,6 @@ public static class MockJsonHelper
         => GetBackingToken(token) is JValue;
 
     /// <summary>
-    /// Replacement for NavJsonToken.ALAsArray().
-    /// Returns a NavJsonArray wrapping the same backing JArray.
-    /// Throws if the token is not an array.
-    /// </summary>
-    public static NavJsonArray AsArray(NavJsonToken token)
-    {
-        var backing = GetBackingToken(token);
-        if (backing is not JArray)
-            throw new Exception("The JSON token cannot be converted to a JsonArray value.");
-        return (NavJsonArray)NavJsonToken.Create(backing);
-    }
-
-    /// <summary>
-    /// Replacement for NavJsonToken.ALAsObject().
-    /// Returns a NavJsonObject wrapping the same backing JObject.
-    /// Throws if the token is not an object.
-    /// </summary>
-    public static NavJsonObject AsObject(NavJsonToken token)
-    {
-        var backing = GetBackingToken(token);
-        if (backing is not JObject)
-            throw new Exception("The JSON token cannot be converted to a JsonObject value.");
-        return (NavJsonObject)NavJsonToken.Create(backing);
-    }
-
-    /// <summary>
-    /// Replacement for NavJsonToken.ALAsValue().
-    /// Returns a NavJsonValue wrapping the same backing JValue.
-    /// Throws if the token is not a primitive/null value.
-    /// </summary>
-    public static NavJsonValue AsValue(NavJsonToken token)
-    {
-        var backing = GetBackingToken(token);
-        if (backing is not JValue)
-            throw new Exception("The JSON token cannot be converted to a JsonValue value.");
-        return (NavJsonValue)NavJsonToken.Create(backing);
-    }
-
-    /// <summary>
     /// Replacement for NavJsonToken.ALClone().
     /// Deep-clones the token and returns a new NavJsonToken wrapping the clone.
     /// </summary>
@@ -269,9 +230,10 @@ public static class MockJsonHelper
     /// <summary>
     /// Replacement for NavJsonToken property ALPath (read-only).
     /// Returns the JSONPath of the backing JToken within its containing structure.
+    /// BC's ALPath property returns NavText; this matches that return type.
     /// </summary>
-    public static string Path(NavJsonToken token)
-        => GetBackingToken(token).Path ?? string.Empty;
+    public static NavText Path(NavJsonToken token)
+        => new NavText(GetBackingToken(token).Path ?? string.Empty);
 
     private static bool IsSupportedTokenType(JToken token)
     {
