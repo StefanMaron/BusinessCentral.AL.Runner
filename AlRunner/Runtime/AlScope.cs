@@ -537,6 +537,27 @@ public static class AlCompat
         => EnumFromInteger(enumObjectId, (int)ordinal);
 
     /// <summary>
+    /// Validates <paramref name="ordinal"/> against the compile-time-inlined
+    /// <paramref name="validOrdinals"/> array and returns a tagged NavOption.
+    /// When the valid ordinals are known at rewrite time (non-extensible enums
+    /// declared in the same compilation), the rewriter inlines them to avoid
+    /// depending on <see cref="EnumRegistry"/> state at runtime.
+    /// </summary>
+    public static NavOption EnumFromIntegerValidated(int enumObjectId, int ordinal, int[] validOrdinals)
+    {
+        bool valid = false;
+        for (int i = 0; i < validOrdinals.Length; i++)
+            if (validOrdinals[i] == ordinal) { valid = true; break; }
+        if (!valid)
+            throw new Exception($"The value {ordinal} is not a valid ordinal for this enum type.");
+        return CreateTaggedOption(enumObjectId, ordinal);
+    }
+
+    /// <summary>Overload for Decimal18 — AL Integer variables are Decimal18 in BC's C# output.</summary>
+    public static NavOption EnumFromIntegerValidated(int enumObjectId, Decimal18 ordinal, int[] validOrdinals)
+        => EnumFromIntegerValidated(enumObjectId, (int)ordinal, validOrdinals);
+
+    /// <summary>
     /// Create a NavOption that inherits the enum-id tag from an existing
     /// NavOption. Emitted by the rewriter for
     /// <c>NavOption.Create(existing.NavOptionMetadata, V)</c>
