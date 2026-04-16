@@ -1,4 +1,4 @@
-codeunit 61203 "SACF SetAutoCalcFields Tests"
+codeunit 61303 "SACF SetAutoCalcFields Tests"
 {
     Subtype = Test;
 

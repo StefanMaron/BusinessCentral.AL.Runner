@@ -1,5 +1,5 @@
 /// Tables and helper codeunit exercising Record.SetAutoCalcFields.
-table 61200 "SACF Order"
+table 61300 "SACF Order"
 {
     DataClassification = CustomerContent;
     fields
@@ -15,7 +15,7 @@ table 61200 "SACF Order"
     keys { key(PK; "No.") { Clustered = true; } }
 }
 
-table 61201 "SACF Line"
+table 61301 "SACF Line"
 {
     DataClassification = CustomerContent;
     fields
@@ -26,7 +26,7 @@ table 61201 "SACF Line"
     keys { key(PK; "Order No.", "Line No.") { Clustered = true; } }
 }
 
-codeunit 61202 "SACF Helper"
+codeunit 61302 "SACF Helper"
 {
     procedure InsertOrder(orderNo: Code[20])
     var
