@@ -1807,14 +1807,18 @@ Duration.ToText:
 EnumType.AsInteger:
   layer: runtime-api
   category: EnumType
-  status: gap
+  status: covered
   notes: overloads=1
+  tests:
+    - tests/bucket-1/61-enum-integer
 
 EnumType.FromInteger:
   layer: runtime-api
   category: EnumType
-  status: gap
+  status: covered
   notes: overloads=1
+  tests:
+    - tests/bucket-1/61-enum-integer
 
 EnumType.Names:
   layer: runtime-api
