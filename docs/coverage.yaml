@@ -458,6 +458,25 @@ list_type:
     - tests/bucket-2/42-list-of-interface
     - tests/bucket-2/83-list-byref
 
+List.Sort:
+  layer: runtime-api
+  category: List
+  status: gap
+  notes: List.Sort() (no-arg) and List.Sort(IComparer) do not compile with AL compiler 16.2; not a valid AL syntax at this toolchain version
+
+List.Reverse:
+  layer: runtime-api
+  category: List
+  status: covered
+  tests: tests/bucket-1/65-list-sort-reverse
+  notes: overloads=1
+
+List.RemoveRange:
+  layer: runtime-api
+  category: List
+  status: gap
+  notes: List.RemoveRange(index, count) does not compile with AL compiler 16.2; not a valid AL syntax at this toolchain version
+
 object_reference_type:
   layer: syntax
   category: type
