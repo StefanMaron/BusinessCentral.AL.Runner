@@ -26,7 +26,7 @@ public class PipelineOptions
     /// <summary>When true, promote exit code 2 (runner limitations) to exit code 1 (failure).</summary>
     public bool Strict { get; set; }
 
-    /// <summary>Configures the value returned by UserId() — defaults to empty string.</summary>
+    /// <summary>Configures the value returned by UserId() — defaults to "TESTUSER".</summary>
     public string? UserId { get; set; }
 
     /// <summary>
@@ -306,7 +306,7 @@ public class AlRunnerPipeline
             Log.Verbose = true;
 
         // Apply configurable session properties
-        Runtime.AlScope.UserId = options.UserId ?? "";
+        Runtime.AlScope.UserId = options.UserId ?? "TESTUSER";
 
         var alSources = new List<string>();
         var sourceFilePaths = new List<string?>(); // parallel to alSources: file path or null

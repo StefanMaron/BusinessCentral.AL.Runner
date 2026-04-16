@@ -51,7 +51,7 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("  --no-telemetry        Disable crash reporting prompt on unexpected errors");
     Console.Error.WriteLine("  --strict              Fail on runner limitations (exit 1 instead of 2)");
     Console.Error.WriteLine("  --company-name <name> Default value returned by CompanyName() (empty string otherwise)");
-    Console.Error.WriteLine("  --user-id <value>     Set the value returned by UserId() (default: empty string)");
+    Console.Error.WriteLine("  --user-id <value>     Set the value returned by UserId() (default: TESTUSER)");
     Console.Error.WriteLine("  -h, --help            Show this help");
     Console.Error.WriteLine();
     Console.Error.WriteLine("Examples:");
@@ -352,7 +352,7 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   CLI flag, and AL tests can set it at runtime by calling
   `codeunit 131100 "AL Runner Config"` → `SetCompanyName(Name: Text)`.
   Reset back to the CLI default between tests.
-- UserId() — configurable via `--user-id <value>` CLI flag (default: empty string)
+- UserId() — configurable via `--user-id <value>` CLI flag (default: "TESTUSER")
 - System & Session utilities:
   - Session.LogMessage() — no-op (telemetry not available without service tier)
   - Session.ApplicationArea() — returns empty string
