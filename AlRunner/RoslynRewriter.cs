@@ -1958,6 +1958,24 @@ public void ClearApplicationMemberVariables() { }
                     SyntaxFactory.IdentifierName("Default"));
             }
 
+            // ALSession.ALSessionID(session) / ALDatabase.ALSessionID(session)
+            // -> MockSession.GetSessionId()
+            // SessionId() is a global AL function that returns the current session ID.
+            // BC may lower it to ALSession.ALSessionID or ALDatabase.ALSessionID with a NavSession arg
+            // that becomes null! after the Session→null! rewrite, causing NullReferenceException.
+            // Replace the entire invocation with a 0-arg call to MockSession.GetSessionId().
+            if ((methodName == "ALSessionID" || methodName == "ALSessionId") &&
+                (exprText == "ALSession" || exprText == "ALDatabase"))
+            {
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("MockSession"),
+                        SyntaxFactory.IdentifierName("GetSessionId")),
+                    SyntaxFactory.ArgumentList())
+                    .WithTriviaFrom(visited);
+            }
+
             // ALSession.ALStartSession(...) -> MockSession.ALStartSession(...)
             // ALSession.ALIsSessionActive(...) -> MockSession.ALIsSessionActive(...)
             // ALSession.ALStopSession(...) -> MockSession.ALStopSession(...)
@@ -2807,10 +2825,12 @@ public void ClearApplicationMemberVariables() { }
             return SyntaxFactory.LiteralExpression(SyntaxKind.FalseLiteralExpression)
                 .WithTriviaFrom(visited);
         }
-        // Pattern: <any>.ALSessionId — the BC compiler lowers SessionId() to this.Session.ALSessionId.
-        // The rewriter turns this.Session → null!, so null!.ALSessionId throws NullReferenceException.
-        // Catch ALSessionId by member name regardless of receiver and redirect to MockSession.GetSessionId().
-        if (memberName == "ALSessionId")
+        // Pattern: <any>.ALSessionID or <any>.ALSessionId — the BC compiler lowers SessionId() to
+        // a property access on ALDatabase or this.Session. The rewriter turns this.Session → null!,
+        // so null!.ALSessionID throws NullReferenceException. BC follows the ALUserID naming convention
+        // (uppercase "ID"), but we also catch lowercase "Id" for robustness across BC versions.
+        // Catch by member name regardless of receiver and redirect to MockSession.GetSessionId().
+        if (memberName == "ALSessionID" || memberName == "ALSessionId")
         {
             return SyntaxFactory.InvocationExpression(
                 SyntaxFactory.MemberAccessExpression(

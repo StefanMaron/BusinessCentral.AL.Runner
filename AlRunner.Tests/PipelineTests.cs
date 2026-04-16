@@ -513,6 +513,28 @@ namespace AlRunnerGenerated {
     }
 
     [Fact]
+    public void SessionId_ReturnsPositiveInteger()
+    {
+        // Validates that SessionId() is correctly rewritten to MockSession.GetSessionId().
+        // If this test fails, DumpCSharp output below shows the actual BC-compiled form
+        // (pre-rewrite) so the exact property/method name can be identified.
+        var dumpPipeline = new AlRunnerPipeline();
+        var dumpResult = dumpPipeline.Run(new PipelineOptions
+        {
+            DumpCSharp = true,
+            InlineCode = "if SessionId() <= 0 then error('fail');"
+        });
+
+        var pipeline = new AlRunnerPipeline();
+        var result = pipeline.Run(new PipelineOptions
+        {
+            InlineCode = "if SessionId() <= 0 then error('SessionId() must return a positive integer');"
+        });
+        Assert.True(result.ExitCode == 0,
+            $"SessionId() returned non-positive or crashed.\nPre-rewrite C#:\n{dumpResult.StdOut}");
+    }
+
+    [Fact]
     public void InitValue_AppliedOnRecordInit()
     {
         var pipeline = new AlRunnerPipeline();
