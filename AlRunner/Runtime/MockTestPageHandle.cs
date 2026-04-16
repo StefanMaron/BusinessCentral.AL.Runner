@@ -64,6 +64,74 @@ public class MockTestPageHandle
     /// </summary>
     public int ALValidationErrorCount() => 0;
 
+    // ── TestRequestPage-specific methods ────────────────────────────────────────
+
+    /// <summary>
+    /// Triggers preview of the report. Returns a no-op action.
+    /// BC emits <c>tP.Target.ALPreview().ALInvoke()</c> — returns an Action.
+    /// </summary>
+    public MockTestPageAction ALPreview() => new MockTestPageAction();
+
+    /// <summary>
+    /// Triggers printing of the report. Returns a no-op action.
+    /// BC emits <c>tP.Target.ALPrint().ALInvoke()</c> — returns an Action.
+    /// </summary>
+    public MockTestPageAction ALPrint() => new MockTestPageAction();
+
+    /// <summary>
+    /// Saves the report as PDF. No-op stub in standalone mode.
+    /// BC emits <c>tP.Target.ALSaveAsPdf(fileName)</c>.
+    /// </summary>
+    public void ALSaveAsPdf(NavText fileName) { }
+    public void ALSaveAsPdf(string fileName) { }
+
+    /// <summary>
+    /// Saves the report as Excel. No-op stub in standalone mode.
+    /// BC emits <c>tP.Target.ALSaveAsExcel(fileName)</c>.
+    /// </summary>
+    public void ALSaveAsExcel(NavText fileName) { }
+    public void ALSaveAsExcel(string fileName) { }
+
+    /// <summary>
+    /// Saves the report as Word. No-op stub in standalone mode.
+    /// BC emits <c>tP.Target.ALSaveAsWord(fileName)</c>.
+    /// </summary>
+    public void ALSaveAsWord(NavText fileName) { }
+    public void ALSaveAsWord(string fileName) { }
+
+    /// <summary>
+    /// Saves the report as XML. No-op stub in standalone mode.
+    /// BC emits <c>tP.Target.ALSaveAsXml(reportFileName, dataFileName)</c>.
+    /// </summary>
+    public void ALSaveAsXml(NavText reportFileName, NavText dataFileName) { }
+    public void ALSaveAsXml(string reportFileName, string dataFileName) { }
+
+    /// <summary>
+    /// Schedules the report. Returns a no-op action.
+    /// BC emits <c>tP.Target.ALSchedule().ALInvoke()</c> — returns an Action.
+    /// </summary>
+    public MockTestPageAction ALSchedule() => new MockTestPageAction();
+
+    /// <summary>
+    /// Finds the first/next/previous field matching the given value. Stubs return false.
+    /// Additional MockTestPageField-typed overloads handle BC TestPage field references
+    /// passed directly (vs raw int hashes covered by the int overloads added by #689).
+    /// </summary>
+    public bool ALFindFirstField(MockTestPageField field, NavValue value) => false;
+    public bool ALFindFirstField(MockTestPageField field, object? value) => false;
+    public bool ALFindFirstField(DataError errorLevel, MockTestPageField field, NavValue value) => false;
+    public bool ALFindFirstField(DataError errorLevel, MockTestPageField field, object? value) => false;
+
+    public bool ALFindNextField(MockTestPageField field, NavValue value) => false;
+    public bool ALFindNextField(MockTestPageField field, object? value) => false;
+    public bool ALFindNextField(DataError errorLevel, MockTestPageField field, NavValue value) => false;
+    public bool ALFindNextField(DataError errorLevel, MockTestPageField field, object? value) => false;
+
+    public bool ALFindPreviousField(MockTestPageField field, NavValue value) => false;
+    public bool ALFindPreviousField(MockTestPageField field, object? value) => false;
+    public bool ALFindPreviousField(DataError errorLevel, MockTestPageField field, NavValue value) => false;
+    public bool ALFindPreviousField(DataError errorLevel, MockTestPageField field, object? value) => false;
+
     /// <summary>
     /// Navigates to the first record on the page. Stub returns true.
     /// </summary>

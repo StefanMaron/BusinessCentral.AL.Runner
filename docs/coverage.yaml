@@ -7267,14 +7267,16 @@ TestPart.Visible:
 TestRequestPage.Cancel:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/269-testrequestpage-methods
+  notes: overloads=1; GetBuiltInAction(FormResult.Cancel) no-op stub
 
 TestRequestPage.Caption:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/269-testrequestpage-methods
+  notes: overloads=1; ALCaption property returns "TestPage"
 
 TestRequestPage.Editable:
   layer: runtime-api
@@ -7285,38 +7287,44 @@ TestRequestPage.Editable:
 TestRequestPage.Expand:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/269-testrequestpage-methods
+  notes: overloads=1; ALExpand(bool) no-op stub
 
 TestRequestPage.FindFirstField:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/269-testrequestpage-methods
+  notes: overloads=1; ALFindFirstField stub returns false
 
 TestRequestPage.FindNextField:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/269-testrequestpage-methods
+  notes: overloads=1; ALFindNextField stub returns false
 
 TestRequestPage.FindPreviousField:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/269-testrequestpage-methods
+  notes: overloads=1; ALFindPreviousField stub returns false
 
 TestRequestPage.First:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/269-testrequestpage-methods
+  notes: overloads=1; ALFirst() returns true
 
 TestRequestPage.GetValidationError:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/269-testrequestpage-methods
+  notes: overloads=1; ALGetValidationError(int) returns empty NavText
 
 TestRequestPage.GoToKey:
   layer: runtime-api
@@ -7339,80 +7347,93 @@ TestRequestPage.IsExpanded:
 TestRequestPage.Last:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/269-testrequestpage-methods
+  notes: overloads=1; ALLast() returns false (empty page)
 
 TestRequestPage.New:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/269-testrequestpage-methods
+  notes: overloads=1; ALNew() no-op stub
 
 TestRequestPage.Next:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/269-testrequestpage-methods
+  notes: overloads=1; ALNext() returns false
 
 TestRequestPage.OK:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/269-testrequestpage-methods
+  notes: overloads=1; GetBuiltInAction(FormResult.OK) sets ModalResult
 
 TestRequestPage.Preview:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/269-testrequestpage-methods
+  notes: overloads=1; ALPreview() returns MockTestPageAction (call .Invoke())
 
 TestRequestPage.Previous:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/269-testrequestpage-methods
+  notes: overloads=1; ALPrevious() returns false
 
 TestRequestPage.Print:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/269-testrequestpage-methods
+  notes: overloads=1; ALPrint() returns MockTestPageAction (call .Invoke())
 
 TestRequestPage.SaveAsExcel:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/269-testrequestpage-methods
+  notes: overloads=1; ALSaveAsExcel(NavText) no-op stub
 
 TestRequestPage.SaveAsPdf:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/269-testrequestpage-methods
+  notes: overloads=1; ALSaveAsPdf(NavText) no-op stub
 
 TestRequestPage.SaveAsWord:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/269-testrequestpage-methods
+  notes: overloads=1; ALSaveAsWord(NavText) no-op stub
 
 TestRequestPage.SaveAsXml:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/269-testrequestpage-methods
+  notes: overloads=1; ALSaveAsXml(NavText, NavText) no-op stub
 
 TestRequestPage.Schedule:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/269-testrequestpage-methods
+  notes: overloads=1; ALSchedule() returns MockTestPageAction (call .Invoke())
 
 TestRequestPage.ValidationErrorCount:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/269-testrequestpage-methods
+  notes: overloads=1; ALValidationErrorCount() returns 0
 
 # ── Text ────────────────────────────────────────────────────────
 
