@@ -668,9 +668,26 @@ public static class MockJsonHelper
             var backing = GetBackingToken(token);
             if (backing.Type == JTokenType.Date)
                 return CreateNavTime(backing.Value<DateTime>());
-            if (backing.Type == JTokenType.String &&
-                DateTime.TryParse(backing.Value<string>(), out var parsed))
-                return CreateNavTime(parsed);
+            if (backing.Type == JTokenType.TimeSpan)
+            {
+                // TimeSpan stored directly — use as time-of-day
+                var ts = backing.Value<TimeSpan>();
+                return CreateNavTime(DateTime.MinValue + ts);
+            }
+            if (backing.Type == JTokenType.Integer)
+            {
+                // Stored as milliseconds since midnight
+                var ms = backing.Value<long>();
+                return CreateNavTime(DateTime.MinValue + TimeSpan.FromMilliseconds(ms));
+            }
+            if (backing.Type == JTokenType.String)
+            {
+                var s = backing.Value<string>() ?? "";
+                if (DateTime.TryParse(s, out var dt))
+                    return CreateNavTime(dt);
+                if (TimeSpan.TryParse(s, out var tsv))
+                    return CreateNavTime(DateTime.MinValue + tsv);
+            }
         }
         return NavTime.Default;
     }
