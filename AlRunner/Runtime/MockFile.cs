@@ -14,6 +14,10 @@ using Microsoft.Dynamics.Nav.Types;
 ///     Name, TextMode, WriteMode, GetStamp, SetStamp, CreateInStream, CreateOutStream,
 ///     Download, Upload, View, ViewFromStream, CreateTempFile) are backed by an
 ///     in-memory byte array so round-trip text I/O works in tests.
+///
+/// Path/name parameters use <c>string</c> rather than <c>NavText</c> because BC compiles
+/// AL string literals to C# <c>string</c> and <c>NavText</c> has an implicit <c>string</c>
+/// operator, so both NavText variables and string literals are accepted.
 /// </summary>
 public class MockFile
 {
@@ -36,52 +40,52 @@ public class MockFile
     // ── Static methods ────────────────────────────────────────────────────────
 
     /// <summary>File.Exists — always false in standalone mode (no real filesystem).</summary>
-    public static bool ALExists(NavText name) => false;
+    public static bool ALExists(string name) => false;
 
     /// <summary>File.Exists with DataError overload.</summary>
-    public static bool ALExists(DataError errorLevel, NavText name) => false;
+    public static bool ALExists(DataError errorLevel, string name) => false;
 
     /// <summary>File.Copy — no-op in standalone mode.</summary>
-    public static void ALCopy(NavText fromName, NavText toName) { }
+    public static void ALCopy(string fromName, string toName) { }
 
-    public static void ALCopy(DataError errorLevel, NavText fromName, NavText toName) { }
+    public static void ALCopy(DataError errorLevel, string fromName, string toName) { }
 
     /// <summary>File.Erase — no-op in standalone mode.</summary>
-    public static void ALErase(NavText name) { }
+    public static void ALErase(string name) { }
 
-    public static void ALErase(DataError errorLevel, NavText name) { }
+    public static void ALErase(DataError errorLevel, string name) { }
 
     /// <summary>File.Rename — no-op in standalone mode.</summary>
-    public static void ALRename(NavText oldName, NavText newName) { }
+    public static void ALRename(string oldName, string newName) { }
 
-    public static void ALRename(DataError errorLevel, NavText oldName, NavText newName) { }
+    public static void ALRename(DataError errorLevel, string oldName, string newName) { }
 
     /// <summary>File.IsPathTemporary — returns false; no temp FS in standalone mode.</summary>
-    public static bool ALIsPathTemporary(NavText name) => false;
+    public static bool ALIsPathTemporary(string name) => false;
 
-    public static bool ALIsPathTemporary(DataError errorLevel, NavText name) => false;
+    public static bool ALIsPathTemporary(DataError errorLevel, string name) => false;
 
     // ── Instance methods ──────────────────────────────────────────────────────
 
     /// <summary>ALCreate — opens an in-memory buffer for writing.</summary>
-    public void ALCreate(object? parent, DataError errorLevel, NavText name)
+    public void ALCreate(object? parent, DataError errorLevel, string name)
     {
-        _name = name.ToString();
+        _name = name;
         _data = Array.Empty<byte>();
         _pos = 0;
         _writeMode = true;
     }
 
-    public void ALCreate(object? parent, NavText name) => ALCreate(parent, DataError.ThrowError, name);
+    public void ALCreate(object? parent, string name) => ALCreate(parent, DataError.ThrowError, name);
 
     /// <summary>ALOpen — opens an in-memory buffer for reading.</summary>
-    public void ALOpen(object? parent, DataError errorLevel, NavText name)
+    public void ALOpen(object? parent, DataError errorLevel, string name)
     {
-        _name = name.ToString();
+        _name = name;
         _pos = 0;
     }
 
-    public void ALOpen(object? parent, NavText name) => ALOpen(parent, DataError.ThrowError, name);
+    public void ALOpen(object? parent, string name) => ALOpen(parent, DataError.ThrowError, name);
 
     /// <summary>ALClose — resets stream position.</summary>
     public void ALClose()
@@ -92,9 +96,9 @@ public class MockFile
     public void ALClose(object? parent) => ALClose();
 
     /// <summary>ALWrite — appends UTF-8 encoded text to the in-memory buffer.</summary>
-    public void ALWrite(NavText value)
+    public void ALWrite(string value)
     {
-        var bytes = Encoding.UTF8.GetBytes(value.ToString());
+        var bytes = Encoding.UTF8.GetBytes(value ?? string.Empty);
         var newData = new byte[_data.Length + bytes.Length];
         Array.Copy(_data, newData, _data.Length);
         Array.Copy(bytes, 0, newData, _data.Length, bytes.Length);
@@ -102,7 +106,7 @@ public class MockFile
         _pos = _data.Length;
     }
 
-    public void ALWrite(object? parent, NavText value) => ALWrite(value);
+    public void ALWrite(object? parent, string value) => ALWrite(value);
 
     /// <summary>ALRead — reads one line of UTF-8 text from the in-memory buffer.</summary>
     public void ALRead(ref NavText value)
@@ -193,14 +197,14 @@ public class MockFile
     public void ALCreateTempFile(object? parent) { }
 
     /// <summary>ALDownload — no-op; no browser/UI in standalone mode.</summary>
-    public void ALDownload(NavText name) { }
+    public void ALDownload(string name) { }
 
-    public void ALDownload(object? parent, NavText name) { }
+    public void ALDownload(object? parent, string name) { }
 
     /// <summary>ALUpload — no-op; no browser/UI in standalone mode.</summary>
-    public void ALUpload(NavText name) { }
+    public void ALUpload(string name) { }
 
-    public void ALUpload(object? parent, NavText name) { }
+    public void ALUpload(object? parent, string name) { }
 
     /// <summary>ALView — no-op; no UI in standalone mode.</summary>
     public void ALView(object? parent) { }
