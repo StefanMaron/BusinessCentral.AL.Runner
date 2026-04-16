@@ -39,17 +39,23 @@ public struct MockVersion
         object? major, object? minor, object? build, object? revision)
         => ALCreate(null, major, minor, build, revision);
 
-    /// <summary>BC lowers <c>ver.Major()</c> to <c>ver.ALMajor()</c>.</summary>
-    public NavInteger ALMajor() => NavInteger.Create(_major);
+    /// <summary>
+    /// Default (zero) instance — BC emits <c>NavVersion.Default</c> for uninitialized
+    /// <c>Version</c> variables (0.0.0.0).
+    /// </summary>
+    public static MockVersion Default => new MockVersion();
 
-    /// <summary>BC lowers <c>ver.Minor()</c> to <c>ver.ALMinor()</c>.</summary>
-    public NavInteger ALMinor() => NavInteger.Create(_minor);
+    /// <summary>BC lowers <c>ver.Major()</c> to the int property <c>ver.ALMajor</c>.</summary>
+    public int ALMajor => _major;
 
-    /// <summary>BC lowers <c>ver.Build()</c> to <c>ver.ALBuild()</c>.</summary>
-    public NavInteger ALBuild() => NavInteger.Create(_build);
+    /// <summary>BC lowers <c>ver.Minor()</c> to the int property <c>ver.ALMinor</c>.</summary>
+    public int ALMinor => _minor;
 
-    /// <summary>BC lowers <c>ver.Revision()</c> to <c>ver.ALRevision()</c>.</summary>
-    public NavInteger ALRevision() => NavInteger.Create(_revision);
+    /// <summary>BC lowers <c>ver.Build()</c> to the int property <c>ver.ALBuild</c>.</summary>
+    public int ALBuild => _build;
+
+    /// <summary>BC lowers <c>ver.Revision()</c> to the int property <c>ver.ALRevision</c>.</summary>
+    public int ALRevision => _revision;
 
     /// <summary>
     /// BC lowers <c>ver.ToText()</c> to <c>ver.ALToText(session)</c> or <c>ver.ALToText()</c>.
