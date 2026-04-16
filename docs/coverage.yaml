@@ -8411,44 +8411,44 @@ Version.ToText:
 WebServiceActionContext.AddEntityKey:
   layer: runtime-api
   category: WebServiceActionContext
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=2 (base + DataError); MockWebServiceActionContext; stores (tableId, fieldName, fieldValue) tuples in-memory; tested via CallAddEntityKey no-throw
 
 WebServiceActionContext.GetObjectId:
   layer: runtime-api
   category: WebServiceActionContext
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=2 (base + DataError); MockWebServiceActionContext; returns stored int; default 0; round-trip tested
 
 WebServiceActionContext.GetObjectType:
   layer: runtime-api
   category: WebServiceActionContext
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=2 (base + DataError); MockWebServiceActionContext; returns stored int; default 0; round-trip tested
 
 WebServiceActionContext.GetResultCode:
   layer: runtime-api
   category: WebServiceActionContext
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=2 (base + DataError); MockWebServiceActionContext; returns WebServiceActionResultCode enum; round-trip tested for Created and OkResponse
 
 WebServiceActionContext.SetObjectId:
   layer: runtime-api
   category: WebServiceActionContext
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=2 (base + DataError); MockWebServiceActionContext; stores int; round-trip tested
 
 WebServiceActionContext.SetObjectType:
   layer: runtime-api
   category: WebServiceActionContext
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=2 (base + DataError); MockWebServiceActionContext; stores int; round-trip tested
 
 WebServiceActionContext.SetResultCode:
   layer: runtime-api
   category: WebServiceActionContext
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=2 (base + DataError); MockWebServiceActionContext; stores WebServiceActionResultCode enum; round-trip tested for Created and OkResponse
 
 # ── XmlAttribute ────────────────────────────────────────────────
 

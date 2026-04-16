@@ -1253,6 +1253,12 @@ public void ClearApplicationMemberVariables()
         if (text == "NavSessionSettings")
             return node.WithIdentifier(SyntaxFactory.Identifier("MockSessionSettings"));
 
+        // NavWebServiceActionContext -> MockWebServiceActionContext
+        // WebServiceActionContext is used in OData action handlers. The real type
+        // ties into BC service-tier dispatch; the mock stores state in-memory.
+        if (text == "NavWebServiceActionContext")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockWebServiceActionContext"));
+
         // NavEventScope -> object (event scope type used for static fields)
         // Use PredefinedType to emit the C# keyword "object" properly, avoiding
         // namespace resolution issues where "object" as an IdentifierName fails.
@@ -1507,6 +1513,14 @@ public void ClearApplicationMemberVariables()
         // BC emits `new NavFilterPageBuilder(this)` in scope-class field initialisers.
         // The mock is parameterless — strip the ITreeObject parent.
         if (typeText == "MockFilterPageBuilder" && visited.ArgumentList?.Arguments.Count == 1)
+        {
+            return visited.WithArgumentList(SyntaxFactory.ArgumentList());
+        }
+
+        // new MockWebServiceActionContext(this) -> new MockWebServiceActionContext()
+        // BC may emit `new NavWebServiceActionContext(this)` in scope-class field initialisers.
+        // The mock is parameterless — strip the ITreeObject parent.
+        if (typeText == "MockWebServiceActionContext" && visited.ArgumentList?.Arguments.Count == 1)
         {
             return visited.WithArgumentList(SyntaxFactory.ArgumentList());
         }
