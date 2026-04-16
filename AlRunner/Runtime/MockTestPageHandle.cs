@@ -65,6 +65,84 @@ public class MockTestPageHandle
     public int ALValidationErrorCount() => 0;
 
     /// <summary>
+    /// Returns the validation error message at the given index. Stub returns empty string.
+    /// BC emits <c>tP.Target.ALGetValidationError(index)</c>.
+    /// </summary>
+    public NavText ALGetValidationError(int index) => new NavText("");
+
+    // ── TestRequestPage-specific methods ────────────────────────────────────────
+
+    /// <summary>
+    /// Triggers preview of the report. No-op stub in standalone mode.
+    /// BC emits <c>tP.Target.ALPreview()</c>.
+    /// </summary>
+    public void ALPreview() { }
+
+    /// <summary>
+    /// Triggers printing of the report. No-op stub in standalone mode.
+    /// BC emits <c>tP.Target.ALPrint()</c>.
+    /// </summary>
+    public void ALPrint() { }
+
+    /// <summary>
+    /// Saves the report as PDF. No-op stub in standalone mode.
+    /// BC emits <c>tP.Target.ALSaveAsPdf(fileName)</c>.
+    /// </summary>
+    public void ALSaveAsPdf(NavText fileName) { }
+    public void ALSaveAsPdf(string fileName) { }
+
+    /// <summary>
+    /// Saves the report as Excel. No-op stub in standalone mode.
+    /// BC emits <c>tP.Target.ALSaveAsExcel(fileName)</c>.
+    /// </summary>
+    public void ALSaveAsExcel(NavText fileName) { }
+    public void ALSaveAsExcel(string fileName) { }
+
+    /// <summary>
+    /// Saves the report as Word. No-op stub in standalone mode.
+    /// BC emits <c>tP.Target.ALSaveAsWord(fileName)</c>.
+    /// </summary>
+    public void ALSaveAsWord(NavText fileName) { }
+    public void ALSaveAsWord(string fileName) { }
+
+    /// <summary>
+    /// Saves the report as XML. No-op stub in standalone mode.
+    /// BC emits <c>tP.Target.ALSaveAsXml(reportFileName, dataFileName)</c>.
+    /// </summary>
+    public void ALSaveAsXml(NavText reportFileName, NavText dataFileName) { }
+    public void ALSaveAsXml(string reportFileName, string dataFileName) { }
+
+    /// <summary>
+    /// Schedules the report. No-op stub in standalone mode.
+    /// BC emits <c>tP.Target.ALSchedule()</c>.
+    /// </summary>
+    public void ALSchedule() { }
+
+    /// <summary>
+    /// Finds the first field matching the given value. Stub returns false.
+    /// BC emits <c>tP.Target.ALFindFirstField(field, value)</c>.
+    /// </summary>
+    public bool ALFindFirstField(MockTestPageField field, NavValue value) => false;
+    public bool ALFindFirstField(MockTestPageField field, object value) => false;
+    public bool ALFindFirstField(DataError errorLevel, MockTestPageField field, NavValue value) => false;
+
+    /// <summary>
+    /// Finds the next field matching the given value. Stub returns false.
+    /// BC emits <c>tP.Target.ALFindNextField(field, value)</c>.
+    /// </summary>
+    public bool ALFindNextField(MockTestPageField field, NavValue value) => false;
+    public bool ALFindNextField(MockTestPageField field, object value) => false;
+    public bool ALFindNextField(DataError errorLevel, MockTestPageField field, NavValue value) => false;
+
+    /// <summary>
+    /// Finds the previous field matching the given value. Stub returns false.
+    /// BC emits <c>tP.Target.ALFindPreviousField(field, value)</c>.
+    /// </summary>
+    public bool ALFindPreviousField(MockTestPageField field, NavValue value) => false;
+    public bool ALFindPreviousField(MockTestPageField field, object value) => false;
+    public bool ALFindPreviousField(DataError errorLevel, MockTestPageField field, NavValue value) => false;
+
+    /// <summary>
     /// Navigates to the first record on the page. Stub returns true.
     /// </summary>
     public bool ALFirst() => true;
