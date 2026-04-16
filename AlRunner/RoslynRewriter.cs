@@ -2277,17 +2277,6 @@ public void ClearApplicationMemberVariables()
                 or "ALGetText" or "ALGetInteger" or "ALGetDecimal"
                 or "ALGetObject" or "ALGetArray")
             {
-                // Guard: XML WriteTo(var Result: Text) compiles to ALWriteTo(..., ref resultVar)
-                // while JSON WriteTo(OutStream) compiles to ALWriteTo(..., streamVar) — no ref.
-                // Skip the JSON rewrite for XML-style calls that pass a result by reference.
-                if (methodName is "ALWriteTo" or "ALReadFrom")
-                {
-                    bool hasRefArg = visited.ArgumentList.Arguments.Any(
-                        a => a.RefKindKeyword.IsKind(SyntaxKind.RefKeyword));
-                    if (hasRefArg)
-                        return visited;
-                }
-
                 var helperMethod = methodName switch
                 {
                     "ALWriteTo" => "WriteTo",

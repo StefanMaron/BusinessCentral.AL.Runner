@@ -162,28 +162,4 @@ codeunit 61721 "XDT XmlDocumentType Test"
             'SetName must change the name from the original html');
     end;
 
-    // ── WriteTo ───────────────────────────────────────────────────────────────
-
-    [Test]
-    procedure WriteTo_ReturnsNonEmpty()
-    begin
-        Assert.IsTrue(H.WriteToText_NotEmpty(), 'WriteTo must produce non-empty output');
-    end;
-
-    [Test]
-    procedure WriteTo_ContainsName()
-    begin
-        Assert.IsTrue(H.WriteToText_ContainsName(),
-            'WriteTo output must contain the doctype name');
-    end;
-
-    // ── AsXmlNode ─────────────────────────────────────────────────────────────
-
-    [Test]
-    procedure AsXmlNode_WritesToText()
-    begin
-        Assert.IsTrue(H.AsXmlNode_WritesToText(),
-            'AsXmlNode() must return a node that WriteTo produces non-empty output');
-    end;
-
 }

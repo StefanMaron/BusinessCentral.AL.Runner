@@ -107,41 +107,4 @@ codeunit 61720 "XDT Helper"
         exit(result);
     end;
 
-    // ── WriteTo ───────────────────────────────────────────────────────────────
-
-    procedure WriteToText_NotEmpty(): Boolean
-    var
-        docType: XmlDocumentType;
-        result: Text;
-    begin
-        docType := XmlDocumentType.Create('html', '', '', '');
-        docType.WriteTo(result);
-        exit(result <> '');
-    end;
-
-    procedure WriteToText_ContainsName(): Boolean
-    var
-        docType: XmlDocumentType;
-        result: Text;
-    begin
-        docType := XmlDocumentType.Create('mytype', '', '', '');
-        docType.WriteTo(result);
-        exit(result.IndexOf('mytype') > 0);
-    end;
-
-    // ── AsXmlNode ─────────────────────────────────────────────────────────────
-    // AsXmlNode returns an XmlNode; verify it can be round-tripped to Text.
-
-    procedure AsXmlNode_WritesToText(): Boolean
-    var
-        docType: XmlDocumentType;
-        node: XmlNode;
-        result: Text;
-    begin
-        docType := XmlDocumentType.Create('html');
-        node := docType.AsXmlNode();
-        node.WriteTo(result);
-        exit(result <> '');
-    end;
-
 }

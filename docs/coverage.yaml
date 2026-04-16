@@ -8774,8 +8774,8 @@ XmlDocumentType.AddBeforeSelf:
 XmlDocumentType.AsXmlNode:
   layer: runtime-api
   category: XmlDocumentType
-  status: covered
-  notes: overloads=1; AsXmlNode() returns XmlNode that WriteTo produces non-empty output
+  status: gap
+  notes: overloads=1; ALWriteTo rewriter collision — RoslynRewriter incorrectly routes XML WriteTo through MockJsonHelper (issue #714)
 
 XmlDocumentType.Create:
   layer: runtime-api
@@ -8870,8 +8870,8 @@ XmlDocumentType.SetSystemId:
 XmlDocumentType.WriteTo:
   layer: runtime-api
   category: XmlDocumentType
-  status: covered
-  notes: overloads=4; WriteTo(Text) returns non-empty string containing DOCTYPE name
+  status: gap
+  notes: overloads=4; ALWriteTo rewriter collision — RoslynRewriter incorrectly routes XML WriteTo through MockJsonHelper (issue #714)
 
 # ── XmlElement ──────────────────────────────────────────────────
 
