@@ -93,4 +93,55 @@ codeunit 59401 "Test Table Fixed Section"
         asserterror Rec.Insert();
         Assert.ExpectedError('already exists');
     end;
+
+    // --- Page layout fixed() group tests ---
+
+    [Test]
+    procedure FixedLayoutGroup_SetAndReadLeft()
+    var
+        TP: TestPage "Fixed Section Page";
+    begin
+        // [GIVEN] A page with a fixed() layout group containing grpLeft and grpRight
+        TP.OpenNew();
+
+        // [WHEN] Fields in the left group are set
+        TP.IdField.SetValue(10);
+        TP.NameField.SetValue('Alpha');
+
+        // [THEN] Values are readable — fixed() groups do not break field access
+        Assert.AreEqual('10', TP.IdField.Value, 'IdField in fixed() group must be 10');
+        Assert.AreEqual('Alpha', TP.NameField.Value, 'NameField in fixed() group must be Alpha');
+        TP.Close();
+    end;
+
+    [Test]
+    procedure FixedLayoutGroup_SetAndReadRight()
+    var
+        TP: TestPage "Fixed Section Page";
+    begin
+        // [GIVEN] A page with a fixed() layout group
+        TP.OpenNew();
+
+        // [WHEN] A field in the right group is set
+        TP.AmountField.SetValue(999.99);
+
+        // [THEN] The value is readable from the right-side fixed() group
+        Assert.AreEqual('999.99', TP.AmountField.Value, 'AmountField in fixed() right group must be 999.99');
+        TP.Close();
+    end;
+
+    [Test]
+    procedure FixedLayoutGroup_FieldValue_NotDefaultAfterSet()
+    var
+        TP: TestPage "Fixed Section Page";
+    begin
+        // [GIVEN] A page with a fixed() layout group, name field set to a specific value
+        TP.OpenNew();
+        TP.NameField.SetValue('Beta');
+
+        // [THEN] The value is not the default empty string
+        Assert.AreNotEqual('', TP.NameField.Value, 'NameField must not be empty after SetValue');
+        Assert.AreEqual('Beta', TP.NameField.Value, 'NameField must be Beta');
+        TP.Close();
+    end;
 }
