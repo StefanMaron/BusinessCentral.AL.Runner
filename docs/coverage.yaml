@@ -3890,44 +3890,44 @@ ModuleDependencyInfo.Publisher:
 ModuleInfo.AppVersion:
   layer: runtime-api
   category: ModuleInfo
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; default returns Version 0.0.0.0; tests/bucket-1/267-moduleinfo-properties
 
 ModuleInfo.DataVersion:
   layer: runtime-api
   category: ModuleInfo
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; default returns Version 0.0.0.0; tests/bucket-1/267-moduleinfo-properties
 
 ModuleInfo.Dependencies:
   layer: runtime-api
   category: ModuleInfo
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; default returns empty List of [ModuleDependencyInfo]; tests/bucket-1/267-moduleinfo-properties
 
 ModuleInfo.Id:
   layer: runtime-api
   category: ModuleInfo
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; default returns empty GUID; tests/bucket-1/267-moduleinfo-properties
 
 ModuleInfo.Name:
   layer: runtime-api
   category: ModuleInfo
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; default returns empty string; tests/bucket-1/267-moduleinfo-properties
 
 ModuleInfo.PackageId:
   layer: runtime-api
   category: ModuleInfo
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; default returns empty GUID; tests/bucket-1/267-moduleinfo-properties
 
 ModuleInfo.Publisher:
   layer: runtime-api
   category: ModuleInfo
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; default returns empty string; tests/bucket-1/267-moduleinfo-properties
 
 # ── NavApp ──────────────────────────────────────────────────────
 

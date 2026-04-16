@@ -29,9 +29,9 @@ codeunit 84101 "MI Test"
     [Test]
     procedure Id_Default_IsEmptyGuid()
     begin
-        // Positive: default ModuleInfo.Id formats as empty GUID.
+        // Positive: default ModuleInfo.Id formats as empty GUID (no braces in AL Format output).
         Assert.AreEqual(
-            '{00000000-0000-0000-0000-000000000000}',
+            '00000000-0000-0000-0000-000000000000',
             Src.DefaultId(),
             'Default ModuleInfo.Id must be empty GUID');
     end;
@@ -39,9 +39,9 @@ codeunit 84101 "MI Test"
     [Test]
     procedure PackageId_Default_IsEmptyGuid()
     begin
-        // Positive: default ModuleInfo.PackageId formats as empty GUID.
+        // Positive: default ModuleInfo.PackageId formats as empty GUID (no braces in AL Format output).
         Assert.AreEqual(
-            '{00000000-0000-0000-0000-000000000000}',
+            '00000000-0000-0000-0000-000000000000',
             Src.DefaultPackageId(),
             'Default ModuleInfo.PackageId must be empty GUID');
     end;
