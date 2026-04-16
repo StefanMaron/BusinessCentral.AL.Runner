@@ -1247,6 +1247,12 @@ public void ClearApplicationMemberVariables()
         if (text == "NavFilterPageBuilder")
             return node.WithIdentifier(SyntaxFactory.Identifier("MockFilterPageBuilder"));
 
+        // NavSessionSettings -> MockSessionSettings
+        // NavSessionSettings.ALInit() dereferences NavSession (null standalone).
+        // MockSessionSettings stores settings in-memory; RequestSessionUpdate is a no-op.
+        if (text == "NavSessionSettings")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockSessionSettings"));
+
         // NavEventScope -> object (event scope type used for static fields)
         // Use PredefinedType to emit the C# keyword "object" properly, avoiding
         // namespace resolution issues where "object" as an IdentifierName fails.

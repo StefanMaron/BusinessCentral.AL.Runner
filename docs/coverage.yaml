@@ -5572,56 +5572,65 @@ SessionInformation.SqlStatementsExecuted:
 SessionSettings.Company:
   layer: runtime-api
   category: SessionSettings
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/192-session-settings
+  notes: overloads=1. MockSessionSettings holds setting in-memory; setter + getter round-trip tested.
 
 SessionSettings.Init:
   layer: runtime-api
   category: SessionSettings
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/192-session-settings
+  notes: overloads=1. NavSessionSettings is rewritten to MockSessionSettings; ALInit populates defaults and never dereferences NavSession.
 
 SessionSettings.LanguageId:
   layer: runtime-api
   category: SessionSettings
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/192-session-settings
+  notes: overloads=1. Integer setter + getter round-trip on MockSessionSettings.
 
 SessionSettings.LocaleId:
   layer: runtime-api
   category: SessionSettings
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/192-session-settings
+  notes: overloads=1. Integer setter + getter round-trip on MockSessionSettings.
 
 SessionSettings.ProfileAppId:
   layer: runtime-api
   category: SessionSettings
-  status: gap
-  notes: overloads=1
+  status: stub
+  tests: tests/bucket-2/192-session-settings
+  notes: overloads=1. Property present on MockSessionSettings (NavGuid, defaults to Guid.Empty); explicit setter/getter tests TBD.
 
 SessionSettings.ProfileId:
   layer: runtime-api
   category: SessionSettings
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/192-session-settings
+  notes: overloads=1. Text setter + getter round-trip on MockSessionSettings.
 
 SessionSettings.ProfileSystemScope:
   layer: runtime-api
   category: SessionSettings
-  status: gap
-  notes: overloads=1
+  status: stub
+  tests: tests/bucket-2/192-session-settings
+  notes: overloads=1. Option-typed property present on MockSessionSettings; explicit setter/getter tests TBD.
 
 SessionSettings.RequestSessionUpdate:
   layer: runtime-api
   category: SessionSettings
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/192-session-settings
+  notes: overloads=2 (with/without reloadUserProfile flag). Standalone no-op — no service-tier session to refresh. Preserves local state.
 
 SessionSettings.TimeZone:
   layer: runtime-api
   category: SessionSettings
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/192-session-settings
+  notes: overloads=1. Text setter + getter round-trip on MockSessionSettings.
 
 # ── System ──────────────────────────────────────────────────────
 
