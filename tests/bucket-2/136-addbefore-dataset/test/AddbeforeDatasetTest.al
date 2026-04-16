@@ -63,7 +63,7 @@ codeunit 59602 "ABDS Tests"
         // Positive: the source table in the same compilation unit as the reportextensions
         // must be usable — inserts/finds work, proving the compilation unit is live.
         Item.Init();
-        Item."No." := 'ITEM1';
+        Item.Code := 'ITEM1';
         Item.Name := 'Test Item';
         Item.Qty := 42;
         Item.Insert();
