@@ -3546,18 +3546,27 @@ public void ClearApplicationMemberVariables()
             }
         }
 
-        // Pattern: ALSystemErrorHandling.ALGetLastErrorText -> AlScope.LastErrorText
+        // Pattern: ALSystemErrorHandling.ALGetLastErrorText     -> AlScope.LastErrorText
+        //          ALSystemErrorHandling.ALGetLastErrorCode     -> AlScope.LastErrorCode
+        //          ALSystemErrorHandling.ALGetLastErrorCallStack -> AlScope.LastErrorCallStack
         // ALSystemErrorHandling accesses NavCurrentThread.Session which is null in standalone mode.
         if (visited.Expression is IdentifierNameSyntax errHandlingId &&
             errHandlingId.Identifier.Text == "ALSystemErrorHandling")
         {
             var errProp = visited.Name.Identifier.Text;
-            if (errProp == "ALGetLastErrorText" || errProp == "ALGetLastErrorCode" || errProp == "ALGetLastErrorCallStack")
+            string? scopeProp = errProp switch
+            {
+                "ALGetLastErrorText" => "LastErrorText",
+                "ALGetLastErrorCode" => "LastErrorCode",
+                "ALGetLastErrorCallStack" => "LastErrorCallStack",
+                _ => null
+            };
+            if (scopeProp != null)
             {
                 return SyntaxFactory.MemberAccessExpression(
                     SyntaxKind.SimpleMemberAccessExpression,
                     SyntaxFactory.IdentifierName("AlScope"),
-                    SyntaxFactory.IdentifierName("LastErrorText"));
+                    SyntaxFactory.IdentifierName(scopeProp));
             }
         }
 

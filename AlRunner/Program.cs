@@ -2240,6 +2240,8 @@ public static class Executor
             AlRunner.Runtime.MockIsolatedStorage.ResetAll();
             AlRunner.Runtime.MockVariableStorage.Reset();
             AlRunner.Runtime.AlScope.ResetLastStatement();
+            AlRunner.Runtime.AlScope.LastErrorText = "";
+            AlRunner.Runtime.AlScope.LastErrorCode = "";
             AlRunner.Runtime.AlScope.ResetCollectedErrors();
             AlRunner.Runtime.HandlerRegistry.Reset();
             AlRunner.Runtime.MockSession.Reset();

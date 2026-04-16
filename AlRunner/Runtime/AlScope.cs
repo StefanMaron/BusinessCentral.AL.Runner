@@ -150,6 +150,12 @@ public class AlScope : IDisposable, ITreeObject
     public static string LastErrorText { get; set; } = "";
 
     /// <summary>
+    /// Stores the last error code. Always empty in standalone runner (BC error codes
+    /// require structured ErrorInfo which is beyond runner scope).
+    /// </summary>
+    public static string LastErrorCode { get; set; } = "";
+
+    /// <summary>
     /// Configurable user ID returned by UserId() — defaults to "TESTUSER".
     /// Set via --user-id CLI flag or PipelineOptions.UserId before running.
     /// </summary>
@@ -185,6 +191,13 @@ public class AlScope : IDisposable, ITreeObject
             CollectedErrors.Clear();
         return result;
     }
+
+    /// <summary>
+    /// Zero-arg overload emitted by BC compiler for GetCollectedErrors() in AL.
+    /// Returns the collected errors without clearing (BC default behaviour).
+    /// </summary>
+    public static NavList<NavALErrorInfo> GetCollectedErrors()
+        => GetCollectedErrors(clearErrors: false);
 
     /// <summary>Clears all collected errors.</summary>
     public static void ClearCollectedErrors() => CollectedErrors.Clear();

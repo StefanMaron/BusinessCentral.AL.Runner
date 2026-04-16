@@ -5778,14 +5778,14 @@ System.ClearAll:
 System.ClearCollectedErrors:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; AlScope.ClearCollectedErrors(); tested in 176-system-error-utils
 
 System.ClearLastError:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewrites to AlScope.LastErrorText = ""; tested in 176-system-error-utils
 
 System.ClosingDate:
   layer: runtime-api
@@ -5962,8 +5962,8 @@ System.Format:
 System.GetCollectedErrors:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; zero-arg AlScope.GetCollectedErrors(); tested in 176-system-error-utils
 
 System.GetDocumentUrl:
   layer: runtime-api
@@ -5980,14 +5980,14 @@ System.GetDotNetType:
 System.GetLastErrorCallStack:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns AlScope.LastErrorCallStack (always "" in runner); tested in 176-system-error-utils
 
 System.GetLastErrorCode:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns AlScope.LastErrorCode (always "" in runner); tested in 176-system-error-utils
 
 System.GetLastErrorObject:
   layer: runtime-api
@@ -5998,8 +5998,8 @@ System.GetLastErrorObject:
 System.GetLastErrorText:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; returns AlScope.LastErrorText set by asserterror; tested in 176-system-error-utils
 
 System.GetUrl:
   layer: runtime-api
@@ -6022,8 +6022,8 @@ System.GuiAllowed:
 System.HasCollectedErrors:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; AlScope.HasCollectedErrors; tested in 176-system-error-utils
 
 System.Hyperlink:
   layer: runtime-api
@@ -6052,8 +6052,8 @@ System.ImportStreamWithUrlAccess:
 System.IsCollectingErrors:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; AlScope.IsCollectingErrors; tested in 176-system-error-utils
 
 System.IsNull:
   layer: runtime-api
