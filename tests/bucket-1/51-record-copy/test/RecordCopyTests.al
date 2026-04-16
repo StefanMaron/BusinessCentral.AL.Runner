@@ -1,4 +1,4 @@
-codeunit 55902 "Record Copy Tests"
+codeunit 56002 "Record Copy Tests"
 {
     Subtype = Test;
 
