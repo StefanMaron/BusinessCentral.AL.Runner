@@ -3032,8 +3032,10 @@ IsolatedStorage.Set:
 IsolatedStorage.SetEncrypted:
   layer: runtime-api
   category: IsolatedStorage
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2 (with/without DataScope; Text and NavSecretText value). Rewriter routes to MockIsolatedStorage.ALSetEncrypted which stores plaintext — encryption is transparent standalone, value round-trips through Get/Contains.
+  tests:
+    - tests/bucket-2/175-iso-setencrypted
 
 # ── JsonArray ───────────────────────────────────────────────────
 

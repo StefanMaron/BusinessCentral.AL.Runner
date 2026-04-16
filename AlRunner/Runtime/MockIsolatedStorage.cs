@@ -47,6 +47,30 @@ public static class MockIsolatedStorage
         _store[key] = ExtractSecretValue(value);
     }
 
+    // ALSetEncrypted — encrypted variant. In the mock, encryption is transparent
+    // (no crypto); the value round-trips through Get/Contains like a plain ALSet.
+    // Overloads cover the same arg shapes as ALSet: with/without DataScope, and
+    // Text vs NavSecretText value.
+    public static void ALSetEncrypted(DataError errorLevel, string key, string value)
+    {
+        _store[key] = value;
+    }
+
+    public static void ALSetEncrypted(DataError errorLevel, string key, NavSecretText value)
+    {
+        _store[key] = ExtractSecretValue(value);
+    }
+
+    public static void ALSetEncrypted(DataError errorLevel, string key, string value, object dataScope)
+    {
+        _store[key] = value;
+    }
+
+    public static void ALSetEncrypted(DataError errorLevel, string key, NavSecretText value, object dataScope)
+    {
+        _store[key] = ExtractSecretValue(value);
+    }
+
     // ALGet overloads (with DataScope)
     public static bool ALGet(DataError errorLevel, string key, object dataScope, out NavText value)
     {
