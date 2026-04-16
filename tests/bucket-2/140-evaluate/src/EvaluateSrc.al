@@ -1,7 +1,7 @@
 /// Helper codeunit that exercises the AL built-in Evaluate() function.
 /// Evaluate(var Variable; Text) parses a text value into a typed variable.
 /// Returns true on success, false on failure.
-codeunit 60500 "EVL Helper"
+codeunit 60100 "EVL Helper"
 {
     /// Parse text into Integer. Returns parsed value; errors on invalid input.
     procedure ParseInteger(txt: Text): Integer
