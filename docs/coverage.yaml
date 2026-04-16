@@ -2187,8 +2187,9 @@ ErrorInfo.Title:
 ErrorInfo.Verbosity:
   layer: runtime-api
   category: ErrorInfo
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; NavALErrorInfo.ALVerbosity works standalone via BC runtime DLL
+  test: tests/bucket-1/84-errorinfo-verbosity
 
 # ── FieldRef ────────────────────────────────────────────────────
 
