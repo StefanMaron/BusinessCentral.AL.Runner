@@ -1,4 +1,4 @@
-codeunit 56501 "IsEmpty Tests"
+codeunit 56601 "IsEmpty Tests"
 {
     Subtype = Test;
 

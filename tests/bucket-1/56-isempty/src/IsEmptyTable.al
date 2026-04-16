@@ -1,4 +1,4 @@
-table 56500 "IE Test Table"
+table 56600 "IE Test Table"
 {
     DataClassification = ToBeClassified;
 
