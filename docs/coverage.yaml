@@ -1921,7 +1921,9 @@ Dialog.Update:
 Duration.ToText:
   layer: runtime-api
   category: Duration
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/142-duration-totext
   notes: overloads=1
 
 # ── EnumType ────────────────────────────────────────────────────
