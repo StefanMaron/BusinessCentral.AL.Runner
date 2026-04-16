@@ -8598,26 +8598,32 @@ XmlAttributeCollection.Count:
 XmlAttributeCollection.Get:
   layer: runtime-api
   category: XmlAttributeCollection
-  status: gap
-  notes: overloads=3
+  status: covered
+  tests:
+    - tests/bucket-2/193-xmlattribute
+    - tests/bucket-2/197-xmlattrcollection
+  notes: overloads=3. Covered via BC native — returns attribute value; returns false for missing key.
 
 XmlAttributeCollection.Remove:
   layer: runtime-api
   category: XmlAttributeCollection
-  status: gap
-  notes: overloads=3
+  status: covered
+  tests: tests/bucket-2/197-xmlattrcollection
+  notes: overloads=3. Covered via BC native — deletes named attribute so Get returns false.
 
 XmlAttributeCollection.RemoveAll:
   layer: runtime-api
   category: XmlAttributeCollection
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/197-xmlattrcollection
+  notes: overloads=1. Covered via RemoveAllAttributes() on XmlElement; also tested here via HasAttributes becoming false.
 
 XmlAttributeCollection.Set:
   layer: runtime-api
   category: XmlAttributeCollection
-  status: gap
-  notes: overloads=2
+  status: covered
+  tests: tests/bucket-2/197-xmlattrcollection
+  notes: overloads=2. Covered via BC native — Set(name, value) replaces existing or adds new attribute.
 
 # ── XmlCData ────────────────────────────────────────────────────
 
