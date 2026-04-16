@@ -5693,13 +5693,13 @@ System.TemporaryPath:
 System.Time:
   layer: runtime-api
   category: System
-  status: gap
+  status: covered
   notes: overloads=1
 
 System.Today:
   layer: runtime-api
   category: System
-  status: gap
+  status: covered
   notes: overloads=1
 
 System.Variant2Date:
