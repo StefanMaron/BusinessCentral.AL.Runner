@@ -150,10 +150,10 @@ public class AlScope : IDisposable, ITreeObject
     public static string LastErrorText { get; set; } = "";
 
     /// <summary>
-    /// Configurable user ID returned by UserId() — defaults to empty string.
+    /// Configurable user ID returned by UserId() — defaults to "TESTUSER".
     /// Set via --user-id CLI flag or PipelineOptions.UserId before running.
     /// </summary>
-    public static string UserId { get; set; } = "";
+    public static string UserId { get; set; } = "TESTUSER";
 
     // NavMethodScope static fields/methods — the BC compiler can emit static
     // references to these on scope classes that inherit from AlScope.

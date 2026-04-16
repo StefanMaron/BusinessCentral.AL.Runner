@@ -1542,8 +1542,10 @@ Database.UnregisterTableConnection:
 Database.UserId:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; default stub value "TESTUSER" (configurable via --user-id flag)
+  tests:
+    - tests/bucket-1/57-userid
 
 Database.UserSecurityId:
   layer: runtime-api

@@ -13,6 +13,12 @@ All notable changes to this project are documented here. Format based on
   call without error, call after insert still shows record with correct field value,
   multiple calls are all no-ops. Coverage map: `Database.SelectLatestVersion` moved
   from `gap` to `covered`.
+- **`UserId()` default stub value fix (#314)** — `AlScope.UserId` previously defaulted
+  to `""` (empty string), causing `Assert.AreNotEqual('', UserId())` to fail. Changed
+  default to `"TESTUSER"` so AL code calling `UserId()` gets a stable non-empty value
+  without requiring the `--user-id` CLI flag. New suite `tests/bucket-1/57-userid`
+  adds 2 proving tests: UserId is non-empty, UserId is consistent across calls.
+  Coverage map: `Database.UserId` moved from `gap` to `covered`.
 - **`Record.IsEmpty` coverage (#299)** — `ALIsEmpty` was already implemented in
   `MockRecordHandle` (`GetFilteredAndMarkedRecords().Count == 0`) but had no proving
   tests. New suite `tests/bucket-1/56-isempty` adds 5 proving tests: empty table →
