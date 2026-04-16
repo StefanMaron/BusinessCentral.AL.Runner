@@ -45,10 +45,12 @@ page 59200 "VS Product List"
         view(ActiveOnly)
         {
             Caption = 'Active Products';
+            Filters = where(Active = const(true));
         }
         view(InStockOnly)
         {
             Caption = 'In Stock';
+            Filters = where(Stock = filter('>0'));
         }
     }
 }
@@ -62,15 +64,12 @@ codeunit 59200 "VS Product Helper"
         exit(Stock > 0);
     end;
 
-    procedure CategoryLabel(Category: Code[10]): Text
+    procedure CategoryLabel(Category: Text): Text
     begin
-        case Category of
-            'A':
-                exit('Premium');
-            'B':
-                exit('Standard');
-            else
-                exit('Other');
-        end;
+        if Category = 'A' then
+            exit('Premium');
+        if Category = 'B' then
+            exit('Standard');
+        exit('Other');
     end;
 }
