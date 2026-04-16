@@ -7,6 +7,11 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **`separator_action` coverage (#394)** — Pages containing `separator()` elements in
+  action areas now compile and run correctly. The existing `RoslynRewriter` already
+  handles this — separator declarations are inside `InitializeComponent` which is
+  stripped for `NavForm` (page) classes. New suite `tests/bucket-1/73-separator-action`
+  adds 2 proving tests. Coverage map: `separator_action` moved from `gap` to `covered`.
 - **`actionref_declaration` coverage (#388)** — Pages and page extensions containing
   `actionref` sections (promoted-action bindings) now compile and run correctly.
   The existing `RoslynRewriter` already handles the BC-generated C# for actionref
