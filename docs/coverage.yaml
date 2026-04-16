@@ -2400,44 +2400,51 @@ FieldRef.Value:
 File.Close:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALClose() resets position
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.Copy:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALCopy() no-op in standalone
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.Create:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALCreate() opens in-memory buffer
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.CreateInStream:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALCreateInStream() fills stream from buffer
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.CreateOutStream:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALCreateOutStream() writes back to buffer
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.CreateTempFile:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALCreateTempFile() no-op in standalone
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.Download:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALDownload() no-op (no browser/UI in standalone)
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.DownloadFromStream:
   layer: runtime-api
@@ -2448,92 +2455,107 @@ File.DownloadFromStream:
 File.Erase:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALErase() no-op in standalone
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.Exists:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALExists() always returns false (no real FS)
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.GetStamp:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALGetStamp() returns NavDateTime.Default
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.IsPathTemporary:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALIsPathTemporary() returns false
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.Len:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALLen() returns byte length of in-memory buffer
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.Name:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALName() returns name set by Create/Open
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.Open:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALOpen() resets position for reading
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.Pos:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALPos() returns current position
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.Read:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALRead() reads UTF-8 line from in-memory buffer
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.Rename:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALRename() no-op in standalone
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.Seek:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALSeek() moves position in in-memory buffer
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.SetStamp:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALSetStamp() no-op (no real FS)
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.TextMode:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALTextMode property get/set
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.Trunc:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALTrunc() truncates buffer at current position
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.Upload:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALUpload() no-op (no browser/UI in standalone)
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.UploadIntoStream:
   layer: runtime-api
@@ -2544,26 +2566,30 @@ File.UploadIntoStream:
 File.View:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALView() no-op (no UI in standalone)
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.ViewFromStream:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALViewFromStream() no-op (no UI in standalone)
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.Write:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=21
+  status: covered
+  notes: overloads=21; MockFile.ALWrite() appends UTF-8 bytes to in-memory buffer
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 File.WriteMode:
   layer: runtime-api
   category: File
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFile.ALWriteMode property get/set
+  test: tests/bucket-1/87-file-io/test/FileTest.al
 
 # ── FileUpload ──────────────────────────────────────────────────
 

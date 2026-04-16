@@ -1,61 +1,220 @@
 namespace AlRunner.Runtime;
 
+using System.Text;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
 
 /// <summary>
-/// Minimal file-dialog replacement. Standalone mode has no client picker, so
-/// upload requests fail closed and leave the target stream empty.
+/// In-memory stub for BC's <c>File</c> / <c>NavFile</c> type.
+/// Real BC File I/O requires an OS filesystem and a service-tier session.
+/// This mock provides enough behaviour for unit-test code paths:
+///   - Static methods (File.Exists, File.Copy, File.Erase, File.Rename, File.IsPathTemporary)
+///     are no-ops or return safe defaults.
+///   - Instance methods (Create, Open, Close, Read, Write, Seek, Trunc, Len, Pos,
+///     Name, TextMode, WriteMode, GetStamp, SetStamp, CreateInStream, CreateOutStream,
+///     Download, Upload, View, ViewFromStream, CreateTempFile) are backed by an
+///     in-memory byte array so round-trip text I/O works in tests.
 /// </summary>
-public static class MockFile
+public class MockFile
 {
-    // --- ALUploadIntoStream overloads ---
-    public static bool ALUploadIntoStream(DataError errorLevel, string filter, ByRef<MockInStream> inStream)
+    private byte[] _data = Array.Empty<byte>();
+    private int _pos = 0;
+    private bool _textMode = true;
+    private bool _writeMode = false;
+    private string _name = string.Empty;
+
+    // ── Constructors ─────────────────────────────────────────────────────────
+
+    public MockFile() { }
+
+    /// <summary>1-arg constructor — BC emits <c>new NavFile(this)</c> (scope/parent arg).</summary>
+    public MockFile(object? parent) { }
+
+    /// <summary>Static factory for BC-emitted <c>NavFile.Default</c>.</summary>
+    public static MockFile Default => new MockFile();
+
+    // ── Static methods ────────────────────────────────────────────────────────
+
+    /// <summary>File.Exists — always false in standalone mode (no real filesystem).</summary>
+    public static bool ALExists(NavText name) => false;
+
+    /// <summary>File.Exists with DataError overload.</summary>
+    public static bool ALExists(DataError errorLevel, NavText name) => false;
+
+    /// <summary>File.Copy — no-op in standalone mode.</summary>
+    public static void ALCopy(NavText fromName, NavText toName) { }
+
+    public static void ALCopy(DataError errorLevel, NavText fromName, NavText toName) { }
+
+    /// <summary>File.Erase — no-op in standalone mode.</summary>
+    public static void ALErase(NavText name) { }
+
+    public static void ALErase(DataError errorLevel, NavText name) { }
+
+    /// <summary>File.Rename — no-op in standalone mode.</summary>
+    public static void ALRename(NavText oldName, NavText newName) { }
+
+    public static void ALRename(DataError errorLevel, NavText oldName, NavText newName) { }
+
+    /// <summary>File.IsPathTemporary — returns false; no temp FS in standalone mode.</summary>
+    public static bool ALIsPathTemporary(NavText name) => false;
+
+    public static bool ALIsPathTemporary(DataError errorLevel, NavText name) => false;
+
+    // ── Instance methods ──────────────────────────────────────────────────────
+
+    /// <summary>ALCreate — opens an in-memory buffer for writing.</summary>
+    public void ALCreate(object? parent, DataError errorLevel, NavText name)
     {
-        if (inStream.Value != null)
-            inStream.Value.Clear();
-        return false;
+        _name = name.ToString();
+        _data = Array.Empty<byte>();
+        _pos = 0;
+        _writeMode = true;
     }
 
-    public static bool ALUploadIntoStream(DataError errorLevel, string filter, ByRef<MockInStream> inStream, System.Guid uploadId)
+    public void ALCreate(object? parent, NavText name) => ALCreate(parent, DataError.ThrowError, name);
+
+    /// <summary>ALOpen — opens an in-memory buffer for reading.</summary>
+    public void ALOpen(object? parent, DataError errorLevel, NavText name)
     {
-        if (inStream.Value != null)
-            inStream.Value.Clear();
-        return false;
+        _name = name.ToString();
+        _pos = 0;
     }
 
-    public static bool ALUploadIntoStream(DataError errorLevel, string dialogTitle, string fromFolder, string filter, ByRef<NavText> fileName, ByRef<MockInStream> inStream, System.Guid uploadId)
+    public void ALOpen(object? parent, NavText name) => ALOpen(parent, DataError.ThrowError, name);
+
+    /// <summary>ALClose — resets stream position.</summary>
+    public void ALClose()
     {
-        if (inStream.Value != null)
-            inStream.Value.Clear();
-        return false;
+        _pos = 0;
     }
 
-    public static bool ALUploadIntoStream(DataError errorLevel, string dialogTitle, string fromFolder, string filter, ByRef<NavOemText> fileName, ByRef<MockInStream> inStream, System.Guid uploadId)
+    public void ALClose(object? parent) => ALClose();
+
+    /// <summary>ALWrite — appends UTF-8 encoded text to the in-memory buffer.</summary>
+    public void ALWrite(NavText value)
     {
-        if (inStream.Value != null)
-            inStream.Value.Clear();
-        return false;
+        var bytes = Encoding.UTF8.GetBytes(value.ToString());
+        var newData = new byte[_data.Length + bytes.Length];
+        Array.Copy(_data, newData, _data.Length);
+        Array.Copy(bytes, 0, newData, _data.Length, bytes.Length);
+        _data = newData;
+        _pos = _data.Length;
     }
 
-    // --- ALDownloadFromStream overloads ---
-    public static bool ALDownloadFromStream(DataError errorLevel, MockInStream inStream, string dialogTitle, string fromFolder, string filter, ByRef<NavText> fileName, System.Guid downloadId)
+    public void ALWrite(object? parent, NavText value) => ALWrite(value);
+
+    /// <summary>ALRead — reads one line of UTF-8 text from the in-memory buffer.</summary>
+    public void ALRead(ref NavText value)
     {
-        return false;
+        int remaining = _data.Length - _pos;
+        if (remaining <= 0) { value = NavText.Empty; return; }
+        int lineEnd = Array.IndexOf(_data, (byte)'\n', _pos);
+        int toRead = lineEnd >= 0 ? lineEnd - _pos + 1 : remaining;
+        value = new NavText(Encoding.UTF8.GetString(_data, _pos, toRead).TrimEnd('\n', '\r'));
+        _pos += toRead;
     }
 
-    public static bool ALDownloadFromStream(DataError errorLevel, MockInStream inStream, string dialogTitle, string fromFolder, string filter, ByRef<NavOemText> fileName, System.Guid downloadId)
+    public void ALRead(object? parent, ref NavText value) => ALRead(ref value);
+
+    /// <summary>ALLen — returns the total byte length of the in-memory buffer.</summary>
+    public int ALLen() => _data.Length;
+
+    public int ALLen(object? parent) => ALLen();
+
+    /// <summary>ALPos — returns the current read/write position.</summary>
+    public int ALPos() => _pos;
+
+    public int ALPos(object? parent) => ALPos();
+
+    /// <summary>ALSeek — moves the current position.</summary>
+    public void ALSeek(int pos)
     {
-        return false;
+        _pos = Math.Max(0, Math.Min(pos, _data.Length));
     }
 
-    public static bool ALDownloadFromStream(DataError errorLevel, MockInStream inStream, string dialogTitle, string fromFolder, string filter, ByRef<NavText> fileName)
+    public void ALSeek(object? parent, int pos) => ALSeek(pos);
+
+    /// <summary>ALTrunc — truncates the buffer at the current position.</summary>
+    public void ALTrunc()
     {
-        return false;
+        if (_pos < _data.Length)
+        {
+            var newData = new byte[_pos];
+            Array.Copy(_data, newData, _pos);
+            _data = newData;
+        }
     }
 
-    public static bool ALDownloadFromStream(DataError errorLevel, MockInStream inStream, string dialogTitle, ByRef<NavText> fileName)
+    public void ALTrunc(object? parent) => ALTrunc();
+
+    /// <summary>ALName — returns the file name set by Create/Open.</summary>
+    public NavText ALName() => new NavText(_name);
+
+    public NavText ALName(object? parent) => ALName();
+
+    /// <summary>ALTextMode — get/set text mode flag. BC emits as property access.</summary>
+    public bool ALTextMode { get => _textMode; set => _textMode = value; }
+
+    /// <summary>ALWriteMode — get/set write mode flag. BC emits as property access.</summary>
+    public bool ALWriteMode { get => _writeMode; set => _writeMode = value; }
+
+    /// <summary>ALGetStamp — returns default DateTime; no real filesystem timestamps.</summary>
+    public NavDateTime ALGetStamp() => NavDateTime.Default;
+
+    /// <summary>ALSetStamp — no-op.</summary>
+    public void ALSetStamp(NavDateTime stamp) { }
+
+    /// <summary>ALCreateInStream — fills <paramref name="inStream"/> with the current buffer.</summary>
+    public void ALCreateInStream(object? parent, MockInStream inStream)
     {
-        return false;
+        inStream.Init(_data);
+    }
+
+    public void ALCreateInStream(object? parent, MockInStream inStream, object? encoding)
+    {
+        inStream.Init(_data);
+    }
+
+    /// <summary>ALCreateOutStream — prepares an outstream that writes back into this file's buffer.</summary>
+    public void ALCreateOutStream(object? parent, MockOutStream outStream)
+    {
+        outStream.Init();
+        outStream.OnFlush = d => _data = d;
+    }
+
+    public void ALCreateOutStream(object? parent, MockOutStream outStream, object? encoding)
+    {
+        outStream.Init();
+        outStream.OnFlush = d => _data = d;
+    }
+
+    /// <summary>ALCreateTempFile — no-op in standalone mode.</summary>
+    public void ALCreateTempFile(object? parent) { }
+
+    /// <summary>ALDownload — no-op; no browser/UI in standalone mode.</summary>
+    public void ALDownload(NavText name) { }
+
+    public void ALDownload(object? parent, NavText name) { }
+
+    /// <summary>ALUpload — no-op; no browser/UI in standalone mode.</summary>
+    public void ALUpload(NavText name) { }
+
+    public void ALUpload(object? parent, NavText name) { }
+
+    /// <summary>ALView — no-op; no UI in standalone mode.</summary>
+    public void ALView(object? parent) { }
+
+    /// <summary>ALViewFromStream — no-op; no UI in standalone mode.</summary>
+    public void ALViewFromStream(object? parent, MockInStream inStream) { }
+
+    /// <summary>ALAssign — copies the backing data and state from another MockFile.</summary>
+    public void ALAssign(MockFile other)
+    {
+        _data = (byte[])other._data.Clone();
+        _pos = 0;
+        _name = other._name;
+        _textMode = other._textMode;
+        _writeMode = other._writeMode;
     }
 }
