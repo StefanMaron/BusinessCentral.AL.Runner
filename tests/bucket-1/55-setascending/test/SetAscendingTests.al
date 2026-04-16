@@ -96,7 +96,7 @@ codeunit 56201 "SetAscending Tests"
         Item: Record "SA Item";
         Items: Text;
     begin
-        // [GIVEN] Four records: A(P=1), B(P=1), C(P=2), D(P=2)
+        // [GIVEN] Four records: B(P=1), C(P=2), D(P=2), A(P=3) — from Seed + extra D
         Seed();
         Item.Init(); Item.Code := 'D'; Item.Name := 'Delta'; Item.Priority := 2; Item.Insert();
 
@@ -109,8 +109,8 @@ codeunit 56201 "SetAscending Tests"
             Items += Item.Code;
         until Item.Next() = 0;
 
-        // [THEN] Priority 1 first (B, A — Code desc), then Priority 2 (D, C — Code desc)
-        Assert.AreEqual('BADC', Items, 'Composite key: Priority asc, Code desc must give BADC');
+        // [THEN] B(P=1), then D and C (P=2, Code desc: D>C), then A(P=3)
+        Assert.AreEqual('BDCA', Items, 'Composite key: Priority asc, Code desc must give BDCA');
     end;
 
     // -----------------------------------------------------------------------
