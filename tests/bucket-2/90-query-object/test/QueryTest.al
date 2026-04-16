@@ -129,4 +129,64 @@ codeunit 59001 "Query Tests"
         asserterror Logic.TrySaveAsXml();
         Assert.ExpectedError('Query');
     end;
+
+    [Test]
+    procedure QuerySaveAsJsonThrowsNotSupported()
+    begin
+        // [GIVEN] A declared Query variable
+        // [WHEN]  We call Q.SaveAsJson(OutStream)
+        // [THEN]  A clear 'Query' error is raised
+        asserterror Logic.TrySaveAsJson();
+        Assert.ExpectedError('Query');
+    end;
+
+    // ------------------------------------------------------------------
+    // Metadata stubs: GetFilter, GetFilters, ColumnCaption, ColumnName, ColumnNo
+    // These return stub values — prove the methods compile and run.
+    // ------------------------------------------------------------------
+
+    [Test]
+    procedure QueryGetFilterReturnsEmpty()
+    begin
+        // [GIVEN] A Query variable with no filter set
+        // [WHEN]  We call Q.GetFilter(ColumnRef)
+        // [THEN]  Empty string is returned (stub — filter state is not tracked)
+        Assert.AreEqual('', Logic.TryGetFilter(), 'GetFilter should return empty string when no filter set');
+    end;
+
+    [Test]
+    procedure QueryGetFiltersReturnsEmpty()
+    begin
+        // [GIVEN] A Query variable with no filters set
+        // [WHEN]  We access Q.GetFilters
+        // [THEN]  Empty string is returned (stub — filter state is not tracked)
+        Assert.AreEqual('', Logic.TryGetFilters(), 'GetFilters should return empty string when no filters set');
+    end;
+
+    [Test]
+    procedure QueryColumnCaptionReturnsNonEmpty()
+    begin
+        // [GIVEN] A declared Query variable
+        // [WHEN]  We call Q.ColumnCaption(ColumnRef)
+        // [THEN]  A non-empty stub caption is returned
+        Assert.AreNotEqual('', Logic.TryColumnCaption(), 'ColumnCaption should return a non-empty stub value');
+    end;
+
+    [Test]
+    procedure QueryColumnNameReturnsNonEmpty()
+    begin
+        // [GIVEN] A declared Query variable
+        // [WHEN]  We call Q.ColumnName(ColumnRef)
+        // [THEN]  A non-empty stub name is returned
+        Assert.AreNotEqual('', Logic.TryColumnName(), 'ColumnName should return a non-empty stub value');
+    end;
+
+    [Test]
+    procedure QueryColumnNoReturnsPositive()
+    begin
+        // [GIVEN] A declared Query variable
+        // [WHEN]  We call Q.ColumnNo(ColumnRef)
+        // [THEN]  A positive integer column number is returned
+        Assert.IsTrue(Logic.TryColumnNo() > 0, 'ColumnNo should return a positive integer');
+    end;
 }

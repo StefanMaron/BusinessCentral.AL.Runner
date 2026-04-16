@@ -4329,92 +4329,122 @@ Query.SaveAsXml:
 QueryInstance.Close:
   layer: runtime-api
   category: QueryInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockQueryHandle.ALClose is a no-op stub.
+  tests:
+    - tests/bucket-2/90-query-object
 
 QueryInstance.ColumnCaption:
   layer: runtime-api
   category: QueryInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockQueryHandle.ALColumnCaption returns stub "Column{n}".
+  tests:
+    - tests/bucket-2/90-query-object
 
 QueryInstance.ColumnName:
   layer: runtime-api
   category: QueryInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockQueryHandle.ALColumnName returns stub "Column{n}".
+  tests:
+    - tests/bucket-2/90-query-object
 
 QueryInstance.ColumnNo:
   layer: runtime-api
   category: QueryInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockQueryHandle.ALColumnNo returns the column number as-is.
+  tests:
+    - tests/bucket-2/90-query-object
 
 QueryInstance.GetFilter:
   layer: runtime-api
   category: QueryInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockQueryHandle.ALGetFilter returns empty string (filters not tracked).
+  tests:
+    - tests/bucket-2/90-query-object
 
 QueryInstance.GetFilters:
   layer: runtime-api
   category: QueryInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockQueryHandle.ALGetFilters property returns empty string.
+  tests:
+    - tests/bucket-2/90-query-object
 
 QueryInstance.Open:
   layer: runtime-api
   category: QueryInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockQueryHandle.ALOpen throws NotSupportedException (requires BC service tier).
+  tests:
+    - tests/bucket-2/90-query-object
 
 QueryInstance.Read:
   layer: runtime-api
   category: QueryInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockQueryHandle.ALRead throws NotSupportedException (requires BC service tier).
+  tests:
+    - tests/bucket-2/90-query-object
 
 QueryInstance.SaveAsCsv:
   layer: runtime-api
   category: QueryInstance
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; MockQueryHandle.ALSaveAsCsv throws NotSupportedException.
+  tests:
+    - tests/bucket-2/90-query-object
 
 QueryInstance.SaveAsJson:
   layer: runtime-api
   category: QueryInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockQueryHandle.ALSaveAsJson throws NotSupportedException.
+  tests:
+    - tests/bucket-2/90-query-object
 
 QueryInstance.SaveAsXml:
   layer: runtime-api
   category: QueryInstance
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; MockQueryHandle.ALSaveAsXml throws NotSupportedException.
+  tests:
+    - tests/bucket-2/90-query-object
 
 QueryInstance.SecurityFiltering:
   layer: runtime-api
   category: QueryInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockQueryHandle.ALSecurityFiltering property get/set.
+  tests:
+    - tests/bucket-2/90-query-object
 
 QueryInstance.SetFilter:
   layer: runtime-api
   category: QueryInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockQueryHandle.ALSetFilter is a no-op stub.
+  tests:
+    - tests/bucket-2/90-query-object
 
 QueryInstance.SetRange:
   layer: runtime-api
   category: QueryInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockQueryHandle.ALSetRangeSafe is a no-op stub (3 overloads: clear/single/range).
+  tests:
+    - tests/bucket-2/90-query-object
 
 QueryInstance.TopNumberOfRows:
   layer: runtime-api
   category: QueryInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockQueryHandle.ALTopNumberOfRowsToReturn property get/set.
+  tests:
+    - tests/bucket-2/90-query-object
 
 # ── RecordId ────────────────────────────────────────────────────
 
