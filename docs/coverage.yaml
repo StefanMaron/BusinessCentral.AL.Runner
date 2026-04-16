@@ -8042,8 +8042,10 @@ XmlAttribute.WriteTo:
 XmlAttributeCollection.Count:
   layer: runtime-api
   category: XmlAttributeCollection
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone when the XmlElement is built programmatically.
+  tests:
+    - tests/bucket-2/144-xml-collections
 
 XmlAttributeCollection.Get:
   layer: runtime-api
@@ -8690,8 +8692,10 @@ XmlElement.InnerXml:
 XmlElement.IsEmpty:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone when the XmlElement is built programmatically.
+  tests:
+    - tests/bucket-2/144-xml-collections
 
 XmlElement.LocalName:
   layer: runtime-api
@@ -9004,8 +9008,10 @@ XmlNode.WriteTo:
 XmlNodeList.Count:
   layer: runtime-api
   category: XmlNodeList
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone when the XmlElement is built programmatically.
+  tests:
+    - tests/bucket-2/144-xml-collections
 
 XmlNodeList.Get:
   layer: runtime-api
