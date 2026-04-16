@@ -1145,7 +1145,9 @@ addlast_dataset_modification:
 addlast_fieldgroup_modification:
   layer: syntax
   category: modification
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/138-addlast-fieldgroup
 
 addlast_modification:
   layer: syntax
