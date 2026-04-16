@@ -2657,8 +2657,9 @@ Guid.CreateGuid:
 Guid.CreateSequentialGuid:
   layer: runtime-api
   category: Guid
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/179-guid-sequential
+  notes: overloads=1. Covered: non-null, uniqueness (two successive calls differ). Standalone note — the sequential-ordering guarantee is not modelled; the helper delegates to Guid.NewGuid.
 
 Guid.ToText:
   layer: runtime-api
