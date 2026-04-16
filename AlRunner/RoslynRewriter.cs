@@ -2830,6 +2830,19 @@ public void ClearApplicationMemberVariables() { }
                         SyntaxFactory.IdentifierName(methodName)));
             }
 
+            // NavGuid.ALNewSequentialGuid() -> AlCompat.ALCreateSequentialGuid()
+            // BC 26+ lowers Guid.CreateSequentialGuid() to NavGuid.ALNewSequentialGuid()
+            // instead of the older ALDatabase.ALCreateSequentialGuid. Route both forms
+            // to our AlCompat helper so the method exists across BC versions.
+            if (exprText == "NavGuid" && methodName == "ALNewSequentialGuid")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("ALCreateSequentialGuid")));
+            }
+
             // ALDatabase.ALIsNullGuid(g) -> AlCompat.ALIsNullGuid(g)
             // The real implementation goes through NavSession; ours checks Guid.Empty.
             if (exprText == "ALDatabase" && methodName == "ALIsNullGuid")
