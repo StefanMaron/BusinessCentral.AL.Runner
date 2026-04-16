@@ -3892,20 +3892,26 @@ Label.TrimStart:
 Media.ExportFile:
   layer: runtime-api
   category: Media
-  status: gap
+  status: covered
   notes: overloads=1
+  tests:
+    - tests/bucket-1/272-media
 
 Media.ExportStream:
   layer: runtime-api
   category: Media
-  status: gap
+  status: covered
   notes: overloads=1
+  tests:
+    - tests/bucket-1/272-media
 
 Media.FindOrphans:
   layer: runtime-api
   category: Media
-  status: gap
+  status: covered
   notes: overloads=1
+  tests:
+    - tests/bucket-1/272-media
 
 Media.HasValue:
   layer: runtime-api
@@ -3916,20 +3922,26 @@ Media.HasValue:
 Media.ImportFile:
   layer: runtime-api
   category: Media
-  status: gap
+  status: covered
   notes: overloads=1
+  tests:
+    - tests/bucket-1/272-media
 
 Media.ImportStream:
   layer: runtime-api
   category: Media
-  status: gap
+  status: covered
   notes: overloads=2
+  tests:
+    - tests/bucket-1/272-media
 
 Media.MediaId:
   layer: runtime-api
   category: Media
-  status: gap
+  status: covered
   notes: overloads=1
+  tests:
+    - tests/bucket-1/272-media
 
 # ── MediaSet ────────────────────────────────────────────────────
 

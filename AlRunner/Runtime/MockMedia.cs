@@ -1,0 +1,122 @@
+namespace AlRunner.Runtime;
+
+using Microsoft.Dynamics.Nav.Runtime;
+using Microsoft.Dynamics.Nav.Types;
+
+/// <summary>
+/// In-memory Media stub replacing NavMedia in standalone mode.
+/// NavMedia's Import/Export methods require a BC service tier to access
+/// blob storage and the media catalog. This mock:
+///   — ImportFile/ImportStream: set a HasValue flag and return true
+///   — ExportFile/ExportStream: no-op, return false (no data stored)
+///   — MediaId: returns a stable per-instance GUID
+///   — FindOrphans: static stub returning an empty list
+/// </summary>
+public class MockMedia
+{
+    private bool _hasValue;
+    private readonly Guid _id = Guid.NewGuid();
+
+    public static MockMedia Default => new MockMedia();
+
+    // ── HasValue ─────────────────────────────────────────────────────────────────
+
+    /// <summary>BC emits <c>m.ALHasValue(errorLevel)</c> for <c>Media.HasValue()</c>.</summary>
+    public bool ALHasValue(DataError errorLevel) => _hasValue;
+    public bool ALHasValue() => _hasValue;
+
+    // ── MediaId ──────────────────────────────────────────────────────────────────
+
+    /// <summary>BC emits <c>m.ALMediaId(errorLevel)</c> for <c>Media.MediaId()</c>.</summary>
+    public NavGuid ALMediaId(DataError errorLevel) => new NavGuid(_id);
+    public NavGuid ALMediaId() => new NavGuid(_id);
+
+    // ── ImportFile ───────────────────────────────────────────────────────────────
+
+    /// <summary>BC emits <c>m.ALImportFile(errorLevel, fileName)</c> for <c>Media.ImportFile()</c>.</summary>
+    public bool ALImportFile(DataError errorLevel, NavText fileName)
+    {
+        _hasValue = true;
+        return true;
+    }
+
+    public bool ALImportFile(DataError errorLevel, string fileName)
+    {
+        _hasValue = true;
+        return true;
+    }
+
+    public bool ALImportFile(NavText fileName)
+    {
+        _hasValue = true;
+        return true;
+    }
+
+    // ── ImportStream ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// BC emits <c>m.ALImportStream(errorLevel, inStream, fileName)</c> for
+    /// <c>Media.ImportStream(InStream, Text)</c>.
+    /// Two overloads per runtime-api.json (with and without MIME type).
+    /// </summary>
+    public bool ALImportStream(DataError errorLevel, MockInStream stream, NavText fileName)
+    {
+        _hasValue = true;
+        return true;
+    }
+
+    public bool ALImportStream(DataError errorLevel, MockInStream stream, string fileName)
+    {
+        _hasValue = true;
+        return true;
+    }
+
+    public bool ALImportStream(DataError errorLevel, MockInStream stream, NavText fileName, NavText mimeType)
+    {
+        _hasValue = true;
+        return true;
+    }
+
+    public bool ALImportStream(DataError errorLevel, MockInStream stream, string fileName, string mimeType)
+    {
+        _hasValue = true;
+        return true;
+    }
+
+    public bool ALImportStream(MockInStream stream, NavText fileName)
+    {
+        _hasValue = true;
+        return true;
+    }
+
+    public bool ALImportStream(MockInStream stream, string fileName)
+    {
+        _hasValue = true;
+        return true;
+    }
+
+    // ── ExportFile ───────────────────────────────────────────────────────────────
+
+    /// <summary>BC emits <c>m.ALExportFile(errorLevel, fileName)</c> for <c>Media.ExportFile()</c>.</summary>
+    public bool ALExportFile(DataError errorLevel, NavText fileName) => false;
+    public bool ALExportFile(DataError errorLevel, string fileName) => false;
+    public bool ALExportFile(NavText fileName) => false;
+
+    // ── ExportStream ─────────────────────────────────────────────────────────────
+
+    /// <summary>BC emits <c>m.ALExportStream(errorLevel, outStream)</c> for <c>Media.ExportStream()</c>.</summary>
+    public bool ALExportStream(DataError errorLevel, MockOutStream stream) => false;
+    public bool ALExportStream(MockOutStream stream) => false;
+
+    // ── FindOrphans ──────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// BC emits <c>NavMedia.ALFindOrphans(errorLevel)</c> for the static <c>Media.FindOrphans()</c>.
+    /// Returns an empty list — no orphaned media in a standalone test environment.
+    /// </summary>
+    public static NavList<NavGuid> ALFindOrphans(DataError errorLevel)
+        => NavList<NavGuid>.Default;
+
+    public static NavList<NavGuid> ALFindOrphans()
+        => NavList<NavGuid>.Default;
+}
