@@ -1,6 +1,6 @@
 /// Helper codeunit exercising XmlDocumentType.Create and property getters.
 /// Actual signatures: GetName(var Result: Text): Boolean, etc.
-codeunit 61700 "XDT Helper"
+codeunit 61720 "XDT Helper"
 {
     /// Create an XmlDocumentType with the given name and return its name via GetName.
     procedure CreateAndGetName(name: Text): Text
