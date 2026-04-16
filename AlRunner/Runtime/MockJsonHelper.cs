@@ -713,8 +713,8 @@ public static class MockJsonHelper
     /// Returns the Newtonsoft.Json path of the backing token.
     /// AL: JsonValue.Path  →  MockJsonHelper.Path(token)
     /// </summary>
-    public static string Path(NavJsonToken token, DataError errorLevel = default)
-        => GetBackingToken(token).Path;
+    public static NavText Path(NavJsonToken token, DataError errorLevel = default)
+        => new NavText(GetBackingToken(token).Path);
 
     /// <summary>
     /// Replacement for NavJsonValue.ALSetValueToUndefined().
