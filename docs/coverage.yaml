@@ -164,6 +164,7 @@ pageextension_declaration:
   category: extension
   status: covered
   tests:
+    - tests/bucket-1/82-pageextension
     - tests/bucket-2/36-page-ext-no-cascade
     - tests/bucket-2/38-page-ext-currpage
 
