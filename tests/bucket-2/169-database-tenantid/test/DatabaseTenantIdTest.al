@@ -1,4 +1,4 @@
-codeunit 61831 "DTI Database TenantId Test"
+codeunit 97002 "DTI Database TenantId Test"
 {
     Subtype = Test;
 

@@ -1,7 +1,7 @@
 /// Source codeunit that calls Database.TenantId() — used to prove the
 /// runner handles the call without error and returns a deterministic stub.
 
-codeunit 61830 "DTI Src"
+codeunit 97001 "DTI Src"
 {
     procedure GetTenantId(): Text
     begin
