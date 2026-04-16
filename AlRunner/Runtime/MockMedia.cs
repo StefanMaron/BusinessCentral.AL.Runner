@@ -12,7 +12,7 @@ using Microsoft.Dynamics.Nav.Types;
 ///   — MediaId: returns a stable per-instance GUID
 ///   — FindOrphans: static stub returning an empty list
 /// </summary>
-public class MockMedia
+public class MockMedia : NavValue
 {
     private bool _hasValue;
     private readonly Guid _id = Guid.NewGuid();
@@ -129,4 +129,17 @@ public class MockMedia
 
     public static NavList<NavGuid> ALFindOrphans()
         => NavList<NavGuid>.Default;
+
+    // ── NavValue abstract members ────────────────────────────────────────────────
+
+    /// <summary>NclType 56 is a placeholder; AlRunner code never reads NclType on MockMedia.</summary>
+    public override NavNclType NclType => (NavNclType)56;
+    public override bool IsMutable => true;
+    public override object ValueAsObject => _id;
+    public override object ClientObject => _id;
+    public override bool IsZeroOrEmpty => !_hasValue;
+    public override int GetBytesSize => 16;
+
+    public override int GetHashCode() => _id.GetHashCode();
+    public override bool Equals(NavValue? other) => other is MockMedia m && _id == m._id;
 }

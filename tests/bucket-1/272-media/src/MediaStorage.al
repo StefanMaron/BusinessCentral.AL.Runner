@@ -5,6 +5,7 @@ table 84407 "Media Test Storage"
     {
         field(1; Id; Integer) { }
         field(2; Data; Blob) { }
+        field(3; MediaField; Media) { }
     }
 
     keys

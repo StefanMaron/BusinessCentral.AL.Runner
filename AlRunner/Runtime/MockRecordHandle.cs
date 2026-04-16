@@ -251,7 +251,7 @@ public class MockRecordHandle
         // (or re-inserted records) get different MediaIds.
         if (expectedType == NavType.Media)
         {
-            var media = new NavMedia(Guid.NewGuid());
+            var media = new MockMedia();
             _fields[fieldNo] = media;
             return media;
         }
@@ -2367,7 +2367,7 @@ public class MockRecordHandle
             NavType.DateFormula => NavDateFormula.Default,
             NavType.GUID => new NavGuid(Guid.Empty),
             NavType.Duration => NavDuration.Default,
-            NavType.Media => NavMedia.Default,
+            NavType.Media => new MockMedia(),
             NavType.MediaSet => NavMediaSet.Default,
             _ => NavText.Default(0)
         };

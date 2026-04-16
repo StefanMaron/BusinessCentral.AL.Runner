@@ -1,56 +1,56 @@
-/// Helper codeunit exercising Media methods.
+/// Helper codeunit exercising Media methods via table field access.
 codeunit 84407 "Media Src"
 {
     // ── MediaId ─────────────────────────────────────────────────────────────────
-    procedure GetMediaId(var m: Media): Guid
+    procedure GetMediaId(): Guid
     var
+        Storage: Record "Media Test Storage" temporary;
         Id: Guid;
     begin
-        // Assign to local variable first to avoid AL0282 (nullable return guard).
-        Id := m.MediaId();
+        Id := Storage.MediaField.MediaId();
         exit(Id);
     end;
 
     // ── HasValue ─────────────────────────────────────────────────────────────────
-    procedure MediaHasValue(var m: Media): Boolean
+    procedure MediaHasValueDefault(): Boolean
+    var
+        Storage: Record "Media Test Storage" temporary;
     begin
-        exit(m.HasValue());
+        exit(Storage.MediaField.HasValue());
     end;
 
     // ── ImportFile ───────────────────────────────────────────────────────────────
     procedure ImportFileReturnsTrue(FileName: Text): Boolean
     var
-        m: Media;
+        Storage: Record "Media Test Storage" temporary;
         Ok: Boolean;
     begin
-        // Assign to local Boolean first to avoid AL0282 on nullable return.
-        Ok := m.ImportFile(FileName);
+        Ok := Storage.MediaField.ImportFile(FileName);
         exit(Ok);
     end;
 
     // ── ImportFile sets HasValue ─────────────────────────────────────────────────
     procedure HasValueAfterImportFile(FileName: Text): Boolean
     var
-        m: Media;
+        Storage: Record "Media Test Storage" temporary;
     begin
-        m.ImportFile(FileName);
-        exit(m.HasValue());
+        Storage.MediaField.ImportFile(FileName);
+        exit(Storage.MediaField.HasValue());
     end;
 
     // ── ExportFile ───────────────────────────────────────────────────────────────
     procedure ExportFileOnDefaultReturnsFalse(FileName: Text): Boolean
     var
-        m: Media;
+        Storage: Record "Media Test Storage" temporary;
         Ok: Boolean;
     begin
-        Ok := m.ExportFile(FileName);
+        Ok := Storage.MediaField.ExportFile(FileName);
         exit(Ok);
     end;
 
     // ── ImportStream ─────────────────────────────────────────────────────────────
     procedure ImportStreamReturnsTrue(content: Text): Boolean
     var
-        m: Media;
         Storage: Record "Media Test Storage" temporary;
         OutStr: OutStream;
         InStr: InStream;
@@ -60,13 +60,12 @@ codeunit 84407 "Media Src"
         Storage.Data.CreateOutStream(OutStr);
         OutStr.WriteText(content);
         Storage.Data.CreateInStream(InStr);
-        Ok := m.ImportStream(InStr, 'test.jpg');
+        Ok := Storage.MediaField.ImportStream(InStr, 'test.jpg');
         exit(Ok);
     end;
 
     procedure HasValueAfterImportStream(content: Text): Boolean
     var
-        m: Media;
         Storage: Record "Media Test Storage" temporary;
         OutStr: OutStream;
         InStr: InStream;
@@ -75,21 +74,20 @@ codeunit 84407 "Media Src"
         Storage.Data.CreateOutStream(OutStr);
         OutStr.WriteText(content);
         Storage.Data.CreateInStream(InStr);
-        m.ImportStream(InStr, 'test.jpg');
-        exit(m.HasValue());
+        Storage.MediaField.ImportStream(InStr, 'test.jpg');
+        exit(Storage.MediaField.HasValue());
     end;
 
     // ── ExportStream ─────────────────────────────────────────────────────────────
     procedure ExportStreamOnDefaultReturnsFalse(): Boolean
     var
-        m: Media;
         Storage: Record "Media Test Storage" temporary;
         OutStr: OutStream;
         Ok: Boolean;
     begin
         Storage.Init();
         Storage.Data.CreateOutStream(OutStr);
-        Ok := m.ExportStream(OutStr);
+        Ok := Storage.MediaField.ExportStream(OutStr);
         exit(Ok);
     end;
 
