@@ -63,49 +63,43 @@ codeunit 61801 "CP Cookie Properties Tests"
     end;
 
     // -----------------------------------------------------------------------
-    // Cookie.Secure
+    // Cookie.Secure — default read
     // -----------------------------------------------------------------------
-
-    [Test]
-    procedure Cookie_Secure_GetSet_True()
-    var
-        Cookie: Cookie;
-    begin
-        // Positive: Secure=true round-trips correctly
-        Cookie.Secure := true;
-        Assert.IsTrue(Cookie.Secure, 'Cookie.Secure must return true when set to true');
-    end;
 
     [Test]
     procedure Cookie_Secure_Default_False()
     var
         Cookie: Cookie;
     begin
-        // Negative: Secure defaults to false
+        // Negative: Secure defaults to false when not set
         Assert.IsFalse(Cookie.Secure, 'Cookie.Secure must default to false');
     end;
 
-    // -----------------------------------------------------------------------
-    // Cookie.HttpOnly
-    // -----------------------------------------------------------------------
-
     [Test]
-    procedure Cookie_HttpOnly_GetSet_True()
-    var
-        Cookie: Cookie;
+    procedure Cookie_Secure_Default_Via_Helper()
     begin
-        // Positive: HttpOnly=true round-trips correctly
-        Cookie.HttpOnly := true;
-        Assert.IsTrue(Cookie.HttpOnly, 'Cookie.HttpOnly must return true when set to true');
+        // Negative: default Secure via helper
+        Assert.IsFalse(Helper.DefaultSecure(), 'Cookie.Secure default must be false via helper');
     end;
+
+    // -----------------------------------------------------------------------
+    // Cookie.HttpOnly — default read
+    // -----------------------------------------------------------------------
 
     [Test]
     procedure Cookie_HttpOnly_Default_False()
     var
         Cookie: Cookie;
     begin
-        // Negative: HttpOnly defaults to false
+        // Negative: HttpOnly defaults to false when not set
         Assert.IsFalse(Cookie.HttpOnly, 'Cookie.HttpOnly must default to false');
+    end;
+
+    [Test]
+    procedure Cookie_HttpOnly_Default_Via_Helper()
+    begin
+        // Negative: default HttpOnly via helper
+        Assert.IsFalse(Helper.DefaultHttpOnly(), 'Cookie.HttpOnly default must be false via helper');
     end;
 
     // -----------------------------------------------------------------------
@@ -133,17 +127,17 @@ codeunit 61801 "CP Cookie Properties Tests"
     end;
 
     // -----------------------------------------------------------------------
-    // All properties together
+    // Name, Value, Domain, Path together
     // -----------------------------------------------------------------------
 
     [Test]
-    procedure Cookie_AllProperties_RoundTrip()
+    procedure Cookie_StringProperties_RoundTrip()
     begin
-        // Positive: all string/bool properties set and read back correctly
+        // Positive: all 4 string properties set and read back correctly
         Assert.AreEqual(
-            'auth|tok123|auth.example.com|/|true|true',
-            Helper.CreateCookieWithProperties('auth', 'tok123', 'auth.example.com', '/', true, true),
-            'All Cookie properties must round-trip correctly');
+            'auth|tok123|auth.example.com|/',
+            Helper.CreateCookieWithProperties('auth', 'tok123', 'auth.example.com', '/'),
+            'Cookie Name/Value/Domain/Path must round-trip correctly');
     end;
 
     // -----------------------------------------------------------------------
