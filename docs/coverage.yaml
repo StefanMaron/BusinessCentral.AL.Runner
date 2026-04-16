@@ -8488,8 +8488,10 @@ XmlDocument.SelectNodes:
 XmlDocument.SelectSingleNode:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; BC native works standalone. XmlDocument receiver requires .GetRoot first (or call on XmlElement directly). See also XmlElement.SelectSingleNode.
+  tests:
+    - tests/bucket-2/158-selectsinglenode
 
 XmlDocument.SetDeclaration:
   layer: runtime-api
@@ -8806,8 +8808,10 @@ XmlElement.SelectNodes:
 XmlElement.SelectSingleNode:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; BC native works standalone for programmatically-built XmlElements. Relative XPath is resolved against the receiver element.
+  tests:
+    - tests/bucket-2/158-selectsinglenode
 
 XmlElement.SetAttribute:
   layer: runtime-api
