@@ -6075,8 +6075,11 @@ Table.TableName:
 Table.TestField:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=26
+  status: covered
+  tests:
+    - tests/bucket-1/27-testfield-error
+    - tests/bucket-1/54-testfield-enum
+  notes: overloads=26; basic non-empty check and enum value comparison covered
 
 Table.TransferFields:
   layer: runtime-api

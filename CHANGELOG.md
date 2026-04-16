@@ -7,6 +7,11 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **`Table.TestField` enum coverage (#302)** — New suite `tests/bucket-1/54-testfield-enum`
+  adds 6 proving tests for `TestField` with enum fields: matching enum value passes,
+  wrong value errors, default-vs-non-zero, non-default passes the no-value check, and
+  default value fails the no-value check. Coverage map: `Table.TestField` moved from
+  `gap` to `covered` (also surfaces the existing `27-testfield-error` suite).
 - **`Table.FindSet` / `SetCurrentKey` iteration coverage (#301)** — New suite
   `tests/bucket-1/53-findset` adds 8 proving tests: PK-order iteration (no
   `SetCurrentKey`), Name-key iteration, Priority-key iteration, filter+key
