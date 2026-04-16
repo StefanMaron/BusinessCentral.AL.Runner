@@ -94,4 +94,44 @@ codeunit 54500 "Test LockTable"
         Assert.AreEqual(0, Rec.Count,
             'Record should be deleted after LockTable + Delete');
     end;
+
+    [Test]
+    procedure LockTableWaitFalseIsNoOp()
+    var
+        Rec: Record "Lock Probe";
+    begin
+        // Positive: LockTable(Wait: Boolean) overload is a no-op — must not raise an error.
+        Rec.LockTable(false);
+        Assert.AreEqual(0, Rec.Count, 'LockTable(false) must not alter the table or throw');
+    end;
+
+    [Test]
+    procedure LockTableWaitTrueIsNoOp()
+    var
+        Rec: Record "Lock Probe";
+    begin
+        // Positive: LockTable(true) is also a no-op.
+        Rec.LockTable(true);
+        Assert.AreEqual(0, Rec.Count, 'LockTable(true) must not alter the table or throw');
+    end;
+
+    [Test]
+    procedure LockTableWaitFalseDoesNotBlockInsert()
+    var
+        Rec: Record "Lock Probe";
+    begin
+        // Positive: Insert still works after LockTable(false).
+        Rec.LockTable(false);
+        Rec.Init();
+        Rec."No." := 'E';
+        Rec.Name := 'WithWait';
+        Rec.Amount := 99;
+        Rec.Insert(true);
+
+        Rec.Get('E');
+        Assert.AreEqual('WithWait', Rec.Name,
+            'Record inserted after LockTable(false) must be retrievable');
+        Assert.AreEqual(99, Rec.Amount,
+            'Amount must match after LockTable(false) + Insert');
+    end;
 }
