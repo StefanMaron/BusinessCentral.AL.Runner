@@ -5873,8 +5873,11 @@ Table.HasLinks:
 Table.Init:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests:
+    - tests/bucket-1/47-initvalue
+    - tests/bucket-1/56-init-reset
+  notes: overloads=1; clears non-PK fields to defaults, preserves PK, applies InitValue
 
 Table.Insert:
   layer: runtime-api
