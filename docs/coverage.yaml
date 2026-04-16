@@ -8218,14 +8218,18 @@ XmlComment.AddBeforeSelf:
 XmlComment.AsXmlNode:
   layer: runtime-api
   category: XmlComment
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone. Resulting XmlNode.IsXmlComment is true.
+  tests:
+    - tests/bucket-2/165-xmlcomment
 
 XmlComment.Create:
   layer: runtime-api
   category: XmlComment
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone. Comment text round-trips via .Value, comment can be attached to an XmlElement via .Add.
+  tests:
+    - tests/bucket-2/165-xmlcomment
 
 XmlComment.GetDocument:
   layer: runtime-api
@@ -8266,8 +8270,10 @@ XmlComment.SelectSingleNode:
 XmlComment.Value:
   layer: runtime-api
   category: XmlComment
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone. Round-trips comment text from Create.
+  tests:
+    - tests/bucket-2/165-xmlcomment
 
 XmlComment.WriteTo:
   layer: runtime-api
