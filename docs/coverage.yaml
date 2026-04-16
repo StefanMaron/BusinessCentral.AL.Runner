@@ -873,12 +873,16 @@ usercontrol_section:
 view_definition:
   layer: syntax
   category: page
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/72-views-section
 
 views_section:
   layer: syntax
   category: page
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/72-views-section
 
 # ── report ──────────────────────────────────────────────────────
 
