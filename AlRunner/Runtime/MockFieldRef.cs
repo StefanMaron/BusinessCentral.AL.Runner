@@ -135,8 +135,21 @@ public class MockFieldRef
     /// <summary>ALOptionCaption — option caption string. Stub: empty.</summary>
     public string ALOptionCaption => "";
 
-    /// <summary>ALOptionString — option string. Stub: empty.</summary>
-    public string ALOptionString => "";
+    /// <summary>ALOptionString — alias for OptionMembers; BC may emit either property name.</summary>
+    public string ALOptionString
+    {
+        get
+        {
+            var members = GetEnumMembers();
+            if (members != null) return string.Join(",", members.Select(m => m.Name));
+            if (_owner != null)
+            {
+                var inline = TableFieldRegistry.GetOptionMembers(_owner.TableId, _fieldNo);
+                if (inline != null) return inline;
+            }
+            return "";
+        }
+    }
 
     /// <summary>ALOptionMembers — comma-separated option member names for this field; empty for non-option fields.</summary>
     public string ALOptionMembers
