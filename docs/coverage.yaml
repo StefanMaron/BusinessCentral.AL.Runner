@@ -1574,8 +1574,10 @@ Database.ExportData:
 Database.GetDefaultTableConnection:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter stubs ALGetDefaultTableConnection(ct) to empty string (no external connections standalone).
+  tests:
+    - tests/bucket-2/155-get-default-table-connection
 
 Database.HasTableConnection:
   layer: runtime-api

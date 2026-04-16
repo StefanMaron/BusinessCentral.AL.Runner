@@ -2676,6 +2676,17 @@ public void ClearApplicationMemberVariables() { }
                     .WithTriviaFrom(visited);
             }
 
+            // ALDatabase.ALGetDefaultTableConnection(ct) -> "" (empty string)
+            // Real impl requires NavSession to look up registered connections; the runner
+            // has no external connections so the "default" is simply the empty string.
+            if (exprText == "ALDatabase" && methodName == "ALGetDefaultTableConnection")
+            {
+                return SyntaxFactory.LiteralExpression(
+                    SyntaxKind.StringLiteralExpression,
+                    SyntaxFactory.Literal(""))
+                    .WithTriviaFrom(visited);
+            }
+
             // ALDatabase.ALUserSecurityId() -> AlCompat.UserSecurityId()
             // Real impl requires NavSession (crashes with NullReferenceException standalone).
             // AlCompat.UserSecurityId returns a fixed non-null Guid so stability is preserved
