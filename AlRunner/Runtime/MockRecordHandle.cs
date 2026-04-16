@@ -1674,6 +1674,13 @@ public class MockRecordHandle
     }
 
     /// <summary>
+    /// AL's CopyFilter(fromField, toRecord) — copies the filter for fromField on this record
+    /// to the same field on the target record (2-argument form).
+    /// </summary>
+    public void ALCopyFilter(int fromFieldNo, MockRecordHandle target)
+        => ALCopyFilter(fromFieldNo, target, fromFieldNo);
+
+    /// <summary>
     /// AL's COPYFILTER(fromFieldNo, toRecord, toFieldNo) — copies the filter from one field
     /// on this record to a field on another record.
     /// </summary>

@@ -529,6 +529,7 @@ public void ALSetRangeSafe(int fieldNo, NavType expectedType, NavValue fromValue
 public void ALSetFilter(int fieldNo, string filterExpression, params NavValue[] args) => Rec.ALSetFilter(fieldNo, filterExpression, args);
 public void ALSetFilter(int fieldNo, NavType expectedType, string filterExpression, params NavValue[] args) => Rec.ALSetFilter(fieldNo, expectedType, filterExpression, args);
 public void ALCopy(MockRecordHandle source, bool shareFilters = false) => Rec.ALCopy(source, shareFilters);
+public void ALCopyFilter(int fromFieldNo, MockRecordHandle target) => Rec.ALCopyFilter(fromFieldNo, target);
 public void ALCopyFilter(int fromFieldNo, MockRecordHandle target, int toFieldNo) => Rec.ALCopyFilter(fromFieldNo, target, toFieldNo);
 public void ALCopyFilters(MockRecordHandle source) => Rec.ALCopyFilters(source);
 public void ALValidateSafe(int fieldNo, NavType expectedType, NavValue value) => Rec.ALValidateSafe(fieldNo, expectedType, value);

@@ -113,8 +113,8 @@ codeunit 67001 "Filter View Test"
         Target: Record "FV Test Table";
     begin
         Source.SetRange(Id, 2, 8);
-        // CopyFilter(sourceField, targetRecord, targetField)
-        Source.CopyFilter(Id, Target, Id);
+        // CopyFilter(sourceField, targetRecord) — copies to same-named field in target
+        Source.CopyFilter(Id, Target);
         Assert.AreEqual('2..8', Target.GetFilter(Id),
             'CopyFilter must copy the range filter to the target field');
     end;
@@ -128,7 +128,7 @@ codeunit 67001 "Filter View Test"
         // Target has a filter; Source field has none — CopyFilter must clear target's filter
         Target.SetRange(Id, 1, 3);
         // Source.Id has no filter
-        Source.CopyFilter(Id, Target, Id);
+        Source.CopyFilter(Id, Target);
         Assert.AreEqual('', Target.GetFilter(Id),
             'CopyFilter with no source filter must clear target filter');
     end;
