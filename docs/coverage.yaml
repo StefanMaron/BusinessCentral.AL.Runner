@@ -9351,50 +9351,66 @@ XmlNameTable.Get:
 XmlNamespaceManager.AddNamespace:
   layer: runtime-api
   category: XmlNamespaceManager
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone.
+  tests:
+    - tests/bucket-1/167-xmlnamespacemanager
 
 XmlNamespaceManager.HasNamespace:
   layer: runtime-api
   category: XmlNamespaceManager
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone. True after AddNamespace, false for unknown prefix.
+  tests:
+    - tests/bucket-1/167-xmlnamespacemanager
 
 XmlNamespaceManager.LookupNamespace:
   layer: runtime-api
   category: XmlNamespaceManager
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone. Round-trips URI added via AddNamespace.
+  tests:
+    - tests/bucket-1/167-xmlnamespacemanager
 
 XmlNamespaceManager.LookupPrefix:
   layer: runtime-api
   category: XmlNamespaceManager
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone. Round-trips prefix added via AddNamespace.
+  tests:
+    - tests/bucket-1/167-xmlnamespacemanager
 
 XmlNamespaceManager.NameTable:
   layer: runtime-api
   category: XmlNamespaceManager
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone. Returns XmlNameTable without throwing.
+  tests:
+    - tests/bucket-1/167-xmlnamespacemanager
 
 XmlNamespaceManager.PopScope:
   layer: runtime-api
   category: XmlNamespaceManager
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone. Default-scope namespaces survive push+pop.
+  tests:
+    - tests/bucket-1/167-xmlnamespacemanager
 
 XmlNamespaceManager.PushScope:
   layer: runtime-api
   category: XmlNamespaceManager
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone.
+  tests:
+    - tests/bucket-1/167-xmlnamespacemanager
 
 XmlNamespaceManager.RemoveNamespace:
   layer: runtime-api
   category: XmlNamespaceManager
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone. HasNamespace returns false after removal.
+  tests:
+    - tests/bucket-1/167-xmlnamespacemanager
 
 # ── XmlNode ─────────────────────────────────────────────────────
 
