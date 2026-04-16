@@ -1104,7 +1104,9 @@ addfirst_views_modification:
 addlast_action_modification:
   layer: syntax
   category: modification
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/78-addlast-action
 
 addlast_dataset_modification:
   layer: syntax
