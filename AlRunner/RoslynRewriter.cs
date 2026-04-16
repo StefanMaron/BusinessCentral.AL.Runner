@@ -1280,9 +1280,13 @@ public void ClearApplicationMemberVariables()
         // or NavXmlDocument.ALReadFrom(scope, NavXmlDocument, text, byRef) where the type
         // name is passed as a factory hint. Roslyn rejects this (CS0119: type not valid as
         // expression). Replace with default(T) which is valid C# and satisfies the call.
-        if (text.StartsWith("NavXml", StringComparison.Ordinal) && node.Parent is ArgumentSyntax)
-            return SyntaxFactory.DefaultExpression(SyntaxFactory.ParseTypeName(text))
-                .WithTriviaFrom(node);
+        if (text.StartsWith("NavXml", StringComparison.Ordinal))
+        {
+            System.Console.Error.WriteLine($"DEBUG NavXml: '{text}' parent={node.Parent?.GetType().Name ?? "null"} grandparent={node.Parent?.Parent?.GetType().Name ?? "null"}");
+            if (node.Parent is ArgumentSyntax)
+                return SyntaxFactory.DefaultExpression(SyntaxFactory.ParseTypeName(text))
+                    .WithTriviaFrom(node);
+        }
 
         return base.VisitIdentifierName(node);
     }
