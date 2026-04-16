@@ -7237,8 +7237,9 @@ TestRequestPage.ValidationErrorCount:
 Text.Contains:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/182-text-search
+  notes: overloads=1. Covered via NavText native — positive, negative, case-sensitive, empty-needle.
 
 Text.ConvertStr:
   layer: runtime-api
@@ -7269,8 +7270,9 @@ Text.DelStr:
 Text.EndsWith:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/182-text-search
+  notes: overloads=1. Covered via NavText native — positive and negative cases.
 
 Text.IncStr:
   layer: runtime-api
@@ -7282,8 +7284,9 @@ Text.IncStr:
 Text.IndexOf:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/182-text-search
+  notes: overloads=1. Covered via NavText native — returns 1-based index (AL convention), 0 when not found, first-occurrence semantics.
 
 Text.IndexOfAny:
   layer: runtime-api
@@ -7300,8 +7303,9 @@ Text.InsStr:
 Text.LastIndexOf:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/182-text-search
+  notes: overloads=1. Covered via NavText native — 1-based last occurrence, 0 when not found, differs from IndexOf for multi-match strings.
 
 Text.LowerCase:
   layer: runtime-api
@@ -7361,8 +7365,9 @@ Text.Split:
 Text.StartsWith:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/182-text-search
+  notes: overloads=1. Covered via NavText native — positive, negative, case-sensitive.
 
 Text.StrCheckSum:
   layer: runtime-api
