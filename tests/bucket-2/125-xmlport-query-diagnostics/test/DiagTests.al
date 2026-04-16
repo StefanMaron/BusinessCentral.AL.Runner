@@ -30,67 +30,51 @@ codeunit 56254 "XmlPort Query Diag Tests"
     end;
 
     // ==================================================================
-    // XmlPort error messages — must mention "interface injection"
+    // XmlPort I/O — no-ops in standalone mode (require BC service tier)
     // ==================================================================
 
     [Test]
-    procedure XmlPortImportErrorMentionsInterfaceInjection()
+    procedure XmlPortImport_IsNoOp()
     var
         InStr: InStream;
     begin
         // [GIVEN] An XmlPort variable
         // [WHEN]  Import() is called
-        // [THEN]  Error message contains "interface injection"
-        asserterror Logic.TryXmlPortImport(InStr);
-        Assert.ExpectedMessage('interface injection', GetLastErrorText);
+        // [THEN]  No error — Import is a no-op in standalone mode
+        Logic.TryXmlPortImport(InStr);
     end;
 
     [Test]
-    procedure XmlPortExportErrorMentionsInterfaceInjection()
+    procedure XmlPortExport_IsNoOp()
     var
         OutStr: OutStream;
     begin
         // [GIVEN] An XmlPort variable
         // [WHEN]  Export() is called
-        // [THEN]  Error message contains "interface injection"
-        asserterror Logic.TryXmlPortExport(OutStr);
-        Assert.ExpectedMessage('interface injection', GetLastErrorText);
+        // [THEN]  No error — Export is a no-op in standalone mode
+        Logic.TryXmlPortExport(OutStr);
     end;
 
     [Test]
-    procedure StaticXmlPortImportErrorMentionsInterfaceInjection()
+    procedure StaticXmlPortImport_IsNoOp()
     var
         InStr: InStream;
     begin
         // [GIVEN] A static XmlPort.Import call
         // [WHEN]  XmlPort.Import(portId, InStr) is called
-        // [THEN]  Error message contains "interface injection"
-        asserterror Logic.TryStaticXmlPortImport(InStr);
-        Assert.ExpectedMessage('interface injection', GetLastErrorText);
+        // [THEN]  No error — StaticImport is a no-op in standalone mode
+        Logic.TryStaticXmlPortImport(InStr);
     end;
 
     [Test]
-    procedure StaticXmlPortExportErrorMentionsInterfaceInjection()
+    procedure StaticXmlPortExport_IsNoOp()
     var
         OutStr: OutStream;
     begin
         // [GIVEN] A static XmlPort.Export call
         // [WHEN]  XmlPort.Export(portId, OutStr) is called
-        // [THEN]  Error message contains "interface injection"
-        asserterror Logic.TryStaticXmlPortExport(OutStr);
-        Assert.ExpectedMessage('interface injection', GetLastErrorText);
-    end;
-
-    [Test]
-    procedure XmlPortImportErrorMentionsServiceTier()
-    var
-        InStr: InStream;
-    begin
-        // [GIVEN] An XmlPort variable
-        // [WHEN]  Import() is called
-        // [THEN]  Error message mentions "BC service tier"
-        asserterror Logic.TryXmlPortImport(InStr);
-        Assert.ExpectedMessage('BC service tier', GetLastErrorText);
+        // [THEN]  No error — StaticExport is a no-op in standalone mode
+        Logic.TryStaticXmlPortExport(OutStr);
     end;
 
     // ==================================================================

@@ -30,55 +30,51 @@ codeunit 58401 "XmlPort Tests"
     end;
 
     // ------------------------------------------------------------------
-    // Negative: calling Import/Export must throw a NotSupportedException
-    // with 'XmlPort' in the message so the developer gets a clear hint.
+    // No-op: Import/Export are stubs in standalone mode (require BC service tier).
+    // They return without error — inject via AL interface for unit-testable I/O.
     // ------------------------------------------------------------------
 
     [Test]
-    procedure InstanceImportThrowsNotSupported()
+    procedure InstanceImport_IsNoOp()
     var
         InStr: InStream;
     begin
-        // [GIVEN] An uninitialized InStream (import throws before reading it)
+        // [GIVEN] An uninitialized InStream
         // [WHEN]  We call the instance form XP.Import()
-        // [THEN]  A clear 'XmlPort' error is raised
-        asserterror Logic.TryInstanceImport(InStr);
-        Assert.ExpectedError('XmlPort');
+        // [THEN]  No error is raised — Import is a no-op in standalone mode
+        Logic.TryInstanceImport(InStr);
     end;
 
     [Test]
-    procedure InstanceExportThrowsNotSupported()
+    procedure InstanceExport_IsNoOp()
     var
         OutStr: OutStream;
     begin
-        // [GIVEN] An uninitialized OutStream (export throws before writing to it)
+        // [GIVEN] An uninitialized OutStream
         // [WHEN]  We call the instance form XP.Export()
-        // [THEN]  A clear 'XmlPort' error is raised
-        asserterror Logic.TryInstanceExport(OutStr);
-        Assert.ExpectedError('XmlPort');
+        // [THEN]  No error is raised — Export is a no-op in standalone mode
+        Logic.TryInstanceExport(OutStr);
     end;
 
     [Test]
-    procedure StaticImportThrowsNotSupported()
+    procedure StaticImport_IsNoOp()
     var
         InStr: InStream;
     begin
         // [GIVEN] An uninitialized InStream
         // [WHEN]  We call the static form XmlPort.Import(portId, InStr)
-        // [THEN]  A clear 'XmlPort' error is raised
-        asserterror Logic.TryStaticImport(InStr);
-        Assert.ExpectedError('XmlPort');
+        // [THEN]  No error is raised — StaticImport is a no-op in standalone mode
+        Logic.TryStaticImport(InStr);
     end;
 
     [Test]
-    procedure StaticExportThrowsNotSupported()
+    procedure StaticExport_IsNoOp()
     var
         OutStr: OutStream;
     begin
         // [GIVEN] An uninitialized OutStream
         // [WHEN]  We call the static form XmlPort.Export(portId, OutStr)
-        // [THEN]  A clear 'XmlPort' error is raised
-        asserterror Logic.TryStaticExport(OutStr);
-        Assert.ExpectedError('XmlPort');
+        // [THEN]  No error is raised — StaticExport is a no-op in standalone mode
+        Logic.TryStaticExport(OutStr);
     end;
 }
