@@ -4731,8 +4731,9 @@ RecordRef.FieldCount:
 RecordRef.FieldExist:
   layer: runtime-api
   category: RecordRef
-  status: gap
-  notes: overloads=2
+  status: covered
+  tests: tests/bucket-2/202-recref-fieldexist
+  notes: overloads=2. ALFieldExists now checks TableFieldRegistry so it reports true for metadata-registered fields even with no data rows. Known/unknown/second-field tested.
 
 RecordRef.FieldIndex:
   layer: runtime-api
@@ -4944,8 +4945,9 @@ RecordRef.RecordId:
 RecordRef.RecordLevelLocking:
   layer: runtime-api
   category: RecordRef
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/202-recref-fieldexist
+  notes: overloads=1. Standalone: always true (row-level locking, no SQL table hints). Property on MockRecordRef.
 
 RecordRef.Rename:
   layer: runtime-api

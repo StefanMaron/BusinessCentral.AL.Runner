@@ -536,6 +536,10 @@ public class MockRecordRef
     public bool ALFieldExists(int fieldNo) => _handle?.HasField(fieldNo) ?? false;
     public bool ALFieldExists(string fieldName) => false;
 
+    // -- RecordLevelLocking --
+    /// <summary>Standalone: always true — no SQL table-level locking to worry about.</summary>
+    public bool ALRecordLevelLocking => true;
+
     // -- ModifyAll --
     public void ALModifyAll(int fieldNo, NavValue newValue) => _handle?.ALModifyAllSafe(fieldNo, NavType.Text, newValue);
     public void ALModifyAll(int fieldNo, NavValue newValue, bool runTrigger) => _handle?.ALModifyAllSafe(fieldNo, NavType.Text, newValue, runTrigger);

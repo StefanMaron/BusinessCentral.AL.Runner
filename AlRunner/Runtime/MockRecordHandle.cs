@@ -949,7 +949,9 @@ public class MockRecordHandle
     public bool HasField(int fieldNo)
     {
         if (_fields.ContainsKey(fieldNo)) return true;
-        return GetRows().Any(r => r.ContainsKey(fieldNo));
+        if (GetRows().Any(r => r.ContainsKey(fieldNo))) return true;
+        var name = TableFieldRegistry.GetFieldName(_tableId, fieldNo);
+        return name != null;
     }
 
     /// <summary>
