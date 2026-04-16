@@ -3594,8 +3594,9 @@ JsonToken.WriteTo:
 JsonValue.AsBigInteger:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; redirected via MockJsonHelper.AsBigInteger (NavBigInteger.Create)
+  test: tests/bucket-2/189-jsonvalue-extended
 
 JsonValue.AsBoolean:
   layer: runtime-api
@@ -3607,32 +3608,37 @@ JsonValue.AsBoolean:
 JsonValue.AsByte:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; redirected via MockJsonHelper.AsByte
+  test: tests/bucket-2/189-jsonvalue-extended
 
 JsonValue.AsChar:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; redirected via MockJsonHelper.AsChar
+  test: tests/bucket-2/189-jsonvalue-extended
 
 JsonValue.AsCode:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; redirected via MockJsonHelper.AsCode (NavCode[250])
+  test: tests/bucket-2/189-jsonvalue-extended
 
 JsonValue.AsDate:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; redirected via MockJsonHelper.AsDate (reflection NavDate construction)
+  test: tests/bucket-2/189-jsonvalue-extended
 
 JsonValue.AsDateTime:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; redirected via MockJsonHelper.AsDateTime (AlScope.CreateNavDateTime)
+  test: tests/bucket-2/189-jsonvalue-extended
 
 JsonValue.AsDecimal:
   layer: runtime-api
@@ -3644,8 +3650,9 @@ JsonValue.AsDecimal:
 JsonValue.AsDuration:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; redirected via MockJsonHelper.AsDuration (TimeSpan.FromMilliseconds)
+  test: tests/bucket-2/189-jsonvalue-extended
 
 JsonValue.AsInteger:
   layer: runtime-api
@@ -3657,8 +3664,9 @@ JsonValue.AsInteger:
 JsonValue.AsOption:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; redirected via MockJsonHelper.AsOption
+  test: tests/bucket-2/189-jsonvalue-extended
 
 JsonValue.AsText:
   layer: runtime-api
@@ -3670,20 +3678,23 @@ JsonValue.AsText:
 JsonValue.AsTime:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; redirected via MockJsonHelper.AsTime (reflection NavTime construction)
+  test: tests/bucket-2/189-jsonvalue-extended
 
 JsonValue.AsToken:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; redirected via MockJsonHelper.AsToken (identity — NavJsonValue IS NavJsonToken)
+  test: tests/bucket-2/189-jsonvalue-extended
 
 JsonValue.Clone:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; redirected via MockJsonHelper.Clone (JToken.DeepClone + NavJsonToken.Create)
+  test: tests/bucket-2/189-jsonvalue-extended
 
 JsonValue.IsNull:
   layer: runtime-api
@@ -3695,14 +3706,16 @@ JsonValue.IsNull:
 JsonValue.IsUndefined:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; redirected via MockJsonHelper.IsUndefined (JTokenType.Undefined check)
+  test: tests/bucket-2/189-jsonvalue-extended
 
 JsonValue.Path:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; redirected via MockJsonHelper.Path (JToken.Path property)
+  test: tests/bucket-2/189-jsonvalue-extended
 
 JsonValue.ReadFrom:
   layer: runtime-api
@@ -3733,8 +3746,9 @@ JsonValue.SetValueToNull:
 JsonValue.SetValueToUndefined:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; redirected via MockJsonHelper.SetValueToUndefined (JValue.CreateUndefined)
+  test: tests/bucket-2/189-jsonvalue-extended
 
 JsonValue.WriteTo:
   layer: runtime-api

@@ -13,8 +13,11 @@ codeunit 97501 "JVExt Tests"
 
     [Test]
     procedure AsBigInteger_RoundTrip()
+    var
+        expected: BigInteger;
     begin
-        Assert.AreEqual(9876543210, Src.AsBigIntegerRoundTrip(), 'AsBigInteger must return the stored BigInteger value');
+        expected := 9876543210;
+        Assert.AreEqual(expected, Src.AsBigIntegerRoundTrip(), 'AsBigInteger must return the stored BigInteger value');
     end;
 
     [Test]
@@ -82,8 +85,11 @@ codeunit 97501 "JVExt Tests"
 
     [Test]
     procedure AsDuration_RoundTrip()
+    var
+        expected: Duration;
     begin
-        Assert.AreEqual(3600000, Src.AsDurationRoundTrip(), 'AsDuration must return the stored Duration value (3600000 ms)');
+        expected := 3600000;
+        Assert.AreEqual(expected, Src.AsDurationRoundTrip(), 'AsDuration must return the stored Duration value (3600000 ms)');
     end;
 
     // --- AsOption ---

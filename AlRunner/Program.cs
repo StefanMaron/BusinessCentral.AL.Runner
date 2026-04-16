@@ -314,6 +314,9 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   Falls back to stub defaults for tables not parsed from source.
 - JSON types: JsonObject, JsonArray, JsonToken, JsonValue — Add, Get, Contains,
   Remove, Replace, Count, WriteTo, ReadFrom, SelectToken, AsValue, AsText, AsInteger, etc.
+  JsonValue typed getters: AsBigInteger, AsByte, AsChar, AsCode, AsDate, AsDateTime,
+  AsDuration, AsOption, AsTime, AsToken — all redirected via MockJsonHelper.
+  JsonValue utilities: Clone, IsUndefined, Path, SetValueToUndefined — also redirected.
 - BLOB / InStream / OutStream — CreateInStream/CreateOutStream, HasValue, ReadText/WriteText
   (in-memory byte buffer; sufficient for text round-trip tests).
   InStream also supports Length, Position, ResetPosition for byte-level stream operations.

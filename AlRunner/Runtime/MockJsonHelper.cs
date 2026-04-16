@@ -474,6 +474,189 @@ public static class MockJsonHelper
         return CreateJsonToken<NavJsonArray>(jArr);
     }
 
+    // --- NavDate / NavTime construction helpers (avoid Telemetry.Abstractions in BC 28+) ---
+
+    private static readonly FieldInfo? NavDateValueField =
+        typeof(NavDate).BaseType?.GetField("value",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
+    private static readonly FieldInfo? NavTimeValueField =
+        typeof(NavTime).BaseType?.GetField("value",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
+    private static NavDate CreateNavDate(DateTime date)
+    {
+        try
+        {
+            var result = (NavDate)System.Activator.CreateInstance(typeof(NavDate), nonPublic: true)!;
+            NavDateValueField?.SetValue(result, date.Date);
+            return result;
+        }
+        catch { return NavDate.Default; }
+    }
+
+    private static NavTime CreateNavTime(DateTime timeAsDateTime)
+    {
+        try
+        {
+            var result = (NavTime)System.Activator.CreateInstance(typeof(NavTime), nonPublic: true)!;
+            NavTimeValueField?.SetValue(result, timeAsDateTime);
+            return result;
+        }
+        catch { return NavTime.Default; }
+    }
+
+    // --- JsonValue typed-getter / utility methods (issue #699) ---
+
+    /// <summary>
+    /// Replacement for NavJsonValue.ALAsBigInteger().
+    /// Returns the backing integer value as NavBigInteger.
+    /// AL: JsonValue.AsBigInteger()  →  MockJsonHelper.AsBigInteger(token)
+    /// </summary>
+    public static NavBigInteger AsBigInteger(NavJsonToken token, DataError errorLevel = default)
+    {
+        var backing = GetBackingToken(token);
+        return NavBigInteger.Create(backing.Value<long>());
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonValue.ALAsByte().
+    /// Returns the backing integer value as a byte.
+    /// AL: JsonValue.AsByte()  →  MockJsonHelper.AsByte(token)
+    /// </summary>
+    public static byte AsByte(NavJsonToken token, DataError errorLevel = default)
+    {
+        var backing = GetBackingToken(token);
+        return backing.Value<byte>();
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonValue.ALAsChar().
+    /// Returns the backing integer value as a char (code point).
+    /// AL: JsonValue.AsChar()  →  MockJsonHelper.AsChar(token)
+    /// </summary>
+    public static char AsChar(NavJsonToken token, DataError errorLevel = default)
+    {
+        var backing = GetBackingToken(token);
+        return (char)backing.Value<int>();
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonValue.ALAsCode().
+    /// Returns the backing string value as NavCode[250].
+    /// AL: JsonValue.AsCode()  →  MockJsonHelper.AsCode(token)
+    /// </summary>
+    public static NavCode AsCode(NavJsonToken token, DataError errorLevel = default)
+    {
+        var backing = GetBackingToken(token);
+        var s = backing.Value<string>() ?? "";
+        return new NavCode(250, s);
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonValue.ALAsDate().
+    /// Returns the backing date value as NavDate.
+    /// AL: JsonValue.AsDate()  →  MockJsonHelper.AsDate(token)
+    /// </summary>
+    public static NavDate AsDate(NavJsonToken token, DataError errorLevel = default)
+    {
+        var backing = GetBackingToken(token);
+        if (backing.Type == JTokenType.Date)
+            return CreateNavDate(backing.Value<DateTime>());
+        if (backing.Type == JTokenType.String &&
+            DateTime.TryParse(backing.Value<string>(), out var parsed))
+            return CreateNavDate(parsed);
+        return NavDate.Default;
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonValue.ALAsDateTime().
+    /// Returns the backing date/time value as NavDateTime.
+    /// AL: JsonValue.AsDateTime()  →  MockJsonHelper.AsDateTime(token)
+    /// </summary>
+    public static NavDateTime AsDateTime(NavJsonToken token, DataError errorLevel = default)
+    {
+        var backing = GetBackingToken(token);
+        if (backing.Type == JTokenType.Date)
+            return AlScope.CreateNavDateTime(backing.Value<DateTime>());
+        if (backing.Type == JTokenType.String &&
+            DateTime.TryParse(backing.Value<string>(), out var parsed))
+            return AlScope.CreateNavDateTime(parsed);
+        return NavDateTime.Default;
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonValue.ALAsDuration().
+    /// Returns the backing numeric value as a Duration (TimeSpan from milliseconds).
+    /// AL: JsonValue.AsDuration()  →  MockJsonHelper.AsDuration(token)
+    /// </summary>
+    public static TimeSpan AsDuration(NavJsonToken token, DataError errorLevel = default)
+    {
+        var backing = GetBackingToken(token);
+        if (backing.Type == JTokenType.TimeSpan)
+            return backing.Value<TimeSpan>();
+        return TimeSpan.FromMilliseconds(backing.Value<long>());
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonValue.ALAsOption().
+    /// Returns the backing integer value as an option ordinal.
+    /// AL: JsonValue.AsOption()  →  MockJsonHelper.AsOption(token)
+    /// </summary>
+    public static int AsOption(NavJsonToken token, DataError errorLevel = default)
+    {
+        var backing = GetBackingToken(token);
+        return backing.Value<int>();
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonValue.ALAsTime().
+    /// Returns the backing date/time value as NavTime.
+    /// AL: JsonValue.AsTime()  →  MockJsonHelper.AsTime(token)
+    /// </summary>
+    public static NavTime AsTime(NavJsonToken token, DataError errorLevel = default)
+    {
+        var backing = GetBackingToken(token);
+        if (backing.Type == JTokenType.Date)
+            return CreateNavTime(backing.Value<DateTime>());
+        if (backing.Type == JTokenType.String &&
+            DateTime.TryParse(backing.Value<string>(), out var parsed))
+            return CreateNavTime(parsed);
+        return NavTime.Default;
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonValue.ALAsToken().
+    /// Returns the JsonValue as a JsonToken — NavJsonValue IS a NavJsonToken.
+    /// AL: JsonValue.AsToken()  →  MockJsonHelper.AsToken(token)
+    /// </summary>
+    public static NavJsonToken AsToken(NavJsonToken token, DataError errorLevel = default)
+        => token;
+
+    /// <summary>
+    /// Replacement for NavJsonValue.ALIsUndefined().
+    /// Returns true if the backing value has token type Undefined.
+    /// AL: JsonValue.IsUndefined()  →  MockJsonHelper.IsUndefined(token)
+    /// </summary>
+    public static bool IsUndefined(NavJsonToken token, DataError errorLevel = default)
+        => GetBackingToken(token).Type == JTokenType.Undefined;
+
+    /// <summary>
+    /// Replacement for NavJsonValue.ALPath (property / no-arg method).
+    /// Returns the Newtonsoft.Json path of the backing token.
+    /// AL: JsonValue.Path  →  MockJsonHelper.Path(token)
+    /// </summary>
+    public static string Path(NavJsonToken token, DataError errorLevel = default)
+        => GetBackingToken(token).Path;
+
+    /// <summary>
+    /// Replacement for NavJsonValue.ALSetValueToUndefined().
+    /// Sets the backing token to a Newtonsoft.Json Undefined value.
+    /// AL: JsonValue.SetValueToUndefined()  →  MockJsonHelper.SetValueToUndefined(token)
+    /// </summary>
+    public static void SetValueToUndefined(NavJsonToken token, DataError errorLevel = default)
+        => SetBackingToken(token, JValue.CreateUndefined());
+
     private static bool IsSupportedTokenType(JToken token)
     {
         return token.Type switch

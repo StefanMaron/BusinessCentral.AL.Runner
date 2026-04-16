@@ -2356,7 +2356,12 @@ public void ClearApplicationMemberVariables()
                 or "ALGetBoolean" or "ALIsArray" or "ALIsObject" or "ALIsValue" or "ALClone"
                 or "ALKeys"
                 or "ALGetText" or "ALGetInteger" or "ALGetDecimal"
-                or "ALGetObject" or "ALGetArray")
+                or "ALGetObject" or "ALGetArray"
+                // JsonValue extended typed-getter / utility methods (issue #699)
+                or "ALAsBigInteger" or "ALAsByte" or "ALAsChar" or "ALAsCode"
+                or "ALAsDate" or "ALAsDateTime" or "ALAsDuration"
+                or "ALAsOption" or "ALAsTime" or "ALAsToken"
+                or "ALIsUndefined" or "ALPath" or "ALSetValueToUndefined")
             {
                 var helperMethod = methodName switch
                 {
@@ -2377,6 +2382,20 @@ public void ClearApplicationMemberVariables()
                     "ALGetDecimal" => "GetDecimal",
                     "ALGetObject" => "GetObject",
                     "ALGetArray" => "GetArray",
+                    // JsonValue extended typed-getters / utilities
+                    "ALAsBigInteger" => "AsBigInteger",
+                    "ALAsByte" => "AsByte",
+                    "ALAsChar" => "AsChar",
+                    "ALAsCode" => "AsCode",
+                    "ALAsDate" => "AsDate",
+                    "ALAsDateTime" => "AsDateTime",
+                    "ALAsDuration" => "AsDuration",
+                    "ALAsOption" => "AsOption",
+                    "ALAsTime" => "AsTime",
+                    "ALAsToken" => "AsToken",
+                    "ALIsUndefined" => "IsUndefined",
+                    "ALPath" => "Path",
+                    "ALSetValueToUndefined" => "SetValueToUndefined",
                     _ => null
                 };
                 if (helperMethod is not null)
