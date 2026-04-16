@@ -95,10 +95,67 @@ public class MockTestPageHandle
     public bool ALPrevious() => false;
 
     /// <summary>
+    /// Alias for ALPrevious used by TestPart. Stub returns false (empty page).
+    /// BC emits <c>tP.Target.GetPart(hash).ALPrev()</c> for <c>TestPart.Prev()</c>.
+    /// </summary>
+    public bool ALPrev() => false;
+
+    /// <summary>
     /// Expands or collapses a tree node on the page. No-op in standalone mode.
     /// BC emits <c>tP.Target.ALExpand(bool)</c>.
     /// </summary>
     public void ALExpand(bool expand) { }
+
+    /// <summary>
+    /// Returns whether the node is currently expanded. Stub returns false.
+    /// BC emits <c>tP.Target.GetPart(hash).ALIsExpanded()</c> for <c>TestPart.IsExpanded()</c>.
+    /// </summary>
+    public bool ALIsExpanded() => false;
+
+    /// <summary>
+    /// Returns whether the part is enabled. Stub returns true.
+    /// BC emits <c>tP.Target.GetPart(hash).ALEnabled()</c> for <c>TestPart.Enabled()</c>.
+    /// Note: ALEditable is a page-handle property; ALEnabled is the part-level method.
+    /// </summary>
+    public bool ALEnabled() => true;
+
+    /// <summary>
+    /// Returns whether the part is visible. Stub returns true.
+    /// BC emits <c>tP.Target.GetPart(hash).ALVisible()</c> for <c>TestPart.Visible()</c>.
+    /// </summary>
+    public bool ALVisible() => true;
+
+    /// <summary>
+    /// Returns the text of the nth validation error on the part. Stub returns empty string.
+    /// BC emits <c>tP.Target.GetPart(hash).ALGetValidationError(n)</c> for
+    /// <c>TestPart.GetValidationError(n)</c>.
+    /// </summary>
+    public string ALGetValidationError(int index) => string.Empty;
+    public string ALGetValidationError(DataError errorLevel, int index) => ALGetValidationError(index);
+
+    /// <summary>
+    /// Finds the first record where field equals value. Stub returns true.
+    /// BC emits <c>tP.Target.GetPart(hash).ALFindFirstField(field, value)</c> for
+    /// <c>TestPart.FindFirstField(field, value)</c>.
+    /// </summary>
+    public bool ALFindFirstField(MockTestPageField field, object value) => true;
+    public bool ALFindFirstField(DataError errorLevel, MockTestPageField field, object value) => true;
+
+    /// <summary>
+    /// Finds the next record where field equals value. Stub returns false (end of set).
+    /// BC emits <c>tP.Target.GetPart(hash).ALFindNextField(field, value)</c> for
+    /// <c>TestPart.FindNextField(field, value)</c>.
+    /// </summary>
+    public bool ALFindNextField(MockTestPageField field, object value) => false;
+    public bool ALFindNextField(DataError errorLevel, MockTestPageField field, object value) => false;
+
+    /// <summary>
+    /// Finds the previous record where field equals value. Stub returns false (end of set).
+    /// BC emits <c>tP.Target.GetPart(hash).ALFindPreviousField(field, value)</c> for
+    /// <c>TestPart.FindPreviousField(field, value)</c>.
+    /// </summary>
+    public bool ALFindPreviousField(MockTestPageField field, object value) => false;
+    public bool ALFindPreviousField(DataError errorLevel, MockTestPageField field, object value) => false;
 
     /// <summary>
     /// Returns a MockRecordHandle representing the underlying record of the page.

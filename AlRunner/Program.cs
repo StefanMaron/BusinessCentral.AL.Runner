@@ -333,6 +333,12 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   GoToKey(), GoToRecord(), Next(), New(), Expand(), GetPart(), GetRecord(),
   Filter.SetFilter()/GetFilter(), field AsDecimal(), Enabled() (stubs; return true/no-op
   unless otherwise noted; Next()/Last()/Previous() return false, ValidationErrorCount() returns 0)
+- TestPart (subpage accessed via TestPage.PartName) — all navigation and state methods:
+  Caption, Editable, Enabled(), Visible(), First(), Last(), Next(), Previous(), Prev(),
+  New(), GoToRecord(), GoToKey(), Expand(), IsExpanded(), ValidationErrorCount(),
+  GetValidationError(n), FindFirstField(field,value), FindNextField(field,value),
+  FindPreviousField(field,value), GetField() (stubs; First/GoToRecord/GoToKey/FindFirstField
+  return true; all others return false/0/empty; parts share MockTestPageHandle with TestPage)
 - Request page handler dispatch — [RequestPageHandler] intercepts Report.RunRequestPage() calls
 - Report handler dispatch — [ReportHandler] intercepts Report.Run()/Report.RunModal() and
   report variable .Run()/.RunModal() calls. Handler receives TestRequestPage parameter.
