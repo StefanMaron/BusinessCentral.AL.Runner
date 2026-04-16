@@ -5965,14 +5965,16 @@ Table.AddLink:
 Table.AddLoadFields:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/185-loadfields
+  notes: overloads=2 (fields, DataError+fields). Standalone no-op — all fields are always loaded in memory.
 
 Table.AreFieldsLoaded:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/185-loadfields
+  notes: overloads=2 (fields, DataError+fields). Standalone: always returns true (every field is always loaded).
 
 Table.Ascending:
   layer: runtime-api

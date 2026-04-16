@@ -105,7 +105,7 @@ public class RoslynRewriter : CSharpSyntaxRewriter
         "ALDeleteAll", "ALCount", "ALSetRange", "ALSetFilter", "ALFindSet",
         "ALFindFirst", "ALFindLast", "ALIsEmpty", "ALCalcFields", "ALSetCurrentKey",
         "ALReset", "ALCopy", "ALCopyFilter", "ALCopyFilters", "ALTestField", "ALTestFieldSafe", "ALValidate", "ALValidateSafe", "ALRename",
-        "ALLockTable", "ALCalcSums", "ALSetLoadFields", "ALFieldCaption", "ALSetRecFilter",
+        "ALLockTable", "ALCalcSums", "ALSetLoadFields", "ALAddLoadFields", "ALAreFieldsLoaded", "ALFieldCaption", "ALSetRecFilter",
         "ALTableCaption", "ALTableName", "ALTestFieldNavValueSafe",
         "ALFilterGroup", "ALSetRangeSafe", "ALReadIsolation",
         "ALGetView", "ALSetView", "ALGetFilter",

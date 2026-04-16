@@ -1466,6 +1466,31 @@ public class MockRecordHandle
     }
 
     /// <summary>
+    /// AL's ADDLOADFIELDS — extends the load set established by SetLoadFields with
+    /// additional fields. No-op in standalone mode since all fields are always loaded.
+    /// </summary>
+    public void ALAddLoadFields(params int[] fieldNos)
+    {
+        // No-op: all fields always loaded in in-memory store
+    }
+
+    /// <summary>Overload with DataError level (transpiler pattern).</summary>
+    public void ALAddLoadFields(DataError errorLevel, params int[] fieldNos)
+    {
+        // No-op: all fields always loaded in in-memory store
+    }
+
+    /// <summary>
+    /// AL's AREFIELDSLOADED — reports whether every field in the supplied list is
+    /// currently loaded. Standalone contract: all fields are always in memory, so
+    /// the method always returns true.
+    /// </summary>
+    public bool ALAreFieldsLoaded(params int[] fieldNos) => true;
+
+    /// <summary>Overload with DataError level (transpiler pattern).</summary>
+    public bool ALAreFieldsLoaded(DataError errorLevel, params int[] fieldNos) => true;
+
+    /// <summary>
     /// AL GetView([useNames]) — serialises the current sort order and filter state
     /// into a view string that can be round-tripped through SetView.
     /// Format: [SORTING(Field1[,Field2...])] [WHERE(Field=FILTER(expr)[,Field=FILTER(expr)...])]

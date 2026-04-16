@@ -71,7 +71,7 @@ public class MockRecordRef
         }
     }
 
-    // -- SetLoadFields (no-op) --
+    // -- SetLoadFields / AddLoadFields / AreFieldsLoaded (no-op in standalone) --
 
     /// <summary>
     /// ALSetLoadFields — no-op in standalone mode. All fields are always in memory.
@@ -79,6 +79,14 @@ public class MockRecordRef
     /// </summary>
     public void ALSetLoadFields(params int[] fieldNos) { }
     public void ALSetLoadFields(DataError errorLevel, params int[] fieldNos) { }
+
+    /// <summary>ALAddLoadFields — extends the load set. No-op in standalone (all fields loaded).</summary>
+    public void ALAddLoadFields(params int[] fieldNos) { }
+    public void ALAddLoadFields(DataError errorLevel, params int[] fieldNos) { }
+
+    /// <summary>ALAreFieldsLoaded — standalone: all fields are always loaded, so always true.</summary>
+    public bool ALAreFieldsLoaded(params int[] fieldNos) => true;
+    public bool ALAreFieldsLoaded(DataError errorLevel, params int[] fieldNos) => true;
 
     // -- Caption --
 
