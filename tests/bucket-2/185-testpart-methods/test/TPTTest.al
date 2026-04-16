@@ -49,16 +49,6 @@ codeunit 97302 "TPT Tests"
     end;
 
     [Test]
-    procedure Prev_ReturnsFalse()
-    var
-        TP: TestPage "TPT Card";
-    begin
-        TP.OpenEdit();
-        Assert.IsFalse(TP.Lines.Prev(), 'Part.Prev must return false (empty stub)');
-        TP.Close();
-    end;
-
-    [Test]
     procedure New_DoesNotError()
     var
         TP: TestPage "TPT Card";

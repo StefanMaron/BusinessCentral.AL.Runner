@@ -7125,8 +7125,8 @@ TestPart.Next:
 TestPart.Prev:
   layer: runtime-api
   category: TestPart
-  status: covered
-  tests: tests/bucket-2/185-testpart-methods
+  status: n/a
+  notes: removed in BC runtime 13.0 (AL0666); not available in BC 26+
 
 TestPart.Previous:
   layer: runtime-api

@@ -95,12 +95,6 @@ public class MockTestPageHandle
     public bool ALPrevious() => false;
 
     /// <summary>
-    /// Alias for ALPrevious used by TestPart. Stub returns false (empty page).
-    /// BC emits <c>tP.Target.GetPart(hash).ALPrev()</c> for <c>TestPart.Prev()</c>.
-    /// </summary>
-    public bool ALPrev() => false;
-
-    /// <summary>
     /// Expands or collapses a tree node on the page. No-op in standalone mode.
     /// BC emits <c>tP.Target.ALExpand(bool)</c>.
     /// </summary>
