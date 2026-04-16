@@ -4582,14 +4582,16 @@ RecordRef.AddLink:
 RecordRef.AddLoadFields:
   layer: runtime-api
   category: RecordRef
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=2; MockRecordRef.ALAddLoadFields no-op (all fields always loaded in standalone)
+  tests: tests/bucket-1/92-recordref-stub-methods
 
 RecordRef.AreFieldsLoaded:
   layer: runtime-api
   category: RecordRef
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=2; MockRecordRef.ALAreFieldsLoaded always returns true in standalone
+  tests: tests/bucket-1/92-recordref-stub-methods
 
 RecordRef.Ascending:
   layer: runtime-api
@@ -4630,8 +4632,9 @@ RecordRef.Copy:
 RecordRef.CopyLinks:
   layer: runtime-api
   category: RecordRef
-  status: gap
-  notes: overloads=3
+  status: covered
+  notes: overloads=2; MockRecordRef.ALCopyLinks no-op (no BC link service in standalone)
+  tests: tests/bucket-1/92-recordref-stub-methods
 
 RecordRef.Count:
   layer: runtime-api
@@ -4810,8 +4813,9 @@ RecordRef.Insert:
 RecordRef.IsDirty:
   layer: runtime-api
   category: RecordRef
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockRecordRef.ALIsDirty always false (no dirty tracking in standalone)
+  tests: tests/bucket-1/92-recordref-stub-methods
 
 RecordRef.IsEmpty:
   layer: runtime-api
@@ -4840,8 +4844,9 @@ RecordRef.KeyIndex:
 RecordRef.LoadFields:
   layer: runtime-api
   category: RecordRef
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=2; MockRecordRef.ALLoadFields no-op (deprecated alias for SetLoadFields)
+  tests: tests/bucket-1/92-recordref-stub-methods
 
 RecordRef.LockTable:
   layer: runtime-api
@@ -4894,8 +4899,9 @@ RecordRef.Open:
 RecordRef.ReadConsistency:
   layer: runtime-api
   category: RecordRef
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockRecordRef.ALReadConsistency always false (no SQL in standalone)
+  tests: tests/bucket-1/92-recordref-stub-methods
 
 RecordRef.ReadIsolation:
   layer: runtime-api
@@ -4936,8 +4942,9 @@ RecordRef.Reset:
 RecordRef.SecurityFiltering:
   layer: runtime-api
   category: RecordRef
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockRecordRef.ALSecurityFiltering get/set property stub
+  tests: tests/bucket-1/92-recordref-stub-methods
 
 RecordRef.SetAutoCalcFields:
   layer: runtime-api
@@ -5014,8 +5021,9 @@ RecordRef.SystemModifiedByNo:
 RecordRef.Truncate:
   layer: runtime-api
   category: RecordRef
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockRecordRef.ALTruncate delegates to ALDeleteAll without triggers
+  tests: tests/bucket-1/92-recordref-stub-methods
 
 RecordRef.WritePermission:
   layer: runtime-api
