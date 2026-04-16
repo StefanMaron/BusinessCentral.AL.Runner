@@ -7,14 +7,6 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
-- **`TestRequestPage` methods coverage (#681)** — `MockTestPageHandle` now implements
-  21 previously missing `TestRequestPage` stubs: `OK`/`Cancel` built-in actions,
-  `First`/`Last`/`Next`/`Previous` navigation, `ValidationErrorCount` (returns 0),
-  `GetValidationError` (returns empty string), `Caption`, `New`, `Expand`, `Preview`,
-  `Print`, `SaveAsPdf`/`SaveAsExcel`/`SaveAsWord`/`SaveAsXml` (no-op file saves),
-  `Schedule`, and `FindFirstField`/`FindNextField`/`FindPreviousField` (return false).
-  New suite `tests/bucket-1/269-testrequestpage-methods` adds 21 proving tests.
-  Coverage map: 21 `TestRequestPage.*` methods moved from `gap` to `covered`.
 - **`actionref_declaration` coverage (#388)** — Pages and page extensions containing
   `actionref` sections (promoted-action bindings) now compile and run correctly.
   The existing `RoslynRewriter` already handles the BC-generated C# for actionref
