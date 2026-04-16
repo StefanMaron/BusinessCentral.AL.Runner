@@ -434,6 +434,7 @@ unary_expression:
   status: covered
   tests:
     - tests/bucket-1/01-pure-function
+    - tests/bucket-2/166-unary-expression
 
 # ── type ────────────────────────────────────────────────────────
 
