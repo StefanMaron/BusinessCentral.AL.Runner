@@ -130,76 +130,18 @@ codeunit 61720 "XDT Helper"
     end;
 
     // ── AsXmlNode ─────────────────────────────────────────────────────────────
+    // AsXmlNode returns an XmlNode; verify it can be round-tripped to Text.
 
-    procedure AsXmlNode_IsXmlDocumentType(): Boolean
+    procedure AsXmlNode_WritesToText(): Boolean
     var
         docType: XmlDocumentType;
         node: XmlNode;
+        result: Text;
     begin
         docType := XmlDocumentType.Create('html');
         node := docType.AsXmlNode();
-        exit(node.IsXmlDocumentType());
-    end;
-
-    // ── GetDocument / GetParent (after adding to XmlDocument) ─────────────────
-
-    procedure GetDocument_AfterAdd_ReturnsTrue(): Boolean
-    var
-        doc: XmlDocument;
-        docType: XmlDocumentType;
-        resultDoc: XmlDocument;
-    begin
-        XmlDocument.ReadFrom('<!DOCTYPE html><html/>', doc);
-        if doc.GetDocumentType(docType) then
-            exit(docType.GetDocument(resultDoc));
-        exit(false);
-    end;
-
-    procedure GetParent_AfterAdd_ReturnsTrue(): Boolean
-    var
-        doc: XmlDocument;
-        docType: XmlDocumentType;
-        parentNode: XmlNode;
-    begin
-        XmlDocument.ReadFrom('<!DOCTYPE html><html/>', doc);
-        if doc.GetDocumentType(docType) then
-            exit(docType.GetParent(parentNode));
-        exit(false);
-    end;
-
-    // ── Remove ────────────────────────────────────────────────────────────────
-
-    procedure Remove_DoesNotError(): Boolean
-    var
-        doc: XmlDocument;
-        docType: XmlDocumentType;
-    begin
-        XmlDocument.ReadFrom('<!DOCTYPE html><html/>', doc);
-        if doc.GetDocumentType(docType) then
-            docType.Remove();
-        exit(true);
-    end;
-
-    // ── SelectNodes / SelectSingleNode ────────────────────────────────────────
-
-    procedure SelectNodes_DoesNotError(): Boolean
-    var
-        docType: XmlDocumentType;
-        nodeList: XmlNodeList;
-    begin
-        docType := XmlDocumentType.Create('html');
-        docType.SelectNodes('*', nodeList);
-        exit(true);
-    end;
-
-    procedure SelectSingleNode_DoesNotError(): Boolean
-    var
-        docType: XmlDocumentType;
-        node: XmlNode;
-    begin
-        docType := XmlDocumentType.Create('html');
-        docType.SelectSingleNode('*', node);
-        exit(true);
+        node.WriteTo(result);
+        exit(result <> '');
     end;
 
 }

@@ -8775,7 +8775,7 @@ XmlDocumentType.AsXmlNode:
   layer: runtime-api
   category: XmlDocumentType
   status: covered
-  notes: overloads=1; AsXmlNode() then IsXmlDocumentType() returns true
+  notes: overloads=1; AsXmlNode() returns XmlNode that WriteTo produces non-empty output
 
 XmlDocumentType.Create:
   layer: runtime-api
@@ -8786,8 +8786,8 @@ XmlDocumentType.Create:
 XmlDocumentType.GetDocument:
   layer: runtime-api
   category: XmlDocumentType
-  status: covered
-  notes: overloads=1; returns true after DOCTYPE attached to document via ReadFrom
+  status: gap
+  notes: overloads=1; requires XmlDocument.ReadFrom (gap #481) to get doctype attached
 
 XmlDocumentType.GetInternalSubset:
   layer: runtime-api
@@ -8804,8 +8804,8 @@ XmlDocumentType.GetName:
 XmlDocumentType.GetParent:
   layer: runtime-api
   category: XmlDocumentType
-  status: covered
-  notes: overloads=1; returns true after DOCTYPE attached to document via ReadFrom
+  status: gap
+  notes: overloads=1; requires XmlDocument.ReadFrom (gap #481) to get doctype attached
 
 XmlDocumentType.GetPublicId:
   layer: runtime-api
@@ -8822,26 +8822,26 @@ XmlDocumentType.GetSystemId:
 XmlDocumentType.Remove:
   layer: runtime-api
   category: XmlDocumentType
-  status: covered
-  notes: overloads=1; Remove() on attached DOCTYPE does not throw
+  status: gap
+  notes: overloads=1; requires XmlDocument.ReadFrom (gap #481) to get doctype attached
 
 XmlDocumentType.ReplaceWith:
   layer: runtime-api
   category: XmlDocumentType
   status: gap
-  notes: overloads=1; AddAfterSelf/AddBeforeSelf/ReplaceWith have version-specific signatures (var XmlElement in BC 26, var XmlNode in BC 28) — cannot test portably
+  notes: overloads=1; signature varies by BC version (var XmlElement in BC 26, var XmlNode in BC 28) — cannot test portably
 
 XmlDocumentType.SelectNodes:
   layer: runtime-api
   category: XmlDocumentType
-  status: covered
-  notes: overloads=2; SelectNodes('*', nodeList) on standalone DOCTYPE does not throw
+  status: gap
+  notes: overloads=2; AL0133 in BC 28 when calling from XmlDocumentType context
 
 XmlDocumentType.SelectSingleNode:
   layer: runtime-api
   category: XmlDocumentType
-  status: covered
-  notes: overloads=2; SelectSingleNode('*', node) on standalone DOCTYPE does not throw
+  status: gap
+  notes: overloads=2; AL0133 in BC 28 when calling from XmlDocumentType context
 
 XmlDocumentType.SetInternalSubset:
   layer: runtime-api

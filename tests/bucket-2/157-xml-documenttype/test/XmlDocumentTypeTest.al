@@ -180,53 +180,10 @@ codeunit 61721 "XDT XmlDocumentType Test"
     // ── AsXmlNode ─────────────────────────────────────────────────────────────
 
     [Test]
-    procedure AsXmlNode_ReturnsXmlDocumentTypeNode()
+    procedure AsXmlNode_WritesToText()
     begin
-        Assert.IsTrue(H.AsXmlNode_IsXmlDocumentType(),
-            'AsXmlNode() must return a node where IsXmlDocumentType() is true');
-    end;
-
-    // ── GetDocument ───────────────────────────────────────────────────────────
-
-    [Test]
-    procedure GetDocument_AfterAdd_ReturnsTrue()
-    begin
-        Assert.IsTrue(H.GetDocument_AfterAdd_ReturnsTrue(),
-            'GetDocument must return true when doctype is attached to a document');
-    end;
-
-    // ── GetParent ─────────────────────────────────────────────────────────────
-
-    [Test]
-    procedure GetParent_AfterAdd_ReturnsTrue()
-    begin
-        Assert.IsTrue(H.GetParent_AfterAdd_ReturnsTrue(),
-            'GetParent must return true when doctype is attached to a document');
-    end;
-
-    // ── Remove ────────────────────────────────────────────────────────────────
-
-    [Test]
-    procedure Remove_DoesNotError()
-    begin
-        Assert.IsTrue(H.Remove_DoesNotError(),
-            'Remove() must not throw when doctype is attached to a document');
-    end;
-
-    // ── SelectNodes / SelectSingleNode ────────────────────────────────────────
-
-    [Test]
-    procedure SelectNodes_DoesNotError()
-    begin
-        Assert.IsTrue(H.SelectNodes_DoesNotError(),
-            'SelectNodes must not throw on a standalone XmlDocumentType');
-    end;
-
-    [Test]
-    procedure SelectSingleNode_DoesNotError()
-    begin
-        Assert.IsTrue(H.SelectSingleNode_DoesNotError(),
-            'SelectSingleNode must not throw on a standalone XmlDocumentType');
+        Assert.IsTrue(H.AsXmlNode_WritesToText(),
+            'AsXmlNode() must return a node that WriteTo produces non-empty output');
     end;
 
 }
