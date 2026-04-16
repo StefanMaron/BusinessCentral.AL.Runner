@@ -8,24 +8,25 @@ codeunit 84408 "Media Test"
 
     // ── MediaId ──────────────────────────────────────────────────────────────────
     [Test]
-    procedure MediaId_Default_ReturnsNonEmptyGuid()
-    var
-        m: Media;
-    begin
-        // Positive: MediaId() must return a non-empty GUID.
-        Assert.AreNotEqual(Format(Src.GetMediaId(m)), '',
-            'MediaId() must return a non-empty GUID');
-    end;
-
-    [Test]
     procedure MediaId_Default_IsNotEmptyGuid()
     var
         m: Media;
         EmptyGuid: Guid;
     begin
-        // Negative: MediaId() must not be the all-zeros GUID.
+        // Positive: MediaId() must return a non-empty GUID.
         Assert.AreNotEqual(EmptyGuid, Src.GetMediaId(m),
             'MediaId() must not equal the empty GUID');
+    end;
+
+    [Test]
+    procedure MediaId_TwoInstances_DifferentIds()
+    var
+        m1: Media;
+        m2: Media;
+    begin
+        // Negative: two different Media instances must have different MediaIds.
+        Assert.AreNotEqual(Src.GetMediaId(m1), Src.GetMediaId(m2),
+            'Two Media instances must have different MediaIds');
     end;
 
     // ── ImportFile ───────────────────────────────────────────────────────────────

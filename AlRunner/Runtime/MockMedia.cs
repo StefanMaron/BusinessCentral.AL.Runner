@@ -17,7 +17,14 @@ public class MockMedia
     private bool _hasValue;
     private readonly Guid _id = Guid.NewGuid();
 
+    /// <summary>Default instance — BC emits <c>NavMedia.Default</c> in some contexts.</summary>
     public static MockMedia Default => new MockMedia();
+
+    /// <summary>
+    /// 1-arg constructor — BC emits <c>new NavMedia(this)</c> where <c>this</c>
+    /// is the scope object (ITreeObject parent). Unused in standalone mode.
+    /// </summary>
+    public MockMedia(object? parent) { }
 
     // ── HasValue ─────────────────────────────────────────────────────────────────
 

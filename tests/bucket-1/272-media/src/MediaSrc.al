@@ -82,10 +82,8 @@ codeunit 84407 "Media Src"
 
     // ── FindOrphans ──────────────────────────────────────────────────────────────
     procedure FindOrphansReturnsEmptyList(): Integer
-    var
-        Guids: List of [Guid];
     begin
-        Guids := Media.FindOrphans();
-        exit(Guids.Count());
+        // Chain Count() directly to avoid version-sensitive List of [Guid] type storage.
+        exit(Media.FindOrphans().Count());
     end;
 }
