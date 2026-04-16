@@ -26,17 +26,21 @@ report 60100 "AADS Base Report"
     }
 }
 
-/// Report extension using addafter() in the dataset area — adds a column
-/// after an existing column. This is the construct issue #426 says fails to compile.
+/// Report extension using addafter() in the dataset area — modifies an existing
+/// dataitem and adds a column after an existing column.
+/// This is the construct issue #426 says fails to compile.
 /// addafter in dataset is a layout directive; it has no runtime effect in
 /// unit-test context, so proving compilation is sufficient.
 reportextension 60101 "AADS Report Ext" extends "AADS Base Report"
 {
     dataset
     {
-        addafter(Description)
+        modify(AADSItem)
         {
-            column(Quantity; Quantity) { }
+            addafter(Description)
+            {
+                column(Quantity; Quantity) { }
+            }
         }
     }
 }
