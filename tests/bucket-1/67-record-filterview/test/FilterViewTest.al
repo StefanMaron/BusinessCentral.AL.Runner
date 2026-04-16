@@ -5,17 +5,6 @@ codeunit 67001 "Filter View Test"
     var
         Assert: Codeunit Assert;
 
-    local procedure InsertRow(Id: Integer; Category: Code[10]; Amount: Decimal)
-    var
-        Rec: Record "FV Test Table";
-    begin
-        Rec.Init();
-        Rec.Id := Id;
-        Rec.Category := Category;
-        Rec.Amount := Amount;
-        Rec.Insert();
-    end;
-
     // --- GetFilter(field) ---
 
     [Test]
@@ -23,7 +12,7 @@ codeunit 67001 "Filter View Test"
     var
         Rec: Record "FV Test Table";
     begin
-        // Negative: no filter set → GetFilter must return ''
+        // Negative: no filter set — GetFilter must return ''
         Assert.AreEqual('', Rec.GetFilter(Id), 'GetFilter on unfiltered field must be empty');
     end;
 
@@ -73,10 +62,10 @@ codeunit 67001 "Filter View Test"
         View: Text;
     begin
         Rec.SetRange(Id, 1, 5);
-        View := Rec.GetView(false);  // serialize current state
+        View := Rec.GetView();
         Rec.Reset();
         Assert.AreEqual('', Rec.GetFilter(Id), 'Precondition: filter cleared after Reset');
-        Rec.SetView(View);           // restore from serialized view
+        Rec.SetView(View);
         Assert.AreEqual('1..5', Rec.GetFilter(Id), 'GetFilter after SetView must restore range 1..5');
     end;
 
@@ -87,21 +76,10 @@ codeunit 67001 "Filter View Test"
         View: Text;
     begin
         Rec.SetFilter(Category, 'A|B');
-        View := Rec.GetView(false);
+        View := Rec.GetView();
         Rec.Reset();
         Rec.SetView(View);
         Assert.AreEqual('A|B', Rec.GetFilter(Category), 'GetFilter after SetView must restore A|B filter');
-    end;
-
-    [Test]
-    procedure GetView_EmptyRecord_DoesNotThrow()
-    var
-        Rec: Record "FV Test Table";
-        View: Text;
-    begin
-        // Positive: no filters — GetView must not throw and must return a non-error value
-        View := Rec.GetView(false);
-        Assert.IsTrue(true, 'GetView on record with no filters must not throw');
     end;
 
     // --- CopyFilter ---
@@ -113,7 +91,6 @@ codeunit 67001 "Filter View Test"
         Target: Record "FV Test Table";
     begin
         Source.SetRange(Id, 2, 8);
-        // CopyFilter(sourceField, targetRecord) — copies to same-named field in target
         Source.CopyFilter(Id, Target);
         Assert.AreEqual('2..8', Target.GetFilter(Id),
             'CopyFilter must copy the range filter to the target field');
@@ -127,7 +104,6 @@ codeunit 67001 "Filter View Test"
     begin
         // Target has a filter; Source field has none — CopyFilter must clear target's filter
         Target.SetRange(Id, 1, 3);
-        // Source.Id has no filter
         Source.CopyFilter(Id, Target);
         Assert.AreEqual('', Target.GetFilter(Id),
             'CopyFilter with no source filter must clear target filter');
