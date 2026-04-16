@@ -4056,20 +4056,23 @@ ModuleInfo.Publisher:
 NavApp.DeleteArchiveData:
   layer: runtime-api
   category: NavApp
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockNavApp.ALDeleteArchiveData() is a no-op — no archive service in standalone
+  test: tests/bucket-1/94-navapp-archive/test/NavAppArchiveTest.al
 
 NavApp.GetArchiveRecordRef:
   layer: runtime-api
   category: NavApp
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockNavApp.ALGetArchiveRecordRef() is a no-op — leaves RecordRef unbound
+  test: tests/bucket-1/94-navapp-archive/test/NavAppArchiveTest.al
 
 NavApp.GetArchiveVersion:
   layer: runtime-api
   category: NavApp
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockNavApp.ALGetArchiveVersion() returns NavText.Empty — no archive in standalone
+  test: tests/bucket-1/94-navapp-archive/test/NavAppArchiveTest.al
 
 NavApp.GetCallerCallstackModuleInfos:
   layer: runtime-api
@@ -4098,8 +4101,9 @@ NavApp.GetModuleInfo:
 NavApp.GetResource:
   layer: runtime-api
   category: NavApp
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockNavApp.ALGetResource() is a no-op — leaves InStream unchanged in standalone
+  test: tests/bucket-1/94-navapp-archive/test/NavAppArchiveTest.al
 
 NavApp.GetResourceAsJson:
   layer: runtime-api
@@ -4146,14 +4150,16 @@ NavApp.ListResources:
 NavApp.LoadPackageData:
   layer: runtime-api
   category: NavApp
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockNavApp.ALLoadPackageData() is a no-op — no upgrade service in standalone
+  test: tests/bucket-1/94-navapp-archive/test/NavAppArchiveTest.al
 
 NavApp.RestoreArchiveData:
   layer: runtime-api
   category: NavApp
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockNavApp.ALRestoreArchiveData() is a no-op — no archive service in standalone
+  test: tests/bucket-1/94-navapp-archive/test/NavAppArchiveTest.al
 
 # ── Notification ────────────────────────────────────────────────
 

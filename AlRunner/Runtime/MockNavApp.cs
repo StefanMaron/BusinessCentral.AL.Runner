@@ -102,4 +102,47 @@ public static class MockNavApp
 
     public static NavList<NavText> ALListResources(object? errorLevel, NavText resourceType)
         => NavList<NavText>.Default;
+
+    /// <summary>
+    /// NavApp.GetResource(ResourceName: Text; var InStream: InStream) — loads a resource into
+    /// an InStream. No .app bundle in standalone; leaves the stream unchanged.
+    /// BC emits: ALNavApp.ALGetResource(DataError, NavText, ByRef&lt;MockInStream&gt;)
+    /// </summary>
+    public static void ALGetResource(DataError errorLevel, NavText resourceName, ByRef<MockInStream> inStream) { }
+
+    /// <summary>
+    /// NavApp.GetArchiveVersion(AppId: Guid) : Text — returns the archived data version for
+    /// the given extension. No archive exists in standalone; returns empty string.
+    /// BC emits: ALNavApp.ALGetArchiveVersion(DataError, Guid) → NavText
+    /// </summary>
+    public static NavText ALGetArchiveVersion(DataError errorLevel, Guid appId)
+        => NavText.Empty;
+
+    /// <summary>
+    /// NavApp.GetArchiveRecordRef(AppId: Guid; var RecordRef: RecordRef) — populates RecordRef
+    /// with archived data. No archive in standalone; leaves RecordRef unchanged (unbound).
+    /// BC emits: ALNavApp.ALGetArchiveRecordRef(DataError, Guid, ByRef&lt;MockRecordRef&gt;)
+    /// </summary>
+    public static void ALGetArchiveRecordRef(DataError errorLevel, Guid appId, ByRef<MockRecordRef> recordRef) { }
+
+    /// <summary>
+    /// NavApp.LoadPackageData(TableId: Integer) — loads upgrade package data for the given table.
+    /// No-op in standalone mode (no upgrade service exists).
+    /// BC emits: ALNavApp.ALLoadPackageData(DataError, int)
+    /// </summary>
+    public static void ALLoadPackageData(DataError errorLevel, int tableId) { }
+
+    /// <summary>
+    /// NavApp.RestoreArchiveData(TableId: Integer) — restores archived data into the given table.
+    /// No-op in standalone mode (no archive service exists).
+    /// BC emits: ALNavApp.ALRestoreArchiveData(DataError, int)
+    /// </summary>
+    public static void ALRestoreArchiveData(DataError errorLevel, int tableId) { }
+
+    /// <summary>
+    /// NavApp.DeleteArchiveData(TableId: Integer) — deletes archived data for the given table.
+    /// No-op in standalone mode (no archive service exists).
+    /// BC emits: ALNavApp.ALDeleteArchiveData(DataError, int)
+    /// </summary>
+    public static void ALDeleteArchiveData(DataError errorLevel, int tableId) { }
 }
