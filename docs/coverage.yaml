@@ -2181,8 +2181,10 @@ ErrorInfo.TableId:
 ErrorInfo.Title:
   layer: runtime-api
   category: ErrorInfo
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; NavALErrorInfo.ALTitle() works via BC runtime DLL without session.
+  tests:
+    - tests/bucket-1/83-errorinfo-title
 
 ErrorInfo.Verbosity:
   layer: runtime-api
