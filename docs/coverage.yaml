@@ -1370,8 +1370,10 @@ Boolean.ToText:
 Byte.ToText:
   layer: runtime-api
   category: Byte
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; ToText() rewritten to AlCompat.Format(expr) by RoslynRewriter
+  tests:
+    - tests/bucket-2/156-byte-totext
 
 # ── Codeunit ────────────────────────────────────────────────────
 
