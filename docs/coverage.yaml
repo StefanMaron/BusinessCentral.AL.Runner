@@ -6952,8 +6952,8 @@ TestRequestPage.Caption:
 TestRequestPage.Editable:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; mock tracks field Editable metadata; suite 161-testrequestpage-editable
 
 TestRequestPage.Expand:
   layer: runtime-api
