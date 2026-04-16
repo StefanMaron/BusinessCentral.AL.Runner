@@ -20,6 +20,9 @@ public class MockMedia
     /// <summary>Default instance — BC emits <c>NavMedia.Default</c> in some contexts.</summary>
     public static MockMedia Default => new MockMedia();
 
+    /// <summary>Default constructor — for MockMedia.Default and direct instantiation.</summary>
+    public MockMedia() { }
+
     /// <summary>
     /// 1-arg constructor — BC emits <c>new NavMedia(this)</c> where <c>this</c>
     /// is the scope object (ITreeObject parent). Unused in standalone mode.

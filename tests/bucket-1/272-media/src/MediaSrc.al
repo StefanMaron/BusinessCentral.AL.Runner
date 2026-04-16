@@ -3,8 +3,12 @@ codeunit 84407 "Media Src"
 {
     // ── MediaId ─────────────────────────────────────────────────────────────────
     procedure GetMediaId(var m: Media): Guid
+    var
+        Id: Guid;
     begin
-        exit(m.MediaId());
+        // Assign to local variable first to avoid AL0282 (nullable return guard).
+        Id := m.MediaId();
+        exit(Id);
     end;
 
     // ── HasValue ─────────────────────────────────────────────────────────────────
@@ -17,8 +21,11 @@ codeunit 84407 "Media Src"
     procedure ImportFileReturnsTrue(FileName: Text): Boolean
     var
         m: Media;
+        Ok: Boolean;
     begin
-        exit(m.ImportFile(FileName));
+        // Assign to local Boolean first to avoid AL0282 on nullable return.
+        Ok := m.ImportFile(FileName);
+        exit(Ok);
     end;
 
     // ── ImportFile sets HasValue ─────────────────────────────────────────────────
@@ -34,8 +41,10 @@ codeunit 84407 "Media Src"
     procedure ExportFileOnDefaultReturnsFalse(FileName: Text): Boolean
     var
         m: Media;
+        Ok: Boolean;
     begin
-        exit(m.ExportFile(FileName));
+        Ok := m.ExportFile(FileName);
+        exit(Ok);
     end;
 
     // ── ImportStream ─────────────────────────────────────────────────────────────
@@ -45,12 +54,14 @@ codeunit 84407 "Media Src"
         Storage: Record "Media Test Storage" temporary;
         OutStr: OutStream;
         InStr: InStream;
+        Ok: Boolean;
     begin
         Storage.Init();
         Storage.Data.CreateOutStream(OutStr);
         OutStr.WriteText(content);
         Storage.Data.CreateInStream(InStr);
-        exit(m.ImportStream(InStr, 'test.jpg'));
+        Ok := m.ImportStream(InStr, 'test.jpg');
+        exit(Ok);
     end;
 
     procedure HasValueAfterImportStream(content: Text): Boolean
@@ -74,16 +85,21 @@ codeunit 84407 "Media Src"
         m: Media;
         Storage: Record "Media Test Storage" temporary;
         OutStr: OutStream;
+        Ok: Boolean;
     begin
         Storage.Init();
         Storage.Data.CreateOutStream(OutStr);
-        exit(m.ExportStream(OutStr));
+        Ok := m.ExportStream(OutStr);
+        exit(Ok);
     end;
 
     // ── FindOrphans ──────────────────────────────────────────────────────────────
     procedure FindOrphansReturnsEmptyList(): Integer
+    var
+        Count: Integer;
     begin
-        // Chain Count() directly to avoid version-sensitive List of [Guid] type storage.
-        exit(Media.FindOrphans().Count());
+        // Assign count to local Integer first to avoid AL0282 on nullable chain.
+        Count := Media.FindOrphans().Count();
+        exit(Count);
     end;
 }
