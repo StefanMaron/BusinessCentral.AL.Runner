@@ -888,6 +888,14 @@ systempart_section:
   tests:
     - tests/bucket-1/261-page-part-section
 
+tooltip_control_property:
+  layer: syntax
+  category: page
+  status: covered
+  notes: Tooltip is a compile-time annotation; the BC compiler emits it in generated C# and the runner accepts it unchanged
+  tests:
+    - tests/bucket-1/262-tooltip-control-property
+
 usercontrol_section:
   layer: syntax
   category: page
