@@ -111,19 +111,20 @@ public static class MockNavApp
     public static void ALGetResource(DataError errorLevel, NavText resourceName, ByRef<MockInStream> inStream) { }
 
     /// <summary>
-    /// NavApp.GetArchiveVersion(AppId: Guid) : Text — returns the archived data version for
-    /// the given extension. No archive exists in standalone; returns empty string.
-    /// BC emits: ALNavApp.ALGetArchiveVersion(DataError, Guid) → NavText
+    /// NavApp.GetArchiveVersion() : Text — returns the archived data version for the current
+    /// extension. No archive exists in standalone; returns empty string.
+    /// BC emits: ALNavApp.ALGetArchiveVersion(DataError) → NavText
     /// </summary>
-    public static NavText ALGetArchiveVersion(DataError errorLevel, Guid appId)
+    public static NavText ALGetArchiveVersion(DataError errorLevel)
         => NavText.Empty;
 
     /// <summary>
-    /// NavApp.GetArchiveRecordRef(AppId: Guid; var RecordRef: RecordRef) — populates RecordRef
-    /// with archived data. No archive in standalone; leaves RecordRef unchanged (unbound).
-    /// BC emits: ALNavApp.ALGetArchiveRecordRef(DataError, Guid, ByRef&lt;MockRecordRef&gt;)
+    /// NavApp.GetArchiveRecordRef(TableId: Integer; var RecordRef: RecordRef) — populates
+    /// RecordRef with archived data for the given table. No archive in standalone; leaves
+    /// RecordRef unchanged (unbound).
+    /// BC emits: ALNavApp.ALGetArchiveRecordRef(DataError, int, ByRef&lt;MockRecordRef&gt;)
     /// </summary>
-    public static void ALGetArchiveRecordRef(DataError errorLevel, Guid appId, ByRef<MockRecordRef> recordRef) { }
+    public static void ALGetArchiveRecordRef(DataError errorLevel, int tableId, ByRef<MockRecordRef> recordRef) { }
 
     /// <summary>
     /// NavApp.LoadPackageData(TableId: Integer) — loads upgrade package data for the given table.

@@ -3,14 +3,14 @@
 /// RestoreArchiveData, DeleteArchiveData, GetResource.
 codeunit 94000 "NAA Src"
 {
-    procedure GetArchiveVersion(AppId: Guid): Text
+    procedure GetArchiveVersion(): Text
     begin
-        exit(NavApp.GetArchiveVersion(AppId));
+        exit(NavApp.GetArchiveVersion());
     end;
 
-    procedure CheckGetArchiveRecordRef(AppId: Guid; var RecRef: RecordRef)
+    procedure CheckGetArchiveRecordRef(TableId: Integer; var RecRef: RecordRef)
     begin
-        NavApp.GetArchiveRecordRef(AppId, RecRef);
+        NavApp.GetArchiveRecordRef(TableId, RecRef);
     end;
 
     procedure CallLoadPackageData(TableId: Integer)

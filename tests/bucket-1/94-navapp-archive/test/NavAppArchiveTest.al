@@ -12,11 +12,8 @@ codeunit 94001 "NAA Tests"
 
     [Test]
     procedure NavApp_GetArchiveVersion_ReturnsEmpty()
-    var
-        AppId: Guid;
     begin
-        AppId := CreateGuid();
-        Assert.AreEqual('', Src.GetArchiveVersion(AppId),
+        Assert.AreEqual('', Src.GetArchiveVersion(),
             'GetArchiveVersion should return empty string in standalone');
     end;
 
@@ -27,11 +24,9 @@ codeunit 94001 "NAA Tests"
     [Test]
     procedure NavApp_GetArchiveRecordRef_LeavesUnbound()
     var
-        AppId: Guid;
         RecRef: RecordRef;
     begin
-        AppId := CreateGuid();
-        Src.CheckGetArchiveRecordRef(AppId, RecRef);
+        Src.CheckGetArchiveRecordRef(0, RecRef);
         Assert.AreEqual(0, RecRef.Number(), 'GetArchiveRecordRef should leave RecordRef unbound');
     end;
 
