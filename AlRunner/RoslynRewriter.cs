@@ -2314,23 +2314,28 @@ public void ClearApplicationMemberVariables()
                 }
             }
 
-            // NavForm.Run(pageId, record) -> no-op (page navigation not supported standalone)
-            // NavForm.RunModal(bool, bool, pageId, record) -> FormResult.LookupOK
+            // NavForm static Page.* method calls — expression-level stubs.
+            // Statement-level void calls are stripped to EmptyStatement in VisitExpressionStatement.
+            // Expression-level (return value used) calls need a typed default:
+            //   RunModal → default(FormResult)
+            //   ObjectId → default(NavInteger)   (Page.ObjectId returns the page ID integer)
+            //   LookupMode (get) → false          (handled in VisitMemberAccessExpression)
             // Accept the fully-qualified form too — older BC versions emit
             // `Microsoft.Dynamics.Nav.Runtime.NavForm.Run(...)`.
-            if ((exprText == "NavForm" || exprText.EndsWith(".NavForm", StringComparison.Ordinal)) &&
-                (methodName == "Run" || methodName == "RunModal"))
+            if ((exprText == "NavForm" || exprText.EndsWith(".NavForm", StringComparison.Ordinal)))
             {
-                // RunModal returns FormResult, but the enum is from Nav.Ncl. Return a constant.
-                // FormResult.LookupOK = used in transpiled code for dialog lookups
-                // For Run (void), we can't return anything - the statement-level handler will remove it
                 if (methodName == "RunModal")
                 {
-                    // Return 0 cast to the expected type (FormResult enum), or just return default
                     return SyntaxFactory.DefaultExpression(
                         SyntaxFactory.ParseTypeName("FormResult"));
                 }
-                // For Run: will be removed at statement level as a no-op
+                if (methodName == "ObjectId")
+                {
+                    // Page.ObjectId([withName]) returns the page object ID as NavInteger.
+                    return SyntaxFactory.DefaultExpression(
+                        SyntaxFactory.ParseTypeName("NavInteger"));
+                }
+                // Run and all other void methods: will be stripped at statement level.
                 return visited;
             }
 
@@ -3574,6 +3579,16 @@ public void ClearApplicationMemberVariables()
                         SyntaxFactory.Argument(visited.Expression))));
         }
 
+        // NavForm.LookupMode (property getter — no parentheses in C#)
+        // BC lowers static `Page.LookupMode` to a PROPERTY GET on NavForm, not a method call.
+        // NavForm doesn't exist standalone, so return false (default). Assignment is stripped
+        // to no-op in VisitExpressionStatement.
+        if (IsNavFormReference(visited.Expression) && memberName == "ALLookupMode")
+        {
+            return SyntaxFactory.LiteralExpression(SyntaxKind.FalseLiteralExpression)
+                .WithTriviaFrom(visited);
+        }
+
         // NavOption.ALNames / NavOption.ALOrdinals — property getters that
         // reach into NCLOptionMetadata native code. Redirect to AlCompat
         // helpers which look up the tagged enum id via ConditionalWeakTable.
@@ -3820,23 +3835,27 @@ public void ClearApplicationMemberVariables()
                 return SyntaxFactory.EmptyStatement();
             }
 
-            // NavForm.Run / NavForm.RunModal / NavForm.SetRecord called as bare statements
-            // (i.e. value discarded) -> no-op. Page navigation is not supported standalone;
-            // when the return value is assigned, the expression-level rewriter turns it
-            // into default(FormResult) instead — which is not a valid statement, so we must
-            // strip it here first.
+            // NavForm.Run / NavForm.RunModal / NavForm.SetRecord / NavForm.Activate / ... called
+            // as bare statements (i.e. value discarded) -> no-op. Page navigation and page
+            // lifecycle methods are not supported standalone; when the return value is assigned,
+            // the expression-level rewriter turns it into a default value instead.
             //
             // Accept both `NavForm.Method(...)` and fully-qualified
             // `Microsoft.Dynamics.Nav.Runtime.NavForm.Method(...)` — older BC
             // compiler versions emit the qualified form, so a strict `== "NavForm"`
             // check missed them and let the broken call survive into Roslyn.
             if (invocation.Expression is MemberAccessExpressionSyntax navFormMa &&
-                IsNavFormReference(navFormMa.Expression) &&
-                (navFormMa.Name.Identifier.Text == "Run" ||
-                 navFormMa.Name.Identifier.Text == "RunModal" ||
-                 navFormMa.Name.Identifier.Text == "SetRecord"))
+                IsNavFormReference(navFormMa.Expression))
             {
-                return SyntaxFactory.EmptyStatement();
+                var navFormMethod = navFormMa.Name.Identifier.Text;
+                if (navFormMethod is "Run" or "RunModal" or "SetRecord" or
+                    "Activate" or "SaveRecord" or "Update" or
+                    "SetTableView" or "SetSelectionFilter" or
+                    "CancelBackgroundTask" or "SetBackgroundTaskResult" or
+                    "GetBackgroundParameters" or "EnqueueBackgroundTask")
+                {
+                    return SyntaxFactory.EmptyStatement();
+                }
             }
 
             // NavRuntimeHelpers.CompilationError(...) -> throw new InvalidOperationException("Compilation error");
@@ -3863,6 +3882,17 @@ public void ClearApplicationMemberVariables()
             lockMa.Expression is IdentifierNameSyntax lockDbId &&
             lockDbId.Identifier.Text == "ALDatabase" &&
             lockMa.Name.Identifier.Text == "ALLockTimeout")
+        {
+            return SyntaxFactory.EmptyStatement();
+        }
+
+        // NavForm.ALLookupMode = value → no-op
+        // BC lowers `Page.LookupMode := value` to an assignment to NavForm.ALLookupMode.
+        // NavForm doesn't exist standalone; swallow the assignment.
+        if (node.Expression is AssignmentExpressionSyntax lookupModeAssignment &&
+            lookupModeAssignment.Left is MemberAccessExpressionSyntax lookupModeMa &&
+            IsNavFormReference(lookupModeMa.Expression) &&
+            lookupModeMa.Name.Identifier.Text == "ALLookupMode")
         {
             return SyntaxFactory.EmptyStatement();
         }

@@ -4274,13 +4274,15 @@ OutStream.WriteText:
 Page.Activate:
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests: tests/bucket-1/89-page-static
   notes: overloads=1
 
 Page.CancelBackgroundTask:
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests: tests/bucket-1/89-page-static
   notes: overloads=1
 
 Page.Caption:
@@ -4304,13 +4306,15 @@ Page.Editable:
 Page.EnqueueBackgroundTask:
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests: tests/bucket-1/89-page-static
   notes: overloads=1
 
 Page.GetBackgroundParameters:
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests: tests/bucket-1/89-page-static
   notes: overloads=1
 
 Page.GetRecord:
@@ -4322,13 +4326,15 @@ Page.GetRecord:
 Page.LookupMode:
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests: tests/bucket-1/89-page-static
   notes: overloads=1
 
 Page.ObjectId:
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests: tests/bucket-1/89-page-static
   notes: overloads=1
 
 Page.PromptMode:
@@ -4340,49 +4346,57 @@ Page.PromptMode:
 Page.Run:
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests: tests/bucket-1/89-page-static
   notes: overloads=3
 
 Page.RunModal:
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests: tests/bucket-1/89-page-static
   notes: overloads=4
 
 Page.SaveRecord:
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests: tests/bucket-1/89-page-static
   notes: overloads=1
 
 Page.SetBackgroundTaskResult:
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests: tests/bucket-1/89-page-static
   notes: overloads=1
 
 Page.SetRecord:
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests: tests/bucket-1/89-page-static
   notes: overloads=1
 
 Page.SetSelectionFilter:
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests: tests/bucket-1/89-page-static
   notes: overloads=1
 
 Page.SetTableView:
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests: tests/bucket-1/89-page-static
   notes: overloads=1
 
 Page.Update:
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests: tests/bucket-1/89-page-static
   notes: overloads=1
 
 # ── ProductName ─────────────────────────────────────────────────
