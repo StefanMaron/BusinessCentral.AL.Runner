@@ -606,8 +606,7 @@ public bool ALHasFilter => Rec.ALHasFilter;
 public object ALGetRangeMinSafe(int fieldNo, NavType expectedType) => Rec.ALGetRangeMinSafe(fieldNo, expectedType);
 public object ALGetRangeMaxSafe(int fieldNo, NavType expectedType) => Rec.ALGetRangeMaxSafe(fieldNo, expectedType);
 public string ALCurrentKey => Rec.ALCurrentKey;
-public bool ALAscending() => Rec.ALAscending();
-public void ALAscending(bool asc) => Rec.ALAscending(asc);
+public bool ALAscending { get => Rec.ALAscending; set => Rec.ALAscending = value; }
 public int ALCountApprox => Rec.ALCountApprox;
 public void ALConsistent(bool consistent) => Rec.ALConsistent(consistent);
 public bool ALFieldActive(int fieldNo) => Rec.ALFieldActive(fieldNo);
