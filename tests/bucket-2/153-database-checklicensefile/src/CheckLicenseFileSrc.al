@@ -1,6 +1,6 @@
 /// Helper codeunit that wraps Database.CheckLicenseFile(KeyNumber) so the
 /// test can exercise it without calling it inline.
-codeunit 61200 "CLF Helper"
+codeunit 61220 "CLF Helper"
 {
     /// Call Database.CheckLicenseFile(keyNumber) — must be a no-op stub in standalone mode.
     procedure CallCheckLicenseFile(keyNumber: Integer)
