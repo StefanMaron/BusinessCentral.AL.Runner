@@ -2382,6 +2382,17 @@ public void ClearApplicationMemberVariables() { }
                         SyntaxFactory.IdentifierName("HasTableConnection")));
             }
 
+            // ALDatabase.ALCurrentTransactionType() -> AlCompat.ALCurrentTransactionType()
+            // The real implementation requires NavSession; our stub returns TransactionType::Update (ordinal 2).
+            if (exprText == "ALDatabase" && methodName == "ALCurrentTransactionType")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("ALCurrentTransactionType")));
+            }
+
             // ALDatabase.ALCreateGuid() -> AlCompat.ALCreateGuid()
             // ALDatabase.ALCreateSequentialGuid() -> AlCompat.ALCreateSequentialGuid()
             // The real implementations require NavSession; ours use System.Guid.NewGuid().

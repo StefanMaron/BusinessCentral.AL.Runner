@@ -1344,6 +1344,16 @@ public static class AlCompat
     /// </summary>
     public static NavGuid ALCreateSequentialGuid() => new NavGuid(Guid.NewGuid());
 
+    /// <summary>
+    /// Replacement for ALDatabase.ALCurrentTransactionType() which requires NavSession.
+    /// The runner has no real transaction tracking; returns TransactionType::Update (ordinal 2),
+    /// the most common real-world value and a predictable stable stub.
+    /// TransactionType ordinals: Browse=0, Snapshot=1, Update=2, Report=3.
+    /// </summary>
+    public static NavOption ALCurrentTransactionType()
+        => AlRunner.Runtime.MockRecordHandle.CreateOptionValue(2); // TransactionType::Update
+
+    /// <summary>
     /// Replacement for ALDatabase.ALIsNullGuid(g) which requires NavSession.
     /// Returns true when the GUID is the all-zeros default ({00000000-...}).
     /// </summary>

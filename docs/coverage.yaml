@@ -1418,8 +1418,10 @@ Database.CopyCompany:
 Database.CurrentTransactionType:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: stub
+  tests:
+    - tests/bucket-2/62-current-transaction-type
+  notes: stub returning TransactionType::Update (ordinal 2); runner has no real transaction tracking
 
 Database.DataFileInformation:
   layer: runtime-api
