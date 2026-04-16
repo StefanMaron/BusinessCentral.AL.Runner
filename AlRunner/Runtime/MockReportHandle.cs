@@ -205,10 +205,15 @@ public class MockReportHandle
     // Report.SaveAs* — no-ops (no real file I/O in standalone mode)
     public static void StaticSaveAs(int reportId, string format, string path) { }
     public static void StaticSaveAsPdf(int reportId, string path) { }
+    public static void StaticSaveAsPdf(int reportId, string path, object recordRef) { }
     public static void StaticSaveAsWord(int reportId, string path) { }
+    public static void StaticSaveAsWord(int reportId, string path, object recordRef) { }
     public static void StaticSaveAsExcel(int reportId, string path) { }
+    public static void StaticSaveAsExcel(int reportId, string path, object recordRef) { }
     public static void StaticSaveAsHtml(int reportId, string path) { }
+    public static void StaticSaveAsHtml(int reportId, string path, object recordRef) { }
     public static void StaticSaveAsXml(int reportId, string path) { }
+    public static void StaticSaveAsXml(int reportId, string path, object recordRef) { }
 
     // Report.DefaultLayout / layout enum methods — return 0 (default enum ordinal)
     public static int StaticDefaultLayout(int reportId) => 0;
