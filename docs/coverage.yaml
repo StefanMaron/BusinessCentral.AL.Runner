@@ -2068,8 +2068,10 @@ ErrorInfo.CustomDimensions:
 ErrorInfo.DataClassification:
   layer: runtime-api
   category: ErrorInfo
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALDataClassification() getter + ALDataClassification(int) setter on NavALErrorInfo
+  tests:
+    - tests/bucket-1/264-errorinfo-dataclassification
 
 ErrorInfo.DetailedMessage:
   layer: runtime-api
