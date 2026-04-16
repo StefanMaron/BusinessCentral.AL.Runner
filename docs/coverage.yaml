@@ -851,7 +851,10 @@ separator_action:
 systemaction_declaration:
   layer: syntax
   category: page
-  status: gap
+  status: covered
+  notes: BC compiler emits C# for systemaction() entries; runner accepts the generated output unchanged (no rewriter rule needed)
+  tests:
+    - tests/bucket-1/73-systemaction
 
 systempart_section:
   layer: syntax
@@ -1870,7 +1873,7 @@ EnumType.FromInteger:
   layer: runtime-api
   category: EnumType
   status: covered
-  notes: overloads=1; RoslynRewriter intercepts NCLEnumMetadata.Create(N).FromInteger(I) → AlCompat.EnumFromInteger(N,I); runtime validates ordinal via EnumRegistry.GetMembers(N), throws on invalid
+  notes: BC emits NavOption.Create(NCLEnumMetadata.Create(N),I) for FromInteger; CreateTaggedOption validates ordinal via EnumRegistry for Extensible=false enums, throws on invalid ordinal
   tests:
     - tests/bucket-1/101-enum-frominteger
 
