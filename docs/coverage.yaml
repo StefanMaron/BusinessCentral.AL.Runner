@@ -1418,8 +1418,8 @@ Database.CopyCompany:
 Database.CurrentTransactionType:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; ALDatabase.ALCurrentTransactionType() → AlCompat.CurrentTransactionType() → TransactionType::Update (ordinal 2)
 
 Database.DataFileInformation:
   layer: runtime-api

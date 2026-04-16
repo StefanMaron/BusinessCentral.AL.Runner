@@ -2362,6 +2362,19 @@ public void ClearApplicationMemberVariables() { }
                         SyntaxFactory.IdentifierName("StrSubstNo")));
             }
 
+            // ALDatabase.ALCurrentTransactionType() -> AlCompat.CurrentTransactionType()
+            // Returns NavOption for TransactionType::Update (ordinal 2). Real impl requires NavSession.
+            if (exprText == "ALDatabase" && methodName == "ALCurrentTransactionType")
+            {
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("CurrentTransactionType")),
+                    SyntaxFactory.ArgumentList())
+                    .WithTriviaFrom(visited);
+            }
+
             // ALDatabase.ALIsInWriteTransaction() -> false
             // The real ALIsInWriteTransaction calls NavSession.HasWriteTransaction() which crashes
             // with NullReferenceException when NavSession is null (runner context, no DB).

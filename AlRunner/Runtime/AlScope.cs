@@ -1434,6 +1434,13 @@ public static class AlCompat
     public static NavGuid CompanyPropertyID() => new NavGuid(new Guid("5f5f5f5f-5f5f-5f5f-5f5f-5f5f5f5f5f5f"));
 
     /// <summary>
+    /// CurrentTransactionType() stub — returns TransactionType::Update (ordinal 2).
+    /// BC lowers this to ALDatabase.ALCurrentTransactionType() which requires a live session.
+    /// Update is the most common real-world value and is the safest stable stub.
+    /// </summary>
+    public static NavOption CurrentTransactionType() => MockRecordHandle.CreateOptionValue(2);
+
+    /// <summary>
     /// NormalDate(date) — wraps ALSystemDate.ALNormalDate with 0D handling.
     /// BC runtime throws NavNCLDateInvalidException on 0D; we return 0D.
     /// </summary>
