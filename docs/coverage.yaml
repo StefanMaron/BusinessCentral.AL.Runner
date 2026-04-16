@@ -2568,14 +2568,16 @@ File.WriteMode:
 FileUpload.CreateInStream:
   layer: runtime-api
   category: FileUpload
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; MockFileUpload.ALCreateInStream(parent, stream) and ALCreateInStream(parent, stream, encoding)
+  test: tests/bucket-1/86-fileupload/test/FileUploadTest.al
 
 FileUpload.FileName:
   layer: runtime-api
   category: FileUpload
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFileUpload.ALFileName() returns '' for default instance
+  test: tests/bucket-1/86-fileupload/test/FileUploadTest.al
 
 # ── FilterPageBuilder ───────────────────────────────────────────
 

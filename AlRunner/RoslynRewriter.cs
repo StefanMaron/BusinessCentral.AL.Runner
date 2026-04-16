@@ -1125,6 +1125,12 @@ public void ClearApplicationMemberVariables() { }
         if (text == "NavKeyRef")
             return node.WithIdentifier(SyntaxFactory.Identifier("MockKeyRef"));
 
+        // NavFileUpload -> MockFileUpload
+        // NavFileUpload represents a browser-uploaded file; it requires a service tier
+        // to actually receive file data. MockFileUpload is a standalone in-memory version.
+        if (text == "NavFileUpload")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockFileUpload"));
+
         // NavBLOB -> MockBlob
         // NavBLOB's ALCreateInStream/ALCreateOutStream pass ITreeObject to
         // NavStream ctor which crashes with null in standalone mode.
