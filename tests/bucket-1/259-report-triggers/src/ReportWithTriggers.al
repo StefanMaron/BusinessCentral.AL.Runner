@@ -9,15 +9,19 @@ report 50258 "Report With Triggers"
 
     trigger OnPreReport()
     var
-        State: Codeunit "Report Trigger State";
+        Log: Record "Trigger Log Table";
     begin
-        State.SetPreFired();
+        Log."Line No." := 1;
+        Log.Event := 'PRE';
+        Log.Insert();
     end;
 
     trigger OnPostReport()
     var
-        State: Codeunit "Report Trigger State";
+        Log: Record "Trigger Log Table";
     begin
-        State.SetPostFired();
+        Log."Line No." := 2;
+        Log.Event := 'POST';
+        Log.Insert();
     end;
 }

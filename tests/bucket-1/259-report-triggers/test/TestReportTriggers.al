@@ -8,33 +8,46 @@ codeunit 50260 "Test Report Triggers"
     [Test]
     procedure OnPreReport_IsFired()
     var
-        State: Codeunit "Report Trigger State";
+        Log: Record "Trigger Log Table";
         Rpt: Report "Report With Triggers";
     begin
-        State.Reset();
+        Log.DeleteAll();
         Rpt.Run();
-        Assert.IsTrue(State.WasPreFired(), 'OnPreReport must fire when the report runs');
+        Log.SetRange(Event, 'PRE');
+        Assert.IsTrue(Log.FindFirst(), 'OnPreReport must fire when the report runs');
     end;
 
     [Test]
     procedure OnPostReport_IsFired()
     var
-        State: Codeunit "Report Trigger State";
+        Log: Record "Trigger Log Table";
         Rpt: Report "Report With Triggers";
     begin
-        State.Reset();
+        Log.DeleteAll();
         Rpt.Run();
-        Assert.IsTrue(State.WasPostFired(), 'OnPostReport must fire when the report runs');
+        Log.SetRange(Event, 'POST');
+        Assert.IsTrue(Log.FindFirst(), 'OnPostReport must fire when the report runs');
     end;
 
     [Test]
     procedure OnPreReport_FiresBeforeOnPostReport()
     var
-        State: Codeunit "Report Trigger State";
+        Log: Record "Trigger Log Table";
         Rpt: Report "Report With Triggers";
+        PreLineNo: Integer;
+        PostLineNo: Integer;
     begin
-        State.Reset();
+        Log.DeleteAll();
         Rpt.Run();
-        Assert.IsTrue(State.PreBeforePost(), 'OnPreReport must fire before OnPostReport');
+
+        Log.SetRange(Event, 'PRE');
+        Log.FindFirst();
+        PreLineNo := Log."Line No.";
+
+        Log.SetRange(Event, 'POST');
+        Log.FindFirst();
+        PostLineNo := Log."Line No.";
+
+        Assert.IsTrue(PreLineNo < PostLineNo, 'OnPreReport must fire before OnPostReport');
     end;
 }
