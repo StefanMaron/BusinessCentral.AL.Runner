@@ -7371,7 +7371,7 @@ TestRequestPage.Preview:
   category: TestRequestPage
   status: covered
   tests: tests/bucket-1/269-testrequestpage-methods
-  notes: overloads=1; ALPreview() no-op stub
+  notes: overloads=1; ALPreview() returns MockTestPageAction (call .Invoke())
 
 TestRequestPage.Previous:
   layer: runtime-api
@@ -7385,7 +7385,7 @@ TestRequestPage.Print:
   category: TestRequestPage
   status: covered
   tests: tests/bucket-1/269-testrequestpage-methods
-  notes: overloads=1; ALPrint() no-op stub
+  notes: overloads=1; ALPrint() returns MockTestPageAction (call .Invoke())
 
 TestRequestPage.SaveAsExcel:
   layer: runtime-api
@@ -7420,7 +7420,7 @@ TestRequestPage.Schedule:
   category: TestRequestPage
   status: covered
   tests: tests/bucket-1/269-testrequestpage-methods
-  notes: overloads=1; ALSchedule() no-op stub
+  notes: overloads=1; ALSchedule() returns MockTestPageAction (call .Invoke())
 
 TestRequestPage.ValidationErrorCount:
   layer: runtime-api

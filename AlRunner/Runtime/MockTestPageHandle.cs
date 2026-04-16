@@ -73,16 +73,16 @@ public class MockTestPageHandle
     // ── TestRequestPage-specific methods ────────────────────────────────────────
 
     /// <summary>
-    /// Triggers preview of the report. No-op stub in standalone mode.
-    /// BC emits <c>tP.Target.ALPreview()</c>.
+    /// Triggers preview of the report. Returns a no-op action.
+    /// BC emits <c>tP.Target.ALPreview().ALInvoke()</c> — returns an Action.
     /// </summary>
-    public void ALPreview() { }
+    public MockTestPageAction ALPreview() => new MockTestPageAction();
 
     /// <summary>
-    /// Triggers printing of the report. No-op stub in standalone mode.
-    /// BC emits <c>tP.Target.ALPrint()</c>.
+    /// Triggers printing of the report. Returns a no-op action.
+    /// BC emits <c>tP.Target.ALPrint().ALInvoke()</c> — returns an Action.
     /// </summary>
-    public void ALPrint() { }
+    public MockTestPageAction ALPrint() => new MockTestPageAction();
 
     /// <summary>
     /// Saves the report as PDF. No-op stub in standalone mode.
@@ -113,10 +113,10 @@ public class MockTestPageHandle
     public void ALSaveAsXml(string reportFileName, string dataFileName) { }
 
     /// <summary>
-    /// Schedules the report. No-op stub in standalone mode.
-    /// BC emits <c>tP.Target.ALSchedule()</c>.
+    /// Schedules the report. Returns a no-op action.
+    /// BC emits <c>tP.Target.ALSchedule().ALInvoke()</c> — returns an Action.
     /// </summary>
-    public void ALSchedule() { }
+    public MockTestPageAction ALSchedule() => new MockTestPageAction();
 
     /// <summary>
     /// Finds the first field matching the given value. Stub returns false.

@@ -196,7 +196,7 @@ codeunit 84401 "TRM Test"
     [RequestPageHandler]
     procedure PreviewHandler(var RequestPage: TestRequestPage "TRM Report")
     begin
-        RequestPage.Preview();
+        RequestPage.Preview().Invoke();
     end;
 
     [Test]
@@ -211,7 +211,7 @@ codeunit 84401 "TRM Test"
     [RequestPageHandler]
     procedure PrintHandler(var RequestPage: TestRequestPage "TRM Report")
     begin
-        RequestPage.Print();
+        RequestPage.Print().Invoke();
     end;
 
     // ── SaveAs* ────────────────────────────────────────────────────────────────
@@ -288,7 +288,7 @@ codeunit 84401 "TRM Test"
     [RequestPageHandler]
     procedure ScheduleHandler(var RequestPage: TestRequestPage "TRM Report")
     begin
-        RequestPage.Schedule();
+        RequestPage.Schedule().Invoke();
     end;
 
     // ── FindFirstField / FindNextField / FindPreviousField ─────────────────────
