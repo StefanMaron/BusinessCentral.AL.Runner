@@ -1,6 +1,7 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using System.Linq;
 
 // No namespace - must be accessible from Program.cs top-level statements
 
@@ -1716,9 +1717,12 @@ public void ClearApplicationMemberVariables() { }
             }
         }
 
-        // Special-case: `NCLEnumMetadata.Create(N).FromInteger(I)` → `AlCompat.EnumFromInteger(N, I)`
+        // Special-case: `NCLEnumMetadata.Create(N).FromInteger(I)` → `AlCompat.EnumFromInteger(N, validOrdinals, I)`
         // BC emits this pattern for `Enum::"T".FromInteger(I)`. Must be intercepted before
         // recursing so the inner NCLEnumMetadata.Create(N) is not erased by the generic rewrite.
+        // The valid ordinals are encoded as a C# array literal at rewrite time (registry is
+        // populated before the rewriter runs) so validation works regardless of whether the
+        // runtime registry lookup by enumObjectId succeeds.
         if (node.ArgumentList.Arguments.Count == 1 &&
             node.Expression is MemberAccessExpressionSyntax fiOuterMa &&
             fiOuterMa.Name.Identifier.Text == "FromInteger" &&
@@ -1731,6 +1735,42 @@ public void ClearApplicationMemberVariables() { }
         {
             var enumIdArg = fiInnerInv.ArgumentList.Arguments[0].Expression;
             var ordinalArg = (ExpressionSyntax)Visit(node.ArgumentList.Arguments[0].Expression)!;
+
+            // Resolve valid ordinals at rewrite time from the EnumRegistry.
+            // N is typically a C# integer literal equal to the AL enum object ID.
+            ExpressionSyntax validOrdinalsExpr;
+            if (enumIdArg is LiteralExpressionSyntax enumLit &&
+                int.TryParse(enumLit.Token.ValueText, out var enumId))
+            {
+                var members = AlRunner.Runtime.EnumRegistry.GetMembers(enumId);
+                if (members.Count > 0)
+                {
+                    // Emit: new int[] { 0, 1, 2, ... }
+                    var elements = SyntaxFactory.SeparatedList(
+                        members.Select(m => (ExpressionSyntax)SyntaxFactory.LiteralExpression(
+                            SyntaxKind.NumericLiteralExpression,
+                            SyntaxFactory.Literal(m.Ordinal))));
+                    validOrdinalsExpr = SyntaxFactory.ArrayCreationExpression(
+                        SyntaxFactory.ArrayType(
+                            SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.IntKeyword)),
+                            SyntaxFactory.SingletonList(
+                                SyntaxFactory.ArrayRankSpecifier())),
+                        SyntaxFactory.InitializerExpression(
+                            SyntaxKind.ArrayInitializerExpression,
+                            elements));
+                }
+                else
+                {
+                    // Unknown enum — emit empty array (no validation)
+                    validOrdinalsExpr = SyntaxFactory.ParseExpression("new int[0]");
+                }
+            }
+            else
+            {
+                // N is not a literal — emit empty array (no validation)
+                validOrdinalsExpr = SyntaxFactory.ParseExpression("new int[0]");
+            }
+
             return SyntaxFactory.InvocationExpression(
                 SyntaxFactory.MemberAccessExpression(
                     SyntaxKind.SimpleMemberAccessExpression,
@@ -1739,6 +1779,7 @@ public void ClearApplicationMemberVariables() { }
                 SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList(new[]
                 {
                     SyntaxFactory.Argument(enumIdArg),
+                    SyntaxFactory.Argument(validOrdinalsExpr),
                     SyntaxFactory.Argument(ordinalArg)
                 })));
         }

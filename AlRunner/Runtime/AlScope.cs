@@ -511,19 +511,18 @@ public static class AlCompat
     }
 
     /// <summary>
-    /// Implements <c>Enum::"T".FromInteger(I)</c> — validates ordinal <paramref name="ordinal"/>
-    /// against the declared enum members and returns a tagged NavOption.
-    /// Throws if <paramref name="ordinal"/> is not a valid member of the enum.
+    /// Implements <c>Enum::"T".FromInteger(I)</c> — validates <paramref name="ordinal"/>
+    /// against <paramref name="validOrdinals"/> (encoded at rewrite time from the EnumRegistry)
+    /// and returns a tagged NavOption.  Throws if the ordinal is not declared.
     /// Emitted by the rewriter for <c>NCLEnumMetadata.Create(N).FromInteger(I)</c>.
     /// </summary>
-    public static NavOption EnumFromInteger(int enumObjectId, int ordinal)
+    public static NavOption EnumFromInteger(int enumObjectId, int[] validOrdinals, int ordinal)
     {
-        var members = EnumRegistry.GetMembers(enumObjectId);
-        if (members.Count > 0)
+        if (validOrdinals.Length > 0)
         {
             bool valid = false;
-            foreach (var (ord, _) in members)
-                if (ord == ordinal) { valid = true; break; }
+            foreach (var v in validOrdinals)
+                if (v == ordinal) { valid = true; break; }
             if (!valid)
                 throw new Exception($"The value {ordinal} is not a valid ordinal for this enum type.");
         }
@@ -531,8 +530,8 @@ public static class AlCompat
     }
 
     /// <summary>Overload for Decimal18 — AL Integer variables are Decimal18 in BC's C# output.</summary>
-    public static NavOption EnumFromInteger(int enumObjectId, Decimal18 ordinal)
-        => EnumFromInteger(enumObjectId, (int)ordinal);
+    public static NavOption EnumFromInteger(int enumObjectId, int[] validOrdinals, Decimal18 ordinal)
+        => EnumFromInteger(enumObjectId, validOrdinals, (int)ordinal);
 
     /// <summary>
     /// Create a NavOption that inherits the enum-id tag from an existing
