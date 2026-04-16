@@ -1,7 +1,7 @@
 /// Exercises NavApp archive/resource stubs:
 /// GetArchiveVersion, GetArchiveRecordRef, LoadPackageData,
 /// RestoreArchiveData, DeleteArchiveData, GetResource.
-codeunit 94000 "NAA Src"
+codeunit 97000 "NAA Src"
 {
     procedure GetArchiveVersion(): Text
     begin

@@ -1,4 +1,4 @@
-codeunit 94001 "NAA Tests"
+codeunit 97001 "NAA Tests"
 {
     Subtype = Test;
 
