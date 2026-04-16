@@ -1,4 +1,4 @@
-codeunit 59401 "Test BigInteger ToText"
+codeunit 60401 "Test BigInteger ToText"
 {
     Subtype = Test;
 

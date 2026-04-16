@@ -7,11 +7,6 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
-- **`BigInteger.ToText` coverage (#326)** — `Format(BigInteger)` was already working via
-  `AlCompat.Format` → `NavBigInteger` → `((long)nbi).ToString()` but had no proving tests.
-  New suite `tests/bucket-1/59-biginteger-totext` adds 5 tests: positive value, negative
-  value, zero, max Int64, and large negative. Coverage map: `BigInteger.ToText` moved from
-  `gap` to `covered`.
 - **`Database.SelectLatestVersion` coverage (#313)** — `SelectLatestVersion()` was already
   a no-op (stripped by `StripEntireCallMethods` in `RoslynRewriter`) but had no proving
   tests. New suite `tests/bucket-1/58-database-select-latest-version` adds 3 tests:
