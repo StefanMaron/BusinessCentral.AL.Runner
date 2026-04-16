@@ -1719,8 +1719,10 @@ Database.SetDefaultTableConnection:
 Database.SetUserPassword:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1 (userId, newPassword); rewriter strips the entire call (no service-tier user system standalone).
+  tests:
+    - tests/bucket-1/264-database-setuserpassword
 
 Database.SID:
   layer: runtime-api

@@ -51,6 +51,7 @@ public class RoslynRewriter : CSharpSyntaxRewriter
         "ALAlterKey", // ALDatabase.ALAlterKey() — DDL not supported standalone; no-op
         "ALCheckLicenseFile", // ALDatabase.ALCheckLicenseFile() — no license system standalone; no-op
         "ALChangeUserPassword",  // ALDatabase.ALChangeUserPassword(err, old, new) — user system not modeled; no-op standalone
+        "ALSetUserPassword",     // ALDatabase.ALSetUserPassword(userId, newPwd) — service-tier user system; no-op standalone
         "ALCopyCompany",  // ALDatabase.ALCopyCompany(src, dest) — no multi-company store standalone; no-op
         "ALImportData",   // ALDatabase.ALImportData(tableNo, path, create) — no file I/O standalone; no-op
         "ALExportData",   // ALDatabase.ALExportData(fileName, ...) — no file I/O standalone; no-op
