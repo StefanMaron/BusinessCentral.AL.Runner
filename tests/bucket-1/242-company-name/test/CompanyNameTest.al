@@ -7,11 +7,11 @@ codeunit 50242 "Company Name Tests"
         RunnerConfig: Codeunit "AL Runner Config";
 
     [Test]
-    procedure CompanyName_Default_IsEmpty()
+    procedure CompanyName_Default_IsCRONUS()
     begin
         // [GIVEN] No company name configured (runner default + per-test reset)
-        // [THEN] CompanyName() returns empty string
-        Assert.AreEqual('', CompanyName(), 'CompanyName() must default to empty string when not configured');
+        // [THEN] CompanyName() returns the built-in stub value 'CRONUS'
+        Assert.AreEqual('CRONUS', CompanyName(), 'CompanyName() must default to CRONUS in standalone mode');
     end;
 
     [Test]
@@ -41,9 +41,9 @@ codeunit 50242 "Company Name Tests"
     [Test]
     procedure CompanyName_ResetBetweenTests_RestoresDefault()
     begin
-        // This test runs after the configurable test — per-test reset must restore default ('').
+        // This test runs after the configurable test — per-test reset must restore default ('CRONUS').
         // Without reset, the previous test's value would leak here.
-        Assert.AreEqual('', CompanyName(), 'Per-test reset must restore CompanyName() to default empty string');
+        Assert.AreEqual('CRONUS', CompanyName(), 'Per-test reset must restore CompanyName() to default CRONUS');
     end;
 
     [Test]
