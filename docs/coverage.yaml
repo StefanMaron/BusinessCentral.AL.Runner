@@ -1586,14 +1586,18 @@ Database.LastUsedRowVersion:
 Database.LockTimeout:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; property get stubbed to `true` via rewriter (BC default); setter already a no-op.
+  tests:
+    - tests/bucket-2/143-lock-timeout
 
 Database.LockTimeoutDuration:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; property get stubbed to `0L` via rewriter (no timeout), flows through ALCompiler.ToDuration.
+  tests:
+    - tests/bucket-2/143-lock-timeout
 
 Database.MinimumActiveRowVersion:
   layer: runtime-api

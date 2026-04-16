@@ -3126,6 +3126,32 @@ public void ClearApplicationMemberVariables() { }
                 .WithTriviaFrom(visited);
         }
 
+        // Pattern: ALDatabase.ALLockTimeout (property get) -> true
+        //          ALDatabase.ALLockTimeoutDuration (property get) -> 0L
+        // BC lowers Database.LockTimeout and Database.LockTimeoutDuration to property
+        // getters that require a live NavSession; they crash with NullReferenceException
+        // standalone. Assignment (`ALDatabase.ALLockTimeout = val`) is already stripped
+        // to no-op in VisitExpressionStatement. The runner has no real database, so
+        // true (lock-timeout-enabled by default) and 0L (zero-duration) are sensible
+        // standalone stubs. 0L flows through `ALCompiler.ToDuration(long)` back to
+        // NavDuration without further adaptation.
+        if (visited.Expression is IdentifierNameSyntax lockDbId2 &&
+            lockDbId2.Identifier.Text == "ALDatabase")
+        {
+            if (visited.Name.Identifier.Text == "ALLockTimeout")
+            {
+                return SyntaxFactory.LiteralExpression(SyntaxKind.TrueLiteralExpression)
+                    .WithTriviaFrom(visited);
+            }
+            if (visited.Name.Identifier.Text == "ALLockTimeoutDuration")
+            {
+                return SyntaxFactory.LiteralExpression(
+                    SyntaxKind.NumericLiteralExpression,
+                    SyntaxFactory.Literal(0L))
+                    .WithTriviaFrom(visited);
+            }
+        }
+
         // Pattern: ALDatabase.ALCompanyName / ALDatabase.ALUserID / ALDatabase.ALTenantID / ALDatabase.ALSerialNumber
         // These static property accesses crash because ALDatabase requires a live BC session.
         // ALCompanyName routes to MockSession.GetCompanyName() (configurable via --company-name CLI flag).
