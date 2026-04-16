@@ -66,6 +66,10 @@ public class RoslynRewriter : CSharpSyntaxRewriter
                         // without a UI. Stripping is safe — MockNotification tests that exist don't assert on stored action state.
         "ALAddNavigationAction",  // NavALErrorInfo.ALAddNavigationAction(caption [, description]) —
                         // navigation drill-downs require a UI client to open; no-op in standalone mode.
+        "ALSendTraceTag",  // ALSession.ALSendTraceTag(session, tag, category, verbosity, msg, classification) — telemetry; no-op standalone
+        "ALLogSecurityAudit",  // ALSession.ALLogSecurityAudit(session, desc, result, resultDesc, category, ...) — needs OpenTelemetry DLL; no-op standalone
+        "ALEnableVerboseTelemetry",  // ALSession.ALEnableVerboseTelemetry(session, enabled, duration) — telemetry config; no-op standalone
+        "ALSetDocumentServiceToken",  // ALSession.ALSetDocumentServiceToken(session, token) — OneDrive integration; no-op standalone
     };
 
     private static readonly HashSet<string> StripITreeObjectArgMethods = new(StringComparer.Ordinal)
@@ -2455,6 +2459,16 @@ public void ClearApplicationMemberVariables()
                         SyntaxFactory.IdentifierName(methodName)));
             }
 
+            // ALSession.ALApplicationIdentifier(session) -> ""
+            // Real implementation returns the BC app identifier; standalone returns empty.
+            if (exprText == "ALSession" && methodName == "ALApplicationIdentifier")
+            {
+                return SyntaxFactory.LiteralExpression(
+                    SyntaxKind.StringLiteralExpression,
+                    SyntaxFactory.Literal(""))
+                    .WithTriviaFrom(visited);
+            }
+
             // ALSession.ALApplicationArea(session) -> AlCompat.ApplicationArea()
             // Requires NavSession which doesn't exist in standalone mode.
             if (exprText == "ALSession" && methodName == "ALApplicationArea")
@@ -2482,7 +2496,7 @@ public void ClearApplicationMemberVariables()
             // ALSession.ALGetExecutionContext(session) / ALGetModuleExecutionContext(session)
             // -> AlCompat.GetExecutionContext()
             if (exprText == "ALSession" &&
-                (methodName == "ALGetExecutionContext" || methodName == "ALGetModuleExecutionContext"))
+                (methodName == "ALGetExecutionContext" || methodName == "ALGetModuleExecutionContext" || methodName == "ALGetCurrentModuleExecutionContext"))
             {
                 return SyntaxFactory.InvocationExpression(
                     SyntaxFactory.MemberAccessExpression(

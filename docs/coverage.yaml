@@ -5487,14 +5487,16 @@ SecretText.Unwrap:
 Session.ApplicationArea:
   layer: runtime-api
   category: Session
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-session-extended
+  notes: overloads=1. Rewriter redirects ALSession.ALApplicationArea to AlCompat.ApplicationArea → empty string.
 
 Session.ApplicationIdentifier:
   layer: runtime-api
   category: Session
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-session-extended
+  notes: overloads=1. Rewriter replaces ALSession.ALApplicationIdentifier with "" (no BC app context standalone).
 
 Session.BindSubscription:
   layer: runtime-api
@@ -5526,26 +5528,30 @@ Session.DefaultClientType:
 Session.EnableVerboseTelemetry:
   layer: runtime-api
   category: Session
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-session-extended
+  notes: overloads=1. Stripped via StripEntireCallMethods — no telemetry config standalone.
 
 Session.GetCurrentModuleExecutionContext:
   layer: runtime-api
   category: Session
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-session-extended
+  notes: overloads=1. Rewriter redirects to AlCompat.GetExecutionContext → Normal.
 
 Session.GetExecutionContext:
   layer: runtime-api
   category: Session
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-session-extended
+  notes: overloads=1. Rewriter redirects to AlCompat.GetExecutionContext → Normal.
 
 Session.GetModuleExecutionContext:
   layer: runtime-api
   category: Session
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-session-extended
+  notes: overloads=1. Rewriter redirects to AlCompat.GetExecutionContext → Normal.
 
 Session.IsSessionActive:
   layer: runtime-api
@@ -5570,20 +5576,22 @@ Session.LogMessage:
 Session.LogSecurityAudit:
   layer: runtime-api
   category: Session
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-session-extended
+  notes: overloads=1. Stripped via StripEntireCallMethods — needs OpenTelemetry.Audit.Geneva DLL that's missing standalone.
 
 Session.SendTraceTag:
   layer: runtime-api
   category: Session
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-session-extended
+  notes: overloads=1. Stripped via StripEntireCallMethods — deprecated telemetry; no-op standalone.
 
 Session.SetDocumentServiceToken:
   layer: runtime-api
   category: Session
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1. Stripped via StripEntireCallMethods — OneDrive integration; no-op standalone. No explicit test (no return value to assert).
 
 Session.StartSession:
   layer: runtime-api
