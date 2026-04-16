@@ -33,24 +33,19 @@ page 59600 "CA Order Card"
 
     actions
     {
-        area(Processing)
+        area(Promoted)
         {
             customaction(SendToFlow)
             {
                 ApplicationArea = All;
                 CustomActionType = Flow;
                 FlowId = '00000000-0000-0000-0000-000000000001';
-                FlowEnvironmentId = '00000000-0000-0000-0000-000000000002';
             }
-        }
-        area(Promoted)
-        {
             customaction(ProcessWithTemplate)
             {
                 ApplicationArea = All;
                 CustomActionType = FlowTemplate;
                 FlowTemplateName = 'Process Order Template';
-                FlowTemplateFlowId = '00000000-0000-0000-0000-000000000003';
             }
         }
     }
