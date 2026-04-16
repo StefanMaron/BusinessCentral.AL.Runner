@@ -1,5 +1,5 @@
 /// Helper codeunit exercising ArrayLen() for 1-D and 2-D arrays.
-codeunit 61800 "AL Helper"
+codeunit 61810 "AL Helper"
 {
     procedure GetLen1D(): Integer
     var
