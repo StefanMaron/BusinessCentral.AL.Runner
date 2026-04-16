@@ -832,18 +832,31 @@ public static class AlCompat
             }
             catch { }
         }
-        // NavGuid — check by type name (version-independent) and call ToGuid() via reflection.
-        // Pattern-match on Microsoft.Dynamics.Nav.Runtime.NavGuid is unreliable across BC versions;
-        // typeName check + reflection is defensive. Format "B" = {XXXXXXXX-...} (38 chars, braces).
+        // NavGuid — check by type name (version-independent) and extract the Guid value.
+        // Pattern-match on Microsoft.Dynamics.Nav.Runtime.NavGuid is unreliable across BC versions.
+        // Try multiple extraction strategies; last resort parses ToString() which NavGuid always
+        // returns in "D" (36-char) format. Format "B" = {XXXXXXXX-...} (38 chars, braces).
         if (typeName == "NavGuid")
         {
             try
             {
-                var toGuidMethod = value.GetType().GetMethod("ToGuid");
+                // Try parameterless ToGuid() method
+                var toGuidMethod = value.GetType().GetMethod("ToGuid", Type.EmptyTypes);
                 if (toGuidMethod != null)
                     return ((Guid)toGuidMethod.Invoke(value, null)!).ToString("B").ToUpperInvariant();
             }
             catch { }
+            try
+            {
+                // Try Value property of type Guid
+                var valueProp = value.GetType().GetProperty("Value");
+                if (valueProp?.PropertyType == typeof(Guid))
+                    return ((Guid)valueProp.GetValue(value)!).ToString("B").ToUpperInvariant();
+            }
+            catch { }
+            // Last resort: NavGuid.ToString() always returns a parseable Guid string ("D" format).
+            if (Guid.TryParse(value.ToString(), out var parsedGuid))
+                return parsedGuid.ToString("B").ToUpperInvariant();
         }
         // Handle NavValue subtypes — use ToText() where available, avoid ToString() which may need NavSession
         if (value is Microsoft.Dynamics.Nav.Runtime.NavValue nv)
@@ -1542,6 +1555,26 @@ public static class AlCompat
         if (g is Guid guid) return new NavText(guid.ToString(format).ToUpperInvariant());
         // MockTextBuilder.ALToText() is also routed here — delegate back to preserve correct text.
         if (g is MockTextBuilder mtb) return mtb.ALToText();
+        // NavGuid from a different BC version assembly: use reflection or Guid.TryParse as fallback.
+        if (g != null && g.GetType().Name == "NavGuid")
+        {
+            try
+            {
+                var toGuidMethod = g.GetType().GetMethod("ToGuid", Type.EmptyTypes);
+                if (toGuidMethod != null)
+                    return new NavText(((Guid)toGuidMethod.Invoke(g, null)!).ToString(format).ToUpperInvariant());
+            }
+            catch { }
+            try
+            {
+                var valueProp = g.GetType().GetProperty("Value");
+                if (valueProp?.PropertyType == typeof(Guid))
+                    return new NavText(((Guid)valueProp.GetValue(g)!).ToString(format).ToUpperInvariant());
+            }
+            catch { }
+            if (Guid.TryParse(g.ToString(), out var parsed))
+                return new NavText(parsed.ToString(format).ToUpperInvariant());
+        }
         return new NavText(Format(g)); // fallback for non-Guid types
     }
 
