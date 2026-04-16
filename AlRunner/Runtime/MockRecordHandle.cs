@@ -2771,21 +2771,25 @@ public class MockRecordHandle
     }
 
     /// <summary>
-    /// AL Ascending — returns whether the current sort order is ascending.
+    /// AL Ascending() — no-arg getter; returns whether the current sort order is ascending.
     /// Defaults to true. Checks the first current key field's ascending state.
+    /// BC emits <c>handle.ALAscending()</c> for AL <c>Rec.Ascending()</c>.
     /// </summary>
-    public bool ALAscending
+    public bool ALAscending()
     {
-        get
+        if (_currentKeyFields != null && _currentKeyFields.Length > 0)
         {
-            if (_currentKeyFields != null && _currentKeyFields.Length > 0)
-            {
-                if (_ascending.TryGetValue(_currentKeyFields[0], out var isAsc))
-                    return isAsc;
-            }
-            return true;
+            if (_ascending.TryGetValue(_currentKeyFields[0], out var isAsc))
+                return isAsc;
         }
+        return true;
     }
+
+    /// <summary>
+    /// AL Ascending(bool) — setter; sets the sort direction for all current key fields.
+    /// BC emits <c>handle.ALAscending(false)</c> for AL <c>Rec.Ascending(false)</c>.
+    /// </summary>
+    public void ALAscending(bool ascending) => SetOverallAscending(ascending);
 
     /// <summary>
     /// AL CountApprox — in BC returns an approximate count (faster than Count).

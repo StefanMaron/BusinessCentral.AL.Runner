@@ -5823,8 +5823,8 @@ Table.AreFieldsLoaded:
 Table.Ascending:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALAscending() getter + ALAscending(bool) setter on MockRecordHandle
 
 Table.CalcFields:
   layer: runtime-api

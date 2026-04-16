@@ -457,9 +457,11 @@ public class MockRecordRef
     public bool ALChangeCompany(DataError errorLevel) => true;
 
     // -- Ascending (delegates to handle) --
+    // MockRecordRef.ALAscending is a property (RecordRef.Ascending in AL is get/set).
+    // MockRecordHandle.ALAscending is a method pair (Table.Ascending() getter / setter).
     public bool ALAscending
     {
-        get => _handle?.ALAscending ?? true;
+        get => _handle?.ALAscending() ?? true;
         set => _handle?.SetOverallAscending(value);
     }
 
