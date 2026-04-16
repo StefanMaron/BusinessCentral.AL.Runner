@@ -7,6 +7,12 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **`System.Sleep` coverage (#462)** — `Sleep(Milliseconds)` is now a confirmed no-op
+  in standalone mode. The existing `RoslynRewriter` rule rewrites `NavSession.Sleep(ms)`
+  to `MockSession.Sleep(ms)` (a no-op stub). New suite `tests/bucket-2/152-sleep`
+  adds 5 proving tests: Sleep(0) and Sleep(1) complete without error, return values
+  after Sleep are correct, and error handling works normally after Sleep.
+  Coverage map: `System.Sleep` moved from `gap` to `covered`.
 - **`actionref_declaration` coverage (#388)** — Pages and page extensions containing
   `actionref` sections (promoted-action bindings) now compile and run correctly.
   The existing `RoslynRewriter` already handles the BC-generated C# for actionref
