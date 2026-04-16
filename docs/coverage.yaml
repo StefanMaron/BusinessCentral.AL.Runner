@@ -994,7 +994,9 @@ schema_section:
 xmlport_attribute:
   layer: syntax
   category: xmlport
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/100-xmlport-attribute
 
 xmlport_element:
   layer: syntax
