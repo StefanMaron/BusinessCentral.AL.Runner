@@ -43,18 +43,6 @@ codeunit 89001 "XI Tests"
     end;
 
     [Test]
-    procedure Break_IsNoOp()
-    begin
-        Assert.IsTrue(Src.CallBreak(), 'XmlPort.Break() must be a no-op');
-    end;
-
-    [Test]
-    procedure BreakUnbound_IsNoOp()
-    begin
-        Assert.IsTrue(Src.CallBreakUnbound(), 'XmlPort.BreakUnbound() must be a no-op');
-    end;
-
-    [Test]
     procedure CurrentPath_ReturnsEmpty()
     begin
         Assert.AreEqual('', Src.CallCurrentPath(), 'XmlPort.CurrentPath() must return empty string');
@@ -97,12 +85,6 @@ codeunit 89001 "XI Tests"
     end;
 
     [Test]
-    procedure Quit_IsNoOp()
-    begin
-        Assert.IsTrue(Src.CallQuit(), 'XmlPort.Quit() must be a no-op');
-    end;
-
-    [Test]
     procedure RecordSeparator_RoundTrip()
     begin
         Assert.IsTrue(Src.CallRecordSeparator(), 'XmlPort.RecordSeparator(set) must be a no-op');
@@ -112,12 +94,6 @@ codeunit 89001 "XI Tests"
     procedure RecordSeparator_Get_ReturnsDefault()
     begin
         Assert.AreEqual('', Src.GetRecordSeparator(), 'XmlPort.RecordSeparator() default must be empty');
-    end;
-
-    [Test]
-    procedure Skip_IsNoOp()
-    begin
-        Assert.IsTrue(Src.CallSkip(), 'XmlPort.Skip() must be a no-op');
     end;
 
     [Test]

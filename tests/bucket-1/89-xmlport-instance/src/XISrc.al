@@ -84,22 +84,6 @@ codeunit 89000 "XI Src"
         exit(true);
     end;
 
-    procedure CallBreak(): Boolean
-    var
-        XP: XmlPort "XI Item Port";
-    begin
-        XP.Break();
-        exit(true);
-    end;
-
-    procedure CallBreakUnbound(): Boolean
-    var
-        XP: XmlPort "XI Item Port";
-    begin
-        XP.BreakUnbound();
-        exit(true);
-    end;
-
     procedure CallCurrentPath(): Text
     var
         XP: XmlPort "XI Item Port";
@@ -152,14 +136,6 @@ codeunit 89000 "XI Src"
         exit(XP.Filename());
     end;
 
-    procedure CallQuit(): Boolean
-    var
-        XP: XmlPort "XI Item Port";
-    begin
-        XP.Quit();
-        exit(true);
-    end;
-
     procedure CallRecordSeparator(): Boolean
     var
         XP: XmlPort "XI Item Port";
@@ -173,14 +149,6 @@ codeunit 89000 "XI Src"
         XP: XmlPort "XI Item Port";
     begin
         exit(XP.RecordSeparator());
-    end;
-
-    procedure CallSkip(): Boolean
-    var
-        XP: XmlPort "XI Item Port";
-    begin
-        XP.Skip();
-        exit(true);
     end;
 
     procedure CallTableSeparator(): Boolean

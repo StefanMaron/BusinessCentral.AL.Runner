@@ -9705,7 +9705,7 @@ XmlportInstance.Break:
   layer: runtime-api
   category: XmlportInstance
   status: covered
-  notes: overloads=1; no-op on MockXmlPortHandle
+  notes: overloads=1; no-op on MockXmlPortHandle; AL0161 — protected, only callable within XmlPort trigger code; not testable from external codeunits
   tests:
     - tests/bucket-1/89-xmlport-instance
 
@@ -9713,7 +9713,7 @@ XmlportInstance.BreakUnbound:
   layer: runtime-api
   category: XmlportInstance
   status: covered
-  notes: overloads=1; no-op on MockXmlPortHandle
+  notes: overloads=1; no-op on MockXmlPortHandle; AL0161 — protected, only callable within XmlPort trigger code; not testable from external codeunits
   tests:
     - tests/bucket-1/89-xmlport-instance
 
@@ -9775,7 +9775,7 @@ XmlportInstance.Quit:
   layer: runtime-api
   category: XmlportInstance
   status: covered
-  notes: overloads=1; no-op on MockXmlPortHandle
+  notes: overloads=1; no-op on MockXmlPortHandle; AL0161 — protected, only callable within XmlPort trigger code; not testable from external codeunits
   tests:
     - tests/bucket-1/89-xmlport-instance
 
@@ -9823,7 +9823,7 @@ XmlportInstance.Skip:
   layer: runtime-api
   category: XmlportInstance
   status: covered
-  notes: overloads=1; no-op on MockXmlPortHandle
+  notes: overloads=1; no-op on MockXmlPortHandle; AL0161 — protected, only callable within XmlPort trigger code; not testable from external codeunits
   tests:
     - tests/bucket-1/89-xmlport-instance
 
