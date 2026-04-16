@@ -5350,8 +5350,8 @@ System.DT2Date:
 System.DT2Time:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; tested in 61-datetime-decomposition and 62-time-decomposition
 
 System.DWY2Date:
   layer: runtime-api
@@ -7252,32 +7252,32 @@ TextConst.TrimStart:
 Time.Hour:
   layer: runtime-api
   category: Time
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; via Format(T,0,'<Hours24,2>') picture string; Time2HMS not available in BC AL
 
 Time.Millisecond:
   layer: runtime-api
   category: Time
   status: gap
-  notes: overloads=1
+  notes: overloads=1; no picture-string token for ms; Time2HMS not available in BC AL
 
 Time.Minute:
   layer: runtime-api
   category: Time
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; via Format(T,0,'<Minutes,2>') picture string
 
 Time.Second:
   layer: runtime-api
   category: Time
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; via Format(T,0,'<Seconds,2>') picture string
 
 Time.ToText:
   layer: runtime-api
   category: Time
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; via Format(T) handled by AlCompat.FormatNavTime
 
 # ── Variant ─────────────────────────────────────────────────────
 
