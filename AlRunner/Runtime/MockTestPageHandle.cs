@@ -102,9 +102,10 @@ public class MockTestPageHandle
 
     /// <summary>
     /// Returns whether the node is currently expanded. Stub returns false.
-    /// BC emits <c>tP.Target.GetPart(hash).ALIsExpanded()</c> for <c>TestPart.IsExpanded()</c>.
+    /// BC emits <c>tP.Target.GetPart(hash).ALIsExpanded</c> as a property access
+    /// (not a method call) for <c>TestPart.IsExpanded()</c>.
     /// </summary>
-    public bool ALIsExpanded() => false;
+    public bool ALIsExpanded => false;
 
     /// <summary>
     /// Returns whether the part is enabled. Stub returns true.
