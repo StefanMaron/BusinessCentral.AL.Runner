@@ -1193,7 +1193,9 @@ movefirst_modification:
 movelast_modification:
   layer: syntax
   category: modification
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/83-movelast
 
 # ── label ───────────────────────────────────────────────────────
 
