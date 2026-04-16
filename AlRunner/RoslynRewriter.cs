@@ -693,8 +693,20 @@ protected bool CallGetFormatExtensionMethod(int fieldNo, ref string result) {{ r
 
         if (isCodeunitClass)
         {
+            // BC emits a protected OnClear() on each codeunit that resets all
+            // AL globals to their type defaults. AL's ClearAll() is lowered to
+            // ClearApplicationMemberVariables() — delegate to OnClear via
+            // reflection so codeunits that happen not to declare any globals
+            // (no OnClear emitted) still compile.
             var codeunitMemberCode = @"
-public void ClearApplicationMemberVariables() { }
+public void ClearApplicationMemberVariables()
+{
+    var m = GetType().GetMethod(""OnClear"",
+        System.Reflection.BindingFlags.Instance |
+        System.Reflection.BindingFlags.NonPublic |
+        System.Reflection.BindingFlags.Public);
+    m?.Invoke(this, null);
+}
 ";
             var codeunitMembers = CSharpSyntaxTree.ParseText(
                 $"class _Temp_ {{ {codeunitMemberCode} }}").GetRoot()
