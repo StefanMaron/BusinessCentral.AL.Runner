@@ -68,7 +68,7 @@ public class MockFilterPageBuilder
     public int ALAddField(string caption, MockFieldRef fieldRef)
     {
         var tableId = 0;
-        try { tableId = (int)fieldRef.Record().TableId; } catch { /* ignore */ }
+        try { tableId = (int)fieldRef.ALRecord().TableId; } catch { /* ignore */ }
         _tables.Add((caption, tableId, string.Empty));
         return _tables.Count;
     }
