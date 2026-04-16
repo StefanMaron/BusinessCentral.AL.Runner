@@ -259,8 +259,9 @@ public class AlScope : IDisposable, ITreeObject
 public class MockCurrPage
 {
     public bool Editable { get; set; }
-    // BC compiler maps CurrPage.Caption → C# property PageCaption
-    public NavText PageCaption { get; set; }
+    // BC compiler maps CurrPage.Caption → C# property PageCaption.
+    // The setter receives a C# string literal, so string is the backing type.
+    public string PageCaption { get; set; } = string.Empty;
     public bool LookupMode { get; set; }
 
     /// <summary>
