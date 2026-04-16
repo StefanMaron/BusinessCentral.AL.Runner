@@ -464,7 +464,9 @@ code_type:
 dictionary_type:
   layer: syntax
   category: type
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/138-dictionary
 
 list_type:
   layer: syntax
