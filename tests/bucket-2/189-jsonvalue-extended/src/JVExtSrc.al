@@ -107,11 +107,11 @@ codeunit 97500 "JVExt Src"
     procedure CloneProducesEqualValue(): Boolean
     var
         JV: JsonValue;
-        JC: JsonValue;
+        JC: JsonToken;
     begin
         JV.SetValue('original');
         JC := JV.Clone();
-        exit(JC.AsText() = 'original');
+        exit(JC.AsValue().AsText() = 'original');
     end;
 
     procedure IsUndefined_Fresh(): Boolean
