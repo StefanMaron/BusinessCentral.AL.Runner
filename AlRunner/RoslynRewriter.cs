@@ -1659,6 +1659,19 @@ public void ClearApplicationMemberVariables() { }
                 .WithTriviaFrom(node);
         }
 
+        // NavDatabase.TenantId() — BC emits this form for Database.TenantId() in some compiler
+        // versions. Returns the zero GUID so tests can assert a deterministic non-empty value.
+        if (node.Expression is MemberAccessExpressionSyntax navDbTenantMa &&
+            navDbTenantMa.Expression is IdentifierNameSyntax navDbTenantIdent &&
+            navDbTenantIdent.Identifier.Text == "NavDatabase" &&
+            navDbTenantMa.Name.Identifier.Text == "TenantId")
+        {
+            return SyntaxFactory.LiteralExpression(
+                SyntaxKind.StringLiteralExpression,
+                SyntaxFactory.Literal("00000000-0000-0000-0000-000000000000"))
+                .WithTriviaFrom(node);
+        }
+
         // ALDatabase.ALTenantID() / ALDatabase.ALSerialNumber() / ALDatabase.ALServiceInstanceID()
         // BC emits these as method calls on ALDatabase; the real implementations require
         // NavSession and crash with NullReferenceException standalone. Catch the invocation
@@ -1672,7 +1685,14 @@ public void ClearApplicationMemberVariables() { }
             dbIdIdent.Identifier.Text == "ALDatabase")
         {
             var idName = dbIdMa.Name.Identifier.Text;
-            if (idName == "ALTenantID" || idName == "ALSerialNumber")
+            if (idName == "ALTenantID")
+            {
+                return SyntaxFactory.LiteralExpression(
+                    SyntaxKind.StringLiteralExpression,
+                    SyntaxFactory.Literal("00000000-0000-0000-0000-000000000000"))
+                    .WithTriviaFrom(node);
+            }
+            if (idName == "ALSerialNumber")
             {
                 return SyntaxFactory.LiteralExpression(
                     SyntaxKind.StringLiteralExpression,
@@ -3346,8 +3366,8 @@ public void ClearApplicationMemberVariables() { }
         // These static property accesses crash because ALDatabase requires a live BC session.
         // ALCompanyName routes to MockSession.GetCompanyName() (configurable via --company-name CLI flag).
         // ALUserID redirects to AlScope.UserId (configurable via --user-id CLI flag).
-        // ALTenantID and ALSerialNumber return a fixed non-empty string ("STANDALONE") so
-        // telemetry / licensing branches that test non-empty behave consistently.
+        // ALTenantID returns the zero GUID ("00000000-0000-0000-0000-000000000000") — deterministic
+        // and detectable by tests. ALSerialNumber returns "STANDALONE" (opaque non-empty value).
         // (Note: BC sometimes emits these as method calls instead — see the invocation
         // handler at the top of VisitInvocationExpression which uses the same placeholder.)
         if (visited.Expression is IdentifierNameSyntax dbId &&
@@ -3369,6 +3389,13 @@ public void ClearApplicationMemberVariables() { }
                     SyntaxKind.SimpleMemberAccessExpression,
                     SyntaxFactory.IdentifierName("AlScope"),
                     SyntaxFactory.IdentifierName("UserId"))
+                    .WithTriviaFrom(visited);
+            }
+            if (visited.Name.Identifier.Text == "ALTenantID")
+            {
+                return SyntaxFactory.LiteralExpression(
+                    SyntaxKind.StringLiteralExpression,
+                    SyntaxFactory.Literal("00000000-0000-0000-0000-000000000000"))
                     .WithTriviaFrom(visited);
             }
             return SyntaxFactory.LiteralExpression(

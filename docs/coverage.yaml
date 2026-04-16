@@ -1727,9 +1727,10 @@ Database.TenantId:
   layer: runtime-api
   category: Database
   status: covered
-  notes: overloads=1; rewriter stubs ALTenantID (property and method) to the fixed string "STANDALONE".
+  notes: overloads=1; rewriter stubs ALTenantID (property and method) and NavDatabase.TenantId() to the zero GUID "00000000-0000-0000-0000-000000000000".
   tests:
     - tests/bucket-2/148-db-identity
+    - tests/bucket-2/169-database-tenantid
 
 Database.UnregisterTableConnection:
   layer: runtime-api
