@@ -1251,8 +1251,11 @@ Byte.ToText:
 Codeunit.Run:
   layer: runtime-api
   category: Codeunit
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests:
+    - tests/bucket-1/64-codeunit-run-record
+    - tests/bucket-1/112-codeunit-onrun-record
+  notes: overloads=2 (no-record and with-record variants); returns true on success, false on trapped error
 
 # ── CodeunitInstance ────────────────────────────────────────────
 
