@@ -5346,56 +5346,56 @@ ReportInstance.WordXmlPart:
 RequestPage.Activate:
   layer: runtime-api
   category: RequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op stub on MockCurrPage (page extension CurrPage); compilation-tested in 91-requestpage-currpage
 
 RequestPage.Caption:
   layer: runtime-api
   category: RequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; get/set NavText property on MockCurrPage; compilation-tested in 91-requestpage-currpage
 
 RequestPage.Close:
   layer: runtime-api
   category: RequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op stub on MockCurrPage; compilation-tested in 91-requestpage-currpage
 
 RequestPage.Editable:
   layer: runtime-api
   category: RequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; bool get/set on MockCurrPage; existing coverage in 38-page-ext-currpage
 
 RequestPage.LookupMode:
   layer: runtime-api
   category: RequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; bool get/set on MockCurrPage; compilation-tested in 91-requestpage-currpage
 
 RequestPage.ObjectId:
   layer: runtime-api
   category: RequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns NavText.Empty in standalone mode; compilation-tested in 91-requestpage-currpage
 
 RequestPage.SaveRecord:
   layer: runtime-api
   category: RequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op stub on MockCurrPage; compilation-tested in 91-requestpage-currpage
 
 RequestPage.SetSelectionFilter:
   layer: runtime-api
   category: RequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op stub on MockCurrPage; compilation-tested in 91-requestpage-currpage
 
 RequestPage.Update:
   layer: runtime-api
   category: RequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op stub on MockCurrPage; existing coverage in 38-page-ext-currpage
 
 # ── SecretText ──────────────────────────────────────────────────
 
