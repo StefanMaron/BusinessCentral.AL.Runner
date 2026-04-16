@@ -1558,8 +1558,8 @@ Database.CurrentTransactionType:
 Database.DataFileInformation:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op stub (no real DB standalone); tests/bucket-2/154-database-datafileinformation
 
 Database.ExportData:
   layer: runtime-api
