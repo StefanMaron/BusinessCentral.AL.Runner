@@ -2108,8 +2108,10 @@ ErrorInfo.DataClassification:
 ErrorInfo.DetailedMessage:
   layer: runtime-api
   category: ErrorInfo
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native property works standalone on default-initialised ErrorInfo values. AL emits as property get/set.
+  tests:
+    - tests/bucket-2/170-errorinfo-detailedmsg
 
 ErrorInfo.ErrorType:
   layer: runtime-api
