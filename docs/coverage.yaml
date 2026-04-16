@@ -1594,8 +1594,8 @@ Database.ImportData:
 Database.IsInWriteTransaction:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: RoslynRewriter rewrites ALDatabase.ALIsInWriteTransaction() to false literal; runner has no real transactions; tests/bucket-2/157-isinwritetransaction
 
 Database.LastUsedRowVersion:
   layer: runtime-api
