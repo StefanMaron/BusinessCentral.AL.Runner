@@ -9046,8 +9046,9 @@ XmlDocumentType.WriteTo:
 XmlElement.Add:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/191-xmlelement
+  notes: overloads=1. Covered via NavXmlElement native — child XmlElement add and text add.
 
 XmlElement.AddAfterSelf:
   layer: runtime-api
@@ -9070,26 +9071,30 @@ XmlElement.AddFirst:
 XmlElement.AsXmlNode:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/191-xmlelement
+  notes: overloads=1. Covered via NavXmlElement native — AsXmlNode().AsXmlElement().Name round-trips.
 
 XmlElement.Attributes:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/191-xmlelement
+  notes: overloads=1. Covered via NavXmlElement native — Attributes().Get(name, var XmlAttribute) returns true + populates the attribute.
 
 XmlElement.Create:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=4
+  status: covered
+  tests: tests/bucket-2/191-xmlelement
+  notes: overloads=4. Covered via NavXmlElement native — 1-arg Create(name) tested for Name, children, attributes, SelectNodes.
 
 XmlElement.GetChildElements:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=3
+  status: covered
+  tests: tests/bucket-2/191-xmlelement
+  notes: overloads=3. Covered via NavXmlElement native — reflects the number of added child elements.
 
 XmlElement.GetChildNodes:
   layer: runtime-api
@@ -9136,26 +9141,30 @@ XmlElement.GetPrefixOfNamespace:
 XmlElement.HasAttributes:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/191-xmlelement
+  notes: overloads=1. Covered via NavXmlElement native — true after SetAttribute, false initially, false after RemoveAttribute.
 
 XmlElement.HasElements:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/191-xmlelement
+  notes: overloads=1. Covered via NavXmlElement native — true after Add, false initially.
 
 XmlElement.InnerText:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/191-xmlelement
+  notes: overloads=1. Covered via NavXmlElement native — reflects text added via Add.
 
 XmlElement.InnerXml:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/191-xmlelement
+  notes: overloads=1. Covered via NavXmlElement native — serialises child elements + attributes.
 
 XmlElement.IsEmpty:
   layer: runtime-api
@@ -9168,14 +9177,16 @@ XmlElement.IsEmpty:
 XmlElement.LocalName:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/191-xmlelement
+  notes: overloads=1. Covered via NavXmlElement native.
 
 XmlElement.Name:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/191-xmlelement
+  notes: overloads=1. Covered via NavXmlElement native — returns the Create() name.
 
 XmlElement.NamespaceUri:
   layer: runtime-api
@@ -9200,8 +9211,9 @@ XmlElement.RemoveAllAttributes:
 XmlElement.RemoveAttribute:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=3
+  status: covered
+  tests: tests/bucket-2/191-xmlelement
+  notes: overloads=3. Covered via NavXmlElement native — clears the named attribute; HasAttributes becomes false if it was the only one.
 
 XmlElement.RemoveNodes:
   layer: runtime-api
@@ -9224,8 +9236,9 @@ XmlElement.ReplaceWith:
 XmlElement.SelectNodes:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=2
+  status: covered
+  tests: tests/bucket-2/191-xmlelement
+  notes: overloads=2. Covered via NavXmlElement native — XPath matches descendants on a programmatically-built element.
 
 XmlElement.SelectSingleNode:
   layer: runtime-api
@@ -9238,8 +9251,9 @@ XmlElement.SelectSingleNode:
 XmlElement.SetAttribute:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=2
+  status: covered
+  tests: tests/bucket-2/191-xmlelement
+  notes: overloads=2. Covered via NavXmlElement native — value readable via Attributes().Get; HasAttributes becomes true.
 
 XmlElement.WriteTo:
   layer: runtime-api
