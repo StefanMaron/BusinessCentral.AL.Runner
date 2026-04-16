@@ -7,6 +7,12 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **`Record.IsEmpty` coverage (#299)** — `ALIsEmpty` was already implemented in
+  `MockRecordHandle` (`GetFilteredAndMarkedRecords().Count == 0`) but had no proving
+  tests. New suite `tests/bucket-1/56-isempty` adds 5 proving tests: empty table →
+  true, records exist → false, filter excludes all → true, filter matches some →
+  false, Reset clears filter → false. Coverage map: `Table.IsEmpty` moved from `gap`
+  to `covered`.
 - **`Database.Commit` coverage (#311)** — `Commit()` was already a no-op (stripped by
   `StripEntireCallMethods` in `RoslynRewriter`) but had no proving tests. New suite
   `tests/bucket-1/56-database-commit` adds 4 tests: commit without error, commit after
