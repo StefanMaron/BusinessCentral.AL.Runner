@@ -95,7 +95,7 @@ public class MockRecordRef
     // -- IsDirty — no dirty tracking in standalone --
 
     /// <summary>ALIsDirty — standalone has no write-pending tracking; always false.</summary>
-    public bool ALIsDirty() => false;
+    public bool ALIsDirty => false;
 
     // -- CopyLinks — no-op in standalone (no BC link service) --
 
@@ -106,13 +106,13 @@ public class MockRecordRef
     // -- ReadConsistency — no SQL transactions in standalone --
 
     /// <summary>ALReadConsistency — standalone has no read-consistency isolation; always false.</summary>
-    public bool ALReadConsistency() => false;
+    public bool ALReadConsistency => false;
 
     // -- SecurityFiltering — get/set stub --
 
-    private object _securityFiltering = 0;
+    private SecurityFiltering _securityFiltering;
     /// <summary>ALSecurityFiltering — get/set the security filter mode. Stored but not enforced.</summary>
-    public object ALSecurityFiltering
+    public SecurityFiltering ALSecurityFiltering
     {
         get => _securityFiltering;
         set => _securityFiltering = value;
@@ -122,6 +122,7 @@ public class MockRecordRef
 
     /// <summary>ALTruncate — removes all records from the table without running triggers.</summary>
     public void ALTruncate() => _handle?.ALDeleteAll(DataError.ThrowError, false);
+    public void ALTruncate(DataError errorLevel) => _handle?.ALDeleteAll(errorLevel, false);
 
     // -- Caption --
 
