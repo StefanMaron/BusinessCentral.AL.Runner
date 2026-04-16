@@ -9570,164 +9570,189 @@ XmlNamespaceManager.RemoveNamespace:
 XmlNode.AddAfterSelf:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=1; BC native NavXmlNode.ALAddAfterSelf works standalone
 
 XmlNode.AddBeforeSelf:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=1; BC native NavXmlNode.ALAddBeforeSelf works standalone
 
 XmlNode.AsXmlAttribute:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=1; BC native NavXmlNode.ALAsXmlAttribute works standalone; errors on type mismatch
 
 XmlNode.AsXmlCData:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=1; BC native NavXmlNode.ALAsXmlCData works standalone
 
 XmlNode.AsXmlComment:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=1; BC native NavXmlNode.ALAsXmlComment works standalone
 
 XmlNode.AsXmlDeclaration:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=1; BC native NavXmlNode.ALAsXmlDeclaration works standalone
 
 XmlNode.AsXmlDocument:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=1; BC native NavXmlNode.ALAsXmlDocument works standalone; IsXmlDocument verified
 
 XmlNode.AsXmlDocumentType:
   layer: runtime-api
   category: XmlNode
   status: gap
-  notes: overloads=1
+  notes: overloads=1; not tested (XmlDocumentType.AsXmlNode not yet exercised in suite)
 
 XmlNode.AsXmlElement:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=1; BC native NavXmlNode.ALAsXmlElement works standalone; errors on type mismatch
 
 XmlNode.AsXmlProcessingInstruction:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=1; BC native NavXmlNode.ALAsXmlProcessingInstruction works standalone
 
 XmlNode.AsXmlText:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=1; BC native NavXmlNode.ALAsXmlText works standalone
 
 XmlNode.GetDocument:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=1; BC native NavXmlNode.ALGetDocument works standalone; true when in doc, false for orphan
 
 XmlNode.GetParent:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=1; BC native NavXmlNode.ALGetParent works standalone; true when parented, false for orphan
 
 XmlNode.IsXmlAttribute:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=1; BC native NavXmlNode.ALIsXmlAttribute works standalone
 
 XmlNode.IsXmlCData:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=1; BC native NavXmlNode.ALIsXmlCData works standalone
 
 XmlNode.IsXmlComment:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=1; BC native NavXmlNode.ALIsXmlComment works standalone
 
 XmlNode.IsXmlDeclaration:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=1; BC native NavXmlNode.ALIsXmlDeclaration works standalone
 
 XmlNode.IsXmlDocument:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=1; BC native NavXmlNode.ALIsXmlDocument works standalone
 
 XmlNode.IsXmlDocumentType:
   layer: runtime-api
   category: XmlNode
   status: gap
-  notes: overloads=1
+  notes: overloads=1; not tested (XmlDocumentType.AsXmlNode not yet exercised in suite)
 
 XmlNode.IsXmlElement:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=1; BC native NavXmlNode.ALIsXmlElement works standalone
 
 XmlNode.IsXmlProcessingInstruction:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=1; BC native NavXmlNode.ALIsXmlProcessingInstruction works standalone
 
 XmlNode.IsXmlText:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=1; BC native NavXmlNode.ALIsXmlText works standalone
 
 XmlNode.Remove:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=1; BC native NavXmlNode.ALRemove works standalone; detaches from parent
 
 XmlNode.ReplaceWith:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=1; BC native NavXmlNode.ALReplaceWith works standalone; substitutes node in parent
 
 XmlNode.SelectNodes:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=2
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=2; BC native NavXmlNode.ALSelectNodes works standalone via XPath on programmatic trees
 
 XmlNode.SelectSingleNode:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=2
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=2; BC native NavXmlNode.ALSelectSingleNode works standalone via XPath on programmatic trees
 
 XmlNode.WriteTo:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=4
+  status: covered
+  tests: tests/bucket-1/179-xmlnode-methods
+  notes: overloads=4; BC native NavXmlNode.ALWriteTo works standalone; elements and attributes serialized correctly
 
 # ── XmlNodeList ─────────────────────────────────────────────────
 
