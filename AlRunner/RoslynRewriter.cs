@@ -2374,6 +2374,17 @@ public void ClearApplicationMemberVariables() { }
                         SyntaxFactory.IdentifierName(methodName)));
             }
 
+            // ALDatabase.ALIsNullGuid(g) -> AlCompat.ALIsNullGuid(g)
+            // The real implementation goes through NavSession; ours checks Guid.Empty.
+            if (exprText == "ALDatabase" && methodName == "ALIsNullGuid")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("ALIsNullGuid")));
+            }
+
             // ALSystemDate.ALWorkDate(null!) -> ALSystemDate.ALWorkDate(NavDate.Default)
             // The rewriter turns this.Session -> null!, which makes ALWorkDate ambiguous between
             // the NavSession and NavDate overloads. We disambiguate to the NavDate overload.

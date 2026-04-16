@@ -5499,7 +5499,8 @@ System.IsNull:
 System.IsNullGuid:
   layer: runtime-api
   category: System
-  status: gap
+  status: covered
+  tests: tests/bucket-1/58-is-null-guid
   notes: overloads=1
 
 System.IsServiceTier:
