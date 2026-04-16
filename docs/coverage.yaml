@@ -1546,8 +1546,8 @@ Database.CompanyName:
 Database.CopyCompany:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op stub (no multi-company store in standalone mode); ALCopyCompany stripped by RoslynRewriter
 
 Database.CurrentTransactionType:
   layer: runtime-api
