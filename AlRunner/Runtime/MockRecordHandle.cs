@@ -2771,8 +2771,11 @@ public class MockRecordHandle
     }
 
     /// <summary>
-    /// AL Ascending — returns whether the current sort order is ascending.
-    /// Defaults to true. Checks the first current key field's ascending state.
+    /// AL Ascending — get/set property for the record's sort direction.
+    /// BC lowers <c>Rec.Ascending()</c> to a property read and
+    /// <c>Rec.Ascending(false)</c> to a property assignment.
+    /// Defaults to true (ascending). The setter delegates to SetOverallAscending
+    /// which propagates the direction across all current key fields.
     /// </summary>
     public bool ALAscending
     {
@@ -2785,6 +2788,7 @@ public class MockRecordHandle
             }
             return true;
         }
+        set => SetOverallAscending(value);
     }
 
     /// <summary>
