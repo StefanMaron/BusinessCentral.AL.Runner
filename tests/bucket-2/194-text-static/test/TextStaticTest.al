@@ -1,10 +1,10 @@
-codeunit 60201 "TXS Test"
+codeunit 60201 "TXST Test"
 {
     Subtype = Test;
 
     var
         Assert: Codeunit Assert;
-        Src: Codeunit "TXS Src";
+        Src: Codeunit "TXST Src";
 
     // --- DelChr ---
 
