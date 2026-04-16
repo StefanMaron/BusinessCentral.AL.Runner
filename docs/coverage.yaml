@@ -7780,14 +7780,14 @@ Time.ToText:
 Variant.IsAction:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false (no Action mock in standalone mode)
 
 Variant.IsAutomation:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsBigInteger:
   layer: runtime-api
@@ -7798,8 +7798,8 @@ Variant.IsBigInteger:
 Variant.IsBinary:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false (no Binary mock in standalone mode)
 
 Variant.IsBoolean:
   layer: runtime-api
@@ -7822,8 +7822,8 @@ Variant.IsChar:
 Variant.IsClientType:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsCode:
   layer: runtime-api
@@ -7834,20 +7834,20 @@ Variant.IsCode:
 Variant.IsCodeunit:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false (codeunit identity not tracked in Variant)
 
 Variant.IsDataClassification:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsDataClassificationType:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsDate:
   layer: runtime-api
@@ -7876,20 +7876,20 @@ Variant.IsDecimal:
 Variant.IsDefaultLayout:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsDictionary:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false (no Dictionary mock in standalone mode)
 
 Variant.IsDotNet:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false (no DotNet interop in standalone mode)
 
 Variant.IsDuration:
   layer: runtime-api
@@ -7900,8 +7900,8 @@ Variant.IsDuration:
 Variant.IsExecutionMode:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsFieldRef:
   layer: runtime-api
@@ -7912,14 +7912,14 @@ Variant.IsFieldRef:
 Variant.IsFile:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false (no File mock in standalone mode)
 
 Variant.IsFilterPageBuilder:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsGuid:
   layer: runtime-api
@@ -7930,8 +7930,8 @@ Variant.IsGuid:
 Variant.IsInStream:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false (stream assignment to Variant not tested in standalone)
 
 Variant.IsInteger:
   layer: runtime-api
@@ -7942,44 +7942,56 @@ Variant.IsInteger:
 Variant.IsJsonArray:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; checks NavJsonToken subtype name == "NavJsonArray"
+  tests:
+    - tests/bucket-1/88-variant-is-methods/test/VITest.al
 
 Variant.IsJsonObject:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; checks NavJsonToken subtype name == "NavJsonObject"
+  tests:
+    - tests/bucket-1/88-variant-is-methods/test/VITest.al
 
 Variant.IsJsonToken:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; checks _value is NavJsonToken (base class for all JSON types)
+  tests:
+    - tests/bucket-1/88-variant-is-methods/test/VITest.al
 
 Variant.IsJsonValue:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; checks NavJsonToken subtype name == "NavJsonValue"
+  tests:
+    - tests/bucket-1/88-variant-is-methods/test/VITest.al
 
 Variant.IsList:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; checks IsGenericType with NavList open generic
+  tests:
+    - tests/bucket-1/88-variant-is-methods/test/VITest.al
 
 Variant.IsNotification:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; checks _value is MockNotification
+  tests:
+    - tests/bucket-1/88-variant-is-methods/test/VITest.al
 
 Variant.IsObjectType:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsOption:
   layer: runtime-api
@@ -7990,14 +8002,14 @@ Variant.IsOption:
 Variant.IsOutStream:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false (stream assignment to Variant not tested in standalone)
 
 Variant.IsPromptMode:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsRecord:
   layer: runtime-api
@@ -8020,26 +8032,26 @@ Variant.IsRecordRef:
 Variant.IsReportFormat:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsSecurityFiltering:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsTableConnectionType:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsTestPermissions:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsText:
   layer: runtime-api
@@ -8050,20 +8062,22 @@ Variant.IsText:
 Variant.IsTextBuilder:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; checks _value is MockTextBuilder (rewriter maps NavTextBuilder → MockTextBuilder)
+  tests:
+    - tests/bucket-1/88-variant-is-methods/test/VITest.al
 
 Variant.IsTextConstant:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsTextEncoding:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsTime:
   layer: runtime-api
@@ -8074,110 +8088,110 @@ Variant.IsTime:
 Variant.IsTransactionType:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsWideChar:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsXmlAttribute:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false (no XML mock in standalone mode)
 
 Variant.IsXmlAttributeCollection:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsXmlCData:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsXmlComment:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsXmlDeclaration:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsXmlDocument:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsXmlDocumentType:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsXmlElement:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsXmlNamespaceManager:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsXmlNameTable:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsXmlNode:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsXmlNodeList:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsXmlProcessingInstruction:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsXmlReadOptions:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsXmlText:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 Variant.IsXmlWriteOptions:
   layer: runtime-api
   category: Variant
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1; always returns false
 
 # ── Version ─────────────────────────────────────────────────────
 
