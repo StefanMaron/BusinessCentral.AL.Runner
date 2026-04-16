@@ -8522,8 +8522,8 @@ XmlDocumentType.AsXmlNode:
 XmlDocumentType.Create:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=4
+  status: covered
+  notes: overloads=4; uses real BC XmlDocumentType; all 4 overloads exercised
 
 XmlDocumentType.GetDocument:
   layer: runtime-api
@@ -8540,8 +8540,8 @@ XmlDocumentType.GetInternalSubset:
 XmlDocumentType.GetName:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns the DOCTYPE name set at creation
 
 XmlDocumentType.GetParent:
   layer: runtime-api
