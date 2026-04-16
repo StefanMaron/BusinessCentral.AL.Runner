@@ -5443,20 +5443,23 @@ Session.BindSubscription:
 Session.CurrentClientType:
   layer: runtime-api
   category: Session
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/190-session-methods
+  notes: overloads=1. Rewriter replaces ALSession.ALCurrentClientType with NavClientType.Background (no NavSession standalone).
 
 Session.CurrentExecutionMode:
   layer: runtime-api
   category: Session
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/190-session-methods
+  notes: overloads=1. Rewriter replaces ALSession.ALGetCurrentExecutionMode with ExecutionMode.Standard.
 
 Session.DefaultClientType:
   layer: runtime-api
   category: Session
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/190-session-methods
+  notes: overloads=1. Rewriter replaces ALSession.ALDefaultClientType with NavClientType.Background.
 
 Session.EnableVerboseTelemetry:
   layer: runtime-api
@@ -5491,14 +5494,16 @@ Session.IsSessionActive:
 Session.LogAuditMessage:
   layer: runtime-api
   category: Session
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/190-session-methods
+  notes: overloads=1. Covered via BC native — telemetry is silently dropped in standalone mode.
 
 Session.LogMessage:
   layer: runtime-api
   category: Session
-  status: gap
-  notes: overloads=2
+  status: covered
+  tests: tests/bucket-2/190-session-methods
+  notes: overloads=2. Covered via BC native — telemetry is silently dropped in standalone mode.
 
 Session.LogSecurityAudit:
   layer: runtime-api
