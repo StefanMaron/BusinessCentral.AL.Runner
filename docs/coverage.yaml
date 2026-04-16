@@ -155,7 +155,9 @@ enumextension_declaration:
 pagecustomization_declaration:
   layer: syntax
   category: extension
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/260-pagecustomization
 
 pageextension_declaration:
   layer: syntax
