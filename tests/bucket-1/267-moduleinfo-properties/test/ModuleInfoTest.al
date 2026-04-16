@@ -1,4 +1,4 @@
-codeunit 88001 "MI Test"
+codeunit 84201 "MI Test"
 {
     Subtype = Test;
 
