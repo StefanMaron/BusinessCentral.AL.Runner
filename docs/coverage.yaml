@@ -916,14 +916,14 @@ requestpage_section:
     - tests/bucket-2/92-request-page-handler
 
 report_OnPreReport:
-  layer: trigger
+  layer: syntax
   category: report
   status: covered
   tests:
     - tests/bucket-1/259-report-triggers
 
 report_OnPostReport:
-  layer: trigger
+  layer: syntax
   category: report
   status: covered
   tests:
