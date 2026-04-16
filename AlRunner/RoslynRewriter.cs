@@ -2756,20 +2756,6 @@ public void ClearApplicationMemberVariables() { }
             }
         }
 
-        // Pattern: ALDatabase.ALSessionId — integer property, crashes without a live BC session.
-        // Rewrite to MockSession.GetSessionId() which returns a stable non-zero stub value (1).
-        if (visited.Expression is IdentifierNameSyntax sessionDbId &&
-            sessionDbId.Identifier.Text == "ALDatabase" &&
-            visited.Name.Identifier.Text == "ALSessionId")
-        {
-            return SyntaxFactory.InvocationExpression(
-                SyntaxFactory.MemberAccessExpression(
-                    SyntaxKind.SimpleMemberAccessExpression,
-                    SyntaxFactory.IdentifierName("MockSession"),
-                    SyntaxFactory.IdentifierName("GetSessionId")))
-                .WithTriviaFrom(visited);
-        }
-
         // Pattern: ALDatabase.ALCompanyName / ALDatabase.ALUserID / ALDatabase.ALTenantID / ALDatabase.ALSerialNumber
         // These static property accesses crash because ALDatabase requires a live BC session.
         // ALCompanyName routes to MockSession.GetCompanyName() (configurable via --company-name CLI flag).
@@ -2819,6 +2805,18 @@ public void ClearApplicationMemberVariables() { }
         if (memberName == "IsEventSessionRecorderEnabled")
         {
             return SyntaxFactory.LiteralExpression(SyntaxKind.FalseLiteralExpression)
+                .WithTriviaFrom(visited);
+        }
+        // Pattern: <any>.ALSessionId — the BC compiler lowers SessionId() to this.Session.ALSessionId.
+        // The rewriter turns this.Session → null!, so null!.ALSessionId throws NullReferenceException.
+        // Catch ALSessionId by member name regardless of receiver and redirect to MockSession.GetSessionId().
+        if (memberName == "ALSessionId")
+        {
+            return SyntaxFactory.InvocationExpression(
+                SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("MockSession"),
+                    SyntaxFactory.IdentifierName("GetSessionId")))
                 .WithTriviaFrom(visited);
         }
         if (memberName.StartsWith("ALIs") && NavVariantTypeCheckProps.Contains(memberName))
