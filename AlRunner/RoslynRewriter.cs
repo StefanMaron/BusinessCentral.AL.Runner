@@ -2361,6 +2361,17 @@ public void ClearApplicationMemberVariables() { }
                     .WithTriviaFrom(visited);
             }
 
+            // ALDatabase.ALHasTableConnection(type, name) -> AlCompat.HasTableConnection(type, name)
+            // The runner has no real external table connections; always returns false.
+            if (exprText == "ALDatabase" && methodName == "ALHasTableConnection")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("HasTableConnection")));
+            }
+
             // ALDatabase.ALCreateGuid() -> AlCompat.ALCreateGuid()
             // ALDatabase.ALCreateSequentialGuid() -> AlCompat.ALCreateSequentialGuid()
             // The real implementations require NavSession; ours use System.Guid.NewGuid().

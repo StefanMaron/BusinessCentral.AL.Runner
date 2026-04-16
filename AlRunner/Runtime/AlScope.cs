@@ -1332,7 +1332,6 @@ public static class AlCompat
     /// </summary>
     public static NavGuid ALCreateSequentialGuid() => new NavGuid(Guid.NewGuid());
 
-    /// <summary>
     /// Replacement for ALDatabase.ALIsNullGuid(g) which requires NavSession.
     /// Returns true when the GUID is the all-zeros default ({00000000-...}).
     /// </summary>
@@ -1343,6 +1342,12 @@ public static class AlCompat
         if (g is Guid guid) return NavBoolean.Create(guid == Guid.Empty);
         return NavBoolean.Create(true); // null/unset treated as empty
     }
+
+    /// <summary>
+    /// Stub for ALDatabase.ALHasTableConnection(TableConnectionType, Name).
+    /// The runner has no real external table connections, so always returns false.
+    /// </summary>
+    public static bool HasTableConnection(TableConnectionType tableConnectionType, string name) => false;
 
     // -----------------------------------------------------------------------
     // HttpContent stream helpers

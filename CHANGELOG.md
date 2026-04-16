@@ -7,6 +7,12 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **`HasTableConnection()` stub (#324)** — `HasTableConnection(TableConnectionType, Name)`
+  now returns `false` in standalone mode (runner has no real external table connections).
+  `RoslynRewriter` redirects `ALDatabase.ALHasTableConnection()` to `AlCompat.HasTableConnection()`.
+  New suite `tests/bucket-1/59-has-table-connection` adds 3 proving tests: returns false
+  for ExternalSQL, returns false for CRM, negative expectation via asserterror.
+  Coverage map: `Database.HasTableConnection` moved from `gap` to `stub`.
 - **`Database.SelectLatestVersion` coverage (#313)** — `SelectLatestVersion()` was already
   a no-op (stripped by `StripEntireCallMethods` in `RoslynRewriter`) but had no proving
   tests. New suite `tests/bucket-1/58-database-select-latest-version` adds 3 tests:

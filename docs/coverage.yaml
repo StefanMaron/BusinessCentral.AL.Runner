@@ -1439,7 +1439,7 @@ Database.GetDefaultTableConnection:
 Database.HasTableConnection:
   layer: runtime-api
   category: Database
-  status: gap
+  status: stub
   notes: overloads=1
 
 Database.ImportData:
