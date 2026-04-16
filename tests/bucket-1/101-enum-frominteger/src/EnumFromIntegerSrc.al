@@ -1,4 +1,4 @@
-enum 58700 "EFI Status"
+enum 50131 "EFI Status"
 {
     Extensible = false;
 
@@ -7,7 +7,7 @@ enum 58700 "EFI Status"
     value(2; Closed) { }
 }
 
-codeunit 58701 "EFI Converter"
+codeunit 50132 "EFI Converter"
 {
     procedure FromInt(I: Integer): Enum "EFI Status"
     begin
