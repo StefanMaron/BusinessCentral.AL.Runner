@@ -1564,14 +1564,14 @@ Database.CurrentTransactionType:
 Database.DataFileInformation:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: no-op stub; ALDataFileInformation added to StripEntireCallMethods in RoslynRewriter; var params remain at defaults; tests/bucket-2/154-datafileinformation
 
 Database.ExportData:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op stub (no file I/O in standalone mode); ALExportData stripped by RoslynRewriter
 
 Database.GetDefaultTableConnection:
   layer: runtime-api
@@ -1596,8 +1596,8 @@ Database.ImportData:
 Database.IsInWriteTransaction:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: RoslynRewriter rewrites ALDatabase.ALIsInWriteTransaction() to false literal; runner has no real transactions; tests/bucket-2/157-isinwritetransaction
 
 Database.LastUsedRowVersion:
   layer: runtime-api
@@ -1634,8 +1634,10 @@ Database.MinimumActiveRowVersion:
 Database.RegisterTableConnection:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter strips the entire call (no external connections standalone). Signature is (ConnectionType, Name, Connection).
+  tests:
+    - tests/bucket-2/156-register-table-connection
 
 Database.SelectLatestVersion:
   layer: runtime-api
@@ -1669,8 +1671,10 @@ Database.SessionId:
 Database.SetDefaultTableConnection:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter strips the entire call (no external connections standalone).
+  tests:
+    - tests/bucket-2/160-set-default-table-connection
 
 Database.SetUserPassword:
   layer: runtime-api
@@ -6219,7 +6223,9 @@ Table.SetAscending:
 Table.SetAutoCalcFields:
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/153-setautocalcfields
   notes: overloads=1
 
 Table.SetBaseLoadFields:
@@ -8486,8 +8492,10 @@ XmlDocument.SelectNodes:
 XmlDocument.SelectSingleNode:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; BC native works standalone. XmlDocument receiver requires .GetRoot first (or call on XmlElement directly). See also XmlElement.SelectSingleNode.
+  tests:
+    - tests/bucket-2/158-selectsinglenode
 
 XmlDocument.SetDeclaration:
   layer: runtime-api
@@ -8524,8 +8532,8 @@ XmlDocumentType.AsXmlNode:
 XmlDocumentType.Create:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=4
+  status: covered
+  notes: overloads=4; uses real BC XmlDocumentType; all 4 overloads exercised
 
 XmlDocumentType.GetDocument:
   layer: runtime-api
@@ -8542,8 +8550,8 @@ XmlDocumentType.GetInternalSubset:
 XmlDocumentType.GetName:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns the DOCTYPE name set at creation
 
 XmlDocumentType.GetParent:
   layer: runtime-api
@@ -8768,8 +8776,10 @@ XmlElement.Remove:
 XmlElement.RemoveAllAttributes:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone. Preserves element name + children; only attributes are cleared.
+  tests:
+    - tests/bucket-2/159-xml-removeallattrs
 
 XmlElement.RemoveAttribute:
   layer: runtime-api
@@ -8804,8 +8814,10 @@ XmlElement.SelectNodes:
 XmlElement.SelectSingleNode:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; BC native works standalone for programmatically-built XmlElements. Relative XPath is resolved against the receiver element.
+  tests:
+    - tests/bucket-2/158-selectsinglenode
 
 XmlElement.SetAttribute:
   layer: runtime-api
