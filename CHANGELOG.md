@@ -7,11 +7,6 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
-- **`addafter_views_modification` coverage (#408)** — Page extensions using `addafter()`
-  in the `views` area now compile and run correctly. Suite `tests/bucket-1/76-addafter-views`
-  adds 9 proving tests confirming that a pageextension with `addafter(views)` (including
-  filter-bearing views) does not block compilation of business logic in the same compilation
-  unit. Coverage map: `addafter_views_modification` moved from `gap` to `covered`.
 - **`actionref_declaration` coverage (#388)** — Pages and page extensions containing
   `actionref` sections (promoted-action bindings) now compile and run correctly.
   The existing `RoslynRewriter` already handles the BC-generated C# for actionref
