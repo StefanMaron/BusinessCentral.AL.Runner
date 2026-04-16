@@ -1858,21 +1858,20 @@ public void ClearApplicationMemberVariables() { }
         // Now recurse into children first
         var visited = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
 
-        // `<expr>.ToText(null!)` -> `AlCompat.Format(<expr>)`
-        // BC lowers AL's `dateTimeVar.ToText()` / `dateVar.ToText()` to `navDt.ToText(session)`
-        // where `session` is emitted as `null!`. The real implementation dereferences session
-        // for CultureInfo and crashes with NullReferenceException standalone.
-        // AlCompat.Format handles every BC value type (including NavDate/NavDateTime/NavTime)
-        // without session access. We key on the single-argument `null!` pattern to avoid
-        // catching legitimate ToText(length) overloads — the compiler only emits
-        // `null!` for the session parameter placeholder.
+        // `<expr>.ToText(session)` -> `AlCompat.Format(<expr>)`
+        // BC lowers AL's `xVar.ToText()` to `navX.ToText(session)` where session is either
+        // `null!` (for most types like DateTime/Date) or a real session reference (for NavByte
+        // and other types that need OEM/locale info). Both forms must be intercepted:
+        //  - `null!` form: crashes with NullReferenceException in NavDateTimeFormatter etc.
+        //  - session form: NavByte.ToText(session) calls NavValueFormatter → NCLManagedAdapter
+        //    (OEM native code) which fails to initialize without the BC service tier.
+        // AlCompat.Format handles every BC value type without session access.
+        // We match exactly 1 argument (session) to avoid catching zero-arg ToString() forms;
+        // BC does not emit ToText(length) in generated code — length is part of the type
+        // declaration, not a runtime argument.
         if (visited.ArgumentList.Arguments.Count == 1 &&
             visited.Expression is MemberAccessExpressionSyntax toTextMa &&
-            toTextMa.Name.Identifier.Text == "ToText" &&
-            visited.ArgumentList.Arguments[0].Expression is PostfixUnaryExpressionSyntax pu &&
-            pu.IsKind(SyntaxKind.SuppressNullableWarningExpression) &&
-            pu.Operand is LiteralExpressionSyntax lit &&
-            lit.IsKind(SyntaxKind.NullLiteralExpression))
+            toTextMa.Name.Identifier.Text == "ToText")
         {
             return SyntaxFactory.InvocationExpression(
                 SyntaxFactory.MemberAccessExpression(
