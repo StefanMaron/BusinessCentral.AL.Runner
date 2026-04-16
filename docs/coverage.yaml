@@ -6015,14 +6015,18 @@ Table.GetPosition:
 Table.GetRangeMax:
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
   notes: overloads=1
+  tests:
+    - tests/bucket-2/141-record-getrangemin
 
 Table.GetRangeMin:
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
   notes: overloads=1
+  tests:
+    - tests/bucket-2/141-record-getrangemin
 
 Table.GetView:
   layer: runtime-api

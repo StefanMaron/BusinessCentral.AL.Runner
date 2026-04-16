@@ -2678,22 +2678,48 @@ public class MockRecordHandle
 
     /// <summary>
     /// AL's GETRANGEMIN — returns the minimum value of the filter range for a field.
+    /// Returns an unwrapped CLR value (int, string, etc.) so that the BC compiler's
+    /// emitted <c>Convert.ToInt32(rec.ALGetRangeMinSafe(...))</c> works for Integer fields.
+    /// NavInteger does not implement IConvertible, so it must be unwrapped to <c>int</c>.
     /// </summary>
-    public NavValue ALGetRangeMinSafe(int fieldNo, NavType expectedType)
+    public object ALGetRangeMinSafe(int fieldNo, NavType expectedType)
     {
-        if (_filters.TryGetValue(fieldNo, out var filter) && filter.FromValue != null)
-            return filter.FromValue;
-        return DefaultForType(expectedType);
+        var val = _filters.TryGetValue(fieldNo, out var filter) && filter.FromValue != null
+            ? filter.FromValue
+            : DefaultForType(expectedType);
+        return UnwrapRangeValue(val);
     }
 
     /// <summary>
     /// AL's GETRANGEMAX — returns the maximum value of the filter range for a field.
+    /// Returns an unwrapped CLR value for the same reason as ALGetRangeMinSafe.
     /// </summary>
-    public NavValue ALGetRangeMaxSafe(int fieldNo, NavType expectedType)
+    public object ALGetRangeMaxSafe(int fieldNo, NavType expectedType)
     {
-        if (_filters.TryGetValue(fieldNo, out var filter) && filter.ToValue != null)
-            return filter.ToValue;
-        return DefaultForType(expectedType);
+        var val = _filters.TryGetValue(fieldNo, out var filter) && filter.ToValue != null
+            ? filter.ToValue
+            : DefaultForType(expectedType);
+        return UnwrapRangeValue(val);
+    }
+
+    /// <summary>
+    /// Unwrap a NavValue to its underlying CLR type so that Convert.ToInt32 etc. work.
+    /// BC compiler emits Convert.ToInt32(rec.ALGetRangeMinSafe(...)) for Integer return types.
+    /// NavInteger does not implement IConvertible, causing an InvalidCastException without this.
+    /// </summary>
+    private static object UnwrapRangeValue(NavValue val)
+    {
+        return val switch
+        {
+            NavInteger ni => (int)ni,
+            NavBoolean nb => (bool)nb,
+            NavBigInteger nbi => (long)nbi,
+            NavText nt => (string)nt,
+            NavCode nc => (string)nc,
+            NavGuid ng => (Guid)ng,
+            NavOption nopt => nopt.Value,
+            _ => (object)val,
+        };
     }
 
     /// <summary>
