@@ -6,23 +6,23 @@ codeunit 61601 "EDT ExportData Test"
         Assert: Codeunit Assert;
 
     [Test]
-    procedure ExportData_NoOp_WithFileName()
+    procedure ExportData_NoOp_ShowDialogTrue()
     var
         Helper: Codeunit "EDT Helper";
     begin
-        // Positive: Database.ExportData('test.dat') must execute without error (no-op stub).
-        Helper.CallExportData('test.dat');
-        Assert.IsTrue(true, 'ExportData(''test.dat'') must complete without error');
+        // Positive: Database.ExportData(true, ...) must execute without error (no-op stub).
+        Helper.CallExportData(true);
+        Assert.IsTrue(true, 'ExportData(true) must complete without error');
     end;
 
     [Test]
-    procedure ExportData_NoOp_EmptyFileName()
+    procedure ExportData_NoOp_ShowDialogFalse()
     var
         Helper: Codeunit "EDT Helper";
     begin
-        // Positive: Database.ExportData('') must also be a no-op.
-        Helper.CallExportData('');
-        Assert.IsTrue(true, 'ExportData('''') must complete without error');
+        // Positive: Database.ExportData(false, ...) must also be a no-op.
+        Helper.CallExportData(false);
+        Assert.IsTrue(true, 'ExportData(false) must complete without error');
     end;
 
     [Test]
@@ -31,8 +31,8 @@ codeunit 61601 "EDT ExportData Test"
         Helper: Codeunit "EDT Helper";
     begin
         // Edge case: calling ExportData multiple times must not error.
-        Helper.CallExportData('first.dat');
-        Helper.CallExportData('second.dat');
+        Helper.CallExportData(false);
+        Helper.CallExportData(true);
         Assert.IsTrue(true, 'ExportData called twice must complete without error');
     end;
 

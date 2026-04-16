@@ -1,12 +1,15 @@
 /// Helper codeunit that wraps Database.ExportData so the test can
 /// exercise it without calling it inline.
+/// Actual signature: ExportData(showDialog: Boolean; var FileName: Text; ...)
 codeunit 61600 "EDT Helper"
 {
-    /// Call Database.ExportData(fileName) — must be a no-op stub
+    /// Call Database.ExportData(showDialog, fileName) — must be a no-op stub
     /// in standalone mode (no external file I/O).
-    procedure CallExportData(fileName: Text)
+    procedure CallExportData(showDialog: Boolean)
+    var
+        FileName: Text;
     begin
-        Database.ExportData(fileName);
+        Database.ExportData(showDialog, FileName);
     end;
 
     /// Proving helper — returns a+b+1 to verify the codeunit is live.
