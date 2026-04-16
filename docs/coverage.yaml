@@ -5362,8 +5362,8 @@ System.ApplicationPath:
 System.ArrayLen:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockArray stores dimensions; 1-arg and 2-arg forms tested
 
 System.CalcDate:
   layer: runtime-api
