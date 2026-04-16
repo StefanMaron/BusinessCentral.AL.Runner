@@ -1686,6 +1686,38 @@ public void ClearApplicationMemberVariables() { }
                     SyntaxFactory.Literal(1))
                     .WithTriviaFrom(node);
             }
+            // ALDatabase.ALSID() / ALDatabase.ALSid() / ALDatabase.ALGetSID()
+            // Database.SID() requires NavSession (crashes with NullReferenceException standalone).
+            // Return fixed non-real SID string. Intercepted here (before base) to avoid
+            // double-call form and to handle session argument mismatch.
+            // Both ALSID and ALSid checked for BC version compatibility.
+            if (idName == "ALSID" || idName == "ALSid" || idName == "ALGetSID"
+                || idName == "ALGetSid")
+            {
+                return SyntaxFactory.LiteralExpression(
+                    SyntaxKind.StringLiteralExpression,
+                    SyntaxFactory.Literal("S-1-0-0"))
+                    .WithTriviaFrom(node);
+            }
+            // Diagnostic: log any unhandled ALDatabase method that is NOT already
+            // intercepted above — this appears in CI stderr to identify unknown method names.
+            if (!System.Array.Exists(new[] {
+                    "ALSessionID", "ALSessionId", "ALTenantID", "ALSerialNumber",
+                    "ALServiceInstanceID", "ALServiceInstanceId",
+                    "ALUserSecurityId", "ALIsInWriteTransaction",
+                    "ALGetDefaultTableConnection", "ALLastUsedRowVersion",
+                    "ALMinimumActiveRowVersion", "ALHasTableConnection",
+                    "ALCommit", "ALSelectLatestVersion", "ALAlterKey",
+                    "ALCheckLicenseFile", "ALChangeUserPassword", "ALCopyCompany",
+                    "ALImportData", "ALExportData", "ALDataFileInformation",
+                    "ALRegisterTableConnection", "ALSetDefaultTableConnection",
+                    "ALUnregisterTableConnection", "ALRunCodeunit",
+                    "ALGetLastErrorText", "ALGetLastErrorCallStack",
+                    "ALClearLastError" },
+                    n => n == idName))
+            {
+                Console.Error.WriteLine($"[RoslynRewriter] UNHANDLED ALDatabase.{idName} — add intercept");
+            }
         }
 
         // `NavOption.Create(existing.NavOptionMetadata, V)` — reassignment
@@ -2768,18 +2800,6 @@ public void ClearApplicationMemberVariables() { }
                         SyntaxKind.SimpleMemberAccessExpression,
                         SyntaxFactory.IdentifierName("AlCompat"),
                         SyntaxFactory.IdentifierName("UserSecurityId")));
-            }
-
-            // ALDatabase.ALSID() -> AlCompat.DatabaseSID()
-            // Database.SID() requires NavSession (crashes with NullReferenceException standalone).
-            // AlCompat.DatabaseSID returns a fixed non-real SID string stable across calls.
-            if (exprText == "ALDatabase" && methodName == "ALSID")
-            {
-                return visited.WithExpression(
-                    SyntaxFactory.MemberAccessExpression(
-                        SyntaxKind.SimpleMemberAccessExpression,
-                        SyntaxFactory.IdentifierName("AlCompat"),
-                        SyntaxFactory.IdentifierName("DatabaseSID")));
             }
 
             // ALDatabase.ALLastUsedRowVersion() -> 0L
