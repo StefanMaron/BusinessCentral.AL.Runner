@@ -4,38 +4,60 @@ table 59300 "AFDS Item"
     DataClassification = CustomerContent;
     fields
     {
-        field(1; "No."; Code[20]) { }
+        field(1; Code; Code[20]) { }
         field(2; Description; Text[100]) { }
         field(3; Quantity; Integer) { }
     }
     keys
     {
-        key(PK; "No.") { Clustered = true; }
+        key(PK; Code) { Clustered = true; }
     }
 }
 
-/// Base report with a dataset — reportextension will prepend columns using addfirst.
+/// Extra table used as a nested child dataitem in the report extension.
+table 59301 "AFDS Sub"
+{
+    DataClassification = CustomerContent;
+    fields
+    {
+        field(1; ParentCode; Code[20]) { }
+        field(2; Note; Text[100]) { }
+    }
+    keys
+    {
+        key(PK; ParentCode) { Clustered = true; }
+    }
+}
+
+/// Base report with a single dataitem — the reportextension will add a child
+/// dataitem at the beginning using addfirst.
 report 59300 "AFDS Base Report"
 {
     dataset
     {
         dataitem(AFDSItem; "AFDS Item")
         {
-            column(Description; Description) { }
-            column(Quantity; Quantity) { }
+            column(ItemCode; Code) { }
+            column(ItemDescription; Description) { }
+            column(ItemQuantity; Quantity) { }
         }
     }
 }
 
-/// reportextension using addfirst in the dataset area (prepend a column).
+/// reportextension using addfirst in the dataset area — adds a new child dataitem
+/// as the first nested dataitem inside AFDSItem.
 /// This is the exact construct issue #416 says fails to compile.
-reportextension 59301 "AFDS Report Ext" extends "AFDS Base Report"
+reportextension 59302 "AFDS Report Ext" extends "AFDS Base Report"
 {
     dataset
     {
         addfirst(AFDSItem)
         {
-            column(ItemNo; "No.") { }
+            dataitem(AFDSSub; "AFDS Sub")
+            {
+                column(SubParentCode; ParentCode) { }
+                column(SubNote; Note) { }
+            }
         }
     }
 }
