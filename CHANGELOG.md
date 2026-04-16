@@ -7,6 +7,12 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **`XmlPort.Import(portNumber, fileName)` no-op stub (#533)** — The file-based static
+  XmlPort import form (`XmlPort.Import(portNumber, fileName: Text)`) now completes as a
+  no-op instead of failing. BC transpiles this call to `ALImportFile`; added `ALImportFile`
+  to `StripEntireCallMethods` in `RoslynRewriter` so the statement is silently elided in
+  standalone mode. New suite `tests/bucket-2/158-xmlport-import-file` adds 5 proving tests.
+  Coverage map: `Xmlport.Import` moved from `gap` to `covered`.
 - **`actionref_declaration` coverage (#388)** — Pages and page extensions containing
   `actionref` sections (promoted-action bindings) now compile and run correctly.
   The existing `RoslynRewriter` already handles the BC-generated C# for actionref
