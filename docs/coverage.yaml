@@ -1126,7 +1126,9 @@ addfirst_modification:
 addfirst_views_modification:
   layer: syntax
   category: modification
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/84-addfirst-views
 
 addlast_action_modification:
   layer: syntax
