@@ -764,12 +764,36 @@ public static class MockJsonHelper
     {
         if (NavJsonValueALIsUndefinedMethod != null)
         {
-            try { return (bool)NavJsonValueALIsUndefinedMethod.Invoke(token, new object[] { errorLevel })!; }
-            catch { }
+            bool reflResult;
+            bool reflThrew = false;
+            try
+            {
+                reflResult = (bool)NavJsonValueALIsUndefinedMethod.Invoke(token, new object[] { errorLevel })!;
+            }
+            catch (Exception ex)
+            {
+                reflThrew = true;
+                reflResult = false;
+                // Don't swallow: expose via diagnostic below
+                _ = ex;
+            }
+            if (!reflThrew)
+            {
+                // Reflection call succeeded — but did it give the right answer?
+                // Expose both the reflection result AND the backing type for diagnosis.
+                var backingDbg = BackingTokenProp.GetValue(token) as JToken;
+                var allFieldsDbg = token.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic)
+                    .Concat(token.GetType().BaseType?.GetFields(BindingFlags.Instance | BindingFlags.NonPublic) ?? Array.Empty<FieldInfo>())
+                    .Select(f => { try { return $"{f.Name}={f.GetValue(token)}"; } catch { return $"{f.Name}=<err>"; } })
+                    .ToArray();
+                throw new InvalidOperationException(
+                    $"IsUndefined-diag: reflResult={reflResult} " +
+                    $"backingType={backingDbg?.Type}({(int)(backingDbg?.Type ?? JTokenType.None)}) " +
+                    $"backingVal={backingDbg} tokenClass={token.GetType().Name} " +
+                    $"fields=[{string.Join(", ", allFieldsDbg)}]");
+            }
         }
-        // Fallback: treat any non-concrete-value token as "unset".
-        // BC may use None, Null, Undefined, or a null pointer for the initial state
-        // depending on the BC version and how NavJsonValue is constructed.
+        // Fallback: backing-token heuristics.
         var backing = BackingTokenProp.GetValue(token) as JToken;
         if (backing == null) return true;
         if (backing.Type == JTokenType.None
@@ -778,24 +802,15 @@ public static class MockJsonHelper
             return true;
 
         // --- DIAGNOSTIC: expose the actual backing type so we can determine the correct check ---
-        // Look for an internal "_isUndefined" or similar flag on NavJsonValue.
-        var isUndefinedField = token.GetType().GetField("_isUndefined",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? token.GetType().BaseType?.GetField("_isUndefined",
-                BindingFlags.Instance | BindingFlags.NonPublic);
         var allFields = token.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic)
             .Concat(token.GetType().BaseType?.GetFields(BindingFlags.Instance | BindingFlags.NonPublic) ?? Array.Empty<FieldInfo>())
-            .Select(f => $"{f.Name}={f.GetValue(token)}")
-            .ToArray();
-        var allProps = token.GetType().GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-            .Where(p => p.GetIndexParameters().Length == 0)
-            .Select(p => { try { return $"{p.Name}={p.GetValue(token)}"; } catch { return $"{p.Name}=<err>"; } })
+            .Select(f => { try { return $"{f.Name}={f.GetValue(token)}"; } catch { return $"{f.Name}=<err>"; } })
             .ToArray();
         throw new InvalidOperationException(
-            $"IsUndefined-diag: type={backing.Type}({(int)backing.Type}) val={backing} " +
-            $"tokenClass={token.GetType().Name} " +
-            $"fields=[{string.Join(", ", allFields)}] " +
-            $"props=[{string.Join(", ", allProps)}]");
+            $"IsUndefined-diag-fallback: backingType={backing.Type}({(int)backing.Type}) " +
+            $"backingVal={backing} tokenClass={token.GetType().Name} " +
+            $"reflMethodNull={NavJsonValueALIsUndefinedMethod == null} " +
+            $"fields=[{string.Join(", ", allFields)}]");
     }
 
     /// <summary>
