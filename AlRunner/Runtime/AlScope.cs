@@ -1346,12 +1346,12 @@ public static class AlCompat
 
     /// <summary>
     /// Replacement for ALDatabase.ALCurrentTransactionType() which requires NavSession.
-    /// The runner has no real transaction tracking; returns TransactionType::Update (ordinal 2),
+    /// The runner has no real transaction tracking; returns TransactionType.Update,
     /// the most common real-world value and a predictable stable stub.
-    /// TransactionType ordinals: Browse=0, Snapshot=1, Update=2, Report=3.
+    /// TransactionType is a BC enum: Browse=0, Snapshot=1, Update=2, Report=3.
     /// </summary>
-    public static NavOption ALCurrentTransactionType()
-        => AlRunner.Runtime.MockRecordHandle.CreateOptionValue(2); // TransactionType::Update
+    public static Microsoft.Dynamics.Nav.Types.TransactionType ALCurrentTransactionType()
+        => Microsoft.Dynamics.Nav.Types.TransactionType.Update;
 
     /// <summary>
     /// Replacement for ALDatabase.ALIsNullGuid(g) which requires NavSession.
