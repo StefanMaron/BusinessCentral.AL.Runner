@@ -121,6 +121,18 @@ public class RoslynRewriter : CSharpSyntaxRewriter
     /// </summary>
     public static SyntaxTree RewriteToTree(string csharp)
     {
+        // TEMPORARY DIAGNOSTIC — remove after diagnosing issue #499 Byte.ToText CI failure
+        if (csharp.Contains("BTT") || csharp.Contains("ByteToText") || csharp.Contains("NavByte"))
+        {
+            Console.Error.WriteLine("[DIAG] BTT/NavByte file — relevant lines:");
+            foreach (var line in csharp.Split('\n'))
+            {
+                var t = line.Trim();
+                if (t.Contains("ToText") || t.Contains("NavByte") || t.Contains("NavValueFormatter") ||
+                    t.Contains("ByteToText") || t.Contains("FormatWith"))
+                    Console.Error.WriteLine($"  {t}");
+            }
+        }
         var tree = CSharpSyntaxTree.ParseText(csharp);
         var root = tree.GetRoot();
 
