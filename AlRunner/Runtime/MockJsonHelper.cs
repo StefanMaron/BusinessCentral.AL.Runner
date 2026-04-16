@@ -267,14 +267,14 @@ public static class MockJsonHelper
     /// Returns the integer value of the named property.
     /// AL: JsonObject.GetInteger('key')  →  MockJsonHelper.GetInteger(token, key)
     /// </summary>
-    public static long GetInteger(NavJsonToken token, string key)
+    public static int GetInteger(NavJsonToken token, string key)
     {
         var backingToken = GetBackingToken(token);
         if (backingToken is not JObject obj)
             throw new Exception("The JSON token is not an object.");
         if (!obj.TryGetValue(key, out var val))
             throw new Exception($"The JSON object does not contain a property with the name '{key}'.");
-        return val.Value<long>();
+        return val.Value<int>();
     }
 
     /// <summary>
@@ -297,7 +297,7 @@ public static class MockJsonHelper
     /// Returns the nested JsonObject value of the named property.
     /// AL: JsonObject.GetObject('key')  →  MockJsonHelper.GetObject(token, key)
     /// </summary>
-    public static NavJsonToken GetObject(NavJsonToken token, string key)
+    public static NavJsonObject GetObject(NavJsonToken token, string key)
     {
         var backingToken = GetBackingToken(token);
         if (backingToken is not JObject obj)
@@ -306,7 +306,7 @@ public static class MockJsonHelper
             throw new Exception($"The JSON object does not contain a property with the name '{key}'.");
         if (val is not JObject)
             throw new Exception($"The value of JSON property '{key}' is not an object.");
-        return NavJsonToken.Create(val);
+        return (NavJsonObject)NavJsonToken.Create(val);
     }
 
     /// <summary>
@@ -314,7 +314,7 @@ public static class MockJsonHelper
     /// Returns the nested JsonArray value of the named property.
     /// AL: JsonObject.GetArray('key')  →  MockJsonHelper.GetArray(token, key)
     /// </summary>
-    public static NavJsonToken GetArray(NavJsonToken token, string key)
+    public static NavJsonArray GetArray(NavJsonToken token, string key)
     {
         var backingToken = GetBackingToken(token);
         if (backingToken is not JObject obj)
@@ -323,7 +323,7 @@ public static class MockJsonHelper
             throw new Exception($"The JSON object does not contain a property with the name '{key}'.");
         if (val is not JArray)
             throw new Exception($"The value of JSON property '{key}' is not an array.");
-        return NavJsonToken.Create(val);
+        return (NavJsonArray)NavJsonToken.Create(val);
     }
 
     private static bool IsSupportedTokenType(JToken token)
