@@ -2415,6 +2415,17 @@ public void ClearApplicationMemberVariables()
                     .WithTriviaFrom(visited);
             }
 
+            // ALSession.ALGetCurrentExecutionMode(session) -> ExecutionMode.Standard
+            // Real implementation requires a NavSession (null in standalone).
+            if (exprText == "ALSession" && methodName == "ALGetCurrentExecutionMode")
+            {
+                return SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("ExecutionMode"),
+                    SyntaxFactory.IdentifierName("Standard"))
+                    .WithTriviaFrom(visited);
+            }
+
             // ALSession.ALGetExecutionContext(session) / ALGetModuleExecutionContext(session)
             // -> AlCompat.GetExecutionContext()
             if (exprText == "ALSession" &&
@@ -3426,6 +3437,22 @@ public void ClearApplicationMemberVariables()
             // Also handle ToDecimal, and other methods that may chain after Target
             // e.g. this.spikeItem.Target.GetFieldValueSafe(3, NavType.Decimal).ToDecimal()
             // The GetFieldValueSafe is caught above; ToDecimal chains on its result, not on Target.
+        }
+
+        // Pattern: ALSession.ALCurrentClientType -> NavClientType.Background
+        //          ALSession.ALDefaultClientType -> NavClientType.Background
+        // Both access NavSession which is null in standalone mode.
+        if (visited.Expression is IdentifierNameSyntax sessionId &&
+            sessionId.Identifier.Text == "ALSession")
+        {
+            var propName = visited.Name.Identifier.Text;
+            if (propName == "ALCurrentClientType" || propName == "ALDefaultClientType")
+            {
+                return SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("NavClientType"),
+                    SyntaxFactory.IdentifierName("Background"));
+            }
         }
 
         // Pattern: ALSystemErrorHandling.ALGetLastErrorText -> AlScope.LastErrorText
