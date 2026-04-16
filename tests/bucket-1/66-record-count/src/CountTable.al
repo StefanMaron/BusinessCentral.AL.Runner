@@ -1,4 +1,4 @@
-table 66000 "RC Test Table"
+table 66000 "Count Rows Test Table"
 {
     fields
     {
