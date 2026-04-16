@@ -48,11 +48,11 @@ public class MockHttpResponseMessage
     public void Clear() { }
 
     /// <summary>
-    /// BC emits: <c>response.ALIsBlockedByEnvironment()</c>
+    /// BC emits: <c>response.ALIsBlockedByEnvironment</c> (property read)
     /// for <c>HttpResponseMessage.IsBlockedByEnvironment()</c>.
     /// Always false — environment blocking is not applicable in standalone mode.
     /// </summary>
-    public bool ALIsBlockedByEnvironment() => false;
+    public bool ALIsBlockedByEnvironment => false;
 
     /// <summary>
     /// BC emits: <c>response.ALGetCookie(DataError, name, ByRef&lt;MockCookie&gt;)</c>
