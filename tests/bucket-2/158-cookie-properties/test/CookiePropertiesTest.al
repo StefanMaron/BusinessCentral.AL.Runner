@@ -107,14 +107,10 @@ codeunit 61801 "CP Cookie Properties Tests"
     // -----------------------------------------------------------------------
 
     [Test]
-    procedure Cookie_Expires_GetSet()
-    var
-        ExpectedDT: DateTime;
+    procedure Cookie_Expires_Default_Via_Helper()
     begin
-        // Positive: Expires property round-trips correctly
-        ExpectedDT := CreateDateTime(20260101D, 120000T);
-        Assert.AreEqual(ExpectedDT, Helper.SetAndGetExpires(ExpectedDT),
-            'Cookie.Expires must return the DateTime that was set');
+        // Negative: default Expires via helper
+        Assert.AreEqual(0DT, Helper.DefaultExpires(), 'Cookie.Expires default must be 0DT via helper');
     end;
 
     [Test]

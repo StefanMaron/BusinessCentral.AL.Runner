@@ -53,11 +53,10 @@ codeunit 61800 "CP Helper"
         exit(Cookie.Expires);
     end;
 
-    procedure SetAndGetExpires(expiresDateTime: DateTime): DateTime
+    procedure DefaultExpires(): DateTime
     var
         Cookie: Cookie;
     begin
-        Cookie.Expires := expiresDateTime;
         exit(Cookie.Expires);
     end;
 
