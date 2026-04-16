@@ -1,4 +1,4 @@
-codeunit 58401 "Test Database SessionId"
+codeunit 58501 "Test Database SessionId"
 {
     Subtype = Test;
 
