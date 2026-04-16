@@ -46,7 +46,7 @@ codeunit 82001 "TCP Tooltip Tests"
         TP.ActiveField.SetValue(true);
         // [THEN] Values are correctly set; Tooltip does not interfere
         Assert.AreEqual('99', TP.IdField.Value(), 'IdField must return set value');
-        Assert.AreEqual('true', TP.ActiveField.Value(), 'ActiveField must return set value');
+        Assert.AreEqual('Yes', TP.ActiveField.Value(), 'ActiveField must return set value');
         TP.Close();
     end;
 
