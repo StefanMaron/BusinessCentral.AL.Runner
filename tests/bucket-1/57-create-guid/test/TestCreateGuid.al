@@ -5,14 +5,20 @@ codeunit 56501 "Test Create Guid"
     var
         Assert: Codeunit Assert;
 
-    [Test]
-    procedure CreateGuid_ReturnsNonEmptyGuid()
+    local procedure EmptyGuid(): Guid
     var
         G: Guid;
-        EmptyGuid: Guid;
+    begin
+        exit(G); // default Guid = all zeros
+    end;
+
+    [Test]
+    procedure CreateGuid_ReturnsNonDefaultGuid()
+    var
+        G: Guid;
     begin
         G := CreateGuid();
-        Assert.IsFalse(IsNullGuid(G), 'CreateGuid() must return a non-empty GUID');
+        Assert.AreNotEqual(EmptyGuid(), G, 'CreateGuid() must return a non-default (non-zero) GUID');
     end;
 
     [Test]
@@ -27,31 +33,31 @@ codeunit 56501 "Test Create Guid"
     end;
 
     [Test]
-    procedure CreateSequentialGuid_ReturnsNonEmptyGuid()
+    procedure CreateSequentialGuid_ReturnsNonDefaultGuid()
     var
         G: Guid;
     begin
         G := CreateSequentialGuid();
-        Assert.IsFalse(IsNullGuid(G), 'CreateSequentialGuid() must return a non-empty GUID');
+        Assert.AreNotEqual(EmptyGuid(), G, 'CreateSequentialGuid() must return a non-default GUID');
     end;
 
     [Test]
-    procedure CreateGuid_ViaHelper_ReturnsNonEmpty()
+    procedure CreateGuid_ViaHelper_ReturnsNonDefault()
     var
         Helper: Codeunit "Guid Helper";
         G: Guid;
     begin
         G := Helper.GetNewGuid();
-        Assert.IsFalse(IsNullGuid(G), 'CreateGuid() via codeunit helper must return non-empty GUID');
+        Assert.AreNotEqual(EmptyGuid(), G, 'CreateGuid() via codeunit helper must return non-default GUID');
     end;
 
     [Test]
-    procedure CreateSequentialGuid_ViaHelper_ReturnsNonEmpty()
+    procedure CreateSequentialGuid_ViaHelper_ReturnsNonDefault()
     var
         Helper: Codeunit "Guid Helper";
         G: Guid;
     begin
         G := Helper.GetNewSequentialGuid();
-        Assert.IsFalse(IsNullGuid(G), 'CreateSequentialGuid() via codeunit helper must return non-empty GUID');
+        Assert.AreNotEqual(EmptyGuid(), G, 'CreateSequentialGuid() via codeunit helper must return non-default GUID');
     end;
 }
