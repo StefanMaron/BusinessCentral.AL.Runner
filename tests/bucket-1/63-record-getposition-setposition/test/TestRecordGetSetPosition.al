@@ -8,88 +8,88 @@ codeunit 63401 "Test Record GetPosition"
     [Test]
     procedure GetPosition_ReturnsNonEmptyString()
     var
-        Customer: Record Customer;
+        Rec: Record "Pos Test Table";
         Pos: Text;
     begin
-        Customer.Init();
-        Customer."No." := 'GP001';
-        Customer.Insert();
+        Rec.Init();
+        Rec."No." := 'GP001';
+        Rec.Insert();
 
-        Customer.FindFirst();
-        Pos := Customer.GetPosition();
+        Rec.FindFirst();
+        Pos := Rec.GetPosition();
         Assert.AreNotEqual('', Pos, 'GetPosition must return a non-empty string after FindFirst');
     end;
 
     [Test]
     procedure SetPosition_RestoresPrimaryKeyRow()
     var
-        Customer: Record Customer;
+        Rec: Record "Pos Test Table";
         Pos: Text;
         FirstNo: Code[20];
     begin
         // Insert two rows
-        Customer.Init();
-        Customer."No." := 'SP001';
-        Customer.Insert();
-        Customer.Init();
-        Customer."No." := 'SP002';
-        Customer.Insert();
+        Rec.Init();
+        Rec."No." := 'SP001';
+        Rec.Insert();
+        Rec.Init();
+        Rec."No." := 'SP002';
+        Rec.Insert();
 
         // Position at first row, save position
-        Customer.FindFirst();
-        FirstNo := Customer."No.";
-        Pos := Customer.GetPosition();
+        Rec.FindFirst();
+        FirstNo := Rec."No.";
+        Pos := Rec.GetPosition();
 
         // Move to next row
-        Customer.Next();
-        Assert.AreNotEqual(FirstNo, Customer."No.", 'Next must advance to a different row');
+        Rec.Next();
+        Assert.AreNotEqual(FirstNo, Rec."No.", 'Next must advance to a different row');
 
         // Restore position — must be back on first row
-        Customer.SetPosition(Pos);
-        Assert.AreEqual(FirstNo, Customer."No.", 'SetPosition must restore the cursor to the saved row');
+        Rec.SetPosition(Pos);
+        Assert.AreEqual(FirstNo, Rec."No.", 'SetPosition must restore the cursor to the saved row');
     end;
 
     [Test]
     procedure GetSetPosition_Roundtrip()
     var
-        Customer: Record Customer;
+        Rec: Record "Pos Test Table";
         Pos: Text;
         SavedNo: Code[20];
     begin
-        Customer.Init();
-        Customer."No." := 'RT001';
-        Customer.Insert();
-        Customer.Init();
-        Customer."No." := 'RT002';
-        Customer.Insert();
-        Customer.Init();
-        Customer."No." := 'RT003';
-        Customer.Insert();
+        Rec.Init();
+        Rec."No." := 'RT001';
+        Rec.Insert();
+        Rec.Init();
+        Rec."No." := 'RT002';
+        Rec.Insert();
+        Rec.Init();
+        Rec."No." := 'RT003';
+        Rec.Insert();
 
         // Move to last row, save position
-        Customer.FindLast();
-        SavedNo := Customer."No.";
-        Pos := Customer.GetPosition();
+        Rec.FindLast();
+        SavedNo := Rec."No.";
+        Pos := Rec.GetPosition();
 
         // Move to first row
-        Customer.FindFirst();
-        Assert.AreNotEqual(SavedNo, Customer."No.", 'FindFirst must give a different row than saved');
+        Rec.FindFirst();
+        Assert.AreNotEqual(SavedNo, Rec."No.", 'FindFirst must give a different row than saved');
 
         // Restore
-        Customer.SetPosition(Pos);
-        Assert.AreEqual(SavedNo, Customer."No.", 'SetPosition roundtrip must return to the saved row');
+        Rec.SetPosition(Pos);
+        Assert.AreEqual(SavedNo, Rec."No.", 'SetPosition roundtrip must return to the saved row');
     end;
 
     [Test]
     procedure SetPosition_InvalidString_RaisesError()
     var
-        Customer: Record Customer;
+        Rec: Record "Pos Test Table";
     begin
-        Customer.Init();
-        Customer."No." := 'INV001';
-        Customer.Insert();
+        Rec.Init();
+        Rec."No." := 'INV001';
+        Rec.Insert();
 
-        asserterror Customer.SetPosition('totally-invalid-position-string');
+        asserterror Rec.SetPosition('totally-invalid-position-string');
         Assert.ExpectedError('');
     end;
 }
