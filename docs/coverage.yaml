@@ -5108,7 +5108,7 @@ Session.ApplicationIdentifier:
 Session.BindSubscription:
   layer: runtime-api
   category: Session
-  status: gap
+  status: covered
   notes: overloads=1
 
 Session.CurrentClientType:
@@ -5204,7 +5204,7 @@ Session.StopSession:
 Session.UnbindSubscription:
   layer: runtime-api
   category: Session
-  status: gap
+  status: covered
   notes: overloads=1
 
 # ── SessionInformation ──────────────────────────────────────────
