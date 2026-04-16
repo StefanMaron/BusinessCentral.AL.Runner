@@ -2125,8 +2125,10 @@ ErrorInfo.ErrorType:
 ErrorInfo.FieldNo:
   layer: runtime-api
   category: ErrorInfo
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native property works standalone. Integer get/set with 0 as fresh default.
+  tests:
+    - tests/bucket-2/172-errorinfo-fieldno
 
 ErrorInfo.Message:
   layer: runtime-api
