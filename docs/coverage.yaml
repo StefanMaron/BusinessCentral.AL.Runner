@@ -8536,74 +8536,74 @@ XmlAttributeCollection.Set:
 XmlCData.AddAfterSelf:
   layer: runtime-api
   category: XmlCData
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; tested in tests/bucket-1/166-xmlcdata
 
 XmlCData.AddBeforeSelf:
   layer: runtime-api
   category: XmlCData
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; tested in tests/bucket-1/166-xmlcdata
 
 XmlCData.AsXmlNode:
   layer: runtime-api
   category: XmlCData
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; tested in tests/bucket-1/166-xmlcdata
 
 XmlCData.Create:
   layer: runtime-api
   category: XmlCData
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; tested in tests/bucket-1/166-xmlcdata
 
 XmlCData.GetDocument:
   layer: runtime-api
   category: XmlCData
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; tested in tests/bucket-1/166-xmlcdata
 
 XmlCData.GetParent:
   layer: runtime-api
   category: XmlCData
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; tested in tests/bucket-1/166-xmlcdata
 
 XmlCData.Remove:
   layer: runtime-api
   category: XmlCData
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; tested in tests/bucket-1/166-xmlcdata
 
 XmlCData.ReplaceWith:
   layer: runtime-api
   category: XmlCData
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; tested in tests/bucket-1/166-xmlcdata
 
 XmlCData.SelectNodes:
   layer: runtime-api
   category: XmlCData
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; tested in tests/bucket-1/166-xmlcdata
 
 XmlCData.SelectSingleNode:
   layer: runtime-api
   category: XmlCData
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; tested in tests/bucket-1/166-xmlcdata
 
 XmlCData.Value:
   layer: runtime-api
   category: XmlCData
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; tested in tests/bucket-1/166-xmlcdata
 
 XmlCData.WriteTo:
   layer: runtime-api
   category: XmlCData
-  status: gap
-  notes: overloads=4
+  status: covered
+  notes: overloads=4; WriteTo(Text) covered via MockJsonHelper.WriteTo(object) fallback; tested in tests/bucket-1/166-xmlcdata
 
 # ── XmlComment ──────────────────────────────────────────────────
 

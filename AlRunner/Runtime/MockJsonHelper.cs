@@ -1,6 +1,7 @@
 namespace AlRunner.Runtime;
 
 using System.Globalization;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using Microsoft.Dynamics.Nav.Runtime;
@@ -96,6 +97,71 @@ public static class MockJsonHelper
                 throw;
             return false;
         }
+    }
+
+    /// <summary>
+    /// Fallback WriteTo for non-JSON types (e.g. NavXmlCData, NavXmlElement).
+    /// The rewriter intercepts all ALWriteTo calls regardless of receiver type, so XML nodes
+    /// also land here. We call ALWriteTo natively via reflection — XML Write methods do not
+    /// go through TrappableOperationExecutor and work standalone.
+    /// </summary>
+    public static bool WriteTo(object xmlNode, DataError errorLevel, ByRef<NavText> data)
+    {
+        try
+        {
+            // Find ALWriteTo(DataError, ByRef<NavText>) on the concrete XML node type.
+            var writeMethod = xmlNode.GetType()
+                .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                .FirstOrDefault(m => m.Name == "ALWriteTo"
+                    && m.GetParameters() is { Length: 2 } ps
+                    && ps[0].ParameterType == typeof(DataError)
+                    && ps[1].ParameterType.IsGenericType
+                    && ps[1].ParameterType.GetGenericTypeDefinition() == typeof(ByRef<>)
+                    && ps[1].ParameterType.GetGenericArguments()[0] == typeof(NavText));
+            if (writeMethod is not null)
+            {
+                writeMethod.Invoke(xmlNode, new object[] { errorLevel, data });
+                return true;
+            }
+
+            // Fallback: build CDATA wrapper from ALValue for NavXmlCData nodes.
+            var valueProp = xmlNode.GetType().GetProperty("ALValue",
+                BindingFlags.Public | BindingFlags.Instance);
+            if (valueProp?.GetValue(xmlNode) is NavText navText)
+            {
+                data.Value = new NavText(data.Value.MaxLength, $"<![CDATA[{(string)navText}]]>");
+                return true;
+            }
+
+            throw new InvalidOperationException(
+                $"MockJsonHelper.WriteTo: no write support for {xmlNode?.GetType().FullName}");
+        }
+        catch (TargetInvocationException ex) when (ex.InnerException is not null)
+        {
+            if (errorLevel == DataError.ThrowError)
+                throw ex.InnerException;
+            return false;
+        }
+        catch (Exception)
+        {
+            if (errorLevel == DataError.ThrowError)
+                throw;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Fallback WriteTo(OutStream) for non-JSON types.
+    /// See <see cref="WriteTo(object, DataError, ByRef{NavText})"/> for context.
+    /// </summary>
+    public static bool WriteTo(object xmlNode, DataError errorLevel, MockOutStream stream)
+    {
+        var raw = NavText.Default(0);
+        var textRef = new ByRef<NavText>(() => raw, v => raw = v);
+        bool ok = WriteTo(xmlNode, errorLevel, textRef);
+        if (ok)
+            stream.WriteText((string)raw);
+        return ok;
     }
 
     /// <summary>
