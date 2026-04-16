@@ -2250,8 +2250,10 @@ FieldRef.GetEnumValueCaption:
 FieldRef.GetEnumValueCaptionFromOrdinalValue:
   layer: runtime-api
   category: FieldRef
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFieldRef.ALGetEnumValueCaptionFromOrdinalValue looks up by ordinal value (not 1-based index). EnumRegistry does not track captions separately from names standalone, so the caption equals the member name.
+  tests:
+    - tests/bucket-2/177-fieldref-enum-from-ordinal
 
 FieldRef.GetEnumValueName:
   layer: runtime-api
@@ -2262,8 +2264,10 @@ FieldRef.GetEnumValueName:
 FieldRef.GetEnumValueNameFromOrdinalValue:
   layer: runtime-api
   category: FieldRef
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockFieldRef.ALGetEnumValueNameFromOrdinalValue returns the AL identifier of the enum member whose ordinal matches.
+  tests:
+    - tests/bucket-2/177-fieldref-enum-from-ordinal
 
 FieldRef.GetEnumValueOrdinal:
   layer: runtime-api

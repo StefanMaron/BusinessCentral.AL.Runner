@@ -276,6 +276,47 @@ public class MockFieldRef
         return members![index - 1].Ordinal;
     }
 
+    /// <summary>
+    /// ALGetEnumValueCaptionFromOrdinalValue — returns the caption of the enum member
+    /// whose ordinal value equals <paramref name="ordinalValue"/>. Distinct from the
+    /// 1-based-index ALGetOptionValueCaption: this one takes the enum's assigned
+    /// integer value (e.g. 0/5/10, not 1/2/3).
+    ///
+    /// Note: EnumRegistry does not track captions separately from names in standalone
+    /// mode (the AL parser only captures the member name at transpile time). Consumers
+    /// treating the caption as a display string should still get a reasonable value;
+    /// tests asserting caption-specific formatting should compare against the name.
+    /// </summary>
+    public string ALGetEnumValueCaptionFromOrdinalValue(int ordinalValue)
+    {
+        var members = GetEnumMembers();
+        if (members == null)
+            return "";
+        foreach (var m in members)
+        {
+            if (m.Ordinal == ordinalValue)
+                return m.Name;
+        }
+        return "";
+    }
+
+    /// <summary>
+    /// ALGetEnumValueNameFromOrdinalValue — returns the AL identifier of the enum
+    /// member whose ordinal value equals <paramref name="ordinalValue"/>.
+    /// </summary>
+    public string ALGetEnumValueNameFromOrdinalValue(int ordinalValue)
+    {
+        var members = GetEnumMembers();
+        if (members == null)
+            return "";
+        foreach (var m in members)
+        {
+            if (m.Ordinal == ordinalValue)
+                return m.Name;
+        }
+        return "";
+    }
+
     // -- CalcSum --
 
     /// <summary>
