@@ -74,7 +74,7 @@ public class IntegrationTests
     [Fact]
     public async Task StrictFlag_PromotesRunnerLimitationToFailure()
     {
-        // Without --strict: XmlPort.Import() throws NotSupportedException → exit 2
+        // Without --strict: Query.Open() throws NotSupportedException → exit 2
         var normal = await CliRunner.RunTestCaseAsync("strict-mode-fixture");
         Assert.Equal(2, normal.ExitCode);
 

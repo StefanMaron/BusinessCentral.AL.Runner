@@ -11,20 +11,14 @@ table 59950 "Strict Test Item"
     }
 }
 
-xmlport 59950 "Strict Test XmlPort"
+query 59950 "Strict Test Query"
 {
-    Direction = Import;
-    Format = Xml;
-
-    schema
+    elements
     {
-        textelement(Root)
+        dataitem(Item; "Strict Test Item")
         {
-            tableelement(Item; "Strict Test Item")
-            {
-                fieldelement(Id; Item.Id) { }
-                fieldelement(Name; Item.Name) { }
-            }
+            column(Id; Id) { }
+            column(Name; Name) { }
         }
     }
 }
