@@ -58,7 +58,12 @@ public static class MockNavApp
 
     /// <summary>
     /// Returns true — the runner grants full entitlement so all code paths are reachable.
-    /// BC's real implementation returns false when the app is not entitled on the tenant.
+    /// BC's real signature: IsEntitled(Id: Text[250] [; AppId: Guid]): Boolean
     /// </summary>
-    public static bool ALIsEntitled() => true;
+    public static bool ALIsEntitled(NavText id) => true;
+
+    /// <summary>
+    /// Overload with optional AppId: IsEntitled(Id: Text[250]; AppId: Guid): Boolean
+    /// </summary>
+    public static bool ALIsEntitled(NavText id, Guid appId) => true;
 }

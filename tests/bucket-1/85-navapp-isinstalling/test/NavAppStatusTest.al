@@ -40,9 +40,17 @@ codeunit 85001 "NAS Test"
     [Test]
     procedure IsEntitled_ReturnsTrue()
     begin
-        // Positive: standalone mode is always considered entitled.
-        Assert.IsTrue(Src.GetIsEntitled(),
-            'NavApp.IsEntitled() must return true in standalone mode');
+        // Positive: standalone mode is always considered entitled for any entitlement ID.
+        Assert.IsTrue(Src.GetIsEntitled('STANDARD'),
+            'NavApp.IsEntitled(id) must return true in standalone mode');
+    end;
+
+    [Test]
+    procedure IsEntitled_EmptyId_ReturnsTrue()
+    begin
+        // Positive: empty entitlement ID is also accepted — standalone grants all.
+        Assert.IsTrue(Src.GetIsEntitled(''),
+            'NavApp.IsEntitled with empty id must return true in standalone mode');
     end;
 
     // -----------------------------------------------------------------------
@@ -60,7 +68,7 @@ codeunit 85001 "NAS Test"
         // Negative: if entitled, must not also be unlicensed or installing.
         IsInstalling := Src.GetIsInstalling();
         IsUnlicensed := Src.GetIsUnlicensed();
-        IsEntitled := Src.GetIsEntitled();
+        IsEntitled := Src.GetIsEntitled('ANY');
 
         Assert.IsTrue(IsEntitled, 'Must be entitled');
         Assert.IsFalse(IsInstalling, 'Must not be installing when entitled');

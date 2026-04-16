@@ -12,8 +12,8 @@ codeunit 85000 "NAS Src"
         exit(NavApp.IsUnlicensed());
     end;
 
-    procedure GetIsEntitled(): Boolean
+    procedure GetIsEntitled(EntitlementId: Text): Boolean
     begin
-        exit(NavApp.IsEntitled());
+        exit(NavApp.IsEntitled(EntitlementId));
     end;
 }
