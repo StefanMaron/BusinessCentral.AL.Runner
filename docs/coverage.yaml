@@ -7521,14 +7521,16 @@ Text.CopyStr:
 Text.DelChr:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/194-text-static
+  notes: overloads=1. Static Text.DelChr form covered — where='=' strips all, '<' strips leading, '>' strips trailing.
 
 Text.DelStr:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/194-text-static
+  notes: overloads=2 (pos / pos+count). Both forms covered — 1-based AL convention.
 
 Text.EndsWith:
   layer: runtime-api
@@ -7560,8 +7562,9 @@ Text.IndexOfAny:
 Text.InsStr:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/194-text-static
+  notes: overloads=1. Static Text.InsStr form covered — insertion at start and middle positions (1-based).
 
 Text.LastIndexOf:
   layer: runtime-api
@@ -7573,14 +7576,16 @@ Text.LastIndexOf:
 Text.LowerCase:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/194-text-static
+  notes: overloads=1. Static Text.LowerCase form covered — includes differs-from-UpperCase trap.
 
 Text.MaxStrLen:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=2
+  status: covered
+  tests: tests/bucket-2/194-text-static
+  notes: overloads=2. Static Text.MaxStrLen form covered — returns the declared Text[N] length.
 
 Text.PadLeft:
   layer: runtime-api
@@ -7646,8 +7651,9 @@ Text.StrCheckSum:
 Text.StrLen:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/194-text-static
+  notes: overloads=1. Static Text.StrLen form covered — length of non-empty and empty strings.
 
 Text.StrPos:
   layer: runtime-api
@@ -7658,8 +7664,9 @@ Text.StrPos:
 Text.StrSubstNo:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/194-text-static
+  notes: overloads=1 (variadic). Static Text.StrSubstNo form covered — no-placeholder passthrough, single %1, multiple placeholders with mixed Text/Integer args.
 
 Text.Substring:
   layer: runtime-api
@@ -7703,8 +7710,9 @@ Text.TrimStart:
 Text.UpperCase:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/194-text-static
+  notes: overloads=1. Static Text.UpperCase form covered — includes differs-from-LowerCase trap.
 
 # ── TextBuilder ─────────────────────────────────────────────────
 
