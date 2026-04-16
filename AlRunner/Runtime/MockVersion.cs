@@ -45,6 +45,27 @@ public struct MockVersion
     /// </summary>
     public static MockVersion Default => new MockVersion();
 
+    /// <summary>
+    /// Implicit conversion from the real <c>NavVersion</c> BC runtime type to
+    /// <c>MockVersion</c>. BC may assign a real <c>NavVersion</c> (e.g. from
+    /// <c>ModuleInfo.AppVersion</c>) to a variable whose declared type was rewritten
+    /// to <c>MockVersion</c>. Reads the int properties on the real type; falls back
+    /// to zero on any exception (service-tier types unavailable standalone).
+    /// </summary>
+    public static implicit operator MockVersion(Microsoft.Dynamics.Nav.Runtime.NavVersion nav)
+    {
+        var result = new MockVersion();
+        try
+        {
+            result._major    = nav.ALMajor;
+            result._minor    = nav.ALMinor;
+            result._build    = nav.ALBuild;
+            result._revision = nav.ALRevision;
+        }
+        catch { /* NavVersion properties may not work without the service tier */ }
+        return result;
+    }
+
     /// <summary>BC lowers <c>ver.Major()</c> to the int property <c>ver.ALMajor</c>.</summary>
     public int ALMajor => _major;
 

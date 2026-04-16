@@ -802,6 +802,8 @@ public static class AlCompat
         if (value == null) return "";
         // Unwrap MockVariant to get the underlying value
         if (value is MockVariant mv) return Format(mv.Value);
+        // MockVersion — Format(ver) returns "major.minor.build.revision"
+        if (value is MockVersion mver) return $"{mver.ALMajor}.{mver.ALMinor}.{mver.ALBuild}.{mver.ALRevision}";
         // Handle native .NET numeric types
         if (value is decimal d) return FormatDecimal(d);
         if (value is double dbl) return FormatDecimal((decimal)dbl);
