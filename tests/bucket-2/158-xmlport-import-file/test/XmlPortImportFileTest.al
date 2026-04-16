@@ -1,4 +1,4 @@
-codeunit 61801 "XIF XmlPortImportFile Test"
+codeunit 61802 "XIF XmlPortImportFile Test"
 {
     Subtype = Test;
 
@@ -6,13 +6,13 @@ codeunit 61801 "XIF XmlPortImportFile Test"
         Assert: Codeunit Assert;
 
     [Test]
-    procedure ImportFile_WithPortNumber_NoError()
+    procedure ImportFile_WithFileName_NoError()
     var
         Helper: Codeunit "XIF Helper";
     begin
-        // Positive: XmlPort.Import(portNumber, fileName) must be a no-op stub — no error.
-        Helper.CallImportFile(1, 'test.xml');
-        Assert.IsTrue(true, 'XmlPort.Import(portNumber, fileName) must complete without error');
+        // Positive: xp.ImportFile(fileName) must be a no-op stub — no error.
+        Helper.CallImportFile('test.xml');
+        Assert.IsTrue(true, 'XmlPort.ImportFile(fileName) must complete without error');
     end;
 
     [Test]
@@ -21,8 +21,8 @@ codeunit 61801 "XIF XmlPortImportFile Test"
         Helper: Codeunit "XIF Helper";
     begin
         // Edge case: empty filename must also be a no-op.
-        Helper.CallImportFile(0, '');
-        Assert.IsTrue(true, 'XmlPort.Import with empty fileName must complete without error');
+        Helper.CallImportFile('');
+        Assert.IsTrue(true, 'XmlPort.ImportFile with empty fileName must complete without error');
     end;
 
     [Test]
@@ -31,9 +31,9 @@ codeunit 61801 "XIF XmlPortImportFile Test"
         Helper: Codeunit "XIF Helper";
     begin
         // Edge case: calling ImportFile multiple times must not error.
-        Helper.CallImportFile(1, 'first.xml');
-        Helper.CallImportFile(2, 'second.xml');
-        Assert.IsTrue(true, 'XmlPort.Import called twice must complete without error');
+        Helper.CallImportFile('first.xml');
+        Helper.CallImportFile('second.xml');
+        Assert.IsTrue(true, 'XmlPort.ImportFile called twice must complete without error');
     end;
 
     [Test]

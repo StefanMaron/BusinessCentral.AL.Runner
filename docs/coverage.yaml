@@ -9262,8 +9262,8 @@ Xmlport.Export:
 Xmlport.Import:
   layer: runtime-api
   category: Xmlport
-  status: covered
-  notes: overloads=1; no-op stub via ALImportFile in StripEntireCallMethods; suite 158-xmlport-import-file
+  status: gap
+  notes: overloads=1
 
 Xmlport.Run:
   layer: runtime-api
@@ -9324,8 +9324,8 @@ XmlportInstance.Import:
 XmlportInstance.ImportFile:
   layer: runtime-api
   category: XmlportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op stub via ALImportFile in StripEntireCallMethods; suite 158-xmlport-import-file
 
 XmlportInstance.Quit:
   layer: runtime-api

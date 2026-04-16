@@ -1,13 +1,26 @@
-/// Helper codeunit that wraps the file-based XmlPort.Import overload so the
-/// test can exercise it without calling it inline.
-/// Actual static signature: XmlPort.Import(PortNumber: Integer; FileName: Text)
-codeunit 61800 "XIF Helper"
+/// Helper codeunit that wraps the instance XmlPort.ImportFile so the
+/// test can exercise the file-based import path without calling it inline.
+/// Actual signature: myXmlPort.ImportFile(FileName: Text)
+
+xmlport 61800 "XIF XmlPort"
 {
-    /// Call XmlPort.Import(portNumber, fileName) — must be a no-op stub
+    Direction = Import;
+    Format = Xml;
+    schema
+    {
+        textelement(Root) { }
+    }
+}
+
+codeunit 61801 "XIF Helper"
+{
+    /// Call xp.ImportFile(fileName) on an XmlPort instance — must be a no-op stub
     /// in standalone mode (no actual file I/O performed).
-    procedure CallImportFile(portNumber: Integer; fileName: Text)
+    procedure CallImportFile(fileName: Text)
+    var
+        xp: XmlPort "XIF XmlPort";
     begin
-        XmlPort.Import(portNumber, fileName);
+        xp.ImportFile(fileName);
     end;
 
     /// Proving helper — returns a+b+1 to verify the codeunit is live.
