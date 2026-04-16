@@ -823,9 +823,9 @@ public static class AlTranspiler
         {
             if (parseDiags.Any(d => d.Severity == DiagnosticSeverity.Error))
             {
-                Log.Info("AL parse errors:");
+                Console.Error.WriteLine("AL parse errors:");
                 foreach (var d in parseDiags.Where(d => d.Severity == DiagnosticSeverity.Error))
-                    Log.Info($"  {d}");
+                    Console.Error.WriteLine($"  {d}");
                 hasErrors = true;
             }
             syntaxTrees.Add(tree);
@@ -1164,11 +1164,11 @@ public static class AlTranspiler
             }
 
             if (otherErrors.Count > 0)
-                Log.Info($"AL declaration errors ({otherErrors.Count} non-missing):");
+                Console.Error.WriteLine($"AL declaration errors ({otherErrors.Count} non-missing):");
             foreach (var d in otherErrors.Take(10))
-                Log.Info($"  {d.Id}: {d.GetMessage()}");
+                Console.Error.WriteLine($"  {d.Id}: {d.GetMessage()}");
             if (otherErrors.Count > 10)
-                Log.Info($"  ... and {otherErrors.Count - 10} more");
+                Console.Error.WriteLine($"  ... and {otherErrors.Count - 10} more");
         }
 
         var outputter = new CSharpCaptureOutputter();
