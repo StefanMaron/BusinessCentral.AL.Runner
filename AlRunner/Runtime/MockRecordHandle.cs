@@ -2436,14 +2436,14 @@ public class MockRecordHandle
     {
         return template switch
         {
-            NavCode _ => new NavCode(raw),
+            NavCode _ => new NavCode(250, raw),
             NavText _ => new NavText(raw),
             NavInteger _ when int.TryParse(raw, System.Globalization.NumberStyles.Integer,
-                System.Globalization.CultureInfo.InvariantCulture, out var iv) => new NavInteger(iv),
+                System.Globalization.CultureInfo.InvariantCulture, out var iv) => NavInteger.Create(iv),
             NavBigInteger _ when long.TryParse(raw, System.Globalization.NumberStyles.Integer,
-                System.Globalization.CultureInfo.InvariantCulture, out var lv) => new NavBigInteger(lv),
+                System.Globalization.CultureInfo.InvariantCulture, out var lv) => NavBigInteger.Create(lv),
             NavGuid _ when Guid.TryParse(raw, out var gv) => new NavGuid(gv),
-            NavBoolean _ when bool.TryParse(raw, out var bv) => new NavBoolean(bv),
+            NavBoolean _ when bool.TryParse(raw, out var bv) => NavBoolean.Create(bv),
             _ => new NavText(raw),
         };
     }
