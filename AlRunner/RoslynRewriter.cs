@@ -2110,6 +2110,20 @@ public void ClearApplicationMemberVariables() { }
                     visited.ArgumentList);
             }
 
+            // NavXmlPort.Run(portId [, showPage, showXml]) -> MockXmlPortHandle.StaticRun(...)
+            // BC emits `NavXmlPort.Run(<id>)` for Xmlport.Run(Xmlport::"X"). No file I/O or
+            // interactive target standalone — the stub completes as a no-op so caller
+            // execution continues unaffected.
+            if (exprText == "NavXmlPort" && methodName == "Run")
+            {
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("MockXmlPortHandle"),
+                        SyntaxFactory.IdentifierName("StaticRun")),
+                    visited.ArgumentList);
+            }
+
             // NavQuery.ALSaveAsCsv/ALSaveAsXml/ALSaveAsJson/ALSaveAsExcel -> MockQueryHandle statics
             // BC emits these static calls for Query.SaveAsCsv(queryId, ...) etc.
             // NavQuery requires the service tier; forward to MockQueryHandle stubs.

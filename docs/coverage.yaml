@@ -9278,8 +9278,10 @@ Xmlport.Import:
 Xmlport.Run:
   layer: runtime-api
   category: Xmlport
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter routes NavXmlPort.Run -> MockXmlPortHandle.StaticRun which is a no-op (no file I/O or interactive UI standalone). Accepts all arg shapes via params object?[].
+  tests:
+    - tests/bucket-2/163-xmlport-run
 
 # ── XmlportInstance ─────────────────────────────────────────────
 

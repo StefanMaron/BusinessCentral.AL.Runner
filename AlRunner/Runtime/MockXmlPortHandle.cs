@@ -80,4 +80,15 @@ public class MockXmlPortHandle
         => throw new NotSupportedException(
             $"XmlPort {xmlPortId} Export requires the BC service tier and is not supported by al-runner. " +
             "Use AL interface injection to abstract XmlPort dependencies for testing.");
+
+    /// <summary>
+    /// Static <c>Xmlport.Run(portId [, showPage [, showXml]])</c> — no-op standalone.
+    /// The real implementation opens a request page or imports/exports via file
+    /// dialogs, neither of which apply to al-runner. Unlike StaticImport/Export
+    /// (which take explicit stream arguments and thus indicate intentional I/O),
+    /// Run is a "fire and forget" entry-point — tests that call it generally
+    /// just want the compilation unit to build and control to flow past the call.
+    /// `params object?[]` accepts any trailing arg shape BC emits.
+    /// </summary>
+    public static void StaticRun(int xmlPortId, params object?[] args) { }
 }
