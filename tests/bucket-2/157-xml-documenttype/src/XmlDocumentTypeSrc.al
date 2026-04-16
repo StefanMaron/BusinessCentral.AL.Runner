@@ -209,14 +209,12 @@ codeunit 61720 "XDT Helper"
     var
         doc: XmlDocument;
         docType: XmlDocumentType;
-        pi: XmlProcessingInstruction;
-        piNode: XmlNode;
+        elem: XmlElement;
     begin
         XmlDocument.ReadFrom('<!DOCTYPE html><html/>', doc);
         if doc.GetDocumentType(docType) then begin
-            pi := XmlProcessingInstruction.Create('xml-stylesheet', 'type="text/css"');
-            piNode := pi.AsXmlNode();
-            docType.AddAfterSelf(piNode);
+            elem := XmlElement.Create('added');
+            docType.AddAfterSelf(elem);
         end;
         exit(true);
     end;
@@ -225,14 +223,12 @@ codeunit 61720 "XDT Helper"
     var
         doc: XmlDocument;
         docType: XmlDocumentType;
-        pi: XmlProcessingInstruction;
-        piNode: XmlNode;
+        elem: XmlElement;
     begin
         XmlDocument.ReadFrom('<!DOCTYPE html><html/>', doc);
         if doc.GetDocumentType(docType) then begin
-            pi := XmlProcessingInstruction.Create('xml-stylesheet', 'type="text/css"');
-            piNode := pi.AsXmlNode();
-            docType.AddBeforeSelf(piNode);
+            elem := XmlElement.Create('before');
+            docType.AddBeforeSelf(elem);
         end;
         exit(true);
     end;
@@ -241,14 +237,12 @@ codeunit 61720 "XDT Helper"
     var
         doc: XmlDocument;
         docType: XmlDocumentType;
-        newDocType: XmlDocumentType;
-        newNode: XmlNode;
+        elem: XmlElement;
     begin
         XmlDocument.ReadFrom('<!DOCTYPE html><html/>', doc);
         if doc.GetDocumentType(docType) then begin
-            newDocType := XmlDocumentType.Create('svg');
-            newNode := newDocType.AsXmlNode();
-            docType.ReplaceWith(newNode);
+            elem := XmlElement.Create('replacement');
+            docType.ReplaceWith(elem);
         end;
         exit(true);
     end;
