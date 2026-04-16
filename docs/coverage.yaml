@@ -1006,7 +1006,9 @@ addafter_dataset_modification:
 addafter_modification:
   layer: syntax
   category: modification
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/70-pageext-addafter-addbefore
 
 addafter_views_modification:
   layer: syntax
@@ -1026,7 +1028,9 @@ addbefore_dataset_modification:
 addbefore_modification:
   layer: syntax
   category: modification
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/70-pageext-addafter-addbefore
 
 addbefore_views_modification:
   layer: syntax
