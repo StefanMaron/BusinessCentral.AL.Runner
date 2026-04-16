@@ -2146,6 +2146,13 @@ public void ClearApplicationMemberVariables()
             var exprText = memberAccess.Expression.ToString();
             var methodName = memberAccess.Name.Identifier.Text;
 
+            // DEBUG: log any method calls that contain "Undefined" in the name
+            if (methodName.Contains("Undefined", StringComparison.OrdinalIgnoreCase)
+                || methodName.Contains("Undef", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.Error.WriteLine($"[DEBUG-REWRITER] Invocation: {exprText}.{methodName}({string.Join(", ", visited.ArgumentList.Arguments.Select(a => a.ToString()))})");
+            }
+
             // NavDialog.ALConfirm(session, guid, question, [default]) -> MockDialog.ALConfirm(question, [default])
             if ((exprText == "NavDialog" || exprText == "MockDialog") && methodName == "ALConfirm")
             {
