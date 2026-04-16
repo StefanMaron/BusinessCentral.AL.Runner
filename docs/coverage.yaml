@@ -6917,14 +6917,16 @@ Text.Contains:
 Text.ConvertStr:
   layer: runtime-api
   category: Text
-  status: gap
+  status: covered
+  tests: tests/bucket-1/66-text-selectstr-incstr
   notes: overloads=1
 
 Text.CopyStr:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/66-text-selectstr-incstr
+  notes: overloads=2 (2-param via AlCompat; 3-param via BC runtime)
 
 Text.DelChr:
   layer: runtime-api
@@ -6947,7 +6949,8 @@ Text.EndsWith:
 Text.IncStr:
   layer: runtime-api
   category: Text
-  status: gap
+  status: covered
+  tests: tests/bucket-1/66-text-selectstr-incstr
   notes: overloads=2
 
 Text.IndexOf:
@@ -7019,7 +7022,8 @@ Text.Replace:
 Text.SelectStr:
   layer: runtime-api
   category: Text
-  status: gap
+  status: covered
+  tests: tests/bucket-1/66-text-selectstr-incstr
   notes: overloads=1
 
 Text.Split:

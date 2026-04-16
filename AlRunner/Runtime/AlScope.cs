@@ -1537,4 +1537,89 @@ public static class AlCompat
         var val = NavDateTimeValueField.GetValue(dt);
         return val is DateTime d ? d : default;
     }
+
+    // -----------------------------------------------------------------------
+    // Replacement for ALSystemString.ALSelectStr
+    // AL SelectStr(Number, String) returns the Nth comma-delimited token
+    // (1-based). Throws if Number is out of range.
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// AL <c>SelectStr(n, s)</c> — returns the Nth comma-separated token from s (1-based).
+    /// Throws when n is less than 1 or greater than the number of tokens.
+    /// </summary>
+    public static string SelectStr(int n, string s)
+    {
+        var parts = (s ?? "").Split(',');
+        if (n < 1 || n > parts.Length)
+            throw new Exception($"The index ({n}) in SelectStr is out of range (1..{parts.Length}).");
+        return parts[n - 1];
+    }
+
+    // -----------------------------------------------------------------------
+    // Replacement for ALSystemString.ALIncStr
+    // AL IncStr(s) increments the last numeric sequence found in s.
+    // e.g. 'DOC001' -> 'DOC002', 'A099' -> 'A100'.
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// AL <c>IncStr(s)</c> — increments the trailing numeric sequence in s,
+    /// preserving leading zeros and width. Returns s unchanged if no digits found.
+    /// </summary>
+    public static string IncStr(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return s;
+        // Find the last run of digit characters
+        int end = s.Length - 1;
+        while (end >= 0 && !char.IsDigit(s[end]))
+            end--;
+        if (end < 0) return s; // no digits
+        int start = end;
+        while (start > 0 && char.IsDigit(s[start - 1]))
+            start--;
+        var digits = s.Substring(start, end - start + 1);
+        var incremented = (long.Parse(digits) + 1).ToString().PadLeft(digits.Length, '0');
+        return s.Substring(0, start) + incremented + s.Substring(end + 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Replacement for ALSystemString.ALConvertStr
+    // AL ConvertStr(String, FromChars, ToChars) replaces each character in
+    // FromChars with the corresponding character in ToChars.
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// AL <c>ConvertStr(s, fromChars, toChars)</c> — character-for-character
+    /// replacement. Each character in fromChars is replaced with the corresponding
+    /// character in toChars. FromChars and ToChars must have the same length.
+    /// </summary>
+    public static string ConvertStr(string s, string fromChars, string toChars)
+    {
+        if (string.IsNullOrEmpty(s)) return s;
+        if (string.IsNullOrEmpty(fromChars)) return s;
+        var sb = new System.Text.StringBuilder(s.Length);
+        foreach (char c in s)
+        {
+            int idx = fromChars.IndexOf(c);
+            sb.Append(idx >= 0 && idx < toChars.Length ? toChars[idx] : c);
+        }
+        return sb.ToString();
+    }
+
+    // -----------------------------------------------------------------------
+    // Replacement for ALSystemString.ALCopyStr (2-param variant)
+    // AL CopyStr(String, Position) returns the substring from Position to end.
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// AL <c>CopyStr(s, position)</c> — returns the substring starting at
+    /// position (1-based) through the end of the string.
+    /// </summary>
+    public static string CopyStr(string s, int position)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        if (position < 1) position = 1;
+        if (position > s.Length) return "";
+        return s.Substring(position - 1);
+    }
 }

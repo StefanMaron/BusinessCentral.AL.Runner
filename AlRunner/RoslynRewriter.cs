@@ -2362,6 +2362,51 @@ public void ClearApplicationMemberVariables() { }
                         SyntaxFactory.IdentifierName("StrSubstNo")));
             }
 
+            // ALSystemString.ALSelectStr(n, s) -> AlCompat.SelectStr(n, s)
+            // The real ALSelectStr calls NavSession for locale, crashing without NavSession.
+            if (exprText == "ALSystemString" && methodName == "ALSelectStr")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("SelectStr")));
+            }
+
+            // ALSystemString.ALIncStr(s) -> AlCompat.IncStr(s)
+            // The real ALIncStr calls NavValueFormatter, crashing without NavSession.
+            if (exprText == "ALSystemString" && methodName == "ALIncStr")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("IncStr")));
+            }
+
+            // ALSystemString.ALConvertStr(s, from, to) -> AlCompat.ConvertStr(s, from, to)
+            // The real ALConvertStr accesses NavSession for locale, crashing without NavSession.
+            if (exprText == "ALSystemString" && methodName == "ALConvertStr")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("ConvertStr")));
+            }
+
+            // ALSystemString.ALCopyStr(s, position) -> AlCompat.CopyStr(s, position)  [2-arg variant]
+            // The 3-arg variant (s, position, length) is handled by the BC runtime natively.
+            if (exprText == "ALSystemString" && methodName == "ALCopyStr"
+                && visited.ArgumentList.Arguments.Count == 2)
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("CopyStr")));
+            }
+
             // ALDatabase.ALIsInWriteTransaction() -> false
             // The real ALIsInWriteTransaction calls NavSession.HasWriteTransaction() which crashes
             // with NullReferenceException when NavSession is null (runner context, no DB).
