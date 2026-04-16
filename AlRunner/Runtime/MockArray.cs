@@ -11,6 +11,7 @@ public class MockArray<T> : IEnumerable<T>
 {
     private readonly T[] _items;
     private readonly Func<T>? _factory;
+    private readonly int[] _dimensions;
 
     /// <summary>
     /// Constructor matching NavArray(T initValue, params int[] dimensions).
@@ -18,8 +19,9 @@ public class MockArray<T> : IEnumerable<T>
     /// </summary>
     public MockArray(T defaultValue, params int[] dimensions)
     {
+        _dimensions = dimensions.Length > 0 ? (int[])dimensions.Clone() : new[] { 0 };
         int totalLength = 1;
-        foreach (var d in dimensions) totalLength *= d;
+        foreach (var d in _dimensions) totalLength *= d;
         _factory = null;
         _items = new T[totalLength];
         for (int i = 0; i < totalLength; i++)
@@ -32,6 +34,7 @@ public class MockArray<T> : IEnumerable<T>
     /// </summary>
     public MockArray(int length, Func<T> factory)
     {
+        _dimensions = new[] { length };
         _factory = factory;
         _items = new T[length];
         for (int i = 0; i < length; i++)
@@ -53,8 +56,22 @@ public class MockArray<T> : IEnumerable<T>
     }
 
     public int Length => _items.Length;
-    public int ArrayLen() => _items.Length;
-    public int ArrayLen(int dimension) => _items.Length;
+
+    /// <summary>
+    /// AL ArrayLen(arr) — returns the length of the first dimension.
+    /// For a 1-D array[N], returns N. For multi-D array[X,Y,...] returns X.
+    /// </summary>
+    public int ArrayLen() => _dimensions.Length > 0 ? _dimensions[0] : 0;
+
+    /// <summary>
+    /// AL ArrayLen(arr, dimension) — returns the length of the specified 1-based dimension.
+    /// For array[3,4], dimension=1 returns 3, dimension=2 returns 4.
+    /// </summary>
+    public int ArrayLen(int dimension)
+    {
+        int idx = dimension - 1; // AL is 1-based
+        return (idx >= 0 && idx < _dimensions.Length) ? _dimensions[idx] : 0;
+    }
 
     public void Clear()
     {
