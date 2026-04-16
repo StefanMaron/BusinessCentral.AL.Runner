@@ -5877,8 +5877,10 @@ Table.Insert:
 Table.IsEmpty:
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
   notes: overloads=1
+  tests:
+    - tests/bucket-1/56-isempty
 
 Table.IsTemporary:
   layer: runtime-api
