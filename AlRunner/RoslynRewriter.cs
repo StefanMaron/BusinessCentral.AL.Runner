@@ -2485,18 +2485,24 @@ public void ClearApplicationMemberVariables() { }
                     .WithTriviaFrom(visited);
             }
 
-            // ALCompiler.ToText(session, value[, withBraces]) -> AlCompat.Format(value) or AlCompat.GuidToText(value, false)
+            // ALCompiler.ToText(session, value[, withBraces]) -> AlCompat.Format(value) or AlCompat.GuidToText(value, bool)
             // BC lowers `byteVar.ToText()` (and other scalar ToText calls) to the static
             // ALCompiler.ToText(session, value) form. We take the second argument (value).
             // 3-arg form: ALCompiler.ToText(session, navGuid, false) for Guid.ToText(false) →
             //   3rd arg literal false = no-delimiter form → GuidToText(value, false).
+            // 3-arg form: ALCompiler.ToText(session, navGuid, true) for Guid.ToText() (BC 26.x) →
+            //   3rd arg literal true = with-braces form → GuidToText(value, true).
+            // Note: Format(Guid) goes through NavValueFormatter.Format → AlCompat.Format → "D" (no braces).
+            //       Guid.ToText() goes through ALCompiler.ToText(s, g, true) → GuidToText(g, true) → "B" (braces).
             if (exprText == "ALCompiler" && methodName == "ToText"
                 && visited.ArgumentList.Arguments.Count >= 2)
             {
                 var valueArg = visited.ArgumentList.Arguments[1];
                 bool isFalseThirdArg = visited.ArgumentList.Arguments.Count >= 3 &&
                     visited.ArgumentList.Arguments[2].Expression.IsKind(SyntaxKind.FalseLiteralExpression);
-                if (isFalseThirdArg)
+                bool isTrueThirdArg = visited.ArgumentList.Arguments.Count >= 3 &&
+                    visited.ArgumentList.Arguments[2].Expression.IsKind(SyntaxKind.TrueLiteralExpression);
+                if (isFalseThirdArg || isTrueThirdArg)
                 {
                     return SyntaxFactory.InvocationExpression(
                         SyntaxFactory.MemberAccessExpression(
@@ -2506,7 +2512,8 @@ public void ClearApplicationMemberVariables() { }
                         SyntaxFactory.ArgumentList(
                             SyntaxFactory.SeparatedList(new[] {
                                 valueArg,
-                                SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(SyntaxKind.FalseLiteralExpression))
+                                SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(
+                                    isFalseThirdArg ? SyntaxKind.FalseLiteralExpression : SyntaxKind.TrueLiteralExpression))
                             })))
                         .WithTriviaFrom(visited);
                 }
