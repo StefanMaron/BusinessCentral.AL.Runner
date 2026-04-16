@@ -34,6 +34,13 @@ public class MockXmlPortHandle
     public MockOutStream? Destination { get; set; }
 
     /// <summary>
+    /// Instance <c>XP.Run([showRequestPage [, isImport]])</c>. No-op in standalone mode —
+    /// XmlPort.Run opens the request dialog and executes I/O, both of which require the
+    /// BC service tier. In tests, call the code that uses the XmlPort result directly.
+    /// </summary>
+    public void ALRun(object? errorLevel = null, object? showRequestPage = null, object? isImport = null) { }
+
+    /// <summary>
     /// Instance <c>XP.Import()</c>. Always throws — XmlPort I/O requires the service tier.
     /// Use an AL interface to inject a testable implementation.
     /// </summary>
@@ -58,8 +65,10 @@ public class MockXmlPortHandle
     public object? Invoke(int memberId, object[] args) => null;
 
     // ------------------------------------------------------------------
-    // Static form: XmlPort.Import(XmlPort::"X", InStr [, Rec])
+    // Static forms: XmlPort.Import/Export/Run
     // BC emits: NavXmlPort.Import(DataError, xmlPortId, inStr [, rec])
+    //           NavXmlPort.Export(DataError, xmlPortId, outStr [, rec])
+    //           NavXmlPort.Run(DataError) — no portId arg; port resolved via generated class
     // Rewriter redirects these to the statics below.
     // ------------------------------------------------------------------
 
@@ -80,4 +89,13 @@ public class MockXmlPortHandle
         => throw new NotSupportedException(
             $"XmlPort {xmlPortId} Export requires the BC service tier and is not supported by al-runner. " +
             "Use AL interface injection to abstract XmlPort dependencies for testing.");
+
+    /// <summary>
+    /// Static <c>XmlPort.Run([showRequestPage [, isImport]])</c> no-op stub.
+    /// BC emits <c>NavXmlPort.Run(DataError)</c> for the static AL form — no portId is
+    /// passed as an argument; the port identity is resolved through the generated XmlPort
+    /// derived class, not via a parameter. XmlPort.Run shows a request dialog and executes
+    /// I/O, both of which require the BC service tier. In standalone mode this is a no-op.
+    /// </summary>
+    public static void StaticRun(object? errorLevel = null, object? showRequestPage = null, object? isImport = null) { }
 }

@@ -9278,8 +9278,9 @@ Xmlport.Import:
 Xmlport.Run:
   layer: runtime-api
   category: Xmlport
-  status: gap
+  status: covered
   notes: overloads=1
+  suite: 163-xmlport-run
 
 # ── XmlportInstance ─────────────────────────────────────────────
 

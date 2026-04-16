@@ -2079,6 +2079,19 @@ public void ClearApplicationMemberVariables() { }
                 }
             }
 
+            // NavXmlPort.Run(DataError, xmlPortId [, showRequestPage [, isImport]]) -> MockXmlPortHandle.StaticRun(...)
+            // BC emits this static call for XmlPort.Run(XmlPort::"X" [, showRequestPage [, isImport]]).
+            // XmlPort.Run shows a request dialog and performs I/O — no-op in standalone mode.
+            if (exprText == "NavXmlPort" && methodName == "Run")
+            {
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("MockXmlPortHandle"),
+                        SyntaxFactory.IdentifierName("StaticRun")),
+                    visited.ArgumentList);
+            }
+
             // NavXmlPort.Import(DataError, xmlPortId, stream [, rec]) -> MockXmlPortHandle.StaticImport(...)
             // NavXmlPort.Export(DataError, xmlPortId, stream [, rec]) -> MockXmlPortHandle.StaticExport(...)
             // BC emits these static calls for the short form: XmlPort.Import(XmlPort::"X", InStr).
