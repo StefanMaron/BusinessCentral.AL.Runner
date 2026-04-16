@@ -48,11 +48,6 @@ All notable changes to this project are documented here. Format based on
   `tests/bucket-1/56-database-commit` adds 4 tests: commit without error, commit after
   insert preserves records, multiple commits are all no-ops, commit after modify preserves
   modified values. Coverage map: `Database.Commit` moved from `gap` to `covered`.
-- **`Table.Init` reset coverage (#306)** — New suite `tests/bucket-1/56-init-reset` adds 7
-  proving tests: Init clears Text/Decimal/Integer/Boolean fields to type defaults, preserves
-  PK fields, applies InitValue property, and resets in-memory values after Insert+Modify while
-  leaving the stored record unchanged. Coverage map: `Table.Init` moved from `gap` to `covered`
-  (also surfaces existing `47-initvalue` suite).
 - **`Table.SetAscending` coverage (#305)** — New suite `tests/bucket-1/55-setascending`
   adds 6 proving tests: default PK ascending, `SetAscending(Name, false)` → descending,
   explicit `SetAscending(Name, true)`, composite key with mixed directions (Priority asc +
