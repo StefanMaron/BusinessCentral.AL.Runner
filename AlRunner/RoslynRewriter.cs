@@ -59,6 +59,10 @@ public class RoslynRewriter : CSharpSyntaxRewriter
         "ALRegisterTableConnection",  // ALDatabase.ALRegisterTableConnection(target, ct, name, conn) — no external connections standalone; no-op
         "ALSetDefaultTableConnection",  // ALDatabase.ALSetDefaultTableConnection(ct, name) — no external connections standalone; no-op
         "ALUnregisterTableConnection",  // ALDatabase.ALUnregisterTableConnection(ct, name) — no external connections standalone; no-op
+        "ALAddAction",  // <navALErrorInfo | mockNotification>.ALAddAction(caption, codeunitId, method [, desc]) —
+                        // NavALErrorInfo.ALAddAction crashes standalone (null parent in NavApplicationObjectBaseHandle ctor),
+                        // and neither interactive ErrorInfo drill-down actions nor Notification action dispatch happen
+                        // without a UI. Stripping is safe — MockNotification tests that exist don't assert on stored action state.
     };
 
     private static readonly HashSet<string> StripITreeObjectArgMethods = new(StringComparer.Ordinal)

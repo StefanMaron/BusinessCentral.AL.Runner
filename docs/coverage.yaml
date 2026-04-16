@@ -2056,8 +2056,10 @@ EnumType.Ordinals:
 ErrorInfo.AddAction:
   layer: runtime-api
   category: ErrorInfo
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2 (3-arg + 4-arg with description); rewriter strips the entire call. ALAddAction on NavALErrorInfo crashes standalone (null parent in NavApplicationObjectBaseHandle ctor); stripping is safe because interactive drill-down actions don't fire without a UI.
+  tests:
+    - tests/bucket-2/169-errorinfo-addaction
 
 ErrorInfo.AddNavigationAction:
   layer: runtime-api
