@@ -3760,32 +3760,42 @@ Label.IndexOf:
 Label.IndexOfAny:
   layer: runtime-api
   category: Label
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2. Covered via NavText native — returns 1-based position of the earliest matching char; 0 when none match.
+  tests:
+    - tests/bucket-2/186-label-string-methods
 
 Label.LastIndexOf:
   layer: runtime-api
   category: Label
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1. Covered via NavText native — 1-based last occurrence, 0 when not found.
+  tests:
+    - tests/bucket-2/186-label-string-methods
 
 Label.PadLeft:
   layer: runtime-api
   category: Label
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1 (with padChar). Covered via NavText native.
+  tests:
+    - tests/bucket-2/186-label-string-methods
 
 Label.PadRight:
   layer: runtime-api
   category: Label
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1 (with padChar). Covered via NavText native.
+  tests:
+    - tests/bucket-2/186-label-string-methods
 
 Label.Remove:
   layer: runtime-api
   category: Label
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1 (from-index). Covered via NavText native — 1-based AL convention.
+  tests:
+    - tests/bucket-2/186-label-string-methods
 
 Label.Replace:
   layer: runtime-api
@@ -3798,8 +3808,10 @@ Label.Replace:
 Label.Split:
   layer: runtime-api
   category: Label
-  status: gap
-  notes: overloads=3
+  status: covered
+  notes: overloads=3 (Char, Text, List of [Char]). Covered via NavText native.
+  tests:
+    - tests/bucket-2/186-label-string-methods
 
 Label.StartsWith:
   layer: runtime-api
@@ -3812,8 +3824,10 @@ Label.StartsWith:
 Label.Substring:
   layer: runtime-api
   category: Label
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=2 (from-index, from-index+length). Covered via NavText native.
+  tests:
+    - tests/bucket-2/186-label-string-methods
 
 Label.ToLower:
   layer: runtime-api
@@ -3842,14 +3856,18 @@ Label.Trim:
 Label.TrimEnd:
   layer: runtime-api
   category: Label
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1. Covered via NavText native — trailing strip only, differs-from-TrimStart trap.
+  tests:
+    - tests/bucket-2/186-label-string-methods
 
 Label.TrimStart:
   layer: runtime-api
   category: Label
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1. Covered via NavText native — leading strip only.
+  tests:
+    - tests/bucket-2/186-label-string-methods
 
 # ── Media ───────────────────────────────────────────────────────
 
