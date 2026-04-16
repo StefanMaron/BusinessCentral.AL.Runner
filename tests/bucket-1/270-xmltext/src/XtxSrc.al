@@ -7,7 +7,7 @@ codeunit 84403 "XTX Src"
         t: XmlText;
     begin
         t := XmlText.Create(txt);
-        exit(t.Value());
+        exit(t.Value);
     end;
 
     procedure SetAndGetValue(initial: Text; newVal: Text): Text
@@ -15,8 +15,8 @@ codeunit 84403 "XTX Src"
         t: XmlText;
     begin
         t := XmlText.Create(initial);
-        t.Value(newVal);
-        exit(t.Value());
+        t.Value := newVal;
+        exit(t.Value);
     end;
 
     // ── AsXmlNode ───────────────────────────────────────────────────────────────
@@ -32,11 +32,11 @@ codeunit 84403 "XTX Src"
     procedure WriteToText(txt: Text): Text
     var
         t: XmlText;
-        sb: TextBuilder;
+        result: Text;
     begin
         t := XmlText.Create(txt);
-        t.WriteTo(sb);
-        exit(sb.ToText());
+        t.WriteTo(result);
+        exit(result);
     end;
 
     // ── AttachToElement / GetParent ─────────────────────────────────────────────
@@ -62,7 +62,8 @@ codeunit 84403 "XTX Src"
         root := XmlElement.Create('root');
         t := XmlText.Create(txt);
         root.Add(t);
-        t.GetParent(parent);
+        if not t.GetParent(parent) then
+            exit('');
         exit(parent.Name);
     end;
 
@@ -95,7 +96,8 @@ codeunit 84403 "XTX Src"
         root.Add(t);
         doc := XmlDocument.Create();
         doc.Add(root);
-        t.SelectNodes(xPath, nodes);
+        if not t.SelectNodes(xPath, nodes) then
+            exit(0);
         exit(nodes.Count);
     end;
 
