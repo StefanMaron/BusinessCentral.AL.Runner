@@ -1944,6 +1944,35 @@ public void ClearApplicationMemberVariables() { }
                 .WithTriviaFrom(visited);
         }
 
+        // `<expr>.ALToText(...)` → `AlCompat.GuidToText(<expr>, true/false)`
+        // BC emits navGuid.ALToText() (with AL prefix) for Guid.ToText() in AL, wrapped in
+        // new NavText(...). We only intercept when inside new NavText(...) to avoid catching
+        // MockTextBuilder.ALToText() (returns NavText directly, not wrapped in new NavText).
+        // The remaining new NavText(...) wrapper stays — GuidToText returns string so
+        // new NavText(string) compiles fine.
+        if (visited.Expression is MemberAccessExpressionSyntax alToTextMa &&
+            alToTextMa.Name.Identifier.Text == "ALToText" &&
+            node.Parent is ArgumentSyntax &&
+            node.Parent?.Parent is ArgumentListSyntax &&
+            node.Parent?.Parent?.Parent is ObjectCreationExpressionSyntax alToTextOc &&
+            alToTextOc.Type.ToString().Contains("NavText"))
+        {
+            bool isFalseArg = visited.ArgumentList.Arguments.Count >= 1 &&
+                visited.ArgumentList.Arguments[0].Expression.IsKind(SyntaxKind.FalseLiteralExpression);
+            return SyntaxFactory.InvocationExpression(
+                SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("AlCompat"),
+                    SyntaxFactory.IdentifierName("GuidToText")),
+                SyntaxFactory.ArgumentList(
+                    SyntaxFactory.SeparatedList(new[] {
+                        SyntaxFactory.Argument(alToTextMa.Expression),
+                        SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(
+                            isFalseArg ? SyntaxKind.FalseLiteralExpression : SyntaxKind.TrueLiteralExpression))
+                    })))
+                .WithTriviaFrom(visited);
+        }
+
         // NavCode.op_Equality(a, b) / NavCode.op_Inequality(a, b)
         // BC may emit explicit static operator calls for Code[N] comparisons in case statements
         // (rather than a binary == expression), depending on the BC version. Both forms need
