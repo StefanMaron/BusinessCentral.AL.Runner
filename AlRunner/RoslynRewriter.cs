@@ -1491,6 +1491,14 @@ public void ClearApplicationMemberVariables()
             }
         }
 
+        // new MockFilterPageBuilder(this) -> new MockFilterPageBuilder()
+        // BC emits `new NavFilterPageBuilder(this)` in scope-class field initialisers.
+        // The mock is parameterless — strip the ITreeObject parent.
+        if (typeText == "MockFilterPageBuilder" && visited.ArgumentList?.Arguments.Count == 1)
+        {
+            return visited.WithArgumentList(SyntaxFactory.ArgumentList());
+        }
+
         // new NavCode(maxLen, value) -> AlCompat.CreateNavCode(maxLen, value)
         // NavCode constructor calls EnsureValueIsUppercasedIfNeeded() which triggers NavEnvironment on Linux.
         // AlCompat.CreateNavCode pre-uppercases the string to avoid NavEnvironment access.
