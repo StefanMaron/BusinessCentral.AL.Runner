@@ -272,6 +272,8 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - Composite primary keys, sort ordering (SetCurrentKey / SetAscending), CurrentKey, Ascending
 - SETRANGE / SETFILTER filtering (=, <>, <, <=, >, >=, wildcards, OR via |)
 - GetFilter(field), GetFilters, HasFilter — return active filter expressions
+- GetPosition() / SetPosition(text) — serialise/restore primary-key cursor position;
+  round-trip guaranteed; SetPosition with unparseable or non-existent position throws
 - Record marking: `Rec.Mark(true/false)`, `Rec.Mark()` getter, `Rec.MarkedOnly(true)`,
   `Rec.ClearMarks()`. Marks are per record-variable; MarkedOnly gates FindSet/FindFirst/
   FindLast/Next/Count/IsEmpty to the marked subset.

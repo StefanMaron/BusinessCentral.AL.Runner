@@ -5869,7 +5869,9 @@ Table.GetFilters:
 Table.GetPosition:
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/63-record-getposition-setposition
   notes: overloads=1
 
 Table.GetRangeMax:
@@ -6089,7 +6091,9 @@ Table.SetPermissionFilter:
 Table.SetPosition:
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/63-record-getposition-setposition
   notes: overloads=1
 
 Table.SetRange:

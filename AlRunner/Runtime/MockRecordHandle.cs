@@ -2341,6 +2341,114 @@ public class MockRecordHandle
     }
 
     /// <summary>
+    /// AL's GETPOSITION — serialises the current primary-key field values into a text
+    /// string that <see cref="ALSetPosition"/> can use to restore the cursor later.
+    /// Format: <c>FieldName=CONST(Value)</c> for each PK field, comma-separated.
+    /// Example: <c>"No.=CONST(A001)"</c> for a Customer record positioned on No.=A001.
+    /// </summary>
+    public string ALGetPosition()
+    {
+        var pkFields = GetPrimaryKeyFields();
+        var parts = new List<string>(pkFields.Length);
+        foreach (var fieldNo in pkFields)
+        {
+            var name = GetFieldNameByNo(fieldNo);
+            var value = _fields.TryGetValue(fieldNo, out var v) ? NavValueToString(v) : "";
+            parts.Add($"{name}=CONST({value})");
+        }
+        return string.Join(",", parts);
+    }
+
+    /// <summary>
+    /// AL's SETPOSITION — parses a position string produced by <see cref="ALGetPosition"/>
+    /// and repositions the record cursor to the matching row.
+    /// Format expected: <c>FieldName=CONST(Value)</c> for each PK field, comma-separated.
+    /// Throws if the string is unparseable or the row is not found.
+    /// </summary>
+    public void ALSetPosition(string positionText)
+    {
+        if (string.IsNullOrEmpty(positionText))
+            throw new Exception($"SetPosition: position string is empty.");
+
+        // Parse each "FieldName=CONST(Value)" segment
+        var segments = positionText.Split(',');
+        var parsedValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var seg in segments)
+        {
+            var trimmed = seg.Trim();
+            var eqIdx = trimmed.IndexOf('=');
+            if (eqIdx < 0)
+                throw new Exception($"SetPosition: invalid position string '{positionText}'.");
+            var fieldName = trimmed[..eqIdx].Trim();
+            var rest = trimmed[(eqIdx + 1)..].Trim();
+            // Expect CONST(value) wrapper
+            if (!rest.StartsWith("CONST(", StringComparison.OrdinalIgnoreCase) || !rest.EndsWith(")"))
+                throw new Exception($"SetPosition: invalid segment '{trimmed}' in position string '{positionText}'.");
+            var rawValue = rest[6..^1]; // strip "CONST(" and ")"
+            parsedValues[fieldName] = rawValue;
+        }
+
+        if (parsedValues.Count == 0)
+            throw new Exception($"SetPosition: position string '{positionText}' has no field values.");
+
+        // Look up field numbers and set them in _fields
+        var pkFields = GetPrimaryKeyFields();
+        foreach (var fieldNo in pkFields)
+        {
+            var name = GetFieldNameByNo(fieldNo);
+            if (!parsedValues.TryGetValue(name, out var rawVal))
+                throw new Exception($"SetPosition: PK field '{name}' not found in position string '{positionText}'.");
+
+            // Preserve the field's existing type — copy the value as NavText/NavCode if present,
+            // or set as a NavText for unknown types. The Find below does a string compare anyway.
+            if (_fields.TryGetValue(fieldNo, out var existing))
+            {
+                // Re-apply the value preserving the existing NavValue type
+                _fields[fieldNo] = ParseNavValue(existing, rawVal);
+            }
+            else
+            {
+                _fields[fieldNo] = new NavText(rawVal);
+            }
+        }
+
+        // Find the row that matches the newly-set PK values
+        var table = GetRows();
+        var matchedPkFields = GetPrimaryKeyFields();
+        for (int i = 0; i < table.Count; i++)
+        {
+            if (RowMatchesPrimaryKey(table[i], _fields, matchedPkFields))
+            {
+                _fields = new Dictionary<int, NavValue>(table[i]);
+                _currentResultSet = table;
+                _cursorPosition = i;
+                return;
+            }
+        }
+        throw new Exception($"SetPosition: no record found for position '{positionText}' in table {_tableId}.");
+    }
+
+    /// <summary>
+    /// Parses a raw string into the same NavValue subtype as <paramref name="template"/>.
+    /// Used by <see cref="ALSetPosition"/> to restore PK field values with correct types.
+    /// </summary>
+    private static NavValue ParseNavValue(NavValue template, string raw)
+    {
+        return template switch
+        {
+            NavCode _ => new NavCode(raw),
+            NavText _ => new NavText(raw),
+            NavInteger _ when int.TryParse(raw, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var iv) => new NavInteger(iv),
+            NavBigInteger _ when long.TryParse(raw, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var lv) => new NavBigInteger(lv),
+            NavGuid _ when Guid.TryParse(raw, out var gv) => new NavGuid(gv),
+            NavBoolean _ when bool.TryParse(raw, out var bv) => new NavBoolean(bv),
+            _ => new NavText(raw),
+        };
+    }
+
+    /// <summary>
     /// AL's GETRANGEMIN — returns the minimum value of the filter range for a field.
     /// </summary>
     public NavValue ALGetRangeMinSafe(int fieldNo, NavType expectedType)
