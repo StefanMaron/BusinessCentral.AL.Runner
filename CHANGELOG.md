@@ -7,6 +7,13 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **`actionref_declaration` coverage (#388)** — Pages and page extensions containing
+  `actionref` sections (promoted-action bindings) now compile and run correctly.
+  The existing `RoslynRewriter` already handles the BC-generated C# for actionref
+  (the actionref declarations are inside `InitializeComponent` which is stripped).
+  New suite `tests/bucket-1/72-actionref` adds 2 proving tests confirming that a
+  codeunit in the same compilation unit as a page with actionref compiles and executes.
+  Coverage map: `actionref_declaration` moved from `gap` to `covered`.
 - **`Database.SelectLatestVersion` coverage (#313)** — `SelectLatestVersion()` was already
   a no-op (stripped by `StripEntireCallMethods` in `RoslynRewriter`) but had no proving
   tests. New suite `tests/bucket-1/58-database-select-latest-version` adds 3 tests:

@@ -764,7 +764,9 @@ action_group_section:
 actionref_declaration:
   layer: syntax
   category: page
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/72-actionref
 
 actions_section:
   layer: syntax
