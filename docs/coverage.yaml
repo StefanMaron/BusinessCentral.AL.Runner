@@ -837,8 +837,9 @@ page_field:
 part_section:
   layer: syntax
   category: page
-  status: gap
-  notes: Page parts require UI composition
+  status: covered
+  tests:
+    - tests/bucket-1/261-page-part-section
 
 repeater_section:
   layer: syntax
@@ -863,8 +864,9 @@ systemaction_declaration:
 systempart_section:
   layer: syntax
   category: page
-  status: gap
-  notes: System parts require BC client
+  status: covered
+  tests:
+    - tests/bucket-1/261-page-part-section
 
 usercontrol_section:
   layer: syntax

@@ -1742,8 +1742,9 @@ public void ClearApplicationMemberVariables() { }
         // Special-case: `NCLEnumMetadata.Create(N).FromInteger(I)` → `AlCompat.EnumFromInteger(N, I)`
         // BC emits this pattern for `Enum::"T".FromInteger(I)`. Must be intercepted before
         // recursing so the inner NCLEnumMetadata.Create(N) is not erased by the generic rewrite.
-        // N is passed through as-is (same as GetEnumOrdinals/GetEnumNames); the runtime
-        // AlCompat.EnumFromInteger validates the ordinal against EnumRegistry.GetMembers(N).
+        // When the enum is known (non-extensible, declared in this compilation), valid ordinals
+        // are inlined at rewrite time via `AlCompat.EnumFromIntegerValidated(N, I, new[]{...})`
+        // so validation does not depend on EnumRegistry state at runtime.
         if (node.ArgumentList.Arguments.Count == 1 &&
             node.Expression is MemberAccessExpressionSyntax fiOuterMa &&
             fiOuterMa.Name.Identifier.Text == "FromInteger" &&
@@ -1752,10 +1753,58 @@ public void ClearApplicationMemberVariables() { }
             fiInnerMa.Expression is IdentifierNameSyntax fiInnerIdent &&
             fiInnerIdent.Identifier.Text == "NCLEnumMetadata" &&
             fiInnerMa.Name.Identifier.Text == "Create" &&
-            fiInnerInv.ArgumentList.Arguments.Count == 1)
+            fiInnerInv.ArgumentList.Arguments.Count >= 1)
         {
             var enumIdArg = fiInnerInv.ArgumentList.Arguments[0].Expression;
             var ordinalArg = (ExpressionSyntax)Visit(node.ArgumentList.Arguments[0].Expression)!;
+
+            // Try to resolve the valid ordinals at rewrite time so the call
+            // site carries its own validation and does not rely on EnumRegistry
+            // state during test execution.
+            int[]? validOrdinals = null;
+            if (enumIdArg is LiteralExpressionSyntax litExpr &&
+                litExpr.IsKind(SyntaxKind.NumericLiteralExpression))
+            {
+                int enumIdInt = litExpr.Token.Value switch
+                {
+                    int i   => i,
+                    long l  => (int)l,
+                    uint u  => (int)u,
+                    _       => -1
+                };
+                if (enumIdInt >= 0)
+                {
+                    var members = AlRunner.Runtime.EnumRegistry.GetMembers(enumIdInt);
+                    if (members.Count > 0)
+                        validOrdinals = members.Select(m => m.Ordinal).ToArray();
+                }
+            }
+
+            if (validOrdinals != null)
+            {
+                // Inline validated: AlCompat.EnumFromIntegerValidated(N, I, new int[]{0,1,2,...})
+                var arrayInit = SyntaxFactory.InitializerExpression(
+                    SyntaxKind.ArrayInitializerExpression,
+                    SyntaxFactory.SeparatedList<ExpressionSyntax>(
+                        validOrdinals.Select(o =>
+                            SyntaxFactory.LiteralExpression(
+                                SyntaxKind.NumericLiteralExpression,
+                                SyntaxFactory.Literal(o)))));
+                var arrayCreation = SyntaxFactory.ImplicitArrayCreationExpression(arrayInit);
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("EnumFromIntegerValidated")),
+                    SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList(new[]
+                    {
+                        SyntaxFactory.Argument(enumIdArg),
+                        SyntaxFactory.Argument(ordinalArg),
+                        SyntaxFactory.Argument(arrayCreation)
+                    })));
+            }
+
+            // Fallback (extensible or external enum): runtime registry lookup.
             return SyntaxFactory.InvocationExpression(
                 SyntaxFactory.MemberAccessExpression(
                     SyntaxKind.SimpleMemberAccessExpression,
