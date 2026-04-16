@@ -3125,14 +3125,16 @@ JsonArray.Count:
 JsonArray.Get:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/187-jsonarray-typed-getters
+  notes: overloads=1 (index, var JsonToken). Covered via NavJsonArray native — returns Boolean (true in-range, false out-of-range).
 
 JsonArray.GetArray:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/187-jsonarray-typed-getters
+  notes: overloads=1. Indirectly covered via JsonArray.Get + JsonToken.AsArray(). The BC 21+ typed GetArray(idx) overload is not present in the AL 16.2 compiler bundled with the runner.
 
 JsonArray.GetBigInteger:
   layer: runtime-api
@@ -3143,8 +3145,9 @@ JsonArray.GetBigInteger:
 JsonArray.GetBoolean:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/187-jsonarray-typed-getters
+  notes: overloads=1. Indirectly covered via JsonArray.Get + JsonToken.AsValue().AsBoolean(). The BC 21+ typed GetBoolean(idx) overload is not present in the AL 16.2 compiler bundled with the runner.
 
 JsonArray.GetByte:
   layer: runtime-api
@@ -3173,8 +3176,9 @@ JsonArray.GetDateTime:
 JsonArray.GetDecimal:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/187-jsonarray-typed-getters
+  notes: overloads=1. Indirectly covered via JsonArray.Get + JsonToken.AsValue().AsDecimal(). The BC 21+ typed GetDecimal(idx) overload is not present in the AL 16.2 compiler bundled with the runner.
 
 JsonArray.GetDuration:
   layer: runtime-api
@@ -3185,14 +3189,16 @@ JsonArray.GetDuration:
 JsonArray.GetInteger:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/187-jsonarray-typed-getters
+  notes: overloads=1. Indirectly covered via JsonArray.Get + JsonToken.AsValue().AsInteger(). The BC 21+ typed GetInteger(idx) overload is not present in the AL 16.2 compiler bundled with the runner.
 
 JsonArray.GetObject:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/187-jsonarray-typed-getters
+  notes: overloads=1. Indirectly covered via JsonArray.Get + JsonToken.AsObject(). The BC 21+ typed GetObject(idx) overload is not present in the AL 16.2 compiler bundled with the runner.
 
 JsonArray.GetOption:
   layer: runtime-api
@@ -3203,8 +3209,9 @@ JsonArray.GetOption:
 JsonArray.GetText:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/187-jsonarray-typed-getters
+  notes: overloads=1. Indirectly covered via JsonArray.Get + JsonToken.AsValue().AsText(). The BC 21+ typed GetText(idx) overload is not present in the AL 16.2 compiler bundled with the runner.
 
 JsonArray.GetTime:
   layer: runtime-api
