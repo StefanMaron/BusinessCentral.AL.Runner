@@ -113,6 +113,31 @@ codeunit 56501 "Init Reset Tests"
     end;
 
     // -----------------------------------------------------------------------
+    // Init is idempotent — multiple calls produce consistent results
+    // -----------------------------------------------------------------------
+
+    [Test]
+    procedure Init_IsIdempotent()
+    var
+        Rec: Record "IR Test";
+    begin
+        // [GIVEN] PK set and fields modified
+        Rec."No." := 'IDEM';
+        Rec.Name := 'First';
+        Rec.Amount := 10;
+
+        // [WHEN] Init() is called, then fields are changed again, then Init() again
+        Rec.Init();
+        Rec.Name := 'Second';
+        Rec.Init();
+
+        // [THEN] PK preserved, non-PK reset to defaults on both calls
+        Assert.AreEqual('IDEM', Rec."No.", 'Init() idempotence: PK preserved after second Init');
+        Assert.AreEqual('', Rec.Name, 'Init() idempotence: Name reset after second Init');
+        Assert.AreEqual(5, Rec.Score, 'Init() idempotence: InitValue applied after second Init');
+    end;
+
+    // -----------------------------------------------------------------------
     // Init after Insert+Modify resets in-memory values
     // -----------------------------------------------------------------------
 
