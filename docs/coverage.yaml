@@ -2082,8 +2082,8 @@ ErrorInfo.Collectible:
 ErrorInfo.ControlName:
   layer: runtime-api
   category: ErrorInfo
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; NavALErrorInfo.ALControlName works via BC runtime DLL without session
 
 ErrorInfo.Create:
   layer: runtime-api
