@@ -1332,6 +1332,18 @@ public static class AlCompat
     /// </summary>
     public static NavGuid ALCreateSequentialGuid() => new NavGuid(Guid.NewGuid());
 
+    /// <summary>
+    /// Replacement for ALDatabase.ALIsNullGuid(g) which requires NavSession.
+    /// Returns true when the GUID is the all-zeros default ({00000000-...}).
+    /// </summary>
+    public static NavBoolean ALIsNullGuid(object? g)
+    {
+        g = UnwrapVariant(g);
+        if (g is NavGuid ng) return NavBoolean.Create(ng.ToGuid() == Guid.Empty);
+        if (g is Guid guid) return NavBoolean.Create(guid == Guid.Empty);
+        return NavBoolean.Create(true); // null/unset treated as empty
+    }
+
     // -----------------------------------------------------------------------
     // HttpContent stream helpers
     // -----------------------------------------------------------------------

@@ -24,6 +24,12 @@ All notable changes to this project are documented here. Format based on
   `RoslynRewriter` now redirects that to `MockSession.GetSessionId()`. New suite
   `tests/bucket-1/58-database-sessionid` proves: positive call returns > 0, and consecutive
   calls return the same value. Coverage map: `Database.SessionId` moved from `gap` to `stub`.
+- **`Guid.IsNullGuid` (#318)** — `IsNullGuid(G)` now correctly returns `true` for the
+  all-zeros GUID and `false` for any non-zero GUID. The BC compiler lowers this global
+  function to `ALDatabase.ALIsNullGuid(G)`; `RoslynRewriter` now redirects that to
+  `AlCompat.ALIsNullGuid(G)`, which checks `NavGuid.ToGuid() == Guid.Empty`. New suite
+  `tests/bucket-1/58-is-null-guid` proves both directions. Coverage map: `Guid.IsNullGuid`
+  moved from `gap` to `covered`.
 - **`Record.IsEmpty` coverage (#299)** — `ALIsEmpty` was already implemented in
   `MockRecordHandle` (`GetFilteredAndMarkedRecords().Count == 0`) but had no proving
   tests. New suite `tests/bucket-1/56-isempty` adds 5 proving tests: empty table →
