@@ -6,13 +6,23 @@ codeunit 61201 "CLF CheckLicenseFile Test"
         Assert: Codeunit Assert;
 
     [Test]
-    procedure CheckLicenseFile_NoOp_ExecutesWithoutError()
+    procedure CheckLicenseFile_NoOp_KeyNumber1()
     var
         Helper: Codeunit "CLF Helper";
     begin
-        // Positive: Database.CheckLicenseFile() must execute without error (no-op stub).
-        Helper.CallCheckLicenseFile();
-        Assert.IsTrue(true, 'CheckLicenseFile() must complete without error');
+        // Positive: Database.CheckLicenseFile(1) must execute without error (no-op stub).
+        Helper.CallCheckLicenseFile(1);
+        Assert.IsTrue(true, 'CheckLicenseFile(1) must complete without error');
+    end;
+
+    [Test]
+    procedure CheckLicenseFile_NoOp_KeyNumber0()
+    var
+        Helper: Codeunit "CLF Helper";
+    begin
+        // Positive: Database.CheckLicenseFile(0) must also be a no-op.
+        Helper.CallCheckLicenseFile(0);
+        Assert.IsTrue(true, 'CheckLicenseFile(0) must complete without error');
     end;
 
     [Test]
@@ -21,8 +31,8 @@ codeunit 61201 "CLF CheckLicenseFile Test"
         Helper: Codeunit "CLF Helper";
     begin
         // Edge case: calling CheckLicenseFile multiple times must not error.
-        Helper.CallCheckLicenseFile();
-        Helper.CallCheckLicenseFile();
+        Helper.CallCheckLicenseFile(1);
+        Helper.CallCheckLicenseFile(2);
         Assert.IsTrue(true, 'CheckLicenseFile() called twice must complete without error');
     end;
 
