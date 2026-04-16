@@ -57,7 +57,7 @@ codeunit 84100 "MI Src"
     procedure DefaultDependencyCount(): Integer
     var
         Info: ModuleInfo;
-        Deps: List of [ModuleInfo];
+        Deps: List of [ModuleDependencyInfo];
     begin
         Deps := Info.Dependencies;
         exit(Deps.Count);
