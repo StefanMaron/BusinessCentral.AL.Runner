@@ -2419,6 +2419,9 @@ public static class Executor
                 dedupMessages.Add(msg);
                 Console.WriteLine($"WARN  {msg}");
                 Console.WriteLine($"      ({count} tests blocked — use -v for per-test details)");
+                // Print the stack trace of the first affected test so CI logs show the crash site.
+                var first = results.First(r => r.Status == AlRunner.TestStatus.Error && r.Message == msg);
+                if (first.StackTrace != null) Console.Write(first.StackTrace);
                 Console.WriteLine();
             }
         }
