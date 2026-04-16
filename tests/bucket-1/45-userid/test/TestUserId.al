@@ -6,12 +6,12 @@ codeunit 55000 "Test UserId"
         Assert: Codeunit Assert;
 
     [Test]
-    procedure UserIdReturnsEmptyStringByDefault()
+    procedure UserIdReturnsTestUserByDefault()
     var
         Id: Text;
     begin
-        // By default, UserId() returns empty string when not configured.
+        // By default, UserId() returns "TESTUSER" when not configured via --user-id.
         Id := UserId();
-        Assert.AreEqual('', Id, 'UserId() must return empty string when not configured');
+        Assert.AreEqual('TESTUSER', Id, 'UserId() must return TESTUSER when not configured');
     end;
 }

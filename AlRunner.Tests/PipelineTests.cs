@@ -488,7 +488,7 @@ namespace AlRunnerGenerated {
     }
 
     [Fact]
-    public void UserId_DefaultIsEmptyString()
+    public void UserId_DefaultIsTestUser()
     {
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
