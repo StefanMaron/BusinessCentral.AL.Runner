@@ -1,4 +1,4 @@
-/// Helper codeunit exercising Cookie property get/set.
+/// Helper codeunit exercising Cookie property get/set (Name, Value, Domain, Path, Secure, HttpOnly, Expires).
 codeunit 61800 "CP Helper"
 {
     procedure CreateCookieWithProperties(
