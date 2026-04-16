@@ -44,10 +44,7 @@ public class MockReportHandle
         if (report == null)
             return;
 
-        var runMethod = report.GetType().GetMethod("Run",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-            null, Type.EmptyTypes, null);
-        runMethod?.Invoke(report, null);
+        ExecuteReportLifecycle(report);
     }
 
     public void RunModal()
@@ -60,10 +57,30 @@ public class MockReportHandle
         if (report == null)
             return;
 
-        var runMethod = report.GetType().GetMethod("Run",
+        ExecuteReportLifecycle(report);
+    }
+
+    /// <summary>
+    /// Executes the report lifecycle: OnPreReport → (data iteration) → OnPostReport.
+    /// The BC service tier normally orchestrates this; we replicate it here since
+    /// the base class Run() override is stripped by the rewriter.
+    /// </summary>
+    private static void ExecuteReportLifecycle(object report)
+    {
+        var reportType = report.GetType();
+
+        InvokeTrigger(report, reportType, "OnPreReport");
+        // Data-item iteration is not yet implemented (architectural gap).
+        // OnPreReport and OnPostReport are called unconditionally.
+        InvokeTrigger(report, reportType, "OnPostReport");
+    }
+
+    private static void InvokeTrigger(object report, Type reportType, string name)
+    {
+        var method = reportType.GetMethod(name,
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
             null, Type.EmptyTypes, null);
-        runMethod?.Invoke(report, null);
+        method?.Invoke(report, null);
     }
 
     public string RunRequestPage()

@@ -291,16 +291,34 @@ public class RoslynRewriter : CSharpSyntaxRewriter
 
                 if (member is MethodDeclarationSyntax method)
                 {
-                    // Skip override methods (OnClear, OnInvoke, OnMetadataLoaded) —
-                    // they reference base class infrastructure we removed.
+                    var methodName = method.Identifier.Text;
+                    // Skip problematic override methods that reference base class
+                    // infrastructure we removed (OnClear, OnInvoke, OnMetadataLoaded).
+                    // Report lifecycle triggers (OnPreReport, OnPostReport) are overrides
+                    // too but we preserve them — strip just the 'override' keyword so
+                    // they compile without a base class and MockReportHandle can invoke them.
                     if (method.Modifiers.Any(SyntaxKind.OverrideKeyword))
-                        continue;
+                    {
+                        if (methodName is "OnPreReport" or "OnPostReport")
+                        {
+                            // Preserve the method body but remove 'override' so it compiles
+                            // without the NavReport base class.
+                            var newModifiers = method.Modifiers.Where(
+                                m => !m.IsKind(SyntaxKind.OverrideKeyword) && !m.IsKind(SyntaxKind.VirtualKeyword));
+                            method = method.WithModifiers(
+                                SyntaxFactory.TokenList(newModifiers));
+                        }
+                        else
+                        {
+                            continue;
+                        }
+                    }
                     // Skip InitializeComponent — references BC fields/properties
                     // (BeginInitialization, Add, EndInitialization, RequestOptionsPage).
-                    if (method.Identifier.Text == "InitializeComponent")
+                    if (methodName == "InitializeComponent")
                         continue;
                     // Skip __Construct factory methods — they call removed constructors.
-                    if (method.Identifier.Text == "__Construct")
+                    if (methodName == "__Construct")
                         continue;
 
                     if (Visit(method) is MemberDeclarationSyntax visitedMethod)
