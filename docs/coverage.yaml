@@ -479,10 +479,8 @@ list_type:
 List.Sort:
   layer: runtime-api
   category: List
-  status: covered
-  notes: overloads=1; NavList<T>.ALSort() works natively on BC 26+ (no rewriter needed). BC 16.2 did not support this syntax but current supported toolchains do.
-  tests:
-    - tests/bucket-1/63-list-sort
+  status: gap
+  notes: 'List of [T]' does not have a Sort() method in AL at any tested BC version (26.0–28.0). AL0132 error: 'List of [Integer]' does not contain a definition for 'Sort'. Not a runner gap — this method does not exist in the AL language for this type.
 
 List.Reverse:
   layer: runtime-api
