@@ -1,4 +1,4 @@
-codeunit 93001 "RRS Tests"
+codeunit 93101 "RRS Tests"
 {
     Subtype = Test;
 
