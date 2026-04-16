@@ -2103,8 +2103,10 @@ ErrorInfo.Create:
 ErrorInfo.CustomDimensions:
   layer: runtime-api
   category: ErrorInfo
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native property works standalone. Dictionary of [Text, Text] get/set with empty default. Setter replaces (not merges).
+  tests:
+    - tests/bucket-2/173-errorinfo-customdims
 
 ErrorInfo.DataClassification:
   layer: runtime-api
