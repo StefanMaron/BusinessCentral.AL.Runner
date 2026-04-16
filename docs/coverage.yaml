@@ -1519,8 +1519,10 @@ Database.AlterKey:
 Database.ChangeUserPassword:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter strips the entire call (no user system standalone). Signature is (OldPassword, NewPassword).
+  tests:
+    - tests/bucket-2/152-change-user-password
 
 Database.CheckLicenseFile:
   layer: runtime-api
