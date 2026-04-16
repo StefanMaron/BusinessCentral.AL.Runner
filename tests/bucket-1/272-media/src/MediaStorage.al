@@ -1,8 +1,6 @@
-/// Temporary table for Media test stream setup.
+/// Helper table for Media test stream setup.
 table 84407 "Media Test Storage"
 {
-    TableType = Temporary;
-
     fields
     {
         field(1; Id; Integer) { }

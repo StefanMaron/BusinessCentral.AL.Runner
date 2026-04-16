@@ -89,20 +89,4 @@ codeunit 84408 "Media Test"
             'ExportStream on default Media must return false (no data to export)');
     end;
 
-    // ── FindOrphans ───────────────────────────────────────────────────────────────
-    [Test]
-    procedure FindOrphans_ReturnsEmptyList()
-    begin
-        // Positive: FindOrphans stub returns an empty list.
-        Assert.AreEqual(0, Src.FindOrphansReturnsEmptyList(),
-            'FindOrphans must return an empty list (no orphans in test environment)');
-    end;
-
-    [Test]
-    procedure FindOrphans_CountIsZero()
-    begin
-        // Negative: FindOrphans count must not be > 0 in test environment.
-        Assert.IsFalse(Src.FindOrphansReturnsEmptyList() > 0,
-            'FindOrphans must not return any orphan GUIDs in test environment');
-    end;
 }

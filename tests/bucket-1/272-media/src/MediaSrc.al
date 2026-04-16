@@ -93,13 +93,4 @@ codeunit 84407 "Media Src"
         exit(Ok);
     end;
 
-    // ── FindOrphans ──────────────────────────────────────────────────────────────
-    procedure FindOrphansReturnsEmptyList(): Integer
-    var
-        Count: Integer;
-    begin
-        // Assign count to local Integer first to avoid AL0282 on nullable chain.
-        Count := Media.FindOrphans().Count();
-        exit(Count);
-    end;
 }

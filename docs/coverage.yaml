@@ -3908,10 +3908,8 @@ Media.ExportStream:
 Media.FindOrphans:
   layer: runtime-api
   category: Media
-  status: covered
-  notes: overloads=1
-  tests:
-    - tests/bucket-1/272-media
+  status: gap
+  notes: "BC 17+ method — not recognised by the BC 16.2 AL compiler used for transpilation; MockMedia.ALFindOrphans() is implemented but untestable from AL until the compiler is upgraded"
 
 Media.HasValue:
   layer: runtime-api
