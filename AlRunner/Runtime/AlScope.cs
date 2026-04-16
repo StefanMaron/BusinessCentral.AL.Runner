@@ -841,7 +841,9 @@ public static class AlCompat
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavBoolean nb) return (bool)nb ? "Yes" : "No";
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavInteger ni) return ((int)ni).ToString();
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavBigInteger nbi) return ((long)nbi).ToString();
-                if (value is Microsoft.Dynamics.Nav.Runtime.NavGuid ng) return ((Guid)ng).ToString();
+                // NavGuid: AL's ToText() returns {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx} (format "B", 38 chars).
+                // .NET ToString() without format gives "D" (36 chars, no braces) — fix to "B".
+                if (value is Microsoft.Dynamics.Nav.Runtime.NavGuid ng) return ((Guid)ng).ToString("B").ToUpperInvariant();
                 // NavByte.ToText() — BCL routes through NCLManagedAdapter.ByteToTextChar (OEM native code)
                 // which fails without the BC service tier. Return the numeric string (0-255) instead.
                 if (typeName == "NavByte")
@@ -1514,6 +1516,22 @@ public static class AlCompat
     /// </summary>
     public static Microsoft.Dynamics.Nav.Types.TransactionType ALCurrentTransactionType()
         => Microsoft.Dynamics.Nav.Types.TransactionType.Update;
+
+    /// <summary>
+    /// Guid.ToText([withBraces]) — BC returns uppercase GUID with braces by default.
+    /// withBraces=true  → {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX} (38 chars, "B" format, uppercase)
+    /// withBraces=false → XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX      (32 chars, "N" format, uppercase)
+    /// AlCompat.Format(NavGuid) handles the default (no-arg) case via the "B" format fix there.
+    /// This method is used when the boolean argument is explicitly false.
+    /// </summary>
+    public static string GuidToText(object? g, bool withBraces)
+    {
+        g = UnwrapVariant(g);
+        var format = withBraces ? "B" : "N";
+        if (g is NavGuid ng) return ((Guid)ng).ToString(format).ToUpperInvariant();
+        if (g is Guid guid) return guid.ToString(format).ToUpperInvariant();
+        return Format(g); // fallback for non-Guid types
+    }
 
     /// <summary>
     /// Replacement for ALDatabase.ALIsNullGuid(g) which requires NavSession.
