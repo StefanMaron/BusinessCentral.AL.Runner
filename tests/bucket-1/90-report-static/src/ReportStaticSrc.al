@@ -1,7 +1,5 @@
-/// Exercises the static Report.* methods (Run, RunModal, Execute, Print,
-/// SaveAs*, DefaultLayout, RunRequestPage, GetSubstituteReportId, etc.)
-/// so the runner can stub them without a real BC service tier.
-codeunit 90000 "RS Src"
+/// Exercises the static Report.* methods that are available across BC 26-28.
+codeunit 91000 "RS Src"
 {
     procedure CallRun(reportId: Integer)
     begin
@@ -11,16 +9,6 @@ codeunit 90000 "RS Src"
     procedure CallRunModal(reportId: Integer)
     begin
         Report.RunModal(reportId);
-    end;
-
-    procedure CallExecute(reportId: Integer)
-    begin
-        Report.Execute(reportId);
-    end;
-
-    procedure CallPrint(reportId: Integer)
-    begin
-        Report.Print(reportId);
     end;
 
     procedure CallSaveAsPdf(reportId: Integer; fileName: Text)
@@ -38,19 +26,9 @@ codeunit 90000 "RS Src"
         Report.SaveAsExcel(reportId, fileName);
     end;
 
-    procedure CallSaveAsHtml(reportId: Integer; fileName: Text)
-    begin
-        Report.SaveAsHtml(reportId, fileName);
-    end;
-
     procedure CallSaveAsXml(reportId: Integer; fileName: Text)
     begin
         Report.SaveAsXml(reportId, fileName);
-    end;
-
-    procedure GetDefaultLayout(reportId: Integer): Integer
-    begin
-        exit(Report.DefaultLayout(reportId));
     end;
 
     procedure GetSubstituteId(reportId: Integer): Integer
