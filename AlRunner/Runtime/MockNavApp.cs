@@ -72,33 +72,34 @@ public static class MockNavApp
     /// <summary>
     /// NavApp.GetResourceAsText(ResourceName [, TextEncoding]) : Text — returns the named
     /// embedded resource as a string. No .app bundle in standalone mode; returns empty string.
-    /// BC emits: ALNavApp.ALGetResourceAsText(DataError, NavText [, object?]) → NavText
+    /// BC emits: ALNavApp.ALGetResourceAsText(null, NavText [, object?]) → NavText
+    /// (The error-level arg is null in BC's generated C# for resource methods.)
     /// </summary>
-    public static NavText ALGetResourceAsText(DataError errorLevel, NavText resourceName)
+    public static NavText ALGetResourceAsText(object? errorLevel, NavText resourceName)
         => NavText.Empty;
 
-    public static NavText ALGetResourceAsText(DataError errorLevel, NavText resourceName, object? encoding)
+    public static NavText ALGetResourceAsText(object? errorLevel, NavText resourceName, object? encoding)
         => NavText.Empty;
 
     /// <summary>
     /// NavApp.GetResourceAsJson(ResourceName [, TextEncoding]) : JsonObject — returns the
     /// named embedded resource as a JSON object. No .app in standalone mode; returns default.
-    /// BC emits: ALNavApp.ALGetResourceAsJson(DataError, NavText [, object?]) → NavJsonObject
+    /// BC emits: ALNavApp.ALGetResourceAsJson(null, NavText [, object?]) → NavJsonObject
     /// </summary>
-    public static NavJsonObject ALGetResourceAsJson(DataError errorLevel, NavText resourceName)
+    public static NavJsonObject ALGetResourceAsJson(object? errorLevel, NavText resourceName)
         => default;
 
-    public static NavJsonObject ALGetResourceAsJson(DataError errorLevel, NavText resourceName, object? encoding)
+    public static NavJsonObject ALGetResourceAsJson(object? errorLevel, NavText resourceName, object? encoding)
         => default;
 
     /// <summary>
     /// NavApp.ListResources([ResourceType]) : List of [Text] — returns names of embedded
     /// resources. No .app in standalone mode; returns empty list.
-    /// BC emits: ALNavApp.ALListResources(DataError [, NavText]) → NavList&lt;NavText&gt;
+    /// BC emits: ALNavApp.ALListResources(null [, NavText]) → NavList&lt;NavText&gt;
     /// </summary>
-    public static NavList<NavText> ALListResources(DataError errorLevel)
+    public static NavList<NavText> ALListResources(object? errorLevel)
         => NavList<NavText>.Default;
 
-    public static NavList<NavText> ALListResources(DataError errorLevel, NavText resourceType)
+    public static NavList<NavText> ALListResources(object? errorLevel, NavText resourceType)
         => NavList<NavText>.Default;
 }
