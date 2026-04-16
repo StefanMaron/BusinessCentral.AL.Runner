@@ -1417,8 +1417,60 @@ public static class AlCompat
     public static bool ALIsFieldRef(object? v) { v = UnwrapVariant(v); return v is MockFieldRef || v?.GetType().Name == "NavFieldRef"; }
     public static bool ALIsCodeunit(object? v) { v = UnwrapVariant(v); return v?.GetType().Name.StartsWith("Codeunit") == true; }
     public static bool ALIsFile(object? v) { v = UnwrapVariant(v); return v?.GetType().Name == "NavFile"; }
-    public static bool ALIsDotNet(object? v) => false; // DotNet types not supported in standalone
-    public static bool ALIsAutomation(object? v) => false; // Automation types not supported in standalone
+    public static bool ALIsDotNet(object? v) => false;
+    public static bool ALIsAutomation(object? v) => false;
+
+    // JSON Is* — checks NavJsonToken and its subclasses (NavJsonObject, NavJsonArray, NavJsonValue)
+    public static bool ALIsJsonToken(object? v) { v = UnwrapVariant(v); return v is NavJsonToken; }
+    public static bool ALIsJsonObject(object? v) { v = UnwrapVariant(v); return v is NavJsonToken && v.GetType().Name == "NavJsonObject"; }
+    public static bool ALIsJsonArray(object? v) { v = UnwrapVariant(v); return v is NavJsonToken && v.GetType().Name == "NavJsonArray"; }
+    public static bool ALIsJsonValue(object? v) { v = UnwrapVariant(v); return v is NavJsonToken && v.GetType().Name == "NavJsonValue"; }
+
+    // Stream Is* — checks mock types used in standalone mode
+    public static bool ALIsInStream(object? v) { v = UnwrapVariant(v); return v is MockInStream; }
+    public static bool ALIsOutStream(object? v) { v = UnwrapVariant(v); return v is MockOutStream; }
+
+    // Notification, TextBuilder, List
+    public static bool ALIsNotification(object? v) { v = UnwrapVariant(v); return v is MockNotification; }
+    public static bool ALIsTextBuilder(object? v) { v = UnwrapVariant(v); return v is MockTextBuilder; }
+    public static bool ALIsList(object? v) { v = UnwrapVariant(v); return v != null && v.GetType().IsGenericType && (v.GetType().GetGenericTypeDefinition().FullName?.StartsWith("Microsoft.Dynamics.Nav.Runtime.NavList", StringComparison.Ordinal) == true); }
+    public static bool ALIsDictionary(object? v) => false;
+
+    // XML and misc stubs — no mock types in standalone mode
+    public static bool ALIsXmlAttribute(object? v) => false;
+    public static bool ALIsXmlAttributeCollection(object? v) => false;
+    public static bool ALIsXmlCData(object? v) => false;
+    public static bool ALIsXmlComment(object? v) => false;
+    public static bool ALIsXmlDeclaration(object? v) => false;
+    public static bool ALIsXmlDocument(object? v) => false;
+    public static bool ALIsXmlDocumentType(object? v) => false;
+    public static bool ALIsXmlElement(object? v) => false;
+    public static bool ALIsXmlNamespaceManager(object? v) => false;
+    public static bool ALIsXmlNameTable(object? v) => false;
+    public static bool ALIsXmlNode(object? v) => false;
+    public static bool ALIsXmlNodeList(object? v) => false;
+    public static bool ALIsXmlProcessingInstruction(object? v) => false;
+    public static bool ALIsXmlReadOptions(object? v) => false;
+    public static bool ALIsXmlText(object? v) => false;
+    public static bool ALIsXmlWriteOptions(object? v) => false;
+    public static bool ALIsAction(object? v) => false;
+    public static bool ALIsBinary(object? v) => false;
+    public static bool ALIsClientType(object? v) => false;
+    public static bool ALIsDataClassification(object? v) => false;
+    public static bool ALIsDataClassificationType(object? v) => false;
+    public static bool ALIsDefaultLayout(object? v) => false;
+    public static bool ALIsExecutionMode(object? v) => false;
+    public static bool ALIsFilterPageBuilder(object? v) => false;
+    public static bool ALIsObjectType(object? v) => false;
+    public static bool ALIsPromptMode(object? v) => false;
+    public static bool ALIsReportFormat(object? v) => false;
+    public static bool ALIsSecurityFiltering(object? v) => false;
+    public static bool ALIsTableConnectionType(object? v) => false;
+    public static bool ALIsTestPermissions(object? v) => false;
+    public static bool ALIsTextConstant(object? v) => false;
+    public static bool ALIsTextEncoding(object? v) => false;
+    public static bool ALIsTransactionType(object? v) => false;
+    public static bool ALIsWideChar(object? v) => false;
 
     /// <summary>
     /// Replacement for ALCompiler.ToSecretText(navText).

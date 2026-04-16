@@ -3639,6 +3639,23 @@ public void ClearApplicationMemberVariables()
         "ALIsDate", "ALIsTime", "ALIsDuration", "ALIsDateTime", "ALIsDateFormula",
         "ALIsGuid", "ALIsRecordId", "ALIsRecord", "ALIsRecordRef", "ALIsFieldRef",
         "ALIsCodeunit", "ALIsFile",
+        // JSON
+        "ALIsJsonToken", "ALIsJsonObject", "ALIsJsonArray", "ALIsJsonValue",
+        // Streams
+        "ALIsInStream", "ALIsOutStream",
+        // Collections and misc
+        "ALIsNotification", "ALIsTextBuilder", "ALIsList", "ALIsDictionary",
+        // XML stubs
+        "ALIsXmlAttribute", "ALIsXmlAttributeCollection", "ALIsXmlCData", "ALIsXmlComment",
+        "ALIsXmlDeclaration", "ALIsXmlDocument", "ALIsXmlDocumentType", "ALIsXmlElement",
+        "ALIsXmlNamespaceManager", "ALIsXmlNameTable", "ALIsXmlNode", "ALIsXmlNodeList",
+        "ALIsXmlProcessingInstruction", "ALIsXmlReadOptions", "ALIsXmlText", "ALIsXmlWriteOptions",
+        // Misc stubs
+        "ALIsAction", "ALIsAutomation", "ALIsBinary", "ALIsClientType", "ALIsDataClassification",
+        "ALIsDataClassificationType", "ALIsDefaultLayout", "ALIsExecutionMode", "ALIsFilterPageBuilder",
+        "ALIsObjectType", "ALIsPromptMode", "ALIsReportFormat", "ALIsSecurityFiltering",
+        "ALIsTableConnectionType", "ALIsTestPermissions", "ALIsTextConstant", "ALIsTextEncoding",
+        "ALIsTransactionType", "ALIsWideChar",
     };
 
     // -----------------------------------------------------------------------

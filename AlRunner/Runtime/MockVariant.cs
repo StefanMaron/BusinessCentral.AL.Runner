@@ -2,6 +2,7 @@ namespace AlRunner.Runtime;
 
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
+using System.Reflection;
 
 /// <summary>
 /// Lightweight replacement for NavVariant which requires ITreeObject.
@@ -90,6 +91,72 @@ public class MockVariant
     public bool ALIsByte => _value is byte;
     public bool ALIsDateFormula => _value is NavDateFormula;
     public bool ALIsFieldRef => false;
+
+    // JSON Is* — check BC runtime subtypes of NavJsonToken
+    public bool ALIsJsonToken => _value is NavJsonToken;
+    public bool ALIsJsonObject => _value is NavJsonToken && _value.GetType().Name == "NavJsonObject";
+    public bool ALIsJsonArray => _value is NavJsonToken && _value.GetType().Name == "NavJsonArray";
+    public bool ALIsJsonValue => _value is NavJsonToken && _value.GetType().Name == "NavJsonValue";
+
+    // Stream Is* — check mock types used in standalone mode
+    public bool ALIsInStream => _value is MockInStream;
+    public bool ALIsOutStream => _value is MockOutStream;
+
+    // Notification
+    public bool ALIsNotification => _value is MockNotification;
+
+    // TextBuilder (rewriter maps NavTextBuilder → MockTextBuilder)
+    public bool ALIsTextBuilder => _value is MockTextBuilder;
+
+    // List of [T] — NavList<T> is generic; check the open generic definition
+    public bool ALIsList => _value != null &&
+        _value.GetType().IsGenericType &&
+        _value.GetType().GetGenericTypeDefinition().FullName?.StartsWith("Microsoft.Dynamics.Nav.Runtime.NavList", StringComparison.Ordinal) == true;
+
+    // IsDictionary — no Dictionary mock in standalone mode; always false
+    public bool ALIsDictionary => false;
+
+    // XML Is* — no XML mocks in standalone mode; always false
+    public bool ALIsXmlAttribute => false;
+    public bool ALIsXmlAttributeCollection => false;
+    public bool ALIsXmlCData => false;
+    public bool ALIsXmlComment => false;
+    public bool ALIsXmlDeclaration => false;
+    public bool ALIsXmlDocument => false;
+    public bool ALIsXmlDocumentType => false;
+    public bool ALIsXmlElement => false;
+    public bool ALIsXmlNamespaceManager => false;
+    public bool ALIsXmlNameTable => false;
+    public bool ALIsXmlNode => false;
+    public bool ALIsXmlNodeList => false;
+    public bool ALIsXmlProcessingInstruction => false;
+    public bool ALIsXmlReadOptions => false;
+    public bool ALIsXmlText => false;
+    public bool ALIsXmlWriteOptions => false;
+
+    // Misc stubs — types not representable in standalone mode
+    public bool ALIsAction => false;
+    public bool ALIsAutomation => false;
+    public bool ALIsBinary => false;
+    public bool ALIsClientType => false;
+    public bool ALIsCodeunit => false;
+    public bool ALIsDataClassification => false;
+    public bool ALIsDataClassificationType => false;
+    public bool ALIsDefaultLayout => false;
+    public bool ALIsDotNet => false;
+    public bool ALIsExecutionMode => false;
+    public bool ALIsFile => false;
+    public bool ALIsFilterPageBuilder => false;
+    public bool ALIsObjectType => false;
+    public bool ALIsPromptMode => false;
+    public bool ALIsReportFormat => false;
+    public bool ALIsSecurityFiltering => false;
+    public bool ALIsTableConnectionType => false;
+    public bool ALIsTestPermissions => false;
+    public bool ALIsTextConstant => false;
+    public bool ALIsTextEncoding => false;
+    public bool ALIsTransactionType => false;
+    public bool ALIsWideChar => false;
 
     /// <summary>Get the underlying value.</summary>
     public object? Value => _value;
