@@ -1900,6 +1900,12 @@ public void ClearApplicationMemberVariables() { }
         // Now recurse into children first
         var visited = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
 
+        // DIAGNOSTIC: log any call involving "Text" in method name — remove after debugging #612
+        if (visited.Expression is MemberAccessExpressionSyntax _diagMa &&
+            _diagMa.Name.Identifier.Text.Contains("Text", StringComparison.OrdinalIgnoreCase) &&
+            _currentClassName != null && _currentClassName.Contains("GT"))
+            Console.Error.WriteLine($"[DIAG-612] {_currentClassName}: {visited.Expression} | args={visited.ArgumentList.Arguments.Count} | parent={node.Parent?.GetType().Name}");
+
         // `<expr>.ToText(...)` -> `AlCompat.Format(<expr>)` or `AlCompat.GuidToText(<expr>, false)`
         // BC lowers AL's `xVar.ToText()` to either an instance `navX.ToText(...)` call
         // or a static `ALCompiler.ToText(session, value)` call (the latter is handled
