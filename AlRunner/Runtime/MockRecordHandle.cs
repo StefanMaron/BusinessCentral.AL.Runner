@@ -1118,6 +1118,35 @@ public class MockRecordHandle
             throw new Exception($"TestField failed: field {fieldNo} in table {_tableId} expected '{expectedStr}' but was '{actualStr}'");
     }
 
+    /// <summary>Overload: TestField with string value (Text/Code fields).</summary>
+    public void ALTestFieldSafe(int fieldNo, NavType expectedType, string expectedValue)
+    {
+        var actual = GetFieldValueSafe(fieldNo, expectedType);
+        var actualStr = NavValueToString(actual);
+        if (actualStr != expectedValue)
+            throw new Exception($"TestField failed: field {fieldNo} in table {_tableId} expected '{expectedValue}' but was '{actualStr}'");
+    }
+
+    /// <summary>Overload: TestField with int value (Integer fields).</summary>
+    public void ALTestFieldSafe(int fieldNo, NavType expectedType, int expectedValue)
+    {
+        var actual = GetFieldValueSafe(fieldNo, expectedType);
+        var actualStr = NavValueToString(actual);
+        var expectedStr = expectedValue.ToString();
+        if (actualStr != expectedStr)
+            throw new Exception($"TestField failed: field {fieldNo} in table {_tableId} expected '{expectedStr}' but was '{actualStr}'");
+    }
+
+    /// <summary>Overload: TestField with Decimal18 value (Decimal fields).</summary>
+    public void ALTestFieldSafe(int fieldNo, NavType expectedType, Decimal18 expectedValue)
+    {
+        var actual = GetFieldValueSafe(fieldNo, expectedType);
+        var actualStr = NavValueToString(actual);
+        var expectedStr = NavValueToString(expectedValue);
+        if (actualStr != expectedStr)
+            throw new Exception($"TestField failed: field {fieldNo} in table {_tableId} expected '{expectedStr}' but was '{actualStr}'");
+    }
+
     /// <summary>AL's TestField for NavValue comparisons (used in some transpiler patterns).</summary>
     public void ALTestFieldNavValueSafe(int fieldNo, NavType expectedType, NavValue expectedValue)
     {
@@ -1126,6 +1155,24 @@ public class MockRecordHandle
 
     /// <summary>Overload: TestField with DataError level.</summary>
     public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType, NavValue expectedValue)
+    {
+        ALTestFieldSafe(fieldNo, expectedType, expectedValue);
+    }
+
+    /// <summary>Overload: TestField with DataError level and string value.</summary>
+    public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType, string expectedValue)
+    {
+        ALTestFieldSafe(fieldNo, expectedType, expectedValue);
+    }
+
+    /// <summary>Overload: TestField with DataError level and int value.</summary>
+    public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType, int expectedValue)
+    {
+        ALTestFieldSafe(fieldNo, expectedType, expectedValue);
+    }
+
+    /// <summary>Overload: TestField with DataError level and Decimal18 value.</summary>
+    public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType, Decimal18 expectedValue)
     {
         ALTestFieldSafe(fieldNo, expectedType, expectedValue);
     }
