@@ -254,11 +254,29 @@ public class AlScope : IDisposable, ITreeObject
 /// Instance replacement for NavDialog (the BC dialog/progress window object).
 /// No-op CurrPage stub for page extensions.
 /// Page extension code calls CurrPage.Update(), CurrPage.Editable, etc.
-/// In standalone mode, all operations are no-ops.
+/// In standalone mode, all operations are no-ops or return sensible defaults.
 /// </summary>
 public class MockCurrPage
 {
     public bool Editable { get; set; }
+    // BC compiler maps CurrPage.Caption → C# property PageCaption.
+    // The setter receives a C# string literal, so string is the backing type.
+    public string PageCaption { get; set; } = string.Empty;
+    public bool LookupMode { get; set; }
+
+    /// <summary>
+    /// CurrPage.ObjectId(UseCaptionName) — returns the page's object identifier.
+    /// BC compiler maps CurrPage.ObjectId → C# ObjectID (capital D).
+    /// In standalone mode there is no running page, so return an empty string.
+    /// </summary>
+    public NavText ObjectID(bool useCaptionName) => NavText.Empty;
+
+    /// <summary>
+    /// CurrPage.SetSelectionFilter(var Rec) — applies the UI row selection as
+    /// a record filter.  In standalone mode this is a no-op.
+    /// </summary>
+    public void SetSelectionFilter(MockRecordHandle rec) { }
+
     public void Update(bool saveRecord = true) { }
     public void Close() { }
     public void Activate() { }
