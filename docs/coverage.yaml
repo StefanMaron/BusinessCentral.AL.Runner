@@ -5510,8 +5510,9 @@ System.ArrayLen:
 System.CalcDate:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=2
+  status: covered
+  tests: tests/bucket-2/181-calcdate
+  notes: overloads=2. Covered via BC's ALCalcDate — formula parsing (D/W/M/Y, compound, empty) and DateFormula-typed overload all pass through the SDK.
 
 System.CanLoadType:
   layer: runtime-api
