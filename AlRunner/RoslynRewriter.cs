@@ -1820,6 +1820,33 @@ public void ClearApplicationMemberVariables() { }
         // Now recurse into children first
         var visited = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
 
+        // `<expr>.ToText(null!)` -> `AlCompat.Format(<expr>)`
+        // BC lowers AL's `dateTimeVar.ToText()` / `dateVar.ToText()` to `navDt.ToText(session)`
+        // where `session` is emitted as `null!`. The real implementation dereferences session
+        // for CultureInfo and crashes with NullReferenceException standalone.
+        // AlCompat.Format handles every BC value type (including NavDate/NavDateTime/NavTime)
+        // without session access. We key on the single-argument `null!` pattern to avoid
+        // catching legitimate ToText(length) overloads — the compiler only emits
+        // `null!` for the session parameter placeholder.
+        if (visited.ArgumentList.Arguments.Count == 1 &&
+            visited.Expression is MemberAccessExpressionSyntax toTextMa &&
+            toTextMa.Name.Identifier.Text == "ToText" &&
+            visited.ArgumentList.Arguments[0].Expression is PostfixUnaryExpressionSyntax pu &&
+            pu.IsKind(SyntaxKind.SuppressNullableWarningExpression) &&
+            pu.Operand is LiteralExpressionSyntax lit &&
+            lit.IsKind(SyntaxKind.NullLiteralExpression))
+        {
+            return SyntaxFactory.InvocationExpression(
+                SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("AlCompat"),
+                    SyntaxFactory.IdentifierName("Format")),
+                SyntaxFactory.ArgumentList(
+                    SyntaxFactory.SingletonSeparatedList(
+                        SyntaxFactory.Argument(toTextMa.Expression))))
+                .WithTriviaFrom(visited);
+        }
+
         // NavCode.op_Equality(a, b) / NavCode.op_Inequality(a, b)
         // BC may emit explicit static operator calls for Code[N] comparisons in case statements
         // (rather than a binary == expression), depending on the BC version. Both forms need

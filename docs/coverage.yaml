@@ -1743,8 +1743,10 @@ DateTime.Time:
 DateTime.ToText:
   layer: runtime-api
   category: DateTime
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter redirects `<navDateTime>.ToText(null!)` to `AlCompat.Format` (session-free).
+  tests:
+    - tests/bucket-2/146-totext
 
 # ── Debugger ────────────────────────────────────────────────────
 
@@ -1867,8 +1869,10 @@ Debugger.Stop:
 Decimal.ToText:
   layer: runtime-api
   category: Decimal
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; BC native `ALCompiler.ToText(null, decimal)` works standalone.
+  tests:
+    - tests/bucket-2/146-totext
 
 # ── Dialog ──────────────────────────────────────────────────────
 
