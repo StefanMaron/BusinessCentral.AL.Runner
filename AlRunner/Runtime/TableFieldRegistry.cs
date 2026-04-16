@@ -59,6 +59,13 @@ public static class TableFieldRegistry
     // (tableId, fieldNo) -> enum name (for fields declared as Enum "XYZ")
     private static readonly Dictionary<(int TableId, int FieldNo), string> _enumFields = new();
 
+    // (tableId, fieldNo) -> comma-separated option members (for inline Option fields with OptionMembers = A,B,C)
+    private static readonly Dictionary<(int TableId, int FieldNo), string> _optionMembersFields = new();
+
+    private static readonly Regex OptionMembersProp = new(
+        @"\bOptionMembers\s*=\s*([^;]+);",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     public static void Clear()
     {
         _byTable.Clear();
@@ -66,6 +73,7 @@ public static class TableFieldRegistry
         _tableCaptions.Clear();
         _fieldMeta.Clear();
         _enumFields.Clear();
+        _optionMembersFields.Clear();
     }
 
     public static void ParseAndRegister(string alSource)
@@ -151,6 +159,9 @@ public static class TableFieldRegistry
                         var capMatch = CaptionProp.Match(fieldBody);
                         if (capMatch.Success)
                             fieldCaption = DecodeAlSingleQuotedString(capMatch.Groups[1].Value);
+                        var omMatch = OptionMembersProp.Match(fieldBody);
+                        if (omMatch.Success)
+                            _optionMembersFields[(tableId, fieldId)] = omMatch.Groups[1].Value.Trim();
                     }
                 }
 
@@ -258,6 +269,12 @@ public static class TableFieldRegistry
     public static string? GetEnumName(int tableId, int fieldNo)
     {
         return _enumFields.TryGetValue((tableId, fieldNo), out var name) ? name : null;
+    }
+
+    /// <summary>Returns the comma-separated OptionMembers string for an inline Option field, or null.</summary>
+    public static string? GetOptionMembers(int tableId, int fieldNo)
+    {
+        return _optionMembersFields.TryGetValue((tableId, fieldNo), out var members) ? members : null;
     }
 
     private static string DecodeAlSingleQuotedString(string value)

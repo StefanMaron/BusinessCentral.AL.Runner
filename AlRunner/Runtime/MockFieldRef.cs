@@ -144,7 +144,13 @@ public class MockFieldRef
         get
         {
             var members = GetEnumMembers();
-            return members != null ? string.Join(",", members.Select(m => m.Name)) : "";
+            if (members != null) return string.Join(",", members.Select(m => m.Name));
+            if (_owner != null)
+            {
+                var inline = TableFieldRegistry.GetOptionMembers(_owner.TableId, _fieldNo);
+                if (inline != null) return inline;
+            }
+            return "";
         }
     }
 
