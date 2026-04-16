@@ -6131,7 +6131,8 @@ Table.TestField:
   tests:
     - tests/bucket-1/27-testfield-error
     - tests/bucket-1/54-testfield-enum
-  notes: overloads=26; basic non-empty check and enum value comparison covered
+    - tests/bucket-2/100-testfield-value
+  notes: overloads=26; non-empty check, enum value comparison, and scalar value comparison (Text/Code/Integer/Decimal) covered
 
 Table.TransferFields:
   layer: runtime-api
