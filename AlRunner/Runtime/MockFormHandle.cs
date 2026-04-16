@@ -67,8 +67,9 @@ public class MockFormHandle
     public void SaveRecord() { }
     /// <summary>No-op. Filters the page view to the selection in the record variable.</summary>
     public void SetSelectionFilter(MockRecordHandle rec) { }
-    /// <summary>Returns the page's object ID as text. Stub returns empty string.</summary>
-    public NavText ObjectId(bool withCaption = false) => NavText.Empty;
+    /// <summary>Returns the page's object ID as text. Stub returns empty string.
+    /// BC emits the method as <c>ObjectID</c> (uppercase D).</summary>
+    public NavText ObjectID(bool withCaption = false) => NavText.Empty;
 
     /// <summary>Dispatch a plain helper procedure on the page's generated class.</summary>
     public object? Invoke(int memberId, object[] args)
