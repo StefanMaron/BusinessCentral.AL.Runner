@@ -64,12 +64,6 @@ public class MockTestPageHandle
     /// </summary>
     public int ALValidationErrorCount() => 0;
 
-    /// <summary>
-    /// Returns the validation error message at the given index. Stub returns empty string.
-    /// BC emits <c>tP.Target.ALGetValidationError(index)</c>.
-    /// </summary>
-    public NavText ALGetValidationError(int index) => new NavText("");
-
     // ── TestRequestPage-specific methods ────────────────────────────────────────
 
     /// <summary>
@@ -119,45 +113,24 @@ public class MockTestPageHandle
     public MockTestPageAction ALSchedule() => new MockTestPageAction();
 
     /// <summary>
-    /// Finds the first field matching the given value. Stub returns false.
-    /// BC emits <c>tP.Target.ALFindFirstField(DataError, fieldHash, value)</c> where
-    /// the field is passed as a raw int hash (not a MockTestPageField).
-    /// Overloads cover all BC codegen patterns.
+    /// Finds the first/next/previous field matching the given value. Stubs return false.
+    /// Additional MockTestPageField-typed overloads handle BC TestPage field references
+    /// passed directly (vs raw int hashes covered by the int overloads added by #689).
     /// </summary>
     public bool ALFindFirstField(MockTestPageField field, NavValue value) => false;
     public bool ALFindFirstField(MockTestPageField field, object? value) => false;
     public bool ALFindFirstField(DataError errorLevel, MockTestPageField field, NavValue value) => false;
     public bool ALFindFirstField(DataError errorLevel, MockTestPageField field, object? value) => false;
-    public bool ALFindFirstField(int fieldHash, NavValue value) => false;
-    public bool ALFindFirstField(int fieldHash, object? value) => false;
-    public bool ALFindFirstField(DataError errorLevel, int fieldHash, NavValue value) => false;
-    public bool ALFindFirstField(DataError errorLevel, int fieldHash, object? value) => false;
 
-    /// <summary>
-    /// Finds the next field matching the given value. Stub returns false.
-    /// BC emits <c>tP.Target.ALFindNextField(DataError, fieldHash, value)</c>.
-    /// </summary>
     public bool ALFindNextField(MockTestPageField field, NavValue value) => false;
     public bool ALFindNextField(MockTestPageField field, object? value) => false;
     public bool ALFindNextField(DataError errorLevel, MockTestPageField field, NavValue value) => false;
     public bool ALFindNextField(DataError errorLevel, MockTestPageField field, object? value) => false;
-    public bool ALFindNextField(int fieldHash, NavValue value) => false;
-    public bool ALFindNextField(int fieldHash, object? value) => false;
-    public bool ALFindNextField(DataError errorLevel, int fieldHash, NavValue value) => false;
-    public bool ALFindNextField(DataError errorLevel, int fieldHash, object? value) => false;
 
-    /// <summary>
-    /// Finds the previous field matching the given value. Stub returns false.
-    /// BC emits <c>tP.Target.ALFindPreviousField(DataError, fieldHash, value)</c>.
-    /// </summary>
     public bool ALFindPreviousField(MockTestPageField field, NavValue value) => false;
     public bool ALFindPreviousField(MockTestPageField field, object? value) => false;
     public bool ALFindPreviousField(DataError errorLevel, MockTestPageField field, NavValue value) => false;
     public bool ALFindPreviousField(DataError errorLevel, MockTestPageField field, object? value) => false;
-    public bool ALFindPreviousField(int fieldHash, NavValue value) => false;
-    public bool ALFindPreviousField(int fieldHash, object? value) => false;
-    public bool ALFindPreviousField(DataError errorLevel, int fieldHash, NavValue value) => false;
-    public bool ALFindPreviousField(DataError errorLevel, int fieldHash, object? value) => false;
 
     /// <summary>
     /// Navigates to the first record on the page. Stub returns true.
