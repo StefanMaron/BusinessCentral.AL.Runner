@@ -161,8 +161,8 @@ codeunit 89001 "TCM Tests"
     [Test]
     procedure TextConst_Remove()
     begin
-        // 'Hello, World!' remove 2 chars starting at position 6 = 'Hello World!'
-        Assert.AreEqual('Hello World!', Src.LabelRemove(6, 2), 'Remove(6,2) should remove ", "');
+        // 'Hello, World!' remove 2 chars at 1-based pos 6 removes ',' and ' ' = 'HelloWorld!'
+        Assert.AreEqual('HelloWorld!', Src.LabelRemove(6, 2), 'Remove(6,2) should remove comma and space');
     end;
 
     // ------------------------------------------------------------------
