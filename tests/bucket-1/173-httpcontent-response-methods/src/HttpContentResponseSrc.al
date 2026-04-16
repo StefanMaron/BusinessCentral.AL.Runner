@@ -54,13 +54,13 @@ codeunit 99200 "HCR Helper"
         exit(response.GetCookie(cookieName, cookie));
     end;
 
-    /// GetCookieNames returns an empty list.
+    /// GetCookieNames returns an empty list in standalone mode.
     procedure ResponseGetCookieNamesCount(): Integer
     var
         response: HttpResponseMessage;
         names: List of [Text];
     begin
-        response.GetCookieNames(names);
+        names := response.GetCookieNames();
         exit(names.Count());
     end;
 }

@@ -66,12 +66,18 @@ public class MockHttpResponseMessage
     }
 
     /// <summary>
-    /// BC emits: <c>response.ALGetCookieNames(DataError, ByRef&lt;NavList&lt;NavText&gt;&gt;)</c>
-    /// for <c>HttpResponseMessage.GetCookieNames(var CookieNames)</c>.
-    /// Populates an empty list — no cookies in standalone mode.
+    /// BC emits: <c>response.ALGetCookieNames(DataError)</c>
+    /// for <c>HttpResponseMessage.GetCookieNames()</c>.
+    /// Returns an empty list — no cookies in standalone mode.
     /// </summary>
-    public void ALGetCookieNames(DataError errorLevel, ByRef<NavList<NavText>> names)
+    public NavList<NavText> ALGetCookieNames(DataError errorLevel)
     {
-        names.Value = NavList<NavText>.Default;
+        return NavList<NavText>.Default;
+    }
+
+    /// <summary>Overload without DataError for caller convenience.</summary>
+    public NavList<NavText> ALGetCookieNames()
+    {
+        return NavList<NavText>.Default;
     }
 }

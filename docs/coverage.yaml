@@ -2985,7 +2985,7 @@ HttpResponseMessage.GetCookieNames:
   category: HttpResponseMessage
   status: covered
   tests: tests/bucket-1/173-httpcontent-response-methods
-  notes: overloads=1; ALGetCookieNames(DataError, ByRef<NavList<NavText>>) returns empty list
+  notes: overloads=1; ALGetCookieNames() → NavList<NavText>.Default (0-arg; GetCookieNames() returns list directly)
 
 HttpResponseMessage.Headers:
   layer: runtime-api
