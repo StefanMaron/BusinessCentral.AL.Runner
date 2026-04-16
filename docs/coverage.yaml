@@ -5528,14 +5528,16 @@ System.CaptionClassTranslate:
 System.Clear:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=3
+  status: covered
+  tests: tests/bucket-2/180-clear-clearall
+  notes: overloads=3. Covered: Text, Integer, Decimal, Boolean, Date, Record, List — each resets to type default.
 
 System.ClearAll:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/180-clear-clearall
+  notes: overloads=1. Covered: resets all codeunit globals on the calling codeunit via BC-emitted OnClear.
 
 System.ClearCollectedErrors:
   layer: runtime-api
