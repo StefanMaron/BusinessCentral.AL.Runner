@@ -767,9 +767,12 @@ public static class MockJsonHelper
             try { return (bool)NavJsonValueALIsUndefinedMethod.Invoke(token, new object[] { errorLevel })!; }
             catch { }
         }
-        // Fallback: treat Undefined and Null backing tokens (and null itself) as "unset".
+        // Fallback: treat any non-concrete-value token as "unset".
+        // BC may use None, Null, Undefined, or a null pointer for the initial state
+        // depending on the BC version and how NavJsonValue is constructed.
         var backing = BackingTokenProp.GetValue(token) as JToken;
-        return backing == null
+        if (backing == null) return true;
+        return backing.Type == JTokenType.None
             || backing.Type == JTokenType.Undefined
             || backing.Type == JTokenType.Null;
     }
