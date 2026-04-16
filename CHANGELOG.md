@@ -7,12 +7,6 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
-- **`table fixed_section` coverage (#284)** — `fieldgroup(Fixed; ...)` in a table declaration
-  compiles and works without any runner changes; the BC compiler treats it identically to
-  `fieldgroup(DropDown; ...)` and `fieldgroup(Brick; ...)` (metadata only, no effect on the
-  emitted C# data class). New suite `tests/bucket-1/59-table-fixed-section` adds 5 proving
-  tests: Insert+Get, Modify, Delete, Get-missing returns false, duplicate key errors.
-  Coverage map: `fixed_section` moved from `gap` to `covered`.
 - **`Database.SelectLatestVersion` coverage (#313)** — `SelectLatestVersion()` was already
   a no-op (stripped by `StripEntireCallMethods` in `RoslynRewriter`) but had no proving
   tests. New suite `tests/bucket-1/58-database-select-latest-version` adds 3 tests:
