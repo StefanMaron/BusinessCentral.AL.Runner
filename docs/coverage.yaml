@@ -1697,8 +1697,10 @@ Database.TenantId:
 Database.UnregisterTableConnection:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter strips the entire call (no external connections standalone). Pairs with RegisterTableConnection / SetDefaultTableConnection.
+  tests:
+    - tests/bucket-2/164-unregister-table-connection
 
 Database.UserId:
   layer: runtime-api
