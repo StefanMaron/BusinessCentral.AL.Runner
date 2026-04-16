@@ -1275,6 +1275,17 @@ attribute_item:
     - tests/bucket-2/41-try-function
     - tests/bucket-2/66-event-subscribers
 
+visible_attribute_condition:
+  layer: syntax
+  category: attribute
+  status: covered
+  notes: >
+    Conditional Visible expressions (variable, record field, compound expression) on page
+    controls compile and execute. BC emits Visible as override methods which the rewriter
+    skips (same as other override page methods), so they compile cleanly.
+  tests:
+    - tests/bucket-1/64-visible-condition
+
 
 # ══════════════════════════════════════════════════════════════
 # Layer: runtime-api
