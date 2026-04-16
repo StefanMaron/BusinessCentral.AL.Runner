@@ -1561,38 +1561,38 @@ Database.UserSecurityId:
 Date.Day:
   layer: runtime-api
   category: Date
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; via Date2DMY(D,1)
 
 Date.DayOfWeek:
   layer: runtime-api
   category: Date
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; via Date2DWY(D,1)
 
 Date.Month:
   layer: runtime-api
   category: Date
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; via Date2DMY(D,2)
 
 Date.ToText:
   layer: runtime-api
   category: Date
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; via Format(D) handled by AlCompat.Format
 
 Date.WeekNo:
   layer: runtime-api
   category: Date
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; via Date2DWY(D,2)
 
 Date.Year:
   layer: runtime-api
   category: Date
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; via Date2DMY(D,3)
 
 # ── DateTime ────────────────────────────────────────────────────
 
@@ -5304,14 +5304,14 @@ System.CurrentDateTime:
 System.Date2DMY:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; day=index 1, month=index 2, year=index 3
 
 System.Date2DWY:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; day-of-week=index 1, week-no=index 2
 
 System.DaTi2Variant:
   layer: runtime-api
