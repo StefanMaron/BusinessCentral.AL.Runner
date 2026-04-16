@@ -4572,10 +4572,8 @@ QueryInstance.TopNumberOfRows:
 RecordId.GetRecord:
   layer: runtime-api
   category: RecordId
-  status: covered
-  notes: overloads=1; BC native NavRecordId.ALGetRecord works standalone — returns false for empty/default RecordId (no live DB).
-  tests:
-    - tests/bucket-1/194-small-gaps-recordid-list-nametable
+  status: gap
+  notes: overloads=1; the 1-argument form GetRecord(var Rec) does not exist in BC 26–28 (AL0126). The 0-argument form GetRecord() exists but returns a Record directly — runner behaviour for empty RecordId TBD.
 
 RecordId.TableNo:
   layer: runtime-api

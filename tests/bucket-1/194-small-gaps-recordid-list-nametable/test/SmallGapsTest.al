@@ -1,4 +1,4 @@
-/// Tests for RecordId.TableNo, RecordId.GetRecord, and XmlNameTable.Add/Get.
+/// Tests for RecordId.TableNo and XmlNameTable.Add/Get.
 codeunit 100101 "SGP Test"
 {
     Subtype = Test;
@@ -18,20 +18,6 @@ codeunit 100101 "SGP Test"
         // [WHEN] TableNo is called
         // [THEN] result is 0
         Assert.AreEqual(0, Src.GetTableNo(RecId), 'default RecordId.TableNo() must be 0');
-    end;
-
-    // ── RecordId.GetRecord ────────────────────────────────────────────────
-
-    [Test]
-    procedure RecordId_GetRecord_EmptyId_ReturnsFalse()
-    var
-        RecId: RecordId;
-        Rec: Record "SGP Table";
-    begin
-        // [GIVEN] an empty/default RecordId
-        // [WHEN] GetRecord is called
-        // [THEN] returns false (no live DB in runner)
-        Assert.IsFalse(Src.TryGetRecord(RecId, Rec), 'GetRecord on empty RecordId must return false');
     end;
 
     // ── XmlNameTable ──────────────────────────────────────────────────────
