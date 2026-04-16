@@ -13,7 +13,7 @@ codeunit 50260 "Test Report Triggers"
     begin
         Log.DeleteAll();
         Rpt.Run();
-        Log.SetRange(Event, 'PRE');
+        Log.SetRange(TriggerName, 'PRE');
         Assert.IsTrue(Log.FindFirst(), 'OnPreReport must fire when the report runs');
     end;
 
@@ -25,7 +25,7 @@ codeunit 50260 "Test Report Triggers"
     begin
         Log.DeleteAll();
         Rpt.Run();
-        Log.SetRange(Event, 'POST');
+        Log.SetRange(TriggerName, 'POST');
         Assert.IsTrue(Log.FindFirst(), 'OnPostReport must fire when the report runs');
     end;
 
@@ -40,11 +40,11 @@ codeunit 50260 "Test Report Triggers"
         Log.DeleteAll();
         Rpt.Run();
 
-        Log.SetRange(Event, 'PRE');
+        Log.SetRange(TriggerName, 'PRE');
         Log.FindFirst();
         PreLineNo := Log."Line No.";
 
-        Log.SetRange(Event, 'POST');
+        Log.SetRange(TriggerName, 'POST');
         Log.FindFirst();
         PostLineNo := Log."Line No.";
 

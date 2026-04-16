@@ -12,7 +12,7 @@ report 50258 "Report With Triggers"
         Log: Record "Trigger Log Table";
     begin
         Log."Line No." := 1;
-        Log.Event := 'PRE';
+        Log.TriggerName := 'PRE';
         Log.Insert();
     end;
 
@@ -21,7 +21,7 @@ report 50258 "Report With Triggers"
         Log: Record "Trigger Log Table";
     begin
         Log."Line No." := 2;
-        Log.Event := 'POST';
+        Log.TriggerName := 'POST';
         Log.Insert();
     end;
 }

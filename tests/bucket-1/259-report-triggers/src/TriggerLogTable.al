@@ -8,7 +8,7 @@ table 50259 "Trigger Log Table"
         {
             DataClassification = ToBeClassified;
         }
-        field(2; Event; Text[50])
+        field(2; TriggerName; Text[50])
         {
             DataClassification = ToBeClassified;
         }
