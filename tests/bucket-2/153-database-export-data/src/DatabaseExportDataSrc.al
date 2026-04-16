@@ -14,3 +14,4 @@ codeunit 50153 "DED Helper"
         exit(a + b);
     end;
 }
+
