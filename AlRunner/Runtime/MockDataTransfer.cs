@@ -16,6 +16,14 @@ public class MockDataTransfer
     private readonly List<(int SourceFieldId, int TargetFieldId)> _fieldMappings = new();
     private readonly List<(object Value, int TargetFieldId)> _constantValues = new();
 
+    /// <summary>
+    /// DataTransfer.UpdateAuditFields — when true, BC auto-populates SystemModifiedAt/By
+    /// on the target records during CopyRows/CopyFields. Default is false.
+    /// In standalone mode there is no real database so audit-field propagation is a no-op,
+    /// but the property must still round-trip for test code that reads it back.
+    /// </summary>
+    public bool ALUpdateAuditFields { get; set; }
+
     /// <summary>Set source and target table IDs.</summary>
     public void ALSetTables(int sourceTableId, int targetTableId)
     {
