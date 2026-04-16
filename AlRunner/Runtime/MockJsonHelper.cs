@@ -204,6 +204,29 @@ public static class MockJsonHelper
         return val.Value<bool>();
     }
 
+    /// <summary>Returns true if the token's backing store is a JArray.</summary>
+    public static bool IsArray(NavJsonToken token)
+        => GetBackingToken(token) is JArray;
+
+    /// <summary>Returns true if the token's backing store is a JObject.</summary>
+    public static bool IsObject(NavJsonToken token)
+        => GetBackingToken(token) is JObject;
+
+    /// <summary>Returns true if the token's backing store is a JValue (primitive or null).</summary>
+    public static bool IsValue(NavJsonToken token)
+        => GetBackingToken(token) is JValue;
+
+    /// <summary>
+    /// Replacement for NavJsonToken.ALClone().
+    /// Deep-clones the token and returns a new NavJsonToken wrapping the clone.
+    /// </summary>
+    public static NavJsonToken Clone(NavJsonToken token)
+    {
+        var backing = GetBackingToken(token);
+        var cloned = backing.DeepClone();
+        return NavJsonToken.Create(cloned);
+    }
+
     private static bool IsSupportedTokenType(JToken token)
     {
         return token.Type switch

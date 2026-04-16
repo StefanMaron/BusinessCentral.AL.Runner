@@ -2186,8 +2186,11 @@ public void ClearApplicationMemberVariables() { }
             // These BC methods go through TrappableOperationExecutor -> NavEnvironment
             // which crashes in standalone mode. MockJsonHelper does the same work
             // using Newtonsoft.Json directly.
+            // ALAsArray/ALAsObject/ALAsValue work natively via the BC runtime without going
+            // through TrappableOperationExecutor — do NOT redirect them here.
+            // Only redirect the methods that crash standalone.
             if (methodName is "ALWriteTo" or "ALReadFrom" or "ALSelectToken" or "ALSelectTokens"
-                or "ALGetBoolean")
+                or "ALGetBoolean" or "ALIsArray" or "ALIsObject" or "ALIsValue" or "ALClone")
             {
                 var helperMethod = methodName switch
                 {
@@ -2196,6 +2199,10 @@ public void ClearApplicationMemberVariables() { }
                     "ALSelectToken" => "SelectToken",
                     "ALSelectTokens" => "SelectTokens",
                     "ALGetBoolean" => "GetBoolean",
+                    "ALIsArray" => "IsArray",
+                    "ALIsObject" => "IsObject",
+                    "ALIsValue" => "IsValue",
+                    "ALClone" => "Clone",
                     _ => null
                 };
                 if (helperMethod is not null)
