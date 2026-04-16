@@ -7325,14 +7325,16 @@ Text.MaxStrLen:
 Text.PadLeft:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/183-text-padtrim
+  notes: overloads=2 (with padChar / default space). Covered via NavText native — pad char, default space, no-op when source already longer.
 
 Text.PadRight:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/183-text-padtrim
+  notes: overloads=2 (with padChar / default space). Covered via NavText native — includes differs-from-PadLeft trap.
 
 Text.PadStr:
   layer: runtime-api
@@ -7343,14 +7345,16 @@ Text.PadStr:
 Text.Remove:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/183-text-padtrim
+  notes: overloads=2 (1-arg from-index / 2-arg with count). Covered via NavText native — 1-based AL convention.
 
 Text.Replace:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/183-text-padtrim
+  notes: overloads=2 (char/char, text/text). Covered via NavText native — single-char, string replace, no-match-unchanged.
 
 Text.SelectStr:
   layer: runtime-api
@@ -7417,20 +7421,23 @@ Text.ToUpper:
 Text.Trim:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/183-text-padtrim
+  notes: overloads=1. Covered via NavText native — both-sides strip, no-whitespace-unchanged.
 
 Text.TrimEnd:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/183-text-padtrim
+  notes: overloads=1. Covered via NavText native — trailing strip only, differs-from-TrimStart trap.
 
 Text.TrimStart:
   layer: runtime-api
   category: Text
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/183-text-padtrim
+  notes: overloads=1. Covered via NavText native — leading strip only.
 
 Text.UpperCase:
   layer: runtime-api
