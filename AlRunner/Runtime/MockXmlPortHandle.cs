@@ -35,7 +35,7 @@ public class MockXmlPortHandle
 
     public string FieldDelimiter { get; set; } = "";
     public string FieldSeparator { get; set; } = "";
-    public string Filename { get; set; } = "";
+    public string FileName { get; set; } = "";
     public string RecordSeparator { get; set; } = "";
     public string TableSeparator { get; set; } = "";
     public object? TextEncoding { get; set; }
