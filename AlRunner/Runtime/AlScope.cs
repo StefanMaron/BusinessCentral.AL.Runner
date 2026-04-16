@@ -1435,10 +1435,13 @@ public static class AlCompat
 
     /// <summary>
     /// CurrentTransactionType() stub — returns TransactionType::Update (ordinal 2).
-    /// BC lowers this to ALDatabase.ALCurrentTransactionType() which requires a live session.
-    /// Update is the most common real-world value and is the safest stable stub.
+    /// BC lowers this to ALDatabase.ALCurrentTransactionType() which returns int (the ordinal).
+    /// BC then wraps the int in NavOption.Create(existing.NavOptionMetadata, ordinal) at the
+    /// call site, handled by the CloneTaggedOption rewriter rule.  Returning int here ensures
+    /// the ordinal passes cleanly without any NavOption implicit-conversion NPE.
+    /// Update (ordinal 2) is the most common real-world value and is the safest stable stub.
     /// </summary>
-    public static NavOption CurrentTransactionType() => MockRecordHandle.CreateOptionValue(2);
+    public static int CurrentTransactionType() => 2;
 
     /// <summary>
     /// NormalDate(date) — wraps ALSystemDate.ALNormalDate with 0D handling.
