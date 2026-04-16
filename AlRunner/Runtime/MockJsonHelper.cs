@@ -554,34 +554,44 @@ public static class MockJsonHelper
     }
 
     /// <summary>
-    /// Replacement for NavJsonValue.ALAsDate().
-    /// Returns the backing date value as NavDate.
-    /// AL: JsonValue.AsDate()  →  MockJsonHelper.AsDate(token)
+    /// Replacement for NavJsonValue.ALAsDate() or MockTestPageField.ALAsDate().
+    /// ALAsDate exists on BOTH NavJsonValue and MockTestPageField; accepts object and dispatches.
+    /// AL: JsonValue.AsDate()  →  MockJsonHelper.AsDate(token, ...)
+    /// AL: TestField.AsDate()  →  MockJsonHelper.AsDate(testField, ...)
     /// </summary>
-    public static NavDate AsDate(NavJsonToken token, DataError errorLevel = default)
+    public static NavDate AsDate(object tokenOrField, DataError errorLevel = default)
     {
-        var backing = GetBackingToken(token);
-        if (backing.Type == JTokenType.Date)
-            return CreateNavDate(backing.Value<DateTime>());
-        if (backing.Type == JTokenType.String &&
-            DateTime.TryParse(backing.Value<string>(), out var parsed))
-            return CreateNavDate(parsed);
+        if (tokenOrField is MockTestPageField f) return f.ALAsDate();
+        if (tokenOrField is NavJsonToken token)
+        {
+            var backing = GetBackingToken(token);
+            if (backing.Type == JTokenType.Date)
+                return CreateNavDate(backing.Value<DateTime>());
+            if (backing.Type == JTokenType.String &&
+                DateTime.TryParse(backing.Value<string>(), out var parsed))
+                return CreateNavDate(parsed);
+        }
         return NavDate.Default;
     }
 
     /// <summary>
-    /// Replacement for NavJsonValue.ALAsDateTime().
-    /// Returns the backing date/time value as NavDateTime.
-    /// AL: JsonValue.AsDateTime()  →  MockJsonHelper.AsDateTime(token)
+    /// Replacement for NavJsonValue.ALAsDateTime() or MockTestPageField.ALAsDateTime().
+    /// ALAsDateTime exists on BOTH NavJsonValue and MockTestPageField; accepts object and dispatches.
+    /// AL: JsonValue.AsDateTime()  →  MockJsonHelper.AsDateTime(token, ...)
+    /// AL: TestField.AsDateTime()  →  MockJsonHelper.AsDateTime(testField, ...)
     /// </summary>
-    public static NavDateTime AsDateTime(NavJsonToken token, DataError errorLevel = default)
+    public static NavDateTime AsDateTime(object tokenOrField, DataError errorLevel = default)
     {
-        var backing = GetBackingToken(token);
-        if (backing.Type == JTokenType.Date)
-            return AlCompat.CreateNavDateTime(backing.Value<DateTime>());
-        if (backing.Type == JTokenType.String &&
-            DateTime.TryParse(backing.Value<string>(), out var parsed))
-            return AlCompat.CreateNavDateTime(parsed);
+        if (tokenOrField is MockTestPageField f) return f.ALAsDateTime();
+        if (tokenOrField is NavJsonToken token)
+        {
+            var backing = GetBackingToken(token);
+            if (backing.Type == JTokenType.Date)
+                return AlCompat.CreateNavDateTime(backing.Value<DateTime>());
+            if (backing.Type == JTokenType.String &&
+                DateTime.TryParse(backing.Value<string>(), out var parsed))
+                return AlCompat.CreateNavDateTime(parsed);
+        }
         return NavDateTime.Default;
     }
 
@@ -610,18 +620,23 @@ public static class MockJsonHelper
     }
 
     /// <summary>
-    /// Replacement for NavJsonValue.ALAsTime().
-    /// Returns the backing date/time value as NavTime.
-    /// AL: JsonValue.AsTime()  →  MockJsonHelper.AsTime(token)
+    /// Replacement for NavJsonValue.ALAsTime() or MockTestPageField.ALAsTime().
+    /// ALAsTime exists on BOTH NavJsonValue and MockTestPageField; accepts object and dispatches.
+    /// AL: JsonValue.AsTime()  →  MockJsonHelper.AsTime(token, ...)
+    /// AL: TestField.AsTime()  →  MockJsonHelper.AsTime(testField, ...)
     /// </summary>
-    public static NavTime AsTime(NavJsonToken token, DataError errorLevel = default)
+    public static NavTime AsTime(object tokenOrField, DataError errorLevel = default)
     {
-        var backing = GetBackingToken(token);
-        if (backing.Type == JTokenType.Date)
-            return CreateNavTime(backing.Value<DateTime>());
-        if (backing.Type == JTokenType.String &&
-            DateTime.TryParse(backing.Value<string>(), out var parsed))
-            return CreateNavTime(parsed);
+        if (tokenOrField is MockTestPageField f) return f.ALAsTime();
+        if (tokenOrField is NavJsonToken token)
+        {
+            var backing = GetBackingToken(token);
+            if (backing.Type == JTokenType.Date)
+                return CreateNavTime(backing.Value<DateTime>());
+            if (backing.Type == JTokenType.String &&
+                DateTime.TryParse(backing.Value<string>(), out var parsed))
+                return CreateNavTime(parsed);
+        }
         return NavTime.Default;
     }
 
