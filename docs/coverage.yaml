@@ -3148,8 +3148,8 @@ JsonArray.GetArray:
 JsonArray.GetBigInteger:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1. BC 21+ typed overload not present in AL 16.2. Indirectly reachable via Get + AsValue().AsBigInteger().
 
 JsonArray.GetBoolean:
   layer: runtime-api
@@ -3161,26 +3161,26 @@ JsonArray.GetBoolean:
 JsonArray.GetByte:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1. BC 21+ typed overload not present in AL 16.2.
 
 JsonArray.GetChar:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1. BC 21+ typed overload not present in AL 16.2.
 
 JsonArray.GetDate:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1. BC 21+ typed overload not present in AL 16.2.
 
 JsonArray.GetDateTime:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1. BC 21+ typed overload not present in AL 16.2.
 
 JsonArray.GetDecimal:
   layer: runtime-api
@@ -3192,8 +3192,8 @@ JsonArray.GetDecimal:
 JsonArray.GetDuration:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1. BC 21+ typed overload not present in AL 16.2.
 
 JsonArray.GetInteger:
   layer: runtime-api
@@ -3212,8 +3212,8 @@ JsonArray.GetObject:
 JsonArray.GetOption:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1. BC 21+ typed overload not present in AL 16.2.
 
 JsonArray.GetText:
   layer: runtime-api
@@ -3225,8 +3225,8 @@ JsonArray.GetText:
 JsonArray.GetTime:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1. BC 21+ typed overload not present in AL 16.2.
 
 JsonArray.IndexOf:
   layer: runtime-api
@@ -3245,8 +3245,9 @@ JsonArray.Insert:
 JsonArray.Path:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/204-jsonarray-path
+  notes: overloads=1. Covered via NavJsonArray native — root returns "$", nested returns "$.key" (JSONPath notation).
 
 JsonArray.ReadFrom:
   layer: runtime-api
