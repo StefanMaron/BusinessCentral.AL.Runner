@@ -832,10 +832,19 @@ public static class AlCompat
             }
             catch { }
         }
-        // NavGuid: checked BEFORE NavValue to avoid the try/catch swallowing cast failures.
-        // NavGuid.ToGuid() is the correct API — explicit (Guid) cast throws InvalidCastException.
-        // Format "B" = {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX} (38 chars, uppercase, braces).
-        if (value is Microsoft.Dynamics.Nav.Runtime.NavGuid ng0) return ng0.ToGuid().ToString("B").ToUpperInvariant();
+        // NavGuid — check by type name (version-independent) and call ToGuid() via reflection.
+        // Pattern-match on Microsoft.Dynamics.Nav.Runtime.NavGuid is unreliable across BC versions;
+        // typeName check + reflection is defensive. Format "B" = {XXXXXXXX-...} (38 chars, braces).
+        if (typeName == "NavGuid")
+        {
+            try
+            {
+                var toGuidMethod = value.GetType().GetMethod("ToGuid");
+                if (toGuidMethod != null)
+                    return ((Guid)toGuidMethod.Invoke(value, null)!).ToString("B").ToUpperInvariant();
+            }
+            catch { }
+        }
         // Handle NavValue subtypes — use ToText() where available, avoid ToString() which may need NavSession
         if (value is Microsoft.Dynamics.Nav.Runtime.NavValue nv)
         {
