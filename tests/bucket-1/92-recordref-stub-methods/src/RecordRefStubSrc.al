@@ -1,6 +1,6 @@
 /// Exercises RecordRef stub methods: IsDirty, LoadFields, CopyLinks,
 /// ReadConsistency, RecordLevelLocking, SecurityFiltering, Truncate.
-codeunit 93000 "RRS Src"
+codeunit 93100 "RRS Src"
 {
     procedure GetIsDirty(var RecRef: RecordRef): Boolean
     begin
