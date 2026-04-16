@@ -1,4 +1,4 @@
-codeunit 87001 "TCM Tests"
+codeunit 89001 "TCM Tests"
 {
     Subtype = Test;
 
