@@ -7,6 +7,12 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **`Database.SelectLatestVersion` coverage (#313)** — `SelectLatestVersion()` was already
+  a no-op (stripped by `StripEntireCallMethods` in `RoslynRewriter`) but had no proving
+  tests. New suite `tests/bucket-1/58-database-select-latest-version` adds 3 tests:
+  call without error, call after insert still shows record with correct field value,
+  multiple calls are all no-ops. Coverage map: `Database.SelectLatestVersion` moved
+  from `gap` to `covered`.
 - **`Record.IsEmpty` coverage (#299)** — `ALIsEmpty` was already implemented in
   `MockRecordHandle` (`GetFilteredAndMarkedRecords().Count == 0`) but had no proving
   tests. New suite `tests/bucket-1/56-isempty` adds 5 proving tests: empty table →

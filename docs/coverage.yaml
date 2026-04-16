@@ -1487,8 +1487,9 @@ Database.RegisterTableConnection:
 Database.SelectLatestVersion:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=2
+  status: covered
+  tests: tests/bucket-1/58-database-select-latest-version
+  notes: overloads=2 (no-arg and optional Boolean); both stripped to no-op by RoslynRewriter
 
 Database.SerialNumber:
   layer: runtime-api
