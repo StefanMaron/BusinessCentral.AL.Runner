@@ -120,7 +120,6 @@ dotnet run --project AlRunner -- ./src ./test
 2. **Documentation must stay current** — any change affecting behavior, CLI flags, or mock capabilities must be reflected in:
    - `README.md` (supported/unsupported feature list, CLI flags)
    - `--guide` output (`PrintGuide()` in `Program.cs`) — the primary way external agents discover runner capabilities
-   - `CHANGELOG.md` (entry under `[Unreleased]` — always required)
    - `docs/limitations.md` (if the change affects known gaps)
 
 3. **File issues for gaps** — never silently work around a gap; always report it.

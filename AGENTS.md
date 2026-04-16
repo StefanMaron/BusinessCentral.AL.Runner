@@ -32,10 +32,11 @@ Every feature, fix, or mock addition requires a test. No exceptions.
 ## Documentation must stay current
 
 Any change affecting behavior, CLI flags, or mock capabilities must update:
-- `CHANGELOG.md` — entry under `[Unreleased]` (always required)
 - `README.md` — supported/unsupported feature list, CLI flags
 - `PrintGuide()` in `AlRunner/Program.cs` — `--guide` output
 - `docs/limitations.md` — if the change affects known gaps
+
+**Do NOT touch `CHANGELOG.md`.** It is generated from commit messages on `main` after merge. Editing it in PRs causes conflicts that block the queue.
 
 ---
 
@@ -91,7 +92,7 @@ Workers self-select from the `status: ready` queue. The orchestrator does not as
 | `AlRunner/Runtime/` | All mock implementations (MockRecordHandle, AlScope, etc.) |
 | `tests/bucket-1/`, `tests/bucket-2/` | AL test suites |
 | `docs/limitations.md` | Known gaps and architectural limits |
-| `CHANGELOG.md` | Always update under `[Unreleased]` |
+| `CHANGELOG.md` | **Do not edit** — generated from commits post-merge |
 
 ## Exit codes
 
