@@ -1820,6 +1820,61 @@ public void ClearApplicationMemberVariables() { }
         // Now recurse into children first
         var visited = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
 
+        // NavCode.op_Equality(a, b) / NavCode.op_Inequality(a, b)
+        // BC may emit explicit static operator calls for Code[N] comparisons in case statements
+        // (rather than a binary == expression), depending on the BC version. Both forms need
+        // the same NavEnvironment-free replacement.
+        if (visited.ArgumentList.Arguments.Count == 2 &&
+            visited.Expression is MemberAccessExpressionSyntax navCodeOpMa &&
+            navCodeOpMa.Expression is IdentifierNameSyntax navCodeOpIdent &&
+            navCodeOpIdent.Identifier.Text == "NavCode")
+        {
+            var opName = navCodeOpMa.Name.Identifier.Text;
+            if (opName == "op_Equality" || opName == "op_Inequality")
+            {
+                var leftArg = visited.ArgumentList.Arguments[0].Expression;
+                var rightArg = visited.ArgumentList.Arguments[1].Expression;
+                var equalsCall = SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("NavCodeEquals")),
+                    SyntaxFactory.ArgumentList(
+                        SyntaxFactory.SeparatedList<ArgumentSyntax>(new[] {
+                            SyntaxFactory.Argument(leftArg),
+                            SyntaxFactory.Argument(rightArg)
+                        })));
+                if (opName == "op_Inequality")
+                    return SyntaxFactory.PrefixUnaryExpression(
+                        SyntaxKind.LogicalNotExpression,
+                        SyntaxFactory.ParenthesizedExpression(equalsCall));
+                return equalsCall;
+            }
+        }
+
+        // <navCodeVar>.CompareTo(<arg>) — BC emits this for case statements on Code[N] fields.
+        // NavCode.CompareTo → NavStringValue.CompareTo calls NavEnvironment (null standalone).
+        // We intercept when the argument is AlCompat.CreateNavCode(...) (the case label after
+        // our VisitObjectCreationExpression rewrite) and route through the safe NavCodeCompare.
+        if (visited.ArgumentList.Arguments.Count == 1 &&
+            visited.Expression is MemberAccessExpressionSyntax compareToMa &&
+            compareToMa.Name.Identifier.Text == "CompareTo" &&
+            IsCreateNavCodeCall(visited.ArgumentList.Arguments[0].Expression))
+        {
+            var receiver = compareToMa.Expression;
+            var compareArg = visited.ArgumentList.Arguments[0].Expression;
+            return SyntaxFactory.InvocationExpression(
+                SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("AlCompat"),
+                    SyntaxFactory.IdentifierName("NavCodeCompare")),
+                SyntaxFactory.ArgumentList(
+                    SyntaxFactory.SeparatedList<ArgumentSyntax>(new[] {
+                        SyntaxFactory.Argument(receiver),
+                        SyntaxFactory.Argument(compareArg)
+                    })));
+        }
+
         // NavText?.ToLowerInvariant() / ?.ToUpperInvariant() -> NavText?.ToString().ToLowerInvariant()
         // NavText implicitly converts to ReadOnlySpan<char>, which picks up the wrong
         // MemoryExtensions.ToLowerInvariant(ReadOnlySpan, Span) overload. Insert .ToString()
@@ -2885,6 +2940,60 @@ public void ClearApplicationMemberVariables() { }
         }
 
         return visited;
+    }
+
+    // -----------------------------------------------------------------------
+    // Binary expressions: intercept NavCode == / != comparisons
+    // -----------------------------------------------------------------------
+
+    /// <summary>Returns true when <paramref name="expr"/> is an <c>AlCompat.CreateNavCode(...)</c> call.</summary>
+    private static bool IsCreateNavCodeCall(ExpressionSyntax expr)
+        => expr is InvocationExpressionSyntax inv &&
+           inv.Expression is MemberAccessExpressionSyntax ma &&
+           ma.Expression.ToString() == "AlCompat" &&
+           ma.Name.Identifier.Text == "CreateNavCode";
+
+    /// <summary>
+    /// Rewrites <c>X == AlCompat.CreateNavCode(...)</c> (and the != form) to
+    /// <c>AlCompat.NavCodeEquals(X, AlCompat.CreateNavCode(...))</c>.
+    ///
+    /// BC emits <c>NavCode.op_Equality</c> for <c>case Category of 'A':</c>, which
+    /// calls <c>NavEnvironment</c> (null in standalone mode → NullReferenceException).
+    /// After <see cref="VisitObjectCreationExpression"/> has rewritten
+    /// <c>new NavCode(N, "A")</c> → <c>AlCompat.CreateNavCode(N, "A")</c> in the
+    /// children, we detect the pattern here and route through the safe helper.
+    /// </summary>
+    public override SyntaxNode? VisitBinaryExpression(BinaryExpressionSyntax node)
+    {
+        var visited = (BinaryExpressionSyntax)base.VisitBinaryExpression(node)!;
+
+        bool isEq = visited.IsKind(SyntaxKind.EqualsExpression);
+        bool isNe = visited.IsKind(SyntaxKind.NotEqualsExpression);
+        if (!isEq && !isNe)
+            return visited;
+
+        // Only intercept when at least one side is AlCompat.CreateNavCode(...) — that
+        // identifies a Code[N] literal comparison generated by BC for case statements.
+        if (!IsCreateNavCodeCall(visited.Left) && !IsCreateNavCodeCall(visited.Right))
+            return visited;
+
+        var equalsCall = SyntaxFactory.InvocationExpression(
+            SyntaxFactory.MemberAccessExpression(
+                SyntaxKind.SimpleMemberAccessExpression,
+                SyntaxFactory.IdentifierName("AlCompat"),
+                SyntaxFactory.IdentifierName("NavCodeEquals")),
+            SyntaxFactory.ArgumentList(
+                SyntaxFactory.SeparatedList<ArgumentSyntax>(new[] {
+                    SyntaxFactory.Argument(visited.Left),
+                    SyntaxFactory.Argument(visited.Right)
+                })));
+
+        if (isNe)
+            return SyntaxFactory.PrefixUnaryExpression(
+                SyntaxKind.LogicalNotExpression,
+                SyntaxFactory.ParenthesizedExpression(equalsCall));
+
+        return equalsCall;
     }
 
     // -----------------------------------------------------------------------

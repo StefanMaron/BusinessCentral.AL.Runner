@@ -1372,6 +1372,28 @@ public static class AlCompat
         return new NavCode(maxLength, value?.ToUpperInvariant() ?? "");
     }
 
+    /// <summary>
+    /// NavCode equality comparison that avoids NavEnvironment.
+    /// NavCode.op_Equality and NavCode.ToString() both call NavEnvironment
+    /// which crashes in standalone mode. The explicit <c>(string)</c> cast uses
+    /// NavCode.op_Explicit which extracts the internal string value directly
+    /// (same pattern used in MockRecordHandle and MockFieldRef).
+    /// </summary>
+    public static bool NavCodeEquals(NavCode a, NavCode b)
+        => string.Equals((string)a, (string)b, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// NavCode ordering comparison that avoids NavEnvironment.
+    /// BC emits <c>Category.CompareTo(new NavCode(N, "A"))</c> for
+    /// <c>case Category of 'A':</c> statements. <c>NavCode.CompareTo</c>
+    /// calls <c>NavStringValue.CompareTo</c> which calls NavEnvironment
+    /// (null in standalone → NullReferenceException). This helper does the
+    /// same comparison via the same safe <c>(string)</c> cast used in
+    /// <see cref="NavCodeEquals"/>.
+    /// </summary>
+    public static int NavCodeCompare(NavCode a, NavCode b)
+        => string.Compare((string)a, (string)b, StringComparison.OrdinalIgnoreCase);
+
     // -----------------------------------------------------------------------
     // ALSystemNumeric replacements (ALRandomize/ALRandom require NavSession)
     // -----------------------------------------------------------------------
