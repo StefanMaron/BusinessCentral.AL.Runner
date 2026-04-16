@@ -2961,8 +2961,9 @@ HttpResponseMessage.ReasonPhrase:
 InStream.EOS:
   layer: runtime-api
   category: InStream
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/266-instream-eos
+  notes: overloads=1; BC emits ALEOS() method on NavInStream; MockInStream.ALEOS() added returning pos >= length
 
 InStream.Length:
   layer: runtime-api

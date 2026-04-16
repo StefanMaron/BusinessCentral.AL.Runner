@@ -56,6 +56,9 @@ public class MockInStream
     /// <summary>ALIsEOS — BC's InStream.EOS() mapped to this property.</summary>
     public bool ALIsEOS => EOS;
 
+    /// <summary>ALEOS() — BC emits inStream.ALEOS() for InStr.EOS() calls.</summary>
+    public bool ALEOS() => EOS;
+
     /// <summary>Read all remaining bytes as a UTF-8 string (used by MockJsonHelper.ReadFrom).</summary>
     public string ReadAll()
     {
