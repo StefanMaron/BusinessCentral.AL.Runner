@@ -1869,8 +1869,10 @@ public void ClearApplicationMemberVariables() { }
         // which fails without the BC service tier. AlCompat.Format handles every BC value
         // type without session access. We route the receiver (expr) through AlCompat.Format,
         // discarding all arguments since AlCompat.Format does not need them.
+        // Exclude ALCompiler.ToText — that static form is handled separately below.
         if (visited.Expression is MemberAccessExpressionSyntax toTextMa &&
-            toTextMa.Name.Identifier.Text == "ToText")
+            toTextMa.Name.Identifier.Text == "ToText" &&
+            !(toTextMa.Expression is IdentifierNameSyntax toTextId && toTextId.Identifier.Text == "ALCompiler"))
         {
             return SyntaxFactory.InvocationExpression(
                 SyntaxFactory.MemberAccessExpression(
