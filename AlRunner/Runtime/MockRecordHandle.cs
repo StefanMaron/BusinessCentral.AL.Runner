@@ -149,10 +149,24 @@ public class MockRecordHandle
 
     public void ALInit()
     {
+        // Preserve PK field values across Init() — AL spec: Init resets non-PK fields
+        // to type defaults (or InitValue), but PK fields are retained.
+        var pkFields = GetPrimaryKeyFields();
+        var savedPk = new Dictionary<int, NavValue>();
+        foreach (var fieldNo in pkFields)
+        {
+            if (_fields.TryGetValue(fieldNo, out var val))
+                savedPk[fieldNo] = val;
+        }
+
         _fields = new Dictionary<int, NavValue>();
         // Apply any InitValue attributes declared on the table's fields.
         // Registry is populated at pipeline start from the AL source.
         TableInitValueRegistry.ApplyInitValues(_tableId, _fields);
+
+        // Restore PK fields
+        foreach (var kv in savedPk)
+            _fields[kv.Key] = kv.Value;
     }
 
     /// <summary>
