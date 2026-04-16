@@ -428,6 +428,8 @@ ternary_expression:
   category: expression
   status: covered
   notes: inline if-then-else expression; nested form tested; BC transpiler handles natively
+  tests:
+    - tests/bucket-2/175-ternary-expression
 
 unary_expression:
   layer: syntax
