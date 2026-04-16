@@ -433,9 +433,24 @@ public static class AlCompat
     /// calls to <see cref="GetOrdinalsForOption"/> / <see cref="GetNamesForOption"/>
     /// can resolve back to the AL enum. Emitted by the rewriter as the
     /// replacement for <c>NavOption.Create(NCLEnumMetadata.Create(N), V)</c>.
+    ///
+    /// Also validates the ordinal against the registry when the enum is
+    /// registered (non-extensible, declared in user AL sources). This
+    /// catches invalid ordinals from <c>Enum::"T".FromInteger(I)</c> calls,
+    /// which BC emits using this same pattern. Validation is skipped when
+    /// the registry has no members for the enum (extensible or external enum).
     /// </summary>
     public static NavOption CreateTaggedOption(int enumObjectId, int ordinal)
     {
+        var members = EnumRegistry.GetMembers(enumObjectId);
+        if (members.Count > 0)
+        {
+            bool valid = false;
+            foreach (var (v, _) in members)
+                if (v == ordinal) { valid = true; break; }
+            if (!valid)
+                throw new Exception($"The value {ordinal} is not a valid ordinal for this enum type.");
+        }
         var opt = AlRunner.Runtime.MockRecordHandle.CreateOptionValue(ordinal);
         _optionEnumId.AddOrUpdate(opt, enumObjectId);
         return opt;
