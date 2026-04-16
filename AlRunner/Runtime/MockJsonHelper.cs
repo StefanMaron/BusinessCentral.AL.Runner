@@ -330,6 +330,14 @@ public static class MockJsonHelper
         return new NavText(bcPath);
     }
 
+    /// <summary>
+    /// Overload for Cookie.Path — BC emits cookie.ALPath as a property access,
+    /// which the rewriter converts to MockJsonHelper.Path(cookie). Cookies do not
+    /// need path-format conversion; just wrap the raw string in NavText.
+    /// </summary>
+    public static NavText Path(MockCookie cookie)
+        => new NavText(cookie.ALPath);
+
     /// <summary>Returns true if the token's backing store is a JArray.</summary>
     public static bool IsArray(NavJsonToken token)
         => GetBackingToken(token) is JArray;
