@@ -9678,14 +9678,18 @@ XmlWriteOptions.PreserveWhitespace:
 Xmlport.Export:
   layer: runtime-api
   category: Xmlport
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter routes NavXmlPort.Export -> MockXmlPortHandle.StaticExport which is a no-op.
+  tests:
+    - tests/bucket-1/89-xmlport-instance
 
 Xmlport.Import:
   layer: runtime-api
   category: Xmlport
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter routes NavXmlPort.Import -> MockXmlPortHandle.StaticImport which is a no-op.
+  tests:
+    - tests/bucket-1/89-xmlport-instance
 
 Xmlport.Run:
   layer: runtime-api
@@ -9700,50 +9704,66 @@ Xmlport.Run:
 XmlportInstance.Break:
   layer: runtime-api
   category: XmlportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op on MockXmlPortHandle
+  tests:
+    - tests/bucket-1/89-xmlport-instance
 
 XmlportInstance.BreakUnbound:
   layer: runtime-api
   category: XmlportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op on MockXmlPortHandle
+  tests:
+    - tests/bucket-1/89-xmlport-instance
 
 XmlportInstance.CurrentPath:
   layer: runtime-api
   category: XmlportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns empty string on MockXmlPortHandle
+  tests:
+    - tests/bucket-1/89-xmlport-instance
 
 XmlportInstance.Export:
   layer: runtime-api
   category: XmlportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op on MockXmlPortHandle
+  tests:
+    - tests/bucket-1/89-xmlport-instance
 
 XmlportInstance.FieldDelimiter:
   layer: runtime-api
   category: XmlportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; property on MockXmlPortHandle, default empty string
+  tests:
+    - tests/bucket-1/89-xmlport-instance
 
 XmlportInstance.FieldSeparator:
   layer: runtime-api
   category: XmlportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; property on MockXmlPortHandle, default empty string
+  tests:
+    - tests/bucket-1/89-xmlport-instance
 
 XmlportInstance.Filename:
   layer: runtime-api
   category: XmlportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; property on MockXmlPortHandle, default empty string
+  tests:
+    - tests/bucket-1/89-xmlport-instance
 
 XmlportInstance.Import:
   layer: runtime-api
   category: XmlportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op on MockXmlPortHandle
+  tests:
+    - tests/bucket-1/89-xmlport-instance
 
 XmlportInstance.ImportFile:
   layer: runtime-api
@@ -9754,53 +9774,71 @@ XmlportInstance.ImportFile:
 XmlportInstance.Quit:
   layer: runtime-api
   category: XmlportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op on MockXmlPortHandle
+  tests:
+    - tests/bucket-1/89-xmlport-instance
 
 XmlportInstance.RecordSeparator:
   layer: runtime-api
   category: XmlportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; property on MockXmlPortHandle, default empty string
+  tests:
+    - tests/bucket-1/89-xmlport-instance
 
 XmlportInstance.Run:
   layer: runtime-api
   category: XmlportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op on MockXmlPortHandle
+  tests:
+    - tests/bucket-1/89-xmlport-instance
 
 XmlportInstance.SetDestination:
   layer: runtime-api
   category: XmlportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC emits xP.Target.Destination = outStr; after .Target stripping lands on MockXmlPortHandle.Destination property
+  tests:
+    - tests/bucket-1/89-xmlport-instance
 
 XmlportInstance.SetSource:
   layer: runtime-api
   category: XmlportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC emits xP.Target.Source = inStr; after .Target stripping lands on MockXmlPortHandle.Source property
+  tests:
+    - tests/bucket-1/89-xmlport-instance
 
 XmlportInstance.SetTableView:
   layer: runtime-api
   category: XmlportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op on MockXmlPortHandle
+  tests:
+    - tests/bucket-1/89-xmlport-instance
 
 XmlportInstance.Skip:
   layer: runtime-api
   category: XmlportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op on MockXmlPortHandle
+  tests:
+    - tests/bucket-1/89-xmlport-instance
 
 XmlportInstance.TableSeparator:
   layer: runtime-api
   category: XmlportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; property on MockXmlPortHandle, default empty string
+  tests:
+    - tests/bucket-1/89-xmlport-instance
 
 XmlportInstance.TextEncoding:
   layer: runtime-api
   category: XmlportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; property on MockXmlPortHandle
+  tests:
+    - tests/bucket-1/89-xmlport-instance

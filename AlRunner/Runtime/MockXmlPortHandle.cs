@@ -8,16 +8,9 @@ namespace AlRunner.Runtime;
 /// <c>MockXmlPortHandle</c> and strips the ITreeObject <c>this</c> arg
 /// so only the XmlPort ID remains.
 ///
-/// After the existing <c>.Target</c>-stripping rewrite the generated code
-/// calls members directly on the handle, e.g.:
-/// <code>
-///   xP.Source = inStr.Value;
-///   xP.Import();
-/// </code>
-/// This class satisfies those calls so files compile. The import/export
-/// methods throw <see cref="NotSupportedException"/> at runtime — XmlPort
-/// I/O requires the BC service tier. Inject via an AL interface to make
-/// XmlPort-dependent code unit-testable.
+/// All instance methods are no-ops — XmlPort I/O and schema iteration
+/// require the BC service tier, which is out of scope for al-runner.
+/// Inject via an AL interface to make XmlPort-dependent code unit-testable.
 /// </summary>
 public class MockXmlPortHandle
 {
@@ -27,34 +20,57 @@ public class MockXmlPortHandle
 
     public MockXmlPortHandle(int xmlPortId) { XmlPortId = xmlPortId; }
 
-    /// <summary>Source stream for import. BC sets this via <c>xP.Target.Source = ...</c>.</summary>
-    public MockInStream? Source { get; set; }
+    // ------------------------------------------------------------------
+    // Stream properties — BC sets via xP.Target.Source / xP.Target.Destination
+    // (after .Target stripping the property assignments land here directly).
+    // ------------------------------------------------------------------
 
-    /// <summary>Destination stream for export. BC sets this via <c>xP.Target.Destination = ...</c>.</summary>
+    public MockInStream? Source { get; set; }
     public MockOutStream? Destination { get; set; }
 
-    /// <summary>
-    /// Instance <c>XP.Import()</c>. Always throws — XmlPort I/O requires the service tier.
-    /// Use an AL interface to inject a testable implementation.
-    /// </summary>
-    public void Import(object? errorLevel = null)
-        => throw new NotSupportedException(
-            $"XmlPort {XmlPortId} Import requires the BC service tier and is not supported by al-runner. " +
-            "Use AL interface injection to abstract XmlPort dependencies for testing.");
+    // ------------------------------------------------------------------
+    // Delimiter / separator properties — AL getter/setter methods lower to
+    // property assignments in BC's generated C#.
+    // ------------------------------------------------------------------
 
-    /// <summary>
-    /// Instance <c>XP.Export()</c>. Always throws — XmlPort I/O requires the service tier.
-    /// Use an AL interface to inject a testable implementation.
-    /// </summary>
-    public void Export(object? errorLevel = null)
-        => throw new NotSupportedException(
-            $"XmlPort {XmlPortId} Export requires the BC service tier and is not supported by al-runner. " +
-            "Use AL interface injection to abstract XmlPort dependencies for testing.");
+    public string FieldDelimiter { get; set; } = "";
+    public string FieldSeparator { get; set; } = "";
+    public string Filename { get; set; } = "";
+    public string RecordSeparator { get; set; } = "";
+    public string TableSeparator { get; set; } = "";
+    public object? TextEncoding { get; set; }
 
-    /// <summary>
-    /// Dispatch a plain helper procedure on the XmlPort (e.g. custom triggers).
-    /// Returns null — XmlPort procedural dispatch requires the service tier.
-    /// </summary>
+    // ------------------------------------------------------------------
+    // Instance I/O methods — no-ops (require service tier in real BC)
+    // ------------------------------------------------------------------
+
+    public void Import(object? errorLevel = null) { }
+
+    public void Export(object? errorLevel = null) { }
+
+    public void Run(object? errorLevel = null) { }
+
+    // ------------------------------------------------------------------
+    // Configuration methods
+    // ------------------------------------------------------------------
+
+    public void SetTableView(MockRecordHandle rec) { }
+
+    // ------------------------------------------------------------------
+    // Control-flow methods (called from XmlPort triggers in real BC)
+    // ------------------------------------------------------------------
+
+    public void Break() { }
+    public void BreakUnbound() { }
+    public void Quit() { }
+    public void Skip() { }
+
+    public string CurrentPath() => "";
+
+    // ------------------------------------------------------------------
+    // Invocation dispatch for helper procedures defined in the XmlPort object
+    // ------------------------------------------------------------------
+
     public object? Invoke(int memberId, object[] args) => null;
 
     // ------------------------------------------------------------------
@@ -63,31 +79,12 @@ public class MockXmlPortHandle
     // Rewriter redirects these to the statics below.
     // ------------------------------------------------------------------
 
-    /// <summary>
-    /// Static <c>XmlPort.Import(portId, InStr [, Rec])</c> stub.
-    /// Throws — XmlPort I/O requires the service tier.
-    /// </summary>
-    public static void StaticImport(object? errorLevel, int xmlPortId, object? stream, object? rec = null)
-        => throw new NotSupportedException(
-            $"XmlPort {xmlPortId} Import requires the BC service tier and is not supported by al-runner. " +
-            "Use AL interface injection to abstract XmlPort dependencies for testing.");
+    public static void StaticImport(object? errorLevel, int xmlPortId, object? stream, object? rec = null) { }
 
-    /// <summary>
-    /// Static <c>XmlPort.Export(portId, OutStr [, Rec])</c> stub.
-    /// Throws — XmlPort I/O requires the service tier.
-    /// </summary>
-    public static void StaticExport(object? errorLevel, int xmlPortId, object? stream, object? rec = null)
-        => throw new NotSupportedException(
-            $"XmlPort {xmlPortId} Export requires the BC service tier and is not supported by al-runner. " +
-            "Use AL interface injection to abstract XmlPort dependencies for testing.");
+    public static void StaticExport(object? errorLevel, int xmlPortId, object? stream, object? rec = null) { }
 
     /// <summary>
     /// Static <c>Xmlport.Run(portId [, showPage [, showXml]])</c> — no-op standalone.
-    /// The real implementation opens a request page or imports/exports via file
-    /// dialogs, neither of which apply to al-runner. Unlike StaticImport/Export
-    /// (which take explicit stream arguments and thus indicate intentional I/O),
-    /// Run is a "fire and forget" entry-point — tests that call it generally
-    /// just want the compilation unit to build and control to flow past the call.
     /// `params object?[]` accepts any trailing arg shape BC emits.
     /// </summary>
     public static void StaticRun(int xmlPortId, params object?[] args) { }

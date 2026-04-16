@@ -47,19 +47,18 @@ codeunit 58701 "XPS XmlPort Schema Tests"
     end;
 
     // -----------------------------------------------------------------------
-    // Negative: Export() on an XmlPort with schema section is not supported
-    // at runtime (no service tier) — must raise a clear error
+    // Export() on an XmlPort with schema section is a no-op in al-runner
+    // (requires the BC service tier for real data; no error is expected)
     // -----------------------------------------------------------------------
 
     [Test]
-    procedure SchemaSection_Export_ThrowsNotSupported()
+    procedure SchemaSection_Export_IsNoOp()
     var
         OutStr: OutStream;
     begin
         // [GIVEN] An XmlPort with a schema section
-        // [WHEN]  Export() is called (requires service tier)
-        // [THEN]  A NotSupportedException mentioning 'XmlPort' is raised
-        asserterror Helper.TryExport(OutStr);
-        Assert.ExpectedError('XmlPort');
+        // [WHEN]  SetDestination + Export() are called
+        // [THEN]  No error is raised — Export is a no-op in standalone mode
+        Helper.TryExport(OutStr);
     end;
 }
