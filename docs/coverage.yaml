@@ -8457,14 +8457,16 @@ XmlAttribute.AddBeforeSelf:
 XmlAttribute.AsXmlNode:
   layer: runtime-api
   category: XmlAttribute
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/193-xmlattribute
+  notes: overloads=1. Covered via NavXmlAttribute native — AsXmlNode().AsXmlAttribute().LocalName round-trips.
 
 XmlAttribute.Create:
   layer: runtime-api
   category: XmlAttribute
-  status: gap
-  notes: overloads=2
+  status: covered
+  tests: tests/bucket-2/193-xmlattribute
+  notes: overloads=2. Covered via NavXmlAttribute native — 2-arg Create(name, value) exercised.
 
 XmlAttribute.CreateNamespaceDeclaration:
   layer: runtime-api
@@ -8493,14 +8495,16 @@ XmlAttribute.IsNamespaceDeclaration:
 XmlAttribute.LocalName:
   layer: runtime-api
   category: XmlAttribute
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/193-xmlattribute
+  notes: overloads=1. Covered via NavXmlAttribute native — equals the attribute name for non-namespaced attrs.
 
 XmlAttribute.Name:
   layer: runtime-api
   category: XmlAttribute
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/193-xmlattribute
+  notes: overloads=1. Covered via NavXmlAttribute native — returns the Create() name (not the same slot as Value).
 
 XmlAttribute.NamespacePrefix:
   layer: runtime-api
@@ -8511,8 +8515,9 @@ XmlAttribute.NamespacePrefix:
 XmlAttribute.NamespaceUri:
   layer: runtime-api
   category: XmlAttribute
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/193-xmlattribute
+  notes: overloads=1. Covered via NavXmlAttribute native — defaults to empty for non-namespaced attrs.
 
 XmlAttribute.Remove:
   layer: runtime-api
@@ -8541,8 +8546,9 @@ XmlAttribute.SelectSingleNode:
 XmlAttribute.Value:
   layer: runtime-api
   category: XmlAttribute
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/193-xmlattribute
+  notes: overloads=1. Covered via NavXmlAttribute native — round-trips via Attributes().Get; replaceable via SetAttribute(name, new value).
 
 XmlAttribute.WriteTo:
   layer: runtime-api
