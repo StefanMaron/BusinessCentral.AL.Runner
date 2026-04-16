@@ -67,6 +67,20 @@ public class MockHttpHeaders
         return _headers.ContainsKey(key);
     }
 
+    /// <summary>
+    /// Overload emitted when the caller declares <c>array[N] of Text</c>.
+    /// BC emits <c>ALGetValues(DataError, key, MockArray&lt;NavText&gt;)</c>.
+    /// Populates the array with stored header values.
+    /// </summary>
+    public bool ALGetValues(DataError errorLevel, string key, MockArray<NavText> values)
+    {
+        if (!_headers.TryGetValue(key, out var list) || list.Count == 0) return false;
+        int count = Math.Min(values.Length, list.Count);
+        for (int i = 0; i < count; i++)
+            values[i] = new NavText(0, list[i]);
+        return true;
+    }
+
     /// <summary>Number of distinct header names.</summary>
     public int ALCount => _headers.Count;
 

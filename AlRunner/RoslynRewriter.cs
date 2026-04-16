@@ -1080,6 +1080,8 @@ public void ClearApplicationMemberVariables()
             return node.WithIdentifier(SyntaxFactory.Identifier("MockHttpRequestMessage"));
         if (text == "NavCookie")
             return node.WithIdentifier(SyntaxFactory.Identifier("MockCookie"));
+        if (text == "NavTestHttpResponseMessage")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockTestHttpResponseMessage"));
 
         // NavFormHandle -> MockFormHandle
         // BC emits `Page "X"` AL variables as `NavFormHandle p` fields with
@@ -1476,6 +1478,7 @@ public void ClearApplicationMemberVariables()
         // whose .Tree must not be null. Strip it — the mocks are parameterless.
         if (typeText is "MockHttpClient" or "MockHttpResponseMessage"
             or "MockHttpContent" or "MockHttpRequestMessage" or "MockCookie"
+            or "MockTestHttpResponseMessage"
             && visited.ArgumentList?.Arguments.Count == 1)
         {
             return visited.WithArgumentList(SyntaxFactory.ArgumentList());

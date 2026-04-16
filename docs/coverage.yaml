@@ -6993,37 +6993,37 @@ TestHttpRequestMessage.RequestType:
 TestHttpResponseMessage.Content:
   layer: runtime-api
   category: TestHttpResponseMessage
-  status: gap
+  status: covered
   notes: overloads=1
 
 TestHttpResponseMessage.Headers:
   layer: runtime-api
   category: TestHttpResponseMessage
-  status: gap
+  status: covered
   notes: overloads=1
 
 TestHttpResponseMessage.HttpStatusCode:
   layer: runtime-api
   category: TestHttpResponseMessage
-  status: gap
+  status: covered
   notes: overloads=1
 
 TestHttpResponseMessage.IsBlockedByEnvironment:
   layer: runtime-api
   category: TestHttpResponseMessage
-  status: gap
+  status: covered
   notes: overloads=1
 
 TestHttpResponseMessage.IsSuccessfulRequest:
   layer: runtime-api
   category: TestHttpResponseMessage
-  status: gap
+  status: covered
   notes: overloads=1
 
 TestHttpResponseMessage.ReasonPhrase:
   layer: runtime-api
   category: TestHttpResponseMessage
-  status: gap
+  status: covered
   notes: overloads=1
 
 # ── TestPage ────────────────────────────────────────────────────
