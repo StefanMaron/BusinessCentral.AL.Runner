@@ -33,6 +33,13 @@ public static class MockJsonHelper
     private static void SetBackingToken(NavJsonToken token, JToken value, bool verifyType = false)
         => SetBackingTokenMethod.Invoke(token, new object[] { value, verifyType });
 
+    private static T CreateJsonToken<T>(JToken backing) where T : NavJsonToken
+    {
+        var instance = (T)Activator.CreateInstance(typeof(T), nonPublic: true)!;
+        SetBackingToken(instance, backing);
+        return instance;
+    }
+
     /// <summary>
     /// Replacement for NavJsonToken.ALWriteTo(DataError, OutStream).
     /// Serializes the JSON token to a MockOutStream.
@@ -304,9 +311,9 @@ public static class MockJsonHelper
             throw new Exception("The JSON token is not an object.");
         if (!obj.TryGetValue(key, out var val))
             throw new Exception($"The JSON object does not contain a property with the name '{key}'.");
-        if (val is not JObject)
+        if (val is not JObject jObj)
             throw new Exception($"The value of JSON property '{key}' is not an object.");
-        return (NavJsonObject)NavJsonToken.Create(val);
+        return CreateJsonToken<NavJsonObject>(jObj);
     }
 
     /// <summary>
@@ -321,9 +328,9 @@ public static class MockJsonHelper
             throw new Exception("The JSON token is not an object.");
         if (!obj.TryGetValue(key, out var val))
             throw new Exception($"The JSON object does not contain a property with the name '{key}'.");
-        if (val is not JArray)
+        if (val is not JArray jArr)
             throw new Exception($"The value of JSON property '{key}' is not an array.");
-        return (NavJsonArray)NavJsonToken.Create(val);
+        return CreateJsonToken<NavJsonArray>(jArr);
     }
 
     private static bool IsSupportedTokenType(JToken token)
