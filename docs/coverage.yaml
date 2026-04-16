@@ -3099,8 +3099,9 @@ IsolatedStorage.SetEncrypted:
 JsonArray.Add:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=16
+  status: covered
+  tests: tests/bucket-2/188-jsonarray-mutations
+  notes: overloads=16. Covered via NavJsonArray native — Integer, Text, Boolean, and JsonObject Add forms all append and retain typed values.
 
 JsonArray.AsToken:
   layer: runtime-api
@@ -3222,14 +3223,16 @@ JsonArray.GetTime:
 JsonArray.IndexOf:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=16
+  status: covered
+  tests: tests/bucket-2/188-jsonarray-mutations
+  notes: overloads=16. Covered via NavJsonArray native — returns 0-based index when found, -1 when absent.
 
 JsonArray.Insert:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=16
+  status: covered
+  tests: tests/bucket-2/188-jsonarray-mutations
+  notes: overloads=16. Covered via NavJsonArray native — increases Count, shifts existing elements, middle-position insertion correct.
 
 JsonArray.Path:
   layer: runtime-api
@@ -3246,8 +3249,9 @@ JsonArray.ReadFrom:
 JsonArray.RemoveAt:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/188-jsonarray-mutations
+  notes: overloads=1. Covered via NavJsonArray native — decreases Count, shifts remaining elements left, not-a-no-op trap.
 
 JsonArray.SelectToken:
   layer: runtime-api
@@ -3258,8 +3262,9 @@ JsonArray.SelectToken:
 JsonArray.Set:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=16
+  status: covered
+  tests: tests/bucket-2/188-jsonarray-mutations
+  notes: overloads=16. Covered via NavJsonArray native — replaces element at index, Count unchanged.
 
 JsonArray.WriteTo:
   layer: runtime-api
