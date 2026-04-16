@@ -36,12 +36,12 @@ codeunit 97100 "JTT Src"
     end;
 
     /// Return whether the object obtained via AsObject() contains the given key.
-    procedure ObjectContains(JT: JsonToken; Key: Text): Boolean
+    procedure ObjectContains(JT: JsonToken; PropName: Text): Boolean
     var
         JObj: JsonObject;
     begin
         JObj := JT.AsObject();
-        exit(JObj.Contains(Key));
+        exit(JObj.Contains(PropName));
     end;
 
     /// Clone a token and verify the clone is independent.
