@@ -1138,6 +1138,10 @@ addfirst_fieldgroup_modification:
   layer: syntax
   category: modification
   status: gap
+  notes: >
+    Language gap: AL compiler (BC 26–28) rejects addfirst inside tableextension
+    fieldgroups with AL0104 — addfirst is not a valid keyword in this position.
+    addlast works; addfirst does not exist at these BC versions.
 
 addfirst_modification:
   layer: syntax
@@ -2149,8 +2153,10 @@ ErrorInfo.RecordId:
 ErrorInfo.SystemId:
   layer: runtime-api
   category: ErrorInfo
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; getter ALSystemId() + setter ALSystemId(Guid) on NavALErrorInfo
+  tests:
+    - tests/bucket-1/263-errorinfo-systemid
 
 ErrorInfo.TableId:
   layer: runtime-api
