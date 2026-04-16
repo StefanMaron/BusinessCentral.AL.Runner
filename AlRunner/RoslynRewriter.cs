@@ -2915,6 +2915,21 @@ public void ClearApplicationMemberVariables() { }
                         SyntaxFactory.IdentifierName(methodName)));
             }
 
+            // ALSystemNumeric.ALRound(v) single-arg -> AlCompat.ALRound(v)
+            // The BC SDK's 1-arg overload defaults precision to 0 (no rounding).
+            // AL semantics are that Round(v) rounds to the nearest integer, so we
+            // redirect to our own helper. The 2-arg and 3-arg overloads already
+            // behave correctly and stay on ALSystemNumeric.
+            if (exprText == "ALSystemNumeric" && methodName == "ALRound"
+                && visited.ArgumentList.Arguments.Count == 1)
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("ALRound")));
+            }
+
             // value.ALByValue(this) -> value  (strip ITreeObject calls)
             // value.ModifyLength(N) -> value  (strip length modification)
             if (StripITreeObjectArgMethods.Contains(methodName))
