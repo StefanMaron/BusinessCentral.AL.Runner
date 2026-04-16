@@ -1,26 +1,35 @@
 /// Helper codeunit that exercises ErrorInfo.DataClassification get and set.
 codeunit 61950 "EI DataClass Src"
 {
-    procedure SetAndGet(): Integer
+    procedure SetCustomerContent()
     var
         ei: ErrorInfo;
     begin
         ei.DataClassification(DataClassification::CustomerContent);
-        exit(ei.DataClassification().AsInteger());
     end;
 
-    procedure GetDefault(): Integer
+    procedure CustomerContentRoundTrips(): Boolean
     var
         ei: ErrorInfo;
     begin
-        exit(ei.DataClassification().AsInteger());
+        ei.DataClassification(DataClassification::CustomerContent);
+        exit(ei.DataClassification() = DataClassification::CustomerContent);
     end;
 
-    procedure SetEndUserContent(): Integer
+    procedure TwoValuesAreDistinct(): Boolean
+    var
+        ei1: ErrorInfo;
+        ei2: ErrorInfo;
+    begin
+        ei1.DataClassification(DataClassification::CustomerContent);
+        ei2.DataClassification(DataClassification::SystemMetadata);
+        exit(ei1.DataClassification() <> ei2.DataClassification());
+    end;
+
+    procedure DefaultMatchesNone(): Boolean
     var
         ei: ErrorInfo;
     begin
-        ei.DataClassification(DataClassification::EndUserIdentifiableInformation);
-        exit(ei.DataClassification().AsInteger());
+        exit(ei.DataClassification() = DataClassification::CustomerContent);
     end;
 }
