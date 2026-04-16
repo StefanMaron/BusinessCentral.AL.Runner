@@ -1314,30 +1314,40 @@ Blob.CreateInStream:
   category: Blob
   status: covered
   notes: overloads=1
+  tests:
+    - tests/bucket-2/151-blob-stream
 
 Blob.CreateOutStream:
   layer: runtime-api
   category: Blob
   status: covered
   notes: overloads=1
+  tests:
+    - tests/bucket-2/151-blob-stream
 
 Blob.Export:
   layer: runtime-api
   category: Blob
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; stream-form (Blob → OutStream via CreateOutStream) works standalone. File-form Export(Filename) is out-of-scope (no filesystem in runner).
+  tests:
+    - tests/bucket-2/151-blob-stream
 
 Blob.HasValue:
   layer: runtime-api
   category: Blob
   status: covered
   notes: overloads=1
+  tests:
+    - tests/bucket-2/151-blob-stream
 
 Blob.Import:
   layer: runtime-api
   category: Blob
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; stream-form (InStream → Blob via CreateInStream) works standalone. File-form Import(Filename) is out-of-scope (no filesystem in runner).
+  tests:
+    - tests/bucket-2/151-blob-stream
 
 Blob.Length:
   layer: runtime-api
