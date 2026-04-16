@@ -458,6 +458,27 @@ list_type:
     - tests/bucket-2/42-list-of-interface
     - tests/bucket-2/83-list-byref
 
+List.Sort:
+  layer: runtime-api
+  category: List
+  status: covered
+  tests: tests/bucket-1/65-list-sort-reverse
+  notes: overloads=1 (no-arg ascending); Sort(IComparer) not tested
+
+List.Reverse:
+  layer: runtime-api
+  category: List
+  status: covered
+  tests: tests/bucket-1/65-list-sort-reverse
+  notes: overloads=1
+
+List.RemoveRange:
+  layer: runtime-api
+  category: List
+  status: covered
+  tests: tests/bucket-1/65-list-sort-reverse
+  notes: overloads=1 (index, count)
+
 object_reference_type:
   layer: syntax
   category: type
