@@ -1051,7 +1051,8 @@ addafter_views_modification:
   layer: syntax
   category: modification
   status: covered
-  test: tests/bucket-1/76-addafter-views
+  tests:
+    - tests/bucket-1/76-addafter-views
 
 addbefore_action_modification:
   layer: syntax
