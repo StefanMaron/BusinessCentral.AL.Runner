@@ -54,6 +54,7 @@ public class RoslynRewriter : CSharpSyntaxRewriter
         "ALCopyCompany",  // ALDatabase.ALCopyCompany(src, dest) — no multi-company store standalone; no-op
         "ALImportData",   // ALDatabase.ALImportData(tableNo, path, create) — no file I/O standalone; no-op
         "ALExportData",   // ALDatabase.ALExportData(fileName, ...) — no file I/O standalone; no-op
+        "ALDataFileInformation", // ALDatabase.ALDataFileInformation(showDialog, ref name, ...) — queries BC data file; no real DB standalone; no-op
     };
 
     private static readonly HashSet<string> StripITreeObjectArgMethods = new(StringComparer.Ordinal)
