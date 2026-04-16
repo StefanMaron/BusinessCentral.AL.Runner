@@ -5600,26 +5600,29 @@ Session.UnbindSubscription:
 SessionInformation.AITokensUsed:
   layer: runtime-api
   category: SessionInformation
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=1. Rewriter replaces ALSessionInformation.ALAITokensUsed with 0L. No explicit test (no AL 16.2 syntax for this yet).
 
 SessionInformation.Callstack:
   layer: runtime-api
   category: SessionInformation
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/196-sessioninfo
+  notes: overloads=1. Rewriter replaces ALSessionInformation.GetALCallstack(session) with "". Standalone: no call stack to report.
 
 SessionInformation.SqlRowsRead:
   layer: runtime-api
   category: SessionInformation
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/196-sessioninfo
+  notes: overloads=1. Rewriter replaces ALSessionInformation.ALSqlRowsRead with 0L. Standalone: no SQL.
 
 SessionInformation.SqlStatementsExecuted:
   layer: runtime-api
   category: SessionInformation
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/196-sessioninfo
+  notes: overloads=1. Rewriter replaces ALSessionInformation.ALSqlStatementsExecuted with 0L. Standalone: no SQL.
 
 # ── SessionSettings ─────────────────────────────────────────────
 
