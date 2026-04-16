@@ -795,7 +795,9 @@ cuegroup_section:
 customaction_declaration:
   layer: syntax
   category: page
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/75-customaction
 
 fileuploadaction_declaration:
   layer: syntax
