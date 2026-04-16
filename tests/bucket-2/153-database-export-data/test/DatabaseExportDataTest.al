@@ -33,7 +33,7 @@ codeunit 50154 "DED Database ExportData Test"
     end;
 
     [Test]
-    procedure HelperCodeunit_Add_ProvesBusiness Logic()
+    procedure HelperCodeunit_Add_ProvidesBusinessLogic()
     begin
         // Positive: helper codeunit alongside ExportData call is fully functional.
         Assert.AreEqual(7, Helper.Add(3, 4), 'Add(3,4) must return 7');
