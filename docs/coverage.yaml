@@ -426,7 +426,8 @@ subscript_expression:
 ternary_expression:
   layer: syntax
   category: expression
-  status: gap
+  status: covered
+  notes: inline if-then-else expression; nested form tested; BC transpiler handles natively
 
 unary_expression:
   layer: syntax
