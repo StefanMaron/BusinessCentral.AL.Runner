@@ -2424,6 +2424,16 @@ public void ClearApplicationMemberVariables()
                         SyntaxFactory.IdentifierName(targetMethod)));
             }
 
+            // ALSessionInformation.GetALCallstack(session) -> ""
+            // The real implementation dereferences NavSession (null standalone).
+            if (exprText == "ALSessionInformation" && methodName == "GetALCallstack")
+            {
+                return SyntaxFactory.LiteralExpression(
+                    SyntaxKind.StringLiteralExpression,
+                    SyntaxFactory.Literal(""))
+                    .WithTriviaFrom(visited);
+            }
+
             // ALTaskScheduler.ALCreateTask/ALTaskExists/ALCancelTask/ALSetTaskReady -> MockTaskScheduler
             // TaskScheduler APIs require the BC service tier. MockTaskScheduler dispatches
             // CreateTask synchronously via MockCodeunitHandle (same pattern as MockSession).
@@ -3488,6 +3498,29 @@ public void ClearApplicationMemberVariables()
                     SyntaxKind.SimpleMemberAccessExpression,
                     SyntaxFactory.IdentifierName("NavClientType"),
                     SyntaxFactory.IdentifierName("Background"));
+            }
+        }
+
+        // Pattern: ALSessionInformation.ALSqlRowsRead -> 0L
+        //          ALSessionInformation.ALSqlStatementsExecuted -> 0L
+        //          ALSessionInformation.ALCallstack -> ""
+        //          ALSessionInformation.ALAITokensUsed -> 0L
+        // All dereference NavSession (null standalone). Return safe defaults.
+        if (visited.Expression is IdentifierNameSyntax sessInfoId &&
+            sessInfoId.Identifier.Text == "ALSessionInformation")
+        {
+            var prop = visited.Name.Identifier.Text;
+            if (prop == "ALSqlRowsRead" || prop == "ALSqlStatementsExecuted" || prop == "ALAITokensUsed")
+            {
+                return SyntaxFactory.LiteralExpression(
+                    SyntaxKind.NumericLiteralExpression,
+                    SyntaxFactory.Literal(0L));
+            }
+            if (prop == "ALCallstack")
+            {
+                return SyntaxFactory.LiteralExpression(
+                    SyntaxKind.StringLiteralExpression,
+                    SyntaxFactory.Literal(""));
             }
         }
 
