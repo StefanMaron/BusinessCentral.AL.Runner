@@ -1491,8 +1491,10 @@ DataTransfer.SetTables:
 DataTransfer.UpdateAuditFields:
   layer: runtime-api
   category: DataTransfer
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; auto-property added to MockDataTransfer (default false; round-trips on set). CopyRows/CopyFields remain no-ops as there is no real DB.
+  tests:
+    - tests/bucket-2/149-datatransfer-audit
 
 # ── Database ────────────────────────────────────────────────────
 
