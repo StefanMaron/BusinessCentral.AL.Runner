@@ -1632,8 +1632,10 @@ Database.MinimumActiveRowVersion:
 Database.RegisterTableConnection:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter strips the entire call (no external connections standalone). Signature is (ConnectionType, Name, Connection).
+  tests:
+    - tests/bucket-2/156-register-table-connection
 
 Database.SelectLatestVersion:
   layer: runtime-api
