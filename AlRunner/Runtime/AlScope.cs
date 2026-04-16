@@ -1757,6 +1757,68 @@ public static class AlCompat
     /// </summary>
     public static NavGuid CompanyPropertyID() => new NavGuid(new Guid("5f5f5f5f-5f5f-5f5f-5f5f-5f5f5f5f5f5f"));
 
+    // ── Date/Variant conversion helpers ─────────────────────────────────────
+    // BC emits ALSystemDate.ALDMY2Date(session, ...) / ALVariant2Date(session, ...)
+    // etc. with a NavMethodScope first arg. AlScope is not NavMethodScope, so the
+    // rewriter strips the session arg and redirects here.
+
+    /// <summary>DMY2Date(day, month, year) — construct a date from components.</summary>
+    public static NavDate DMY2Date(int day, int month, int year)
+        => ALSystemDate.ALDMY2Date(null!, day, month, year);
+
+    /// <summary>DWY2Date(day, week, year) — construct a date from ISO week components.</summary>
+    public static NavDate DWY2Date(int day, int week, int year)
+        => ALSystemDate.ALDWY2Date(null!, day, week, year);
+
+    /// <summary>
+    /// Variant2Date — extract a NavDate from a MockVariant.
+    /// BC emits ALSystemDate.ALVariant2Date(null!, v) but v is already MockVariant
+    /// after the rewriter replaces NavVariant; we unwrap and return the NavDate inside.
+    /// </summary>
+    public static NavDate Variant2Date(MockVariant v)
+    {
+        var raw = v?.Value;
+        if (raw is NavDate d) return d;
+        return NavDate.Default;
+    }
+
+    /// <summary>
+    /// Variant2Time — extract a NavTime from a MockVariant.
+    /// </summary>
+    public static NavTime Variant2Time(MockVariant v)
+    {
+        var raw = v?.Value;
+        if (raw is NavTime t) return t;
+        return NavTime.Default;
+    }
+
+    /// <summary>
+    /// DaTi2Variant(date, time) — pack a NavDate + NavTime into a DateTime MockVariant.
+    /// BC emits ALSystemDate.ALDaTi2Variant(scope, d, t) but scope is AlScope not
+    /// NavMethodScope; the rewriter strips it and calls here.
+    /// The result must satisfy Variant.IsDateTime() → wrap as NavDateTime.
+    /// </summary>
+    public static MockVariant DaTi2Variant(NavDate d, NavTime t)
+    {
+        // Extract DateTime from NavDate (time part is midnight)
+        DateTime? dateOnly = null;
+        try { dateOnly = (DateTime)Convert.ChangeType(d, typeof(DateTime)); } catch { }
+        // Extract DateTime from NavTime (date part is meaningless)
+        DateTime? timeOnly = null;
+        try { timeOnly = (DateTime)Convert.ChangeType(t, typeof(DateTime)); } catch { }
+
+        var combined = new DateTime(
+            (dateOnly ?? DateTime.MinValue).Year,
+            (dateOnly ?? DateTime.MinValue).Month,
+            (dateOnly ?? DateTime.MinValue).Day,
+            (timeOnly ?? DateTime.MinValue).Hour,
+            (timeOnly ?? DateTime.MinValue).Minute,
+            (timeOnly ?? DateTime.MinValue).Second,
+            (timeOnly ?? DateTime.MinValue).Millisecond);
+
+        return new MockVariant(CreateNavDateTime(combined));
+    }
+
     /// <summary>
     /// NormalDate(date) — wraps ALSystemDate.ALNormalDate with 0D handling.
     /// BC runtime throws NavNCLDateInvalidException on 0D; we return 0D.

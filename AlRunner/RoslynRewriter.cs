@@ -2589,6 +2589,66 @@ public void ClearApplicationMemberVariables()
                         SyntaxFactory.IdentifierName("ClosingDate")));
             }
 
+            // ALSystemDate.ALDMY2Date(session, day, month, year) → AlCompat.DMY2Date(day, month, year)
+            // ALSystemDate.ALDWY2Date(session, day, week, year) → AlCompat.DWY2Date(day, week, year)
+            // ALSystemDate.ALVariant2Date(session, v) → AlCompat.Variant2Date(v)
+            // ALSystemDate.ALVariant2Time(session, v) → AlCompat.Variant2Time(v)
+            // ALSystemDate.ALDaTi2Variant(scope, d, t) → AlCompat.DaTi2Variant(d, t)
+            // Strip the first (session/scope) arg; these are pure date-arithmetic operations.
+            // ALVariant2Date/Time require interception because v is MockVariant, not NavVariant.
+            // ALDaTi2Variant requires interception because scope is AlScope, not NavMethodScope.
+            if (exprText == "ALSystemDate" && methodName is "ALDMY2Date" or "ALDWY2Date"
+                    or "ALVariant2Date" or "ALVariant2Time" or "ALDaTi2Variant")
+            {
+                var args = visited.ArgumentList.Arguments;
+                var compatName = methodName switch
+                {
+                    "ALDMY2Date" => "DMY2Date",
+                    "ALDWY2Date" => "DWY2Date",
+                    "ALVariant2Date" => "Variant2Date",
+                    "ALVariant2Time" => "Variant2Time",
+                    "ALDaTi2Variant" => "DaTi2Variant",
+                    _ => methodName
+                };
+                // Strip first arg (session/scope), keep the rest
+                var keptArgs = SyntaxFactory.SeparatedList<ArgumentSyntax>();
+                for (int i = 1; i < args.Count; i++)
+                    keptArgs = keptArgs.Add(args[i]);
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName(compatName)),
+                    SyntaxFactory.ArgumentList(keptArgs))
+                    .WithTriviaFrom(visited);
+            }
+
+            // ALSystemEncryption.ALEncryptionEnabled() → false  (no key in standalone runner)
+            // ALSystemEncryption.ALKeyExists()         → false
+            // ALSystemEncryption.ALEncrypt(text)       → return text unchanged (encryption not enabled)
+            // ALSystemEncryption.ALDecrypt(text)       → return text unchanged
+            // ALSystemEncryption.ALCreateEncryptionKey() → no-op (void)
+            // ALSystemEncryption.ALDeleteEncryptionKey() → no-op (void)
+            // All of these go through NavSession/NavEnvironment which crashes in standalone mode.
+            if (exprText == "ALSystemEncryption")
+            {
+                return methodName switch
+                {
+                    "ALEncryptionEnabled" or "ALKeyExists" =>
+                        SyntaxFactory.LiteralExpression(SyntaxKind.FalseLiteralExpression)
+                            .WithTriviaFrom(visited),
+                    "ALEncrypt" or "ALDecrypt" when visited.ArgumentList.Arguments.Count >= 1 =>
+                        // Return the plaintext arg unchanged — stub: no real encryption
+                        visited.ArgumentList.Arguments[0].Expression,
+                    "ALCreateEncryptionKey" or "ALDeleteEncryptionKey"
+                        or "ALImportEncryptionKey" or "ALExportEncryptionKey" =>
+                        // Void methods: emit a no-op expression (0)
+                        SyntaxFactory.LiteralExpression(SyntaxKind.NumericLiteralExpression,
+                            SyntaxFactory.Literal(0)),
+                    _ => visited
+                };
+            }
+
             // ALCompiler.ToSecretText(navText) -> AlCompat.ToSecretText(navText)
             // ToSecretText wraps a text value as NavSecretText; requires NavSession in BC.
             if (exprText == "ALCompiler" && methodName == "ToSecretText")
