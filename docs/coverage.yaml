@@ -1580,8 +1580,10 @@ Database.IsInWriteTransaction:
 Database.LastUsedRowVersion:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; method stubbed to `0L` via rewriter (no real DB ⇒ no rows written).
+  tests:
+    - tests/bucket-2/145-rowversion
 
 Database.LockTimeout:
   layer: runtime-api
@@ -1602,8 +1604,10 @@ Database.LockTimeoutDuration:
 Database.MinimumActiveRowVersion:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; method stubbed to `0L` via rewriter (no real DB ⇒ no active transactions).
+  tests:
+    - tests/bucket-2/145-rowversion
 
 Database.RegisterTableConnection:
   layer: runtime-api

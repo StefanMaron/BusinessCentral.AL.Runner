@@ -2617,6 +2617,22 @@ public void ClearApplicationMemberVariables() { }
                     .WithTriviaFrom(visited);
             }
 
+            // ALDatabase.ALLastUsedRowVersion() -> 0L
+            // ALDatabase.ALMinimumActiveRowVersion() -> 0L
+            // BC lowers Database.LastUsedRowVersion / MinimumActiveRowVersion to method
+            // calls on ALDatabase that require a live NavSession. The runner has no real
+            // database — 0L (no rows ever written / no active transactions) is the
+            // correct standalone value, and preserves the real BC invariant that
+            // MinimumActiveRowVersion <= LastUsedRowVersion.
+            if (exprText == "ALDatabase" &&
+                (methodName == "ALLastUsedRowVersion" || methodName == "ALMinimumActiveRowVersion"))
+            {
+                return SyntaxFactory.LiteralExpression(
+                    SyntaxKind.NumericLiteralExpression,
+                    SyntaxFactory.Literal(0L))
+                    .WithTriviaFrom(visited);
+            }
+
             // ALDatabase.ALHasTableConnection(type, name) -> AlCompat.HasTableConnection(type, name)
             // The runner has no real external table connections; always returns false.
             if (exprText == "ALDatabase" && methodName == "ALHasTableConnection")
