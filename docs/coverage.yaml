@@ -5404,7 +5404,7 @@ System.CopyStream:
 System.CreateDateTime:
   layer: runtime-api
   category: System
-  status: gap
+  status: covered
   notes: overloads=1
 
 System.CreateEncryptionKey:
@@ -5464,7 +5464,7 @@ System.DMY2Date:
 System.DT2Date:
   layer: runtime-api
   category: System
-  status: gap
+  status: covered
   notes: overloads=1
 
 System.DT2Time:
