@@ -1568,8 +1568,8 @@ Database.DataFileInformation:
 Database.ExportData:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op stub (no file I/O in standalone mode); ALExportData stripped by RoslynRewriter
 
 Database.GetDefaultTableConnection:
   layer: runtime-api
