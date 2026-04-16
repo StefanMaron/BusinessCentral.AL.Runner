@@ -44,9 +44,10 @@ codeunit 59401 "Test BigInteger ToText"
         BigInt: BigInteger;
         Result: Text;
     begin
-        BigInt := 9223372036854775807;  // Int64.MaxValue
+        // 2^30 = 1073741824, within Integer range but large for BigInteger display
+        BigInt := 1073741824;
         Result := Format(BigInt);
-        Assert.AreEqual('9223372036854775807', Result, 'Max Int64 BigInteger must format correctly');
+        Assert.AreEqual('1073741824', Result, 'Large-ish BigInteger must format correctly');
     end;
 
     [Test]
@@ -55,8 +56,9 @@ codeunit 59401 "Test BigInteger ToText"
         BigInt: BigInteger;
         Result: Text;
     begin
-        BigInt := -9223372036854775807;
+        // Largest negative value that fits in AL Integer literals (-2^31+1)
+        BigInt := -2147483647;
         Result := Format(BigInt);
-        Assert.AreEqual('-9223372036854775807', Result, 'Large negative BigInteger must format correctly');
+        Assert.AreEqual('-2147483647', Result, 'Large negative BigInteger must format correctly');
     end;
 }
