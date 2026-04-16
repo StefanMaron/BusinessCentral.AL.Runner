@@ -46,24 +46,26 @@ public static class MockNavApp
 
     /// <summary>
     /// Returns false — no installation lifecycle exists in standalone mode.
+    /// BC emits this as ALNavAppIsInstalling() (type-prefixed method name).
     /// BC's real implementation returns true only during app installation on a service tier.
     /// </summary>
-    public static bool ALIsInstalling() => false;
+    public static bool ALNavAppIsInstalling() => false;
 
     /// <summary>
     /// Returns false — no license enforcement is applied in standalone mode.
+    /// BC emits this as ALIsUnlicensed(DataError).
     /// BC's real implementation returns true when the app has no valid license.
     /// </summary>
-    public static bool ALIsUnlicensed() => false;
+    public static bool ALIsUnlicensed(DataError errorLevel) => false;
 
     /// <summary>
     /// Returns true — the runner grants full entitlement so all code paths are reachable.
-    /// BC's real signature: IsEntitled(Id: Text[250] [; AppId: Guid]): Boolean
+    /// BC emits this as ALIsEntitled(DataError, NavText [, Guid]).
     /// </summary>
-    public static bool ALIsEntitled(NavText id) => true;
+    public static bool ALIsEntitled(DataError errorLevel, NavText id) => true;
 
     /// <summary>
-    /// Overload with optional AppId: IsEntitled(Id: Text[250]; AppId: Guid): Boolean
+    /// Overload with optional AppId: IsEntitled(Id: Text[250]; AppId: Guid).
     /// </summary>
-    public static bool ALIsEntitled(NavText id, Guid appId) => true;
+    public static bool ALIsEntitled(DataError errorLevel, NavText id, Guid appId) => true;
 }
