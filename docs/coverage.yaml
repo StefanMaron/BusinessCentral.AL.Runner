@@ -1086,7 +1086,9 @@ addfirst_action_modification:
 addfirst_dataset_modification:
   layer: syntax
   category: modification
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/135-addfirst-dataset
 
 addfirst_fieldgroup_modification:
   layer: syntax
