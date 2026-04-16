@@ -1396,7 +1396,8 @@ Database.CheckLicenseFile:
 Database.Commit:
   layer: runtime-api
   category: Database
-  status: gap
+  status: covered
+  tests: tests/bucket-1/56-database-commit
   notes: overloads=1
 
 Database.CompanyName:
