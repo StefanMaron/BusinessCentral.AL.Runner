@@ -41,8 +41,12 @@ public class MockCookie
     /// <summary>Expiration timestamp. BC emits <c>cookie.GetALExpires()</c> for the getter.</summary>
     public NavDateTime ALExpires { get; set; } = NavDateTime.Default;
 
-    /// <summary>BC transpiler generates <c>GetALExpires()</c> for DateTime property reads.</summary>
+    /// <summary>BC transpiler generates <c>GetALExpires()</c> for DateTime property reads (no-arg form).</summary>
     public NavDateTime GetALExpires() => ALExpires;
+
+    /// <summary>BC transpiler generates <c>GetALExpires(defaultVal)</c> — the seed argument is ignored;
+    /// we always return the stored value.</summary>
+    public NavDateTime GetALExpires(NavDateTime _) => ALExpires;
 
     /// <summary>ALAssign for the ByRef pattern.</summary>
     public void ALAssign(MockCookie other)
