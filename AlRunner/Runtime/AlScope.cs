@@ -1524,15 +1524,15 @@ public static class AlCompat
     /// Called for all navGuid.ALToText([bool]) invocations (RoslynRewriter intercepts them).
     /// MockTextBuilder is also routed here and delegates back to its own ALToText().
     /// </summary>
-    public static string GuidToText(object? g, bool withBraces)
+    public static NavText GuidToText(object? g, bool withBraces)
     {
         g = UnwrapVariant(g);
         var format = withBraces ? "B" : "N";
-        if (g is NavGuid ng) return ((Guid)ng).ToString(format).ToUpperInvariant();
-        if (g is Guid guid) return guid.ToString(format).ToUpperInvariant();
+        if (g is NavGuid ng) return new NavText(((Guid)ng).ToString(format).ToUpperInvariant());
+        if (g is Guid guid) return new NavText(guid.ToString(format).ToUpperInvariant());
         // MockTextBuilder.ALToText() is also routed here — delegate back to preserve correct text.
-        if (g is MockTextBuilder mtb) return mtb.ALToText().ToString();
-        return Format(g); // fallback for non-Guid types
+        if (g is MockTextBuilder mtb) return mtb.ALToText();
+        return new NavText(Format(g)); // fallback for non-Guid types
     }
 
     /// <summary>
