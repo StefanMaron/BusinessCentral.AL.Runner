@@ -9679,14 +9679,16 @@ XmlProcessingInstruction.AsXmlNode:
 XmlProcessingInstruction.Create:
   layer: runtime-api
   category: XmlProcessingInstruction
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/199-xmlpi
+  notes: overloads=1. Covered via NavXmlProcessingInstruction native — Create(target, data).
 
 XmlProcessingInstruction.GetData:
   layer: runtime-api
   category: XmlProcessingInstruction
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/199-xmlpi
+  notes: overloads=1. Covered via NavXmlProcessingInstruction native — returns the data set at create time or via SetData.
 
 XmlProcessingInstruction.GetDocument:
   layer: runtime-api
@@ -9703,8 +9705,9 @@ XmlProcessingInstruction.GetParent:
 XmlProcessingInstruction.GetTarget:
   layer: runtime-api
   category: XmlProcessingInstruction
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/199-xmlpi
+  notes: overloads=1. Covered via NavXmlProcessingInstruction native — returns the target set at create time or via SetTarget.
 
 XmlProcessingInstruction.Remove:
   layer: runtime-api
@@ -9733,14 +9736,16 @@ XmlProcessingInstruction.SelectSingleNode:
 XmlProcessingInstruction.SetData:
   layer: runtime-api
   category: XmlProcessingInstruction
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/199-xmlpi
+  notes: overloads=1. Covered via NavXmlProcessingInstruction native — setter round-trips through GetData.
 
 XmlProcessingInstruction.SetTarget:
   layer: runtime-api
   category: XmlProcessingInstruction
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/199-xmlpi
+  notes: overloads=1. Covered via NavXmlProcessingInstruction native — setter round-trips through GetTarget.
 
 XmlProcessingInstruction.WriteTo:
   layer: runtime-api
