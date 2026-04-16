@@ -50,6 +50,7 @@ public class RoslynRewriter : CSharpSyntaxRewriter
         "ALSelectLatestVersion", // ALDatabase.ALSelectLatestVersion() — no-op standalone
         "ALAlterKey", // ALDatabase.ALAlterKey() — DDL not supported standalone; no-op
         "ALCheckLicenseFile", // ALDatabase.ALCheckLicenseFile() — no license system standalone; no-op
+        "ALChangeUserPassword",  // ALDatabase.ALChangeUserPassword(err, old, new) — user system not modeled; no-op standalone
     };
 
     private static readonly HashSet<string> StripITreeObjectArgMethods = new(StringComparer.Ordinal)
