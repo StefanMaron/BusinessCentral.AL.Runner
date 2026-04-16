@@ -148,8 +148,8 @@ public class MockFieldRef
         }
     }
 
-    /// <summary>ALIsOptimizedForTextSearch — always false; no full-text index in standalone mode.</summary>
-    public bool ALIsOptimizedForTextSearch => false;
+    /// <summary>ALOptimizedForTextSearch — always false; no full-text index in standalone mode.</summary>
+    public bool ALOptimizedForTextSearch => false;
 
     /// <summary>ALRecord — returns the owning record ref. Stub for compile compat.</summary>
     public MockRecordRef ALRecord() => _owner ?? new MockRecordRef();
