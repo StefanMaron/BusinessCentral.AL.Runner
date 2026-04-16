@@ -65,4 +65,20 @@ public class MockHttpContent
         _textContent = "";
         _headers = new();
     }
+
+    /// <summary>
+    /// BC emits: <c>content.ALClear()</c> for <c>HttpContent.Clear()</c>.
+    /// Resets stored content and headers.
+    /// </summary>
+    public void ALClear()
+    {
+        _textContent = "";
+        _headers = new();
+    }
+
+    /// <summary>
+    /// BC emits: <c>content.ALIsSecretContent</c> for <c>HttpContent.IsSecretContent()</c>.
+    /// Always false — the runner has no secret-content support.
+    /// </summary>
+    public bool ALIsSecretContent => false;
 }

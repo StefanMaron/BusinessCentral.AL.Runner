@@ -2811,8 +2811,9 @@ HttpClient.UseWindowsAuthentication:
 HttpContent.Clear:
   layer: runtime-api
   category: HttpContent
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/173-httpcontent-response-methods
+  notes: overloads=1; ALClear() resets stored text content and headers
 
 HttpContent.GetHeaders:
   layer: runtime-api
@@ -2823,8 +2824,9 @@ HttpContent.GetHeaders:
 HttpContent.IsSecretContent:
   layer: runtime-api
   category: HttpContent
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/173-httpcontent-response-methods
+  notes: overloads=1; property ALIsSecretContent always returns false
 
 HttpContent.ReadAs:
   layer: runtime-api
@@ -2835,8 +2837,9 @@ HttpContent.ReadAs:
 HttpContent.WriteFrom:
   layer: runtime-api
   category: HttpContent
-  status: gap
-  notes: overloads=3
+  status: covered
+  tests: tests/bucket-1/173-httpcontent-response-methods
+  notes: overloads=3; text overload via ALLoadFrom(NavText); stream/secret overloads via AlCompat redirect
 
 # ── HttpHeaders ─────────────────────────────────────────────────
 
@@ -2973,14 +2976,16 @@ HttpResponseMessage.Content:
 HttpResponseMessage.GetCookie:
   layer: runtime-api
   category: HttpResponseMessage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/173-httpcontent-response-methods
+  notes: overloads=1; ALGetCookie(DataError, NavText, ByRef<MockCookie>) always returns false
 
 HttpResponseMessage.GetCookieNames:
   layer: runtime-api
   category: HttpResponseMessage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/173-httpcontent-response-methods
+  notes: overloads=1; ALGetCookieNames(DataError, ByRef<NavList<NavText>>) returns empty list
 
 HttpResponseMessage.Headers:
   layer: runtime-api
@@ -2997,8 +3002,9 @@ HttpResponseMessage.HttpStatusCode:
 HttpResponseMessage.IsBlockedByEnvironment:
   layer: runtime-api
   category: HttpResponseMessage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/173-httpcontent-response-methods
+  notes: overloads=1; property ALIsBlockedByEnvironment always returns false
 
 HttpResponseMessage.IsSuccessStatusCode:
   layer: runtime-api
