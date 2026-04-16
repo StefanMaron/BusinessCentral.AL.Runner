@@ -41,13 +41,4 @@ codeunit 60200 "EVL Helper"
         exit(result);
     end;
 
-    /// Parse text into Date.
-    procedure ParseDate(txt: Text): Date
-    var
-        result: Date;
-    begin
-        if not Evaluate(result, txt) then
-            Error('Evaluate failed for date: %1', txt);
-        exit(result);
-    end;
 }
