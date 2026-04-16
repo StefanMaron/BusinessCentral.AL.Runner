@@ -1688,7 +1688,7 @@ public static class AlCompat
     /// AL <c>SecretStrSubstNo(format, args)</c> — substitutes %1..%N placeholders
     /// and returns the result as a <c>NavSecretText</c>.
     /// </summary>
-    public static NavSecretText SecretStrSubstNo(string format, params object[] args)
+    public static NavSecretText SecretStrSubstNo(string format, params Microsoft.Dynamics.Nav.Runtime.NavValue[] args)
     {
         var result = StrSubstNo(format, args);
         return NavSecretText.Create(result);

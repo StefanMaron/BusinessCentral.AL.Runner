@@ -2425,10 +2425,10 @@ public void ClearApplicationMemberVariables() { }
             // We intercept based on method name only (NavSecretText is the only type with ALUnwrap).
             if (methodName == "ALUnwrap" && visited.ArgumentList.Arguments.Count == 0)
             {
-                var memberAccess = visited.Expression as MemberAccessExpressionSyntax;
-                if (memberAccess != null)
+                var unwrapMemberAccess = visited.Expression as MemberAccessExpressionSyntax;
+                if (unwrapMemberAccess != null)
                 {
-                    var receiver = memberAccess.Expression;
+                    var receiver = unwrapMemberAccess.Expression;
                     return SyntaxFactory.InvocationExpression(
                         SyntaxFactory.MemberAccessExpression(
                             SyntaxKind.SimpleMemberAccessExpression,
