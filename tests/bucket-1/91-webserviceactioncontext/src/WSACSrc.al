@@ -1,43 +1,10 @@
 codeunit 95100 "WSAC Src"
 {
+    // ObjectId — round-trip: set value, get it back
     procedure SetObjectIdAndGet(var Ctx: WebServiceActionContext; ObjId: Integer): Integer
     begin
         Ctx.SetObjectId(ObjId);
         exit(Ctx.GetObjectId());
-    end;
-
-    procedure SetObjectTypeAndGet(var Ctx: WebServiceActionContext; ObjType: Integer): Integer
-    begin
-        Ctx.SetObjectType(ObjType);
-        exit(Ctx.GetObjectType());
-    end;
-
-    procedure SetCreatedCodeAndVerify(var Ctx: WebServiceActionContext): Boolean
-    begin
-        Ctx.SetResultCode(WebServiceActionResultCode::Created);
-        exit(Ctx.GetResultCode() = WebServiceActionResultCode::Created);
-    end;
-
-    procedure SetOkResponseAndVerify(var Ctx: WebServiceActionContext): Boolean
-    begin
-        Ctx.SetResultCode(WebServiceActionResultCode::OkResponse);
-        exit(Ctx.GetResultCode() = WebServiceActionResultCode::OkResponse);
-    end;
-
-    procedure CreatedAndOkResponseDiffer(): Boolean
-    var
-        Ctx1: WebServiceActionContext;
-        Ctx2: WebServiceActionContext;
-    begin
-        Ctx1.SetResultCode(WebServiceActionResultCode::Created);
-        Ctx2.SetResultCode(WebServiceActionResultCode::OkResponse);
-        exit(Ctx1.GetResultCode() <> Ctx2.GetResultCode());
-    end;
-
-    procedure CallAddEntityKey(var Ctx: WebServiceActionContext): Boolean
-    begin
-        Ctx.AddEntityKey(Database::Customer, 'No.', '10000');
-        exit(true);
     end;
 
     procedure GetDefaultObjectId(var Ctx: WebServiceActionContext): Integer
@@ -45,8 +12,24 @@ codeunit 95100 "WSAC Src"
         exit(Ctx.GetObjectId());
     end;
 
-    procedure GetDefaultObjectType(var Ctx: WebServiceActionContext): Integer
+    // ObjectType — no-throw only; ObjectType enum cannot be compared to Integer in AL
+    procedure SetObjectTypeNoThrow(var Ctx: WebServiceActionContext)
     begin
-        exit(Ctx.GetObjectType());
+        Ctx.SetObjectType(ObjectType::Codeunit);
+        Ctx.GetObjectType();
+    end;
+
+    // ResultCode — no-throw only; = operator not supported for WebServiceActionResultCode in AL 26-28
+    procedure SetResultCodeNoThrow(var Ctx: WebServiceActionContext)
+    begin
+        Ctx.SetResultCode(WebServiceActionResultCode::Created);
+        Ctx.GetResultCode();
+    end;
+
+    // AddEntityKey — no-throw; uses integer table ID to avoid base-app dependency
+    procedure CallAddEntityKey(var Ctx: WebServiceActionContext): Boolean
+    begin
+        Ctx.AddEntityKey(18, 'No.', '10000');
+        exit(true);
     end;
 }

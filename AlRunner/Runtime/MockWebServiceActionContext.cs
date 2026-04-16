@@ -30,16 +30,17 @@ public class MockWebServiceActionContext
     public int ALGetObjectId(DataError errorLevel) => _objectId;
 
     // ------------------------------------------------------------------
-    // ObjectType — object type integer (BC ObjectType enum value)
+    // ObjectType — BC ObjectType enum value (use object to accept the C# enum type
+    // without needing a direct reference to Microsoft.Dynamics.Nav.Runtime.ObjectType).
     // ------------------------------------------------------------------
 
-    private int _objectType;
+    private object? _objectType;
 
-    public void ALSetObjectType(int value) { _objectType = value; }
-    public void ALSetObjectType(DataError errorLevel, int value) => ALSetObjectType(value);
+    public void ALSetObjectType(object? value) { _objectType = value; }
+    public void ALSetObjectType(DataError errorLevel, object? value) => ALSetObjectType(value);
 
-    public int ALGetObjectType() => _objectType;
-    public int ALGetObjectType(DataError errorLevel) => _objectType;
+    public object? ALGetObjectType() => _objectType;
+    public object? ALGetObjectType(DataError errorLevel) => _objectType;
 
     // ------------------------------------------------------------------
     // ResultCode — WebServiceActionResultCode enum
