@@ -3399,50 +3399,66 @@ JsonObject.WriteWithSecretsTo:
 JsonToken.AsArray:
   layer: runtime-api
   category: JsonToken
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; redirected via MockJsonHelper.AsArray
+  tests:
+    - tests/bucket-2/176-jsontoken-type
 
 JsonToken.AsObject:
   layer: runtime-api
   category: JsonToken
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; redirected via MockJsonHelper.AsObject
+  tests:
+    - tests/bucket-2/176-jsontoken-type
 
 JsonToken.AsValue:
   layer: runtime-api
   category: JsonToken
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; redirected via MockJsonHelper.AsValue
+  tests:
+    - tests/bucket-2/176-jsontoken-type
 
 JsonToken.Clone:
   layer: runtime-api
   category: JsonToken
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; redirected via MockJsonHelper.Clone
+  tests:
+    - tests/bucket-2/176-jsontoken-type
 
 JsonToken.IsArray:
   layer: runtime-api
   category: JsonToken
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; redirected via MockJsonHelper.IsArray
+  tests:
+    - tests/bucket-2/176-jsontoken-type
 
 JsonToken.IsObject:
   layer: runtime-api
   category: JsonToken
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; redirected via MockJsonHelper.IsObject
+  tests:
+    - tests/bucket-2/176-jsontoken-type
 
 JsonToken.IsValue:
   layer: runtime-api
   category: JsonToken
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; redirected via MockJsonHelper.IsValue
+  tests:
+    - tests/bucket-2/176-jsontoken-type
 
 JsonToken.Path:
   layer: runtime-api
   category: JsonToken
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; property redirected via MockJsonHelper.Path
+  tests:
+    - tests/bucket-2/176-jsontoken-type
 
 JsonToken.ReadFrom:
   layer: runtime-api
