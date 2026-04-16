@@ -102,4 +102,23 @@ public static class MockNavApp
 
     public static NavList<NavText> ALListResources(object? errorLevel, NavText resourceType)
         => NavList<NavText>.Default;
+
+    /// <summary>
+    /// NavApp.GetArchiveVersion() : Text — returns the archive version of the calling
+    /// extension's data. No archive in standalone mode; returns empty.
+    /// BC emits: ALNavApp.ALNavAppGetArchiveVersion(null)
+    /// </summary>
+    public static NavText ALNavAppGetArchiveVersion(object? errorLevel)
+        => NavText.Empty;
+    public static NavText ALNavAppGetArchiveVersion()
+        => NavText.Empty;
+
+    public static void ALNavAppLoadPackageData(object? errorLevel, int tableNo) { }
+    public static void ALNavAppLoadPackageData(int tableNo) { }
+
+    public static void ALNavAppRestoreArchiveData(object? errorLevel, int tableNo) { }
+    public static void ALNavAppRestoreArchiveData(int tableNo) { }
+
+    public static void ALNavAppDeleteArchiveData(object? errorLevel, int tableNo) { }
+    public static void ALNavAppDeleteArchiveData(int tableNo) { }
 }

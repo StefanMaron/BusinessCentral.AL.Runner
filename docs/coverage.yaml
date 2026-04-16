@@ -4072,8 +4072,9 @@ ModuleInfo.Publisher:
 NavApp.DeleteArchiveData:
   layer: runtime-api
   category: NavApp
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/201-navapp-archive
+  notes: overloads=1. No-op standalone — no archive store. Stub on MockNavApp.
 
 NavApp.GetArchiveRecordRef:
   layer: runtime-api
@@ -4084,8 +4085,9 @@ NavApp.GetArchiveRecordRef:
 NavApp.GetArchiveVersion:
   layer: runtime-api
   category: NavApp
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/201-navapp-archive
+  notes: overloads=1. Returns empty — no archive in standalone mode. Stub on MockNavApp.
 
 NavApp.GetCallerCallstackModuleInfos:
   layer: runtime-api
@@ -4162,14 +4164,16 @@ NavApp.ListResources:
 NavApp.LoadPackageData:
   layer: runtime-api
   category: NavApp
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/201-navapp-archive
+  notes: overloads=1. No-op standalone — no .app package data to import. Stub on MockNavApp.
 
 NavApp.RestoreArchiveData:
   layer: runtime-api
   category: NavApp
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/201-navapp-archive
+  notes: overloads=1. No-op standalone — no archive store. Stub on MockNavApp.
 
 # ── Notification ────────────────────────────────────────────────
 
