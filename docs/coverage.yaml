@@ -3990,20 +3990,23 @@ NavApp.GetResourceAsText:
 NavApp.IsEntitled:
   layer: runtime-api
   category: NavApp
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockNavApp.ALIsEntitled() returns true (always entitled in standalone)
+  test: tests/bucket-1/85-navapp-isinstalling/test/NavAppStatusTest.al
 
 NavApp.IsInstalling:
   layer: runtime-api
   category: NavApp
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockNavApp.ALIsInstalling() returns false (no install lifecycle)
+  test: tests/bucket-1/85-navapp-isinstalling/test/NavAppStatusTest.al
 
 NavApp.IsUnlicensed:
   layer: runtime-api
   category: NavApp
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockNavApp.ALIsUnlicensed() returns false (no license enforcement)
+  test: tests/bucket-1/85-navapp-isinstalling/test/NavAppStatusTest.al
 
 NavApp.ListResources:
   layer: runtime-api
