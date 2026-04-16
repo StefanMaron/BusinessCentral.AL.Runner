@@ -8610,14 +8610,18 @@ XmlCData.WriteTo:
 XmlComment.AddAfterSelf:
   layer: runtime-api
   category: XmlComment
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone.
+  tests:
+    - tests/bucket-2/165-xmlcomment
 
 XmlComment.AddBeforeSelf:
   layer: runtime-api
   category: XmlComment
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone.
+  tests:
+    - tests/bucket-2/165-xmlcomment
 
 XmlComment.AsXmlNode:
   layer: runtime-api
@@ -8638,38 +8642,50 @@ XmlComment.Create:
 XmlComment.GetDocument:
   layer: runtime-api
   category: XmlComment
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone.
+  tests:
+    - tests/bucket-2/165-xmlcomment
 
 XmlComment.GetParent:
   layer: runtime-api
   category: XmlComment
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone.
+  tests:
+    - tests/bucket-2/165-xmlcomment
 
 XmlComment.Remove:
   layer: runtime-api
   category: XmlComment
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone.
+  tests:
+    - tests/bucket-2/165-xmlcomment
 
 XmlComment.ReplaceWith:
   layer: runtime-api
   category: XmlComment
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone.
+  tests:
+    - tests/bucket-2/165-xmlcomment
 
 XmlComment.SelectNodes:
   layer: runtime-api
   category: XmlComment
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; BC native works standalone.
+  tests:
+    - tests/bucket-2/165-xmlcomment
 
 XmlComment.SelectSingleNode:
   layer: runtime-api
   category: XmlComment
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; BC native works standalone.
+  tests:
+    - tests/bucket-2/165-xmlcomment
 
 XmlComment.Value:
   layer: runtime-api
@@ -8682,8 +8698,10 @@ XmlComment.Value:
 XmlComment.WriteTo:
   layer: runtime-api
   category: XmlComment
-  status: gap
-  notes: overloads=4
+  status: covered
+  notes: overloads=4; WriteTo(Text) dispatched via MockJsonHelper.WriteTo(object) fallback (PR #712); BC native works standalone.
+  tests:
+    - tests/bucket-2/165-xmlcomment
 
 # ── XmlDeclaration ──────────────────────────────────────────────
 
