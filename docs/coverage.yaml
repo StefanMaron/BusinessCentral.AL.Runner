@@ -77,6 +77,7 @@ interface_declaration:
     - tests/bucket-1/03-interface-injection
     - tests/bucket-1/31-interface-return
     - tests/bucket-1/32-interface-param
+    - tests/bucket-1/68-interface-local-var
     - tests/bucket-2/42-list-of-interface
     - tests/bucket-2/53-enum-interface
 
