@@ -3228,38 +3228,50 @@ JsonArray.WriteTo:
 JsonObject.Add:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=16
+  status: covered
+  notes: overloads=16; works natively via NavJsonObject (no TrappableOperationExecutor path); used in GetBoolean tests
+  tests:
+    - tests/bucket-1/268-jsonobject-methods
 
 JsonObject.AsToken:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; works natively via NavJsonObject; tested
+  tests:
+    - tests/bucket-1/268-jsonobject-methods
 
 JsonObject.Clone:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter redirects ALClone to MockJsonHelper.Clone (deep-clone via Newtonsoft.Json)
+  tests:
+    - tests/bucket-1/268-jsonobject-methods
 
 JsonObject.Contains:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter redirects ALContains to MockJsonHelper.Contains
+  tests:
+    - tests/bucket-1/268-jsonobject-methods
 
 JsonObject.Get:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter redirects ALGet to MockJsonHelper.Get (JObject key lookup, returns ByRef NavJsonToken)
+  tests:
+    - tests/bucket-1/268-jsonobject-methods
 
 JsonObject.GetArray:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter redirects ALGetArray to MockJsonHelper.GetArray
+  tests:
+    - tests/bucket-1/268-jsonobject-methods
 
 JsonObject.GetBigInteger:
   layer: runtime-api
@@ -3302,8 +3314,10 @@ JsonObject.GetDateTime:
 JsonObject.GetDecimal:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter redirects ALGetDecimal to MockJsonHelper.GetDecimal
+  tests:
+    - tests/bucket-1/268-jsonobject-methods
 
 JsonObject.GetDuration:
   layer: runtime-api
@@ -3314,14 +3328,18 @@ JsonObject.GetDuration:
 JsonObject.GetInteger:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter redirects ALGetInteger to MockJsonHelper.GetInteger
+  tests:
+    - tests/bucket-1/268-jsonobject-methods
 
 JsonObject.GetObject:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter redirects ALGetObject to MockJsonHelper.GetObject
+  tests:
+    - tests/bucket-1/268-jsonobject-methods
 
 JsonObject.GetOption:
   layer: runtime-api
@@ -3332,8 +3350,10 @@ JsonObject.GetOption:
 JsonObject.GetText:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter redirects ALGetText to MockJsonHelper.GetText
+  tests:
+    - tests/bucket-1/268-jsonobject-methods
 
 JsonObject.GetTime:
   layer: runtime-api
@@ -3344,8 +3364,10 @@ JsonObject.GetTime:
 JsonObject.Keys:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter redirects ALKeys to MockJsonHelper.Keys (returns NavList<NavText>)
+  tests:
+    - tests/bucket-1/268-jsonobject-methods
 
 JsonObject.Path:
   layer: runtime-api
@@ -3368,14 +3390,18 @@ JsonObject.ReadFromYaml:
 JsonObject.Remove:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter redirects ALRemove to MockJsonHelper.Remove
+  tests:
+    - tests/bucket-1/268-jsonobject-methods
 
 JsonObject.Replace:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=16
+  status: covered
+  notes: overloads=16; rewriter redirects ALReplace to MockJsonHelper.Replace
+  tests:
+    - tests/bucket-1/268-jsonobject-methods
 
 JsonObject.SelectToken:
   layer: runtime-api

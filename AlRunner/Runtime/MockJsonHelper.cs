@@ -227,6 +227,191 @@ public static class MockJsonHelper
         return NavJsonToken.Create(cloned);
     }
 
+    /// <summary>
+    /// Replacement for NavJsonObject.ALGet(DataError, key, ByRef&lt;NavJsonToken&gt;).
+    /// Looks up a property by key and returns the value token via out-ref.
+    /// AL: JsonObject.Get('key', JTok)  →  MockJsonHelper.Get(token, error, key, result)
+    /// </summary>
+    public static bool Get(NavJsonToken token, DataError errorLevel, string key, ByRef<NavJsonToken> result)
+    {
+        try
+        {
+            var backingToken = GetBackingToken(token);
+            if (backingToken is not JObject obj)
+            {
+                if (errorLevel == DataError.ThrowError)
+                    throw new Exception("The JSON token is not an object.");
+                return false;
+            }
+            if (!obj.TryGetValue(key, out var val))
+                return false;
+            result.Value = NavJsonToken.Create(val);
+            return true;
+        }
+        catch (Exception)
+        {
+            if (errorLevel == DataError.ThrowError)
+                throw;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonObject.ALContains(DataError, key).
+    /// Returns true if the object contains the named property.
+    /// AL: JsonObject.Contains('key')  →  MockJsonHelper.Contains(token, error, key)
+    /// </summary>
+    public static bool Contains(NavJsonToken token, DataError errorLevel, string key)
+    {
+        var backingToken = GetBackingToken(token);
+        if (backingToken is not JObject obj)
+        {
+            if (errorLevel == DataError.ThrowError)
+                throw new Exception("The JSON token is not an object.");
+            return false;
+        }
+        return obj.ContainsKey(key);
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonObject.ALKeys(DataError).
+    /// Returns a list of all property names in the object.
+    /// AL: JsonObject.Keys()  →  MockJsonHelper.Keys(token, error)
+    /// </summary>
+    public static NavList<NavText> Keys(NavJsonToken token, DataError errorLevel)
+    {
+        var backingToken = GetBackingToken(token);
+        if (backingToken is not JObject obj)
+        {
+            if (errorLevel == DataError.ThrowError)
+                throw new Exception("The JSON token is not an object.");
+            return NavList<NavText>.Default;
+        }
+        var list = new NavList<NavText>();
+        foreach (var prop in obj.Properties())
+            list.ALAdd(DataError.ThrowError, new NavText(prop.Name));
+        return list;
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonObject.ALRemove(DataError, key).
+    /// Removes the named property and returns true if it was present.
+    /// AL: JsonObject.Remove('key')  →  MockJsonHelper.Remove(token, error, key)
+    /// </summary>
+    public static bool Remove(NavJsonToken token, DataError errorLevel, string key)
+    {
+        var backingToken = GetBackingToken(token);
+        if (backingToken is not JObject obj)
+        {
+            if (errorLevel == DataError.ThrowError)
+                throw new Exception("The JSON token is not an object.");
+            return false;
+        }
+        return obj.Remove(key);
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonObject.ALReplace(DataError, key, NavJsonToken).
+    /// Replaces the value of the named property.
+    /// AL: JsonObject.Replace('key', NewTok)  →  MockJsonHelper.Replace(token, error, key, newValue)
+    /// </summary>
+    public static void Replace(NavJsonToken token, DataError errorLevel, string key, NavJsonToken newValue)
+    {
+        var backingToken = GetBackingToken(token);
+        if (backingToken is not JObject obj)
+        {
+            if (errorLevel == DataError.ThrowError)
+                throw new Exception("The JSON token is not an object.");
+            return;
+        }
+        if (!obj.ContainsKey(key))
+        {
+            if (errorLevel == DataError.ThrowError)
+                throw new Exception($"The JSON object does not contain a property with the name '{key}'.");
+            return;
+        }
+        obj[key] = GetBackingToken(newValue);
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonObject.ALGetText(key).
+    /// Returns the string value of the named property.
+    /// AL: JsonObject.GetText('key')  →  MockJsonHelper.GetText(token, key)
+    /// </summary>
+    public static NavText GetText(NavJsonToken token, string key)
+    {
+        var backingToken = GetBackingToken(token);
+        if (backingToken is not JObject obj)
+            throw new Exception("The JSON token is not an object.");
+        if (!obj.TryGetValue(key, out var val))
+            throw new Exception($"The JSON object does not contain a property with the name '{key}'.");
+        return new NavText(val.Value<string>() ?? string.Empty);
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonObject.ALGetInteger(key).
+    /// Returns the integer value of the named property.
+    /// AL: JsonObject.GetInteger('key')  →  MockJsonHelper.GetInteger(token, key)
+    /// </summary>
+    public static long GetInteger(NavJsonToken token, string key)
+    {
+        var backingToken = GetBackingToken(token);
+        if (backingToken is not JObject obj)
+            throw new Exception("The JSON token is not an object.");
+        if (!obj.TryGetValue(key, out var val))
+            throw new Exception($"The JSON object does not contain a property with the name '{key}'.");
+        return val.Value<long>();
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonObject.ALGetDecimal(key).
+    /// Returns the decimal value of the named property.
+    /// AL: JsonObject.GetDecimal('key')  →  MockJsonHelper.GetDecimal(token, key)
+    /// </summary>
+    public static NavDecimal GetDecimal(NavJsonToken token, string key)
+    {
+        var backingToken = GetBackingToken(token);
+        if (backingToken is not JObject obj)
+            throw new Exception("The JSON token is not an object.");
+        if (!obj.TryGetValue(key, out var val))
+            throw new Exception($"The JSON object does not contain a property with the name '{key}'.");
+        return new NavDecimal(val.Value<decimal>());
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonObject.ALGetObject(key).
+    /// Returns the nested JsonObject value of the named property.
+    /// AL: JsonObject.GetObject('key')  →  MockJsonHelper.GetObject(token, key)
+    /// </summary>
+    public static NavJsonToken GetObject(NavJsonToken token, string key)
+    {
+        var backingToken = GetBackingToken(token);
+        if (backingToken is not JObject obj)
+            throw new Exception("The JSON token is not an object.");
+        if (!obj.TryGetValue(key, out var val))
+            throw new Exception($"The JSON object does not contain a property with the name '{key}'.");
+        if (val is not JObject)
+            throw new Exception($"The value of JSON property '{key}' is not an object.");
+        return NavJsonToken.Create(val);
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonObject.ALGetArray(key).
+    /// Returns the nested JsonArray value of the named property.
+    /// AL: JsonObject.GetArray('key')  →  MockJsonHelper.GetArray(token, key)
+    /// </summary>
+    public static NavJsonToken GetArray(NavJsonToken token, string key)
+    {
+        var backingToken = GetBackingToken(token);
+        if (backingToken is not JObject obj)
+            throw new Exception("The JSON token is not an object.");
+        if (!obj.TryGetValue(key, out var val))
+            throw new Exception($"The JSON object does not contain a property with the name '{key}'.");
+        if (val is not JArray)
+            throw new Exception($"The value of JSON property '{key}' is not an array.");
+        return NavJsonToken.Create(val);
+    }
+
     private static bool IsSupportedTokenType(JToken token)
     {
         return token.Type switch
