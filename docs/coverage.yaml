@@ -1176,7 +1176,9 @@ modify_modification:
 moveafter_modification:
   layer: syntax
   category: modification
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/137-moveafter
 
 movebefore_modification:
   layer: syntax
