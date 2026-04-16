@@ -7,6 +7,13 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **`Table.FindSet` / `SetCurrentKey` iteration coverage (#301)** — New suite
+  `tests/bucket-1/53-findset` adds 8 proving tests: PK-order iteration (no
+  `SetCurrentKey`), Name-key iteration, Priority-key iteration, filter+key
+  combined, `FindSet` returns true/false, empty table → false, no-match filter
+  → false, and `FindLast` with `SetCurrentKey`. `SetCurrentKey` sort was already
+  wired via the PK-sort fix in #297. Coverage map: `Table.FindSet` moved from
+  `gap` to `covered`.
 - **`Table.FindFirst` coverage + PK sort fix (#297)** — New suite
   `tests/bucket-1/52-findfirst` adds 7 proving tests for `FindFirst`. The tests
   revealed a bug: `GetFilteredRecords` only sorted when `SetCurrentKey` had been

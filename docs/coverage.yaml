@@ -5784,8 +5784,10 @@ Table.FindLast:
 Table.FindSet:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=2
+  status: covered
+  tests:
+    - tests/bucket-1/53-findset
+  notes: overloads=2; SetCurrentKey sort order respected via GetFilteredRecords PK-fallback fix
 
 Table.Get:
   layer: runtime-api
