@@ -1500,6 +1500,13 @@ public static class AlCompat
     public static Guid UserSecurityId() => _userSecurityId;
 
     /// <summary>
+    /// Replacement for ALDatabase.ALSID() which requires NavSession.
+    /// Returns a fixed non-real SID string (not a valid Windows domain SID).
+    /// Stable across calls within a process so tests that compare two reads observe equality.
+    /// </summary>
+    public static string DatabaseSID() => "S-1-0-0";
+
+    /// <summary>
     /// Replacement for ALDatabase.ALCurrentTransactionType() which requires NavSession.
     /// The runner has no real transaction tracking; returns TransactionType.Update,
     /// the most common real-world value and a predictable stable stub.

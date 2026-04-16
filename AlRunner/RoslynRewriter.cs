@@ -2770,6 +2770,18 @@ public void ClearApplicationMemberVariables() { }
                         SyntaxFactory.IdentifierName("UserSecurityId")));
             }
 
+            // ALDatabase.ALSID() -> AlCompat.DatabaseSID()
+            // Database.SID() requires NavSession (crashes with NullReferenceException standalone).
+            // AlCompat.DatabaseSID returns a fixed non-real SID string stable across calls.
+            if (exprText == "ALDatabase" && methodName == "ALSID")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("DatabaseSID")));
+            }
+
             // ALDatabase.ALLastUsedRowVersion() -> 0L
             // ALDatabase.ALMinimumActiveRowVersion() -> 0L
             // BC lowers Database.LastUsedRowVersion / MinimumActiveRowVersion to method
