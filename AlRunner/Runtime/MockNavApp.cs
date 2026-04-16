@@ -43,4 +43,31 @@ public static class MockNavApp
     {
         return NavList<NavModuleInfo>.Default;
     }
+
+    /// <summary>
+    /// NavApp.GetResourceAsText(ResourceName, var Text) — no .app in standalone mode,
+    /// leaves the out parameter empty.
+    /// </summary>
+    public static void ALGetResourceAsText(DataError errorLevel, NavText resourceName, ByRef<NavText> text)
+    {
+        text.Value = NavText.Empty;
+    }
+
+    /// <summary>
+    /// NavApp.GetResourceAsJson(ResourceName, var Token) — no .app in standalone mode,
+    /// leaves the out token at its default state.
+    /// </summary>
+    public static void ALGetResourceAsJson(DataError errorLevel, NavText resourceName, ByRef<NavJsonToken> token)
+    {
+        // NavJsonToken default is already an empty/null-backed token — leave it.
+    }
+
+    /// <summary>
+    /// NavApp.ListResources(var ResourceNames) — no .app in standalone mode,
+    /// returns an empty list.
+    /// </summary>
+    public static void ALListResources(DataError errorLevel, ByRef<NavList<NavText>> list)
+    {
+        list.Value = NavList<NavText>.Default;
+    }
 }

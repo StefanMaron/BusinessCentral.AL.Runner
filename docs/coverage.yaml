@@ -3952,14 +3952,16 @@ NavApp.GetResource:
 NavApp.GetResourceAsJson:
   layer: runtime-api
   category: NavApp
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/267-navapp-resources
+  notes: overloads=1; no-op stub in MockNavApp.ALGetResourceAsJson — leaves token at default in standalone mode
 
 NavApp.GetResourceAsText:
   layer: runtime-api
   category: NavApp
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/267-navapp-resources
+  notes: overloads=1; no-op stub in MockNavApp.ALGetResourceAsText — sets text to empty in standalone mode
 
 NavApp.IsEntitled:
   layer: runtime-api
@@ -3982,8 +3984,9 @@ NavApp.IsUnlicensed:
 NavApp.ListResources:
   layer: runtime-api
   category: NavApp
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/267-navapp-resources
+  notes: overloads=1; no-op stub in MockNavApp.ALListResources — returns empty list in standalone mode
 
 NavApp.LoadPackageData:
   layer: runtime-api
