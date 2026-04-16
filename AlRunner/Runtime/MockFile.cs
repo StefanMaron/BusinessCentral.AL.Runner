@@ -208,49 +208,51 @@ public class MockFile
     /// <summary>ALViewFromStream — no-op; no UI in standalone mode.</summary>
     public void ALViewFromStream(object? parent, MockInStream inStream) { }
 
-    /// <summary>ALUploadIntoStream — standalone function; always returns false (no UI).</summary>
-    public static bool ALUploadIntoStream(object? scope, DataError errorLevel, string dialogTitle, string fromFolder, string fromFilter, ref NavText fileName, MockInStream inStream)
+    /// <summary>
+    /// ALUploadIntoStream — BC standalone UploadIntoStream maps here as a static.
+    /// BC emits (scope, title, folder, filter, ByRef&lt;NavText&gt; fileName, MockInStream inStream, Guid extra).
+    /// Always returns false (no UI in standalone mode).
+    /// </summary>
+    public static bool ALUploadIntoStream(object? scope, string dialogTitle, string fromFolder, string fromFilter, ByRef<NavText> fileName, MockInStream inStream, Guid extra)
     {
-        fileName = NavText.Empty;
+        fileName.Value = NavText.Empty;
         return false;
     }
 
-    public static bool ALUploadIntoStream(object? scope, DataError errorLevel, string dialogTitle, string fromFolder, string fromFilter, ref NavText fileName, ref MockInStream inStream)
+    public static bool ALUploadIntoStream(object? scope, string dialogTitle, string fromFolder, string fromFilter, ByRef<NavText> fileName, MockInStream inStream, object? extra)
     {
-        fileName = NavText.Empty;
+        fileName.Value = NavText.Empty;
         return false;
     }
 
-    // Fallback overloads without scope/DataError in case BC version differs
-    public static bool ALUploadIntoStream(string dialogTitle, string fromFolder, string fromFilter, ref NavText fileName, MockInStream inStream)
+    // Fallback: older/simpler BC emit without extra arg
+    public static bool ALUploadIntoStream(object? scope, string dialogTitle, string fromFolder, string fromFilter, ByRef<NavText> fileName, MockInStream inStream)
     {
-        fileName = NavText.Empty;
+        fileName.Value = NavText.Empty;
         return false;
     }
 
-    public static bool ALUploadIntoStream(DataError errorLevel, string dialogTitle, string fromFolder, string fromFilter, ref NavText fileName, MockInStream inStream)
+    /// <summary>
+    /// ALDownloadFromStream — BC standalone DownloadFromStream maps here as a static.
+    /// BC emits (scope, MockInStream inStream, title, folder, filter, ByRef&lt;NavText&gt; fileName, NavText extra).
+    /// No-op (no UI in standalone mode).
+    /// </summary>
+    public static bool ALDownloadFromStream(object? scope, MockInStream inStream, string dialogTitle, string toFolder, string toFilter, ByRef<NavText> fileName, NavText extra)
     {
-        fileName = NavText.Empty;
+        fileName.Value = NavText.Empty;
         return false;
     }
 
-    /// <summary>ALDownloadFromStream — standalone function; no-op (no UI in standalone mode).</summary>
-    public static bool ALDownloadFromStream(object? scope, DataError errorLevel, MockInStream inStream, string dialogTitle, string toFolder, string toFilter, ref NavText fileName)
+    public static bool ALDownloadFromStream(object? scope, MockInStream inStream, string dialogTitle, string toFolder, string toFilter, ByRef<NavText> fileName, object? extra)
     {
-        fileName = NavText.Empty;
+        fileName.Value = NavText.Empty;
         return false;
     }
 
-    // Fallback overloads without scope/DataError
-    public static bool ALDownloadFromStream(MockInStream inStream, string dialogTitle, string toFolder, string toFilter, ref NavText fileName)
+    // Fallback: without extra arg
+    public static bool ALDownloadFromStream(object? scope, MockInStream inStream, string dialogTitle, string toFolder, string toFilter, ByRef<NavText> fileName)
     {
-        fileName = NavText.Empty;
-        return false;
-    }
-
-    public static bool ALDownloadFromStream(DataError errorLevel, MockInStream inStream, string dialogTitle, string toFolder, string toFilter, ref NavText fileName)
-    {
-        fileName = NavText.Empty;
+        fileName.Value = NavText.Empty;
         return false;
     }
 
