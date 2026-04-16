@@ -13,9 +13,9 @@ codeunit 56691 "Company Name Test"
     begin
         // Positive: CompanyName should return a text value without crashing
         Result := Helper.GetCompanyName();
-        // In standalone mode, CompanyName returns empty string — the key thing
-        // is that it does NOT throw a NullReferenceException
-        Assert.AreEqual('', Result, 'CompanyName should return empty string in standalone mode');
+        // In standalone mode, CompanyName returns 'CRONUS' by default — the key thing
+        // is that it does NOT throw a NullReferenceException and returns a non-empty value
+        Assert.AreEqual('CRONUS', Result, 'CompanyName should return CRONUS stub value in standalone mode');
     end;
 
     [Test]
@@ -30,9 +30,9 @@ codeunit 56691 "Company Name Test"
     end;
 
     [Test]
-    procedure CompanyNameDoesNotReturnNonEmpty()
+    procedure CompanyNameReturnsNonEmpty()
     begin
-        // Negative: CompanyName should NOT return a non-empty value in standalone mode
-        Assert.AreNotEqual('CRONUS', Helper.GetCompanyName(), 'CompanyName should not return CRONUS in standalone mode');
+        // Positive: CompanyName must return a non-empty stub value in standalone mode
+        Assert.AreNotEqual('', Helper.GetCompanyName(), 'CompanyName must return a non-empty string in standalone mode');
     end;
 }
