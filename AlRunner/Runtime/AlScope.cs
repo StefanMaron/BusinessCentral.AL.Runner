@@ -789,6 +789,9 @@ public static class AlCompat
         if (value is double dbl) return FormatDecimal((decimal)dbl);
         if (value is float f) return FormatDecimal((decimal)f);
         if (value is int or long or short or byte) return value.ToString()!;
+        // System.Guid — BC 26.x compiles AL Guid variables as System.Guid (not NavGuid).
+        // Default AL format is "B" = {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX} (38 chars, uppercase).
+        if (value is Guid sysGuid) return sysGuid.ToString("B").ToUpperInvariant();
         // Handle Decimal18 and other BC numeric types — convert to decimal
         var typeName = value.GetType().Name;
         if (typeName == "Decimal18")
@@ -832,6 +835,32 @@ public static class AlCompat
             }
             catch { }
         }
+        // NavGuid — check by type name (version-independent) and extract the Guid value.
+        // Pattern-match on Microsoft.Dynamics.Nav.Runtime.NavGuid is unreliable across BC versions.
+        // Try multiple extraction strategies; last resort parses ToString() which NavGuid always
+        // returns in "D" (36-char) format. Format "B" = {XXXXXXXX-...} (38 chars, braces).
+        if (typeName == "NavGuid")
+        {
+            try
+            {
+                // Try parameterless ToGuid() method
+                var toGuidMethod = value.GetType().GetMethod("ToGuid", Type.EmptyTypes);
+                if (toGuidMethod != null)
+                    return ((Guid)toGuidMethod.Invoke(value, null)!).ToString("B").ToUpperInvariant();
+            }
+            catch { }
+            try
+            {
+                // Try Value property of type Guid
+                var valueProp = value.GetType().GetProperty("Value");
+                if (valueProp?.PropertyType == typeof(Guid))
+                    return ((Guid)valueProp.GetValue(value)!).ToString("B").ToUpperInvariant();
+            }
+            catch { }
+            // Last resort: NavGuid.ToString() always returns a parseable Guid string ("D" format).
+            if (Guid.TryParse(value.ToString(), out var parsedGuid))
+                return parsedGuid.ToString("B").ToUpperInvariant();
+        }
         // Handle NavValue subtypes — use ToText() where available, avoid ToString() which may need NavSession
         if (value is Microsoft.Dynamics.Nav.Runtime.NavValue nv)
         {
@@ -841,7 +870,6 @@ public static class AlCompat
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavBoolean nb) return (bool)nb ? "Yes" : "No";
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavInteger ni) return ((int)ni).ToString();
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavBigInteger nbi) return ((long)nbi).ToString();
-                if (value is Microsoft.Dynamics.Nav.Runtime.NavGuid ng) return ((Guid)ng).ToString();
                 // NavByte.ToText() — BCL routes through NCLManagedAdapter.ByteToTextChar (OEM native code)
                 // which fails without the BC service tier. Return the numeric string (0-255) instead.
                 if (typeName == "NavByte")
@@ -1526,6 +1554,44 @@ public static class AlCompat
     /// </summary>
     public static Microsoft.Dynamics.Nav.Types.TransactionType ALCurrentTransactionType()
         => Microsoft.Dynamics.Nav.Types.TransactionType.Update;
+
+    /// <summary>
+    /// Guid.ToText([withBraces]) — BC returns uppercase GUID with braces by default.
+    /// withBraces=true  → {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX} (38 chars, "B" format, uppercase)
+    /// withBraces=false → XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX      (32 chars, "N" format, uppercase)
+    /// Called for all navGuid.ALToText([bool]) invocations (RoslynRewriter intercepts them).
+    /// MockTextBuilder is also routed here and delegates back to its own ALToText().
+    /// </summary>
+    public static NavText GuidToText(object? g, bool withBraces)
+    {
+        g = UnwrapVariant(g);
+        var format = withBraces ? "B" : "N";
+        if (g is NavGuid ng) return new NavText(ng.ToGuid().ToString(format).ToUpperInvariant());
+        if (g is Guid guid) return new NavText(guid.ToString(format).ToUpperInvariant());
+        // MockTextBuilder.ALToText() is also routed here — delegate back to preserve correct text.
+        if (g is MockTextBuilder mtb) return mtb.ALToText();
+        // NavGuid from a different BC version assembly: use reflection or Guid.TryParse as fallback.
+        if (g != null && g.GetType().Name == "NavGuid")
+        {
+            try
+            {
+                var toGuidMethod = g.GetType().GetMethod("ToGuid", Type.EmptyTypes);
+                if (toGuidMethod != null)
+                    return new NavText(((Guid)toGuidMethod.Invoke(g, null)!).ToString(format).ToUpperInvariant());
+            }
+            catch { }
+            try
+            {
+                var valueProp = g.GetType().GetProperty("Value");
+                if (valueProp?.PropertyType == typeof(Guid))
+                    return new NavText(((Guid)valueProp.GetValue(g)!).ToString(format).ToUpperInvariant());
+            }
+            catch { }
+            if (Guid.TryParse(g.ToString(), out var parsed))
+                return new NavText(parsed.ToString(format).ToUpperInvariant());
+        }
+        return new NavText(Format(g)); // fallback for non-Guid types
+    }
 
     /// <summary>
     /// Replacement for ALDatabase.ALIsNullGuid(g) which requires NavSession.

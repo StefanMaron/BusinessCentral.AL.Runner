@@ -2667,7 +2667,7 @@ Guid.CreateSequentialGuid:
 Guid.ToText:
   layer: runtime-api
   category: Guid
-  status: gap
+  status: covered
   notes: overloads=2
 
 # ── HttpClient ──────────────────────────────────────────────────

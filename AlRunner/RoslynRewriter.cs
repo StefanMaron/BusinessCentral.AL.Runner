@@ -1888,7 +1888,8 @@ public void ClearApplicationMemberVariables() { }
         // Now recurse into children first
         var visited = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
 
-        // `<expr>.ToText(...)` -> `AlCompat.Format(<expr>)`
+
+        // `<expr>.ToText(...)` -> `AlCompat.Format(<expr>)` or `AlCompat.GuidToText(<expr>, false)`
         // BC lowers AL's `xVar.ToText()` to either an instance `navX.ToText(...)` call
         // or a static `ALCompiler.ToText(session, value)` call (the latter is handled
         // separately below). For instance calls the arguments vary by type and BC version:
@@ -1899,11 +1900,28 @@ public void ClearApplicationMemberVariables() { }
         // which fails without the BC service tier. AlCompat.Format handles every BC value
         // type without session access. We route the receiver (expr) through AlCompat.Format,
         // discarding all arguments since AlCompat.Format does not need them.
+        // Special case: .ToText(false) with literal false → Guid no-delimiter form.
         // Exclude ALCompiler.ToText — that static form is handled separately below.
         if (visited.Expression is MemberAccessExpressionSyntax toTextMa &&
             toTextMa.Name.Identifier.Text == "ToText" &&
             !(toTextMa.Expression is IdentifierNameSyntax toTextId && toTextId.Identifier.Text == "ALCompiler"))
         {
+            bool isFalseLiteralArg = visited.ArgumentList.Arguments.Count >= 1 &&
+                visited.ArgumentList.Arguments[0].Expression.IsKind(SyntaxKind.FalseLiteralExpression);
+            if (isFalseLiteralArg)
+            {
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("GuidToText")),
+                    SyntaxFactory.ArgumentList(
+                        SyntaxFactory.SeparatedList(new[] {
+                            SyntaxFactory.Argument(toTextMa.Expression),
+                            SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(SyntaxKind.FalseLiteralExpression))
+                        })))
+                    .WithTriviaFrom(visited);
+            }
             return SyntaxFactory.InvocationExpression(
                 SyntaxFactory.MemberAccessExpression(
                     SyntaxKind.SimpleMemberAccessExpression,
@@ -1912,6 +1930,31 @@ public void ClearApplicationMemberVariables() { }
                 SyntaxFactory.ArgumentList(
                     SyntaxFactory.SingletonSeparatedList(
                         SyntaxFactory.Argument(toTextMa.Expression))))
+                .WithTriviaFrom(visited);
+        }
+
+        // `<expr>.ALToText(...)` → `AlCompat.GuidToText(<expr>, true/false)`
+        // BC emits navGuid.ALToText() (with AL prefix) for Guid.ToText() in AL. NavGuid.ALToText()
+        // returns format "D" (36 chars lowercase) but AL spec requires format "B" (38 chars, braces)
+        // for the default and format "N" (32 chars) for ToText(false).
+        // MockTextBuilder.ALToText() is also intercepted — GuidToText delegates non-Guid objects
+        // to their own ALToText() to preserve correct BigText/TextBuilder behavior.
+        if (visited.Expression is MemberAccessExpressionSyntax alToTextMa &&
+            alToTextMa.Name.Identifier.Text == "ALToText")
+        {
+            bool isFalseArg = visited.ArgumentList.Arguments.Count >= 1 &&
+                visited.ArgumentList.Arguments[0].Expression.IsKind(SyntaxKind.FalseLiteralExpression);
+            return SyntaxFactory.InvocationExpression(
+                SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("AlCompat"),
+                    SyntaxFactory.IdentifierName("GuidToText")),
+                SyntaxFactory.ArgumentList(
+                    SyntaxFactory.SeparatedList(new[] {
+                        SyntaxFactory.Argument(alToTextMa.Expression),
+                        SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(
+                            isFalseArg ? SyntaxKind.FalseLiteralExpression : SyntaxKind.TrueLiteralExpression))
+                    })))
                 .WithTriviaFrom(visited);
         }
 
@@ -2442,16 +2485,31 @@ public void ClearApplicationMemberVariables() { }
                     .WithTriviaFrom(visited);
             }
 
-            // ALCompiler.ToText(session, value) -> AlCompat.Format(value)
+            // ALCompiler.ToText(session, value[, withBraces]) -> AlCompat.Format(value) or AlCompat.GuidToText(value, false)
             // BC lowers `byteVar.ToText()` (and other scalar ToText calls) to the static
-            // ALCompiler.ToText(session, value) form. For Byte, this routes through
-            // NavValueFormatter -> NavByteFormatter -> NCLManagedAdapter (OEM native DLLs)
-            // which fails without the BC service tier. AlCompat.Format handles all BC value
-            // types without session access. We take the second argument (value).
+            // ALCompiler.ToText(session, value) form. We take the second argument (value).
+            // 3-arg form: ALCompiler.ToText(session, navGuid, false) for Guid.ToText(false) →
+            //   3rd arg literal false = no-delimiter form → GuidToText(value, false).
             if (exprText == "ALCompiler" && methodName == "ToText"
                 && visited.ArgumentList.Arguments.Count >= 2)
             {
                 var valueArg = visited.ArgumentList.Arguments[1];
+                bool isFalseThirdArg = visited.ArgumentList.Arguments.Count >= 3 &&
+                    visited.ArgumentList.Arguments[2].Expression.IsKind(SyntaxKind.FalseLiteralExpression);
+                if (isFalseThirdArg)
+                {
+                    return SyntaxFactory.InvocationExpression(
+                        SyntaxFactory.MemberAccessExpression(
+                            SyntaxKind.SimpleMemberAccessExpression,
+                            SyntaxFactory.IdentifierName("AlCompat"),
+                            SyntaxFactory.IdentifierName("GuidToText")),
+                        SyntaxFactory.ArgumentList(
+                            SyntaxFactory.SeparatedList(new[] {
+                                valueArg,
+                                SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(SyntaxKind.FalseLiteralExpression))
+                            })))
+                        .WithTriviaFrom(visited);
+                }
                 return SyntaxFactory.InvocationExpression(
                     SyntaxFactory.MemberAccessExpression(
                         SyntaxKind.SimpleMemberAccessExpression,
