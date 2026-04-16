@@ -956,7 +956,8 @@ public class MockRecordHandle
         if (_fieldNames.TryGetValue(_tableId, out var dict) &&
             dict.TryGetValue(fieldName, out var fieldNo))
             return fieldNo;
-        return 0;
+        // Fall back to TableFieldRegistry (populated at transpile-time from AL source declarations)
+        return TableFieldRegistry.GetFieldId(_tableId, fieldName) ?? 0;
     }
 
     /// <summary>
