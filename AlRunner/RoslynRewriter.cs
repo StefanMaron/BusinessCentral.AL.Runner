@@ -1771,6 +1771,38 @@ public void ClearApplicationMemberVariables() { }
         // Now recurse into children first
         var visited = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
 
+        // NavCode.op_Equality(a, b) / NavCode.op_Inequality(a, b)
+        // BC may emit explicit static operator calls for Code[N] comparisons in case statements
+        // (rather than a binary == expression), depending on the BC version. Both forms need
+        // the same NavEnvironment-free replacement.
+        if (visited.ArgumentList.Arguments.Count == 2 &&
+            visited.Expression is MemberAccessExpressionSyntax navCodeOpMa &&
+            navCodeOpMa.Expression is IdentifierNameSyntax navCodeOpIdent &&
+            navCodeOpIdent.Identifier.Text == "NavCode")
+        {
+            var opName = navCodeOpMa.Name.Identifier.Text;
+            if (opName == "op_Equality" || opName == "op_Inequality")
+            {
+                var leftArg = visited.ArgumentList.Arguments[0].Expression;
+                var rightArg = visited.ArgumentList.Arguments[1].Expression;
+                var equalsCall = SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("NavCodeEquals")),
+                    SyntaxFactory.ArgumentList(
+                        SyntaxFactory.SeparatedList<ArgumentSyntax>(new[] {
+                            SyntaxFactory.Argument(leftArg),
+                            SyntaxFactory.Argument(rightArg)
+                        })));
+                if (opName == "op_Inequality")
+                    return SyntaxFactory.PrefixUnaryExpression(
+                        SyntaxKind.LogicalNotExpression,
+                        SyntaxFactory.ParenthesizedExpression(equalsCall));
+                return equalsCall;
+            }
+        }
+
         // NavText?.ToLowerInvariant() / ?.ToUpperInvariant() -> NavText?.ToString().ToLowerInvariant()
         // NavText implicitly converts to ReadOnlySpan<char>, which picks up the wrong
         // MemoryExtensions.ToLowerInvariant(ReadOnlySpan, Span) overload. Insert .ToString()
