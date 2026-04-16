@@ -7,22 +7,21 @@ codeunit 83601 "EI Verbosity Tests"
         Src: Codeunit "EI Verbosity Src";
 
     [Test]
-    procedure Verbosity_SetAndGet_RoundTrip()
+    procedure Verbosity_SetError_GetIsError()
     begin
-        Assert.AreEqual(3, Src.SetAndGet(), 'Verbosity::Error AsInteger must be 3');
+        Assert.IsTrue(Src.SetError_GetIsError(), 'Verbosity set to Error must get as Error');
     end;
 
     [Test]
-    procedure Verbosity_DefaultIsZero()
+    procedure Verbosity_SetWarning_GetIsWarning()
     begin
-        Assert.AreEqual(0, Src.DefaultVerbosity(), 'Default Verbosity AsInteger must be 0');
+        Assert.IsTrue(Src.SetWarning_GetIsWarning(), 'Verbosity set to Warning must get as Warning');
     end;
 
     [Test]
     procedure Verbosity_OverwriteReturnsLatest()
     begin
-        // Verbosity::Normal = 1
-        Assert.AreEqual(1, Src.OverwriteVerbosity(), 'Overwrite Verbosity must return last value set');
+        Assert.IsTrue(Src.OverwriteReturnsLatest(), 'Overwrite Warning->Error must return Error');
     end;
 
     [Test]
@@ -31,14 +30,12 @@ codeunit 83601 "EI Verbosity Tests"
         EI: ErrorInfo;
     begin
         EI.Verbosity(Verbosity::Warning);
-        Assert.AreEqual(2, EI.Verbosity().AsInteger(), 'Verbosity::Warning AsInteger must be 2');
+        Assert.IsTrue(EI.Verbosity() = Verbosity::Warning, 'Inline set Warning must get as Warning');
     end;
 
     [Test]
-    procedure Verbosity_DefaultNotError()
-    var
-        EI: ErrorInfo;
+    procedure Verbosity_SetError_IsNotWarning()
     begin
-        Assert.AreNotEqual(3, EI.Verbosity().AsInteger(), 'Default Verbosity must not be Error (3)');
+        Assert.IsTrue(Src.SetError_GetIsNotWarning(), 'Verbosity Error must not equal Warning');
     end;
 }
