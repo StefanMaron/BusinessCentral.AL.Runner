@@ -45,28 +45,31 @@ public static class MockNavApp
     }
 
     /// <summary>
-    /// NavApp.GetResourceAsText(ResourceName, var Text) — no .app in standalone mode,
-    /// leaves the out parameter empty.
+    /// NavApp.GetResourceAsText(ResourceName, TextEncoding, var Text) — no .app in
+    /// standalone mode, leaves the out parameter empty.
+    /// BC emits: ALNavApp.ALGetResourceAsText(DataError, NavText, TextEncoding, ByRef&lt;NavText&gt;)
     /// </summary>
-    public static void ALGetResourceAsText(DataError errorLevel, NavText resourceName, ByRef<NavText> text)
+    public static void ALGetResourceAsText(DataError errorLevel, NavText resourceName, object? encoding, ByRef<NavText> text)
     {
         text.Value = NavText.Empty;
     }
 
     /// <summary>
-    /// NavApp.GetResourceAsJson(ResourceName, var Token) — no .app in standalone mode,
-    /// leaves the out token at its default state.
+    /// NavApp.GetResourceAsJson(ResourceName, TextEncoding, var Token) — no .app in
+    /// standalone mode, leaves the out token at its default state.
+    /// BC emits: ALNavApp.ALGetResourceAsJson(DataError, NavText, TextEncoding, ByRef&lt;NavJsonToken&gt;)
     /// </summary>
-    public static void ALGetResourceAsJson(DataError errorLevel, NavText resourceName, ByRef<NavJsonToken> token)
+    public static void ALGetResourceAsJson(DataError errorLevel, NavText resourceName, object? encoding, ByRef<NavJsonToken> token)
     {
         // NavJsonToken default is already an empty/null-backed token — leave it.
     }
 
     /// <summary>
-    /// NavApp.ListResources(var ResourceNames) — no .app in standalone mode,
+    /// NavApp.ListResources(ResourceType, var ResourceNames) — no .app in standalone mode,
     /// returns an empty list.
+    /// BC emits: ALNavApp.ALListResources(DataError, NavText, ByRef&lt;NavList&lt;NavText&gt;&gt;)
     /// </summary>
-    public static void ALListResources(DataError errorLevel, ByRef<NavList<NavText>> list)
+    public static void ALListResources(DataError errorLevel, NavText resourceType, ByRef<NavList<NavText>> list)
     {
         list.Value = NavList<NavText>.Default;
     }

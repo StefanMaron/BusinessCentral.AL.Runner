@@ -5,7 +5,7 @@ codeunit 85000 "NavApp Resource Src"
     var
         ResourceText: Text;
     begin
-        NavApp.GetResourceAsText(ResourceName, ResourceText);
+        NavApp.GetResourceAsText(ResourceName, TextEncoding::UTF8, ResourceText);
         exit(ResourceText);
     end;
 
@@ -13,7 +13,7 @@ codeunit 85000 "NavApp Resource Src"
     var
         Token: JsonToken;
     begin
-        NavApp.GetResourceAsJson(ResourceName, Token);
+        NavApp.GetResourceAsJson(ResourceName, TextEncoding::UTF8, Token);
         exit(Token);
     end;
 
@@ -21,7 +21,7 @@ codeunit 85000 "NavApp Resource Src"
     var
         ResourceList: List of [Text];
     begin
-        NavApp.ListResources(ResourceList);
+        NavApp.ListResources('', ResourceList);
         exit(ResourceList.Count());
     end;
 }
