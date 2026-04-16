@@ -1601,10 +1601,23 @@ public void ClearApplicationMemberVariables() { }
         }
 
         // ALDatabase.ALSessionID() -> MockSession.GetSessionId()
-        // BC lowers SessionId() to a 0-argument static method call on ALDatabase.
-        // This must be caught before base.VisitInvocationExpression because the MemberAccess
-        // visitor would otherwise replace the callee with MockSession.GetSessionId() and produce
-        // the invalid double-call form MockSession.GetSessionId()().
+        // ALDatabase.ALCurrentTransactionType() -> AlCompat.CurrentTransactionType()
+        // These must be caught before base.VisitInvocationExpression because the MemberAccess
+        // visitor would otherwise replace the callee and produce an invalid double-call form.
+        if (node.Expression is MemberAccessExpressionSyntax txMa &&
+            txMa.Expression is IdentifierNameSyntax txDbIdent &&
+            txDbIdent.Identifier.Text == "ALDatabase" &&
+            txMa.Name.Identifier.Text == "ALCurrentTransactionType")
+        {
+            return SyntaxFactory.InvocationExpression(
+                SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("AlCompat"),
+                    SyntaxFactory.IdentifierName("CurrentTransactionType")),
+                SyntaxFactory.ArgumentList())
+                .WithTriviaFrom(node);
+        }
+
         if (node.Expression is MemberAccessExpressionSyntax sessionMa &&
             sessionMa.Expression is IdentifierNameSyntax sessionDbIdent &&
             sessionDbIdent.Identifier.Text == "ALDatabase" &&
@@ -2360,19 +2373,6 @@ public void ClearApplicationMemberVariables() { }
                         SyntaxKind.SimpleMemberAccessExpression,
                         SyntaxFactory.IdentifierName("AlCompat"),
                         SyntaxFactory.IdentifierName("StrSubstNo")));
-            }
-
-            // ALDatabase.ALCurrentTransactionType() -> AlCompat.CurrentTransactionType()
-            // Returns NavOption for TransactionType::Update (ordinal 2). Real impl requires NavSession.
-            if (exprText == "ALDatabase" && methodName == "ALCurrentTransactionType")
-            {
-                return SyntaxFactory.InvocationExpression(
-                    SyntaxFactory.MemberAccessExpression(
-                        SyntaxKind.SimpleMemberAccessExpression,
-                        SyntaxFactory.IdentifierName("AlCompat"),
-                        SyntaxFactory.IdentifierName("CurrentTransactionType")),
-                    SyntaxFactory.ArgumentList())
-                    .WithTriviaFrom(visited);
             }
 
             // ALDatabase.ALIsInWriteTransaction() -> false
