@@ -5434,8 +5434,10 @@ System.CreateGuid:
 System.CurrentDateTime:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native returns DateTime.Now, works standalone.
+  tests:
+    - tests/bucket-1/83-currentdatetime
 
 System.Date2DMY:
   layer: runtime-api
