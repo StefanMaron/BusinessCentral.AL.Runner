@@ -25,7 +25,7 @@ tableextension 50139 "ALFG Item Ext" extends "ALFG Item"
 {
     fieldgroups
     {
-        addlast(DropDown; Description)
+        addlast(DropDown; Description) { }
     }
 }
 
