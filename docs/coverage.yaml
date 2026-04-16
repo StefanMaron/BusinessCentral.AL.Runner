@@ -1843,8 +1843,10 @@ EnumType.AsInteger:
 EnumType.FromInteger:
   layer: runtime-api
   category: EnumType
-  status: gap
-  notes: overloads=1; Enum::"T".FromInteger(I) type-qualifier syntax causes BC compilation error — needs investigation
+  status: covered
+  notes: overloads=1; RoslynRewriter intercepts NCLEnumMetadata.Create(N).FromInteger(I) → AlCompat.EnumFromInteger(N,I); validates ordinal, throws on invalid
+  tests:
+    - tests/bucket-1/101-enum-frominteger
 
 EnumType.Names:
   layer: runtime-api
