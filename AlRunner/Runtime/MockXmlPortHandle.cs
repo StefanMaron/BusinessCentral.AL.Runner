@@ -80,4 +80,14 @@ public class MockXmlPortHandle
         => throw new NotSupportedException(
             $"XmlPort {xmlPortId} Export requires the BC service tier and is not supported by al-runner. " +
             "Use AL interface injection to abstract XmlPort dependencies for testing.");
+
+    /// <summary>
+    /// Static <c>XmlPort.Run(portId [, IsImport [, Rec]])</c> stub.
+    /// Throws — XmlPort execution requires the BC service tier.
+    /// Use AL interface injection to make XmlPort-dependent code unit-testable.
+    /// </summary>
+    public static void StaticRun(object? errorLevel, int xmlPortId, object? isImport = null, object? rec = null)
+        => throw new NotSupportedException(
+            $"XmlPort {xmlPortId} Run requires the BC service tier and is not supported by al-runner. " +
+            "Use AL interface injection to abstract XmlPort dependencies for testing.");
 }

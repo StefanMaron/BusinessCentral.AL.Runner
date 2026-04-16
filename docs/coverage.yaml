@@ -9040,8 +9040,10 @@ Xmlport.Import:
 Xmlport.Run:
   layer: runtime-api
   category: Xmlport
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: overloads=3
+  tests:
+    - tests/bucket-1/60-xmlport-run
 
 # ── XmlportInstance ─────────────────────────────────────────────
 

@@ -1859,11 +1859,17 @@ public void ClearApplicationMemberVariables() { }
 
             // NavXmlPort.Import(DataError, xmlPortId, stream [, rec]) -> MockXmlPortHandle.StaticImport(...)
             // NavXmlPort.Export(DataError, xmlPortId, stream [, rec]) -> MockXmlPortHandle.StaticExport(...)
-            // BC emits these static calls for the short form: XmlPort.Import(XmlPort::"X", InStr).
-            // NavXmlPort requires the service tier; forward to stub that throws NotSupportedException.
-            if (exprText == "NavXmlPort" && (methodName == "Import" || methodName == "Export"))
+            // NavXmlPort.Run(DataError, xmlPortId [, isImport [, rec]]) -> MockXmlPortHandle.StaticRun(...)
+            // BC emits these static calls for the short forms: XmlPort.Import/Export/Run(XmlPort::"X", ...).
+            // NavXmlPort requires the service tier; forward to stubs that throw NotSupportedException.
+            if (exprText == "NavXmlPort" && (methodName == "Import" || methodName == "Export" || methodName == "Run"))
             {
-                var stubMethod = methodName == "Import" ? "StaticImport" : "StaticExport";
+                var stubMethod = methodName switch
+                {
+                    "Import" => "StaticImport",
+                    "Export" => "StaticExport",
+                    _ => "StaticRun"
+                };
                 return SyntaxFactory.InvocationExpression(
                     SyntaxFactory.MemberAccessExpression(
                         SyntaxKind.SimpleMemberAccessExpression,
