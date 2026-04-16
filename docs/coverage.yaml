@@ -5738,8 +5738,9 @@ System.Abs:
 System.ApplicationPath:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/178-system-env-stubs
+  notes: overloads=1; MockSystemOperatingSystem.ALApplicationPath → AppContext.BaseDirectory
 
 System.ArrayLen:
   layer: runtime-api
@@ -6015,14 +6016,16 @@ System.GetUrl:
 System.GlobalLanguage:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/178-system-env-stubs
+  notes: overloads=2 (get/set); MockLanguage.ALGlobalLanguage in-memory store; default 1033 (ENU); reset between tests
 
 System.GuiAllowed:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/178-system-env-stubs
+  notes: overloads=1; MockSystemOperatingSystem.ALGuiAllowed always returns false standalone
 
 System.HasCollectedErrors:
   layer: runtime-api
@@ -6033,8 +6036,9 @@ System.HasCollectedErrors:
 System.Hyperlink:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/178-system-env-stubs
+  notes: overloads=1; MockSystemOperatingSystem.ALHyperlink is a no-op in standalone mode
 
 System.ImportEncryptionKey:
   layer: runtime-api
@@ -6063,8 +6067,9 @@ System.IsCollectingErrors:
 System.IsNull:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/178-system-env-stubs
+  notes: overloads=1; RoslynRewriter intercepts NavIndirectValueToNavValue<NavDotNet>(...).IsNull → false; no real DotNet objects in standalone mode
 
 System.IsNullGuid:
   layer: runtime-api
@@ -6076,8 +6081,9 @@ System.IsNullGuid:
 System.IsServiceTier:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/178-system-env-stubs
+  notes: overloads=1; RoslynRewriter intercepts NavEnvironment.IsServiceTier → false; no service tier in standalone mode
 
 System.NormalDate:
   layer: runtime-api
@@ -6114,8 +6120,9 @@ System.Round:
 System.RoundDateTime:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/178-system-env-stubs
+  notes: overloads=1; AlCompat.RoundDateTime via BC native ALSystemDate.ALRoundDateTime; rounds to nearest interval boundary
 
 System.Sleep:
   layer: runtime-api
@@ -6126,8 +6133,9 @@ System.Sleep:
 System.TemporaryPath:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/178-system-env-stubs
+  notes: overloads=1; MockSystemOperatingSystem.ALTemporaryPath → Path.GetTempPath()
 
 System.Time:
   layer: runtime-api
@@ -6156,14 +6164,16 @@ System.Variant2Time:
 System.WindowsLanguage:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/178-system-env-stubs
+  notes: overloads=1; MockLanguage.ALWindowsLanguage → CultureInfo.CurrentCulture.LCID
 
 System.WorkDate:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/178-system-env-stubs
+  notes: overloads=2 (get/set); AlScope.GetWorkDate/SetWorkDate in-memory store; reset to NavDate.Default between tests
 
 # ── Table ───────────────────────────────────────────────────────
 

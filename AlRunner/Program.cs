@@ -2242,6 +2242,7 @@ public static class Executor
             AlRunner.Runtime.AlScope.ResetLastStatement();
             AlRunner.Runtime.AlScope.LastErrorText = "";
             AlRunner.Runtime.AlScope.LastErrorCode = "";
+            AlRunner.Runtime.AlScope.SetWorkDate(Microsoft.Dynamics.Nav.Runtime.NavDate.Default);
             AlRunner.Runtime.AlScope.ResetCollectedErrors();
             AlRunner.Runtime.HandlerRegistry.Reset();
             AlRunner.Runtime.MockSession.Reset();

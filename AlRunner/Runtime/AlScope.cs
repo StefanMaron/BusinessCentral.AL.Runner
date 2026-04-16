@@ -149,6 +149,18 @@ public class AlScope : IDisposable, ITreeObject
     /// </summary>
     public static string LastErrorText { get; set; } = "";
 
+    // ── WorkDate ─────────────────────────────────────────────────────────────
+    // AL WorkDate() returns the session's "working date". In standalone mode,
+    // defaults to NavDate.Default (0D) which tests can override per-test via WorkDate(D).
+
+    private static NavDate _workDate = NavDate.Default;
+
+    /// <summary>WorkDate getter — returns the configured work date.</summary>
+    public static NavDate GetWorkDate() => _workDate;
+
+    /// <summary>WorkDate setter — stores the date for use within this test.</summary>
+    public static void SetWorkDate(NavDate date) => _workDate = date;
+
     /// <summary>
     /// Stores the last error code. Always empty in standalone runner (BC error codes
     /// require structured ErrorInfo which is beyond runner scope).

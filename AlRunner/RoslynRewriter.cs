@@ -3120,26 +3120,35 @@ public void ClearApplicationMemberVariables()
                         SyntaxFactory.IdentifierName("ALIsNullGuid")));
             }
 
-            // ALSystemDate.ALWorkDate(null!) -> ALSystemDate.ALWorkDate(NavDate.Default)
-            // The rewriter turns this.Session -> null!, which makes ALWorkDate ambiguous between
-            // the NavSession and NavDate overloads. We disambiguate to the NavDate overload.
+            // ALSystemDate.ALWorkDate(session)        → AlScope.GetWorkDate()
+            // ALSystemDate.ALWorkDate(session, date)   → AlScope.SetWorkDate(date)
+            // ALWorkDate requires NavSession which is null in standalone mode.
+            // Route both forms through AlScope which holds an in-memory work date.
             if (exprText == "ALSystemDate" && methodName == "ALWorkDate")
             {
                 var args = visited.ArgumentList.Arguments;
                 if (args.Count == 1)
                 {
-                    var argText = args[0].Expression.ToString();
-                    // Match null!, default! or similar null patterns from Session rewriting
-                    if (argText.Contains("null"))
-                    {
-                        return SyntaxFactory.InvocationExpression(
-                            visited.Expression,
-                            SyntaxFactory.ArgumentList(
-                                SyntaxFactory.SingletonSeparatedList(
-                                    SyntaxFactory.Argument(
-                                        SyntaxFactory.DefaultExpression(
-                                            SyntaxFactory.ParseTypeName("NavDate"))))));
-                    }
+                    // Getter form: ALWorkDate(session) → AlScope.GetWorkDate()
+                    return SyntaxFactory.InvocationExpression(
+                        SyntaxFactory.MemberAccessExpression(
+                            SyntaxKind.SimpleMemberAccessExpression,
+                            SyntaxFactory.IdentifierName("AlScope"),
+                            SyntaxFactory.IdentifierName("GetWorkDate")),
+                        SyntaxFactory.ArgumentList())
+                        .WithTriviaFrom(visited);
+                }
+                if (args.Count == 2)
+                {
+                    // Setter form: ALWorkDate(session, date) → AlScope.SetWorkDate(date)
+                    return SyntaxFactory.InvocationExpression(
+                        SyntaxFactory.MemberAccessExpression(
+                            SyntaxKind.SimpleMemberAccessExpression,
+                            SyntaxFactory.IdentifierName("AlScope"),
+                            SyntaxFactory.IdentifierName("SetWorkDate")),
+                        SyntaxFactory.ArgumentList(
+                            SyntaxFactory.SingletonSeparatedList(args[1])))
+                        .WithTriviaFrom(visited);
                 }
             }
 
@@ -3796,17 +3805,18 @@ public void ClearApplicationMemberVariables()
         }
 
         // Pattern: ALSystemLanguage.ALGlobalLanguage -> MockLanguage.ALGlobalLanguage
-        // ALSystemLanguage.get_ALGlobalLanguage / set_ALGlobalLanguage crash because there
-        // is no live BC session context in standalone mode. Redirect both get and set to
-        // MockLanguage.ALGlobalLanguage which is a plain static property backed by an int field.
+        // ALSystemLanguage.ALGlobalLanguage / ALWindowsLanguage crash because there
+        // is no live BC session context in standalone mode.
+        // ALGlobalLanguage: redirect to MockLanguage.ALGlobalLanguage (get/set in-memory).
+        // ALWindowsLanguage: redirect to MockLanguage.ALWindowsLanguage (current-culture LCID).
         if (visited.Expression is IdentifierNameSyntax langId &&
             langId.Identifier.Text == "ALSystemLanguage" &&
-            memberName == "ALGlobalLanguage")
+            (memberName == "ALGlobalLanguage" || memberName == "ALWindowsLanguage"))
         {
             return SyntaxFactory.MemberAccessExpression(
                 SyntaxKind.SimpleMemberAccessExpression,
                 SyntaxFactory.IdentifierName("MockLanguage"),
-                SyntaxFactory.IdentifierName("ALGlobalLanguage"))
+                SyntaxFactory.IdentifierName(memberName))
                 .WithTriviaFrom(visited);
         }
 
@@ -3823,6 +3833,31 @@ public void ClearApplicationMemberVariables()
                 SyntaxFactory.ArgumentList(
                     SyntaxFactory.SingletonSeparatedList(
                         SyntaxFactory.Argument(visited.Expression))));
+        }
+
+        // Pattern: NavEnvironment.IsServiceTier → false
+        // NavEnvironment.IsServiceTier returns true when a BC service tier is present.
+        // In standalone runner there is no service tier, so we always return false.
+        if (visited.Expression is IdentifierNameSyntax envId &&
+            envId.Identifier.Text == "NavEnvironment" &&
+            memberName == "IsServiceTier")
+        {
+            return SyntaxFactory.LiteralExpression(SyntaxKind.FalseLiteralExpression)
+                .WithTriviaFrom(visited);
+        }
+
+        // Pattern: AlCompat.NavIndirectValueToNavValue<NavDotNet>(x).IsNull → false
+        // BC emits this for Variant.IsNull checks. NavDotNet cast fails when the variant holds
+        // a non-DotNet value (Text, Integer, etc.). In standalone mode we never have real
+        // .NET Automation objects, so IsNull is always false for any non-null variant.
+        if (memberName == "IsNull" &&
+            visited.Expression is InvocationExpressionSyntax isNullInvocation &&
+            isNullInvocation.Expression is MemberAccessExpressionSyntax isNullMa &&
+            isNullMa.Name is GenericNameSyntax isNullGeneric &&
+            isNullGeneric.Identifier.Text == "NavIndirectValueToNavValue")
+        {
+            return SyntaxFactory.LiteralExpression(SyntaxKind.FalseLiteralExpression)
+                .WithTriviaFrom(visited);
         }
 
         return visited;

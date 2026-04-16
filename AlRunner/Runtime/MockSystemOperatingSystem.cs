@@ -24,6 +24,19 @@ public static class MockSystemOperatingSystem
     }
 
     /// <summary>
+    /// ALApplicationPath — AL: ApplicationPath() — returns the application's base directory.
+    /// In standalone mode, returns the runner's own base directory.
+    /// </summary>
+    public static string ALApplicationPath
+        => System.AppContext.BaseDirectory;
+
+    /// <summary>
+    /// ALTemporaryPath — AL: TemporaryPath() — returns the OS temp directory.
+    /// </summary>
+    public static string ALTemporaryPath
+        => System.IO.Path.GetTempPath();
+
+    /// <summary>
     /// ALGuiAllowed — AL: GuiAllowed() — returns whether a GUI client is available.
     /// In standalone mode there is no client surface, so this always returns false.
     /// </summary>

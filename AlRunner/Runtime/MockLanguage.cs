@@ -21,6 +21,14 @@ public static class MockLanguage
     }
 
     /// <summary>
+    /// Replaces ALSystemLanguage.ALWindowsLanguage.
+    /// Returns the current process culture LCID, matching the host OS setting.
+    /// ALSystemLanguage.get_ALWindowsLanguage requires NavSession and crashes in standalone mode.
+    /// </summary>
+    public static int ALWindowsLanguage
+        => System.Globalization.CultureInfo.CurrentCulture.LCID;
+
+    /// <summary>
     /// Resets the language back to the ENU default between tests.
     /// Called by Executor.ResetAll() between test runs.
     /// </summary>
