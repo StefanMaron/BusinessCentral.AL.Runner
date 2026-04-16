@@ -18,25 +18,26 @@ public struct MockVersion
     private int _revision;
 
     /// <summary>
-    /// BC lowers <c>Version.Create(major, minor, build, revision, var result)</c>
-    /// to <c>NavVersion.ALCreate(session, major, minor, build, revision, ref result)</c>.
+    /// BC lowers <c>Version.Create(major, minor, build, revision)</c>
+    /// to <c>NavVersion.ALCreate(session, major, minor, build, revision)</c>.
+    /// Returns a new <see cref="MockVersion"/> populated with the given components.
     /// </summary>
-    public static void ALCreate(
+    public static MockVersion ALCreate(
         object? session,
-        object? major, object? minor, object? build, object? revision,
-        ref MockVersion result)
+        object? major, object? minor, object? build, object? revision)
     {
-        result._major   = AlCompat.NavIndirectValueToInt32(major);
-        result._minor   = AlCompat.NavIndirectValueToInt32(minor);
-        result._build   = AlCompat.NavIndirectValueToInt32(build);
+        var result = new MockVersion();
+        result._major    = AlCompat.NavIndirectValueToInt32(major);
+        result._minor    = AlCompat.NavIndirectValueToInt32(minor);
+        result._build    = AlCompat.NavIndirectValueToInt32(build);
         result._revision = AlCompat.NavIndirectValueToInt32(revision);
+        return result;
     }
 
     /// <summary>Overload without session for older BC compiler variants.</summary>
-    public static void ALCreate(
-        object? major, object? minor, object? build, object? revision,
-        ref MockVersion result)
-        => ALCreate(null, major, minor, build, revision, ref result);
+    public static MockVersion ALCreate(
+        object? major, object? minor, object? build, object? revision)
+        => ALCreate(null, major, minor, build, revision);
 
     /// <summary>BC lowers <c>ver.Major()</c> to <c>ver.ALMajor()</c>.</summary>
     public NavInteger ALMajor() => NavInteger.Create(_major);

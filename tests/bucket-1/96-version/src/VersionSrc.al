@@ -2,11 +2,8 @@
 codeunit 96100 "VER Source"
 {
     procedure CreateVersion(Major: Integer; Minor: Integer; Build: Integer; Revision: Integer): Version
-    var
-        Ver: Version;
     begin
-        Version.Create(Major, Minor, Build, Revision, Ver);
-        exit(Ver);
+        exit(Version.Create(Major, Minor, Build, Revision));
     end;
 
     procedure GetMajor(Ver: Version): Integer
