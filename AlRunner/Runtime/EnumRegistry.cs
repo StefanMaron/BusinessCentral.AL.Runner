@@ -270,6 +270,9 @@ public static class EnumRegistry
             : Array.Empty<(int, string)>();
     }
 
+    /// <summary>Return all registered enum object IDs (diagnostic helper).</summary>
+    public static IEnumerable<int> GetAllIds() => _byId.Keys;
+
     /// <summary>Look up enum members by AL enum name (case-insensitive).</summary>
     public static IReadOnlyList<(int Ordinal, string Name)> GetMembersByName(string enumName)
     {

@@ -520,16 +520,12 @@ public static class AlCompat
     /// </summary>
     public static NavOption EnumFromInteger(int enumObjectId, int ordinal)
     {
+        // DIAGNOSTIC: always throw so CI logs show enumObjectId and registry state.
+        // Remove after diagnosing the registry lookup issue.
         var members = EnumRegistry.GetMembers(enumObjectId);
-        if (members.Count > 0)
-        {
-            bool valid = false;
-            foreach (var (v, _) in members)
-                if (v == ordinal) { valid = true; break; }
-            if (!valid)
-                throw new Exception($"The value {ordinal} is not a valid ordinal for this enum type.");
-        }
-        return CreateTaggedOption(enumObjectId, ordinal);
+        throw new Exception(
+            $"DIAG EnumFromInteger: enumObjectId={enumObjectId} ordinal={ordinal} registryCount={members.Count} " +
+            $"allKeys=[{string.Join(",", AlRunner.Runtime.EnumRegistry.GetAllIds())}]");
     }
 
     /// <summary>Overload for Decimal18 — AL Integer variables are Decimal18 in BC's C# output.</summary>
