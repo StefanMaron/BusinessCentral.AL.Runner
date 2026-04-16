@@ -49,6 +49,7 @@ public class RoslynRewriter : CSharpSyntaxRewriter
         "ALCommit",   // ALDatabase.ALCommit() — SQL transaction commit, no-op standalone
         "ALSelectLatestVersion", // ALDatabase.ALSelectLatestVersion() — no-op standalone
         "ALAlterKey", // ALDatabase.ALAlterKey() — DDL not supported standalone; no-op
+        "ALExportData", // ALDatabase.ALExportData() — file I/O not available standalone; no-op
     };
 
     private static readonly HashSet<string> StripITreeObjectArgMethods = new(StringComparer.Ordinal)

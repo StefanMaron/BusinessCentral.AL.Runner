@@ -1564,8 +1564,10 @@ Database.DataFileInformation:
 Database.ExportData:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; no-op stub (file I/O out of scope)
+  tests:
+    - tests/bucket-2/153-database-export-data
 
 Database.GetDefaultTableConnection:
   layer: runtime-api
