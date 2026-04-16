@@ -492,8 +492,8 @@ List.Reverse:
 List.RemoveRange:
   layer: runtime-api
   category: List
-  status: gap
-  notes: List.RemoveRange(index, count) does not compile with AL compiler 16.2; not a valid AL syntax at this toolchain version
+  status: covered
+  notes: available from BC 26+; NavList<T> (real BC type) provides ALRemoveRange; tests/bucket-2/152-list-removerange
 
 object_reference_type:
   layer: syntax
