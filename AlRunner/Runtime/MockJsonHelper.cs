@@ -305,6 +305,20 @@ public static class MockJsonHelper
     }
 
     /// <summary>
+    /// Overload for <c>HttpHeaders.Keys()</c>.
+    /// BC routes ALL <c>.Keys()</c> calls through MockJsonHelper; this overload
+    /// handles the case where the receiver is a <c>MockHttpHeaders</c>.
+    /// Returns a list of all distinct header names.
+    /// </summary>
+    public static NavList<NavText> Keys(MockHttpHeaders headers)
+    {
+        var list = NavList<NavText>.Default;
+        foreach (var key in headers.HeaderNames)
+            list.ALAdd(new NavText(key));
+        return list;
+    }
+
+    /// <summary>
     /// Replacement for NavJsonObject.ALKeys(DataError).
     /// Returns a list of all property names in the object.
     /// AL: JsonObject.Keys()  →  MockJsonHelper.Keys(token, error)

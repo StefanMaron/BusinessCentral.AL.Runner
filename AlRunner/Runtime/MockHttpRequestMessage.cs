@@ -42,8 +42,15 @@ public class MockHttpRequestMessage
         set => _content = value ?? new();
     }
 
-    /// <summary>Request headers. BC emits <c>request.ALGetHeaders</c>.</summary>
-    public MockHttpHeaders ALGetHeaders => _headers;
+    /// <summary>
+    /// BC emits: <c>request.ALGetHeaders(DataError, ByRef&lt;MockHttpHeaders&gt;)</c>
+    /// for <c>HttpRequestMessage.GetHeaders(headers)</c>.
+    /// Sets the out-parameter to the stored headers instance.
+    /// </summary>
+    public void ALGetHeaders(DataError errorLevel, ByRef<MockHttpHeaders> headers)
+    {
+        headers.Value = _headers;
+    }
 
     /// <summary>
     /// ALAssign for the ByRef pattern.
