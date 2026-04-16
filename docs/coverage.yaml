@@ -479,8 +479,10 @@ list_type:
 List.Sort:
   layer: runtime-api
   category: List
-  status: gap
-  notes: List.Sort() (no-arg) and List.Sort(IComparer) do not compile with AL compiler 16.2; not a valid AL syntax at this toolchain version
+  status: covered
+  notes: overloads=1; NavList<T>.ALSort() works natively on BC 26+ (no rewriter needed). BC 16.2 did not support this syntax but current supported toolchains do.
+  tests:
+    - tests/bucket-1/63-list-sort
 
 List.Reverse:
   layer: runtime-api
