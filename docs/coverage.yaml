@@ -3636,20 +3636,26 @@ KeyRef.Record:
 Label.Contains:
   layer: runtime-api
   category: Label
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native NavTextExtensions.ALContains works standalone when called on Label-typed values.
+  tests:
+    - tests/bucket-2/176-label-methods
 
 Label.EndsWith:
   layer: runtime-api
   category: Label
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone.
+  tests:
+    - tests/bucket-2/176-label-methods
 
 Label.IndexOf:
   layer: runtime-api
   category: Label
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone (1-based, 0 when not found).
+  tests:
+    - tests/bucket-2/176-label-methods
 
 Label.IndexOfAny:
   layer: runtime-api
@@ -3684,8 +3690,10 @@ Label.Remove:
 Label.Replace:
   layer: runtime-api
   category: Label
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone. No-op when substring not found.
+  tests:
+    - tests/bucket-2/176-label-methods
 
 Label.Split:
   layer: runtime-api
@@ -3696,8 +3704,10 @@ Label.Split:
 Label.StartsWith:
   layer: runtime-api
   category: Label
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone.
+  tests:
+    - tests/bucket-2/176-label-methods
 
 Label.Substring:
   layer: runtime-api
@@ -3708,20 +3718,26 @@ Label.Substring:
 Label.ToLower:
   layer: runtime-api
   category: Label
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone.
+  tests:
+    - tests/bucket-2/176-label-methods
 
 Label.ToUpper:
   layer: runtime-api
   category: Label
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone.
+  tests:
+    - tests/bucket-2/176-label-methods
 
 Label.Trim:
   layer: runtime-api
   category: Label
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone (removes leading/trailing whitespace).
+  tests:
+    - tests/bucket-2/176-label-methods
 
 Label.TrimEnd:
   layer: runtime-api
