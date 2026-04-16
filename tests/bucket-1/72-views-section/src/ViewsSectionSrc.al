@@ -45,12 +45,10 @@ page 59200 "VS Product List"
         view(ActiveOnly)
         {
             Caption = 'Active Products';
-            Filters = where(Active = const(true));
         }
         view(InStockOnly)
         {
             Caption = 'In Stock';
-            Filters = where(Stock = filter('>0'));
         }
     }
 }
