@@ -3106,14 +3106,16 @@ JsonArray.Add:
 JsonArray.AsToken:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/193-jsonarray-clone-astoken
+  notes: overloads=1. Works natively via NavJsonToken.ALAsToken() — no rewriter redirect needed. Covered with IsArray() and Count() round-trip checks.
 
 JsonArray.Clone:
   layer: runtime-api
   category: JsonArray
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/193-jsonarray-clone-astoken
+  notes: overloads=1. ALClone → MockJsonHelper.Clone (deep-clones via Newtonsoft DeepClone). Covered with empty-array, element-copy, and independence (mutation-after-clone) tests.
 
 JsonArray.Count:
   layer: runtime-api
