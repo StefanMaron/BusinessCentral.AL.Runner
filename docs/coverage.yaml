@@ -3350,20 +3350,26 @@ JsonObject.GetByte:
 JsonObject.GetChar:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; works natively via NavJsonObject (no TrappableOperationExecutor path); BC stores Char as integer code point in JSON
+  tests:
+    - tests/bucket-1/173-jsonobject-extra-methods
 
 JsonObject.GetDate:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; works natively via NavJsonObject (no TrappableOperationExecutor path); BC stores Date as ISO 8601 string in JSON
+  tests:
+    - tests/bucket-1/173-jsonobject-extra-methods
 
 JsonObject.GetDateTime:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; works natively via NavJsonObject (no TrappableOperationExecutor path); BC stores DateTime as ISO 8601 string in JSON
+  tests:
+    - tests/bucket-1/173-jsonobject-extra-methods
 
 JsonObject.GetDecimal:
   layer: runtime-api
@@ -3485,8 +3491,10 @@ JsonObject.WriteToYaml:
 JsonObject.WriteWithSecretsTo:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; rewriter redirects ALWriteWithSecretsTo to MockJsonHelper.WriteWithSecretsTo; in runner secrets are treated as plain text — serializes JSON to NavSecretText; secrets dict ignored
+  tests:
+    - tests/bucket-1/173-jsonobject-extra-methods
 
 # ── JsonToken ───────────────────────────────────────────────────
 

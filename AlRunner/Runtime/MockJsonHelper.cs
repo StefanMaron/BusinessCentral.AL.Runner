@@ -100,6 +100,31 @@ public static class MockJsonHelper
     }
 
     /// <summary>
+    /// Replacement for NavJsonObject.ALWriteWithSecretsTo(DataError, NavDictionary, ByRef&lt;NavSecretText&gt;).
+    /// In the runner, secrets are treated as plain text — serializes the JSON to a string
+    /// and wraps it in a NavSecretText. The secrets dictionary is intentionally ignored.
+    /// AL: JsonObject.WriteWithSecretsTo(Secrets, var Result) → MockJsonHelper.WriteWithSecretsTo(token, error, secrets, result)
+    /// </summary>
+    public static bool WriteWithSecretsTo(NavJsonToken token, DataError errorLevel, object secrets, ByRef<NavSecretText> result)
+    {
+        try
+        {
+            var backingToken = GetBackingToken(token);
+            using var stringWriter = new StringWriter(CultureInfo.InvariantCulture);
+            using var jsonWriter = new JsonTextWriter(stringWriter) { Formatting = Formatting.None };
+            backingToken.WriteTo(jsonWriter);
+            result.Value = NavSecretText.Create(stringWriter.ToString());
+            return true;
+        }
+        catch (Exception)
+        {
+            if (errorLevel == DataError.ThrowError)
+                throw;
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Fallback WriteTo for non-JSON types (e.g. NavXmlCData, NavXmlElement).
     /// The rewriter intercepts all ALWriteTo calls regardless of receiver type, so XML nodes
     /// also land here. We call ALWriteTo natively via reflection — XML Write methods do not

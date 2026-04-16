@@ -2302,7 +2302,7 @@ public void ClearApplicationMemberVariables()
             // TrappableOperationExecutor and crash in standalone mode — redirect those.
             // NOTE: do NOT add ALGet/ALContains/ALRemove/ALReplace here — those method names
             // also appear on record proxy classes and would cause a C# type mismatch if intercepted.
-            if (methodName is "ALWriteTo" or "ALReadFrom" or "ALSelectToken" or "ALSelectTokens"
+            if (methodName is "ALWriteTo" or "ALWriteWithSecretsTo" or "ALReadFrom" or "ALSelectToken" or "ALSelectTokens"
                 or "ALGetBoolean" or "ALIsArray" or "ALIsObject" or "ALIsValue" or "ALClone"
                 or "ALKeys"
                 or "ALGetText" or "ALGetInteger" or "ALGetDecimal"
@@ -2311,6 +2311,7 @@ public void ClearApplicationMemberVariables()
                 var helperMethod = methodName switch
                 {
                     "ALWriteTo" => "WriteTo",
+                    "ALWriteWithSecretsTo" => "WriteWithSecretsTo",
                     "ALReadFrom" => "ReadFrom",
                     "ALSelectToken" => "SelectToken",
                     "ALSelectTokens" => "SelectTokens",
