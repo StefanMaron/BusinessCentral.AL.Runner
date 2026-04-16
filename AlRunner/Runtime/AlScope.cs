@@ -811,6 +811,18 @@ public static class AlCompat
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavInteger ni) return ((int)ni).ToString();
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavBigInteger nbi) return ((long)nbi).ToString();
                 if (value is Microsoft.Dynamics.Nav.Runtime.NavGuid ng) return ((Guid)ng).ToString();
+                // NavByte.ToText() — BCL routes through NCLManagedAdapter.ByteToTextChar (OEM native code)
+                // which fails without the BC service tier. Return the numeric string (0-255) instead.
+                if (typeName == "NavByte")
+                {
+                    try
+                    {
+                        var valProp = value.GetType().GetProperty("Value");
+                        if (valProp != null) return valProp.GetValue(value)?.ToString() ?? "";
+                    }
+                    catch { }
+                    return "";
+                }
                 // NavDateTime: cast to DateTime to avoid NavDateTimeFormatter needing NavSession
                 if (typeName == "NavDateTime")
                 {
