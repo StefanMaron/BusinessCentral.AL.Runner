@@ -40,4 +40,17 @@ codeunit 67001 "Filter View Test"
         Rec.Reset();
         Assert.AreEqual('', Rec.GetFilter(Id), 'GetFilter after Reset must be empty');
     end;
+
+    // --- FilterGroup ---
+
+    [Test]
+    procedure FilterGroup_IsCallable_DoesNotThrow()
+    var
+        Rec: Record "FV Test Table";
+    begin
+        Rec.FilterGroup(1);
+        Rec.FilterGroup(6);
+        Rec.FilterGroup(0);
+        Assert.IsTrue(true, 'FilterGroup must not throw in standalone mode');
+    end;
 }
