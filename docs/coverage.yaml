@@ -1075,7 +1075,9 @@ addbefore_views_modification:
 addfirst_action_modification:
   layer: syntax
   category: modification
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/76-addfirst-action
 
 addfirst_dataset_modification:
   layer: syntax
