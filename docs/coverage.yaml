@@ -1324,8 +1324,10 @@ Blob.CreateOutStream:
 Blob.Export:
   layer: runtime-api
   category: Blob
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; stub returns false (file I/O out of scope)
+  tests:
+    - tests/bucket-2/142-blob-export-import
 
 Blob.HasValue:
   layer: runtime-api
@@ -1336,8 +1338,10 @@ Blob.HasValue:
 Blob.Import:
   layer: runtime-api
   category: Blob
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; stub returns false (file I/O out of scope)
+  tests:
+    - tests/bucket-2/142-blob-export-import
 
 Blob.Length:
   layer: runtime-api

@@ -79,6 +79,18 @@ public class MockBlob : NavValue
         return stream;
     }
 
+    /// <summary>
+    /// ALExport — BC emits <c>blob.ALExport(null!, fileName)</c> for <c>blob.Export(fileName)</c>.
+    /// File I/O is out of scope for the runner — stubs return false.
+    /// </summary>
+    public bool ALExport(object? parent, string fileName) => false;
+
+    /// <summary>
+    /// ALImport — BC emits <c>blob.ALImport(null!, fileName)</c> for <c>blob.Import(fileName)</c>.
+    /// File I/O is out of scope for the runner — stubs return false.
+    /// </summary>
+    public bool ALImport(object? parent, string fileName) => false;
+
     public void ALAssign(MockBlob other)
     {
         _data = (byte[])other._data.Clone();
