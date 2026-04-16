@@ -226,6 +226,31 @@ public static class HandlerRegistry
     }
 
     /// <summary>
+    /// Invoke the registered request page handler if one is registered; returns false if none.
+    /// Used by MockReportHandle.Run/RunModal to show the request page before report execution.
+    /// Does NOT throw when no handler is registered — caller continues silently.
+    /// </summary>
+    public static bool TryInvokeRequestPageHandler(int pageId)
+    {
+        var handler = _requestPageHandler ?? _modalPageHandler;
+        if (handler == null || _parentInstance == null)
+            return false;
+
+        var testPage = new MockTestPageHandle(pageId);
+
+        try
+        {
+            handler.Invoke(_parentInstance, new object[] { testPage });
+        }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            throw tie.InnerException;
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Invoke the registered report handler for the given report ID.
     /// Creates a MockTestPageHandle, passes it to the handler, and returns.
     /// If no handler is registered, silently returns (Report.Run without handler is valid).

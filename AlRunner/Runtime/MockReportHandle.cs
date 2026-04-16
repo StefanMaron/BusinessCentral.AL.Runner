@@ -40,6 +40,10 @@ public class MockReportHandle
         if (HandlerRegistry.InvokeReportHandler(ReportId))
             return;
 
+        // If UseRequestPage is true and a RequestPageHandler is registered, show the request page
+        if (UseRequestForm)
+            HandlerRegistry.TryInvokeRequestPageHandler(ReportId);
+
         var report = EnsureReportInstance();
         if (report == null)
             return;
@@ -52,6 +56,10 @@ public class MockReportHandle
         // If a ReportHandler is registered, invoke it instead of running the report class
         if (HandlerRegistry.InvokeReportHandler(ReportId))
             return;
+
+        // If UseRequestPage is true and a RequestPageHandler is registered, show the request page
+        if (UseRequestForm)
+            HandlerRegistry.TryInvokeRequestPageHandler(ReportId);
 
         var report = EnsureReportInstance();
         if (report == null)
