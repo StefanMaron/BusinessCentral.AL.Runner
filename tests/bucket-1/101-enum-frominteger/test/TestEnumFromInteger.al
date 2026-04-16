@@ -64,4 +64,17 @@ codeunit 50133 "Test EFI From Integer"
         asserterror Conv.FromInt(99);
         Assert.ExpectedError('');
     end;
+
+    [Test]
+    procedure EFIStatus_OrdinalsCount_IsThree()
+    var
+        Ordinals: List of [Integer];
+    begin
+        // Diagnostic: verifies that the runner can enumerate EFI Status members.
+        // If this fails (count 0) the enum registry is empty for enum 50131;
+        // if it passes (count 3) the registry is populated and Ordinals() works.
+        Ordinals := Enum::"EFI Status".Ordinals();
+        Assert.AreEqual(3, Ordinals.Count,
+            'EFI Status must have exactly 3 declared members: Open, Released, Closed');
+    end;
 }

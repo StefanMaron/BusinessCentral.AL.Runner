@@ -1820,6 +1820,79 @@ public void ClearApplicationMemberVariables() { }
         // Now recurse into children first
         var visited = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
 
+        // Post-visit fallback: NCLOptionMetadata.Default(N).FromInteger(I)
+        // When the pre-visit special-case above misses (e.g. because the inner Create expression
+        // did not match IdentifierNameSyntax exactly), the generic VisitMemberAccessExpression
+        // transforms NCLEnumMetadata.Create → NCLOptionMetadata.Default, producing
+        // NCLOptionMetadata.Default(N).FromInteger(I). The enum ID N is still the argument to
+        // Default(), so we can recover it here and emit a validated call.
+        if (visited.ArgumentList.Arguments.Count == 1 &&
+            visited.Expression is MemberAccessExpressionSyntax pvOuterMa &&
+            pvOuterMa.Name.Identifier.Text == "FromInteger" &&
+            pvOuterMa.Expression is InvocationExpressionSyntax pvInnerInv &&
+            pvInnerInv.Expression is MemberAccessExpressionSyntax pvInnerMa &&
+            pvInnerMa.Expression.ToString() == "NCLOptionMetadata" &&
+            pvInnerMa.Name.Identifier.Text == "Default" &&
+            pvInnerInv.ArgumentList.Arguments.Count >= 1)
+        {
+            var enumIdArg = pvInnerInv.ArgumentList.Arguments[0].Expression;
+            var ordinalArg = visited.ArgumentList.Arguments[0].Expression;
+
+            int[]? validOrdinals = null;
+            if (enumIdArg is LiteralExpressionSyntax pvLit &&
+                pvLit.IsKind(SyntaxKind.NumericLiteralExpression))
+            {
+                int enumIdInt = pvLit.Token.Value switch
+                {
+                    int i  => i,
+                    long l => (int)l,
+                    uint u => (int)u,
+                    _      => -1
+                };
+                if (enumIdInt >= 0)
+                {
+                    var members = AlRunner.Runtime.EnumRegistry.GetMembers(enumIdInt);
+                    if (members.Count > 0)
+                        validOrdinals = members.Select(m => m.Ordinal).ToArray();
+                }
+            }
+
+            if (validOrdinals != null)
+            {
+                var arrayInit = SyntaxFactory.InitializerExpression(
+                    SyntaxKind.ArrayInitializerExpression,
+                    SyntaxFactory.SeparatedList<ExpressionSyntax>(
+                        validOrdinals.Select(o =>
+                            SyntaxFactory.LiteralExpression(
+                                SyntaxKind.NumericLiteralExpression,
+                                SyntaxFactory.Literal(o)))));
+                var arrayCreation = SyntaxFactory.ImplicitArrayCreationExpression(arrayInit);
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("EnumFromIntegerValidated")),
+                    SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList(new[]
+                    {
+                        SyntaxFactory.Argument(enumIdArg),
+                        SyntaxFactory.Argument(ordinalArg),
+                        SyntaxFactory.Argument(arrayCreation)
+                    })));
+            }
+
+            // Fallback: runtime registry lookup (extensible or external enum)
+            return SyntaxFactory.InvocationExpression(
+                SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("AlCompat"),
+                    SyntaxFactory.IdentifierName("EnumFromInteger")),
+                SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList(new[]
+                {
+                    SyntaxFactory.Argument(enumIdArg),
+                    SyntaxFactory.Argument(ordinalArg)
+                })));
+        }
+
         // NavText?.ToLowerInvariant() / ?.ToUpperInvariant() -> NavText?.ToString().ToLowerInvariant()
         // NavText implicitly converts to ReadOnlySpan<char>, which picks up the wrong
         // MemoryExtensions.ToLowerInvariant(ReadOnlySpan, Span) overload. Insert .ToString()
