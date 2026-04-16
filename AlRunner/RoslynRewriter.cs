@@ -1275,6 +1275,15 @@ public void ClearApplicationMemberVariables()
         if (text == "NavEventScope")
             return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.ObjectKeyword));
 
+        // NavXml* type used as expression in argument position (CS0119 fix)
+        // BC emits factory-token patterns like NavXmlDocument.ALCreate(scope, NavXmlDocument)
+        // or NavXmlDocument.ALReadFrom(scope, NavXmlDocument, text, byRef) where the type
+        // name is passed as a factory hint. Roslyn rejects this (CS0119: type not valid as
+        // expression). Replace with default(T) which is valid C# and satisfies the call.
+        if (text.StartsWith("NavXml", StringComparison.Ordinal) && node.Parent is ArgumentSyntax)
+            return SyntaxFactory.DefaultExpression(SyntaxFactory.ParseTypeName(text))
+                .WithTriviaFrom(node);
+
         return base.VisitIdentifierName(node);
     }
 
