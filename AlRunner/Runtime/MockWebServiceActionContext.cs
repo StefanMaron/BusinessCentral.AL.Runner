@@ -1,6 +1,7 @@
 namespace AlRunner.Runtime;
 
 using Microsoft.Dynamics.Nav.Runtime;
+using Microsoft.Dynamics.Nav.Types;
 
 /// <summary>
 /// In-memory stub for <c>NavWebServiceActionContext</c> / AL's <c>WebServiceActionContext</c>.
