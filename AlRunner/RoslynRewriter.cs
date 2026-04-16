@@ -2439,6 +2439,19 @@ public void ClearApplicationMemberVariables() { }
                 }
             }
 
+            // ALSystemString.ALPadStr(source, length, filler) -> AlCompat.PadStr(source, length, filler)
+            // Real BC impl validates length >= 0 and throws NavNCLOutsidePermittedRangeException on
+            // negative length — but AL documents negative length as "left-pad". AlCompat.PadStr
+            // implements the AL-level contract (negative = left-pad, truncates when source is longer).
+            if (exprText == "ALSystemString" && methodName == "ALPadStr")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("PadStr")));
+            }
+
             // ALDatabase.ALIsInWriteTransaction() -> false
             // The real ALIsInWriteTransaction calls NavSession.HasWriteTransaction() which crashes
             // with NullReferenceException when NavSession is null (runner context, no DB).
