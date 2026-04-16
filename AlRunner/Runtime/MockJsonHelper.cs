@@ -2,6 +2,7 @@ namespace AlRunner.Runtime;
 
 using System.Globalization;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
 using Newtonsoft.Json;
@@ -35,7 +36,10 @@ public static class MockJsonHelper
 
     private static T CreateJsonToken<T>(JToken backing) where T : NavJsonToken
     {
-        var instance = (T)Activator.CreateInstance(typeof(T), nonPublic: true)!;
+        // NavJsonToken subclasses have no parameterless constructor.
+        // GetUninitializedObject creates a zero-initialized instance bypassing constructors;
+        // SetBackingToken then injects the Newtonsoft.Json token directly.
+        var instance = (T)RuntimeHelpers.GetUninitializedObject(typeof(T));
         SetBackingToken(instance, backing);
         return instance;
     }
