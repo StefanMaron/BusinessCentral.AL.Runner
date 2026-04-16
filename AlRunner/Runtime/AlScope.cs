@@ -1650,4 +1650,51 @@ public static class AlCompat
         var result = StrSubstNo(format, args);
         return NavSecretText.Create(result);
     }
+
+    // -----------------------------------------------------------------------
+    // Unwrap() replacement
+    // AL SecretText.Unwrap() → Text.
+    // BC emits x.ALUnwrap(). In BC 27.x, ALUnwrap() loads CodeAnalysis 16.4.x
+    // at runtime, which is not available in the runner's DLL path.
+    // We extract the string via reflection and wrap in a NavText.
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// AL <c>SecretText.Unwrap()</c> — extracts the underlying string value from a
+    /// <c>NavSecretText</c> struct without calling the native <c>ALUnwrap()</c>
+    /// (which loads an unavailable CodeAnalysis assembly in BC 27.x+).
+    /// </summary>
+    public static NavText Unwrap(NavSecretText st)
+    {
+        if (st.ALIsEmpty()) return new NavText("");
+        // NavSecretText is a struct; box it so reflection can read instance fields.
+        object boxed = st;
+        var flags = System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.Public;
+        foreach (var field in typeof(NavSecretText).GetFields(flags))
+        {
+            if (field.FieldType == typeof(string))
+            {
+                var val = field.GetValue(boxed);
+                if (val is string s)
+                    return new NavText(s);
+            }
+        }
+        foreach (var prop in typeof(NavSecretText).GetProperties(flags))
+        {
+            if (prop.PropertyType == typeof(string) && prop.CanRead)
+            {
+                try
+                {
+                    var val = prop.GetValue(boxed);
+                    if (val is string s)
+                        return new NavText(s);
+                }
+                catch { }
+            }
+        }
+        // Last resort — ToString() returns the value in BC 26.x; may not in 27.x.
+        return new NavText(st.ToString() ?? "");
+    }
 }
