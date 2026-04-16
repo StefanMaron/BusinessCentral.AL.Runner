@@ -1,21 +1,17 @@
-/// Helper codeunit exercising Cookie property get/set (Name, Value, Domain, Path, Secure, HttpOnly, Expires).
+/// Helper codeunit exercising Cookie property get/set (Name, Value) and read-only properties (Domain, Path, Secure, HttpOnly, Expires).
 codeunit 61830 "CP Helper"
 {
-    /// Sets Name, Value, Domain, Path and reads back all four.
-    procedure CreateCookieWithProperties(
+    /// Sets Name and Value (writable) and reads back both.
+    procedure CreateCookieWithNameValue(
         cookieName: Text;
-        cookieValue: Text;
-        cookieDomain: Text;
-        cookiePath: Text
+        cookieValue: Text
     ): Text
     var
         Cookie: Cookie;
     begin
         Cookie.Name := cookieName;
         Cookie.Value := cookieValue;
-        Cookie.Domain := cookieDomain;
-        Cookie.Path := cookiePath;
-        exit(Cookie.Name + '|' + Cookie.Value + '|' + Cookie.Domain + '|' + Cookie.Path);
+        exit(Cookie.Name + '|' + Cookie.Value);
     end;
 
     procedure GetCookieName(Cookie: Cookie): Text
@@ -51,6 +47,20 @@ codeunit 61830 "CP Helper"
     procedure GetCookieExpires(Cookie: Cookie): DateTime
     begin
         exit(Cookie.Expires);
+    end;
+
+    procedure DefaultDomain(): Text
+    var
+        Cookie: Cookie;
+    begin
+        exit(Cookie.Domain);
+    end;
+
+    procedure DefaultPath(): Text
+    var
+        Cookie: Cookie;
+    begin
+        exit(Cookie.Path);
     end;
 
     procedure DefaultExpires(): DateTime

@@ -35,31 +35,43 @@ codeunit 61831 "CP Cookie Properties Tests"
     end;
 
     // -----------------------------------------------------------------------
-    // Cookie.Domain
+    // Cookie.Domain — read-only
     // -----------------------------------------------------------------------
 
     [Test]
-    procedure Cookie_Domain_GetSet()
+    procedure Cookie_Domain_Default_Empty()
     var
         Cookie: Cookie;
     begin
-        // Positive: Domain property round-trips correctly
-        Cookie.Domain := 'example.com';
-        Assert.AreEqual('example.com', Cookie.Domain, 'Cookie.Domain must return the value that was set');
+        // Negative: Domain defaults to '' when not set (read-only property)
+        Assert.AreEqual('', Cookie.Domain, 'Cookie.Domain must default to empty string');
+    end;
+
+    [Test]
+    procedure Cookie_Domain_Default_Via_Helper()
+    begin
+        // Negative: default Domain via helper
+        Assert.AreEqual('', Helper.DefaultDomain(), 'Cookie.Domain default must be empty via helper');
     end;
 
     // -----------------------------------------------------------------------
-    // Cookie.Path
+    // Cookie.Path — read-only
     // -----------------------------------------------------------------------
 
     [Test]
-    procedure Cookie_Path_GetSet()
+    procedure Cookie_Path_Default_Empty()
     var
         Cookie: Cookie;
     begin
-        // Positive: Path property round-trips correctly
-        Cookie.Path := '/api/v1';
-        Assert.AreEqual('/api/v1', Cookie.Path, 'Cookie.Path must return the value that was set');
+        // Negative: Path defaults to '' when not set (read-only property)
+        Assert.AreEqual('', Cookie.Path, 'Cookie.Path must default to empty string');
+    end;
+
+    [Test]
+    procedure Cookie_Path_Default_Via_Helper()
+    begin
+        // Negative: default Path via helper
+        Assert.AreEqual('', Helper.DefaultPath(), 'Cookie.Path default must be empty via helper');
     end;
 
     // -----------------------------------------------------------------------
@@ -127,13 +139,13 @@ codeunit 61831 "CP Cookie Properties Tests"
     // -----------------------------------------------------------------------
 
     [Test]
-    procedure Cookie_StringProperties_RoundTrip()
+    procedure Cookie_NameValue_RoundTrip()
     begin
-        // Positive: all 4 string properties set and read back correctly
+        // Positive: Name and Value (writable) round-trip correctly
         Assert.AreEqual(
-            'auth|tok123|auth.example.com|/',
-            Helper.CreateCookieWithProperties('auth', 'tok123', 'auth.example.com', '/'),
-            'Cookie Name/Value/Domain/Path must round-trip correctly');
+            'auth|tok123',
+            Helper.CreateCookieWithNameValue('auth', 'tok123'),
+            'Cookie Name/Value must round-trip correctly');
     end;
 
     // -----------------------------------------------------------------------
