@@ -34,7 +34,7 @@ public class MockCookie
     public bool ALHttpOnly { get; set; } = false;
 
     /// <summary>Expiration timestamp. BC emits <c>cookie.ALExpires</c> get/set.</summary>
-    public NavDateTime ALExpires { get; set; } = default;
+    public NavDateTime ALExpires { get; set; } = NavDateTime.Default;
 
     /// <summary>ALAssign for the ByRef pattern.</summary>
     public void ALAssign(MockCookie other)
@@ -58,6 +58,6 @@ public class MockCookie
         ALPath = "";
         ALSecure = false;
         ALHttpOnly = false;
-        ALExpires = default;
+        ALExpires = NavDateTime.Default;
     }
 }
