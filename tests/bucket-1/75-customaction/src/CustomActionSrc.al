@@ -38,8 +38,8 @@ page 59600 "CA Order Card"
             customaction(SendToFlow)
             {
                 ApplicationArea = All;
-                CustomActionType = FlowTemplate;
-                FlowTemplateName = 'My Flow Template';
+                CustomActionType = Flow;
+                FlowId = '00000000-0000-0000-0000-000000000001';
             }
         }
     }
