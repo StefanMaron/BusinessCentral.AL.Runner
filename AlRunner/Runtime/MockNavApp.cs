@@ -45,32 +45,35 @@ public static class MockNavApp
     }
 
     /// <summary>
-    /// NavApp.GetResourceAsText(ResourceName, TextEncoding, var Text) — no .app in
-    /// standalone mode, leaves the out parameter empty.
-    /// BC emits: ALNavApp.ALGetResourceAsText(DataError, NavText, TextEncoding, ByRef&lt;NavText&gt;)
+    /// NavApp.GetResourceAsText(ResourceName [, TextEncoding]) : Text — function returning
+    /// the resource as a string. No .app in standalone mode; returns empty string.
+    /// BC emits: ALNavApp.ALGetResourceAsText(DataError, NavText [, object?]) → NavText
     /// </summary>
-    public static void ALGetResourceAsText(DataError errorLevel, NavText resourceName, object? encoding, ByRef<NavText> text)
-    {
-        text.Value = NavText.Empty;
-    }
+    public static NavText ALGetResourceAsText(DataError errorLevel, NavText resourceName)
+        => NavText.Empty;
+
+    public static NavText ALGetResourceAsText(DataError errorLevel, NavText resourceName, object? encoding)
+        => NavText.Empty;
 
     /// <summary>
-    /// NavApp.GetResourceAsJson(ResourceName, TextEncoding, var Token) — no .app in
-    /// standalone mode, leaves the out token at its default state.
-    /// BC emits: ALNavApp.ALGetResourceAsJson(DataError, NavText, TextEncoding, ByRef&lt;NavJsonToken&gt;)
+    /// NavApp.GetResourceAsJson(ResourceName [, TextEncoding]) : JsonToken — function
+    /// returning the resource as a JSON token. No .app in standalone mode; returns default.
+    /// BC emits: ALNavApp.ALGetResourceAsJson(DataError, NavText [, object?]) → NavJsonToken
     /// </summary>
-    public static void ALGetResourceAsJson(DataError errorLevel, NavText resourceName, object? encoding, ByRef<NavJsonToken> token)
-    {
-        // NavJsonToken default is already an empty/null-backed token — leave it.
-    }
+    public static NavJsonToken ALGetResourceAsJson(DataError errorLevel, NavText resourceName)
+        => default;
+
+    public static NavJsonToken ALGetResourceAsJson(DataError errorLevel, NavText resourceName, object? encoding)
+        => default;
 
     /// <summary>
-    /// NavApp.ListResources(ResourceType, var ResourceNames) — no .app in standalone mode,
-    /// returns an empty list.
-    /// BC emits: ALNavApp.ALListResources(DataError, NavText, ByRef&lt;NavList&lt;NavText&gt;&gt;)
+    /// NavApp.ListResources([ResourceType]) : List of [Text] — function returning
+    /// resource names. No .app in standalone mode; returns empty list.
+    /// BC emits: ALNavApp.ALListResources(DataError [, NavText]) → NavList&lt;NavText&gt;
     /// </summary>
-    public static void ALListResources(DataError errorLevel, NavText resourceType, ByRef<NavList<NavText>> list)
-    {
-        list.Value = NavList<NavText>.Default;
-    }
+    public static NavList<NavText> ALListResources(DataError errorLevel)
+        => NavList<NavText>.Default;
+
+    public static NavList<NavText> ALListResources(DataError errorLevel, NavText resourceType)
+        => NavList<NavText>.Default;
 }

@@ -2,26 +2,20 @@
 codeunit 85000 "NavApp Resource Src"
 {
     procedure GetTextResource(ResourceName: Text): Text
-    var
-        ResourceText: Text;
     begin
-        NavApp.GetResourceAsText(ResourceName, TextEncoding::UTF8, ResourceText);
-        exit(ResourceText);
+        exit(NavApp.GetResourceAsText(ResourceName));
     end;
 
     procedure GetJsonResource(ResourceName: Text): JsonToken
-    var
-        Token: JsonToken;
     begin
-        NavApp.GetResourceAsJson(ResourceName, TextEncoding::UTF8, Token);
-        exit(Token);
+        exit(NavApp.GetResourceAsJson(ResourceName));
     end;
 
     procedure ListAllResources(): Integer
     var
         ResourceList: List of [Text];
     begin
-        NavApp.ListResources('', ResourceList);
+        ResourceList := NavApp.ListResources();
         exit(ResourceList.Count());
     end;
 }
