@@ -1,4 +1,4 @@
-codeunit 89001 "XI Tests"
+codeunit 90001 "XI Tests"
 {
     Subtype = Test;
 

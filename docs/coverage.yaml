@@ -9681,7 +9681,7 @@ Xmlport.Export:
   status: covered
   notes: overloads=1; rewriter routes NavXmlPort.Export -> MockXmlPortHandle.StaticExport which is a no-op.
   tests:
-    - tests/bucket-1/89-xmlport-instance
+    - tests/bucket-1/90-xmlport-instance
 
 Xmlport.Import:
   layer: runtime-api
@@ -9689,7 +9689,7 @@ Xmlport.Import:
   status: covered
   notes: overloads=1; rewriter routes NavXmlPort.Import -> MockXmlPortHandle.StaticImport which is a no-op.
   tests:
-    - tests/bucket-1/89-xmlport-instance
+    - tests/bucket-1/90-xmlport-instance
 
 Xmlport.Run:
   layer: runtime-api
@@ -9707,7 +9707,7 @@ XmlportInstance.Break:
   status: covered
   notes: overloads=1; no-op on MockXmlPortHandle; AL0161 — protected, only callable within XmlPort trigger code; not testable from external codeunits
   tests:
-    - tests/bucket-1/89-xmlport-instance
+    - tests/bucket-1/90-xmlport-instance
 
 XmlportInstance.BreakUnbound:
   layer: runtime-api
@@ -9715,7 +9715,7 @@ XmlportInstance.BreakUnbound:
   status: covered
   notes: overloads=1; no-op on MockXmlPortHandle; AL0161 — protected, only callable within XmlPort trigger code; not testable from external codeunits
   tests:
-    - tests/bucket-1/89-xmlport-instance
+    - tests/bucket-1/90-xmlport-instance
 
 XmlportInstance.CurrentPath:
   layer: runtime-api
@@ -9723,7 +9723,7 @@ XmlportInstance.CurrentPath:
   status: covered
   notes: overloads=1; returns empty string on MockXmlPortHandle
   tests:
-    - tests/bucket-1/89-xmlport-instance
+    - tests/bucket-1/90-xmlport-instance
 
 XmlportInstance.Export:
   layer: runtime-api
@@ -9731,7 +9731,7 @@ XmlportInstance.Export:
   status: covered
   notes: overloads=1; no-op on MockXmlPortHandle
   tests:
-    - tests/bucket-1/89-xmlport-instance
+    - tests/bucket-1/90-xmlport-instance
 
 XmlportInstance.FieldDelimiter:
   layer: runtime-api
@@ -9739,7 +9739,7 @@ XmlportInstance.FieldDelimiter:
   status: covered
   notes: overloads=1; property on MockXmlPortHandle, default empty string
   tests:
-    - tests/bucket-1/89-xmlport-instance
+    - tests/bucket-1/90-xmlport-instance
 
 XmlportInstance.FieldSeparator:
   layer: runtime-api
@@ -9747,7 +9747,7 @@ XmlportInstance.FieldSeparator:
   status: covered
   notes: overloads=1; property on MockXmlPortHandle, default empty string
   tests:
-    - tests/bucket-1/89-xmlport-instance
+    - tests/bucket-1/90-xmlport-instance
 
 XmlportInstance.Filename:
   layer: runtime-api
@@ -9755,7 +9755,7 @@ XmlportInstance.Filename:
   status: covered
   notes: overloads=1; property on MockXmlPortHandle, default empty string
   tests:
-    - tests/bucket-1/89-xmlport-instance
+    - tests/bucket-1/90-xmlport-instance
 
 XmlportInstance.Import:
   layer: runtime-api
@@ -9763,7 +9763,7 @@ XmlportInstance.Import:
   status: covered
   notes: overloads=1; no-op on MockXmlPortHandle
   tests:
-    - tests/bucket-1/89-xmlport-instance
+    - tests/bucket-1/90-xmlport-instance
 
 XmlportInstance.ImportFile:
   layer: runtime-api
@@ -9777,7 +9777,7 @@ XmlportInstance.Quit:
   status: covered
   notes: overloads=1; no-op on MockXmlPortHandle; AL0161 — protected, only callable within XmlPort trigger code; not testable from external codeunits
   tests:
-    - tests/bucket-1/89-xmlport-instance
+    - tests/bucket-1/90-xmlport-instance
 
 XmlportInstance.RecordSeparator:
   layer: runtime-api
@@ -9785,7 +9785,7 @@ XmlportInstance.RecordSeparator:
   status: covered
   notes: overloads=1; property on MockXmlPortHandle, default empty string
   tests:
-    - tests/bucket-1/89-xmlport-instance
+    - tests/bucket-1/90-xmlport-instance
 
 XmlportInstance.Run:
   layer: runtime-api
@@ -9793,7 +9793,7 @@ XmlportInstance.Run:
   status: covered
   notes: overloads=1; no-op on MockXmlPortHandle
   tests:
-    - tests/bucket-1/89-xmlport-instance
+    - tests/bucket-1/90-xmlport-instance
 
 XmlportInstance.SetDestination:
   layer: runtime-api
@@ -9801,7 +9801,7 @@ XmlportInstance.SetDestination:
   status: covered
   notes: overloads=1; BC emits xP.Target.Destination = outStr; after .Target stripping lands on MockXmlPortHandle.Destination property
   tests:
-    - tests/bucket-1/89-xmlport-instance
+    - tests/bucket-1/90-xmlport-instance
 
 XmlportInstance.SetSource:
   layer: runtime-api
@@ -9809,7 +9809,7 @@ XmlportInstance.SetSource:
   status: covered
   notes: overloads=1; BC emits xP.Target.Source = inStr; after .Target stripping lands on MockXmlPortHandle.Source property
   tests:
-    - tests/bucket-1/89-xmlport-instance
+    - tests/bucket-1/90-xmlport-instance
 
 XmlportInstance.SetTableView:
   layer: runtime-api
@@ -9817,7 +9817,7 @@ XmlportInstance.SetTableView:
   status: covered
   notes: overloads=1; no-op on MockXmlPortHandle
   tests:
-    - tests/bucket-1/89-xmlport-instance
+    - tests/bucket-1/90-xmlport-instance
 
 XmlportInstance.Skip:
   layer: runtime-api
@@ -9825,7 +9825,7 @@ XmlportInstance.Skip:
   status: covered
   notes: overloads=1; no-op on MockXmlPortHandle; AL0161 — protected, only callable within XmlPort trigger code; not testable from external codeunits
   tests:
-    - tests/bucket-1/89-xmlport-instance
+    - tests/bucket-1/90-xmlport-instance
 
 XmlportInstance.TableSeparator:
   layer: runtime-api
@@ -9833,7 +9833,7 @@ XmlportInstance.TableSeparator:
   status: covered
   notes: overloads=1; property on MockXmlPortHandle, default empty string
   tests:
-    - tests/bucket-1/89-xmlport-instance
+    - tests/bucket-1/90-xmlport-instance
 
 XmlportInstance.TextEncoding:
   layer: runtime-api
@@ -9841,4 +9841,4 @@ XmlportInstance.TextEncoding:
   status: covered
   notes: overloads=1; property on MockXmlPortHandle
   tests:
-    - tests/bucket-1/89-xmlport-instance
+    - tests/bucket-1/90-xmlport-instance
