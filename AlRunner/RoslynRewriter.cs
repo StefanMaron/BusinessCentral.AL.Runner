@@ -3645,11 +3645,6 @@ public void ClearApplicationMemberVariables()
         "ALIsInStream", "ALIsOutStream",
         // Collections and misc
         "ALIsNotification", "ALIsTextBuilder", "ALIsList", "ALIsDictionary",
-        // XML stubs
-        "ALIsXmlAttribute", "ALIsXmlAttributeCollection", "ALIsXmlCData", "ALIsXmlComment",
-        "ALIsXmlDeclaration", "ALIsXmlDocument", "ALIsXmlDocumentType", "ALIsXmlElement",
-        "ALIsXmlNamespaceManager", "ALIsXmlNameTable", "ALIsXmlNode", "ALIsXmlNodeList",
-        "ALIsXmlProcessingInstruction", "ALIsXmlReadOptions", "ALIsXmlText", "ALIsXmlWriteOptions",
         // Misc stubs
         "ALIsAction", "ALIsAutomation", "ALIsBinary", "ALIsClientType", "ALIsDataClassification",
         "ALIsDataClassificationType", "ALIsDefaultLayout", "ALIsExecutionMode", "ALIsFilterPageBuilder",

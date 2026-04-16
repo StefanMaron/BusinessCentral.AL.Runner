@@ -1436,23 +1436,7 @@ public static class AlCompat
     public static bool ALIsList(object? v) { v = UnwrapVariant(v); return v != null && v.GetType().IsGenericType && (v.GetType().GetGenericTypeDefinition().FullName?.StartsWith("Microsoft.Dynamics.Nav.Runtime.NavList", StringComparison.Ordinal) == true); }
     public static bool ALIsDictionary(object? v) => false;
 
-    // XML and misc stubs — no mock types in standalone mode
-    public static bool ALIsXmlAttribute(object? v) => false;
-    public static bool ALIsXmlAttributeCollection(object? v) => false;
-    public static bool ALIsXmlCData(object? v) => false;
-    public static bool ALIsXmlComment(object? v) => false;
-    public static bool ALIsXmlDeclaration(object? v) => false;
-    public static bool ALIsXmlDocument(object? v) => false;
-    public static bool ALIsXmlDocumentType(object? v) => false;
-    public static bool ALIsXmlElement(object? v) => false;
-    public static bool ALIsXmlNamespaceManager(object? v) => false;
-    public static bool ALIsXmlNameTable(object? v) => false;
-    public static bool ALIsXmlNode(object? v) => false;
-    public static bool ALIsXmlNodeList(object? v) => false;
-    public static bool ALIsXmlProcessingInstruction(object? v) => false;
-    public static bool ALIsXmlReadOptions(object? v) => false;
-    public static bool ALIsXmlText(object? v) => false;
-    public static bool ALIsXmlWriteOptions(object? v) => false;
+    // Misc stubs — no mock types in standalone mode
     public static bool ALIsAction(object? v) => false;
     public static bool ALIsBinary(object? v) => false;
     public static bool ALIsClientType(object? v) => false;
