@@ -88,6 +88,42 @@ public class MockRecordRef
     public bool ALAreFieldsLoaded(params int[] fieldNos) => true;
     public bool ALAreFieldsLoaded(DataError errorLevel, params int[] fieldNos) => true;
 
+    /// <summary>ALLoadFields — deprecated alias for SetLoadFields. No-op in standalone.</summary>
+    public void ALLoadFields(params int[] fieldNos) { }
+    public void ALLoadFields(DataError errorLevel, params int[] fieldNos) { }
+
+    // -- IsDirty — no dirty tracking in standalone --
+
+    /// <summary>ALIsDirty — standalone has no write-pending tracking; always false.</summary>
+    public bool ALIsDirty => false;
+
+    // -- CopyLinks — no-op in standalone (no BC link service) --
+
+    /// <summary>ALCopyLinks — copies record links. No-op in standalone mode.</summary>
+    public void ALCopyLinks(MockRecordRef fromRef) { }
+    public void ALCopyLinks(object fromRecord) { }
+
+    // -- ReadConsistency — no SQL transactions in standalone --
+
+    /// <summary>ALReadConsistency — standalone has no read-consistency isolation; always false.</summary>
+    public bool ALReadConsistency => false;
+
+    // -- SecurityFiltering — get/set stub --
+
+    private SecurityFiltering _securityFiltering;
+    /// <summary>ALSecurityFiltering — get/set the security filter mode. Stored but not enforced.</summary>
+    public SecurityFiltering ALSecurityFiltering
+    {
+        get => _securityFiltering;
+        set => _securityFiltering = value;
+    }
+
+    // -- Truncate — delete all rows (same as DeleteAll without triggers) --
+
+    /// <summary>ALTruncate — removes all records from the table without running triggers.</summary>
+    public void ALTruncate() => _handle?.ALDeleteAll(DataError.ThrowError, false);
+    public void ALTruncate(DataError errorLevel) => _handle?.ALDeleteAll(errorLevel, false);
+
     // -- Caption --
 
     /// <summary>
