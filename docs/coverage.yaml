@@ -4572,14 +4572,18 @@ QueryInstance.TopNumberOfRows:
 RecordId.GetRecord:
   layer: runtime-api
   category: RecordId
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native NavRecordId.ALGetRecord works standalone — returns false for empty/default RecordId (no live DB).
+  tests:
+    - tests/bucket-1/194-small-gaps-recordid-list-nametable
 
 RecordId.TableNo:
   layer: runtime-api
   category: RecordId
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native NavRecordId.ALTableNo works standalone — returns 0 for default/empty RecordId.
+  tests:
+    - tests/bucket-1/194-small-gaps-recordid-list-nametable
 
 # ── RecordRef ───────────────────────────────────────────────────
 
@@ -9403,14 +9407,18 @@ XmlElement.WriteTo:
 XmlNameTable.Add:
   layer: runtime-api
   category: XmlNameTable
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native NavXmlNameTable.ALAdd works standalone via MockXmlNameTable wrapper.
+  tests:
+    - tests/bucket-1/194-small-gaps-recordid-list-nametable
 
 XmlNameTable.Get:
   layer: runtime-api
   category: XmlNameTable
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockXmlNameTable.ALGet returns false/empty instead of throwing NavNCLKeyNotFoundException when key absent.
+  tests:
+    - tests/bucket-1/194-small-gaps-recordid-list-nametable
 
 # ── XmlNamespaceManager ─────────────────────────────────────────
 

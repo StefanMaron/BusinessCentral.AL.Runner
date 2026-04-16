@@ -1139,6 +1139,14 @@ public void ClearApplicationMemberVariables()
         if (text == "NavKeyRef")
             return node.WithIdentifier(SyntaxFactory.Identifier("MockKeyRef"));
 
+        // NavXmlNameTable -> MockXmlNameTable
+        // The real NavXmlNameTable.ALGet throws NavNCLKeyNotFoundException when the
+        // requested name is absent.  AL semantics require Get() to return false/empty
+        // rather than throw.  MockXmlNameTable is a dictionary-backed drop-in that
+        // satisfies the ALAdd/ALGet API with safe missing-key handling.
+        if (text == "NavXmlNameTable")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockXmlNameTable"));
+
         // NavFileUpload -> MockFileUpload
         // NavFileUpload represents a browser-uploaded file; it requires a service tier
         // to actually receive file data. MockFileUpload is a standalone in-memory version.

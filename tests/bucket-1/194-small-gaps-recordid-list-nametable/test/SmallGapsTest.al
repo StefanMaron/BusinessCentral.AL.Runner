@@ -1,4 +1,4 @@
-/// Tests for RecordId.TableNo and XmlNameTable.Add/Get.
+/// Tests for RecordId.TableNo, RecordId.GetRecord, and XmlNameTable.Add/Get.
 codeunit 100101 "SGP Test"
 {
     Subtype = Test;
@@ -20,6 +20,20 @@ codeunit 100101 "SGP Test"
         Assert.AreEqual(0, Src.GetTableNo(RecId), 'default RecordId.TableNo() must be 0');
     end;
 
+    // ── RecordId.GetRecord ────────────────────────────────────────────────
+
+    [Test]
+    procedure RecordId_GetRecord_EmptyId_ReturnsFalse()
+    var
+        RecId: RecordId;
+        Rec: Record "SGP Table";
+    begin
+        // [GIVEN] an empty/default RecordId
+        // [WHEN] GetRecord is called
+        // [THEN] returns false (no live DB in runner)
+        Assert.IsFalse(Src.TryGetRecord(RecId, Rec), 'GetRecord on empty RecordId must return false');
+    end;
+
     // ── XmlNameTable ──────────────────────────────────────────────────────
 
     [Test]
@@ -36,7 +50,7 @@ codeunit 100101 "SGP Test"
     begin
         // [GIVEN] a name table with nothing added
         // [WHEN] Get is called for 'missing'
-        // [THEN] empty text is returned
+        // [THEN] empty text is returned (no exception)
         Assert.AreEqual('', Src.NameTableGetMissing('missing'), 'NameTable.Get for unknown value must return empty');
     end;
 }

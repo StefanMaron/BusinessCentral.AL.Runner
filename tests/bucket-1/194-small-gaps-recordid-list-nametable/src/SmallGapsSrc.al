@@ -1,4 +1,4 @@
-/// Source codeunit exercising RecordId.TableNo and XmlNameTable.Add/Get.
+/// Source codeunit exercising RecordId.TableNo, RecordId.GetRecord, and XmlNameTable.Add/Get.
 codeunit 100100 "SGP Src"
 {
     // ── RecordId.TableNo ──────────────────────────────────────────────────
@@ -7,6 +7,15 @@ codeunit 100100 "SGP Src"
     procedure GetTableNo(RecId: RecordId): Integer
     begin
         exit(RecId.TableNo());
+    end;
+
+    // ── RecordId.GetRecord ────────────────────────────────────────────────
+
+    /// Try to fetch the record referenced by RecId into Rec.
+    /// In standalone mode (no live DB), returns false for empty RecordId.
+    procedure TryGetRecord(RecId: RecordId; var Rec: Record "SGP Table"): Boolean
+    begin
+        exit(RecId.GetRecord(Rec));
     end;
 
     // ── XmlNameTable ──────────────────────────────────────────────────────
