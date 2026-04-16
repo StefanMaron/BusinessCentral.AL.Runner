@@ -853,7 +853,9 @@ repeater_section:
 separator_action:
   layer: syntax
   category: page
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/73-separator-action
 
 systemaction_declaration:
   layer: syntax
