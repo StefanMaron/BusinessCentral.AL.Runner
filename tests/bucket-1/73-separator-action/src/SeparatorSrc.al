@@ -1,5 +1,5 @@
 /// Helper codeunit in the same compilation unit as a page with separator() actions.
-codeunit 73000 "Sep Helper"
+codeunit 73002 "Sep Helper"
 {
     procedure GetValue(): Text
     begin
@@ -15,7 +15,7 @@ codeunit 73000 "Sep Helper"
 /// Page with separator() elements between actions.
 /// separator() is a pure UI layout hint — it draws a horizontal divider in menus/toolbars.
 /// The runner must compile this without errors even though there is no UI.
-page 73000 "Sep Test Page"
+page 73002 "Sep Test Page"
 {
     PageType = Card;
 
