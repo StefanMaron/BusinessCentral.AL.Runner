@@ -2826,7 +2826,7 @@ HttpContent.IsSecretContent:
   category: HttpContent
   status: covered
   tests: tests/bucket-1/173-httpcontent-response-methods
-  notes: overloads=1; property ALIsSecretContent always returns false
+  notes: overloads=1; method ALIsSecretContent() always returns false
 
 HttpContent.ReadAs:
   layer: runtime-api
@@ -3004,7 +3004,7 @@ HttpResponseMessage.IsBlockedByEnvironment:
   category: HttpResponseMessage
   status: covered
   tests: tests/bucket-1/173-httpcontent-response-methods
-  notes: overloads=1; property ALIsBlockedByEnvironment always returns false
+  notes: overloads=1; method ALIsBlockedByEnvironment() always returns false
 
 HttpResponseMessage.IsSuccessStatusCode:
   layer: runtime-api

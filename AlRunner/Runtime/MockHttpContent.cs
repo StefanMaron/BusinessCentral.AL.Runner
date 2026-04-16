@@ -77,8 +77,8 @@ public class MockHttpContent
     }
 
     /// <summary>
-    /// BC emits: <c>content.ALIsSecretContent</c> for <c>HttpContent.IsSecretContent()</c>.
+    /// BC emits: <c>content.ALIsSecretContent()</c> for <c>HttpContent.IsSecretContent()</c>.
     /// Always false — the runner has no secret-content support.
     /// </summary>
-    public bool ALIsSecretContent => false;
+    public bool ALIsSecretContent() => false;
 }
