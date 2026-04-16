@@ -194,8 +194,7 @@ codeunit 86101 "TFM Test"
         TP: TestPage "TFM Card";
     begin
         TP.OpenNew();
-        TP.NameField.HideValue(true);
-        TP.NameField.HideValue(false);
+        TP.NameField.HideValue();
         Assert.IsTrue(true, 'HideValue must be a no-op and not raise an error');
         TP.Close();
     end;
@@ -206,8 +205,7 @@ codeunit 86101 "TFM Test"
         TP: TestPage "TFM Card";
     begin
         TP.OpenNew();
-        TP.NameField.ShowMandatory(true);
-        TP.NameField.ShowMandatory(false);
+        TP.NameField.ShowMandatory();
         Assert.IsTrue(true, 'ShowMandatory must be a no-op and not raise an error');
         TP.Close();
     end;
