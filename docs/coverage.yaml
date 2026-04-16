@@ -243,6 +243,18 @@ case_statement:
   tests:
     - tests/bucket-1/01-pure-function
 
+case_statement_on_Code_type:
+  layer: runtime
+  category: statement
+  status: covered
+  notes: >
+    BC emits NavCode.op_Equality for `case CodeVar of 'X':` comparisons.
+    op_Equality calls NavEnvironment (null in standalone → NullReferenceException).
+    RoslynRewriter.VisitBinaryExpression intercepts X == AlCompat.CreateNavCode(...)
+    and rewrites to AlCompat.NavCodeEquals(X, ...) which does string comparison.
+  tests:
+    - tests/bucket-2/100-case-code-type
+
 continue_statement:
   layer: syntax
   category: statement

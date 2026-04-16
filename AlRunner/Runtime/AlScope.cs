@@ -1351,6 +1351,15 @@ public static class AlCompat
         return new NavCode(maxLength, value?.ToUpperInvariant() ?? "");
     }
 
+    /// <summary>
+    /// NavCode equality comparison that avoids NavEnvironment.
+    /// NavCode.op_Equality calls NavEnvironment which crashes in standalone mode.
+    /// Code fields are always stored uppercase, so OrdinalIgnoreCase covers both
+    /// already-uppercased and any raw-string edge cases.
+    /// </summary>
+    public static bool NavCodeEquals(NavCode a, NavCode b)
+        => string.Equals(a.ToString(), b.ToString(), StringComparison.OrdinalIgnoreCase);
+
     // -----------------------------------------------------------------------
     // ALSystemNumeric replacements (ALRandomize/ALRandom require NavSession)
     // -----------------------------------------------------------------------
