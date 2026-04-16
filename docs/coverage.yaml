@@ -678,11 +678,11 @@ fields_section:
 
 fixed_section:
   layer: syntax
-  category: table
+  category: page
   status: covered
   tests:
     - tests/bucket-1/59-table-fixed-section
-  notes: fieldgroup(Fixed; ...) is handled identically to DropDown/Brick by the BC compiler; no runner changes needed
+  notes: fixed() layout group on pages — BC compiler treats it identically to group(); TestPage field access works unchanged
 
 key_declaration:
   layer: syntax

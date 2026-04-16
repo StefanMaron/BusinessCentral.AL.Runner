@@ -20,3 +20,28 @@ table 59400 "Fixed Section Test Table"
         fieldgroup(Fixed; Id, Name, Amount) { }
     }
 }
+
+page 59402 "Fixed Section Page"
+{
+    PageType = Card;
+    SourceTable = "Fixed Section Test Table";
+
+    layout
+    {
+        area(Content)
+        {
+            fixed(grpFixed)
+            {
+                group(grpLeft)
+                {
+                    field(IdField; Rec.Id) { }
+                    field(NameField; Rec.Name) { }
+                }
+                group(grpRight)
+                {
+                    field(AmountField; Rec.Amount) { }
+                }
+            }
+        }
+    }
+}
