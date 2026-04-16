@@ -5720,13 +5720,16 @@ Table.Count:
   status: covered
   tests:
     - tests/bucket-1/44-count-filtered
+    - tests/bucket-1/66-record-count
   notes: overloads=1
 
 Table.CountApprox:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests:
+    - tests/bucket-1/66-record-count
+  notes: overloads=1; returns exact count (ALCountApprox = ALCount) in runner context
 
 Table.CurrentCompany:
   layer: runtime-api
