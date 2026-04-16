@@ -8931,19 +8931,19 @@ XmlDocumentType.AddAfterSelf:
   layer: runtime-api
   category: XmlDocumentType
   status: gap
-  notes: overloads=1
+  notes: overloads=1; signature varies by BC version (var XmlElement in BC 26, var XmlNode in BC 28) — cannot test portably
 
 XmlDocumentType.AddBeforeSelf:
   layer: runtime-api
   category: XmlDocumentType
   status: gap
-  notes: overloads=1
+  notes: overloads=1; signature varies by BC version (var XmlElement in BC 26, var XmlNode in BC 28) — cannot test portably
 
 XmlDocumentType.AsXmlNode:
   layer: runtime-api
   category: XmlDocumentType
   status: gap
-  notes: overloads=1
+  notes: overloads=1; ALWriteTo rewriter collision — RoslynRewriter incorrectly routes XML WriteTo through MockJsonHelper (issue #714)
 
 XmlDocumentType.Create:
   layer: runtime-api
@@ -8955,13 +8955,13 @@ XmlDocumentType.GetDocument:
   layer: runtime-api
   category: XmlDocumentType
   status: gap
-  notes: overloads=1
+  notes: overloads=1; requires XmlDocument.ReadFrom (gap #481) to get doctype attached
 
 XmlDocumentType.GetInternalSubset:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns value passed to Create; empty when not set
 
 XmlDocumentType.GetName:
   layer: runtime-api
@@ -8973,73 +8973,73 @@ XmlDocumentType.GetParent:
   layer: runtime-api
   category: XmlDocumentType
   status: gap
-  notes: overloads=1
+  notes: overloads=1; requires XmlDocument.ReadFrom (gap #481) to get doctype attached
 
 XmlDocumentType.GetPublicId:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns value passed to Create; empty when not set
 
 XmlDocumentType.GetSystemId:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; returns value passed to Create; empty when not set
 
 XmlDocumentType.Remove:
   layer: runtime-api
   category: XmlDocumentType
   status: gap
-  notes: overloads=1
+  notes: overloads=1; requires XmlDocument.ReadFrom (gap #481) to get doctype attached
 
 XmlDocumentType.ReplaceWith:
   layer: runtime-api
   category: XmlDocumentType
   status: gap
-  notes: overloads=1
+  notes: overloads=1; signature varies by BC version (var XmlElement in BC 26, var XmlNode in BC 28) — cannot test portably
 
 XmlDocumentType.SelectNodes:
   layer: runtime-api
   category: XmlDocumentType
   status: gap
-  notes: overloads=2
+  notes: overloads=2; AL0133 in BC 28 when calling from XmlDocumentType context
 
 XmlDocumentType.SelectSingleNode:
   layer: runtime-api
   category: XmlDocumentType
   status: gap
-  notes: overloads=2
+  notes: overloads=2; AL0133 in BC 28 when calling from XmlDocumentType context
 
 XmlDocumentType.SetInternalSubset:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; SetInternalSubset then GetInternalSubset returns new value
 
 XmlDocumentType.SetName:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; SetName then GetName returns the new name
 
 XmlDocumentType.SetPublicId:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; SetPublicId then GetPublicId returns new value
 
 XmlDocumentType.SetSystemId:
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; SetSystemId then GetSystemId returns new value
 
 XmlDocumentType.WriteTo:
   layer: runtime-api
   category: XmlDocumentType
   status: gap
-  notes: overloads=4
+  notes: overloads=4; ALWriteTo rewriter collision — RoslynRewriter incorrectly routes XML WriteTo through MockJsonHelper (issue #714)
 
 # ── XmlElement ──────────────────────────────────────────────────
 
