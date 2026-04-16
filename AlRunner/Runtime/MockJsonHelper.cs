@@ -578,10 +578,10 @@ public static class MockJsonHelper
     {
         var backing = GetBackingToken(token);
         if (backing.Type == JTokenType.Date)
-            return AlScope.CreateNavDateTime(backing.Value<DateTime>());
+            return AlCompat.CreateNavDateTime(backing.Value<DateTime>());
         if (backing.Type == JTokenType.String &&
             DateTime.TryParse(backing.Value<string>(), out var parsed))
-            return AlScope.CreateNavDateTime(parsed);
+            return AlCompat.CreateNavDateTime(parsed);
         return NavDateTime.Default;
     }
 
