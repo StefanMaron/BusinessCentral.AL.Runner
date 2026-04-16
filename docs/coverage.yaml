@@ -7668,50 +7668,58 @@ TextBuilder.AppendLine:
 TextBuilder.Capacity:
   layer: runtime-api
   category: TextBuilder
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockTextBuilder.ALCapacity => _sb.Capacity
+  tests: tests/bucket-1/271-textbuilder-methods
 
 TextBuilder.Clear:
   layer: runtime-api
   category: TextBuilder
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockTextBuilder.ALClear() clears StringBuilder
+  tests: tests/bucket-1/271-textbuilder-methods
 
 TextBuilder.EnsureCapacity:
   layer: runtime-api
   category: TextBuilder
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockTextBuilder.ALEnsureCapacity(capacity) sets _sb.Capacity
+  tests: tests/bucket-1/271-textbuilder-methods
 
 TextBuilder.Insert:
   layer: runtime-api
   category: TextBuilder
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockTextBuilder.ALInsert(DataError, index, text) delegates to _sb.Insert
+  tests: tests/bucket-1/271-textbuilder-methods
 
 TextBuilder.Length:
   layer: runtime-api
   category: TextBuilder
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockTextBuilder.ALLength => _sb.Length
+  tests: tests/bucket-1/271-textbuilder-methods
 
 TextBuilder.MaxCapacity:
   layer: runtime-api
   category: TextBuilder
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockTextBuilder.ALMaxCapacity => _sb.MaxCapacity
+  tests: tests/bucket-1/271-textbuilder-methods
 
 TextBuilder.Remove:
   layer: runtime-api
   category: TextBuilder
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockTextBuilder.ALRemove(DataError, startIndex, count)
+  tests: tests/bucket-1/271-textbuilder-methods
 
 TextBuilder.Replace:
   layer: runtime-api
   category: TextBuilder
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; MockTextBuilder.ALReplace(DataError, oldValue, newValue)
+  tests: tests/bucket-1/271-textbuilder-methods
 
 TextBuilder.ToText:
   layer: runtime-api
