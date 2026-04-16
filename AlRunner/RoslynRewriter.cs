@@ -592,8 +592,8 @@ public bool ALMarkedOnly { get => Rec.ALMarkedOnly; set => Rec.ALMarkedOnly = va
 public int CurrFieldNo { get; set; }
 public string ALGetFilters => Rec.ALGetFilters;
 public bool ALHasFilter => Rec.ALHasFilter;
-public NavValue ALGetRangeMinSafe(int fieldNo, NavType expectedType) => Rec.ALGetRangeMinSafe(fieldNo, expectedType);
-public NavValue ALGetRangeMaxSafe(int fieldNo, NavType expectedType) => Rec.ALGetRangeMaxSafe(fieldNo, expectedType);
+public object ALGetRangeMinSafe(int fieldNo, NavType expectedType) => Rec.ALGetRangeMinSafe(fieldNo, expectedType);
+public object ALGetRangeMaxSafe(int fieldNo, NavType expectedType) => Rec.ALGetRangeMaxSafe(fieldNo, expectedType);
 public string ALCurrentKey => Rec.ALCurrentKey;
 public bool ALAscending => Rec.ALAscending;
 public int ALCountApprox => Rec.ALCountApprox;
