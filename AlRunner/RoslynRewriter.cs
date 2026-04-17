@@ -867,6 +867,13 @@ public void ClearApplicationMemberVariables()
             if (name == "IndirectPermissionList")
                 return true;
 
+            // protected override NavPermissionList InherentPermissionsList => ...;
+            // BC emits this in codeunit classes and their inner scope classes when the
+            // [InherentPermissions] attribute is present.  AlScope has no virtual
+            // InherentPermissionsList, so the override causes CS0115.  Strip it.
+            if (name == "InherentPermissionsList")
+                return true;
+
             // public override NavEventScope EventScope { get; set; }
             if (name == "EventScope")
                 return true;

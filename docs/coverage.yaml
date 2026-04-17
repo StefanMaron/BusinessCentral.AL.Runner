@@ -35,10 +35,32 @@ codeunit_declaration:
     - tests/bucket-1/01-pure-function
     - tests/bucket-1/10-cross-codeunit
     - tests/bucket-1/112-codeunit-onrun-record
+    - tests/bucket-2/216-inherent-permissions
+
+codeunit_permissions_property:
+  layer: syntax
+  category: object
+  status: covered
+  notes: Codeunit Permissions object property — BC emits InherentPermissionsList override; RoslynRewriter strips it (CS0115 fix). Tests with Permissions = tabledata X = R.
+  tests:
+    - tests/bucket-2/216-inherent-permissions
     - tests/bucket-1/128-codeunit-not-found
     - tests/bucket-1/15-codeunit-assign
     - tests/bucket-2/75-codeunit-run-bool
     - tests/bucket-2/76-navscope-dispatch
+
+codeunit_permissions_property:
+  layer: syntax
+  category: object
+  status: covered
+  notes: >
+    Permissions = tabledata "X" = R; on a codeunit — BC compiler emits
+    IndirectPermissionList and (in newer BC versions) InherentPermissionsList
+    override members in the generated scope class.  Both are stripped by
+    RoslynRewriter.ShouldRemoveMember because AlScope has no corresponding
+    virtual members (CS0115 fix for InherentPermissionsList, issue #978).
+  tests:
+    - tests/bucket-2/216-inherent-permissions
 
 controladdin_declaration:
   layer: syntax
