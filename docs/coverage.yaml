@@ -6620,7 +6620,8 @@ Table.FindSet:
   status: covered
   tests:
     - tests/bucket-1/53-findset
-  notes: overloads=2; SetCurrentKey sort order respected via GetFilteredRecords PK-fallback fix
+    - tests/bucket-1/283-overload-gaps
+  notes: overloads=3; 0-arg, 1-arg (ForUpdate), 2-arg (ForUpdate, ForceNewQuery); BC 26+ emits 3-arg C# form; ForUpdate/ForceNewQuery ignored in standalone mode
 
 Table.Get:
   layer: runtime-api
@@ -6721,10 +6722,11 @@ Table.Insert:
   layer: runtime-api
   category: Table
   status: covered
-  notes: overloads=2; ALInsert(DataError) and ALInsert(DataError, bool runTrigger) add record to in-memory store; triggers OnInsert when runTrigger=true.
+  notes: overloads=3; ALInsert(DataError), ALInsert(DataError, runTrigger), ALInsert(DataError, runTrigger, checkMandatoryFields); CheckMandatoryFields not enforced in standalone mode.
   tests:
     - tests/bucket-1/188-table-crud
     - tests/bucket-1/02-record-operations
+    - tests/bucket-1/283-overload-gaps
 
 Table.IsEmpty:
   layer: runtime-api

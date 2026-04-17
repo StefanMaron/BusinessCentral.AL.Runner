@@ -342,6 +342,10 @@ public class MockRecordHandle
 
     public bool ALInsert(DataError errorLevel) => ALInsert(errorLevel, false);
 
+    /// <summary>BC emits ALInsert(DataError, RunTrigger, CheckMandatoryFields) for <c>Insert(RunTrigger, CheckMandatoryFields)</c>.
+    /// CheckMandatoryFields is not enforced in standalone mode — behaves identically to the 2-arg overload.</summary>
+    public bool ALInsert(DataError errorLevel, bool runTrigger, bool checkMandatoryFields) => ALInsert(errorLevel, runTrigger);
+
     public bool ALInsert(DataError errorLevel, bool runTrigger)
     {
         var table = GetRows();
@@ -646,6 +650,11 @@ public class MockRecordHandle
     {
         return ALFind(errorLevel, "-");
     }
+
+    /// <summary>BC 26+ emits ALFindSet(DataError, ForUpdate, ForceNewQuery) for <c>FindSet(ForUpdate, ForceNewQuery)</c>.
+    /// ForceNewQuery is a hint to the BC runtime; in standalone mode both bool args are ignored.</summary>
+    public bool ALFindSet(DataError errorLevel, bool forUpdate, bool forceNewQuery)
+        => ALFindSet(errorLevel, forUpdate);
 
     public bool ALFindFirst(DataError errorLevel = DataError.ThrowError)
     {
