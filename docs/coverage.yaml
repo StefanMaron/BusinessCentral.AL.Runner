@@ -1164,11 +1164,13 @@ addfirst_dataset_modification:
 addfirst_fieldgroup_modification:
   layer: syntax
   category: modification
-  status: gap
+  status: covered
+  tests: tests/bucket-1/277-addfirst-fieldgroup
   notes: >
-    Language gap: AL compiler (BC 26–28) rejects addfirst inside tableextension
-    fieldgroups with AL0104 — addfirst is not a valid keyword in this position.
-    addlast works; addfirst does not exist at these BC versions.
+    PrepareSourceForStandalone strips addfirst(GroupName; Fields) lines from
+    tableextension fieldgroups before AL compilation — the runner's BC compiler
+    version rejects addfirst in this position with AL0104. Fieldgroup
+    modifications have no runtime effect in the runner, so stripping is safe.
 
 addfirst_modification:
   layer: syntax

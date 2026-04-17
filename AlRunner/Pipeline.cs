@@ -946,15 +946,29 @@ public class AlRunnerPipeline
         // contains a report or reportextension declaration — not just when the
         // declaration is at the very start. This handles BOM, header comments,
         // multi-object files, and other common AL file layouts.
-        if (!Regex.IsMatch(source, @"\breport(extension)?\s+\d+", RegexOptions.IgnoreCase))
-            return source;
+        if (Regex.IsMatch(source, @"\breport(extension)?\s+\d+", RegexOptions.IgnoreCase))
+        {
+            source = StripNamedBlock(source, "rendering");
+            // Remove DefaultRenderingLayout property — it references layout names
+            // defined inside the rendering block which we just stripped.
+            source = Regex.Replace(source,
+                @"(?im)^\s*DefaultRenderingLayout\s*=\s*[^;]+;\s*$",
+                "");
+        }
 
-        source = StripNamedBlock(source, "rendering");
-        // Remove DefaultRenderingLayout property — it references layout names
-        // defined inside the rendering block which we just stripped.
-        source = Regex.Replace(source,
-            @"(?im)^\s*DefaultRenderingLayout\s*=\s*[^;]+;\s*$",
-            "");
+        // Strip addfirst(GroupName; Fields...) inside tableextension fieldgroups.
+        // The runner's BC compiler version does not recognise addfirst in fieldgroups
+        // (AL0104). Fieldgroup modifications have no runtime effect in the runner, so
+        // removing them is safe. The distinguishing syntax is a semicolon inside the
+        // parens: addfirst(GroupName; Field1, Field2) vs page-style addfirst(group).
+        if (Regex.IsMatch(source, @"\btableextension\s+\d+", RegexOptions.IgnoreCase) &&
+            Regex.IsMatch(source, @"\baddfirst\s*\(", RegexOptions.IgnoreCase))
+        {
+            source = Regex.Replace(source,
+                @"(?im)^\s*addfirst\s*\([^;)]+;[^)]*\)\s*$",
+                "");
+        }
+
         return source;
     }
 
