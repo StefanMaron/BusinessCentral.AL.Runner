@@ -81,6 +81,29 @@ interface_declaration:
     - tests/bucket-2/42-list-of-interface
     - tests/bucket-2/53-enum-interface
 
+interface_is_operator:
+  layer: runtime
+  category: interface
+  status: covered
+  notes: >
+    AL `myVar is IBar` — BC emits myVar.IsInterfaceOfType(interfaceId).
+    MockInterfaceHandle.IsInterfaceOfType(int) delegates to the BC-generated
+    IsInterfaceOfType(int) method on the codeunit class (kept by rewriter,
+    override stripped so it compiles without the NavCodeunit base class).
+  tests:
+    - tests/bucket-1/287-interface-typecheck
+
+interface_as_operator:
+  layer: runtime
+  category: interface
+  status: covered
+  notes: >
+    AL `myVar as IBar` — BC emits myVar.AsInterfaceOfType(interfaceId).
+    Returns the same MockInterfaceHandle if IsInterfaceOfType passes; throws
+    InvalidCastException otherwise (surfaced as AL runtime error).
+  tests:
+    - tests/bucket-1/287-interface-typecheck
+
 page_declaration:
   layer: syntax
   category: object

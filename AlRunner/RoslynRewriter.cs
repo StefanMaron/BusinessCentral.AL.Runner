@@ -788,9 +788,11 @@ public void ClearApplicationMemberVariables()
             if (name == "GetMethodScopeFlags")
                 return true;
 
-            // Remove BC interface dispatch methods (used by NavInterfaceHandle runtime)
-            if (name == "IsInterfaceOfType" || name == "IsInterfaceMethod")
-                return true;
+            // NOTE: IsInterfaceOfType and IsInterfaceMethod are intentionally kept.
+            // MockInterfaceHandle.IsInterfaceOfType(int) delegates to these methods to
+            // check if a codeunit implements a given AL interface at runtime.
+            // The 'override' modifier is stripped by VisitMethodDeclaration since the
+            // base class (NavCodeunit etc.) is removed.
 
             // Remove Page/Extension-specific methods that reference BC Page runtime
             if (name == "OnMetadataLoaded" || name == "EvaluateCaptionClass"

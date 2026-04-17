@@ -97,6 +97,21 @@ public class MockCodeunitHandle
     }
 
     /// <summary>
+    /// Returns the underlying codeunit instance, lazily creating it if needed.
+    /// Used by MockInterfaceHandle.IsInterfaceOfType to call the BC-generated
+    /// IsInterfaceOfType(int) method on the codeunit class.
+    /// </summary>
+    public object? GetUnderlyingInstance()
+    {
+        if (_codeunitInstance != null) return _codeunitInstance;
+        var assembly = CurrentAssembly ?? Assembly.GetExecutingAssembly();
+        var codeunitType = FindCodeunitType(assembly);
+        if (codeunitType == null) return null;
+        EnsureInstance(codeunitType);
+        return _codeunitInstance;
+    }
+
+    /// <summary>
     /// Static factory matching the rewritten constructor pattern.
     /// </summary>
     public static MockCodeunitHandle Create(int codeunitId)

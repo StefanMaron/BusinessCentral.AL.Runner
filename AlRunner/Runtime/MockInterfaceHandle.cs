@@ -173,4 +173,52 @@ public class MockInterfaceHandle : ITreeObject, IALAssignable<MockInterfaceHandl
     {
         return InvokeInterfaceMethod(memberId, args);
     }
+
+    /// <summary>
+    /// AL <c>myVar is IBar</c> — checks if the underlying implementation supports the given
+    /// interface ID. BC generates <c>myVar.IsInterfaceOfType(interfaceId)</c> for this pattern.
+    /// Delegates to the BC-generated <c>IsInterfaceOfType(int)</c> method on the codeunit class
+    /// (kept by the rewriter; <c>override</c> is stripped so it compiles without the base class).
+    /// </summary>
+    public bool IsInterfaceOfType(int interfaceId)
+    {
+        var instance = GetUnderlyingObject();
+        if (instance == null) return false;
+
+        var method = instance.GetType().GetMethod(
+            "IsInterfaceOfType",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance,
+            null,
+            new[] { typeof(int) },
+            null);
+        if (method == null) return false;
+
+        return (bool)method.Invoke(instance, new object[] { interfaceId })!;
+    }
+
+    /// <summary>
+    /// AL <c>myVar as IBar</c> — returns <c>this</c> if the implementation supports the
+    /// interface ID, otherwise throws <see cref="InvalidCastException"/>.
+    /// BC generates <c>myVar.AsInterfaceOfType(interfaceId)</c> for this pattern.
+    /// </summary>
+    public MockInterfaceHandle AsInterfaceOfType(int interfaceId)
+    {
+        if (!IsInterfaceOfType(interfaceId))
+            throw new InvalidCastException(
+                $"Interface implementation does not support interface with ID {interfaceId}.");
+        return this;
+    }
+
+    /// <summary>
+    /// Unwraps nested handles and codeunit wrappers to reach the codeunit instance
+    /// that carries the BC-generated IsInterfaceOfType(int) method.
+    /// </summary>
+    private object? GetUnderlyingObject()
+    {
+        if (_implementation is MockCodeunitHandle handle)
+            return handle.GetUnderlyingInstance();
+        if (_implementation is MockInterfaceHandle inner)
+            return inner.GetUnderlyingObject();
+        return _implementation;
+    }
 }
