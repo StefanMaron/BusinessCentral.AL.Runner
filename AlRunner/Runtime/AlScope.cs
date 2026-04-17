@@ -2352,16 +2352,36 @@ public static class AlCompat
     // Declarations have no child nodes — populate nodeListRef with a new empty
     // NavXmlNodeList so the caller's Count() call doesn't throw on a null ref.
     // ALSelectNodes takes ByRef<NavXmlNodeList> (BC's output-parameter wrapper).
+    //
+    // NavXmlNodeList has no public parameterless constructor, so we bootstrap one
+    // by running ALSelectNodes on an empty NavXmlDocument — BC always populates the
+    // ByRef output even when SelectNodes returns false (no-match xpath).
+    private static NavXmlNodeList? _emptyNavXmlNodeList;
+    private static NavXmlNodeList GetEmptyNavXmlNodeList()
+    {
+        if (_emptyNavXmlNodeList is null)
+        {
+            var doc = NavXmlDocument.ALCreate(DataError.ThrowError);
+            NavXmlNodeList? list = null;
+            var byRef = new ByRef<NavXmlNodeList>(() => list!, v => list = v);
+            doc.ALSelectNodes(DataError.ThrowError, new NavText("/__alrunner_init__"), byRef);
+            _emptyNavXmlNodeList = list
+                ?? (NavXmlNodeList)System.Runtime.CompilerServices.RuntimeHelpers
+                    .GetUninitializedObject(typeof(NavXmlNodeList));
+        }
+        return _emptyNavXmlNodeList;
+    }
+
     public static bool XmlSelectNodes(object node, NavText xpath, ByRef<NavXmlNodeList> nodeListRef)
     {
         if (node is NavXmlDeclaration)
         {
-            nodeListRef.Value = new NavXmlNodeList();
+            nodeListRef.Value = GetEmptyNavXmlNodeList();
             return false;
         }
         if (node is NavXmlNode n)
             return n.ALSelectNodes(DataError.ThrowError, xpath, nodeListRef);
-        nodeListRef.Value = new NavXmlNodeList();
+        nodeListRef.Value = GetEmptyNavXmlNodeList();
         return false;
     }
 
