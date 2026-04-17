@@ -1728,13 +1728,16 @@ public void ClearApplicationMemberVariables()
         // AlScope implements ITreeObject, so 'this' is a valid non-null ITreeObject
         // for any Nav*/AL* type constructor — no CS1503 and no null-check failures.
 
-        // new NavJsonValue() -> MockJsonHelper.CreateUndefinedJsonValue()
-        // BC's NavJsonValue() constructor initialises the backing token to a non-undefined
-        // state, so the native IsUndefined property returns false for fresh variables.
-        // We replace the construction with a factory that sets JValue.CreateUndefined() as
-        // the backing token so that `var JV: JsonValue` correctly satisfies IsUndefined.
-        if (typeText == "NavJsonValue" &&
-            (visited.ArgumentList == null || visited.ArgumentList.Arguments.Count == 0))
+        // new NavJsonValue(...) -> MockJsonHelper.CreateUndefinedJsonValue()
+        // BC generates `new NavJsonValue(scope, parent)` (with arguments) for every
+        // `var JV: JsonValue` local variable declaration.  The constructor sets a
+        // non-undefined backing token, so the native IsUndefined property returns false
+        // for fresh variables — violating AL semantics where fresh JsonValue IS undefined.
+        // We replace ALL NavJsonValue constructions (any argument count) with a factory
+        // that sets JValue.CreateUndefined() as the backing token; SetValue / AsBigInteger
+        // etc. operate via SetBackingToken which does not require a scope, so the lack of
+        // constructor argument forwarding is safe for all tested operations.
+        if (typeText == "NavJsonValue")
         {
             return SyntaxFactory.InvocationExpression(
                 SyntaxFactory.MemberAccessExpression(
