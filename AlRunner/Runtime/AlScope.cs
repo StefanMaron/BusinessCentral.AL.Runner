@@ -2439,8 +2439,13 @@ public static class AlCompat
                             args[i] = null;
                     }
                     var instance = (NavXmlNodeList)ctor.Invoke(args);
-                    // Sanity check: Count must not throw.
-                    GC.KeepAlive(instance.Count);
+                    // Sanity check: Count/ALCount must not throw.
+                    // Use reflection so this compiles regardless of whether Count
+                    // is a property or method in the loaded BC version.
+                    var countProp = typeof(NavXmlNodeList).GetProperty("ALCount")
+                        ?? typeof(NavXmlNodeList).GetProperty("Count");
+                    if (countProp != null)
+                        GC.KeepAlive(countProp.GetValue(instance));
                     _emptyNavXmlNodeList = instance;
                     return instance;
                 }
