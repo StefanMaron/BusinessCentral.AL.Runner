@@ -4092,8 +4092,9 @@ NavApp.DeleteArchiveData:
 NavApp.GetArchiveRecordRef:
   layer: runtime-api
   category: NavApp
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/99-misc-stubs
+  notes: overloads=1; no-op standalone — leaves RecordRef unbound. Stub on MockNavApp.
 
 NavApp.GetArchiveVersion:
   layer: runtime-api
@@ -4129,8 +4130,9 @@ NavApp.GetModuleInfo:
 NavApp.GetResource:
   layer: runtime-api
   category: NavApp
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/99-misc-stubs
+  notes: overloads=1; no-op standalone — no .app bundle to read resource from. Stub on MockNavApp.
 
 NavApp.GetResourceAsJson:
   layer: runtime-api
@@ -4597,8 +4599,9 @@ QueryInstance.TopNumberOfRows:
 RecordId.GetRecord:
   layer: runtime-api
   category: RecordId
-  status: gap
-  notes: overloads=1; the 1-argument form GetRecord(var Rec) does not exist in BC 26–28 (AL0126). The 0-argument form GetRecord() exists but returns a Record directly — runner behaviour for empty RecordId TBD.
+  status: covered
+  tests: tests/bucket-1/99-misc-stubs
+  notes: overloads=1; the 1-argument form GetRecord(var Rec) does not exist in BC 26–28 (AL0126). The 0-argument form GetRecord() is intercepted by RoslynRewriter (ALGetRecord → new MockRecordRef()) and returns an unbound RecordRef in standalone mode.
 
 RecordId.TableNo:
   layer: runtime-api
@@ -9705,8 +9708,9 @@ XmlNode.AsXmlDocument:
 XmlNode.AsXmlDocumentType:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1; not tested (XmlDocumentType.AsXmlNode not yet exercised in suite)
+  status: covered
+  tests: tests/bucket-1/99-misc-stubs
+  notes: overloads=1; BC native NavXmlNode.ALAsXmlDocumentType works standalone
 
 XmlNode.AsXmlElement:
   layer: runtime-api
@@ -9781,8 +9785,9 @@ XmlNode.IsXmlDocument:
 XmlNode.IsXmlDocumentType:
   layer: runtime-api
   category: XmlNode
-  status: gap
-  notes: overloads=1; not tested (XmlDocumentType.AsXmlNode not yet exercised in suite)
+  status: covered
+  tests: tests/bucket-1/99-misc-stubs
+  notes: overloads=1; BC native NavXmlNode.ALIsXmlDocumentType works standalone; returns false for Element and Document nodes
 
 XmlNode.IsXmlElement:
   layer: runtime-api

@@ -621,6 +621,11 @@ public class MockRecordRef
         }
     }
 
+    /// ALAssign(NavRecordRef) — BC emits this when RecordId.GetRecord() result is
+    /// assigned to a RecordRef. The BC runtime returns a real NavRecordRef, but
+    /// in standalone mode we have no DB; leave this RecordRef unbound (Number=0).
+    public void ALAssign(NavRecordRef other) { }
+
     /// <summary>
     /// ALAssign(MockFieldRef) — BC emits <c>recRef.ALAssign(fldRef)</c> when AL
     /// code does <c>RecRef := FldRef.Record()</c>. The compiler inlines the

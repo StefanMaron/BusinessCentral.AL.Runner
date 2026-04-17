@@ -113,6 +113,14 @@ public static class MockNavApp
     public static NavText ALNavAppGetArchiveVersion()
         => NavText.Empty;
 
+    /// NavApp.GetArchiveRecordRef(TableId; var RecordRef) — leaves RecordRef unbound.
+    /// BC emits: ALNavApp.ALNavAppGetArchiveRecordRef(int, MockRecordRef)
+    public static void ALNavAppGetArchiveRecordRef(int tableId, MockRecordRef recordRef) { }
+
+    /// NavApp.GetResource(ResourceName; var InStream) — no-op in standalone mode.
+    /// BC emits: ALNavApp.ALGetResource(null!, NavText, MockInStream)
+    public static void ALGetResource(object? errorLevel, NavText resourceName, MockInStream inStream) { }
+
     public static void ALNavAppLoadPackageData(object? errorLevel, int tableNo) { }
     public static void ALNavAppLoadPackageData(int tableNo) { }
 

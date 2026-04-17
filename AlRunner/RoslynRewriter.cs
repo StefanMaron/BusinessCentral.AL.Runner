@@ -1973,6 +1973,19 @@ public void ClearApplicationMemberVariables()
                 })));
         }
 
+        // NavRecordId.ALGetRecord(scope, target) -> new MockRecordRef()
+        // BC emits `recId.ALGetRecord(this, CompilationTarget.OnPrem)` for RecordId.GetRecord().
+        // NavRecordId.ALGetRecord reaches into BC runtime infrastructure that doesn't exist in
+        // standalone mode and throws "Parent.Tree cannot be null". Return an unbound MockRecordRef.
+        if (node.Expression is MemberAccessExpressionSyntax getRecordMa &&
+            getRecordMa.Name.Identifier.Text == "ALGetRecord")
+        {
+            return SyntaxFactory.ObjectCreationExpression(
+                SyntaxFactory.IdentifierName("MockRecordRef"))
+                .WithArgumentList(SyntaxFactory.ArgumentList())
+                .WithTriviaFrom(node);
+        }
+
         // Now recurse into children first
         var visited = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
 
