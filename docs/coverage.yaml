@@ -4505,8 +4505,10 @@ Page.LookupMode:
   layer: runtime-api
   category: Page
   status: covered
-  tests: tests/bucket-1/89-page-static
-  notes: overloads=1
+  tests:
+    - tests/bucket-1/89-page-static
+    - tests/bucket-2/218-page-runmodal-lookup
+  notes: overloads=1. Also proven on instance Page<N> — setter + getter round-trip.
 
 Page.ObjectId:
   layer: runtime-api
@@ -4533,8 +4535,10 @@ Page.RunModal:
   layer: runtime-api
   category: Page
   status: covered
-  tests: tests/bucket-1/89-page-static
-  notes: overloads=4
+  tests:
+    - tests/bucket-1/89-page-static
+    - tests/bucket-2/218-page-runmodal-lookup
+  notes: overloads=4. Instance form Page<N>.RunModal() dispatches to ModalPageHandler.
 
 Page.SaveRecord:
   layer: runtime-api
