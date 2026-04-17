@@ -474,6 +474,39 @@ public static class MockJsonHelper
         return CreateJsonToken<NavJsonArray>(jArr);
     }
 
+    /// <summary>
+    /// Stub replacement for NavJsonToken.ALWriteToYaml(DataError, ByRef&lt;NavText&gt;).
+    /// BC's WriteToYaml requires YamlDotNet which is not available in the runner.
+    /// Serializes as JSON instead — JSON is valid YAML, so this stub is sufficient for testing.
+    /// AL: JsonObject.WriteToYaml(var Text)  →  MockJsonHelper.WriteToYaml(token, error, data)
+    /// </summary>
+    public static bool WriteToYaml(NavJsonToken token, DataError errorLevel, ByRef<NavText> data)
+        => WriteTo(token, errorLevel, data);
+
+    /// <summary>
+    /// Stub replacement for NavJsonToken.ALWriteToYaml(DataError, OutStream).
+    /// See <see cref="WriteToYaml(NavJsonToken, DataError, ByRef{NavText})"/> for context.
+    /// </summary>
+    public static bool WriteToYaml(NavJsonToken token, DataError errorLevel, MockOutStream stream)
+        => WriteTo(token, errorLevel, stream);
+
+    /// <summary>
+    /// Stub replacement for NavJsonToken.ALReadFromYaml(DataError, string).
+    /// BC's ReadFromYaml requires YamlDotNet which is not available in the runner.
+    /// Parses as JSON instead — simple YAML using JSON notation (the common test case)
+    /// is parsed correctly.
+    /// AL: JsonObject.ReadFromYaml(Text)  →  MockJsonHelper.ReadFromYaml(token, error, text)
+    /// </summary>
+    public static bool ReadFromYaml(NavJsonToken token, DataError errorLevel, string data)
+        => ReadFrom(token, errorLevel, data);
+
+    /// <summary>
+    /// Stub replacement for NavJsonToken.ALReadFromYaml(DataError, InStream).
+    /// See <see cref="ReadFromYaml(NavJsonToken, DataError, string)"/> for context.
+    /// </summary>
+    public static bool ReadFromYaml(NavJsonToken token, DataError errorLevel, MockInStream stream)
+        => ReadFrom(token, errorLevel, stream);
+
     // --- NavDate / NavTime construction helpers (avoid Telemetry.Abstractions in BC 28+) ---
     // Search the type itself first, then BaseType, mirroring how CreateNavDateTime works in AlScope.
     private static readonly FieldInfo? NavDateValueField =
@@ -737,15 +770,6 @@ public static class MockJsonHelper
     public static NavJsonToken AsToken(NavJsonToken token, DataError errorLevel = default)
         => token;
 
-    /// <summary>
-    /// Replacement for NavJsonValue.ALIsUndefined().
-    /// Returns true if the JsonValue has not been assigned a value.
-    /// AL: JsonValue.IsUndefined()  →  MockJsonHelper.IsUndefined(token)
-    ///
-    /// Strategy: invoke BC's own ALIsUndefined via reflection (it reads internal
-    /// state without going through TrappableOperationExecutor). If that fails,
-    /// fall back to backing-token heuristics.
-    /// </summary>
     /// <summary>
     /// Creates a new NavJsonValue initialised to the "undefined" state.
     /// BC's NavJsonValue() constructor sets a non-undefined backing token, so the
