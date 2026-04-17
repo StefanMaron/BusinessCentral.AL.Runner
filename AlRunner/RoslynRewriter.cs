@@ -2122,6 +2122,10 @@ public void ClearApplicationMemberVariables()
             // (leaves the caller's empty-initialized nodeList unchanged) and delegates to
             // the normal NavXmlNode path otherwise.
             // ALSelectSingleNode follows the same pattern with ByRef<NavXmlNode>.
+            //
+            // IMPORTANT: the DataError argument (arg[0]) must be forwarded verbatim.
+            // BC transpiles SelectSingleNode no-match as DataError.ReturnFalse; replacing
+            // it with DataError.ThrowError would turn a "return false" into a throw.
             if (xmlMethodName is "ALSelectNodes" or "ALSelectSingleNode" &&
                 node.ArgumentList.Arguments.Count == 3 &&
                 node.ArgumentList.Arguments[0].Expression.ToString().StartsWith("DataError"))
@@ -2130,6 +2134,7 @@ public void ClearApplicationMemberVariables()
                     ? "XmlSelectNodes"
                     : "XmlSelectSingleNode";
                 var receiverExpr = (ExpressionSyntax)Visit(xmlDocMa.Expression)!;
+                var dataErrorExpr = (ExpressionSyntax)Visit(node.ArgumentList.Arguments[0].Expression)!;
                 var xpathExpr = (ExpressionSyntax)Visit(node.ArgumentList.Arguments[1].Expression)!;
                 var thirdArgExpr = (ExpressionSyntax)Visit(node.ArgumentList.Arguments[2].Expression)!;
                 return SyntaxFactory.InvocationExpression(
@@ -2140,6 +2145,7 @@ public void ClearApplicationMemberVariables()
                     SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList(new[]
                     {
                         SyntaxFactory.Argument(receiverExpr),
+                        SyntaxFactory.Argument(dataErrorExpr),
                         SyntaxFactory.Argument(xpathExpr),
                         SyntaxFactory.Argument(thirdArgExpr)
                     }))).WithTriviaFrom(node);

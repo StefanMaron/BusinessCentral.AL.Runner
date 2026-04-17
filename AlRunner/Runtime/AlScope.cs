@@ -2458,12 +2458,14 @@ public static class AlCompat
     // BC transpiles the xpath argument to a plain string (not NavText), so both
     // overloads accept string to match what the rewriter emits.
     //
-    // ALSelectNodes/ALSelectSingleNode are NOT virtual on NavXmlNode — calling via
-    // a NavXmlNode-typed reference always dispatches to the base throw-always stub
-    // instead of the concrete type's working override.  Use dynamic so the C# DLR
-    // resolves the method against the actual runtime type, matching the pre-interceptor
-    // behaviour where the BC-generated code held the concrete typed reference.
-    public static bool XmlSelectNodes(object node, string xpath, ByRef<NavXmlNodeList> nodeListRef)
+    // The DataError argument is forwarded verbatim from the BC-generated call.
+    // BC uses DataError.ReturnFalse for SelectSingleNode — replacing it with
+    // DataError.ThrowError turns a "return false on no-match" into a throw.
+    //
+    // ALSelectNodes/ALSelectSingleNode are NOT virtual on NavXmlNode; dynamic dispatch
+    // ensures the concrete type's override is called (matching the pre-interceptor
+    // behaviour where BC-generated code held the concrete-typed reference).
+    public static bool XmlSelectNodes(object node, DataError de, string xpath, ByRef<NavXmlNodeList> nodeListRef)
     {
         if (node is NavXmlDeclaration)
         {
@@ -2471,17 +2473,17 @@ public static class AlCompat
             return false;
         }
         dynamic dyn = node;
-        return dyn.ALSelectNodes(DataError.ThrowError, xpath, nodeListRef);
+        return dyn.ALSelectNodes(de, xpath, nodeListRef);
     }
 
     // NavXmlDeclaration.ALSelectSingleNode also throws NavNCLNotSupportedOperationException.
-    // Declarations have no child nodes — return false.
-    public static bool XmlSelectSingleNode(object node, string xpath, ByRef<NavXmlNode> resultRef)
+    // Declarations have no child nodes — return false regardless of DataError.
+    public static bool XmlSelectSingleNode(object node, DataError de, string xpath, ByRef<NavXmlNode> resultRef)
     {
         if (node is NavXmlDeclaration)
             return false;
         dynamic dyn = node;
-        return dyn.ALSelectSingleNode(DataError.ThrowError, xpath, resultRef);
+        return dyn.ALSelectSingleNode(de, xpath, resultRef);
     }
 
     // -----------------------------------------------------------------------
