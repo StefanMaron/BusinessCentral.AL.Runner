@@ -2354,18 +2354,23 @@ public static class AlCompat
     // ALSelectNodes takes ByRef<NavXmlNodeList> (BC's output-parameter wrapper).
     //
     // NavXmlNodeList has no public parameterless constructor.  We bootstrap a valid
-    // empty instance via ALSelectNodes on a childless NavXmlElement (xpath "*" matches
-    // nothing on an element with no children) or NavXmlDocument.  Multiple strategies
-    // are tried with exception suppression so a future BC version change can't break us.
+    // empty instance by calling ALSelectNodes on a childless NavXmlElement (xpath "*"
+    // matches nothing → empty list).  Multiple strategies are tried with exception
+    // suppression so a future BC version change cannot break us.
+    //
+    // KEY: ALSelectNodes takes a plain string for xpath (not NavText).  Strategies
+    // that used NavText were silently catching the type-mismatch exception and falling
+    // through to GetUninitializedObject which produces a broken instance.  Use dynamic
+    // dispatch + string to match the proven-working pathway.
     private static NavXmlNodeList? _emptyNavXmlNodeList;
     private static NavXmlNodeList GetEmptyNavXmlNodeList()
     {
         if (_emptyNavXmlNodeList is not null)
             return _emptyNavXmlNodeList;
 
-        // Strategy 1: bootstrap via NavXmlElement.ALCreate + ALSelectNodes.
-        // NavXmlElement is the safest choice — XmlElement tests confirm it works.
-        // Use reflection so we never hard-code a signature that might vary by BC version.
+        // Strategy 1: bootstrap via NavXmlElement.ALCreate (reflection) + ALSelectNodes.
+        // XmlElement tests confirm this path works.  Use dynamic so xpath type is resolved
+        // at runtime (avoids NavText vs string mismatch).
         try
         {
             var alCreate = typeof(NavXmlElement).GetMethods(
@@ -2374,51 +2379,45 @@ public static class AlCompat
                 {
                     if (m.Name != "ALCreate") return false;
                     var ps = m.GetParameters();
-                    return ps.Length >= 2
-                        && ps[0].ParameterType == typeof(DataError)
-                        && ps[1].ParameterType == typeof(NavText);
+                    return ps.Length >= 2 && ps[0].ParameterType == typeof(DataError);
                 });
             if (alCreate != null)
             {
-                var args = new object[alCreate.GetParameters().Length];
+                var ps = alCreate.GetParameters();
+                var args = new object[ps.Length];
                 args[0] = DataError.ThrowError;
-                args[1] = new NavText("__alrunner__");
-                for (int i = 2; i < args.Length; i++)
-                {
-                    var pt = alCreate.GetParameters()[i].ParameterType;
-                    args[i] = pt.IsValueType ? System.Activator.CreateInstance(pt)! : null!;
-                }
+                // Second param is the element name — string or NavText depending on version.
+                args[1] = ps[1].ParameterType == typeof(string)
+                    ? (object)"__alrunner__"
+                    : new NavText("__alrunner__");
+                for (int i = 2; i < ps.Length; i++)
+                    args[i] = ps[i].ParameterType.IsValueType
+                        ? System.Activator.CreateInstance(ps[i].ParameterType)!
+                        : null!;
                 var elem = (NavXmlElement)alCreate.Invoke(null, args)!;
                 NavXmlNodeList? list = null;
                 var byRef = new ByRef<NavXmlNodeList>(() => list!, v => list = v);
-                elem.ALSelectNodes(DataError.ThrowError, new NavText("*"), byRef);
-                if (list is not null)
-                {
-                    _emptyNavXmlNodeList = list;
-                    return list;
-                }
+                dynamic elemDyn = elem;
+                elemDyn.ALSelectNodes(DataError.ThrowError, "*", byRef);  // string xpath
+                if (list is not null) { _emptyNavXmlNodeList = list; return list; }
             }
         }
         catch { }
 
-        // Strategy 2: bootstrap via NavXmlDocument.ALSelectNodes.
-        // ALCreate (read-only) does not touch NavEnvironment, so it runs standalone.
+        // Strategy 2: bootstrap via NavXmlDocument.ALCreate + ALSelectNodes.
         try
         {
             var doc = NavXmlDocument.ALCreate(DataError.ThrowError);
             NavXmlNodeList? list = null;
             var byRef = new ByRef<NavXmlNodeList>(() => list!, v => list = v);
-            doc.ALSelectNodes(DataError.ThrowError, new NavText("*"), byRef);
-            if (list is not null)
-            {
-                _emptyNavXmlNodeList = list;
-                return list;
-            }
+            dynamic docDyn = doc;
+            docDyn.ALSelectNodes(DataError.ThrowError, "*", byRef);  // string xpath
+            if (list is not null) { _emptyNavXmlNodeList = list; return list; }
         }
         catch { }
 
-        // Strategy 3: use any non-public constructor via reflection, passing an
-        // empty IEnumerable<XNode> where possible, or null/default for other params.
+        // Strategy 3: non-public constructor via reflection.  After constructing, verify
+        // the instance is usable (Count must not throw) before returning it.
         try
         {
             foreach (var ctor in typeof(NavXmlNodeList).GetConstructors(
@@ -2426,11 +2425,11 @@ public static class AlCompat
             {
                 try
                 {
-                    var ps = ctor.GetParameters();
-                    var args = new object?[ps.Length];
-                    for (int i = 0; i < ps.Length; i++)
+                    var cps = ctor.GetParameters();
+                    var args = new object?[cps.Length];
+                    for (int i = 0; i < cps.Length; i++)
                     {
-                        var pt = ps[i].ParameterType;
+                        var pt = cps[i].ParameterType;
                         if (pt.IsAssignableFrom(
                             typeof(System.Collections.Generic.IEnumerable<System.Xml.Linq.XNode>)))
                             args[i] = System.Linq.Enumerable.Empty<System.Xml.Linq.XNode>();
@@ -2440,6 +2439,8 @@ public static class AlCompat
                             args[i] = null;
                     }
                     var instance = (NavXmlNodeList)ctor.Invoke(args);
+                    // Sanity check: Count must not throw.
+                    _ = instance.Count;
                     _emptyNavXmlNodeList = instance;
                     return instance;
                 }
@@ -2448,8 +2449,8 @@ public static class AlCompat
         }
         catch { }
 
-        // Final fallback: uninitialized object.  Count() may still throw NRE on some
-        // BC versions, but this is better than propagating an exception.
+        // Strategy 4: GetUninitializedObject as absolute last resort.
+        // Count() will throw NRE on most BC versions — log a warning if reached.
         _emptyNavXmlNodeList = (NavXmlNodeList)System.Runtime.CompilerServices.RuntimeHelpers
             .GetUninitializedObject(typeof(NavXmlNodeList));
         return _emptyNavXmlNodeList;
