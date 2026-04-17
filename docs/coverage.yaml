@@ -8992,25 +8992,29 @@ XmlDocument.AddAfterSelf:
   layer: runtime-api
   category: XmlDocument
   status: gap
-  notes: overloads=1
+  notes: overloads=1; blocked by NavEnvironment.get_Topology() called in BC runtime logging when no parent context
 
 XmlDocument.AddBeforeSelf:
   layer: runtime-api
   category: XmlDocument
   status: gap
-  notes: overloads=1
+  notes: overloads=1; blocked by NavEnvironment.get_Topology() called in BC runtime logging when no parent context
 
 XmlDocument.AddFirst:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone
+  tests:
+    - tests/bucket-1/181-xmldocument-remaining
 
 XmlDocument.AsXmlNode:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone; returned node reports IsXmlDocument=true
+  tests:
+    - tests/bucket-1/181-xmldocument-remaining
 
 XmlDocument.Create:
   layer: runtime-api
@@ -9023,8 +9027,10 @@ XmlDocument.Create:
 XmlDocument.GetChildElements:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=3
+  status: covered
+  notes: overloads=3; BC native works standalone; name-filtered overload tested
+  tests:
+    - tests/bucket-1/181-xmldocument-remaining
 
 XmlDocument.GetChildNodes:
   layer: runtime-api
@@ -9040,37 +9046,48 @@ XmlDocument.GetDeclaration:
   status: covered
   notes: overloads=1; BC native works standalone; returns false when no declaration present.
   tests:
+    - tests/bucket-1/181-xmldocument-remaining
     - tests/bucket-1/195-xmldocument
 
 XmlDocument.GetDescendantElements:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=3
+  status: covered
+  notes: overloads=3; BC native works standalone
+  tests:
+    - tests/bucket-1/181-xmldocument-remaining
 
 XmlDocument.GetDescendantNodes:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone
+  tests:
+    - tests/bucket-1/181-xmldocument-remaining
 
 XmlDocument.GetDocument:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone; document returns itself
+  tests:
+    - tests/bucket-1/181-xmldocument-remaining
 
 XmlDocument.GetDocumentType:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone; returns false with no DOCTYPE, true with DOCTYPE
+  tests:
+    - tests/bucket-1/181-xmldocument-remaining
 
 XmlDocument.GetParent:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone; always returns false (document has no parent)
+  tests:
+    - tests/bucket-1/181-xmldocument-remaining
 
 XmlDocument.GetRoot:
   layer: runtime-api
@@ -9083,8 +9100,10 @@ XmlDocument.GetRoot:
 XmlDocument.NameTable:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone
+  tests:
+    - tests/bucket-1/181-xmldocument-remaining
 
 XmlDocument.ReadFrom:
   layer: runtime-api
@@ -9098,7 +9117,7 @@ XmlDocument.Remove:
   layer: runtime-api
   category: XmlDocument
   status: gap
-  notes: overloads=1
+  notes: overloads=1; blocked by NavEnvironment.get_Topology() called in BC runtime logging
 
 XmlDocument.RemoveNodes:
   layer: runtime-api
@@ -9111,14 +9130,16 @@ XmlDocument.RemoveNodes:
 XmlDocument.ReplaceNodes:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone; replaces all child nodes
+  tests:
+    - tests/bucket-1/181-xmldocument-remaining
 
 XmlDocument.ReplaceWith:
   layer: runtime-api
   category: XmlDocument
   status: gap
-  notes: overloads=1
+  notes: overloads=1; blocked by NavEnvironment.get_Topology() called in BC runtime logging when no parent context
 
 XmlDocument.SelectNodes:
   layer: runtime-api
@@ -9139,8 +9160,10 @@ XmlDocument.SelectSingleNode:
 XmlDocument.SetDeclaration:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone; round-trips version and encoding
+  tests:
+    - tests/bucket-1/181-xmldocument-remaining
 
 XmlDocument.WriteTo:
   layer: runtime-api
