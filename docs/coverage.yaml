@@ -6208,8 +6208,9 @@ System.WorkDate:
 Table.AddLink:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/98-table-links
+  notes: overloads=2 (url; url+description); returns unique integer link ID
 
 Table.AddLoadFields:
   layer: runtime-api
@@ -6291,8 +6292,9 @@ Table.CopyFilters:
 Table.CopyLinks:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=2
+  status: covered
+  tests: tests/bucket-1/98-table-links
+  notes: overloads=2 (Record; RecordRef); copies all links from source into target
 
 Table.Count:
   layer: runtime-api
@@ -6342,14 +6344,16 @@ Table.DeleteAll:
 Table.DeleteLink:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/98-table-links
+  notes: overloads=1; removes link by ID, preserves others
 
 Table.DeleteLinks:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/98-table-links
+  notes: overloads=1; removes all links from the record
 
 Table.FieldActive:
   layer: runtime-api
@@ -6500,8 +6504,9 @@ Table.HasFilter:
 Table.HasLinks:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/98-table-links
+  notes: overloads=1; returns true when at least one link exists on the record
 
 Table.Init:
   layer: runtime-api
