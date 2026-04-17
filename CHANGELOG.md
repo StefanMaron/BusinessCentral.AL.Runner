@@ -7,11 +7,6 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
-- **`List.Sort` coverage status corrected (#959)** — `List.Sort()` (no-argument overload)
-  does not exist in the AL language at any tested BC version (26.0–28.0); calling it produces
-  AL0132 compiler error. Coverage map: `List.Sort` status changed from `gap` to `not-possible`.
-
-
 - **`actionref_declaration` coverage (#388)** — Pages and page extensions containing
   `actionref` sections (promoted-action bindings) now compile and run correctly.
   The existing `RoslynRewriter` already handles the BC-generated C# for actionref
