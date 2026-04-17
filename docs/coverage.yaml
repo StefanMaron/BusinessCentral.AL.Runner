@@ -8537,8 +8537,9 @@ Variant.IsFile:
 Variant.IsFilterPageBuilder:
   layer: runtime-api
   category: Variant
-  status: stub
-  notes: overloads=1; always returns false
+  status: covered
+  tests: tests/bucket-2/213-variant-xml-types
+  notes: overloads=1; checks MockFilterPageBuilder — fixed from always-false stub; true+false cases proven.
 
 Variant.IsGuid:
   layer: runtime-api
@@ -8630,7 +8631,8 @@ Variant.IsPromptMode:
   layer: runtime-api
   category: Variant
   status: stub
-  notes: overloads=1; always returns false
+  tests: tests/bucket-2/213-variant-xml-types
+  notes: overloads=1; always returns false — PromptMode enum is indistinguishable from NavOption in a Variant; false case proven.
 
 Variant.IsRecord:
   layer: runtime-api
@@ -8654,7 +8656,8 @@ Variant.IsReportFormat:
   layer: runtime-api
   category: Variant
   status: stub
-  notes: overloads=1; always returns false
+  tests: tests/bucket-2/213-variant-xml-types
+  notes: overloads=1; always returns false — ReportFormat enum is indistinguishable from NavOption in a Variant; false case proven.
 
 Variant.IsSecurityFiltering:
   layer: runtime-api
@@ -8728,8 +8731,9 @@ Variant.IsXmlAttribute:
 Variant.IsXmlAttributeCollection:
   layer: runtime-api
   category: Variant
-  status: stub
-  notes: overloads=1; checks NavXmlAttributeCollection — no direct test yet
+  status: covered
+  tests: tests/bucket-2/213-variant-xml-types
+  notes: overloads=1; checks NavXmlAttributeCollection — true+false cases proven.
 
 Variant.IsXmlCData:
   layer: runtime-api
@@ -8762,8 +8766,9 @@ Variant.IsXmlDocument:
 Variant.IsXmlDocumentType:
   layer: runtime-api
   category: Variant
-  status: stub
-  notes: overloads=1; checks NavXmlDocumentType — no direct test yet
+  status: covered
+  tests: tests/bucket-2/213-variant-xml-types
+  notes: overloads=1; checks NavXmlDocumentType — true+false cases proven.
 
 Variant.IsXmlElement:
   layer: runtime-api
@@ -8775,14 +8780,16 @@ Variant.IsXmlElement:
 Variant.IsXmlNamespaceManager:
   layer: runtime-api
   category: Variant
-  status: stub
-  notes: overloads=1; checks NavXmlNamespaceManager — no direct test yet
+  status: covered
+  tests: tests/bucket-2/213-variant-xml-types
+  notes: overloads=1; checks NavXmlNamespaceManager — true+false cases proven.
 
 Variant.IsXmlNameTable:
   layer: runtime-api
   category: Variant
-  status: stub
-  notes: overloads=1; checks MockXmlNameTable — no direct test yet
+  status: covered
+  tests: tests/bucket-2/213-variant-xml-types
+  notes: overloads=1; checks MockXmlNameTable — true+false cases proven.
 
 Variant.IsXmlNode:
   layer: runtime-api
@@ -8808,8 +8815,9 @@ Variant.IsXmlProcessingInstruction:
 Variant.IsXmlReadOptions:
   layer: runtime-api
   category: Variant
-  status: stub
-  notes: overloads=1; checks NavXmlReadOptions — no direct test yet
+  status: covered
+  tests: tests/bucket-2/213-variant-xml-types
+  notes: overloads=1; checks NavXmlReadOptions — true+false cases proven.
 
 Variant.IsXmlText:
   layer: runtime-api
@@ -8821,8 +8829,9 @@ Variant.IsXmlText:
 Variant.IsXmlWriteOptions:
   layer: runtime-api
   category: Variant
-  status: stub
-  notes: overloads=1; checks NavXmlWriteOptions — no direct test yet
+  status: covered
+  tests: tests/bucket-2/213-variant-xml-types
+  notes: overloads=1; checks NavXmlWriteOptions — true+false cases proven.
 
 # ── Version ─────────────────────────────────────────────────────
 
