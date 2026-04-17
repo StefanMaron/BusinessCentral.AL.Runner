@@ -4376,8 +4376,9 @@ Page.ObjectId:
 Page.PromptMode:
   layer: runtime-api
   category: Page
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/100-page-promptmode
+  notes: overloads=1; MockCurrPage.PromptMode and MockFormHandle.PromptMode NavOption stubs
 
 Page.Run:
   layer: runtime-api

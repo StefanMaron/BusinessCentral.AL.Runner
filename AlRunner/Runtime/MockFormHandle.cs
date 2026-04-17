@@ -53,6 +53,8 @@ public class MockFormHandle
     public void SetTableView(MockRecordHandle rec) { }
     /// <summary>Stub property. BC emits <c>p.Target.LookupMode</c> get/set.</summary>
     public bool LookupMode { get; set; }
+    /// <summary>Stub property. BC emits <c>p.Target.PromptMode</c> get/set (NavOption = Enum "Prompt Mode").</summary>
+    public NavOption? PromptMode { get; set; }
     /// <summary>Stub property. BC emits <c>p.Target.Editable</c> get/set. Default true.</summary>
     public bool Editable { get; set; } = true;
     /// <summary>Stub property. BC emits <c>p.Target.PageCaption</c> get/set.</summary>

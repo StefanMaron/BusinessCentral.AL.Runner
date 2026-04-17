@@ -288,6 +288,8 @@ public class MockCurrPage
     // The setter receives a C# string literal, so string is the backing type.
     public string PageCaption { get; set; } = string.Empty;
     public bool LookupMode { get; set; }
+    /// <summary>BC compiler maps CurrPage.PromptMode → C# property PromptMode (NavOption = Enum "Prompt Mode").</summary>
+    public NavOption? PromptMode { get; set; }
 
     /// <summary>
     /// CurrPage.ObjectId(UseCaptionName) — returns the page's object identifier.
