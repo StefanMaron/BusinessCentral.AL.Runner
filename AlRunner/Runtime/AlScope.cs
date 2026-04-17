@@ -2457,6 +2457,12 @@ public static class AlCompat
 
     // BC transpiles the xpath argument to a plain string (not NavText), so both
     // overloads accept string to match what the rewriter emits.
+    //
+    // ALSelectNodes/ALSelectSingleNode are NOT virtual on NavXmlNode — calling via
+    // a NavXmlNode-typed reference always dispatches to the base throw-always stub
+    // instead of the concrete type's working override.  Use dynamic so the C# DLR
+    // resolves the method against the actual runtime type, matching the pre-interceptor
+    // behaviour where the BC-generated code held the concrete typed reference.
     public static bool XmlSelectNodes(object node, string xpath, ByRef<NavXmlNodeList> nodeListRef)
     {
         if (node is NavXmlDeclaration)
@@ -2464,22 +2470,18 @@ public static class AlCompat
             nodeListRef.Value = GetEmptyNavXmlNodeList();
             return false;
         }
-        if (node is NavXmlNode n)
-            return n.ALSelectNodes(DataError.ThrowError, xpath, nodeListRef);
-        nodeListRef.Value = GetEmptyNavXmlNodeList();
-        return false;
+        dynamic dyn = node;
+        return dyn.ALSelectNodes(DataError.ThrowError, xpath, nodeListRef);
     }
 
     // NavXmlDeclaration.ALSelectSingleNode also throws NavNCLNotSupportedOperationException.
     // Declarations have no child nodes — return false.
-    // ALSelectSingleNode takes ByRef<NavXmlNode> (BC's output-parameter wrapper).
     public static bool XmlSelectSingleNode(object node, string xpath, ByRef<NavXmlNode> resultRef)
     {
         if (node is NavXmlDeclaration)
             return false;
-        if (node is NavXmlNode n)
-            return n.ALSelectSingleNode(DataError.ThrowError, xpath, resultRef);
-        return false;
+        dynamic dyn = node;
+        return dyn.ALSelectSingleNode(DataError.ThrowError, xpath, resultRef);
     }
 
     // -----------------------------------------------------------------------
