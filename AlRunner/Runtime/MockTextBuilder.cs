@@ -49,10 +49,17 @@ public class MockTextBuilder
     // ── New methods (#725) ──────────────────────────────────────────────────────
 
     /// <summary>
-    /// Returns the number of characters in the builder.
-    /// BC emits <c>tb.ALLength</c> for <c>TextBuilder.Length</c>.
+    /// Returns / sets the number of characters in the builder.
+    /// BC emits <c>tb.ALLength</c> for both <c>TextBuilder.Length</c> reads and
+    /// <c>TextBuilder.Length := N</c> assignments. Setting a smaller value truncates
+    /// the buffer; StringBuilder.Length already throws ArgumentOutOfRangeException
+    /// for negative or over-capacity values, matching BC's error behaviour.
     /// </summary>
-    public int ALLength => _sb.Length;
+    public int ALLength
+    {
+        get => _sb.Length;
+        set => _sb.Length = value;
+    }
 
     /// <summary>
     /// Returns the current capacity of the underlying StringBuilder.

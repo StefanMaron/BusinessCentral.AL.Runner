@@ -8162,8 +8162,10 @@ TextBuilder.Length:
   layer: runtime-api
   category: TextBuilder
   status: covered
-  notes: overloads=1; MockTextBuilder.ALLength => _sb.Length
-  tests: tests/bucket-1/271-textbuilder-methods
+  notes: overloads=1; MockTextBuilder.ALLength is both getter and setter — assigning a smaller value truncates the buffer (BC semantics).
+  tests:
+    - tests/bucket-1/271-textbuilder-methods
+    - tests/bucket-2/211-textbuilder-length-setter
 
 TextBuilder.MaxCapacity:
   layer: runtime-api
