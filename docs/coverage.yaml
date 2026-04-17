@@ -7989,8 +7989,10 @@ TextConst.IndexOf:
 TextConst.IndexOfAny:
   layer: runtime-api
   category: TextConst
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; BC native NavText.ALIndexOfAny works after NavTextConstant→NavText rewrite. Both 1-arg and 2-arg (with startIndex) overloads tested — positive and negative cases.
+  tests:
+    - tests/bucket-1/87-textconst-methods
 
 TextConst.LastIndexOf:
   layer: runtime-api
