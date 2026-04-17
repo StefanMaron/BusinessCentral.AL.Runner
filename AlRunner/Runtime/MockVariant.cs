@@ -113,33 +113,36 @@ public class MockVariant
         _value.GetType().IsGenericType &&
         _value.GetType().GetGenericTypeDefinition().FullName?.StartsWith("Microsoft.Dynamics.Nav.Runtime.NavList", StringComparison.Ordinal) == true;
 
-    // IsDictionary — no Dictionary mock in standalone mode; always false
-    public bool ALIsDictionary => false;
+    // IsDictionary — NavDictionary<K,V> is generic; check open generic definition
+    public bool ALIsDictionary => _value != null &&
+        _value.GetType().IsGenericType &&
+        _value.GetType().GetGenericTypeDefinition().FullName?.StartsWith(
+            "Microsoft.Dynamics.Nav.Runtime.NavDictionary", StringComparison.Ordinal) == true;
 
-    // XML Is* — no XML mocks in standalone mode; always false
-    public bool ALIsXmlAttribute => false;
-    public bool ALIsXmlAttributeCollection => false;
-    public bool ALIsXmlCData => false;
-    public bool ALIsXmlComment => false;
-    public bool ALIsXmlDeclaration => false;
-    public bool ALIsXmlDocument => false;
-    public bool ALIsXmlDocumentType => false;
-    public bool ALIsXmlElement => false;
-    public bool ALIsXmlNamespaceManager => false;
-    public bool ALIsXmlNameTable => false;
-    public bool ALIsXmlNode => false;
-    public bool ALIsXmlNodeList => false;
-    public bool ALIsXmlProcessingInstruction => false;
-    public bool ALIsXmlReadOptions => false;
-    public bool ALIsXmlText => false;
-    public bool ALIsXmlWriteOptions => false;
+    // XML Is* — check BC runtime types (NavXml* work standalone; XmlNameTable is mocked)
+    public bool ALIsXmlAttribute => _value is NavXmlAttribute;
+    public bool ALIsXmlAttributeCollection => _value is NavXmlAttributeCollection;
+    public bool ALIsXmlCData => _value is NavXmlCData;
+    public bool ALIsXmlComment => _value is NavXmlComment;
+    public bool ALIsXmlDeclaration => _value is NavXmlDeclaration;
+    public bool ALIsXmlDocument => _value is NavXmlDocument;
+    public bool ALIsXmlDocumentType => _value is NavXmlDocumentType;
+    public bool ALIsXmlElement => _value is NavXmlElement;
+    public bool ALIsXmlNamespaceManager => _value is NavXmlNamespaceManager;
+    public bool ALIsXmlNameTable => _value is MockXmlNameTable;
+    public bool ALIsXmlNode => _value is NavXmlNode;
+    public bool ALIsXmlNodeList => _value is NavXmlNodeList;
+    public bool ALIsXmlProcessingInstruction => _value is NavXmlProcessingInstruction;
+    public bool ALIsXmlReadOptions => _value is NavXmlReadOptions;
+    public bool ALIsXmlText => _value is NavXmlText;
+    public bool ALIsXmlWriteOptions => _value is NavXmlWriteOptions;
 
     // Misc stubs — types not representable in standalone mode
     public bool ALIsAction => false;
     public bool ALIsAutomation => false;
     public bool ALIsBinary => false;
     public bool ALIsClientType => false;
-    public bool ALIsCodeunit => false;
+    public bool ALIsCodeunit => _value is MockCodeunitHandle;
     public bool ALIsDataClassification => false;
     public bool ALIsDataClassificationType => false;
     public bool ALIsDefaultLayout => false;
