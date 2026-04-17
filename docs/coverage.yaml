@@ -6451,8 +6451,11 @@ Table.CurrentKey:
 Table.Delete:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=2; ALDelete(DataError, bool runTrigger) removes record from in-memory store; triggers OnDelete when runTrigger=true.
+  tests:
+    - tests/bucket-1/188-table-crud
+    - tests/bucket-1/42-locktable
 
 Table.DeleteAll:
   layer: runtime-api
@@ -6520,8 +6523,11 @@ Table.FilterGroup:
 Table.Find:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALFind(DataError, string searchMethod="-") positions cursor on first/last/next matching record.
+  tests:
+    - tests/bucket-1/188-table-crud
+    - tests/bucket-1/08-sort-ordering
 
 Table.FindFirst:
   layer: runtime-api
@@ -6550,8 +6556,11 @@ Table.FindSet:
 Table.Get:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALGet(DataError, params NavValue[] keyValues) returns true and positions on record when found.
+  tests:
+    - tests/bucket-1/188-table-crud
+    - tests/bucket-1/02-record-operations
 
 Table.GetAscending:
   layer: runtime-api
@@ -6642,8 +6651,11 @@ Table.Init:
 Table.Insert:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=3
+  status: covered
+  notes: overloads=2; ALInsert(DataError) and ALInsert(DataError, bool runTrigger) add record to in-memory store; triggers OnInsert when runTrigger=true.
+  tests:
+    - tests/bucket-1/188-table-crud
+    - tests/bucket-1/02-record-operations
 
 Table.IsEmpty:
   layer: runtime-api
@@ -6695,8 +6707,11 @@ Table.MarkedOnly:
 Table.Modify:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=2; ALModify(DataError) and ALModify(DataError, bool runTrigger) update record in in-memory store; triggers OnModify when runTrigger=true.
+  tests:
+    - tests/bucket-1/188-table-crud
+    - tests/bucket-1/02-record-operations
 
 Table.ModifyAll:
   layer: runtime-api
@@ -6767,8 +6782,11 @@ Table.Rename:
 Table.Reset:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALReset() clears all filters, ranges, and current-key overrides.
+  tests:
+    - tests/bucket-1/188-table-crud
+    - tests/bucket-1/30-modify-all
 
 Table.SecurityFiltering:
   layer: runtime-api
@@ -6810,8 +6828,11 @@ Table.SetCurrentKey:
 Table.SetFilter:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=2; ALSetFilter(fieldNo, filterExpression, params NavValue[] args) stores filter expression for use in Find/Count.
+  tests:
+    - tests/bucket-1/188-table-crud
+    - tests/bucket-1/09-setfilter-expressions
 
 Table.SetLoadFields:
   layer: runtime-api
@@ -6838,8 +6859,11 @@ Table.SetPosition:
 Table.SetRange:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=3; ALSetRange(fieldNo, type) clears range, ALSetRange(fieldNo, type, value) sets equality, ALSetRange(fieldNo, type, from, to) sets range filter.
+  tests:
+    - tests/bucket-1/188-table-crud
+    - tests/bucket-1/240-setrange-clear
 
 Table.SetRecFilter:
   layer: runtime-api
