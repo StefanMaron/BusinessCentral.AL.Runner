@@ -483,7 +483,7 @@ list_type:
 List.Sort:
   layer: runtime-api
   category: List
-  status: gap
+  status: not-possible
   notes: 'List of [T]' does not have a Sort() method in AL at any tested BC version (26.0–28.0). AL0132 error: 'List of [Integer]' does not contain a definition for 'Sort'. Not a runner gap — this method does not exist in the AL language for this type.
 
 List.Reverse:
