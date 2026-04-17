@@ -3139,9 +3139,10 @@ public void ClearApplicationMemberVariables()
                     .WithTriviaFrom(visited);
             }
 
-            // NavMedia.ALGetDocumentUrl(mediaId) -> AlCompat.GetDocumentUrl(mediaId)
+            // MockMedia.ALGetDocumentUrl(mediaId) -> AlCompat.GetDocumentUrl(mediaId)
+            // (NavMedia was already renamed to MockMedia by VisitIdentifierName above)
             // No BC Media service in standalone mode — return empty string stub.
-            if (exprText == "NavMedia" && methodName == "ALGetDocumentUrl")
+            if (exprText == "MockMedia" && methodName == "ALGetDocumentUrl")
             {
                 return visited.WithExpression(
                     SyntaxFactory.MemberAccessExpression(
@@ -3150,9 +3151,10 @@ public void ClearApplicationMemberVariables()
                         SyntaxFactory.IdentifierName("GetDocumentUrl")));
             }
 
-            // NavMedia.ALImportWithUrlAccess(stream, filename, duration) -> AlCompat.ImportStreamWithUrlAccess(stream, filename, duration)
+            // MockMedia.ALImportWithUrlAccess(stream, filename, duration) -> AlCompat.ImportStreamWithUrlAccess(stream, filename, duration)
+            // (NavMedia was already renamed to MockMedia by VisitIdentifierName above)
             // No BC Media service in standalone mode — return empty string stub.
-            if (exprText == "NavMedia" && methodName == "ALImportWithUrlAccess")
+            if (exprText == "MockMedia" && methodName == "ALImportWithUrlAccess")
             {
                 return visited.WithExpression(
                     SyntaxFactory.MemberAccessExpression(
