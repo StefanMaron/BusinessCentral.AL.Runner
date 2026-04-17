@@ -1928,6 +1928,15 @@ public static class AlCompat
     /// </summary>
     public static System.Guid ImportStreamWithUrlAccess(MockInStream stream, string filename, int duration) => System.Guid.Empty;
 
+    // ── MediaSet static stubs ────────────────────────────────────────────────
+
+    /// <summary>
+    /// MediaSet.FindOrphans() stub — no real media storage in standalone mode.
+    /// Returns an empty list of GUIDs. BC lowers to NavMediaSet.ALFindOrphans(errorLevel).
+    /// </summary>
+    public static NavList<NavGuid> MediaSetFindOrphans(object? errorLevel) => NavList<NavGuid>.Default;
+    public static NavList<NavGuid> MediaSetFindOrphans() => NavList<NavGuid>.Default;
+
     // ── Caption class stub ───────────────────────────────────────────────────
 
     /// <summary>

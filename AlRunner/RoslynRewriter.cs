@@ -3193,6 +3193,17 @@ public void ClearApplicationMemberVariables()
                     .WithTriviaFrom(visited);
             }
 
+            // NavMediaSet.ALFindOrphans() -> AlCompat.MediaSetFindOrphans()
+            // No real media storage in standalone mode — return empty list stub.
+            if (exprText == "NavMediaSet" && methodName == "ALFindOrphans")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("MediaSetFindOrphans")));
+            }
+
             // NavMedia/MockMedia.ALGetDocumentUrl(mediaId) -> AlCompat.GetDocumentUrl(mediaId)
             // No BC Media service in standalone mode — return empty string stub.
             // Note: VisitIdentifierName already rewrites NavMedia→MockMedia before this rule runs,
