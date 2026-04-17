@@ -34,6 +34,10 @@ public sealed class DapServer : IDisposable
     private CancellationTokenSource _cts = new();
     private Task? _runTask;
 
+    // Serialises writes: the BreakpointHit event fires on the AL execution thread
+    // while the ReadLoop may also write (responses). Both must not interleave.
+    private readonly SemaphoreSlim _writeLock = new(1, 1);
+
     // Breakpoint source file → list of (file, line) registrations (for
     // returning verified breakpoints in the setBreakpoints response).
     private readonly Dictionary<string, List<(string File, int Line)>> _requestedBreakpoints = new();
@@ -349,9 +353,19 @@ public sealed class DapServer : IDisposable
         var header = Encoding.ASCII.GetBytes($"Content-Length: {payload.Length}\r\n\r\n");
 
         if (_stream == null) return;
-        await _stream.WriteAsync(header);
-        await _stream.WriteAsync(payload);
-        await _stream.FlushAsync();
+        await _writeLock.WaitAsync();
+        try
+        {
+            await _stream.WriteAsync(header);
+            await _stream.WriteAsync(payload);
+            await _stream.FlushAsync();
+        }
+        catch (IOException) { }
+        catch (ObjectDisposedException) { }
+        finally
+        {
+            _writeLock.Release();
+        }
     }
 
     private async Task<JsonObject?> ReadMessageAsync(CancellationToken ct)
