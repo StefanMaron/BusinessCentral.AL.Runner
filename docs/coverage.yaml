@@ -5221,6 +5221,13 @@ RecordRef.WritePermission:
 
 # ── Report ──────────────────────────────────────────────────────
 
+Report.Clear:
+  layer: runtime-api
+  category: Report
+  status: covered
+  tests: tests/bucket-1/193-report-xmlport-clear
+  notes: overloads=1; AL Clear(rep) rewriter emits rep.Clear() — no-op stub added to MockReportHandle.
+
 Report.DefaultLayout:
   layer: runtime-api
   category: Report
@@ -10406,6 +10413,13 @@ XmlWriteOptions.PreserveWhitespace:
   notes: overloads=1
 
 # ── Xmlport ─────────────────────────────────────────────────────
+
+Xmlport.Clear:
+  layer: runtime-api
+  category: Xmlport
+  status: covered
+  tests: tests/bucket-1/193-report-xmlport-clear
+  notes: overloads=1; AL Clear(xp) rewriter emits xp.Clear() — no-op stub added to MockXmlPortHandle.
 
 Xmlport.Export:
   layer: runtime-api

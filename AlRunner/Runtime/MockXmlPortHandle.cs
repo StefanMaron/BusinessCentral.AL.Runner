@@ -60,6 +60,12 @@ public class MockXmlPortHandle
     // Control-flow methods (called from XmlPort triggers in real BC)
     // ------------------------------------------------------------------
 
+    /// <summary>
+    /// AL's <c>Clear(xp)</c> — the rewriter emits <c>xp.Clear()</c>. Resets the
+    /// xmlport handle to its default state. No-op in standalone mode.
+    /// </summary>
+    public void Clear() { }
+
     public void Break() { }
     public void BreakUnbound() { }
     public void Quit() { }
