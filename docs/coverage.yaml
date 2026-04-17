@@ -5440,7 +5440,9 @@ ReportInstance.FormatRegion:
   layer: runtime-api
   category: ReportInstance
   status: covered
-  tests: tests/bucket-1/279-report-instance
+  tests:
+    - tests/bucket-1/279-report-instance
+    - tests/bucket-2/219-report-properties
   notes: overloads=1; MockReportHandle.FormatRegion property (get/set).
 
 ReportInstance.IsReadOnly:
@@ -5454,7 +5456,9 @@ ReportInstance.Language:
   layer: runtime-api
   category: ReportInstance
   status: covered
-  tests: tests/bucket-1/279-report-instance
+  tests:
+    - tests/bucket-1/279-report-instance
+    - tests/bucket-2/219-report-properties
   notes: overloads=1; MockReportHandle.Language property (get/set).
 
 ReportInstance.NewPage:
@@ -5628,7 +5632,9 @@ ReportInstance.UseRequestPage:
   layer: runtime-api
   category: ReportInstance
   status: covered
-  tests: tests/bucket-1/279-report-instance
+  tests:
+    - tests/bucket-1/279-report-instance
+    - tests/bucket-2/219-report-properties
   notes: overloads=1; MockReportHandle.UseRequestForm property (get/set).
 
 ReportInstance.ValidateAndPrepareLayout:
