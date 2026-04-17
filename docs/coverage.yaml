@@ -2878,7 +2878,8 @@ HttpContent.GetHeaders:
   layer: runtime-api
   category: HttpContent
   status: covered
-  notes: overloads=1
+  tests: tests/bucket-2/216-httpcontent-getheaders
+  notes: overloads=1. MockHttpContent.ALGetHeaders is now a method (was a property; BC emits it as a method call with a ByRef out parameter).
 
 HttpContent.IsSecretContent:
   layer: runtime-api

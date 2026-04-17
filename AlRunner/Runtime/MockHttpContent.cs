@@ -43,8 +43,15 @@ public class MockHttpContent
         text.Value = new NavText(_textContent);
     }
 
-    /// <summary>Content headers. BC emits <c>content.ALGetHeaders</c>.</summary>
-    public MockHttpHeaders ALGetHeaders => _headers;
+    /// <summary>
+    /// Content headers. BC emits <c>content.ALGetHeaders(errorLevel, byref headers)</c>
+    /// as a method call with a ByRef out parameter. The headers collection is shared
+    /// with the content so later mutations round-trip.
+    /// </summary>
+    public void ALGetHeaders(DataError errorLevel, ByRef<MockHttpHeaders> headers)
+    {
+        headers.Value = _headers;
+    }
 
     /// <summary>
     /// ALAssign for the ByRef pattern and <c>content := response.Content</c>.
