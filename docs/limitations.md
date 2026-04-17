@@ -53,27 +53,19 @@ pure-logic tests pass, but any test that exercises the parallel contract itself 
 enforcement, transaction isolation between workers, async completion detection — cannot
 pass here.
 
-### Event subscribers — partial support
+### Event subscribers — full parameter forwarding
 
-The runner does dispatch event subscribers. `RunEvent()` calls are rewritten to
-`AlCompat.FireEvent(publisherCodeunitId, eventName)`, which scans the compiled assembly
-for `[NavEventSubscriber]` methods at startup and calls matching subscribers.
+The runner dispatches event subscribers. `RunEvent()` calls are rewritten to
+`AlCompat.FireEvent(publisherCodeunitId, eventName, args...)`, which scans the compiled
+assembly for `[NavEventSubscriber]` methods at startup and calls matching subscribers.
 
 **What works:** custom `[IntegrationEvent]` / `[BusinessEvent]` publishers with
-zero-argument subscribers.
-
-**What does not work:** subscribers that receive event arguments (e.g. `var Rec: Record X`,
-`Sender: Codeunit X`). The parameters are passed as `null` because the BC-generated
-event method does not expose them to the dispatch call. A subscriber that reads or
-modifies its `Rec` parameter will see a null reference and either crash or silently do
-nothing.
-
-The practical effect: a test that calls `Rec.Modify()` and then asserts on state that is
-normally set by an `[EventSubscriber]` on `OnAfterModify` will see the subscriber called
-but unable to modify any record — producing a **silent false positive**.
-
-Always run the full pipeline after al-runner for code whose correctness depends on
-event subscriber side-effects.
+zero-argument and parametrized subscribers including:
+- `var Rec: Record X` — subscriber can read and modify record fields; changes are
+  visible to the publisher's caller after the event fires
+- `var IsHandled: Boolean` and other value-type `var` parameters
+- `Sender: Codeunit X` when `IncludeSender = true` — subscriber receives the publisher
+  instance and can call its public methods
 
 ### No UI rendering
 
@@ -137,7 +129,6 @@ fails to run, that is a gap to report, not a reason to restructure your code.
 The hard exceptions — things that require the BC service tier by architecture —
 are listed above. For those, test in the full pipeline:
 
-- Event subscribers that pass data via `var Rec` or `Sender` parameters
 - Real company or setup data being present
 - Parallel sessions running concurrently
 - Transaction boundaries (commit / rollback)

@@ -554,6 +554,7 @@ event_declaration:
     - tests/bucket-2/37-event-scope
     - tests/bucket-2/66-event-subscribers
     - tests/bucket-2/97-event-params
+    - tests/bucket-1/277-event-subscriber-rec-param
 
 interface_procedure:
   layer: syntax
