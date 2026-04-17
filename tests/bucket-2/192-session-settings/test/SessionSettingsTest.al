@@ -70,4 +70,52 @@ codeunit 60181 "SST Test"
         Assert.AreNotEqual('', Src.SetAndGetCompany('Contoso'),
             'Company setter must not be a no-op — value must persist');
     end;
+
+    [Test]
+    procedure ProfileAppId_DefaultsToEmptyGuid()
+    begin
+        Assert.IsTrue(IsNullGuid(Src.GetProfileAppId()),
+            'Default SessionSettings.ProfileAppId must be the empty GUID');
+    end;
+
+    [Test]
+    procedure SetAndGet_ProfileAppId()
+    var
+        g: Guid;
+    begin
+        g := '{12345678-1234-1234-1234-1234567890AB}';
+        Assert.AreEqual(g, Src.SetAndGetProfileAppId(g),
+            'SessionSettings.ProfileAppId setter + getter must round-trip');
+    end;
+
+    [Test]
+    procedure ProfileAppId_Setter_NotANoop()
+    var
+        g: Guid;
+    begin
+        g := '{12345678-1234-1234-1234-1234567890AB}';
+        Assert.IsFalse(IsNullGuid(Src.SetAndGetProfileAppId(g)),
+            'ProfileAppId setter must not be a no-op — value must differ from empty GUID');
+    end;
+
+    [Test]
+    procedure ProfileSystemScope_DefaultsToFalse()
+    begin
+        Assert.IsFalse(Src.GetProfileSystemScope(),
+            'Default SessionSettings.ProfileSystemScope must be false');
+    end;
+
+    [Test]
+    procedure SetAndGet_ProfileSystemScope()
+    begin
+        Assert.IsTrue(Src.SetAndGetProfileSystemScope(true),
+            'SessionSettings.ProfileSystemScope setter + getter must round-trip');
+    end;
+
+    [Test]
+    procedure ProfileSystemScope_Setter_NotANoop()
+    begin
+        Assert.AreNotEqual(false, Src.SetAndGetProfileSystemScope(true),
+            'ProfileSystemScope setter must not be a no-op — true must not equal default false');
+    end;
 }

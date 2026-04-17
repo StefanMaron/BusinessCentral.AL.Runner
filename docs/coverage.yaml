@@ -5711,9 +5711,9 @@ SessionSettings.LocaleId:
 SessionSettings.ProfileAppId:
   layer: runtime-api
   category: SessionSettings
-  status: stub
+  status: covered
   tests: tests/bucket-2/192-session-settings
-  notes: overloads=1. Property present on MockSessionSettings (NavGuid, defaults to Guid.Empty); explicit setter/getter tests TBD.
+  notes: overloads=1. NavGuid setter + getter round-trip; defaults to empty GUID.
 
 SessionSettings.ProfileId:
   layer: runtime-api
@@ -5725,9 +5725,9 @@ SessionSettings.ProfileId:
 SessionSettings.ProfileSystemScope:
   layer: runtime-api
   category: SessionSettings
-  status: stub
+  status: covered
   tests: tests/bucket-2/192-session-settings
-  notes: overloads=1. Option-typed property present on MockSessionSettings; explicit setter/getter tests TBD.
+  notes: overloads=1. Boolean setter + getter round-trip; defaults to false on MockSessionSettings.
 
 SessionSettings.RequestSessionUpdate:
   layer: runtime-api
