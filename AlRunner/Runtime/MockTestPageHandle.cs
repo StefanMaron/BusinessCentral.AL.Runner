@@ -53,7 +53,8 @@ public class MockTestPageHandle
     public void ALOpenNew() { _editable = true; }
     public void ALClose() { }
     public void ALTrap() { HandlerRegistry.RegisterTrap(PageId, this); }
-    public void ALNew() { }
+    public void ALNew() { _editable = true; }
+    public MockTestPageAction ALEdit() { _editable = true; return new MockTestPageAction(); }
     public void ClearReference() { }
 
     /// <summary>

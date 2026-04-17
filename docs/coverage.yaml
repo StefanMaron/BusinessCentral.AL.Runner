@@ -7252,14 +7252,16 @@ TestPage.Close:
 TestPage.Edit:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/184-testpage-new-edit
+  notes: overloads=1; ALEdit() sets _editable=true and returns MockTestPageAction; invoked via P.Edit().Invoke() pattern.
 
 TestPage.Editable:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/184-testpage-new-edit
+  notes: overloads=1; ALEditable property on MockTestPageHandle; reflects state set by OpenEdit/OpenView/OpenNew/New/Edit.
 
 TestPage.Expand:
   layer: runtime-api
@@ -7330,8 +7332,9 @@ TestPage.Last:
 TestPage.New:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/184-testpage-new-edit
+  notes: overloads=1; ALNew() sets _editable=true on MockTestPageHandle; idempotent when already editable.
 
 TestPage.Next:
   layer: runtime-api

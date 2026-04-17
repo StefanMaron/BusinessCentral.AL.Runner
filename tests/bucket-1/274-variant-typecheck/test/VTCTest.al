@@ -1,4 +1,4 @@
-codeunit 118002 "VTC Tests"
+codeunit 120002 "VTC Tests"
 {
     Subtype = Test;
 
