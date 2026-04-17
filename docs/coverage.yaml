@@ -1165,7 +1165,8 @@ addfirst_fieldgroup_modification:
   layer: syntax
   category: modification
   status: covered
-  tests: tests/bucket-1/277-addfirst-fieldgroup
+  tests:
+    - tests/bucket-1/277-addfirst-fieldgroup
   notes: >
     PrepareSourceForStandalone strips addfirst(GroupName; Fields) lines from
     tableextension fieldgroups before AL compilation — the runner's BC compiler
@@ -7172,26 +7173,32 @@ TestFilter.SetFilter:
 TestHttpRequestMessage.HasSecretUri:
   layer: runtime-api
   category: TestHttpRequestMessage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockTestHttpRequestMessage.ALHasSecretUri property always returns false.
+  tests:
+    - tests/bucket-1/185-testhttprequestmessage
 
 TestHttpRequestMessage.Path:
   layer: runtime-api
   category: TestHttpRequestMessage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockTestHttpRequestMessage.ALPath property (NavText); BC emits ALPath which rewriter redirects via MockJsonHelper.Path(MockTestHttpRequestMessage) overload.
+  tests:
+    - tests/bucket-1/185-testhttprequestmessage
 
 TestHttpRequestMessage.QueryParameters:
   layer: runtime-api
   category: TestHttpRequestMessage
   status: gap
-  notes: overloads=1
+  notes: overloads=1; Dictionary of [Text,Text] return — not yet testable without web-service handler context.
 
 TestHttpRequestMessage.RequestType:
   layer: runtime-api
   category: TestHttpRequestMessage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; MockTestHttpRequestMessage.ALRequestType property (NavText).
+  tests:
+    - tests/bucket-1/185-testhttprequestmessage
 
 # ── TestHttpResponseMessage ─────────────────────────────────────
 

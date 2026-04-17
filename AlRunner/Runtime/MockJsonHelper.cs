@@ -338,6 +338,13 @@ public static class MockJsonHelper
     public static NavText Path(MockCookie cookie)
         => new NavText(cookie.ALPath);
 
+    /// <summary>
+    /// Overload for TestHttpRequestMessage.Path — BC emits req.ALPath as a property access,
+    /// which the rewriter converts to MockJsonHelper.Path(req). Returns the HTTP request path.
+    /// </summary>
+    public static NavText Path(MockTestHttpRequestMessage req)
+        => req.ALPath;
+
     /// <summary>Returns true if the token's backing store is a JArray.</summary>
     public static bool IsArray(NavJsonToken token)
         => GetBackingToken(token) is JArray;
