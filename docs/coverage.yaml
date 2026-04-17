@@ -9897,20 +9897,23 @@ XmlNodeList.Get:
 XmlProcessingInstruction.AddAfterSelf:
   layer: runtime-api
   category: XmlProcessingInstruction
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/92-xmlprocessinginstruction
+  notes: overloads=1; BC native NavXmlProcessingInstruction works standalone
 
 XmlProcessingInstruction.AddBeforeSelf:
   layer: runtime-api
   category: XmlProcessingInstruction
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/92-xmlprocessinginstruction
+  notes: overloads=1; BC native NavXmlProcessingInstruction works standalone
 
 XmlProcessingInstruction.AsXmlNode:
   layer: runtime-api
   category: XmlProcessingInstruction
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/92-xmlprocessinginstruction
+  notes: overloads=1; BC native NavXmlProcessingInstruction works standalone
 
 XmlProcessingInstruction.Create:
   layer: runtime-api
@@ -9929,14 +9932,16 @@ XmlProcessingInstruction.GetData:
 XmlProcessingInstruction.GetDocument:
   layer: runtime-api
   category: XmlProcessingInstruction
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/92-xmlprocessinginstruction
+  notes: overloads=1; BC native NavXmlProcessingInstruction works standalone
 
 XmlProcessingInstruction.GetParent:
   layer: runtime-api
   category: XmlProcessingInstruction
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/92-xmlprocessinginstruction
+  notes: overloads=1; BC native NavXmlProcessingInstruction works standalone
 
 XmlProcessingInstruction.GetTarget:
   layer: runtime-api
@@ -9948,26 +9953,30 @@ XmlProcessingInstruction.GetTarget:
 XmlProcessingInstruction.Remove:
   layer: runtime-api
   category: XmlProcessingInstruction
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/92-xmlprocessinginstruction
+  notes: overloads=1; BC native NavXmlProcessingInstruction works standalone
 
 XmlProcessingInstruction.ReplaceWith:
   layer: runtime-api
   category: XmlProcessingInstruction
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/92-xmlprocessinginstruction
+  notes: overloads=1; BC native NavXmlProcessingInstruction works standalone
 
 XmlProcessingInstruction.SelectNodes:
   layer: runtime-api
   category: XmlProcessingInstruction
-  status: gap
-  notes: overloads=2
+  status: covered
+  tests: tests/bucket-1/92-xmlprocessinginstruction
+  notes: overloads=2; BC native NavXmlProcessingInstruction works standalone
 
 XmlProcessingInstruction.SelectSingleNode:
   layer: runtime-api
   category: XmlProcessingInstruction
-  status: gap
-  notes: overloads=2
+  status: covered
+  tests: tests/bucket-1/92-xmlprocessinginstruction
+  notes: overloads=2; BC native NavXmlProcessingInstruction works standalone
 
 XmlProcessingInstruction.SetData:
   layer: runtime-api
@@ -9986,8 +9995,9 @@ XmlProcessingInstruction.SetTarget:
 XmlProcessingInstruction.WriteTo:
   layer: runtime-api
   category: XmlProcessingInstruction
-  status: gap
-  notes: overloads=4
+  status: covered
+  tests: tests/bucket-1/92-xmlprocessinginstruction
+  notes: overloads=4; BC native NavXmlProcessingInstruction works standalone
 
 # ── XmlReadOptions ──────────────────────────────────────────────
 
