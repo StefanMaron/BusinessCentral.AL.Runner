@@ -2221,7 +2221,8 @@ FieldRef.Caption:
   layer: runtime-api
   category: FieldRef
   status: covered
-  notes: overloads=1
+  tests: tests/bucket-1/100-fieldref-metadata
+  notes: overloads=1; reads from TableFieldRegistry — returns declared caption, falls back to field name when no Caption set; tableextension fields also covered
 
 FieldRef.Class:
   layer: runtime-api
@@ -2320,7 +2321,8 @@ FieldRef.Name:
   layer: runtime-api
   category: FieldRef
   status: covered
-  notes: overloads=1
+  tests: tests/bucket-1/100-fieldref-metadata
+  notes: overloads=1; reads from TableFieldRegistry — returns declared field name including quoted names; tableextension fields also covered
 
 FieldRef.Number:
   layer: runtime-api
@@ -4756,7 +4758,8 @@ RecordRef.FieldIndex:
   layer: runtime-api
   category: RecordRef
   status: covered
-  notes: overloads=1
+  tests: tests/bucket-1/100-fieldref-metadata
+  notes: overloads=1; uses TableFieldRegistry.GetFieldIds for ordinal-to-field-number mapping so Name/Caption are correct on the returned FieldRef
 
 RecordRef.FilterGroup:
   layer: runtime-api
