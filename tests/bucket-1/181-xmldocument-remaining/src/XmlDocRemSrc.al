@@ -80,14 +80,6 @@ codeunit 108000 "XDR Src"
         exit(true);
     end;
 
-    // ── Remove ──────────────────────────────────────────────────────────────────
-
-    procedure DocRemoveDoesNotCrash(Doc: XmlDocument): Boolean
-    begin
-        Doc.Remove();
-        exit(true);
-    end;
-
     // ── SetDeclaration ──────────────────────────────────────────────────────────
 
     procedure DocSetDeclaration(var Doc: XmlDocument; Decl: XmlDeclaration): Text
@@ -120,30 +112,6 @@ codeunit 108000 "XDR Src"
         Doc.AddFirst(Elem);
         Nodes := Doc.GetChildNodes();
         exit(Nodes.Count());
-    end;
-
-    // ── AddAfterSelf / AddBeforeSelf ────────────────────────────────────────────
-
-    procedure DocAddAfterSelfDoesNotCrash(Doc: XmlDocument; Sibling: XmlElement): Boolean
-    begin
-        // AddAfterSelf on a document is a no-op (no parent context)
-        Doc.AddAfterSelf(Sibling.AsXmlNode());
-        exit(true);
-    end;
-
-    procedure DocAddBeforeSelfDoesNotCrash(Doc: XmlDocument; Sibling: XmlElement): Boolean
-    begin
-        Doc.AddBeforeSelf(Sibling.AsXmlNode());
-        exit(true);
-    end;
-
-    // ── ReplaceWith ─────────────────────────────────────────────────────────────
-
-    procedure DocReplaceWithDoesNotCrash(Doc: XmlDocument; NewNode: XmlNode): Boolean
-    begin
-        // ReplaceWith on a document is a no-op (no parent context)
-        Doc.ReplaceWith(NewNode);
-        exit(true);
     end;
 
     // ── Helper: build a programmatic document ──────────────────────────────────

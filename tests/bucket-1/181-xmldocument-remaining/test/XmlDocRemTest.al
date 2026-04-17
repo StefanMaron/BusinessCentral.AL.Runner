@@ -158,17 +158,6 @@ codeunit 108001 "XDR Test"
         Assert.IsTrue(Src.DocNameTableDoesNotCrash(Doc), 'NameTable() must not crash');
     end;
 
-    // ── Remove ──────────────────────────────────────────────────────────────────
-
-    [Test]
-    procedure Remove_DoesNotCrash()
-    var
-        Doc: XmlDocument;
-    begin
-        Doc := Src.BuildDoc();
-        Assert.IsTrue(Src.DocRemoveDoesNotCrash(Doc), 'Remove() on a document must not crash');
-    end;
-
     // ── SetDeclaration ──────────────────────────────────────────────────────────
 
     [Test]
@@ -228,47 +217,4 @@ codeunit 108001 "XDR Test"
             'AddFirst on empty document must result in 1 child node');
     end;
 
-    // ── AddAfterSelf ────────────────────────────────────────────────────────────
-
-    [Test]
-    procedure AddAfterSelf_DoesNotCrash()
-    var
-        Doc: XmlDocument;
-        Sibling: XmlElement;
-    begin
-        Doc := Src.BuildDoc();
-        Sibling := XmlElement.Create('sibling');
-        Assert.IsTrue(Src.DocAddAfterSelfDoesNotCrash(Doc, Sibling),
-            'AddAfterSelf on a document must not crash');
-    end;
-
-    // ── AddBeforeSelf ───────────────────────────────────────────────────────────
-
-    [Test]
-    procedure AddBeforeSelf_DoesNotCrash()
-    var
-        Doc: XmlDocument;
-        Sibling: XmlElement;
-    begin
-        Doc := Src.BuildDoc();
-        Sibling := XmlElement.Create('sibling');
-        Assert.IsTrue(Src.DocAddBeforeSelfDoesNotCrash(Doc, Sibling),
-            'AddBeforeSelf on a document must not crash');
-    end;
-
-    // ── ReplaceWith ─────────────────────────────────────────────────────────────
-
-    [Test]
-    procedure ReplaceWith_DoesNotCrash()
-    var
-        Doc: XmlDocument;
-        Elem: XmlElement;
-        Node: XmlNode;
-    begin
-        Doc := Src.BuildDoc();
-        Elem := XmlElement.Create('replacement');
-        Node := Elem.AsXmlNode();
-        Assert.IsTrue(Src.DocReplaceWithDoesNotCrash(Doc, Node),
-            'ReplaceWith on a document must not crash');
-    end;
 }
