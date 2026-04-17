@@ -83,7 +83,7 @@ public class MockVariant
     public bool ALIsGuid => _value is NavGuid or Guid;
     public bool ALIsOption => _value is NavOption;
     public bool ALIsRecord => _value is MockRecordHandle;
-    public bool ALIsRecordRef => false;
+    public bool ALIsRecordRef => _value is MockRecordRef;
     public bool ALIsRecordId => false;
     public bool ALIsBigInteger => _value is NavBigInteger or long;
     public bool ALIsDuration => false;
@@ -176,6 +176,20 @@ public class MockVariant
         throw new InvalidCastException(
             $"Cannot cast Variant (holding {v._value?.GetType().Name ?? "null"}) to Record. " +
             "The Variant must contain a Record value.");
+    }
+
+    /// <summary>
+    /// Explicit cast to MockRecordRef.
+    /// Supports the AL pattern: MyRecRef := MyVariant;
+    /// The BC compiler emits ALCompiler.NavIndirectValueToNavValue&lt;NavRecordRef&gt;(variant),
+    /// which the rewriter transforms to (MockRecordRef)(variant).
+    /// </summary>
+    public static explicit operator MockRecordRef(MockVariant v)
+    {
+        if (v._value is MockRecordRef rr) return rr;
+        throw new InvalidCastException(
+            $"Cannot cast Variant (holding {v._value?.GetType().Name ?? "null"}) to RecordRef. " +
+            "The Variant must contain a RecordRef value.");
     }
 
     /// <summary>

@@ -3013,8 +3013,21 @@ public void ClearApplicationMemberVariables()
             }
 
             // ALCompiler.NavIndirectValueToNavValue<T>(x) -> AlCompat.NavIndirectValueToNavValue<T>(x)
+            // Special case: T=MockRecordRef (NavRecordRef after rewriting) — MockRecordRef does not
+            // implement NavValue and cannot satisfy the generic constraint. Emit a direct cast
+            // (MockRecordRef)(x) instead, mirroring how NavIndirectValueToINavRecordHandle is handled.
             if (exprText == "ALCompiler" && methodName == "NavIndirectValueToNavValue")
             {
+                if (memberAccess.Name is GenericNameSyntax recRefGeneric &&
+                    recRefGeneric.TypeArgumentList.Arguments.Count == 1 &&
+                    recRefGeneric.TypeArgumentList.Arguments[0].ToString() == "MockRecordRef")
+                {
+                    var arg = visited.ArgumentList.Arguments[0].Expression;
+                    return SyntaxFactory.CastExpression(
+                        SyntaxFactory.ParseTypeName("MockRecordRef"),
+                        SyntaxFactory.ParenthesizedExpression(arg));
+                }
+
                 // Preserve the generic type arguments (e.g., <NavText>)
                 return visited.WithExpression(
                     SyntaxFactory.MemberAccessExpression(

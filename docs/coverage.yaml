@@ -8655,7 +8655,8 @@ Variant.IsRecordRef:
   layer: runtime-api
   category: Variant
   status: covered
-  notes: overloads=1
+  tests: tests/bucket-2/215-recordref-navvalue
+  notes: overloads=1; ALIsRecordRef checks _value is MockRecordRef; round-trip via Variant also proven (NavIndirectValueToNavValue<MockRecordRef> rewritten to direct cast)
 
 Variant.IsReportFormat:
   layer: runtime-api
