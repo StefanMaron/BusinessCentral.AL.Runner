@@ -2143,8 +2143,10 @@ ErrorInfo.ControlName:
 ErrorInfo.Create:
   layer: runtime-api
   category: ErrorInfo
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; NavALErrorInfo.ALCreate(session, msg) and ALCreate(session, msg, errorType) work via BC runtime DLL standalone.
+  tests:
+    - tests/bucket-2/207-errorinfo-create
 
 ErrorInfo.CustomDimensions:
   layer: runtime-api
@@ -2173,8 +2175,10 @@ ErrorInfo.DetailedMessage:
 ErrorInfo.ErrorType:
   layer: runtime-api
   category: ErrorInfo
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALErrorType getter and ALErrorType(int) setter work via BC runtime DLL standalone.
+  tests:
+    - tests/bucket-2/207-errorinfo-create
 
 ErrorInfo.FieldNo:
   layer: runtime-api
@@ -2187,8 +2191,10 @@ ErrorInfo.FieldNo:
 ErrorInfo.Message:
   layer: runtime-api
   category: ErrorInfo
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALMessage getter and ALMessage(string) setter work via BC runtime DLL standalone. Method form Message(text) is equivalent to the property setter.
+  tests:
+    - tests/bucket-2/207-errorinfo-create
 
 ErrorInfo.PageNo:
   layer: runtime-api
