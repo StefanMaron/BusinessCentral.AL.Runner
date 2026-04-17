@@ -1,5 +1,5 @@
 /// Helper codeunit exercising extended JsonObject methods from issue #791.
-codeunit 112000 "JOEX Src"
+codeunit 113000 "JOEX Src"
 {
     // ── GetTime ────────────────────────────────────────────────────────────────
 
