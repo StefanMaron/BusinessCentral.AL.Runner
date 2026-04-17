@@ -7,12 +7,14 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
-- **`TestPage.GetRecord` coverage (#119)** — `GetRecord(var Rec)` now returns the record
-  the TestPage is currently positioned on (after `GoToKey` / `GoToRecord`) rather than an
-  empty unbound handle. `MockTestPageHandle.ALGetRecord()` returns `_currentRecord` when
-  available, falling back to `MockRecordHandle(0)` when no record is positioned.
-  New suite `tests/bucket-1/281-testpage-getrecord` adds 3 proving tests.
-  Coverage map: `TestPage.GetRecord` added as `covered`.
+- **`TestPage.GetRecord` investigation (#119)** — `TestPage.GetRecord(var Rec)` was
+  removed in BC 26+ (AL0132 from all tested BC versions 26.0–28.0). The internal
+  mock `MockTestPageHandle.ALGetRecord()` now returns `_currentRecord` after
+  `GoToKey`/`GoToRecord`, so the method is correctly implemented for any future BC
+  version that may restore it. The `RoslynRewriter` `ALGetRecord` interception was
+  also narrowed: only intercepts `NavRecordId.ALGetRecord` (no `.Target` receiver);
+  `tP.Target.ALGetRecord()` for TestPage no longer gets incorrectly replaced with
+  `new MockRecordRef()`. Coverage map: `TestPage.GetRecord` documented as `not-possible`.
 - **`actionref_declaration` coverage (#388)** — Pages and page extensions containing
   `actionref` sections (promoted-action bindings) now compile and run correctly.
   The existing `RoslynRewriter` already handles the BC-generated C# for actionref
