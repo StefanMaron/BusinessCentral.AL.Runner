@@ -1193,6 +1193,12 @@ public void ClearApplicationMemberVariables()
         if (text == "NavMedia")
             return node.WithIdentifier(SyntaxFactory.Identifier("MockMedia"));
 
+        // NavMediaSet -> MockMediaSet
+        // NavMediaSet's ALInsert/ALRemove/ALImport/ALExport require the BC session
+        // and blob catalog. MockMediaSet is an in-memory list-backed stub.
+        if (text == "NavMediaSet")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockMediaSet"));
+
         // NavInStream -> MockInStream
         // NavInStream's ctor requires ITreeObject; MockInStream is standalone.
         if (text == "NavInStream")

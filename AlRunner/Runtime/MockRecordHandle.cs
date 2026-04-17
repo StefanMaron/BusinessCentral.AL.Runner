@@ -257,7 +257,7 @@ public class MockRecordHandle
         }
         if (expectedType == NavType.MediaSet)
         {
-            var mediaSet = new NavMediaSet(Guid.NewGuid());
+            var mediaSet = new MockMediaSet(Guid.NewGuid());
             _fields[fieldNo] = mediaSet;
             return mediaSet;
         }
@@ -2411,7 +2411,7 @@ public class MockRecordHandle
             NavType.GUID => new NavGuid(Guid.Empty),
             NavType.Duration => NavDuration.Default,
             NavType.Media => new MockMedia(),
-            NavType.MediaSet => NavMediaSet.Default,
+            NavType.MediaSet => MockMediaSet.Default,
             _ => NavText.Default(0)
         };
     }
