@@ -1,6 +1,6 @@
 /// Tests for TestPage custom action OnAction dispatch (issue #832).
 /// TP.MyAction.Invoke() must execute the action's OnAction trigger.
-codeunit 109001 "TAI Test"
+codeunit 114001 "TAI Test"
 {
     Subtype = Test;
     var Assert: Codeunit Assert;
