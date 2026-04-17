@@ -1176,6 +1176,14 @@ public void ClearApplicationMemberVariables()
         if (text == "NavBLOB")
             return node.WithIdentifier(SyntaxFactory.Identifier("MockBlob"));
 
+        // NavMedia -> MockMedia
+        // NavMedia's ALImportFile/ALImportStream/ALExportFile/ALExportStream/ALMediaId
+        // require a BC service-tier blob catalog and session. MockMedia is an
+        // in-memory stub: imports set a HasValue flag, exports are no-ops,
+        // MediaId returns a per-instance GUID, FindOrphans returns an empty list.
+        if (text == "NavMedia")
+            return node.WithIdentifier(SyntaxFactory.Identifier("MockMedia"));
+
         // NavInStream -> MockInStream
         // NavInStream's ctor requires ITreeObject; MockInStream is standalone.
         if (text == "NavInStream")

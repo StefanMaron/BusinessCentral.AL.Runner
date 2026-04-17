@@ -3911,20 +3911,24 @@ Label.TrimStart:
 Media.ExportFile:
   layer: runtime-api
   category: Media
-  status: gap
+  status: covered
   notes: overloads=1
+  tests:
+    - tests/bucket-1/272-media
 
 Media.ExportStream:
   layer: runtime-api
   category: Media
-  status: gap
+  status: covered
   notes: overloads=1
+  tests:
+    - tests/bucket-1/272-media
 
 Media.FindOrphans:
   layer: runtime-api
   category: Media
   status: gap
-  notes: overloads=1
+  notes: "BC 17+ method — not recognised by the BC 16.2 AL compiler used for transpilation; MockMedia.ALFindOrphans() is implemented but untestable from AL until the compiler is upgraded"
 
 Media.HasValue:
   layer: runtime-api
@@ -3935,20 +3939,26 @@ Media.HasValue:
 Media.ImportFile:
   layer: runtime-api
   category: Media
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: "overloads=3; BC 16.2 signature requires (FileName, Description[, MimeType]) — Description is required"
+  tests:
+    - tests/bucket-1/272-media
 
 Media.ImportStream:
   layer: runtime-api
   category: Media
-  status: gap
+  status: covered
   notes: overloads=2
+  tests:
+    - tests/bucket-1/272-media
 
 Media.MediaId:
   layer: runtime-api
   category: Media
-  status: gap
+  status: covered
   notes: overloads=1
+  tests:
+    - tests/bucket-1/272-media
 
 # ── MediaSet ────────────────────────────────────────────────────
 
