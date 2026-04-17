@@ -3,7 +3,7 @@
 ///   XmlDocument, XmlElement, XmlNode, XmlProcessingInstruction, XmlCData,
 ///   XmlComment, XmlDeclaration, XmlText, XmlNodeList, XmlAttribute,
 ///   InStream, OutStream, Codeunit, Dictionary.
-table 116000 "VTC Data"
+table 118000 "VTC Data"
 {
     fields
     {
@@ -16,7 +16,7 @@ table 116000 "VTC Data"
     }
 }
 
-codeunit 116001 "VTC Src"
+codeunit 118001 "VTC Src"
 {
     // ── XmlDocument ────────────────────────────────────────────────────────────
 
