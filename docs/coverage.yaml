@@ -3341,8 +3341,10 @@ JsonObject.GetArray:
 JsonObject.GetBigInteger:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; works natively via NavJsonObject (no TrappableOperationExecutor path); BC stores BigInteger as integer in JSON
+  tests:
+    - tests/bucket-1/182-jsonobject-extended
 
 JsonObject.GetBoolean:
   layer: runtime-api
@@ -3355,8 +3357,10 @@ JsonObject.GetBoolean:
 JsonObject.GetByte:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; works natively via NavJsonObject (no TrappableOperationExecutor path); BC stores Byte as integer in JSON
+  tests:
+    - tests/bucket-1/182-jsonobject-extended
 
 JsonObject.GetChar:
   layer: runtime-api
@@ -3393,8 +3397,10 @@ JsonObject.GetDecimal:
 JsonObject.GetDuration:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; works natively via NavJsonObject (no TrappableOperationExecutor path); BC stores Duration as integer milliseconds in JSON
+  tests:
+    - tests/bucket-1/182-jsonobject-extended
 
 JsonObject.GetInteger:
   layer: runtime-api
@@ -3415,8 +3421,10 @@ JsonObject.GetObject:
 JsonObject.GetOption:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; works natively via NavJsonObject (no TrappableOperationExecutor path); returns integer ordinal
+  tests:
+    - tests/bucket-1/182-jsonobject-extended
 
 JsonObject.GetText:
   layer: runtime-api
@@ -3429,8 +3437,10 @@ JsonObject.GetText:
 JsonObject.GetTime:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; works natively via NavJsonObject (no TrappableOperationExecutor path); BC stores Time as integer milliseconds-from-midnight in JSON
+  tests:
+    - tests/bucket-1/182-jsonobject-extended
 
 JsonObject.Keys:
   layer: runtime-api
@@ -3444,8 +3454,10 @@ JsonObject.Keys:
 JsonObject.Path:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; rewriter intercepts ALPath property → MockJsonHelper.Path; root object returns "$"
+  tests:
+    - tests/bucket-1/182-jsonobject-extended
 
 JsonObject.ReadFrom:
   layer: runtime-api
@@ -3484,8 +3496,10 @@ JsonObject.SelectToken:
 JsonObject.Values:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; works natively via NavJsonObject (no TrappableOperationExecutor path); returns List of [JsonToken] in insertion order
+  tests:
+    - tests/bucket-1/182-jsonobject-extended
 
 JsonObject.WriteTo:
   layer: runtime-api
