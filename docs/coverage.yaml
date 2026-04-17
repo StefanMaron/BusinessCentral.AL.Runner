@@ -1657,8 +1657,9 @@ Database.GetDefaultTableConnection:
 Database.HasTableConnection:
   layer: runtime-api
   category: Database
-  status: stub
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/101-database-stubs
+  notes: overloads=1; returns false for unregistered connections.
 
 Database.ImportData:
   layer: runtime-api
@@ -1738,8 +1739,9 @@ Database.ServiceInstanceId:
 Database.SessionId:
   layer: runtime-api
   category: Database
-  status: stub
-  notes: overloads=1; returns 1 (stable non-zero stub)
+  status: covered
+  tests: tests/bucket-1/101-database-stubs
+  notes: overloads=1; returns 1 (stable non-zero stub); proved non-zero and stable.
 
 Database.SetDefaultTableConnection:
   layer: runtime-api
