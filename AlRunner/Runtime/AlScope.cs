@@ -1828,6 +1828,32 @@ public static class AlCompat
     /// </summary>
     public static NavGuid CompanyPropertyID() => new NavGuid(new Guid("5f5f5f5f-5f5f-5f5f-5f5f-5f5f5f5f5f5f"));
 
+    // ── Media stubs ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// GetDocumentUrl(MediaId) stub — no BC Media service in standalone mode.
+    /// Returns empty string. BC lowers to NavMedia.ALGetDocumentUrl(mediaId).
+    /// </summary>
+    public static string GetDocumentUrl(object? mediaId) => "";
+
+    /// <summary>
+    /// ImportStreamWithUrlAccess(InStream, FileName, Duration) stub — no BC Media service in standalone mode.
+    /// Returns an empty GUID (BC lowers the return value as Guid → Text via ALCompiler.GuidToNavText).
+    /// BC lowers to NavMedia.ALImportWithUrlAccess(stream, filename, duration).
+    /// </summary>
+    public static System.Guid ImportStreamWithUrlAccess(MockInStream stream, string filename, int duration) => System.Guid.Empty;
+
+    // ── Caption class stub ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// CaptionClassTranslate(CaptionExpression) stub — no caption class service in standalone mode.
+    /// Returns the input expression unchanged. BC lowers to ALSystemObject.ALCaptionClassTranslate(expr).
+    /// </summary>
+    public static string CaptionClassTranslate(string expr) => expr ?? "";
+
+    /// <summary>NavText overload for CaptionClassTranslate.</summary>
+    public static string CaptionClassTranslate(NavText expr) => CaptionClassTranslate((string)expr);
+
     // ── Date/Variant conversion helpers ─────────────────────────────────────
     // BC emits ALSystemDate.ALDMY2Date(session, ...) / ALVariant2Date(session, ...)
     // etc. with a NavMethodScope first arg. AlScope is not NavMethodScope, so the

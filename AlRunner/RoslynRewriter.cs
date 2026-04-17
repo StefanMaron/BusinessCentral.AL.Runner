@@ -70,6 +70,12 @@ public class RoslynRewriter : CSharpSyntaxRewriter
         "ALLogSecurityAudit",  // ALSession.ALLogSecurityAudit(session, desc, result, resultDesc, category, ...) — needs OpenTelemetry DLL; no-op standalone
         "ALEnableVerboseTelemetry",  // ALSession.ALEnableVerboseTelemetry(session, enabled, duration) — telemetry config; no-op standalone
         "ALSetDocumentServiceToken",  // ALSession.ALSetDocumentServiceToken(session, token) — OneDrive integration; no-op standalone
+        "ALCodeCoverageLoadFromTable",  // ALCodeCoverage.ALCodeCoverageLoadFromTable() — no code coverage engine standalone; no-op
+        "ALCodeCoverageLog",            // ALCodeCoverage.ALCodeCoverageLog(enabled) — no code coverage engine standalone; no-op
+        "ALCodeCoverageRefreshTable",   // ALCodeCoverage.ALCodeCoverageRefreshTable() — no code coverage engine standalone; no-op
+        "ALCodeCoverageInclude",        // ALCodeCoverage.ALCodeCoverageInclude(record) — no code coverage engine standalone; no-op
+        "ALImportObjects",              // ALDatabase.ALImportObjects(stream) — object import requires BC runtime; no-op standalone
+        "ALExportObjects",              // ALDatabase.ALExportObjects(stream, ...) — object export requires BC runtime; no-op standalone
     };
 
     private static readonly HashSet<string> StripITreeObjectArgMethods = new(StringComparer.Ordinal)
@@ -3073,6 +3079,39 @@ public void ClearApplicationMemberVariables()
                     SyntaxKind.NumericLiteralExpression,
                     SyntaxFactory.Literal(0L))
                     .WithTriviaFrom(visited);
+            }
+
+            // NavMedia.ALGetDocumentUrl(mediaId) -> AlCompat.GetDocumentUrl(mediaId)
+            // No BC Media service in standalone mode — return empty string stub.
+            if (exprText == "NavMedia" && methodName == "ALGetDocumentUrl")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("GetDocumentUrl")));
+            }
+
+            // NavMedia.ALImportWithUrlAccess(stream, filename, duration) -> AlCompat.ImportStreamWithUrlAccess(stream, filename, duration)
+            // No BC Media service in standalone mode — return empty string stub.
+            if (exprText == "NavMedia" && methodName == "ALImportWithUrlAccess")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("ImportStreamWithUrlAccess")));
+            }
+
+            // ALSystemObject.ALCaptionClassTranslate(expr) -> AlCompat.CaptionClassTranslate(expr)
+            // No caption class service in standalone mode — return input expression unchanged.
+            if (exprText == "ALSystemObject" && methodName == "ALCaptionClassTranslate")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("CaptionClassTranslate")));
             }
 
             // ALDatabase.ALHasTableConnection(type, name) -> AlCompat.HasTableConnection(type, name)
