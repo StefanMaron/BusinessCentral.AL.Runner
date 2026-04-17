@@ -1,4 +1,4 @@
-table 98000 "Links Test Table"
+table 112000 "Links Test Table"
 {
     DataClassification = CustomerContent;
     fields
@@ -12,7 +12,7 @@ table 98000 "Links Test Table"
     }
 }
 
-codeunit 98001 TableLinksSrc
+codeunit 112001 TableLinksSrc
 {
     procedure HasLinks(var Rec: Record "Links Test Table"): Boolean
     begin
