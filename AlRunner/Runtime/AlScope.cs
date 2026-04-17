@@ -402,6 +402,12 @@ public class MockDialog
     public void ALAssign(MockDialog other) { }
 
     /// <summary>
+    /// AL's Clear(dlg) — rewriter emits dlg.Clear(). Resets the dialog to its
+    /// default (unopen) state. No-op standalone: there is no real UI to dismiss.
+    /// </summary>
+    public void Clear() { }
+
+    /// <summary>
     /// AL's Dialog.HideSubsequentDialogs — emitted as a property setter by the
     /// BC compiler (`dlg.ALHideSubsequentDialogs = true`). No UI standalone;
     /// the set is a no-op.

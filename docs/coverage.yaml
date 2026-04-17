@@ -1999,6 +1999,13 @@ Decimal.ToText:
 
 # ── Dialog ──────────────────────────────────────────────────────
 
+Dialog.Clear:
+  layer: runtime-api
+  category: Dialog
+  status: covered
+  tests: tests/bucket-1/192-dialog-clear
+  notes: overloads=1; AL Clear(dlg) rewriter emits dlg.Clear() — no-op stub added to MockDialog.
+
 Dialog.Close:
   layer: runtime-api
   category: Dialog
