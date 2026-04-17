@@ -6952,6 +6952,14 @@ Table.SetRecFilter:
   tests:
     - tests/bucket-1/49-setrecfilter
 
+Table.SetSelectionFilter:
+  layer: runtime-api
+  category: Table
+  status: covered
+  notes: "overloads=2 (plain + DataError); MockRecordHandle.ALSetSelectionFilter; copies active filters (no-marks case) or builds PK filter from marked records (marks case); BC 26-28 do not expose this as a built-in AL record method (AL0132) — method is ready for future BC versions and package-compiled code that emits rec.ALSetSelectionFilter; behavior tested via user-defined table procedure (Invoke path)"
+  tests:
+    - tests/bucket-1/285-record-selectionfilter
+
 Table.SetView:
   layer: runtime-api
   category: Table

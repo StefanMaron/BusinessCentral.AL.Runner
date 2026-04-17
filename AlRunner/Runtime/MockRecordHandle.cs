@@ -1851,6 +1851,64 @@ public class MockRecordHandle
             };
     }
 
+    /// <summary>
+    /// AL Record.SetSelectionFilter(var FilteredRecord) — copies the current selection
+    /// into FilteredRecord, restricting it to only the selected rows.
+    /// <para>
+    /// If any records are marked (via <c>Mark(true)</c>), builds a pipe-separated
+    /// filter expression from the marked records' primary-key values.
+    /// Otherwise, copies the active filter state (equivalent to <c>CopyFilters</c>).
+    /// </para>
+    /// BC emits this as <c>rec.ALSetSelectionFilter(DataError, filtered)</c> for
+    /// <c>Record.SetSelectionFilter(var FilteredRecord)</c> in AL. The method is
+    /// present on <c>MockRecordHandle</c> so that code compiled against a BC version
+    /// that exposes <c>SetSelectionFilter</c> as a built-in record method compiles
+    /// without CS1061.
+    /// </summary>
+    public void ALSetSelectionFilter(DataError errorLevel, MockRecordHandle filtered)
+        => ALSetSelectionFilter(filtered);
+
+    public void ALSetSelectionFilter(MockRecordHandle filtered)
+    {
+        filtered._filters.Clear();
+        filtered._markedRecords.Clear();
+        filtered._markedOnly = false;
+
+        if (_markedRecords.Count > 0)
+        {
+            // Build a PK-based filter from the marked records
+            var allRows = GetRows();
+            var markedRows = allRows.Where(r => _markedRecords.Contains(GetRowPkKey(r))).ToList();
+            if (markedRows.Count > 0)
+            {
+                var pkFields = GetPrimaryKeyFields();
+                foreach (var fn in pkFields)
+                {
+                    var values = markedRows
+                        .Select(r => r.TryGetValue(fn, out var v) ? NavValueToString(v) : "")
+                        .Where(s => s.Length > 0)
+                        .Distinct()
+                        .ToList();
+                    if (values.Count > 0)
+                    {
+                        var expr = string.Join("|", values);
+                        filtered._filters[fn] = new FieldFilter
+                        {
+                            FieldNo = fn,
+                            FilterExpression = expr,
+                            IsRangeFilter = false,
+                        };
+                    }
+                }
+            }
+        }
+        else
+        {
+            // No marks — copy the current active filters
+            filtered.ALCopyFilters(this);
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Rename — stub
     // -----------------------------------------------------------------------
