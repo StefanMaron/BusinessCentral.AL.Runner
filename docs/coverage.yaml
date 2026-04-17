@@ -1873,8 +1873,9 @@ DateTime.ToText:
 Debugger.Activate:
   layer: runtime-api
   category: Debugger
-  status: not-possible
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/210-debugger
+  notes: overloads=1. Stripped via StripEntireCallMethods — no debugger infrastructure standalone.
 
 Debugger.Attach:
   layer: runtime-api
@@ -1909,8 +1910,9 @@ Debugger.Continue:
 Debugger.Deactivate:
   layer: runtime-api
   category: Debugger
-  status: not-possible
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/210-debugger
+  notes: overloads=1. Stripped via StripEntireCallMethods — no debugger infrastructure standalone.
 
 Debugger.DebuggedSessionID:
   layer: runtime-api
@@ -1939,8 +1941,9 @@ Debugger.GetLastErrorText:
 Debugger.IsActive:
   layer: runtime-api
   category: Debugger
-  status: not-possible
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/210-debugger
+  notes: overloads=1. Rewriter replaces ALDebugger.ALIsActive() with false — no debugger attached standalone.
 
 Debugger.IsAttached:
   layer: runtime-api
