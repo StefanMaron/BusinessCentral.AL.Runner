@@ -5830,8 +5830,9 @@ Session.UnbindSubscription:
 SessionInformation.AITokensUsed:
   layer: runtime-api
   category: SessionInformation
-  status: stub
-  notes: overloads=1. Rewriter replaces ALSessionInformation.ALAITokensUsed with 0L. No explicit test (no AL 16.2 syntax for this yet).
+  status: covered
+  tests: tests/bucket-2/212-ai-tokens
+  notes: overloads=1. Rewriter replaces ALSessionInformation.ALAITokensUsed with 0L. Standalone: no AI calls, so always 0.
 
 SessionInformation.Callstack:
   layer: runtime-api
