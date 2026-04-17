@@ -3683,8 +3683,9 @@ JsonToken.WriteTo:
 JsonValue.AsBigInteger:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; Covered via NavJsonValue native — SetValue + typed As* round-trip
+  tests: tests/bucket-2/209-jsonvalue-remaining
 
 JsonValue.AsBoolean:
   layer: runtime-api
@@ -3696,32 +3697,37 @@ JsonValue.AsBoolean:
 JsonValue.AsByte:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; Covered via NavJsonValue native — SetValue + typed As* round-trip
+  tests: tests/bucket-2/209-jsonvalue-remaining
 
 JsonValue.AsChar:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; Covered via NavJsonValue native — SetValue + typed As* round-trip
+  tests: tests/bucket-2/209-jsonvalue-remaining
 
 JsonValue.AsCode:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; Covered via NavJsonValue native — SetValue + typed As* round-trip
+  tests: tests/bucket-2/209-jsonvalue-remaining
 
 JsonValue.AsDate:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; Covered via NavJsonValue native — SetValue + typed As* round-trip
+  tests: tests/bucket-2/209-jsonvalue-remaining
 
 JsonValue.AsDateTime:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; Covered via NavJsonValue native — SetValue + typed As* round-trip
+  tests: tests/bucket-2/209-jsonvalue-remaining
 
 JsonValue.AsDecimal:
   layer: runtime-api
@@ -3733,8 +3739,9 @@ JsonValue.AsDecimal:
 JsonValue.AsDuration:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; Covered via NavJsonValue native — SetValue + typed As* round-trip
+  tests: tests/bucket-2/209-jsonvalue-remaining
 
 JsonValue.AsInteger:
   layer: runtime-api
@@ -3746,8 +3753,9 @@ JsonValue.AsInteger:
 JsonValue.AsOption:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; Covered via NavJsonValue native — SetValue + typed As* round-trip
+  tests: tests/bucket-2/209-jsonvalue-remaining
 
 JsonValue.AsText:
   layer: runtime-api
@@ -3759,8 +3767,9 @@ JsonValue.AsText:
 JsonValue.AsTime:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; Covered via NavJsonValue native — SetValue + typed As* round-trip
+  tests: tests/bucket-2/209-jsonvalue-remaining
 
 JsonValue.AsToken:
   layer: runtime-api
@@ -3826,8 +3835,8 @@ JsonValue.SetValueToNull:
 JsonValue.SetValueToUndefined:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: stub
+  notes: BC 21+ method not tested in AL 16.2; the underlying NavJsonValue method exists but no AL syntax available in 16.2 to exercise it.
 
 JsonValue.WriteTo:
   layer: runtime-api
