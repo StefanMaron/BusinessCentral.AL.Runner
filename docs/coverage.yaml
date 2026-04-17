@@ -8970,8 +8970,10 @@ XmlDeclaration.WriteTo:
 XmlDocument.Add:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native NavXmlDocument.ALAdd works standalone.
+  tests:
+    - tests/bucket-1/195-xmldocument
 
 XmlDocument.AddAfterSelf:
   layer: runtime-api
@@ -9000,8 +9002,10 @@ XmlDocument.AsXmlNode:
 XmlDocument.Create:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; BC native NavXmlDocument.ALCreate works standalone.
+  tests:
+    - tests/bucket-1/195-xmldocument
 
 XmlDocument.GetChildElements:
   layer: runtime-api
@@ -9012,14 +9016,18 @@ XmlDocument.GetChildElements:
 XmlDocument.GetChildNodes:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone; 0-arg form returns XmlNodeList.
+  tests:
+    - tests/bucket-1/195-xmldocument
 
 XmlDocument.GetDeclaration:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone; returns false when no declaration present.
+  tests:
+    - tests/bucket-1/195-xmldocument
 
 XmlDocument.GetDescendantElements:
   layer: runtime-api
@@ -9054,8 +9062,10 @@ XmlDocument.GetParent:
 XmlDocument.GetRoot:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone.
+  tests:
+    - tests/bucket-1/195-xmldocument
 
 XmlDocument.NameTable:
   layer: runtime-api
@@ -9066,8 +9076,10 @@ XmlDocument.NameTable:
 XmlDocument.ReadFrom:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=4
+  status: covered
+  notes: overloads=4; BC native NavXmlDocument.ALReadFrom works standalone; rewriter fixed to not intercept NavXml* with JSON rule.
+  tests:
+    - tests/bucket-1/195-xmldocument
 
 XmlDocument.Remove:
   layer: runtime-api
@@ -9078,8 +9090,10 @@ XmlDocument.Remove:
 XmlDocument.RemoveNodes:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC native works standalone.
+  tests:
+    - tests/bucket-1/195-xmldocument
 
 XmlDocument.ReplaceNodes:
   layer: runtime-api
@@ -9096,8 +9110,10 @@ XmlDocument.ReplaceWith:
 XmlDocument.SelectNodes:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; BC native works standalone; 2-arg (XPath, var XmlNodeList) tested.
+  tests:
+    - tests/bucket-1/195-xmldocument
 
 XmlDocument.SelectSingleNode:
   layer: runtime-api
@@ -9116,8 +9132,10 @@ XmlDocument.SetDeclaration:
 XmlDocument.WriteTo:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=4
+  status: covered
+  notes: overloads=4; BC native works standalone; Text overload tested.
+  tests:
+    - tests/bucket-1/195-xmldocument
 
 # ── XmlDocumentType ─────────────────────────────────────────────
 
