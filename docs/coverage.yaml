@@ -4049,10 +4049,8 @@ MediaSet.ExportFile:
 MediaSet.FindOrphans:
   layer: runtime-api
   category: MediaSet
-  status: covered
-  notes: overloads=1; returns empty List of [Guid]; RoslynRewriter intercepts NavMediaSet.ALFindOrphans() → AlCompat.MediaSetFindOrphans()
-  tests:
-    - tests/bucket-1/100-mediaset-findorphans
+  status: gap
+  notes: "BC 17+ method — not recognised by the BC 16.2 AL compiler used for transpilation; same compiler limitation as Media.FindOrphans"
 
 MediaSet.ImportFile:
   layer: runtime-api
