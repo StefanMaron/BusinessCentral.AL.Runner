@@ -2845,45 +2845,37 @@ public class MockRecordHandle
     // -----------------------------------------------------------------------
     // Record links — in-memory tracking
     // -----------------------------------------------------------------------
-    private readonly List<string> _links = new();
+    private readonly Dictionary<int, string> _links = new();
+    private int _nextLinkId = 1;
 
-    /// <summary>
-    /// AL AddLink — adds a link (URL or note) to the record.
-    /// </summary>
-    public void ALAddLink(string link)
+    public int ALAddLink(string link)
     {
-        _links.Add(link);
+        int id = _nextLinkId++;
+        _links[id] = link;
+        return id;
     }
 
-    /// <summary>
-    /// AL AddLink — overload with description.
-    /// </summary>
-    public void ALAddLink(string link, string description)
+    public int ALAddLink(string link, string description)
     {
-        _links.Add(link);
+        int id = _nextLinkId++;
+        _links[id] = link;
+        return id;
     }
 
-    /// <summary>
-    /// AL DeleteLink — deletes a specific link by index.
-    /// </summary>
-    public void ALDeleteLink(int linkId)
-    {
-        if (linkId > 0 && linkId <= _links.Count)
-            _links.RemoveAt(linkId - 1);
-    }
+    public void ALDeleteLink(int linkId) => _links.Remove(linkId);
 
-    /// <summary>
-    /// AL DeleteLinks — deletes all links from the record.
-    /// </summary>
-    public void ALDeleteLinks()
-    {
-        _links.Clear();
-    }
+    public void ALDeleteLinks() => _links.Clear();
 
-    /// <summary>
-    /// AL HasLinks — returns true if the record has any links.
-    /// </summary>
     public bool ALHasLinks => _links.Count > 0;
+
+    public void ALCopyLinks(MockRecordHandle source)
+    {
+        foreach (var kv in source._links)
+        {
+            int id = _nextLinkId++;
+            _links[id] = kv.Value;
+        }
+    }
 
     /// <summary>
     /// AL WritePermission — checks if the user has write permission on the table.
