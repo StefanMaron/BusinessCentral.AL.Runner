@@ -2,7 +2,7 @@
 /// and Message(text) / Message() method-form setter/getter.
 /// ErrorInfo.Create(msg) overloads and ErrorType are BC 17+ and not recognised
 /// by the BC 16.2 AL compiler (stage-1); they are tracked separately as gaps.
-codeunit 97900 "EIC Src"
+codeunit 97900 "EIC Create Src"
 {
     // ------------------------------------------------------------------
     // ErrorInfo.Create() — 0-arg static factory
