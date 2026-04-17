@@ -6248,8 +6248,9 @@ Table.CalcSums:
 Table.ChangeCompany:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/205-table-extra-methods
+  notes: overloads=1. No-op in standalone mode (single in-memory company); returns true.
 
 Table.ClearMarks:
   layer: runtime-api
@@ -6262,8 +6263,9 @@ Table.ClearMarks:
 Table.Consistent:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/205-table-extra-methods
+  notes: overloads=1. No-op in standalone mode (no transaction consistency).
 
 Table.Copy:
   layer: runtime-api
@@ -6432,14 +6434,16 @@ Table.Get:
 Table.GetAscending:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/205-table-extra-methods
+  notes: overloads=1. Returns true by default (ascending); reflects SetAscending calls.
 
 Table.GetBySystemId:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/205-table-extra-methods
+  notes: overloads=1. Finds record by SystemId field value.
 
 Table.GetFilter:
   layer: runtime-api
@@ -6537,8 +6541,9 @@ Table.IsTemporary:
 Table.LoadFields:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/205-table-extra-methods
+  notes: overloads=1. No-op in standalone mode (all fields always loaded).
 
 Table.LockTable:
   layer: runtime-api
@@ -6589,14 +6594,16 @@ Table.Next:
 Table.ReadConsistency:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/205-table-extra-methods
+  notes: overloads=1. Always false in standalone mode (no SQL isolation).
 
 Table.ReadIsolation:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/205-table-extra-methods
+  notes: overloads=1. No-op property stub in standalone mode.
 
 Table.ReadPermission:
   layer: runtime-api
@@ -6622,8 +6629,9 @@ Table.RecordLevelLocking:
 Table.Relation:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/205-table-extra-methods
+  notes: overloads=1. Returns 0 (no relational metadata in standalone mode).
 
 Table.Rename:
   layer: runtime-api
@@ -6642,8 +6650,9 @@ Table.Reset:
 Table.SecurityFiltering:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/205-table-extra-methods
+  notes: overloads=1. Get/set property stub; stored but not enforced in standalone mode.
 
 Table.SetAscending:
   layer: runtime-api
@@ -6664,8 +6673,9 @@ Table.SetAutoCalcFields:
 Table.SetBaseLoadFields:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/205-table-extra-methods
+  notes: overloads=1. No-op in standalone mode (all fields always loaded).
 
 Table.SetCurrentKey:
   layer: runtime-api
@@ -6683,14 +6693,16 @@ Table.SetFilter:
 Table.SetLoadFields:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/205-table-extra-methods
+  notes: overloads=1. No-op in standalone mode (all fields always loaded).
 
 Table.SetPermissionFilter:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/205-table-extra-methods
+  notes: overloads=1. No-op in standalone mode (no permission enforcement).
 
 Table.SetPosition:
   layer: runtime-api
@@ -6758,8 +6770,9 @@ Table.TransferFields:
 Table.Truncate:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/205-table-extra-methods
+  notes: overloads=1. Deletes all rows without triggers (delegates to DeleteAll(false)).
 
 Table.Validate:
   layer: runtime-api

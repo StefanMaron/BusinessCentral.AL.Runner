@@ -887,6 +887,17 @@ public class MockRecordHandle
     }
 
     /// <summary>
+    /// AL GetAscending — returns whether the field's sort direction is ascending.
+    /// Returns true by default (ascending); reflects any SetAscending call.
+    /// </summary>
+    public bool ALGetAscending(int fieldNo)
+    {
+        if (_ascending.TryGetValue(fieldNo, out var asc))
+            return asc;
+        return true; // BC default is ascending
+    }
+
+    /// <summary>
     /// AL's FILTERGROUP — sets the filter group for subsequent filter operations.
     /// In BC, filter groups isolate filters. In standalone mode, this is a no-op
     /// since we don't track filter groups.
@@ -1463,6 +1474,36 @@ public class MockRecordHandle
 
     /// <summary>Overload with DataError level (transpiler pattern).</summary>
     public void ALSetLoadFields(DataError errorLevel, params int[] fieldNos)
+    {
+        // No-op: all fields always loaded in in-memory store
+    }
+
+    /// <summary>
+    /// AL's LOADFIELDS — loads specific fields. No-op in standalone mode since all
+    /// fields are always in memory.
+    /// </summary>
+    public void ALLoadFields(params int[] fieldNos)
+    {
+        // No-op: all fields always loaded in in-memory store
+    }
+
+    /// <summary>Overload with DataError level (transpiler pattern).</summary>
+    public void ALLoadFields(DataError errorLevel, params int[] fieldNos)
+    {
+        // No-op: all fields always loaded in in-memory store
+    }
+
+    /// <summary>
+    /// AL's SETBASELOADFIELDS — restores the base load field set.
+    /// No-op in standalone mode since all fields are always in memory.
+    /// </summary>
+    public void ALSetBaseLoadFields()
+    {
+        // No-op: all fields always loaded in in-memory store
+    }
+
+    /// <summary>Overload with DataError level (transpiler pattern).</summary>
+    public void ALSetBaseLoadFields(DataError errorLevel)
     {
         // No-op: all fields always loaded in in-memory store
     }
@@ -2922,6 +2963,44 @@ public class MockRecordHandle
     public void ALSetPermissionFilter()
     {
         // No-op: permissions not supported in standalone mode
+    }
+
+    /// <summary>
+    /// AL ChangeCompany — switches the record context to a different company.
+    /// No-op in standalone mode (single in-memory company). Returns true (success).
+    /// </summary>
+    public bool ALChangeCompany(string companyName) => true;
+    public bool ALChangeCompany(DataError errorLevel, string companyName) => true;
+
+    /// <summary>
+    /// AL ReadConsistency — returns whether the record uses read consistency isolation.
+    /// Always false in standalone mode (no SQL transaction isolation).
+    /// </summary>
+    public bool ALReadConsistency => false;
+
+    /// <summary>
+    /// AL Truncate — removes all records from the table without running triggers.
+    /// Equivalent to DeleteAll(false) in standalone mode.
+    /// </summary>
+    public void ALTruncate() => ALDeleteAll(DataError.ThrowError, false);
+    public void ALTruncate(DataError errorLevel) => ALDeleteAll(errorLevel, false);
+
+    /// <summary>
+    /// AL Relation — returns the table number that the field relates to via TableRelation.
+    /// Returns 0 in standalone mode (no relational metadata available).
+    /// </summary>
+    public int ALRelation(int fieldNo) => 0;
+
+    private SecurityFiltering _securityFiltering = SecurityFiltering.Filtered;
+
+    /// <summary>
+    /// AL SecurityFiltering — get/set the security filter mode.
+    /// Stored but not enforced in standalone mode.
+    /// </summary>
+    public SecurityFiltering ALSecurityFiltering
+    {
+        get => _securityFiltering;
+        set => _securityFiltering = value;
     }
 
     /// <summary>
