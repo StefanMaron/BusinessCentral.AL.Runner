@@ -123,7 +123,7 @@ public class RoslynRewriter : CSharpSyntaxRewriter
         "ALGetFilters", "ALGetRangeMinSafe", "ALGetRangeMaxSafe",
         "ALHasFilter", "ALCurrentKey", "ALAscending", "ALCountApprox",
         "ALConsistent", "ALFieldActive", "ALAddLink", "ALDeleteLink", "ALDeleteLinks",
-        "ALHasLinks", "ALCopyLinks", "ALWritePermission", "ALSetPermissionFilter",
+        "ALHasLinks", "ALWritePermission", "ALSetPermissionFilter",
         "SetFieldValueSafe", "GetFieldValueSafe", "GetFieldRefSafe",
     };
 
@@ -627,12 +627,11 @@ public bool ALAscending { get => Rec.ALAscending; set => Rec.ALAscending = value
 public int ALCountApprox => Rec.ALCountApprox;
 public void ALConsistent(bool consistent) => Rec.ALConsistent(consistent);
 public bool ALFieldActive(int fieldNo) => Rec.ALFieldActive(fieldNo);
-public int ALAddLink(string link) => Rec.ALAddLink(link);
-public int ALAddLink(string link, string description) => Rec.ALAddLink(link, description);
+public void ALAddLink(string link) => Rec.ALAddLink(link);
+public void ALAddLink(string link, string description) => Rec.ALAddLink(link, description);
 public void ALDeleteLink(int linkId) => Rec.ALDeleteLink(linkId);
 public void ALDeleteLinks() => Rec.ALDeleteLinks();
 public bool ALHasLinks => Rec.ALHasLinks;
-public void ALCopyLinks(MockRecordHandle source) => Rec.ALCopyLinks(source);
 public bool ALWritePermission => Rec.ALWritePermission;
 public void ALSetPermissionFilter() => Rec.ALSetPermissionFilter();
 protected bool CallGetDecimalPlacesExtensionMethod(int fieldNo, ref string result) { return false; }
@@ -1728,6 +1727,23 @@ public void ClearApplicationMemberVariables()
         // AlScope implements ITreeObject, so 'this' is a valid non-null ITreeObject
         // for any Nav*/AL* type constructor — no CS1503 and no null-check failures.
 
+        // new NavJsonValue() -> MockJsonHelper.CreateUndefinedJsonValue()
+        // BC's NavJsonValue() constructor initialises the backing token to a non-undefined
+        // state, so the native IsUndefined property returns false for fresh variables.
+        // We replace the construction with a factory that sets JValue.CreateUndefined() as
+        // the backing token so that `var JV: JsonValue` correctly satisfies IsUndefined.
+        if (typeText == "NavJsonValue" &&
+            (visited.ArgumentList == null || visited.ArgumentList.Arguments.Count == 0))
+        {
+            return SyntaxFactory.InvocationExpression(
+                SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("MockJsonHelper"),
+                    SyntaxFactory.IdentifierName("CreateUndefinedJsonValue")),
+                SyntaxFactory.ArgumentList())
+                .WithTriviaFrom(visited);
+        }
+
         return visited;
     }
 
@@ -1978,71 +1994,6 @@ public void ClearApplicationMemberVariables()
                     SyntaxFactory.Argument(enumIdArg),
                     SyntaxFactory.Argument(ordinalArg)
                 })));
-        }
-
-        // NavRecordId.ALGetRecord(scope, target) -> new MockRecordRef()
-        // BC emits `recId.ALGetRecord(this, CompilationTarget.OnPrem)` for RecordId.GetRecord().
-        // NavRecordId.ALGetRecord reaches into BC runtime infrastructure that doesn't exist in
-        // standalone mode and throws "Parent.Tree cannot be null". Return an unbound MockRecordRef.
-        if (node.Expression is MemberAccessExpressionSyntax getRecordMa &&
-            getRecordMa.Name.Identifier.Text == "ALGetRecord")
-        {
-            return SyntaxFactory.ObjectCreationExpression(
-                SyntaxFactory.IdentifierName("MockRecordRef"))
-                .WithArgumentList(SyntaxFactory.ArgumentList())
-                .WithTriviaFrom(node);
-        }
-
-        // XmlDocument node-manipulation methods: ALRemove / ALAddAfterSelf / ALAddBeforeSelf / ALReplaceWith.
-        // NavXmlDocument.ALRemove() etc. call NavEnvironment (BC service-tier logging) which is
-        // unavailable standalone and throws TypeInitializationException.
-        // Redirect through AlCompat.XmlRemove/XmlAddAfterSelf/etc. which dispatch to the NavXmlNode
-        // path when the receiver is a NavXmlNode (keeps existing XmlNode tests working) and are
-        // no-ops for NavXmlDocument (standalone documents have no parent to manipulate).
-        // Must be intercepted BEFORE base visit to avoid the method call being executed.
-        if (node.Expression is MemberAccessExpressionSyntax xmlDocMa)
-        {
-            var xmlMethodName = xmlDocMa.Name.Identifier.Text;
-            // ALRemove(DataError) — 1 argument, first is DataError
-            if (xmlMethodName == "ALRemove" &&
-                node.ArgumentList.Arguments.Count == 1 &&
-                node.ArgumentList.Arguments[0].Expression.ToString().StartsWith("DataError"))
-            {
-                var receiverExpr = (ExpressionSyntax)Visit(xmlDocMa.Expression)!;
-                return SyntaxFactory.InvocationExpression(
-                    SyntaxFactory.MemberAccessExpression(
-                        SyntaxKind.SimpleMemberAccessExpression,
-                        SyntaxFactory.IdentifierName("AlCompat"),
-                        SyntaxFactory.IdentifierName("XmlRemove")),
-                    SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList(new[]
-                    {
-                        SyntaxFactory.Argument(receiverExpr)
-                    }))).WithTriviaFrom(node);
-            }
-            // ALAddAfterSelf(DataError, sibling) / ALAddBeforeSelf(DataError, sibling) / ALReplaceWith(DataError, node) — 2 args, first is DataError
-            if (xmlMethodName is "ALAddAfterSelf" or "ALAddBeforeSelf" or "ALReplaceWith" &&
-                node.ArgumentList.Arguments.Count == 2 &&
-                node.ArgumentList.Arguments[0].Expression.ToString().StartsWith("DataError"))
-            {
-                var helperName = xmlMethodName switch
-                {
-                    "ALAddAfterSelf" => "XmlAddAfterSelf",
-                    "ALAddBeforeSelf" => "XmlAddBeforeSelf",
-                    _ => "XmlReplaceWith"
-                };
-                var receiverExpr = (ExpressionSyntax)Visit(xmlDocMa.Expression)!;
-                var secondArg = (ExpressionSyntax)Visit(node.ArgumentList.Arguments[1].Expression)!;
-                return SyntaxFactory.InvocationExpression(
-                    SyntaxFactory.MemberAccessExpression(
-                        SyntaxKind.SimpleMemberAccessExpression,
-                        SyntaxFactory.IdentifierName("AlCompat"),
-                        SyntaxFactory.IdentifierName(helperName)),
-                    SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList(new[]
-                    {
-                        SyntaxFactory.Argument(receiverExpr),
-                        SyntaxFactory.Argument(secondArg)
-                    }))).WithTriviaFrom(node);
-            }
         }
 
         // Now recurse into children first
@@ -2429,7 +2380,11 @@ public void ClearApplicationMemberVariables()
                 or "ALKeys"
                 or "ALGetText" or "ALGetInteger" or "ALGetDecimal"
                 or "ALGetObject" or "ALGetArray"
-                or "ALWriteToYaml" or "ALReadFromYaml")
+                // JsonValue extended typed-getter / utility methods (issue #699)
+                or "ALAsBigInteger" or "ALAsByte" or "ALAsChar" or "ALAsCode"
+                or "ALAsDate" or "ALAsDateTime" or "ALAsDuration"
+                or "ALAsOption" or "ALAsTime" or "ALAsToken"
+                or "ALIsUndefined" or "ALPath" or "ALSetValueToUndefined")
             {
                 var helperMethod = methodName switch
                 {
@@ -2450,8 +2405,20 @@ public void ClearApplicationMemberVariables()
                     "ALGetDecimal" => "GetDecimal",
                     "ALGetObject" => "GetObject",
                     "ALGetArray" => "GetArray",
-                    "ALWriteToYaml" => "WriteToYaml",
-                    "ALReadFromYaml" => "ReadFromYaml",
+                    // JsonValue extended typed-getters / utilities
+                    "ALAsBigInteger" => "AsBigInteger",
+                    "ALAsByte" => "AsByte",
+                    "ALAsChar" => "AsChar",
+                    "ALAsCode" => "AsCode",
+                    "ALAsDate" => "AsDate",
+                    "ALAsDateTime" => "AsDateTime",
+                    "ALAsDuration" => "AsDuration",
+                    "ALAsOption" => "AsOption",
+                    "ALAsTime" => "AsTime",
+                    "ALAsToken" => "AsToken",
+                    "ALIsUndefined" => "IsUndefined",
+                    "ALPath" => "Path",
+                    "ALSetValueToUndefined" => "SetValueToUndefined",
                     _ => null
                 };
                 if (helperMethod is not null)
@@ -3193,11 +3160,10 @@ public void ClearApplicationMemberVariables()
                     .WithTriviaFrom(visited);
             }
 
-            // NavMedia/MockMedia.ALGetDocumentUrl(mediaId) -> AlCompat.GetDocumentUrl(mediaId)
+            // MockMedia.ALGetDocumentUrl(mediaId) -> AlCompat.GetDocumentUrl(mediaId)
+            // NavMedia was already renamed to MockMedia by VisitIdentifierName — check MockMedia here.
             // No BC Media service in standalone mode — return empty string stub.
-            // Note: VisitIdentifierName already rewrites NavMedia→MockMedia before this rule runs,
-            // so we must also check for MockMedia here.
-            if ((exprText == "NavMedia" || exprText == "MockMedia") && methodName == "ALGetDocumentUrl")
+            if (exprText == "MockMedia" && methodName == "ALGetDocumentUrl")
             {
                 return visited.WithExpression(
                     SyntaxFactory.MemberAccessExpression(
@@ -3206,11 +3172,10 @@ public void ClearApplicationMemberVariables()
                         SyntaxFactory.IdentifierName("GetDocumentUrl")));
             }
 
-            // NavMedia/MockMedia.ALImportWithUrlAccess(stream, filename, duration) -> AlCompat.ImportStreamWithUrlAccess(...)
+            // MockMedia.ALImportWithUrlAccess(stream, filename, duration) -> AlCompat.ImportStreamWithUrlAccess(stream, filename, duration)
+            // (NavMedia was already renamed to MockMedia by VisitIdentifierName above)
             // No BC Media service in standalone mode — return empty string stub.
-            // Note: VisitIdentifierName already rewrites NavMedia→MockMedia before this rule runs,
-            // so we must also check for MockMedia here.
-            if ((exprText == "NavMedia" || exprText == "MockMedia") && methodName == "ALImportWithUrlAccess")
+            if (exprText == "MockMedia" && methodName == "ALImportWithUrlAccess")
             {
                 return visited.WithExpression(
                     SyntaxFactory.MemberAccessExpression(
@@ -4042,6 +4007,24 @@ public void ClearApplicationMemberVariables()
             isNullGeneric.Identifier.Text == "NavIndirectValueToNavValue")
         {
             return SyntaxFactory.LiteralExpression(SyntaxKind.FalseLiteralExpression)
+                .WithTriviaFrom(visited);
+        }
+
+        // Pattern: expr.IsUndefined (NavJsonValue property) -> MockJsonHelper.IsUndefined(expr)
+        // BC compiles AL's JsonValue.IsUndefined() as a native C# PROPERTY ACCESS on NavJsonValue,
+        // not as a method call — so VisitInvocationExpression never intercepts it.
+        // MockJsonHelper.IsUndefined() correctly returns true when the backing token is null
+        // (fresh variable) or JValue.CreateUndefined() (after SetValueToUndefined).
+        if (memberName == "IsUndefined")
+        {
+            return SyntaxFactory.InvocationExpression(
+                SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("MockJsonHelper"),
+                    SyntaxFactory.IdentifierName("IsUndefined")),
+                SyntaxFactory.ArgumentList(
+                    SyntaxFactory.SingletonSeparatedList(
+                        SyntaxFactory.Argument(visited.Expression))))
                 .WithTriviaFrom(visited);
         }
 
