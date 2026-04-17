@@ -6294,8 +6294,10 @@ Table.Ascending:
 Table.CalcFields:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests:
+    - tests/bucket-1/275-calcfields
+  notes: overloads=1; evaluates Sum/Count/Exist/Lookup FlowField formulas against in-memory tables via CalcFormulaRegistry; multiple fields in one call supported
 
 Table.CalcSums:
   layer: runtime-api
