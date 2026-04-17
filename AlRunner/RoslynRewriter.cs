@@ -3140,7 +3140,7 @@ public void ClearApplicationMemberVariables()
             }
 
             // MockMedia.ALGetDocumentUrl(mediaId) -> AlCompat.GetDocumentUrl(mediaId)
-            // (NavMedia was already renamed to MockMedia by VisitIdentifierName above)
+            // NavMedia was already renamed to MockMedia by VisitIdentifierName — check MockMedia here.
             // No BC Media service in standalone mode — return empty string stub.
             if (exprText == "MockMedia" && methodName == "ALGetDocumentUrl")
             {
