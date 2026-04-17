@@ -1,4 +1,4 @@
-codeunit 124001 "MSM Test"
+codeunit 125001 "MSM Test"
 {
     Subtype = Test;
     var
