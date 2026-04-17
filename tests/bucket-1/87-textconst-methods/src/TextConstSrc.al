@@ -33,6 +33,16 @@ codeunit 89000 "TCM Src"
         exit(HelloWorld.LastIndexOf(sub));
     end;
 
+    procedure LabelIndexOfAny(chars: Text): Integer
+    begin
+        exit(HelloWorld.IndexOfAny(chars));
+    end;
+
+    procedure LabelIndexOfAnyFrom(chars: Text; startIndex: Integer): Integer
+    begin
+        exit(HelloWorld.IndexOfAny(chars, startIndex));
+    end;
+
     procedure LabelSubstring(start: Integer; len: Integer): Text
     begin
         exit(HelloWorld.Substring(start, len));

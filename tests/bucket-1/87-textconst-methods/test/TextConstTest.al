@@ -75,6 +75,40 @@ codeunit 89001 "TCM Tests"
     end;
 
     // ------------------------------------------------------------------
+    // IndexOfAny
+    // ------------------------------------------------------------------
+
+    [Test]
+    procedure TextConst_IndexOfAny_Found()
+    begin
+        // 'Hello, World!' — first of 'lo' chars: 'l' at position 3
+        Assert.AreEqual(3, Src.LabelIndexOfAny('lo'),
+            'IndexOfAny lo must return 3 — l at position 3 is the earliest match');
+    end;
+
+    [Test]
+    procedure TextConst_IndexOfAny_NotFound()
+    begin
+        Assert.AreEqual(0, Src.LabelIndexOfAny('xyz'),
+            'IndexOfAny xyz must return 0 — no char from xyz is present');
+    end;
+
+    [Test]
+    procedure TextConst_IndexOfAny_WithStartIndex()
+    begin
+        // 'Hello, World!' from position 6: ',', ' ', 'W', 'o'(9) — first of 'lo' is 'o' at 9
+        Assert.AreEqual(9, Src.LabelIndexOfAnyFrom('lo', 6),
+            'IndexOfAny lo from 6 must return 9 — first lo-char after position 6 is o at 9');
+    end;
+
+    [Test]
+    procedure TextConst_IndexOfAny_WithStartIndex_NotFound()
+    begin
+        Assert.AreEqual(0, Src.LabelIndexOfAnyFrom('xyz', 6),
+            'IndexOfAny xyz from 6 must return 0 — xyz not present anywhere');
+    end;
+
+    // ------------------------------------------------------------------
     // Substring
     // ------------------------------------------------------------------
 
