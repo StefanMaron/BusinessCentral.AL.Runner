@@ -9329,20 +9329,23 @@ XmlComment.WriteTo:
 XmlDeclaration.AddAfterSelf:
   layer: runtime-api
   category: XmlDeclaration
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/219-xmldeclaration-navmethods
+  notes: overloads=1. No-op for detached declarations (no XmlElement parent in the node tree).
 
 XmlDeclaration.AddBeforeSelf:
   layer: runtime-api
   category: XmlDeclaration
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/219-xmldeclaration-navmethods
+  notes: overloads=1. No-op for detached declarations (no XmlElement parent in the node tree).
 
 XmlDeclaration.AsXmlNode:
   layer: runtime-api
   category: XmlDeclaration
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/219-xmldeclaration-navmethods
+  notes: overloads=1. NavXmlDeclaration.ALAsXmlNode works natively.
 
 XmlDeclaration.Create:
   layer: runtime-api
@@ -9361,38 +9364,50 @@ XmlDeclaration.Encoding:
 XmlDeclaration.GetDocument:
   layer: runtime-api
   category: XmlDeclaration
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/219-xmldeclaration-navmethods
+  notes: >
+    overloads=1. NavXmlDeclaration.ALGetDocument works natively — returns false
+    when detached and false when set via SetDeclaration (declarations are not
+    stored as navigable child nodes in BC's XML DOM).
 
 XmlDeclaration.GetParent:
   layer: runtime-api
   category: XmlDeclaration
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/219-xmldeclaration-navmethods
+  notes: overloads=1. NavXmlDeclaration.ALGetParent works natively — always false (declarations have no XmlElement parent).
 
 XmlDeclaration.Remove:
   layer: runtime-api
   category: XmlDeclaration
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/219-xmldeclaration-navmethods
+  notes: overloads=1. NavXmlDeclaration.ALRemove works natively via AlCompat.XmlRemove dispatch.
 
 XmlDeclaration.ReplaceWith:
   layer: runtime-api
   category: XmlDeclaration
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/219-xmldeclaration-navmethods
+  notes: overloads=1. NavXmlDeclaration.ALReplaceWith works natively via AlCompat.XmlReplaceWith dispatch.
 
 XmlDeclaration.SelectNodes:
   layer: runtime-api
   category: XmlDeclaration
-  status: gap
-  notes: overloads=2
+  status: covered
+  tests: tests/bucket-2/219-xmldeclaration-navmethods
+  notes: >
+    overloads=2 (1-arg XPath variant covered). NavXmlDeclaration.ALSelectNodes
+    throws NavNCLNotSupportedOperationException; redirected through
+    AlCompat.XmlSelectNodes (RoslynRewriter) which returns an empty NodeList.
 
 XmlDeclaration.SelectSingleNode:
   layer: runtime-api
   category: XmlDeclaration
-  status: gap
-  notes: overloads=2
+  status: covered
+  tests: tests/bucket-2/219-xmldeclaration-navmethods
+  notes: overloads=2 (1-arg XPath variant covered). NavXmlDeclaration.ALSelectSingleNode works natively.
 
 XmlDeclaration.Standalone:
   layer: runtime-api
@@ -9411,8 +9426,9 @@ XmlDeclaration.Version:
 XmlDeclaration.WriteTo:
   layer: runtime-api
   category: XmlDeclaration
-  status: gap
-  notes: overloads=4
+  status: covered
+  tests: tests/bucket-2/219-xmldeclaration-navmethods
+  notes: overloads=4 (Text overload covered). NavXmlDeclaration.ALWriteTo works natively.
 
 # ── XmlDocument ─────────────────────────────────────────────────
 

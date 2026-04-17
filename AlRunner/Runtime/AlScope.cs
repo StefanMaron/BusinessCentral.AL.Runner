@@ -2348,6 +2348,25 @@ public static class AlCompat
         if (node is NavXmlNode n) n.ALReplaceWith(DataError.ThrowError, replacement);
     }
 
+    // NavXmlDeclaration.ALSelectNodes throws NavNCLNotSupportedOperationException.
+    // Declarations have no child nodes, so SelectNodes must return an empty list.
+    // This helper checks for NavXmlDeclaration first, then delegates to the normal
+    // NavXmlNode path for all other XML node types.
+    public static bool XmlSelectNodes(object node, NavText xpath, ref NavXmlNodeList nodeList)
+    {
+        if (node is NavXmlDeclaration)
+        {
+            nodeList = NavXmlElement.ALCreate(DataError.ThrowError, new NavText("_"))
+                                    .ALGetChildNodes(DataError.ThrowError);
+            return false;
+        }
+        if (node is NavXmlNode n)
+            return n.ALSelectNodes(DataError.ThrowError, xpath, ref nodeList);
+        nodeList = NavXmlElement.ALCreate(DataError.ThrowError, new NavText("_"))
+                                .ALGetChildNodes(DataError.ThrowError);
+        return false;
+    }
+
     // -----------------------------------------------------------------------
     // ErrorInfo.Create(message) safe factory
     // NavALErrorInfo.ALCreate(msg, ...) calls UpdateWithRecordInfo() which loads

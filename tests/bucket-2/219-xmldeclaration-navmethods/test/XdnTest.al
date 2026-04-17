@@ -57,10 +57,10 @@ codeunit 97908 "XDN Test"
     [Test]
     procedure AsXmlNode_DifferentVersions_NotSameNode()
     var
-        Node10: XmlNode;
-        Node11: XmlNode;
         Decl10: XmlDeclaration;
         Decl11: XmlDeclaration;
+        Node10: XmlNode;
+        Node11: XmlNode;
     begin
         // Negative trap: two declarations with different versions are different nodes
         Decl10 := XmlDeclaration.Create('1.0', '', '');
@@ -96,12 +96,14 @@ codeunit 97908 "XDN Test"
     end;
 
     [Test]
-    procedure GetDocument_InDocument_ReturnsTrue()
+    procedure GetDocument_SetDeclaration_ReturnsFalse()
     begin
-        // [GIVEN] A declaration set on a document
-        // [WHEN]  GetDocument is called
-        // [THEN]  Returns true
-        Assert.IsTrue(Src.GetDocumentInDoc(), 'Declaration in document must return true for GetDocument');
+        // [GIVEN] A declaration set on a document via SetDeclaration
+        // [WHEN]  GetDocument is called on the declaration
+        // [THEN]  Returns false — SetDeclaration does not link the declaration
+        //         as a navigable child node in BC's XML DOM.
+        Assert.IsFalse(Src.GetDocumentSetDeclaration(),
+            'GetDocument must return false for declaration set via SetDeclaration');
     end;
 
     // ── Remove ────────────────────────────────────────────────────────────────
@@ -120,15 +122,15 @@ codeunit 97908 "XDN Test"
     [Test]
     procedure AddAfterSelf_NoThrow()
     begin
-        // [WHEN]  AddAfterSelf is called (no-op for declaration nodes without XmlNode parent)
+        // [WHEN]  AddAfterSelf is called on a detached declaration
         // [THEN]  Does not throw
-        Assert.AreEqual(1, Src.AddAfterSelfChildCount(), 'Document must still have one child element');
+        Assert.IsTrue(Src.AddAfterSelfNoThrow(), 'AddAfterSelf on declaration must not throw');
     end;
 
     [Test]
     procedure AddBeforeSelf_NoThrow()
     begin
-        Assert.AreEqual(1, Src.AddBeforeSelfChildCount(), 'Document must still have one child element');
+        Assert.IsTrue(Src.AddBeforeSelfNoThrow(), 'AddBeforeSelf on declaration must not throw');
     end;
 
     // ── ReplaceWith ───────────────────────────────────────────────────────────

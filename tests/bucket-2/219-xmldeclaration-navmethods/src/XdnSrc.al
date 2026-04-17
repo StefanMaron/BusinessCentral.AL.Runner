@@ -43,7 +43,7 @@ codeunit 97907 "XDN Src"
 
     // ── GetDocument ───────────────────────────────────────────────────────────
 
-    /// Returns false when the declaration is not attached to a document.
+    /// Returns false when the declaration is detached.
     procedure GetDocumentDetached(): Boolean
     var
         Decl: XmlDeclaration;
@@ -53,8 +53,9 @@ codeunit 97907 "XDN Src"
         exit(Decl.GetDocument(OutDoc));
     end;
 
-    /// Returns true when the declaration is attached to a document.
-    procedure GetDocumentInDoc(): Boolean
+    /// GetDocument returns false even when the declaration is set on a document
+    /// via SetDeclaration — declarations are not stored as navigable child nodes.
+    procedure GetDocumentSetDeclaration(): Boolean
     var
         Doc: XmlDocument;
         Decl: XmlDeclaration;
@@ -84,40 +85,28 @@ codeunit 97907 "XDN Src"
 
     // ── AddAfterSelf / AddBeforeSelf ──────────────────────────────────────────
 
-    /// Adds a sibling element after the declaration child in the document.
-    procedure AddAfterSelfChildCount(): Integer
+    /// Calls AddAfterSelf on a declaration — no-op since declarations have no
+    /// XmlElement parent in the standard node tree.
+    procedure AddAfterSelfNoThrow(): Boolean
     var
-        Doc: XmlDocument;
-        Root: XmlElement;
         Decl: XmlDeclaration;
-        Sibling: XmlElement;
-        Nodes: XmlNodeList;
+        Sibling: XmlDeclaration;
     begin
-        Doc := XmlDocument.Create();
-        Root := XmlElement.Create('root');
-        Doc.Add(Root);
         Decl := XmlDeclaration.Create('1.0', '', '');
-        Doc.SetDeclaration(Decl);
-        // AddAfterSelf is a no-op for standalone declaration (no XmlNode parent)
-        // We just call it and verify no crash.
-        Nodes := Doc.GetChildNodes();
-        exit(Nodes.Count());
+        Sibling := XmlDeclaration.Create('1.1', '', '');
+        Decl.AddAfterSelf(Sibling);
+        exit(true);
     end;
 
-    procedure AddBeforeSelfChildCount(): Integer
+    procedure AddBeforeSelfNoThrow(): Boolean
     var
-        Doc: XmlDocument;
-        Root: XmlElement;
         Decl: XmlDeclaration;
-        Nodes: XmlNodeList;
+        Sibling: XmlDeclaration;
     begin
-        Doc := XmlDocument.Create();
-        Root := XmlElement.Create('root');
-        Doc.Add(Root);
         Decl := XmlDeclaration.Create('1.0', '', '');
-        Doc.SetDeclaration(Decl);
-        Nodes := Doc.GetChildNodes();
-        exit(Nodes.Count());
+        Sibling := XmlDeclaration.Create('1.1', '', '');
+        Decl.AddBeforeSelf(Sibling);
+        exit(true);
     end;
 
     // ── ReplaceWith ───────────────────────────────────────────────────────────
@@ -141,7 +130,7 @@ codeunit 97907 "XDN Src"
 
     // ── SelectNodes ───────────────────────────────────────────────────────────
 
-    /// Returns a non-negative count (XPath on a declaration node returns no children).
+    /// Returns 0 — declarations have no child nodes.
     procedure SelectNodesCount(): Integer
     var
         Decl: XmlDeclaration;
