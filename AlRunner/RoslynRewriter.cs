@@ -3169,7 +3169,7 @@ public void ClearApplicationMemberVariables()
                     .WithTriviaFrom(visited);
             }
 
-            // NavMedia.ALGetDocumentUrl(mediaId) -> AlCompat.GetDocumentUrl(mediaId)
+            // NavMedia/MockMedia.ALGetDocumentUrl(mediaId) -> AlCompat.GetDocumentUrl(mediaId)
             // No BC Media service in standalone mode — return empty string stub.
             // Note: VisitIdentifierName already rewrites NavMedia→MockMedia before this rule runs,
             // so we must also check for MockMedia here.
@@ -3182,7 +3182,7 @@ public void ClearApplicationMemberVariables()
                         SyntaxFactory.IdentifierName("GetDocumentUrl")));
             }
 
-            // NavMedia.ALImportWithUrlAccess(stream, filename, duration) -> AlCompat.ImportStreamWithUrlAccess(stream, filename, duration)
+            // NavMedia/MockMedia.ALImportWithUrlAccess(stream, filename, duration) -> AlCompat.ImportStreamWithUrlAccess(...)
             // No BC Media service in standalone mode — return empty string stub.
             // Note: VisitIdentifierName already rewrites NavMedia→MockMedia before this rule runs,
             // so we must also check for MockMedia here.
