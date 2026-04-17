@@ -1,4 +1,4 @@
-codeunit 128002 "RIE Test"
+codeunit 130002 "RIE Test"
 {
     Subtype = Test;
     var

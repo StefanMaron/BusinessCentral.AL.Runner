@@ -1,5 +1,5 @@
 /// Source objects for ReportInstance extended method tests (issue #948).
-table 128000 "RIE Table"
+table 130000 "RIE Table"
 {
     fields
     {
@@ -10,7 +10,7 @@ table 128000 "RIE Table"
 
 /// Report that exercises CurrReport.* methods requiring injection or compilation.
 /// All the if-false blocks prove these compile; the trigger runs normally.
-report 128000 "RIE Report"
+report 130000 "RIE Report"
 {
     dataset
     {
@@ -36,11 +36,11 @@ report 128000 "RIE Report"
 }
 
 /// Exercises ReportInstance methods accessible from external code.
-codeunit 128001 "RIE Source"
+codeunit 130001 "RIE Source"
 {
     procedure Execute_NoOp()
     begin
-        Report.Execute(128000, '');
+        Report.Execute(130000, '');
     end;
 
     procedure Print_NoOp()
@@ -73,7 +73,7 @@ codeunit 128001 "RIE Source"
         InStrIn: InStream;
         InStrOut: InStream;
     begin
-        Report.ValidateAndPrepareLayout(128000, InStrIn, InStrOut, ReportLayoutType::RDLC);
+        Report.ValidateAndPrepareLayout(130000, InStrIn, InStrOut, ReportLayoutType::RDLC);
     end;
 
     procedure RunWithCurrReportMethods_NoThrow()
