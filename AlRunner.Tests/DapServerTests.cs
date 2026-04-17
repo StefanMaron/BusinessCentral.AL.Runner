@@ -243,8 +243,8 @@ public class DapServerTests : IAsyncDisposable
         BreakpointManager.RegisterBreakpoint("SomeScope_Scope_abc", 1);
 
         await SendAsync(new { seq = 1, type = "request", command = "initialize", arguments = new { } });
-        await ReceiveWithTimeout();
-        await ReceiveWithTimeout();
+        await ReceiveWithTimeout(); // initialize response
+        await ReceiveWithTimeout(); // initialized event
 
         bool resumed = false;
         var pausedTask = Task.Run(() =>
@@ -258,9 +258,25 @@ public class DapServerTests : IAsyncDisposable
 
         // Send continue via DAP
         await SendAsync(new { seq = 2, type = "request", command = "continue", arguments = new { threadId = 1 } });
-        var response = await ReceiveWithTimeout();
-        Assert.Equal("response", response?["type"]?.GetValue<string>());
-        Assert.True(response?["success"]?.GetValue<bool>());
+
+        // The server may send a 'stopped' event before the continue response.
+        // Read messages until we find the continue response.
+        JsonObject? continueResponse = null;
+        for (int i = 0; i < 5; i++)
+        {
+            var msg = await ReceiveWithTimeout();
+            if (msg == null) break;
+            if (msg["type"]?.GetValue<string>() == "response" &&
+                msg["command"]?.GetValue<string>() == "continue")
+            {
+                continueResponse = msg;
+                break;
+            }
+            // Skip events (e.g. 'stopped' fired by the BreakpointHit handler)
+        }
+
+        Assert.NotNull(continueResponse);
+        Assert.True(continueResponse["success"]?.GetValue<bool>());
 
         await pausedTask.WaitAsync(TimeSpan.FromSeconds(2));
         Assert.True(resumed, "Execution must resume after DAP continue");
