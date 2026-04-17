@@ -2422,7 +2422,8 @@ public void ClearApplicationMemberVariables()
                 or "ALGetBoolean" or "ALIsArray" or "ALIsObject" or "ALIsValue" or "ALClone"
                 or "ALKeys"
                 or "ALGetText" or "ALGetInteger" or "ALGetDecimal"
-                or "ALGetObject" or "ALGetArray")
+                or "ALGetObject" or "ALGetArray"
+                or "ALWriteToYaml" or "ALReadFromYaml")
             {
                 var helperMethod = methodName switch
                 {
@@ -2443,6 +2444,8 @@ public void ClearApplicationMemberVariables()
                     "ALGetDecimal" => "GetDecimal",
                     "ALGetObject" => "GetObject",
                     "ALGetArray" => "GetArray",
+                    "ALWriteToYaml" => "WriteToYaml",
+                    "ALReadFromYaml" => "ReadFromYaml",
                     _ => null
                 };
                 if (helperMethod is not null)
