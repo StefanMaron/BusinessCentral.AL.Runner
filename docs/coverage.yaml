@@ -9019,14 +9019,18 @@ XmlDocument.Add:
 XmlDocument.AddAfterSelf:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=1; blocked by NavEnvironment.get_Topology() called in BC runtime logging when no parent context
+  status: covered
+  notes: overloads=1; rewriter intercepts ALAddAfterSelf on XmlDocument receiver and routes to AlCompat.XmlAddAfterSelf which no-ops for document (documents cannot have siblings)
+  tests:
+    - tests/bucket-1/101-xmldocument-nodemanip
 
 XmlDocument.AddBeforeSelf:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=1; blocked by NavEnvironment.get_Topology() called in BC runtime logging when no parent context
+  status: covered
+  notes: overloads=1; rewriter intercepts ALAddBeforeSelf on XmlDocument receiver and routes to AlCompat.XmlAddBeforeSelf which no-ops for document (documents cannot have siblings)
+  tests:
+    - tests/bucket-1/101-xmldocument-nodemanip
 
 XmlDocument.AddFirst:
   layer: runtime-api
@@ -9144,8 +9148,10 @@ XmlDocument.ReadFrom:
 XmlDocument.Remove:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=1; blocked by NavEnvironment.get_Topology() called in BC runtime logging
+  status: covered
+  notes: overloads=1; rewriter intercepts ALRemove on XmlDocument receiver and routes to AlCompat.XmlRemove which no-ops for document (Remove on a document is a no-op in BC too)
+  tests:
+    - tests/bucket-1/101-xmldocument-nodemanip
 
 XmlDocument.RemoveNodes:
   layer: runtime-api
@@ -9166,8 +9172,10 @@ XmlDocument.ReplaceNodes:
 XmlDocument.ReplaceWith:
   layer: runtime-api
   category: XmlDocument
-  status: gap
-  notes: overloads=1; blocked by NavEnvironment.get_Topology() called in BC runtime logging when no parent context
+  status: covered
+  notes: overloads=1; rewriter intercepts ALReplaceWith on XmlDocument receiver and routes to AlCompat.XmlReplaceWith which no-ops for document (documents cannot be replaced in their parent)
+  tests:
+    - tests/bucket-1/101-xmldocument-nodemanip
 
 XmlDocument.SelectNodes:
   layer: runtime-api

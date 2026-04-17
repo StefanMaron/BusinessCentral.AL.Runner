@@ -2224,4 +2224,37 @@ public static class AlCompat
         return false;
     }
 
+    // XmlDocument node-manipulation stubs.
+    // NavXmlDocument.ALRemove/ALAddAfterSelf/ALAddBeforeSelf/ALReplaceWith reach
+    // into NavEnvironment (BC service-tier logging) which is unavailable standalone
+    // and throws TypeInitializationException.  These helpers dispatch through the
+    // NavXmlNode path (which works) for node-typed receivers, and are no-ops for
+    // NavXmlDocument (standalone documents have no parent to manipulate).
+    public static void XmlRemove(object node)
+    {
+        // NavXmlDocument checked first: it may inherit NavXmlNode on some BC versions,
+        // and its ALRemove reaches into NavEnvironment (BC service-tier logging) which
+        // is unavailable standalone. A standalone document has no parent, so no-op is correct.
+        if (node is NavXmlDocument) return;
+        if (node is NavXmlNode n) n.ALRemove(DataError.ThrowError);
+    }
+
+    public static void XmlAddAfterSelf(object node, NavXmlNode sibling)
+    {
+        if (node is NavXmlDocument) return;
+        if (node is NavXmlNode n) n.ALAddAfterSelf(DataError.ThrowError, sibling);
+    }
+
+    public static void XmlAddBeforeSelf(object node, NavXmlNode sibling)
+    {
+        if (node is NavXmlDocument) return;
+        if (node is NavXmlNode n) n.ALAddBeforeSelf(DataError.ThrowError, sibling);
+    }
+
+    public static void XmlReplaceWith(object node, NavXmlNode replacement)
+    {
+        if (node is NavXmlDocument) return;
+        if (node is NavXmlNode n) n.ALReplaceWith(DataError.ThrowError, replacement);
+    }
+
 }

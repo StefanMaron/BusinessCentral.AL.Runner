@@ -1986,6 +1986,58 @@ public void ClearApplicationMemberVariables()
                 .WithTriviaFrom(node);
         }
 
+        // XmlDocument node-manipulation methods: ALRemove / ALAddAfterSelf / ALAddBeforeSelf / ALReplaceWith.
+        // NavXmlDocument.ALRemove() etc. call NavEnvironment (BC service-tier logging) which is
+        // unavailable standalone and throws TypeInitializationException.
+        // Redirect through AlCompat.XmlRemove/XmlAddAfterSelf/etc. which dispatch to the NavXmlNode
+        // path when the receiver is a NavXmlNode (keeps existing XmlNode tests working) and are
+        // no-ops for NavXmlDocument (standalone documents have no parent to manipulate).
+        // Must be intercepted BEFORE base visit to avoid the method call being executed.
+        if (node.Expression is MemberAccessExpressionSyntax xmlDocMa)
+        {
+            var xmlMethodName = xmlDocMa.Name.Identifier.Text;
+            // ALRemove(DataError) — 1 argument, first is DataError
+            if (xmlMethodName == "ALRemove" &&
+                node.ArgumentList.Arguments.Count == 1 &&
+                node.ArgumentList.Arguments[0].Expression.ToString().StartsWith("DataError"))
+            {
+                var receiverExpr = (ExpressionSyntax)Visit(xmlDocMa.Expression)!;
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("XmlRemove")),
+                    SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList(new[]
+                    {
+                        SyntaxFactory.Argument(receiverExpr)
+                    }))).WithTriviaFrom(node);
+            }
+            // ALAddAfterSelf(DataError, sibling) / ALAddBeforeSelf(DataError, sibling) / ALReplaceWith(DataError, node) — 2 args, first is DataError
+            if (xmlMethodName is "ALAddAfterSelf" or "ALAddBeforeSelf" or "ALReplaceWith" &&
+                node.ArgumentList.Arguments.Count == 2 &&
+                node.ArgumentList.Arguments[0].Expression.ToString().StartsWith("DataError"))
+            {
+                var helperName = xmlMethodName switch
+                {
+                    "ALAddAfterSelf" => "XmlAddAfterSelf",
+                    "ALAddBeforeSelf" => "XmlAddBeforeSelf",
+                    _ => "XmlReplaceWith"
+                };
+                var receiverExpr = (ExpressionSyntax)Visit(xmlDocMa.Expression)!;
+                var secondArg = (ExpressionSyntax)Visit(node.ArgumentList.Arguments[1].Expression)!;
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName(helperName)),
+                    SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList(new[]
+                    {
+                        SyntaxFactory.Argument(receiverExpr),
+                        SyntaxFactory.Argument(secondArg)
+                    }))).WithTriviaFrom(node);
+            }
+        }
+
         // Now recurse into children first
         var visited = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
 
