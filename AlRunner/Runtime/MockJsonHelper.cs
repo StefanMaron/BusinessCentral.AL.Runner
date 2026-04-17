@@ -29,6 +29,20 @@ public static class MockJsonHelper
             BindingFlags.Instance | BindingFlags.NonPublic,
             null, new[] { typeof(JToken), typeof(bool) }, null)!;
 
+    // BC's native IsUndefined property on NavJsonValue correctly identifies the
+    // "fresh variable" undefined state (which uses an internal BC representation
+    // that differs from JValue.CreateUndefined()).
+    private static readonly PropertyInfo? NavJsonValueIsUndefinedProp =
+        typeof(NavJsonValue).GetProperty("IsUndefined",
+            BindingFlags.Instance | BindingFlags.Public);
+
+    // BC's ALSetValueToUndefined sets the internal undefined state that IsUndefined
+    // natively checks — more reliable than manually setting JValue.CreateUndefined().
+    private static readonly MethodInfo? NavJsonValueALSetValueToUndefinedMethod =
+        typeof(NavJsonValue).GetMethod("ALSetValueToUndefined",
+            BindingFlags.Instance | BindingFlags.Public,
+            null, new[] { typeof(DataError) }, null);
+
     private static JToken GetBackingToken(NavJsonToken token)
         => (JToken)BackingTokenProp.GetValue(token)!;
 
@@ -804,9 +818,16 @@ public static class MockJsonHelper
     /// </summary>
     public static bool IsUndefined(NavJsonToken token, DataError errorLevel = default)
     {
-        // Fallback path: BC does NOT emit ALIsUndefined() as an invocation — it uses
-        // a native property (IsUndefined) on NavJsonValue.  This method is only reached
-        // if a future BC version redirects the call here.  Check the backing token type.
+        // Use BC's own IsUndefined property via reflection — it correctly identifies
+        // both the fresh-variable undefined state (BC's internal representation) and
+        // the state after SetValueToUndefined.  Avoid the backing-token heuristic
+        // which cannot detect BC's internal "undefined" marker.
+        if (token is NavJsonValue jv && NavJsonValueIsUndefinedProp != null)
+        {
+            try { return (bool)(NavJsonValueIsUndefinedProp.GetValue(jv) ?? false); }
+            catch { /* fall through to backing-token heuristic */ }
+        }
+        // Fallback for non-NavJsonValue tokens or if reflection fails.
         var backing = BackingTokenProp.GetValue(token) as JToken;
         if (backing == null) return true;
         return backing.Type == JTokenType.None
@@ -822,7 +843,21 @@ public static class MockJsonHelper
     /// IsUndefined property returns true after this call.
     /// </summary>
     public static void SetValueToUndefined(NavJsonToken token, DataError errorLevel = default)
-        => SetBackingToken(token, JValue.CreateUndefined());
+    {
+        // Call BC's own ALSetValueToUndefined so that the resulting state is exactly
+        // what BC's IsUndefined property expects — keeps SetValueToUndefined + IsUndefined
+        // consistent without relying on the Newtonsoft JValue.CreateUndefined() mapping.
+        if (token is NavJsonValue jv && NavJsonValueALSetValueToUndefinedMethod != null)
+        {
+            try
+            {
+                NavJsonValueALSetValueToUndefinedMethod.Invoke(jv, new object[] { errorLevel });
+                return;
+            }
+            catch { /* fall through to backing-token fallback */ }
+        }
+        SetBackingToken(token, JValue.CreateUndefined());
+    }
 
     private static bool IsSupportedTokenType(JToken token)
     {
