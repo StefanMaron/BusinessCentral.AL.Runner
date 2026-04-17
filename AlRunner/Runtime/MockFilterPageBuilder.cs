@@ -126,12 +126,18 @@ public class MockFilterPageBuilder
     // ── RunModal ──────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Simulate running the filter dialog. In standalone mode no UI is shown;
-    /// returns FormResult.OK (equivalent to Action::OK).
+    /// Simulate running the filter dialog. In standalone mode no UI is shown.
+    /// <para>
+    /// <c>FilterPageBuilder.RunModal()</c> in AL returns <c>Boolean</c> (true = user accepted).
+    /// BC emits <c>fPB.ALRunModal(DataError)</c>; the return type must be <c>bool</c> so that
+    /// compound boolean expressions like <c>cond &amp; fPB.ALRunModal()</c> compile without
+    /// CS0019 ("Operator '&amp;' cannot be applied to operands of type 'bool' and 'FormResult'").
+    /// </para>
+    /// Always returns <c>true</c> in standalone mode (equivalent to Action::OK accepted).
     /// </summary>
-    public FormResult ALRunModal()
-        => FormResult.OK;
+    public bool ALRunModal()
+        => true;
 
-    public FormResult ALRunModal(DataError errorLevel)
-        => FormResult.OK;
+    public bool ALRunModal(DataError errorLevel)
+        => true;
 }

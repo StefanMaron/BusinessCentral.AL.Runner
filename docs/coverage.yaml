@@ -2735,8 +2735,8 @@ FilterPageBuilder.RunModal:
   layer: runtime-api
   category: FilterPageBuilder
   status: covered
-  notes: overloads=1; MockFilterPageBuilder; returns FormResult.OK (Action::OK) — no UI
-  tests: tests/bucket-2/179-filter-page-builder
+  notes: "overloads=2; MockFilterPageBuilder; returns bool (true=OK) — fixed CS0019 (was returning FormResult causing 'bool & FormResult' error in compound boolean expressions); BC emits ALRunModal(DataError) expecting bool return"
+  tests: tests/bucket-2/179-filter-page-builder, tests/bucket-1/284-formresult-operator
 
 FilterPageBuilder.SetView:
   layer: runtime-api
