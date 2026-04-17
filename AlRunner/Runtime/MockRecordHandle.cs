@@ -2892,6 +2892,30 @@ public class MockRecordHandle
     public bool ALWritePermission => true;
 
     /// <summary>
+    /// AL RecordLevelLocking — returns whether record-level locking is in effect.
+    /// In standalone mode there is no SQL locking, so always returns false.
+    /// </summary>
+    public bool ALRecordLevelLocking => false;
+
+    /// <summary>
+    /// AL FieldName — returns the AL field name (identifier) for a given field number.
+    /// Looks up from TableFieldRegistry; falls back to "FieldNN" if not registered.
+    /// BC lowers <c>Rec.FieldName(SomeField)</c> to <c>rec.ALFieldName(fieldNo)</c>.
+    /// </summary>
+    public NavText ALFieldName(int fieldNo)
+    {
+        var name = TableFieldRegistry.GetFieldName(_tableId, fieldNo);
+        return new NavText(name ?? $"Field{fieldNo}");
+    }
+
+    /// <summary>
+    /// AL CurrentCompany — returns the current company name.
+    /// In standalone mode returns the configured company name (default "CRONUS").
+    /// This mirrors <c>CompanyName()</c> built-in, which BC also routes here on record instances.
+    /// </summary>
+    public string ALCurrentCompany => MockSession.GetCompanyName();
+
+    /// <summary>
     /// AL SetPermissionFilter — applies permission-based filtering.
     /// No-op in standalone mode (no permission enforcement).
     /// </summary>

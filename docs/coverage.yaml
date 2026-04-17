@@ -6293,14 +6293,16 @@ Table.CountApprox:
 Table.CurrentCompany:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/180-table-metadata-stubs
+  notes: overloads=1; MockRecordHandle.ALCurrentCompany → MockSession.GetCompanyName() (default "CRONUS")
 
 Table.CurrentKey:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/180-table-metadata-stubs
+  notes: overloads=1; MockRecordHandle.ALCurrentKey — returns comma-separated field names from current sort key
 
 Table.Delete:
   layer: runtime-api
@@ -6330,26 +6332,30 @@ Table.DeleteLinks:
 Table.FieldActive:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/180-table-metadata-stubs
+  notes: overloads=1; MockRecordHandle.ALFieldActive(fieldNo) — always true in standalone (no field disabling)
 
 Table.FieldCaption:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/180-table-metadata-stubs
+  notes: overloads=1; MockRecordHandle.ALFieldCaption(fieldNo) — from TableFieldRegistry; falls back to "FieldNN"
 
 Table.FieldError:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=2
+  status: covered
+  tests: tests/bucket-1/180-table-metadata-stubs
+  notes: overloads=2; MockRecordHandle.ALFieldError(fieldNo) / ALFieldError(fieldNo, msg) — throws validation error
 
 Table.FieldName:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/180-table-metadata-stubs
+  notes: overloads=1; MockRecordHandle.ALFieldName(fieldNo) — from TableFieldRegistry; falls back to "FieldNN"
 
 Table.FieldNo:
   layer: runtime-api
@@ -6502,8 +6508,9 @@ Table.IsEmpty:
 Table.IsTemporary:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/180-table-metadata-stubs
+  notes: overloads=1; MockRecordHandle.ALIsTemporary — reflects _isTemporary flag set at construction
 
 Table.LoadFields:
   layer: runtime-api
@@ -6572,20 +6579,23 @@ Table.ReadIsolation:
 Table.ReadPermission:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/180-table-metadata-stubs
+  notes: overloads=1; MockRecordHandle.ALReadPermission — always true (no permission system in standalone)
 
 Table.RecordId:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/180-table-metadata-stubs
+  notes: overloads=1; MockRecordHandle.ALRecordId — returns NavRecordId.Default (no-crash stub); TableNo returns 0 in standalone
 
 Table.RecordLevelLocking:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/180-table-metadata-stubs
+  notes: overloads=1; MockRecordHandle.ALRecordLevelLocking — always false (no SQL locking in standalone)
 
 Table.Relation:
   layer: runtime-api
@@ -6693,14 +6703,16 @@ Table.SetView:
 Table.TableCaption:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/180-table-metadata-stubs
+  notes: overloads=1; MockRecordHandle.ALTableCaption — from TableFieldRegistry; falls back to ALTableName
 
 Table.TableName:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/180-table-metadata-stubs
+  notes: overloads=1; MockRecordHandle.ALTableName — from TableFieldRegistry; falls back to "TableNN"
 
 Table.TestField:
   layer: runtime-api
@@ -6737,8 +6749,9 @@ Table.Validate:
 Table.WritePermission:
   layer: runtime-api
   category: Table
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/180-table-metadata-stubs
+  notes: overloads=1; MockRecordHandle.ALWritePermission — always true (no permission system in standalone)
 
 # ── TaskScheduler ───────────────────────────────────────────────
 
