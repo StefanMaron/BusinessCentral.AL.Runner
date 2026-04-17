@@ -110,4 +110,18 @@ public class MockMediaSet : NavValue
     /// <c>MediaSet.ExportFile(FileName)</c>. Returns 0 — no blob data in standalone mode.
     /// </summary>
     public int ALExport(DataError errorLevel, string fileName) => 0;
+
+    // ── FindOrphans ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// BC emits <c>MockMediaSet.ALFindOrphans(errorLevel)</c> for the static
+    /// <c>MediaSet.FindOrphans()</c>. Returns an empty list — no orphaned media
+    /// in a standalone test environment.
+    /// AL <c>List of [Guid]</c> compiles to <c>NavList&lt;System.Guid&gt;</c>.
+    /// </summary>
+    public static NavList<Guid> ALFindOrphans(DataError errorLevel)
+        => NavList<Guid>.Default;
+
+    public static NavList<Guid> ALFindOrphans()
+        => NavList<Guid>.Default;
 }

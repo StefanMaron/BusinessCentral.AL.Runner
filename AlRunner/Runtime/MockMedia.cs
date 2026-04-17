@@ -225,12 +225,13 @@ public class MockMedia : NavValue
     /// <summary>
     /// BC emits <c>NavMedia.ALFindOrphans(errorLevel)</c> for the static <c>Media.FindOrphans()</c>.
     /// Returns an empty list — no orphaned media in a standalone test environment.
+    /// AL <c>List of [Guid]</c> compiles to <c>NavList&lt;System.Guid&gt;</c>.
     /// </summary>
-    public static NavList<NavGuid> ALFindOrphans(DataError errorLevel)
-        => NavList<NavGuid>.Default;
+    public static NavList<Guid> ALFindOrphans(DataError errorLevel)
+        => NavList<Guid>.Default;
 
-    public static NavList<NavGuid> ALFindOrphans()
-        => NavList<NavGuid>.Default;
+    public static NavList<Guid> ALFindOrphans()
+        => NavList<Guid>.Default;
 
     // ── GetDocumentUrl ────────────────────────────────────────────────────────────
 

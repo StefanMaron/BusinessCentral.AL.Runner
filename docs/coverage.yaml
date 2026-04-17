@@ -4016,8 +4016,10 @@ Media.ExportStream:
 Media.FindOrphans:
   layer: runtime-api
   category: Media
-  status: gap
-  notes: "BC 17+ method — not recognised by the BC 16.2 AL compiler used for transpilation; MockMedia.ALFindOrphans() is implemented but untestable from AL until the compiler is upgraded"
+  status: covered
+  tests:
+    - tests/bucket-1/280-media-findorphans
+  notes: "Static method returning List of [Guid]; MockMedia.ALFindOrphans() returns NavList<Guid>.Default (empty list) — no orphaned media in standalone mode."
 
 Media.HasValue:
   layer: runtime-api
@@ -4072,8 +4074,10 @@ MediaSet.ExportFile:
 MediaSet.FindOrphans:
   layer: runtime-api
   category: MediaSet
-  status: gap
-  notes: "BC 17+ method — not recognised by the BC 16.2 AL compiler used for transpilation; same compiler limitation as Media.FindOrphans"
+  status: covered
+  tests:
+    - tests/bucket-1/280-media-findorphans
+  notes: "Static method returning List of [Guid]; MockMediaSet.ALFindOrphans() returns NavList<Guid>.Default (empty list) — no orphaned media in standalone mode."
 
 MediaSet.ImportFile:
   layer: runtime-api
