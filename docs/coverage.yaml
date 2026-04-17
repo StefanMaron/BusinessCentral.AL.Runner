@@ -1617,8 +1617,10 @@ Database.Commit:
 Database.CompanyName:
   layer: runtime-api
   category: Database
-  status: stub
-  notes: overloads=1; returns "CRONUS" by default; configurable via --company-name CLI flag
+  status: covered
+  notes: overloads=1; returns "CRONUS" by default; configurable via --company-name CLI flag or "AL Runner Config".SetCompanyName(). Per-test reset restores the default.
+  tests:
+    - tests/bucket-1/242-company-name
 
 Database.CopyCompany:
   layer: runtime-api
