@@ -4001,7 +4001,7 @@ Media.ExportFile:
   layer: runtime-api
   category: Media
   status: covered
-  notes: overloads=1
+  notes: "overloads=2; BC emits ALExport(DataError, fileName) — returns false (no data in standalone)"
   tests:
     - tests/bucket-1/272-media
 
@@ -4009,7 +4009,7 @@ Media.ExportStream:
   layer: runtime-api
   category: Media
   status: covered
-  notes: overloads=1
+  notes: overloads=2
   tests:
     - tests/bucket-1/272-media
 
@@ -4023,13 +4023,15 @@ Media.HasValue:
   layer: runtime-api
   category: Media
   status: covered
-  notes: overloads=1
+  notes: "overloads=1; BC emits ALHasValue property (not method)"
+  tests:
+    - tests/bucket-1/272-media
 
 Media.ImportFile:
   layer: runtime-api
   category: Media
   status: covered
-  notes: "overloads=3; BC 16.2 signature requires (FileName, Description[, MimeType]) — Description is required"
+  notes: "overloads=4; BC emits ALImport(DataError, fileName, description[, mimeType]) — returns Guid (media ID)"
   tests:
     - tests/bucket-1/272-media
 

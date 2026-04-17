@@ -31,15 +31,58 @@ public class MockMedia : NavValue
 
     // ── HasValue ─────────────────────────────────────────────────────────────────
 
-    /// <summary>BC emits <c>m.ALHasValue(errorLevel)</c> for <c>Media.HasValue()</c>.</summary>
-    public bool ALHasValue(DataError errorLevel) => _hasValue;
-    public bool ALHasValue() => _hasValue;
+    /// <summary>
+    /// BC emits <c>m.ALHasValue</c> (property access) for <c>Media.HasValue()</c>.
+    /// The legacy method overloads are kept for any older-generated code paths.
+    /// </summary>
+    public bool ALHasValue => _hasValue;
 
     // ── MediaId ──────────────────────────────────────────────────────────────────
 
     /// <summary>BC emits <c>m.ALMediaId(errorLevel)</c> for <c>Media.MediaId()</c>.</summary>
     public NavGuid ALMediaId(DataError errorLevel) => new NavGuid(_id);
     public NavGuid ALMediaId() => new NavGuid(_id);
+
+    // ── ALImport (BC-emitted name for Media.ImportFile) ───────────────────────────
+
+    /// <summary>
+    /// BC emits <c>m.ALImport(errorLevel, fileName, description)</c>
+    /// for <c>Media.ImportFile(FileName, Description)</c>.
+    /// Returns a stable per-instance GUID (the media ID).
+    /// </summary>
+    public Guid ALImport(DataError errorLevel, NavText fileName, NavText description)
+    {
+        _hasValue = true;
+        return _id;
+    }
+
+    public Guid ALImport(DataError errorLevel, string fileName, string description)
+    {
+        _hasValue = true;
+        return _id;
+    }
+
+    public Guid ALImport(DataError errorLevel, NavText fileName, NavText description, NavText mimeType)
+    {
+        _hasValue = true;
+        return _id;
+    }
+
+    public Guid ALImport(DataError errorLevel, string fileName, string description, string mimeType)
+    {
+        _hasValue = true;
+        return _id;
+    }
+
+    // ── ALExport (BC-emitted name for Media.ExportFile) ───────────────────────
+
+    /// <summary>
+    /// BC emits <c>m.ALExport(errorLevel, fileName)</c>
+    /// for <c>Media.ExportFile(FileName)</c>.
+    /// Returns false — no blob data in standalone mode.
+    /// </summary>
+    public bool ALExport(DataError errorLevel, NavText fileName) => false;
+    public bool ALExport(DataError errorLevel, string fileName) => false;
 
     // ── ImportFile ───────────────────────────────────────────────────────────────
 
