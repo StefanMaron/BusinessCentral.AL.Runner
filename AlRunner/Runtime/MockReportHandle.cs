@@ -298,8 +298,17 @@ public class MockReportHandle
         handle.RunModal();
     }
 
+    // ── Instance Print method ────────────────────────────────────────────────
+    // BC emits rep.Print(requestPageXml) for Report.Print() on an instance variable.
+    /// <summary>Instance <c>Rep.Print(requestPageXml)</c> — no-op in standalone mode.</summary>
+    public void Print(string requestPageXml) { }
+
     // Report.Execute / Report.Print — no-ops in standalone mode
     public static void StaticExecute(int reportId) { }
+
+    /// <summary>BC emits <c>MockReportHandle.StaticExecute(reportId, requestPage)</c> for <c>Report.Execute(N, requestPage)</c>.</summary>
+    public static void StaticExecute(int reportId, string requestPage) { }
+
     public static void StaticPrint(int reportId) { }
 
     // Report.SaveAs* — no-ops (no real file I/O in standalone mode)
@@ -330,5 +339,17 @@ public class MockReportHandle
 
     // Report.ValidateAndPrepareLayout / Report.WordXmlPart — no-ops
     public static void StaticValidateAndPrepareLayout(int reportId) { }
+
+    /// <summary>
+    /// BC emits <c>MockReportHandle.StaticValidateAndPrepareLayout(errorLevel, reportId, inStreamIn, ByRef&lt;inStreamOut&gt;, layoutType)</c>
+    /// for <c>Report.ValidateAndPrepareLayout(N, InStrIn, InStrOut, LayoutType)</c>. No-op in standalone mode.
+    /// </summary>
+    public static void StaticValidateAndPrepareLayout(
+        DataError errorLevel,
+        int reportId,
+        MockInStream inStreamIn,
+        ByRef<MockInStream> inStreamOut,
+        object layoutType) { }
+
     public static string StaticWordXmlPart(int reportId) => string.Empty;
 }
