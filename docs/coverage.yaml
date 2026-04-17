@@ -5951,8 +5951,8 @@ System.CalcDate:
 System.CanLoadType:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1; requires DotNet type variable — not testable without DotNet package references; stub not implemented (DotNet type resolution unavailable in standalone mode)
+  status: not-possible
+  notes: requires DotNet type parameter — unavailable in standalone mode; no DotNet type resolution without BC service tier
 
 System.CaptionClassTranslate:
   layer: runtime-api
@@ -6186,8 +6186,8 @@ System.GetDocumentUrl:
 System.GetDotNetType:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1; requires DotNet variable — not testable without DotNet package references; stub not implemented
+  status: not-possible
+  notes: requires DotNet type parameter — unavailable in standalone mode; no DotNet type resolution without BC service tier
 
 System.GetLastErrorCallStack:
   layer: runtime-api
