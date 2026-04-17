@@ -3184,8 +3184,10 @@ JsonArray.GetArray:
 JsonArray.GetBigInteger:
   layer: runtime-api
   category: JsonArray
-  status: stub
-  notes: overloads=1. BC 21+ typed overload not present in AL 16.2. Indirectly reachable via Get + AsValue().AsBigInteger().
+  status: covered
+  notes: overloads=1. Works natively via NavJsonArray; single-arg form GetBigInteger(idx) returns BigInteger directly.
+  tests:
+    - tests/bucket-1/183-jsonarray-extended-getters
 
 JsonArray.GetBoolean:
   layer: runtime-api
@@ -3197,26 +3199,34 @@ JsonArray.GetBoolean:
 JsonArray.GetByte:
   layer: runtime-api
   category: JsonArray
-  status: stub
-  notes: overloads=1. BC 21+ typed overload not present in AL 16.2.
+  status: covered
+  notes: overloads=1. Works natively via NavJsonArray; single-arg form GetByte(idx) returns Byte directly.
+  tests:
+    - tests/bucket-1/183-jsonarray-extended-getters
 
 JsonArray.GetChar:
   layer: runtime-api
   category: JsonArray
-  status: stub
-  notes: overloads=1. BC 21+ typed overload not present in AL 16.2.
+  status: covered
+  notes: overloads=1. Works natively via NavJsonArray; single-arg form GetChar(idx) returns Char directly.
+  tests:
+    - tests/bucket-1/183-jsonarray-extended-getters
 
 JsonArray.GetDate:
   layer: runtime-api
   category: JsonArray
-  status: stub
-  notes: overloads=1. BC 21+ typed overload not present in AL 16.2.
+  status: covered
+  notes: overloads=1. Works natively via NavJsonArray; single-arg form GetDate(idx) returns Date directly.
+  tests:
+    - tests/bucket-1/183-jsonarray-extended-getters
 
 JsonArray.GetDateTime:
   layer: runtime-api
   category: JsonArray
-  status: stub
-  notes: overloads=1. BC 21+ typed overload not present in AL 16.2.
+  status: covered
+  notes: overloads=1. Works natively via NavJsonArray; single-arg form GetDateTime(idx) returns DateTime directly.
+  tests:
+    - tests/bucket-1/183-jsonarray-extended-getters
 
 JsonArray.GetDecimal:
   layer: runtime-api
@@ -3228,8 +3238,10 @@ JsonArray.GetDecimal:
 JsonArray.GetDuration:
   layer: runtime-api
   category: JsonArray
-  status: stub
-  notes: overloads=1. BC 21+ typed overload not present in AL 16.2.
+  status: covered
+  notes: overloads=1. Works natively via NavJsonArray; single-arg form GetDuration(idx) returns Duration directly.
+  tests:
+    - tests/bucket-1/183-jsonarray-extended-getters
 
 JsonArray.GetInteger:
   layer: runtime-api
@@ -3248,8 +3260,10 @@ JsonArray.GetObject:
 JsonArray.GetOption:
   layer: runtime-api
   category: JsonArray
-  status: stub
-  notes: overloads=1. BC 21+ typed overload not present in AL 16.2.
+  status: covered
+  notes: overloads=1. Works natively via NavJsonArray; single-arg form GetOption(idx) returns Integer ordinal directly.
+  tests:
+    - tests/bucket-1/183-jsonarray-extended-getters
 
 JsonArray.GetText:
   layer: runtime-api
@@ -3261,8 +3275,10 @@ JsonArray.GetText:
 JsonArray.GetTime:
   layer: runtime-api
   category: JsonArray
-  status: stub
-  notes: overloads=1. BC 21+ typed overload not present in AL 16.2.
+  status: covered
+  notes: overloads=1. Works natively via NavJsonArray; single-arg form GetTime(idx) returns Time directly.
+  tests:
+    - tests/bucket-1/183-jsonarray-extended-getters
 
 JsonArray.IndexOf:
   layer: runtime-api
