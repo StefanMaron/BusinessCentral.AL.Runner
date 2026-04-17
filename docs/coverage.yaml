@@ -7273,8 +7273,10 @@ TestHttpRequestMessage.Path:
 TestHttpRequestMessage.QueryParameters:
   layer: runtime-api
   category: TestHttpRequestMessage
-  status: gap
-  notes: overloads=1; Dictionary of [Text,Text] return — not yet testable without web-service handler context.
+  status: covered
+  notes: overloads=1; BC emits ALQueryParameters property returning NavDictionary<NavText,NavText>; empty stub (no URI parsing in standalone)
+  tests:
+    - tests/bucket-1/190-test-infra-stubs
 
 TestHttpRequestMessage.RequestType:
   layer: runtime-api
@@ -7532,8 +7534,10 @@ TestPage.Previous:
 TestPage.RunPageBackgroundTask:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1; Requires service-tier background task infrastructure — architectural limit.
+  status: covered
+  notes: overloads=2 (taskId; taskId+recordId); returns empty NavDictionary<NavText,NavText> — no background task execution in standalone mode
+  tests:
+    - tests/bucket-1/190-test-infra-stubs
 
 TestPage.Trap:
   layer: runtime-api

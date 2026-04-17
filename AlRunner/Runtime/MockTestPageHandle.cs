@@ -370,6 +370,20 @@ public class MockTestPageHandle
         return new MockTestPageAction(() => method.Invoke(page, null));
     }
 
+    // ── RunPageBackgroundTask ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// BC emits <c>tP.Target.ALRunPageBackgroundTask(taskId)</c> for
+    /// <c>TestPage.RunPageBackgroundTask(TaskId: Integer)</c>.
+    /// Returns an empty dictionary — no background task execution in standalone mode.
+    /// </summary>
+    public NavDictionary<NavText, NavText> ALRunPageBackgroundTask(int taskId)
+        => NavDictionary<NavText, NavText>.Default;
+
+    /// <summary>Overload with optional RecordId parameter.</summary>
+    public NavDictionary<NavText, NavText> ALRunPageBackgroundTask(int taskId, object recordId)
+        => NavDictionary<NavText, NavText>.Default;
+
     /// <summary>
     /// Returns a MockTestPageAction for built-in actions (OK, Cancel, Close, etc.).
     /// BC casts FormResult enum values: GetBuiltInAction((FormResult)1) for OK.

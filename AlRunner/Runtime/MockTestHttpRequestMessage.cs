@@ -12,7 +12,7 @@ using Microsoft.Dynamics.Nav.Types;
 /// Provides in-memory defaults for all four gap properties:
 ///   Path, RequestType — empty string by default
 ///   HasSecretUri — always false in standalone mode
-///   QueryParameters — not accessible from AL directly (infrastructure method)
+///   QueryParameters — returns empty Dictionary of [Text,Text] (no URI parsing in standalone)
 /// </summary>
 public class MockTestHttpRequestMessage
 {
@@ -26,4 +26,12 @@ public class MockTestHttpRequestMessage
 
     /// <summary>Always false — no secret URI support in standalone mode.</summary>
     public bool ALHasSecretUri => false;
+
+    /// <summary>
+    /// BC emits <c>req.ALQueryParameters</c> (property) for
+    /// <c>TestHttpRequestMessage.QueryParameters()</c>.
+    /// Returns an empty dictionary — no URI query-string parsing in standalone mode.
+    /// </summary>
+    public NavDictionary<NavText, NavText> ALQueryParameters
+        => NavDictionary<NavText, NavText>.Default;
 }
