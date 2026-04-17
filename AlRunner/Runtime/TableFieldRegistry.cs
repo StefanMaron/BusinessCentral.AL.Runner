@@ -316,6 +316,24 @@ public static class TableFieldRegistry
     public static string? GetTableName(int tableId)
         => _tableNames.TryGetValue(tableId, out var name) ? name : null;
 
+    /// <summary>
+    /// Looks up a table ID by a normalised name (spaces and non-alphanumeric
+    /// characters stripped, comparison is case-insensitive).  Used by
+    /// <see cref="MockReportHandle"/> to map a data-item field name (e.g.
+    /// <c>RDTRecord</c>) back to the original table ID (e.g. <c>84500</c>
+    /// for table "RDT Record").
+    /// </summary>
+    public static int? GetTableIdByNormalizedName(string normalizedName)
+    {
+        foreach (var kv in _tableNames)
+        {
+            var stripped = System.Text.RegularExpressions.Regex.Replace(kv.Value, @"[^A-Za-z0-9]", "");
+            if (string.Equals(stripped, normalizedName, StringComparison.OrdinalIgnoreCase))
+                return kv.Key;
+        }
+        return null;
+    }
+
     /// <summary>Returns the table caption or null if not registered.</summary>
     public static string? GetTableCaption(int tableId)
         => _tableCaptions.TryGetValue(tableId, out var caption) ? caption : null;

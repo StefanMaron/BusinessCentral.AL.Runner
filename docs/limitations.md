@@ -89,9 +89,10 @@ dispatch, and report/request-page variables support a limited standalone surface
   registered, otherwise throws.
 - Request pages can be handled via `[RequestPageHandler]`, but this is handler dispatch
   only, not real request-page rendering.
-- Report variables can call limited standalone helpers such as `SetTableView()`,
-  helper procedures, `Run()`, and `RunRequestPage()`, but report layout/rendering
-  behavior is still not available.
+- Report variables support `Run()`, `RunRequestPage()`, `SetTableView()`, and
+  helper procedures. Report triggers execute: `OnPreReport`, `OnPreDataItem`,
+  `OnAfterGetRecord` (once per row in the in-memory table), `OnPostDataItem`, and
+  `OnPostReport`. Report layout/rendering is still not available.
 
 ### HTTP — partial support
 
