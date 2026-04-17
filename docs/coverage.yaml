@@ -9267,14 +9267,16 @@ XmlElement.Add:
 XmlElement.AddAfterSelf:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-xmlelement-remaining
+  notes: overloads=1. Covered via NavXmlElement native.
 
 XmlElement.AddBeforeSelf:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-xmlelement-remaining
+  notes: overloads=1. Covered via NavXmlElement native.
 
 XmlElement.AddFirst:
   layer: runtime-api
@@ -9321,26 +9323,30 @@ XmlElement.GetChildNodes:
 XmlElement.GetDescendantElements:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=3
+  status: covered
+  tests: tests/bucket-2/200-xmlelement-remaining
+  notes: overloads=3. Covered via NavXmlElement native.
 
 XmlElement.GetDescendantNodes:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-xmlelement-remaining
+  notes: overloads=1. Covered via NavXmlElement native.
 
 XmlElement.GetDocument:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-xmlelement-remaining
+  notes: overloads=1. Covered via NavXmlElement native.
 
 XmlElement.GetNamespaceOfPrefix:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-xmlelement-remaining
+  notes: overloads=1. Covered via NavXmlElement native.
 
 XmlElement.GetParent:
   layer: runtime-api
@@ -9352,8 +9358,9 @@ XmlElement.GetParent:
 XmlElement.GetPrefixOfNamespace:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-xmlelement-remaining
+  notes: overloads=1. Covered via NavXmlElement native.
 
 XmlElement.HasAttributes:
   layer: runtime-api
@@ -9408,8 +9415,9 @@ XmlElement.Name:
 XmlElement.NamespaceUri:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-xmlelement-remaining
+  notes: overloads=1. Covered via NavXmlElement native.
 
 XmlElement.Remove:
   layer: runtime-api
@@ -9443,14 +9451,16 @@ XmlElement.RemoveNodes:
 XmlElement.ReplaceNodes:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-xmlelement-remaining
+  notes: overloads=1. Covered via NavXmlElement native.
 
 XmlElement.ReplaceWith:
   layer: runtime-api
   category: XmlElement
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/200-xmlelement-remaining
+  notes: overloads=1. Covered via NavXmlElement native.
 
 XmlElement.SelectNodes:
   layer: runtime-api
