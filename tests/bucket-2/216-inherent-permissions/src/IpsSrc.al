@@ -6,7 +6,7 @@
 /// virtual InherentPermissionsList to override.
 codeunit 97905 "IPS Src"
 {
-    InherentPermissions = TableData "IPS Table" = R;
+    InherentPermissions = tabledata "IPS Table" = R;
 
     procedure Echo(s: Text): Text
     begin
