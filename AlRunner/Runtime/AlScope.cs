@@ -2349,15 +2349,19 @@ public static class AlCompat
     }
 
     // NavXmlDeclaration.ALSelectNodes throws NavNCLNotSupportedOperationException.
-    // Declarations have no child nodes — return false and leave the caller's
-    // (already-initialized empty) nodeListRef unchanged.
+    // Declarations have no child nodes — populate nodeListRef with a new empty
+    // NavXmlNodeList so the caller's Count() call doesn't throw on a null ref.
     // ALSelectNodes takes ByRef<NavXmlNodeList> (BC's output-parameter wrapper).
     public static bool XmlSelectNodes(object node, NavText xpath, ByRef<NavXmlNodeList> nodeListRef)
     {
         if (node is NavXmlDeclaration)
+        {
+            nodeListRef.Value = new NavXmlNodeList();
             return false;
+        }
         if (node is NavXmlNode n)
             return n.ALSelectNodes(DataError.ThrowError, xpath, nodeListRef);
+        nodeListRef.Value = new NavXmlNodeList();
         return false;
     }
 
