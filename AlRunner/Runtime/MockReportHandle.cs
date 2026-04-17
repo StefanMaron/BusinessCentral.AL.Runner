@@ -298,6 +298,12 @@ public class MockReportHandle
         handle.RunModal();
     }
 
+    /// <summary>
+    /// AL's <c>Clear(rep)</c> — the rewriter emits <c>rep.Clear()</c>. Resets the
+    /// report handle to its default (un-run) state. No-op in standalone mode.
+    /// </summary>
+    public void Clear() { }
+
     // ── Instance Print method ────────────────────────────────────────────────
     // BC emits rep.Print(requestPageXml) for Report.Print() on an instance variable.
     /// <summary>Instance <c>Rep.Print(requestPageXml)</c> — no-op in standalone mode.</summary>
