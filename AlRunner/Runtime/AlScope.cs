@@ -2440,7 +2440,7 @@ public static class AlCompat
                     }
                     var instance = (NavXmlNodeList)ctor.Invoke(args);
                     // Sanity check: Count must not throw.
-                    _ = instance.Count;
+                    GC.KeepAlive(instance.Count);
                     _emptyNavXmlNodeList = instance;
                     return instance;
                 }
