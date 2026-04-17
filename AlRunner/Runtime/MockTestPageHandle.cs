@@ -52,7 +52,7 @@ public class MockTestPageHandle
     public void ALOpenView() { _editable = false; }
     public void ALOpenNew() { _editable = true; }
     public void ALClose() { }
-    public void ALTrap() { }
+    public void ALTrap() { HandlerRegistry.RegisterTrap(PageId, this); }
     public void ALNew() { }
     public void ClearReference() { }
 

@@ -7391,8 +7391,9 @@ TestPage.RunPageBackgroundTask:
 TestPage.Trap:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/103-testpage-trap
+  notes: overloads=1; registers trap in HandlerRegistry; consumed by next MockFormHandle.RunModal on same pageId.
 
 TestPage.ValidationErrorCount:
   layer: runtime-api

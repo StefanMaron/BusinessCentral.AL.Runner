@@ -39,6 +39,9 @@ public static class HandlerRegistry
     // Registered send notification handler: method that takes (ByRef<MockNotification> notification) and returns bool
     private static MethodInfo? _sendNotificationHandler;
 
+    // Trap registry: TestPage.Trap() registers a handle here; consumed by the next RunModal on the same pageId.
+    private static readonly Dictionary<int, MockTestPageHandle> _trapHandles = new();
+
     /// <summary>
     /// Register handlers for the current test. Called by the Executor before each test.
     /// </summary>
@@ -173,13 +176,20 @@ public static class HandlerRegistry
     }
 
     /// <summary>
+    /// Register a TestPage trap for the given page ID. Consumed by the next RunModal on that page.
+    /// </summary>
+    public static void RegisterTrap(int pageId, MockTestPageHandle handle) => _trapHandles[pageId] = handle;
+
+    /// <summary>
     /// Invoke the registered modal page handler for the given page ID.
-    /// Creates a MockTestPageHandle, passes it to the handler, and returns
-    /// the FormResult set by the handler (via OK/Cancel action invocation).
-    /// Throws if no handler is registered.
+    /// If a Trap is registered for this page, consumes it and returns OK.
+    /// Throws if neither a trap nor a ModalPageHandler is registered.
     /// </summary>
     public static FormResult InvokeModalPageHandler(int pageId)
     {
+        if (_trapHandles.Remove(pageId))
+            return FormResult.OK;
+
         if (_modalPageHandler == null || _parentInstance == null)
             throw new Exception($"No ModalPageHandler registered for page {pageId}. " +
                 "Add [HandlerFunctions('YourHandler')] to the test and a " +
@@ -368,5 +378,6 @@ public static class HandlerRegistry
         _requestPageHandler = null;
         _reportHandler = null;
         _sendNotificationHandler = null;
+        _trapHandles.Clear();
     }
 }
