@@ -14,22 +14,26 @@ codeunit 95100 "WSAC Src"
 
     // ObjectType — no-throw only; ObjectType enum cannot be compared to Integer in AL
     procedure SetObjectTypeNoThrow(var Ctx: WebServiceActionContext)
+    var
+        ObjType: ObjectType;
     begin
         Ctx.SetObjectType(ObjectType::Codeunit);
-        Ctx.GetObjectType();
+        ObjType := Ctx.GetObjectType();
     end;
 
     // ResultCode — no-throw only; = operator not supported for WebServiceActionResultCode in AL 26-28
     procedure SetResultCodeNoThrow(var Ctx: WebServiceActionContext)
+    var
+        RC: WebServiceActionResultCode;
     begin
         Ctx.SetResultCode(WebServiceActionResultCode::Created);
-        Ctx.GetResultCode();
+        RC := Ctx.GetResultCode();
     end;
 
-    // AddEntityKey — no-throw; uses integer table ID to avoid base-app dependency
+    // AddEntityKey — no-throw; signature is (Integer fieldId, Variant value)
     procedure CallAddEntityKey(var Ctx: WebServiceActionContext): Boolean
     begin
-        Ctx.AddEntityKey(18, 'No.', '10000');
+        Ctx.AddEntityKey(1, '10000');
         exit(true);
     end;
 }

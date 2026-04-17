@@ -17,6 +17,8 @@ public class MockWebServiceActionContext
 {
     public MockWebServiceActionContext() { }
 
+    public static MockWebServiceActionContext Default => new MockWebServiceActionContext();
+
     // ------------------------------------------------------------------
     // ObjectId — integer ID of the resulting BC object
     // ------------------------------------------------------------------
@@ -30,17 +32,16 @@ public class MockWebServiceActionContext
     public int ALGetObjectId(DataError errorLevel) => _objectId;
 
     // ------------------------------------------------------------------
-    // ObjectType — BC ObjectType enum value (use object to accept the C# enum type
-    // without needing a direct reference to Microsoft.Dynamics.Nav.Runtime.ObjectType).
+    // ObjectType — BC ObjectType enum value
     // ------------------------------------------------------------------
 
-    private object? _objectType;
+    private NavObjectType _objectType;
 
-    public void ALSetObjectType(object? value) { _objectType = value; }
-    public void ALSetObjectType(DataError errorLevel, object? value) => ALSetObjectType(value);
+    public void ALSetObjectType(NavObjectType value) { _objectType = value; }
+    public void ALSetObjectType(DataError errorLevel, NavObjectType value) => ALSetObjectType(value);
 
-    public object? ALGetObjectType() => _objectType;
-    public object? ALGetObjectType(DataError errorLevel) => _objectType;
+    public NavObjectType ALGetObjectType() => _objectType;
+    public NavObjectType ALGetObjectType(DataError errorLevel) => _objectType;
 
     // ------------------------------------------------------------------
     // ResultCode — WebServiceActionResultCode enum
@@ -56,18 +57,19 @@ public class MockWebServiceActionContext
 
     // ------------------------------------------------------------------
     // AddEntityKey — stores field key-value pairs for the OData response.
+    // AL signature: AddEntityKey(fieldId: Integer; value: Variant)
     // Standalone: no OData serialisation; pairs stored in memory only.
     // ------------------------------------------------------------------
 
-    private readonly List<(int TableId, string FieldName, string FieldValue)> _entityKeys = new();
+    private readonly List<(int FieldId, object? Value)> _entityKeys = new();
 
-    public void ALAddEntityKey(int tableId, string fieldName, string fieldValue)
-        => _entityKeys.Add((tableId, fieldName, fieldValue));
+    public void ALAddEntityKey(int fieldId, object? value)
+        => _entityKeys.Add((fieldId, value));
 
-    public void ALAddEntityKey(DataError errorLevel, int tableId, string fieldName, string fieldValue)
-        => ALAddEntityKey(tableId, fieldName, fieldValue);
+    public void ALAddEntityKey(DataError errorLevel, int fieldId, object? value)
+        => ALAddEntityKey(fieldId, value);
 
     /// <summary>Read-only snapshot of added entity keys (for test assertions).</summary>
-    public IReadOnlyList<(int TableId, string FieldName, string FieldValue)> EntityKeys
+    public IReadOnlyList<(int FieldId, object? Value)> EntityKeys
         => _entityKeys.AsReadOnly();
 }
