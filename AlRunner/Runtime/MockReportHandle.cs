@@ -23,6 +23,64 @@ public class MockReportHandle
     /// </summary>
     public bool UseRequestForm { get; set; } = true;
 
+    // ── IsReadOnly / ObjectID ─────────────────────────────────────────────────
+
+    /// <summary>BC emits <c>rep.ALIsReadOnly</c> for <c>Report.IsReadOnly()</c>. Always false in standalone mode.</summary>
+    public bool ALIsReadOnly => false;
+
+    /// <summary>BC emits <c>rep.ObjectID(useIdChar)</c> for <c>Report.ObjectId(UseIdChar)</c>. Returns the report ID as text.</summary>
+    public string ObjectID(bool useIdChar) => ReportId.ToString();
+
+    // ── Layout methods ────────────────────────────────────────────────────────
+
+    /// <summary>BC emits <c>rep.DefaultLayout()</c> — returns None (no rendering in standalone mode).</summary>
+    public NavDefaultLayout DefaultLayout() => default;
+
+    /// <summary>BC emits <c>rep.RDLCLayout(errorLevel, ByRef&lt;InStream&gt;)</c> — no layout data in standalone mode.</summary>
+    public bool RDLCLayout(DataError errorLevel, ByRef<MockInStream> inStream) => false;
+
+    /// <summary>BC emits <c>rep.WordLayout(errorLevel, ByRef&lt;InStream&gt;)</c> — no layout data in standalone mode.</summary>
+    public bool WordLayout(DataError errorLevel, ByRef<MockInStream> inStream) => false;
+
+    /// <summary>BC emits <c>rep.ExcelLayout(errorLevel, ByRef&lt;InStream&gt;)</c> — no layout data in standalone mode.</summary>
+    public bool ExcelLayout(DataError errorLevel, ByRef<MockInStream> inStream) => false;
+
+    // ── TargetFormat / FormatRegion / Language ─────────────────────────────────
+
+    /// <summary>BC emits <c>rep.ALTargetFormat</c> for <c>Report.TargetFormat()</c>. Returns default (None) in standalone mode.</summary>
+    public NavReportFormat ALTargetFormat => default;
+
+    /// <summary>BC emits <c>rep.FormatRegion = value</c> for <c>Report.FormatRegion(value)</c>.</summary>
+    public string FormatRegion { get; set; } = string.Empty;
+
+    /// <summary>BC emits <c>rep.Language = value</c> for <c>Report.Language(value)</c>.</summary>
+    public int Language { get; set; } = 0;
+
+    // ── WordXmlPart ───────────────────────────────────────────────────────────
+
+    /// <summary>BC emits <c>rep.WordXmlPart()</c> for <c>Report.WordXmlPart()</c>. Returns empty in standalone mode.</summary>
+    public string WordXmlPart() => string.Empty;
+
+    // ── SaveAs* instance methods ───────────────────────────────────────────────
+
+    /// <summary>BC emits <c>rep.SaveAsPdf(errorLevel, path)</c> for <c>Report.SaveAsPdf(FileName)</c>. No-op in standalone mode.</summary>
+    public void SaveAsPdf(DataError errorLevel, string path) { }
+
+    /// <summary>BC emits <c>rep.SaveAsExcel(errorLevel, path)</c> for <c>Report.SaveAsExcel(FileName)</c>. No-op in standalone mode.</summary>
+    public void SaveAsExcel(DataError errorLevel, string path) { }
+
+    /// <summary>BC emits <c>rep.SaveAsWord(errorLevel, path)</c> for <c>Report.SaveAsWord(FileName)</c>. No-op in standalone mode.</summary>
+    public void SaveAsWord(DataError errorLevel, string path) { }
+
+    /// <summary>BC emits <c>rep.SaveAsHtml(errorLevel, path)</c> for <c>Report.SaveAsHtml(FileName)</c>. No-op in standalone mode.</summary>
+    public void SaveAsHtml(DataError errorLevel, string path) { }
+
+    /// <summary>BC emits <c>rep.SaveAsXml(errorLevel, path)</c> for <c>Report.SaveAsXml(FileName)</c>. No-op in standalone mode.</summary>
+    public void SaveAsXml(DataError errorLevel, string path) { }
+
+    /// <summary>BC emits <c>rep.SaveAs(errorLevel, params, format, ByRef&lt;OutStream&gt;)</c> for <c>Report.SaveAs(Params, Format, OutStream)</c>. No-op in standalone mode.</summary>
+    public void SaveAs(DataError errorLevel, string requestParams, NavReportFormat format, ByRef<MockOutStream> outStream) { }
+
     public MockReportHandle() { }
 
     public MockReportHandle(int reportId)

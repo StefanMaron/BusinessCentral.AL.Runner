@@ -393,15 +393,23 @@ public class RoslynRewriter : CSharpSyntaxRewriter
                 SyntaxFactory.ParseMemberDeclaration(
                     $"public {node.Identifier.Text}() {{ }}")!);
 
-            // Inject CurrReport.Skip() and CurrReport.Break() stubs.
-            // BC compiler emits these as instance calls on the report class
-            // (this.Skip(), this.Break()), but the base class is removed.
+            // Inject CurrReport.* stubs that come from the stripped NavReport base class.
+            // BC compiler emits these as instance calls on the report class, but after
+            // stripping the base class they must be provided explicitly.
             preservedMembers.Add(
                 SyntaxFactory.ParseMemberDeclaration(
                     "public void Skip() { }")!);
             preservedMembers.Add(
                 SyntaxFactory.ParseMemberDeclaration(
                     "public void Break() { }")!);
+            // Quit — CurrReport.Quit() ends the report run; no-op in standalone mode.
+            preservedMembers.Add(
+                SyntaxFactory.ParseMemberDeclaration(
+                    "public void Quit() { }")!);
+            // PrintOnlyIfDetail — CurrReport.PrintOnlyIfDetail (get/set bool property).
+            preservedMembers.Add(
+                SyntaxFactory.ParseMemberDeclaration(
+                    "public bool PrintOnlyIfDetail { get; set; }")!);
 
             // For report extensions: inject a CurrReport stub.
             // BC generates a CurrReport property that casts this.ParentObject to the
