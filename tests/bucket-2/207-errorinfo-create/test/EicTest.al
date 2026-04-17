@@ -5,13 +5,13 @@
 ///   ErrorInfo.Create(Message: Text)      — 1-arg overload
 ///   ErrorInfo.Create(Message, ErrorType) — 2-arg overload
 ///   ErrorInfo.ErrorType                  — getter/setter (ErrorType enum is BC 17+)
-codeunit 97901 "EIC Tests"
+codeunit 97901 "EIC Create Tests"
 {
     Subtype = Test;
 
     var
         Assert: Codeunit Assert;
-        Src: Codeunit "EIC Src";
+        Src: Codeunit "EIC Create Src";
 
     // ------------------------------------------------------------------
     // ErrorInfo.Create() — 0-arg static factory
