@@ -3765,14 +3765,16 @@ JsonValue.AsTime:
 JsonValue.AsToken:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/208-jsonvalue-extended
+  notes: overloads=1. Covered via NavJsonValue native — AsToken().AsValue().AsInteger() round-trips.
 
 JsonValue.Clone:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/208-jsonvalue-extended
+  notes: overloads=1. Covered via NavJsonValue native — Clone produces independent copy.
 
 JsonValue.IsNull:
   layer: runtime-api
@@ -3784,14 +3786,16 @@ JsonValue.IsNull:
 JsonValue.IsUndefined:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/208-jsonvalue-extended
+  notes: overloads=1. Covered via NavJsonValue native — default-initialised returns false (null != undefined), after SetValue also false.
 
 JsonValue.Path:
   layer: runtime-api
   category: JsonValue
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-2/208-jsonvalue-extended
+  notes: overloads=1. Covered via NavJsonValue native — nested value under "score" returns "$.score" (JSONPath notation).
 
 JsonValue.ReadFrom:
   layer: runtime-api
