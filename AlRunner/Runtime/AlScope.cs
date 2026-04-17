@@ -1561,7 +1561,7 @@ public static class AlCompat
     public static bool ALIsNotification(object? v) { v = UnwrapVariant(v); return v is MockNotification; }
     public static bool ALIsTextBuilder(object? v) { v = UnwrapVariant(v); return v is MockTextBuilder; }
     public static bool ALIsList(object? v) { v = UnwrapVariant(v); return v != null && v.GetType().IsGenericType && (v.GetType().GetGenericTypeDefinition().FullName?.StartsWith("Microsoft.Dynamics.Nav.Runtime.NavList", StringComparison.Ordinal) == true); }
-    public static bool ALIsDictionary(object? v) => false;
+    public static bool ALIsDictionary(object? v) { v = UnwrapVariant(v); return v != null && v.GetType().IsGenericType && (v.GetType().GetGenericTypeDefinition().FullName?.StartsWith("Microsoft.Dynamics.Nav.Runtime.NavDictionary", StringComparison.Ordinal) == true); }
 
     // Misc stubs — no mock types in standalone mode
     public static bool ALIsAction(object? v) => false;

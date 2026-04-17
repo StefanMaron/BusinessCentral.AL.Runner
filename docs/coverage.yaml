@@ -8236,7 +8236,7 @@ Variant.IsCodeunit:
   layer: runtime-api
   category: Variant
   status: stub
-  notes: overloads=1; always returns false (codeunit identity not tracked in Variant)
+  notes: overloads=1; checks MockCodeunitHandle — no direct test yet
 
 Variant.IsDataClassification:
   layer: runtime-api
@@ -8283,8 +8283,9 @@ Variant.IsDefaultLayout:
 Variant.IsDictionary:
   layer: runtime-api
   category: Variant
-  status: stub
-  notes: overloads=1; always returns false (no Dictionary mock in standalone mode)
+  status: covered
+  tests: tests/bucket-1/274-variant-typecheck
+  notes: overloads=1; checks NavDictionary open generic via AlCompat.ALIsDictionary
 
 Variant.IsDotNet:
   layer: runtime-api
@@ -8331,8 +8332,9 @@ Variant.IsGuid:
 Variant.IsInStream:
   layer: runtime-api
   category: Variant
-  status: stub
-  notes: overloads=1; always returns false (stream assignment to Variant not tested in standalone)
+  status: covered
+  tests: tests/bucket-1/274-variant-typecheck
+  notes: overloads=1; checks MockInStream via AlCompat.ALIsInStream
 
 Variant.IsInteger:
   layer: runtime-api
@@ -8403,8 +8405,9 @@ Variant.IsOption:
 Variant.IsOutStream:
   layer: runtime-api
   category: Variant
-  status: stub
-  notes: overloads=1; always returns false (stream assignment to Variant not tested in standalone)
+  status: covered
+  tests: tests/bucket-1/274-variant-typecheck
+  notes: overloads=1; checks MockOutStream via AlCompat.ALIsOutStream
 
 Variant.IsPromptMode:
   layer: runtime-api
@@ -8501,98 +8504,108 @@ Variant.IsWideChar:
 Variant.IsXmlAttribute:
   layer: runtime-api
   category: Variant
-  status: stub
-  notes: overloads=1; always returns false (no XML mock in standalone mode)
+  status: covered
+  tests: tests/bucket-1/274-variant-typecheck
+  notes: overloads=1; checks NavXmlAttribute via MockVariant
 
 Variant.IsXmlAttributeCollection:
   layer: runtime-api
   category: Variant
   status: stub
-  notes: overloads=1; always returns false
+  notes: overloads=1; checks NavXmlAttributeCollection — no direct test yet
 
 Variant.IsXmlCData:
   layer: runtime-api
   category: Variant
-  status: stub
-  notes: overloads=1; always returns false
+  status: covered
+  tests: tests/bucket-1/274-variant-typecheck
+  notes: overloads=1; checks NavXmlCData via MockVariant
 
 Variant.IsXmlComment:
   layer: runtime-api
   category: Variant
-  status: stub
-  notes: overloads=1; always returns false
+  status: covered
+  tests: tests/bucket-1/274-variant-typecheck
+  notes: overloads=1; checks NavXmlComment via MockVariant
 
 Variant.IsXmlDeclaration:
   layer: runtime-api
   category: Variant
-  status: stub
-  notes: overloads=1; always returns false
+  status: covered
+  tests: tests/bucket-1/274-variant-typecheck
+  notes: overloads=1; checks NavXmlDeclaration via MockVariant
 
 Variant.IsXmlDocument:
   layer: runtime-api
   category: Variant
-  status: stub
-  notes: overloads=1; always returns false
+  status: covered
+  tests: tests/bucket-1/274-variant-typecheck
+  notes: overloads=1; checks NavXmlDocument via MockVariant
 
 Variant.IsXmlDocumentType:
   layer: runtime-api
   category: Variant
   status: stub
-  notes: overloads=1; always returns false
+  notes: overloads=1; checks NavXmlDocumentType — no direct test yet
 
 Variant.IsXmlElement:
   layer: runtime-api
   category: Variant
-  status: stub
-  notes: overloads=1; always returns false
+  status: covered
+  tests: tests/bucket-1/274-variant-typecheck
+  notes: overloads=1; checks NavXmlElement via MockVariant
 
 Variant.IsXmlNamespaceManager:
   layer: runtime-api
   category: Variant
   status: stub
-  notes: overloads=1; always returns false
+  notes: overloads=1; checks NavXmlNamespaceManager — no direct test yet
 
 Variant.IsXmlNameTable:
   layer: runtime-api
   category: Variant
   status: stub
-  notes: overloads=1; always returns false
+  notes: overloads=1; checks MockXmlNameTable — no direct test yet
 
 Variant.IsXmlNode:
   layer: runtime-api
   category: Variant
-  status: stub
-  notes: overloads=1; always returns false
+  status: covered
+  tests: tests/bucket-1/274-variant-typecheck
+  notes: overloads=1; checks NavXmlNode via MockVariant
 
 Variant.IsXmlNodeList:
   layer: runtime-api
   category: Variant
-  status: stub
-  notes: overloads=1; always returns false
+  status: covered
+  tests: tests/bucket-1/274-variant-typecheck
+  notes: overloads=1; checks NavXmlNodeList via MockVariant
 
 Variant.IsXmlProcessingInstruction:
   layer: runtime-api
   category: Variant
-  status: stub
-  notes: overloads=1; always returns false
+  status: covered
+  tests: tests/bucket-1/274-variant-typecheck
+  notes: overloads=1; checks NavXmlProcessingInstruction via MockVariant
 
 Variant.IsXmlReadOptions:
   layer: runtime-api
   category: Variant
   status: stub
-  notes: overloads=1; always returns false
+  notes: overloads=1; checks NavXmlReadOptions — no direct test yet
 
 Variant.IsXmlText:
   layer: runtime-api
   category: Variant
-  status: stub
-  notes: overloads=1; always returns false
+  status: covered
+  tests: tests/bucket-1/274-variant-typecheck
+  notes: overloads=1; checks NavXmlText via MockVariant
 
 Variant.IsXmlWriteOptions:
   layer: runtime-api
   category: Variant
   status: stub
-  notes: overloads=1; always returns false
+  notes: overloads=1; checks NavXmlWriteOptions — no direct test yet
 
 # ── Version ─────────────────────────────────────────────────────
 
