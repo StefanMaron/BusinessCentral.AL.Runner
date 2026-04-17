@@ -1,5 +1,5 @@
 /// Exercises GetLastErrorCallStack().
-codeunit 60400 "LEC Src"
+codeunit 60410 "LEC Src"
 {
     procedure GetCallStack_NoPriorError(): Text
     begin
