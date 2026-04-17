@@ -1275,19 +1275,6 @@ public void ClearApplicationMemberVariables()
         if (text == "NavEventScope")
             return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.ObjectKeyword));
 
-        // NavXml* type used as expression in argument position (CS0119 fix)
-        // BC emits factory-token patterns like NavXmlDocument.ALCreate(scope, NavXmlDocument)
-        // or NavXmlDocument.ALReadFrom(scope, NavXmlDocument, text, byRef) where the type
-        // name is passed as a factory hint. Roslyn rejects this (CS0119: type not valid as
-        // expression). Replace with default(T) which is valid C# and satisfies the call.
-        if (text.StartsWith("NavXml", StringComparison.Ordinal))
-        {
-            System.Console.Error.WriteLine($"DEBUG NavXml: '{text}' parent={node.Parent?.GetType().Name ?? "null"} grandparent={node.Parent?.Parent?.GetType().Name ?? "null"}");
-            if (node.Parent is ArgumentSyntax)
-                return SyntaxFactory.DefaultExpression(SyntaxFactory.ParseTypeName(text))
-                    .WithTriviaFrom(node);
-        }
-
         return base.VisitIdentifierName(node);
     }
 
@@ -1957,24 +1944,6 @@ public void ClearApplicationMemberVariables()
         // Now recurse into children first
         var visited = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
 
-        // Strip BC-generated XML type-token arguments (CS0119 fix)
-        // BC emits patterns like NavXmlDocument.ALCreate(scope, NavXmlDocument) or
-        // NavXmlDocument.ALReadFrom(scope, NavXmlDocument, text, byRef) where the type
-        // name is passed as a factory token. This causes CS0119 in Roslyn compilation.
-        // Strip any argument that is a plain NavXml* identifier (type-as-expression).
-        // The runtime methods have overloads without the type-token argument.
-        if (visited.ArgumentList != null)
-        {
-            var argsBefore = visited.ArgumentList.Arguments;
-            var argsAfter = argsBefore.Where(a =>
-                !(a.Expression is IdentifierNameSyntax id &&
-                  id.Identifier.Text.StartsWith("NavXml", StringComparison.Ordinal))).ToList();
-            if (argsAfter.Count < argsBefore.Count)
-                visited = visited.WithArgumentList(
-                    visited.ArgumentList.WithArguments(
-                        SyntaxFactory.SeparatedList(argsAfter)));
-        }
-
         // `<expr>.ToText(...)` -> `AlCompat.Format(<expr>)` or `AlCompat.GuidToText(<expr>, false)`
         // BC lowers AL's `xVar.ToText()` to either an instance `navX.ToText(...)` call
         // or a static `ALCompiler.ToText(session, value)` call (the latter is handled
@@ -2346,7 +2315,12 @@ public void ClearApplicationMemberVariables()
             // TrappableOperationExecutor and crash in standalone mode — redirect those.
             // NOTE: do NOT add ALGet/ALContains/ALRemove/ALReplace here — those method names
             // also appear on record proxy classes and would cause a C# type mismatch if intercepted.
-            if (methodName is "ALWriteTo" or "ALWriteWithSecretsTo" or "ALReadFrom" or "ALSelectToken" or "ALSelectTokens"
+            // Guard: skip JSON intercepts when receiver is a NavXml* type.
+            // NavXmlDocument.ALReadFrom() is a static XML factory method, not a JSON operation.
+            // Without this guard the JSON ALReadFrom rule rewrites it to
+            // MockJsonHelper.ReadFrom(NavXmlDocument, ...) which causes CS0119.
+            if (!exprText.StartsWith("NavXml", StringComparison.Ordinal) &&
+                methodName is "ALWriteTo" or "ALWriteWithSecretsTo" or "ALReadFrom" or "ALSelectToken" or "ALSelectTokens"
                 or "ALGetBoolean" or "ALIsArray" or "ALIsObject" or "ALIsValue" or "ALClone"
                 or "ALKeys"
                 or "ALGetText" or "ALGetInteger" or "ALGetDecimal"

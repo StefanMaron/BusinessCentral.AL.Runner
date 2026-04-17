@@ -2031,19 +2031,6 @@ public static class RoslynCompiler
                 var formatted = SourceLineMapper.FormatDiagnostic(d);
                 Console.Error.WriteLine($"  {formatted}");
                 errorSink?.Add(formatted);
-                // DEBUG: print the specific rewritten C# line around each error
-                var errTree = d.Location.SourceTree;
-                if (errTree != null)
-                {
-                    var span = d.Location.GetLineSpan();
-                    int errLine = span.StartLinePosition.Line; // 0-based
-                    var lines = errTree.GetText().Lines;
-                    int start = Math.Max(0, errLine - 1);
-                    int end = Math.Min(lines.Count - 1, errLine + 1);
-                    Console.Error.WriteLine($"  DEBUG C# context (lines {start+1}-{end+1}):");
-                    for (int li = start; li <= end; li++)
-                        Console.Error.WriteLine($"    {li+1}: {lines[li].ToString()}");
-                }
             }
             Console.Error.WriteLine();
             Console.Error.WriteLine("  ⚑ These errors may indicate AL constructs not yet handled by the runner's rewriter.");
