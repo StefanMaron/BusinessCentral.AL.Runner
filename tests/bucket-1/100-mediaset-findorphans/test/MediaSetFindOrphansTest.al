@@ -1,4 +1,4 @@
-codeunit 118002 "MSF Tests"
+codeunit 150002 "MSF Tests"
 {
     Subtype = Test;
 
