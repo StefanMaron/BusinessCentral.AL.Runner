@@ -6084,8 +6084,10 @@ System.GetLastErrorCode:
 System.GetLastErrorObject:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests:
+    - tests/bucket-1/276-get-last-error-object
+  notes: overloads=1; ALSystemErrorHandling.ALGetLastErrorObject → AlScope.GetLastErrorObject(); returns MockVariant(errorMessage) after asserterror, empty MockVariant after ClearLastError
 
 System.GetLastErrorText:
   layer: runtime-api

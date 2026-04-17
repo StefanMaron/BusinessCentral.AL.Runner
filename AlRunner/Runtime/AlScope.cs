@@ -133,6 +133,7 @@ public class AlScope : IDisposable, ITreeObject
         {
             action();
             LastErrorText = "";
+            LastErrorObject = null;
         }
         catch (Exception ex)
         {
@@ -141,6 +142,7 @@ public class AlScope : IDisposable, ITreeObject
             while (inner is System.Reflection.TargetInvocationException tie && tie.InnerException != null)
                 inner = tie.InnerException;
             LastErrorText = inner.Message;
+            LastErrorObject = new MockVariant(inner.Message);
         }
     }
 
@@ -148,6 +150,33 @@ public class AlScope : IDisposable, ITreeObject
     /// Stores the last error message from asserterror blocks.
     /// </summary>
     public static string LastErrorText { get; set; } = "";
+
+    /// <summary>
+    /// Stores the last error object from asserterror blocks.
+    /// BC emits <c>ALSystemErrorHandling.ALGetLastErrorObject(parent)</c> for
+    /// <c>GetLastErrorObject()</c>. In standalone mode we return a MockVariant
+    /// containing the error message text, or null when no error is active.
+    /// </summary>
+    public static MockVariant? LastErrorObject { get; set; } = null;
+
+    /// <summary>
+    /// Returns the last error object as a MockVariant. Returns a default empty
+    /// MockVariant when no error is active (ClearLastError was called or no
+    /// asserterror has fired yet).
+    /// </summary>
+    public static MockVariant GetLastErrorObject()
+        => LastErrorObject ?? new MockVariant("");
+
+    /// <summary>
+    /// Resets both LastErrorText and LastErrorObject to their cleared state.
+    /// BC emits <c>ALSystemErrorHandling.ALClearLastError()</c> for <c>ClearLastError()</c>.
+    /// Rewriter rewrites that call to <c>AlScope.ClearLastErrorState()</c>.
+    /// </summary>
+    public static void ClearLastErrorState()
+    {
+        LastErrorText = "";
+        LastErrorObject = null;
+    }
 
     // ── WorkDate ─────────────────────────────────────────────────────────────
     // AL WorkDate() returns the session's "working date". In standalone mode,
