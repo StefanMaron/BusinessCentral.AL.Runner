@@ -2121,23 +2121,27 @@ public void ClearApplicationMemberVariables()
             // Redirect through AlCompat.XmlSelectNodes which is a no-op for declarations
             // (leaves the caller's empty-initialized nodeList unchanged) and delegates to
             // the normal NavXmlNode path otherwise.
-            if (xmlMethodName == "ALSelectNodes" &&
+            // ALSelectSingleNode follows the same pattern with ByRef<NavXmlNode>.
+            if (xmlMethodName is "ALSelectNodes" or "ALSelectSingleNode" &&
                 node.ArgumentList.Arguments.Count == 3 &&
                 node.ArgumentList.Arguments[0].Expression.ToString().StartsWith("DataError"))
             {
+                var helperName = xmlMethodName == "ALSelectNodes"
+                    ? "XmlSelectNodes"
+                    : "XmlSelectSingleNode";
                 var receiverExpr = (ExpressionSyntax)Visit(xmlDocMa.Expression)!;
                 var xpathExpr = (ExpressionSyntax)Visit(node.ArgumentList.Arguments[1].Expression)!;
-                var nodeListExpr = (ExpressionSyntax)Visit(node.ArgumentList.Arguments[2].Expression)!;
+                var thirdArgExpr = (ExpressionSyntax)Visit(node.ArgumentList.Arguments[2].Expression)!;
                 return SyntaxFactory.InvocationExpression(
                     SyntaxFactory.MemberAccessExpression(
                         SyntaxKind.SimpleMemberAccessExpression,
                         SyntaxFactory.IdentifierName("AlCompat"),
-                        SyntaxFactory.IdentifierName("XmlSelectNodes")),
+                        SyntaxFactory.IdentifierName(helperName)),
                     SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList(new[]
                     {
                         SyntaxFactory.Argument(receiverExpr),
                         SyntaxFactory.Argument(xpathExpr),
-                        SyntaxFactory.Argument(nodeListExpr)
+                        SyntaxFactory.Argument(thirdArgExpr)
                     }))).WithTriviaFrom(node);
             }
         }

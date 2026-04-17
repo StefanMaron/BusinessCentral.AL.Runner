@@ -2361,6 +2361,18 @@ public static class AlCompat
         return false;
     }
 
+    // NavXmlDeclaration.ALSelectSingleNode also throws NavNCLNotSupportedOperationException.
+    // Declarations have no child nodes — return false.
+    // ALSelectSingleNode takes ByRef<NavXmlNode> (BC's output-parameter wrapper).
+    public static bool XmlSelectSingleNode(object node, NavText xpath, ByRef<NavXmlNode> resultRef)
+    {
+        if (node is NavXmlDeclaration)
+            return false;
+        if (node is NavXmlNode n)
+            return n.ALSelectSingleNode(DataError.ThrowError, xpath, resultRef);
+        return false;
+    }
+
     // -----------------------------------------------------------------------
     // ErrorInfo.Create(message) safe factory
     // NavALErrorInfo.ALCreate(msg, ...) calls UpdateWithRecordInfo() which loads
