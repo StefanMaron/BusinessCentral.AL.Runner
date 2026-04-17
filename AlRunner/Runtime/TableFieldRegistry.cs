@@ -26,6 +26,11 @@ public static class TableFieldRegistry
         @"\btable\s+(\d+)\s+(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))[^{]*?\{",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    // tableextension Id "Name" extends "BaseTableName" { fields { ... } }
+    private static readonly Regex TableExtHeader = new(
+        @"\btableextension\s+\d+\s+(?:""[^""]*""|[A-Za-z_][A-Za-z0-9_]*)\s+extends\s+(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))[^{]*?\{",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     // field(id; name; type) — captures field ID, name (quoted or bare), and type
     private static readonly Regex FieldDecl = new(
         @"\bfield\s*\(\s*(\d+)\s*;\s*(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))\s*;\s*([^)]+?)\s*\)",
@@ -209,6 +214,94 @@ public static class TableFieldRegistry
                     MockRecordHandle.RegisterPrimaryKey(tableId, pkFieldIds.ToArray());
             }
         }
+
+        // Parse tableextension declarations: register extension fields under the base table ID.
+        // tableextension N "Name" extends "BaseTableName" { fields { field(...) ... } }
+        // The base table must have been registered (from a prior table declaration in this or a
+        // previously-processed source file) so we can resolve the name → ID mapping.
+        // Build a reverse map from table name → table ID for the lookup.
+        var nameToId = new Dictionary<string, int>(_tableNames.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var kv in _tableNames) nameToId[kv.Value] = kv.Key;
+
+        foreach (Match em in TableExtHeader.Matches(alSource))
+        {
+            var baseName = em.Groups[1].Success ? em.Groups[1].Value : em.Groups[2].Value;
+            if (!nameToId.TryGetValue(baseName, out var baseTableId)) continue;
+
+            int extStart = em.Index + em.Length;
+            int extDepth = 1, extI = extStart;
+            while (extI < alSource.Length && extDepth > 0)
+            {
+                if (alSource[extI] == '{') extDepth++;
+                else if (alSource[extI] == '}') extDepth--;
+                extI++;
+            }
+            if (extDepth != 0) continue;
+            var extBody = alSource.Substring(extStart, extI - extStart - 1);
+
+            if (!_byTable.TryGetValue(baseTableId, out var extFields))
+                _byTable[baseTableId] = extFields = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            if (!_fieldMeta.TryGetValue(baseTableId, out var extMeta))
+                _fieldMeta[baseTableId] = extMeta = new Dictionary<int, FieldMeta>();
+
+            foreach (Match fm in FieldDecl.Matches(extBody))
+            {
+                if (!int.TryParse(fm.Groups[1].Value, out var fieldId)) continue;
+                var name = fm.Groups[2].Success ? fm.Groups[2].Value : fm.Groups[3].Value;
+                var fieldTypeRaw = fm.Groups[4].Value.Trim();
+                extFields[name] = fieldId;
+
+                string typeName = fieldTypeRaw;
+                int? length = null;
+                var bracketIdx = fieldTypeRaw.IndexOf('[');
+                if (bracketIdx >= 0)
+                {
+                    typeName = fieldTypeRaw.Substring(0, bracketIdx).Trim();
+                    var closeBracket = fieldTypeRaw.IndexOf(']', bracketIdx);
+                    if (closeBracket > bracketIdx + 1 &&
+                        int.TryParse(fieldTypeRaw.Substring(bracketIdx + 1, closeBracket - bracketIdx - 1), out var len))
+                        length = len;
+                }
+
+                string? fieldCaption = null;
+                int searchPos = fm.Index + fm.Length;
+                while (searchPos < extBody.Length && char.IsWhiteSpace(extBody[searchPos]))
+                    searchPos++;
+                if (searchPos < extBody.Length && extBody[searchPos] == '{')
+                {
+                    int fDepth = 1, fStart = searchPos + 1, fEnd = fStart;
+                    while (fEnd < extBody.Length && fDepth > 0)
+                    {
+                        if (extBody[fEnd] == '{') fDepth++;
+                        else if (extBody[fEnd] == '}') fDepth--;
+                        fEnd++;
+                    }
+                    if (fDepth == 0)
+                    {
+                        var capMatch = CaptionProp.Match(extBody.Substring(fStart, fEnd - fStart - 1));
+                        if (capMatch.Success)
+                            fieldCaption = DecodeAlSingleQuotedString(capMatch.Groups[1].Value);
+                    }
+                }
+
+                extMeta[fieldId] = new FieldMeta(fieldId, name, fieldCaption, typeName, length);
+            }
+
+            // Enum fields in extensions
+            foreach (Match efm in FieldDeclWithType.Matches(extBody))
+            {
+                if (!int.TryParse(efm.Groups[1].Value, out var fieldId)) continue;
+                var enumName = efm.Groups[4].Success ? efm.Groups[4].Value : efm.Groups[5].Value;
+                _enumFields[(baseTableId, fieldId)] = enumName;
+            }
+
+            // Option fields in extensions
+            foreach (Match om in OptionFieldMembersRx.Matches(extBody))
+            {
+                if (!int.TryParse(om.Groups[1].Value, out var fieldId)) continue;
+                _optionMembersFields[(baseTableId, fieldId)] = om.Groups[2].Value.Trim();
+            }
+        }
     }
 
     public static int? GetFieldId(int tableId, string fieldName)
@@ -272,6 +365,18 @@ public static class TableFieldRegistry
         if (_fieldMeta.TryGetValue(tableId, out var meta))
             return meta.Count;
         return 0;
+    }
+
+    /// <summary>
+    /// Returns all declared field IDs for a table in ascending numeric order.
+    /// Used by <c>RecordRef.FieldIndex(n)</c> to enumerate fields by ordinal position.
+    /// Returns empty list if the table is not in the registry.
+    /// </summary>
+    public static IReadOnlyList<int> GetFieldIds(int tableId)
+    {
+        if (_fieldMeta.TryGetValue(tableId, out var meta))
+            return meta.Keys.OrderBy(k => k).ToList();
+        return Array.Empty<int>();
     }
 
     /// <summary>

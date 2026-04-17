@@ -156,7 +156,12 @@ public class MockRecordRef
     {
         if (_handle != null)
         {
-            var fieldNos = _handle.GetFieldNumbers();
+            // Prefer registry field IDs (all declared fields in order) over _fields.Keys
+            // (which only contains fields that have been explicitly set at runtime).
+            var fieldNos = TableFieldRegistry.GetFieldIds(_handle.TableId);
+            if (fieldNos.Count == 0)
+                fieldNos = _handle.GetFieldNumbers();
+
             if (index >= 1 && index <= fieldNos.Count)
             {
                 var fref = new MockFieldRef();

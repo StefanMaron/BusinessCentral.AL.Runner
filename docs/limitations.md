@@ -123,7 +123,7 @@ the exact value will see different results.
 | `GuiAllowed()` | False in background sessions | `false` |
 | `GetFilter(field)` | Serialised filter expression | Returns serialised filter expression (functional) |
 | Field `InitValue` | Applied on `Init()` | Not applied — type default only |
-| `FieldRef.Caption` / `.Name` | Field metadata from schema | Real values when parsed from AL source; `"FieldNN"` stub otherwise |
+| `FieldRef.Caption` / `.Name` | Field metadata from schema | Real values for all AL-compiled tables including tableextension fields; `"FieldNN"` stub only for base-app tables not compiled in the current run |
 | `Commit()` | Commits current transaction | No-op |
 
 ---

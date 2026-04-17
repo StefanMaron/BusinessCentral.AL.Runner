@@ -167,6 +167,24 @@ public class MockMedia : NavValue
     public static NavList<NavGuid> ALFindOrphans()
         => NavList<NavGuid>.Default;
 
+    // ── GetDocumentUrl ────────────────────────────────────────────────────────────
+
+    /// <summary>BC emits <c>NavMedia.ALGetDocumentUrl(errorLevel, mediaId)</c> for <c>Media.GetDocumentUrl()</c>.</summary>
+    public static NavText ALGetDocumentUrl(DataError errorLevel, NavGuid mediaId) => NavText.Empty;
+    public static NavText ALGetDocumentUrl(NavGuid mediaId) => NavText.Empty;
+
+    // ── ImportWithUrlAccess ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// BC emits <c>NavMedia.ALImportWithUrlAccess(stream, fileName, duration)</c> for
+    /// <c>ImportStreamWithUrlAccess()</c>. BC wraps the return in <c>GuidToNavText</c>,
+    /// so the method returns a <c>Guid</c> (not NavText).
+    /// </summary>
+    public static Guid ALImportWithUrlAccess(DataError errorLevel, MockInStream stream, NavText fileName, int duration) => Guid.Empty;
+    public static Guid ALImportWithUrlAccess(DataError errorLevel, MockInStream stream, string fileName, int duration) => Guid.Empty;
+    public static Guid ALImportWithUrlAccess(MockInStream stream, NavText fileName, int duration) => Guid.Empty;
+    public static Guid ALImportWithUrlAccess(MockInStream stream, string fileName, int duration) => Guid.Empty;
+
     // ── NavValue abstract members ────────────────────────────────────────────────
 
     /// <summary>NclType 56 is a placeholder; AlRunner code never reads NclType on MockMedia.</summary>
