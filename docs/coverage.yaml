@@ -8838,6 +8838,13 @@ Version.Build:
   tests: tests/bucket-1/96-version
   notes: overloads=1
 
+Version.Compare:
+  layer: runtime-api
+  category: Version
+  status: covered
+  tests: tests/bucket-2/215-version-compare
+  notes: MockVersion overloads == / != / < / > / <= / >= operators; comparison is lexicographic on (major, minor, build, revision).
+
 Version.Create:
   layer: runtime-api
   category: Version
