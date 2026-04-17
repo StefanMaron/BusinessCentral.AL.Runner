@@ -7493,20 +7493,20 @@ TestRequestPage.GetValidationError:
 TestRequestPage.GoToKey:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALGoToKey(DataError, params NavValue[]) returns true; tests/bucket-1/269-testrequestpage-methods
 
 TestRequestPage.GoToRecord:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALGoToRecord(MockRecordHandle) returns true; tests/bucket-1/269-testrequestpage-methods
 
 TestRequestPage.IsExpanded:
   layer: runtime-api
   category: TestRequestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALIsExpanded property returns false; tests/bucket-1/269-testrequestpage-methods
 
 TestRequestPage.Last:
   layer: runtime-api

@@ -336,4 +336,101 @@ codeunit 84401 "TRM Test"
     begin
         NavResult := RequestPage.FindPreviousField(RequestPage."AmountFld", 0);
     end;
+
+    // ── GoToKey ────────────────────────────────────────────────────────────────
+    [Test]
+    [HandlerFunctions('GoToKeyHandler')]
+    procedure GoToKey_ReturnsTrue()
+    begin
+        // Positive: GoToKey(keyValue) must return true on the stub.
+        Src.RunReport();
+        Assert.IsTrue(NavResult, 'GoToKey must return true on stub');
+    end;
+
+    [RequestPageHandler]
+    procedure GoToKeyHandler(var RequestPage: TestRequestPage "TRM Report")
+    begin
+        NavResult := RequestPage.GoToKey(1);
+    end;
+
+    [Test]
+    [HandlerFunctions('GoToKeyNegativeHandler')]
+    procedure GoToKey_NegativeNotFalse()
+    begin
+        // Negative: GoToKey must not return false (proving the stub does not default to false).
+        Src.RunReport();
+        Assert.IsFalse(not NavResult, 'GoToKey must not return false');
+    end;
+
+    [RequestPageHandler]
+    procedure GoToKeyNegativeHandler(var RequestPage: TestRequestPage "TRM Report")
+    begin
+        NavResult := RequestPage.GoToKey(1);
+    end;
+
+    // ── GoToRecord ─────────────────────────────────────────────────────────────
+    [Test]
+    [HandlerFunctions('GoToRecordHandler')]
+    procedure GoToRecord_ReturnsTrue()
+    begin
+        // Positive: GoToRecord(rec) must return true on the stub.
+        Src.RunReport();
+        Assert.IsTrue(NavResult, 'GoToRecord must return true on stub');
+    end;
+
+    [RequestPageHandler]
+    procedure GoToRecordHandler(var RequestPage: TestRequestPage "TRM Report")
+    var
+        Rec: Record "TRM Nav Rec";
+    begin
+        NavResult := RequestPage.GoToRecord(Rec);
+    end;
+
+    [Test]
+    [HandlerFunctions('GoToRecordNegativeHandler')]
+    procedure GoToRecord_NegativeNotFalse()
+    begin
+        // Negative: GoToRecord must not return false (proving the stub does not default to false).
+        Src.RunReport();
+        Assert.IsFalse(not NavResult, 'GoToRecord must not return false');
+    end;
+
+    [RequestPageHandler]
+    procedure GoToRecordNegativeHandler(var RequestPage: TestRequestPage "TRM Report")
+    var
+        Rec: Record "TRM Nav Rec";
+    begin
+        NavResult := RequestPage.GoToRecord(Rec);
+    end;
+
+    // ── IsExpanded ─────────────────────────────────────────────────────────────
+    [Test]
+    [HandlerFunctions('IsExpandedHandler')]
+    procedure IsExpanded_ReturnsFalse()
+    begin
+        // Positive: IsExpanded() must return false (stub — no real UI rendering).
+        Src.RunReport();
+        Assert.IsFalse(NavResult, 'IsExpanded must return false on stub');
+    end;
+
+    [RequestPageHandler]
+    procedure IsExpandedHandler(var RequestPage: TestRequestPage "TRM Report")
+    begin
+        NavResult := RequestPage.IsExpanded();
+    end;
+
+    [Test]
+    [HandlerFunctions('IsExpandedNegativeHandler')]
+    procedure IsExpanded_NegativeNotTrue()
+    begin
+        // Negative: IsExpanded must not return true (proving the stub does not default to true).
+        Src.RunReport();
+        Assert.IsTrue(not NavResult, 'IsExpanded must not return true');
+    end;
+
+    [RequestPageHandler]
+    procedure IsExpandedNegativeHandler(var RequestPage: TestRequestPage "TRM Report")
+    begin
+        NavResult := RequestPage.IsExpanded();
+    end;
 }
