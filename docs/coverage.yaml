@@ -2120,8 +2120,10 @@ ErrorInfo.Callstack:
 ErrorInfo.Collectible:
   layer: runtime-api
   category: ErrorInfo
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ErrorInfo.Collectible := true marks errors for collection. [ErrorBehavior(ErrorBehavior::Collect)] on source-side methods works via AlScope.RunBehavior. [ErrorBehavior(ErrorBehavior::Collect)] on test procedures handled by executor detecting ldc.i4.1+box in test method IL and calling AlScope.RunWithCollecting. HasCollectedErrors, ClearCollectedErrors, IsCollectingErrors, GetCollectedErrors all functional.
+  tests:
+    - tests/bucket-1/272-collectible-errors
 
 ErrorInfo.ControlName:
   layer: runtime-api

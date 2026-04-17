@@ -2315,8 +2315,34 @@ public static class Executor
                     continue;
                 }
 
+                // Detect [ErrorBehavior(ErrorBehavior::Collect)] on the test procedure.
+                // BC generates: scope.RunBehavior(false, null, ErrorBehavior.Collect) where
+                // ErrorBehavior.Collect = 1 is boxed before the call.  In IL this produces
+                // ldc.i4.1 (0x17) immediately followed by box (0x8C).  The executor bypasses
+                // RunBehavior() and calls OnRun() directly, so we must activate collecting
+                // mode manually using AlScope.RunWithCollecting().
+                bool collectingTest = false;
+                if (testMethod != null)
+                {
+                    var ilBytes = testMethod.GetMethodBody()?.GetILAsByteArray();
+                    if (ilBytes != null)
+                    {
+                        for (int i = 0; i < ilBytes.Length - 1; i++)
+                        {
+                            if (ilBytes[i] == 0x17 && ilBytes[i + 1] == 0x8C) // ldc.i4.1 + box
+                            {
+                                collectingTest = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                onRunMethod.Invoke(scope, null);
+                if (collectingTest)
+                    AlRunner.Runtime.AlScope.RunWithCollecting(() => onRunMethod.Invoke(scope, null));
+                else
+                    onRunMethod.Invoke(scope, null);
                 sw.Stop();
 
                 // Capture variable values from scope fields if enabled

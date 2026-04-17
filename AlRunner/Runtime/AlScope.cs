@@ -221,6 +221,19 @@ public class AlScope : IDisposable, ITreeObject
         _collectedErrors = null;
     }
 
+    /// <summary>
+    /// Runs <paramref name="body"/> with <see cref="IsCollectingErrors"/> set to true,
+    /// then restores the previous state.  Called by the test executor when the test
+    /// procedure itself is annotated with [ErrorBehavior(ErrorBehavior::Collect)].
+    /// </summary>
+    public static void RunWithCollecting(Action body)
+    {
+        bool was = _isCollectingErrors;
+        _isCollectingErrors = true;
+        try { body(); }
+        finally { _isCollectingErrors = was; }
+    }
+
     public static AlScope? FindTryMethodScope(AlScope scope)
     {
         // In the real runtime this walks the scope chain looking for a
@@ -467,7 +480,13 @@ public static class AlDialog
 
         if (errorInfo != null && errorInfo.ALCollectible && AlScope.IsCollectingErrors)
         {
-            AlScope.CollectedErrors.Add(errorInfo);
+            // Store a shallow clone so later mutations to the same ErrorInfo object
+            // (common in BC-generated code that reuses one local variable for multiple errors)
+            // do not overwrite already-collected messages.
+            var cloneMethod = typeof(object).GetMethod("MemberwiseClone",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var snapshot = (NavALErrorInfo)(cloneMethod!.Invoke(errorInfo, null) ?? errorInfo);
+            AlScope.CollectedErrors.Add(snapshot);
             return;
         }
 
