@@ -93,7 +93,7 @@ public sealed class DapServer : IDisposable
             finally
             {
                 BreakpointManager.Disable();
-                BreakpointManager.BreakpointHit = null;
+                BreakpointManager.ClearBreakpointHitHandlers();
                 try
                 {
                     // Signal termination after pipeline finishes

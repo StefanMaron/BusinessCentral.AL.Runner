@@ -75,6 +75,9 @@ public static class BreakpointManager
             _breakpoints.Clear();
     }
 
+    /// <summary>Remove all subscribers from the <see cref="BreakpointHit"/> event.</summary>
+    public static void ClearBreakpointHitHandlers() => BreakpointHit = null;
+
     /// <summary>
     /// Called from <see cref="AlScope.StmtHit"/> / <see cref="AlScope.CStmtHit"/>
     /// on every executed statement. Blocks the calling thread if a matching
