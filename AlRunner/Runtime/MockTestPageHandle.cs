@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
@@ -31,6 +32,13 @@ public class MockTestPageHandle
     private MockRecordHandle? _currentRecord;
     private readonly Dictionary<int, MethodInfo> _actionMethodCache = new();
     private bool _actionCacheBuilt;
+
+    // ── Source table and field-hash mapping ───────────────────────────────────
+    // Resolved lazily from the compiled page class's Rec property.
+    // Maps page field hash → source table field ID so that GoToKey/GoToRecord
+    // can populate MockTestPageField values from the positioned record.
+    private int? _sourceTableId;
+    private Dictionary<int, int>? _hashToFieldId; // fieldHash → tableFieldId
 
     /// <summary>
     /// The modal result set by invoking a built-in action (OK, Cancel, etc.).
@@ -149,14 +157,43 @@ public class MockTestPageHandle
     public bool ALFirst() => true;
 
     /// <summary>
-    /// Navigates to a specific record on the page. Stores the record so that when
-    /// a custom action's OnAction trigger fires, the page instance operates on
-    /// this record instead of its default empty one.
+    /// Navigates to a specific record on the page.  Verifies the record exists
+    /// in the in-memory store (via the primary key), sets <c>_currentRecord</c>,
+    /// and populates <see cref="MockTestPageField"/> values so that field reads
+    /// after the call reflect the positioned record.  Returns <c>true</c> when
+    /// the record is found, <c>false</c> otherwise (same semantics as BC).
     /// </summary>
     public bool ALGoToRecord(MockRecordHandle rec)
     {
-        _currentRecord = rec;
-        LinkRecToPageInstance(rec);
+        EnsureFieldMapping();
+
+        // If this page has no registered source table (e.g. TestRequestPage stubs) fall back
+        // to the original "always accept" behaviour: position on the passed record and
+        // return true, which is what the historical no-op stub did.
+        if (!_sourceTableId.HasValue || _sourceTableId.Value == 0)
+        {
+            _currentRecord = rec;
+            EnsurePageInstance();
+            if (_pageInstance != null) LinkRecToPageInstance(rec);
+            PopulateFieldsFromRecord(rec);
+            return true;
+        }
+
+        // Source table is known — do a real lookup so GoToRecord returns true only when
+        // the record actually exists in the in-memory store.
+        var pks = rec.GetPrimaryKeyFieldNos();
+        var keyValues = pks
+            .Select(pk => rec.GetFieldValueSafe(pk, default))
+            .ToArray();
+
+        var fetched = new MockRecordHandle(rec.TableId);
+        if (!fetched.ALGet(DataError.TrapError, keyValues))
+            return false;
+
+        _currentRecord = fetched;
+        EnsurePageInstance();
+        if (_pageInstance != null) LinkRecToPageInstance(fetched);
+        PopulateFieldsFromRecord(fetched);
         return true;
     }
 
@@ -248,10 +285,29 @@ public class MockTestPageHandle
     public MockRecordHandle ALGetRecord() => new MockRecordHandle(0);
 
     /// <summary>
-    /// Navigates to the record matching the given key values. Stub returns true.
-    /// BC emits: ALGoToKey(DataError.TrapError, ALCompiler.ToNavValue(...))
+    /// Navigates to the record with the given primary key value(s).
+    /// Looks up the record in the in-memory store, positions the page cursor on
+    /// it, and populates <see cref="MockTestPageField"/> values so that field
+    /// reads after the call reflect the positioned record.
+    /// Returns <c>true</c> if found, <c>false</c> if not found.
+    /// BC emits: <c>tP.ALGoToKey(DataError, ALCompiler.ToNavValue(key1), ...)</c>
     /// </summary>
-    public bool ALGoToKey(DataError errorLevel, params NavValue[] keyValues) => true;
+    public bool ALGoToKey(DataError errorLevel, params NavValue[] keyValues)
+    {
+        EnsureFieldMapping();
+        // No source-table metadata (stub page such as TestRequestPage) or table ID unresolved —
+        // fall back to the historical stub behaviour and return true.
+        if (!_sourceTableId.HasValue || _sourceTableId.Value == 0) return true;
+
+        var rec = new MockRecordHandle(_sourceTableId.Value);
+        if (!rec.ALGet(DataError.TrapError, keyValues)) return false;
+
+        _currentRecord = rec;
+        EnsurePageInstance();
+        if (_pageInstance != null) LinkRecToPageInstance(rec);
+        PopulateFieldsFromRecord(rec);
+        return true;
+    }
 
     /// <summary>
     /// Returns a filter object for the TestPage. BC emits:
@@ -317,6 +373,76 @@ public class MockTestPageHandle
     {
         var fr = (FormResult)formResult;
         return new MockTestPageAction(this, fr);
+    }
+
+    // ── Source-table / field-hash mapping ────────────────────────────────────
+
+    /// <summary>
+    /// Discovers the page's source table ID and builds the <c>_hashToFieldId</c> map
+    /// (page field hash → table field ID).
+    ///
+    /// Resolution order:
+    /// 1. <see cref="TableFieldRegistry.GetSourceTableId"/> — populated by parsing the
+    ///    <c>SourceTable = "…"</c> property from the AL page declaration at transpile time.
+    ///    This is the reliable path and works even though the RoslynRewriter rewrites the
+    ///    <c>Rec</c> property initialiser to <c>new MockRecordHandle(0)</c>.
+    /// 2. Fallback: read <c>Rec.TableId</c> from the compiled page class.  In practice this
+    ///    always yields 0 for normal pages (see rewriter limitation), but it is kept as a
+    ///    safety net for hand-crafted test scenarios.
+    ///
+    /// Call this before any code that needs to look up record fields by hash.
+    /// </summary>
+    private void EnsureFieldMapping()
+    {
+        if (_hashToFieldId != null) return;
+        _hashToFieldId = new Dictionary<int, int>();
+
+        if (PageId == 0) return;
+
+        // 1. Try the AL-source registry (reliable path).
+        var registryTableId = TableFieldRegistry.GetSourceTableId(PageId);
+        if (registryTableId.HasValue)
+        {
+            _sourceTableId = registryTableId.Value;
+        }
+        else
+        {
+            // 2. Fall back to the compiled page class's Rec property.
+            //    This yields tableId=0 for most rewritten pages, but covers edge cases.
+            EnsurePageInstance();
+            if (_pageInstance == null) return;
+            var recProp = _pageInstance.GetType()
+                .GetProperty("Rec", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (recProp?.GetValue(_pageInstance) is not MockRecordHandle recHandle) return;
+            _sourceTableId = recHandle.TableId;
+        }
+
+        if (_sourceTableId == 0) return;
+
+        // For every field registered in the source table, compute its page-field
+        // hash and record the hash → tableFieldId mapping.
+        foreach (var (fieldId, fieldName) in TableFieldRegistry.GetAllFields(_sourceTableId.Value))
+        {
+            int hash = IdSpaceHelper.GetMemberId(PageId, fieldName);
+            if (hash != 0)
+                _hashToFieldId[hash] = fieldId;
+        }
+    }
+
+    /// <summary>
+    /// Copies field values from <paramref name="rec"/> into the corresponding
+    /// <see cref="MockTestPageField"/> instances using the <c>_hashToFieldId</c>
+    /// map.  Only fields whose page-hash is already known (computed by
+    /// <see cref="EnsureFieldMapping"/>) are populated.
+    /// </summary>
+    private void PopulateFieldsFromRecord(MockRecordHandle rec)
+    {
+        if (_hashToFieldId == null) return;
+        foreach (var (hash, fieldId) in _hashToFieldId)
+        {
+            var value = rec.GetFieldValueSafe(fieldId, default);
+            GetField(hash).ALValue = value;
+        }
     }
 
     // ── Page instance lifecycle ───────────────────────────────────────────────
