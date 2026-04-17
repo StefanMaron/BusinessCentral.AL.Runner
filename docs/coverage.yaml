@@ -7257,20 +7257,26 @@ TestHttpResponseMessage.ReasonPhrase:
 TestPage.Cancel:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC emits GetBuiltInAction((FormResult)Cancel).ALInvoke() — handled by MockTestPageAction.
+  tests:
+    - tests/bucket-1/71-testpage
 
 TestPage.Caption:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALCaption property on MockTestPageHandle returns "TestPage" (stub).
+  tests:
+    - tests/bucket-1/187-testpage-methods
 
 TestPage.Close:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALClose() no-op on MockTestPageHandle.
+  tests:
+    - tests/bucket-1/187-testpage-methods
 
 TestPage.Edit:
   layer: runtime-api
@@ -7289,44 +7295,58 @@ TestPage.Editable:
 TestPage.Expand:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALExpand(bool) no-op on MockTestPageHandle.
+  tests:
+    - tests/bucket-1/187-testpage-methods
 
 TestPage.FindFirstField:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=4; ALFindFirstField stubs always return false (no field scanning in standalone mode).
+  tests:
+    - tests/bucket-2/186-testpage-findfirstfield
 
 TestPage.FindNextField:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=4; ALFindNextField stubs always return false (no field scanning in standalone mode).
+  tests:
+    - tests/bucket-2/186-testpage-findfirstfield
 
 TestPage.FindPreviousField:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=4; ALFindPreviousField stubs always return false (no field scanning in standalone mode).
+  tests:
+    - tests/bucket-2/186-testpage-findfirstfield
 
 TestPage.First:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALFirst() always returns true (stub — no multi-record navigation in standalone mode).
+  tests:
+    - tests/bucket-1/187-testpage-methods
 
 TestPage.GetField:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; GetField(hash) returns MockTestPageField keyed by field hash.
+  tests:
+    - tests/bucket-1/71-testpage
 
 TestPage.GetValidationError:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=2; ALGetValidationError(int) returns empty string (no validation errors in standalone mode).
+  tests:
+    - tests/bucket-2/189-testpage-validationerror
 
 TestPage.GoToKey:
   layer: runtime-api
@@ -7358,14 +7378,18 @@ TestPage.GoToRecord:
 TestPage.IsExpanded:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALIsExpanded property always returns false (standalone mode has no expand state).
+  tests:
+    - tests/bucket-1/187-testpage-methods
 
 TestPage.Last:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALLast() always returns false (stub — no multi-record navigation in standalone mode).
+  tests:
+    - tests/bucket-1/187-testpage-methods
 
 TestPage.New:
   layer: runtime-api
@@ -7377,20 +7401,26 @@ TestPage.New:
 TestPage.Next:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=2; ALNext() always returns false (stub — no multi-record navigation in standalone mode).
+  tests:
+    - tests/bucket-2/201-testpage-navigation
 
 TestPage.No:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC emits GetBuiltInAction((FormResult)No).ALInvoke() — handled by MockTestPageAction.
+  tests:
+    - tests/bucket-1/187-testpage-methods
 
 TestPage.OK:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC emits GetBuiltInAction((FormResult)OK).ALInvoke() — handled by MockTestPageAction.
+  tests:
+    - tests/bucket-1/71-testpage
 
 TestPage.OpenEdit:
   layer: runtime-api
@@ -7416,20 +7446,24 @@ TestPage.OpenView:
 TestPage.Prev:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; Same as Previous — BC emits ALPrevious(); always returns false.
+  tests:
+    - tests/bucket-2/201-testpage-navigation
 
 TestPage.Previous:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALPrevious() always returns false (stub — no multi-record navigation in standalone mode).
+  tests:
+    - tests/bucket-1/187-testpage-methods
 
 TestPage.RunPageBackgroundTask:
   layer: runtime-api
   category: TestPage
   status: gap
-  notes: overloads=1
+  notes: overloads=1; Requires service-tier background task infrastructure — architectural limit.
 
 TestPage.Trap:
   layer: runtime-api
@@ -7441,20 +7475,26 @@ TestPage.Trap:
 TestPage.ValidationErrorCount:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALValidationErrorCount() always returns 0 (no field validation tracking in standalone mode).
+  tests:
+    - tests/bucket-1/187-testpage-methods
 
 TestPage.View:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALView() returns empty string (stub — no filter-view serialization in standalone mode).
+  tests:
+    - tests/bucket-1/187-testpage-methods
 
 TestPage.Yes:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC emits GetBuiltInAction((FormResult)Yes).ALInvoke() — handled by MockTestPageAction.
+  tests:
+    - tests/bucket-1/187-testpage-methods
 
 # ── TestPart ────────────────────────────────────────────────────
 

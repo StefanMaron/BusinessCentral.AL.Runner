@@ -72,6 +72,12 @@ public class MockTestPageHandle
     public string ALCaption => "TestPage";
 
     /// <summary>
+    /// Returns the current filter view string. Stub returns empty string.
+    /// BC emits <c>tP.Target.ALView()</c> as a method call.
+    /// </summary>
+    public string ALView() => string.Empty;
+
+    /// <summary>
     /// Whether the page is editable. Set by ALOpenEdit/ALOpenView/ALOpenNew.
     /// BC emits <c>tP.Target.ALEditable</c> as a property access.
     /// </summary>
