@@ -92,6 +92,21 @@ public class MockRecordRef
     public void ALLoadFields(params int[] fieldNos) { }
     public void ALLoadFields(DataError errorLevel, params int[] fieldNos) { }
 
+    /// <summary>
+    /// ALFilterGroup — set/get the active filter group. Standalone no-op (groups not tracked);
+    /// reads always return 0. Exposed as a property so BC can emit both the assignment form
+    /// (<c>recRef.ALFilterGroup = 2</c>) and the invocation form (<c>recRef.ALFilterGroup(2)</c>
+    /// via the method overload below).
+    /// </summary>
+    public int ALFilterGroup
+    {
+        get => _handle?.ALFilterGroup ?? 0;
+        set { if (_handle != null) _handle.ALFilterGroup = value; }
+    }
+
+    /// <summary>Method overload for recRef.ALFilterGroup(n) call syntax.</summary>
+    public void SetALFilterGroup(int groupId) => _handle?.SetALFilterGroup(groupId);
+
     // -- IsDirty — no dirty tracking in standalone --
 
     /// <summary>ALIsDirty — standalone has no write-pending tracking; always false.</summary>

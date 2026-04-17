@@ -4912,7 +4912,8 @@ RecordRef.FilterGroup:
   layer: runtime-api
   category: RecordRef
   status: covered
-  notes: overloads=1
+  tests: tests/bucket-2/217-recref-filtergroup
+  notes: overloads=1. ALFilterGroup property/method on MockRecordRef delegates to MockRecordHandle — no-op standalone, reads return 0.
 
 RecordRef.Find:
   layer: runtime-api
