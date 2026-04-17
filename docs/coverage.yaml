@@ -5943,6 +5943,20 @@ System.ApplicationPath:
   tests: tests/bucket-1/178-system-env-stubs
   notes: overloads=1; MockSystemOperatingSystem.ALApplicationPath → AppContext.BaseDirectory
 
+Array.GetSubArray:
+  layer: runtime-api
+  category: Array
+  status: covered
+  notes: "MockArray<T>.GetSubArray(int rowIndex); BC emits arr.GetSubArray(0) when a 2D array row is passed to a 1D array parameter; returns a new MockArray<T> with the row's elements; row index is 0-based"
+  tests: tests/bucket-1/286-array-multidim
+
+Array.MultiDimIndexer:
+  layer: runtime-api
+  category: Array
+  status: covered
+  notes: "MockArray<T>[r, c] and [x, y, z] 2-arg and 3-arg indexers; BC emits arr[r-1, c-1] for 2D array element access; flat-index formula: r*dim[1]+c"
+  tests: tests/bucket-1/286-array-multidim
+
 System.ArrayLen:
   layer: runtime-api
   category: System
