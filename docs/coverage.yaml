@@ -986,6 +986,30 @@ report_OnPostReport:
   tests:
     - tests/bucket-1/259-report-triggers
 
+report_OnPreDataItem:
+  layer: syntax
+  category: report
+  status: covered
+  notes: "fired once before record iteration for each dataitem; MockReportHandle.ExecuteDataItems"
+  tests:
+    - tests/bucket-1/270-report-dataitem-triggers
+
+report_OnAfterGetRecord:
+  layer: syntax
+  category: report
+  status: covered
+  notes: "fired once per row of the dataitem's in-memory table; MockReportHandle.ExecuteDataItems"
+  tests:
+    - tests/bucket-1/270-report-dataitem-triggers
+
+report_OnPostDataItem:
+  layer: syntax
+  category: report
+  status: covered
+  notes: "fired once after record iteration for each dataitem; MockReportHandle.ExecuteDataItems"
+  tests:
+    - tests/bucket-1/270-report-dataitem-triggers
+
 # ── query ───────────────────────────────────────────────────────
 
 query_column:

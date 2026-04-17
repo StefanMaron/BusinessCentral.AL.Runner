@@ -1,5 +1,6 @@
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
+using Microsoft.Dynamics.Nav.Types;
 
 namespace AlRunner.Runtime;
 
@@ -69,7 +70,8 @@ public class MockReportHandle
     }
 
     /// <summary>
-    /// Executes the report lifecycle: OnPreReport → (data iteration) → OnPostReport.
+    /// Executes the report lifecycle:
+    /// OnPreReport → for each data-item: OnPreDataItem → [OnAfterGetRecord per row] → OnPostDataItem → OnPostReport.
     /// The BC service tier normally orchestrates this; we replicate it here since
     /// the base class Run() override is stripped by the rewriter.
     /// </summary>
@@ -78,9 +80,49 @@ public class MockReportHandle
         var reportType = report.GetType();
 
         InvokeTrigger(report, reportType, "OnPreReport");
-        // Data-item iteration is not yet implemented (architectural gap).
-        // OnPreReport and OnPostReport are called unconditionally.
+        ExecuteDataItems(report, reportType);
         InvokeTrigger(report, reportType, "OnPostReport");
+    }
+
+    /// <summary>
+    /// Discovers all MockRecordHandle fields in the report class (each represents
+    /// a data-item), resolves their table IDs via <see cref="TableFieldRegistry"/>,
+    /// and runs the Pre/AfterGetRecord/Post trigger sequence for each one.
+    /// </summary>
+    private static void ExecuteDataItems(object report, Type reportType)
+    {
+        var dataItemFields = reportType
+            .GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .Where(f => f.FieldType == typeof(MockRecordHandle))
+            .ToList();
+
+        foreach (var field in dataItemFields)
+        {
+            var fieldName = field.Name;
+
+            // Resolve the table ID by matching the field name against all registered
+            // table names (stripping spaces/punctuation for the comparison).
+            var tableId = TableFieldRegistry.GetTableIdByNormalizedName(fieldName);
+            if (tableId == null)
+                continue;
+
+            // Initialise the field if BC did not do so (it is null in generated code).
+            var rec = (MockRecordHandle?)field.GetValue(report) ?? new MockRecordHandle(tableId.Value);
+            field.SetValue(report, rec);
+
+            InvokeTrigger(report, reportType, $"{fieldName}_a45_OnPreDataItem");
+
+            if (rec.ALFindSet(DataError.TrapError))
+            {
+                do
+                {
+                    InvokeTrigger(report, reportType, $"{fieldName}_a45_OnAfterGetRecord");
+                }
+                while (rec.ALNext() != 0);
+            }
+
+            InvokeTrigger(report, reportType, $"{fieldName}_a45_OnPostDataItem");
+        }
     }
 
     private static void InvokeTrigger(object report, Type reportType, string name)
