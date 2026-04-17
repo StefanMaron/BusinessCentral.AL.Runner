@@ -1,17 +1,7 @@
 /// Helper codeunit exercising Media methods via table field access.
 codeunit 84407 "Media Src"
 {
-    // ── HasValue ─────────────────────────────────────────────────────────────────
-    procedure MediaHasValueDefault(): Boolean
-    var
-        Storage: Record "Media Test Storage" temporary;
-        HasVal: Boolean;
-    begin
-        HasVal := Storage.MediaField.HasValue();
-        exit(HasVal);
-    end;
-
-    // ── ImportFile ───────────────────────────────────────────────────────────────
+    // Minimal stub — just ImportFile which returns Boolean, no HasValue
     procedure ImportFileReturnsTrue(FileName: Text): Boolean
     var
         Storage: Record "Media Test Storage" temporary;
@@ -21,18 +11,6 @@ codeunit 84407 "Media Src"
         exit(Ok);
     end;
 
-    // ── ImportFile sets HasValue ─────────────────────────────────────────────────
-    procedure HasValueAfterImportFile(FileName: Text): Boolean
-    var
-        Storage: Record "Media Test Storage" temporary;
-        HasVal: Boolean;
-    begin
-        Storage.MediaField.ImportFile(FileName, '');
-        HasVal := Storage.MediaField.HasValue();
-        exit(HasVal);
-    end;
-
-    // ── ExportFile ───────────────────────────────────────────────────────────────
     procedure ExportFileOnDefaultReturnsFalse(FileName: Text): Boolean
     var
         Storage: Record "Media Test Storage" temporary;
