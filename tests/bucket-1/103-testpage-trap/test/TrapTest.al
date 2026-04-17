@@ -19,11 +19,13 @@ codeunit 160001 "TRAP Test"
     var
         TP: TestPage "TRAP Card Page";
         P: Page "TRAP Card Page";
+        Result: Action;
     begin
         // Positive: after Trap(), RunModal() on the matching Page var must
         // succeed (return OK) instead of throwing "No ModalPageHandler registered".
         TP.Trap();
-        P.RunModal();
+        Result := P.RunModal();
+        Assert.AreEqual(Action::OK, Result, 'Trap() must cause RunModal() to return OK');
     end;
 
     [Test]

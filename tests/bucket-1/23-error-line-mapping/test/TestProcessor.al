@@ -2,6 +2,9 @@ codeunit 50490 "Test Ref Processor"
 {
     Subtype = Test;
 
+    var
+        Assert: Codeunit Assert;
+
     [Test]
     procedure SumQuantities_Works()
     var
@@ -20,7 +23,7 @@ codeunit 50490 "Test Ref Processor"
 
         Item.Reset();
         Item.FindFirst();
-        if Item.Quantity <> 42 then
-            Error('Expected 42 but got %1', Item.Quantity);
+        // Prove the specific value, not just "no error"
+        Assert.AreEqual(42, Item.Quantity, 'Quantity must be 42 after Insert+FindFirst');
     end;
 }

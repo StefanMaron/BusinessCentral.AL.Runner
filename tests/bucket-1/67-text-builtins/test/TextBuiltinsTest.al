@@ -48,8 +48,10 @@ codeunit 50967 "Text Builtins Test"
     [Test]
     procedure TestSubstringInvalidRange()
     begin
-        // AL Substring errors on out-of-range arguments
+        // AL Substring errors on out-of-range arguments (startPos > length)
         asserterror Helper.CallSubstring('Hello', 10, 3);
+        // Error must mention the out-of-range position or index
+        Assert.ExpectedError('startIndex');
     end;
 
     [Test]

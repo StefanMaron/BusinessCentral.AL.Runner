@@ -2,6 +2,9 @@ codeunit 50390 "Test Item Processor"
 {
     Subtype = Test;
 
+    var
+        Assert: Codeunit Assert;
+
     [Test]
     procedure SumQuantities_ReturnsCorrectTotal()
     var
@@ -27,9 +30,8 @@ codeunit 50390 "Test Item Processor"
         // Act
         Result := Processor.SumQuantities(Staging);
 
-        // Assert
-        if Result <> 35.5 then
-            Error('Expected 35.5 but got %1', Result);
+        // Assert — specific value, not just "no error"
+        Assert.AreEqual(35.5, Result, 'SumQuantities(10 + 25.5) must return 35.5');
     end;
 
     [Test]
@@ -39,8 +41,8 @@ codeunit 50390 "Test Item Processor"
         Result: Text;
     begin
         Result := Processor.FormatItemLine('ITEM-A', 'Widget', 10);
-        if Result = '' then
-            Error('Expected non-empty result');
+        // Prove the exact format, not just non-empty
+        Assert.AreEqual('ITEM-A - Widget: 10', Result, 'FormatItemLine must produce "ITEM-A - Widget: 10"');
     end;
 
     [Test]
@@ -52,7 +54,6 @@ codeunit 50390 "Test Item Processor"
     begin
         Staging.Reset();
         Result := Processor.SumQuantities(Staging);
-        if Result <> 0 then
-            Error('Expected 0 but got %1', Result);
+        Assert.AreEqual(0, Result, 'SumQuantities on empty table must return 0');
     end;
 }

@@ -29,7 +29,39 @@ Every test must cover **both directions**:
 
 A test that only proves the happy path is incomplete — a mock that always returns a default value would also pass.
 
-**Tests must prove, not just pass.** Before marking a test complete, ask: "would this catch a broken or no-op mock?" If the test would pass even if the implementation always returned a default value, it is not a proving test — it is noise. Assert specific expected values, not just absence of errors. See issue #203.
+**Tests must prove, not just pass.** Before marking a test complete, ask: "would this catch a broken or no-op mock?" If the test would pass even if the implementation always returned a default value, it is not a proving test — it is noise. Assert specific expected values, not just absence of errors.
+
+### What a proving test looks like
+
+A skeptic unfamiliar with the codebase must be able to read any test and say: "yes, if this passes, I am confident that feature X works correctly in al-runner." Every test must satisfy all of the following:
+
+**1. Positive case with a specific assertion**
+```al
+// Weak — proves almost nothing:
+MyProc();  // just runs, no assertion
+
+// Strong — proves the output is correct:
+Result := MyProc(3, 4);
+Assert.AreEqual(7, Result, 'MyProc should return the sum');
+```
+
+**2. Negative case with a specific error**
+```al
+// Weak — proves something fails, but not what or why:
+asserterror MyProc(-1);
+
+// Strong — proves the right error fires:
+asserterror MyProc(-1);
+Assert.ExpectedError('Value must be positive');
+```
+
+**3. The test would catch a broken mock**
+If the test passes even when the mock always returns a default value (0, `''`, `false`), it is not a proving test. Assert a non-default concrete value whenever possible, so a stub that ignores its input cannot pass.
+
+**4. Use `Assert.*` — not `if X then Error(...)`**
+Custom `if/Error` guards are easy to get wrong (wrong condition, missing coverage). Always use `Assert.AreEqual`, `Assert.IsTrue`, `Assert.IsFalse`, or `Assert.ExpectedError` so failures produce clear diagnostics.
+
+Exception: "no-op stub" tests (`Hyperlink_NoThrow`, `Report_Run_IsNoOp`, etc.) are valid when the *entire* claim is "this does not crash." The name must make that explicit.
 
 ---
 

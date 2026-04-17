@@ -14,12 +14,11 @@ codeunit 50809 "CurrentKey Tests"
     var
         Rec: Record "Key Probe";
     begin
-        // [GIVEN] A record with SetCurrentKey
+        // [GIVEN] A record with SetCurrentKey("Name")
         Rec.SetCurrentKey("Name");
 
-        // [WHEN] CurrentKey is read
-        // [THEN] It should return the key field name
-        Assert.AreNotEqual('', Rec.CurrentKey(), 'CurrentKey should return non-empty after SetCurrentKey');
+        // [WHEN/THEN] CurrentKey returns the field name — not just non-empty
+        Assert.AreEqual('Name', Rec.CurrentKey(), 'CurrentKey must return "Name" after SetCurrentKey(Name)');
     end;
 
     // -----------------------------------------------------------------------
@@ -33,10 +32,9 @@ codeunit 50809 "CurrentKey Tests"
         KeyText: Text;
     begin
         // [GIVEN] A record with no explicit SetCurrentKey
-        // [WHEN] CurrentKey is read
+        // [WHEN] CurrentKey is read, [THEN] returns the PK field name (non-empty)
         KeyText := Rec.CurrentKey();
-        // [THEN] It should return a value (PK by default) without crashing
-        // We just verify it compiles and runs — the value is PK-dependent
+        Assert.AreNotEqual('', KeyText, 'CurrentKey must return PK field name by default, not empty');
     end;
 
     // -----------------------------------------------------------------------

@@ -33,6 +33,8 @@ codeunit 59531 "Dict Test"
     begin
         d := Helper.Build();
         asserterror Helper.GetByKey(d, 'missing');
+        // Prove the right error fires — key-not-found error contains "not present"
+        Assert.ExpectedError('not present');
     end;
 
     [Test]
@@ -52,6 +54,7 @@ codeunit 59531 "Dict Test"
         d: Dictionary of [Text, Integer];
     begin
         d := Helper.Build();
+        // Adding a duplicate key must error; specific error message is runner-version-dependent
         asserterror d.Add('one', 99);
     end;
 

@@ -46,6 +46,13 @@ Every test procedure must prove:
 
 A suite that only proves the happy path is incomplete. Flag it.
 
+**Red flags that prove nothing:**
+- `if X <> expected then Error('...')` — use `Assert.AreEqual` instead
+- `asserterror Foo();` with no `Assert.ExpectedError` — proves something fails, not what
+- A test with only `Assert.IsTrue(true, ...)` — unconditional, always green
+- A test where the assertion would pass for a mock returning a default value (0, `''`, `false`)
+- A "no-op stub" test named `DoesNotCrash`/`IsNoOp` where the claim is NOT about crash safety — rename to reflect what is actually proven
+
 ---
 
 ## Documentation checklist
