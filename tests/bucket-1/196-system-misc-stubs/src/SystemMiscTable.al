@@ -1,5 +1,5 @@
 /// Helper table providing a Blob field for InStream creation in tests.
-table 107000 "SMisc Blob"
+table 100302 "SMisc Blob"
 {
     fields
     {

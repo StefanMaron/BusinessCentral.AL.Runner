@@ -2,7 +2,7 @@
 /// Format (3-arg with mask), GetUrl, GetDocumentUrl, CaptionClassTranslate,
 /// CanLoadType, CodeCoverage*, ImportObjects, ExportObjects,
 /// ImportStreamWithUrlAccess, GetDotNetType.
-codeunit 107000 "SystemMisc Src"
+codeunit 100300 "SystemMisc Src"
 {
     // ── Format 3-arg ─────────────────────────────────────────────────────────
 
