@@ -8537,9 +8537,9 @@ Variant.IsFile:
 Variant.IsFilterPageBuilder:
   layer: runtime-api
   category: Variant
-  status: covered
+  status: stub
   tests: tests/bucket-2/213-variant-xml-types
-  notes: overloads=1; checks MockFilterPageBuilder — fixed from always-false stub; true+false cases proven.
+  notes: overloads=1; always returns false — FilterPageBuilder is not Variant-assignable in BC AL; false case proven.
 
 Variant.IsGuid:
   layer: runtime-api
@@ -8731,9 +8731,9 @@ Variant.IsXmlAttribute:
 Variant.IsXmlAttributeCollection:
   layer: runtime-api
   category: Variant
-  status: covered
+  status: stub
   tests: tests/bucket-2/213-variant-xml-types
-  notes: overloads=1; checks NavXmlAttributeCollection — true+false cases proven.
+  notes: overloads=1; checks NavXmlAttributeCollection — XmlAttributeCollection not Variant-assignable in BC AL; false case proven.
 
 Variant.IsXmlCData:
   layer: runtime-api
@@ -8768,7 +8768,7 @@ Variant.IsXmlDocumentType:
   category: Variant
   status: covered
   tests: tests/bucket-2/213-variant-xml-types
-  notes: overloads=1; checks NavXmlDocumentType — true+false cases proven.
+  notes: overloads=1; checks NavXmlDocumentType (XmlNode subtype, Variant-compatible) — true+false cases proven.
 
 Variant.IsXmlElement:
   layer: runtime-api
@@ -8780,16 +8780,16 @@ Variant.IsXmlElement:
 Variant.IsXmlNamespaceManager:
   layer: runtime-api
   category: Variant
-  status: covered
+  status: stub
   tests: tests/bucket-2/213-variant-xml-types
-  notes: overloads=1; checks NavXmlNamespaceManager — true+false cases proven.
+  notes: overloads=1; checks NavXmlNamespaceManager — XmlNamespaceManager not Variant-assignable in BC AL; false case proven.
 
 Variant.IsXmlNameTable:
   layer: runtime-api
   category: Variant
-  status: covered
+  status: stub
   tests: tests/bucket-2/213-variant-xml-types
-  notes: overloads=1; checks MockXmlNameTable — true+false cases proven.
+  notes: overloads=1; checks MockXmlNameTable — XmlNameTable not Variant-assignable in BC AL; false case proven.
 
 Variant.IsXmlNode:
   layer: runtime-api
@@ -8815,9 +8815,9 @@ Variant.IsXmlProcessingInstruction:
 Variant.IsXmlReadOptions:
   layer: runtime-api
   category: Variant
-  status: covered
+  status: stub
   tests: tests/bucket-2/213-variant-xml-types
-  notes: overloads=1; checks NavXmlReadOptions — true+false cases proven.
+  notes: overloads=1; checks NavXmlReadOptions — XmlReadOptions not Variant-assignable in BC AL; false case proven.
 
 Variant.IsXmlText:
   layer: runtime-api
@@ -8829,9 +8829,9 @@ Variant.IsXmlText:
 Variant.IsXmlWriteOptions:
   layer: runtime-api
   category: Variant
-  status: covered
+  status: stub
   tests: tests/bucket-2/213-variant-xml-types
-  notes: overloads=1; checks NavXmlWriteOptions — true+false cases proven.
+  notes: overloads=1; checks NavXmlWriteOptions — XmlWriteOptions not Variant-assignable in BC AL; false case proven.
 
 # ── Version ─────────────────────────────────────────────────────
 

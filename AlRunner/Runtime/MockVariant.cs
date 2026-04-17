@@ -149,7 +149,7 @@ public class MockVariant
     public bool ALIsDotNet => false;
     public bool ALIsExecutionMode => false;
     public bool ALIsFile => false;
-    public bool ALIsFilterPageBuilder => _value is MockFilterPageBuilder;
+    public bool ALIsFilterPageBuilder => false;
     public bool ALIsObjectType => false;
     public bool ALIsPromptMode => false;
     public bool ALIsReportFormat => false;

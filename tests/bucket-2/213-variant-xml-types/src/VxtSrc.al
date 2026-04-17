@@ -1,8 +1,13 @@
-/// Helper codeunit exercising Variant.IsXxx for XML types and enum-like stubs
-/// (issue #987). Covers the methods that were previously untested stubs.
+/// Helper codeunit exercising Variant.IsXxx for XML types and misc type stubs
+/// (issue #987). Tests cover the false cases (non-matching Variant) plus the
+/// true case for XmlDocumentType (an XmlNode subtype, so Variant-compatible).
+/// Other types (XmlAttributeCollection, XmlNamespaceManager, XmlNameTable,
+/// XmlReadOptions, XmlWriteOptions, FilterPageBuilder) are not directly
+/// assignable to Variant in BC AL, so only the false case is provable.
 codeunit 60392 "VXT Src"
 {
     // ── XmlDocumentType ───────────────────────────────────────────────────────
+    // XmlDocumentType is an XmlNode subtype — Variant-compatible.
 
     procedure IsXmlDocumentType_ForDocType(): Boolean
     var
@@ -22,20 +27,8 @@ codeunit 60392 "VXT Src"
         exit(v.IsXmlDocumentType());
     end;
 
-    // ── XmlAttributeCollection ────────────────────────────────────────────────
-
-    procedure IsXmlAttributeCollection_ForAttrCollection(): Boolean
-    var
-        v: Variant;
-        Elem: XmlElement;
-        AttrCol: XmlAttributeCollection;
-    begin
-        Elem := XmlElement.Create('root');
-        Elem.SetAttribute('x', '1');
-        Elem.Attributes(AttrCol);
-        v := AttrCol;
-        exit(v.IsXmlAttributeCollection());
-    end;
+    // ── XmlAttributeCollection (false-only) ────────────────────────────────────
+    // XmlAttributeCollection is not directly Variant-assignable in BC AL.
 
     procedure IsXmlAttributeCollection_ForInteger(): Boolean
     var
@@ -45,18 +38,8 @@ codeunit 60392 "VXT Src"
         exit(v.IsXmlAttributeCollection());
     end;
 
-    // ── XmlNamespaceManager ───────────────────────────────────────────────────
-
-    procedure IsXmlNamespaceManager_ForNsMgr(): Boolean
-    var
-        v: Variant;
-        NameTable: XmlNameTable;
-        NsMgr: XmlNamespaceManager;
-    begin
-        NsMgr := XmlNamespaceManager.Create(NameTable);
-        v := NsMgr;
-        exit(v.IsXmlNamespaceManager());
-    end;
+    // ── XmlNamespaceManager (false-only) ──────────────────────────────────────
+    // XmlNamespaceManager is not directly Variant-assignable in BC AL.
 
     procedure IsXmlNamespaceManager_ForInteger(): Boolean
     var
@@ -66,16 +49,8 @@ codeunit 60392 "VXT Src"
         exit(v.IsXmlNamespaceManager());
     end;
 
-    // ── XmlNameTable ──────────────────────────────────────────────────────────
-
-    procedure IsXmlNameTable_ForNameTable(): Boolean
-    var
-        v: Variant;
-        NameTable: XmlNameTable;
-    begin
-        v := NameTable;
-        exit(v.IsXmlNameTable());
-    end;
+    // ── XmlNameTable (false-only) ─────────────────────────────────────────────
+    // XmlNameTable is not directly Variant-assignable in BC AL.
 
     procedure IsXmlNameTable_ForInteger(): Boolean
     var
@@ -85,16 +60,8 @@ codeunit 60392 "VXT Src"
         exit(v.IsXmlNameTable());
     end;
 
-    // ── XmlReadOptions ────────────────────────────────────────────────────────
-
-    procedure IsXmlReadOptions_ForReadOptions(): Boolean
-    var
-        v: Variant;
-        Opts: XmlReadOptions;
-    begin
-        v := Opts;
-        exit(v.IsXmlReadOptions());
-    end;
+    // ── XmlReadOptions (false-only) ────────────────────────────────────────────
+    // XmlReadOptions is not directly Variant-assignable in BC AL.
 
     procedure IsXmlReadOptions_ForInteger(): Boolean
     var
@@ -104,16 +71,8 @@ codeunit 60392 "VXT Src"
         exit(v.IsXmlReadOptions());
     end;
 
-    // ── XmlWriteOptions ───────────────────────────────────────────────────────
-
-    procedure IsXmlWriteOptions_ForWriteOptions(): Boolean
-    var
-        v: Variant;
-        Opts: XmlWriteOptions;
-    begin
-        v := Opts;
-        exit(v.IsXmlWriteOptions());
-    end;
+    // ── XmlWriteOptions (false-only) ──────────────────────────────────────────
+    // XmlWriteOptions is not directly Variant-assignable in BC AL.
 
     procedure IsXmlWriteOptions_ForInteger(): Boolean
     var
@@ -123,16 +82,8 @@ codeunit 60392 "VXT Src"
         exit(v.IsXmlWriteOptions());
     end;
 
-    // ── FilterPageBuilder ─────────────────────────────────────────────────────
-
-    procedure IsFilterPageBuilder_ForFPB(): Boolean
-    var
-        v: Variant;
-        FPB: FilterPageBuilder;
-    begin
-        v := FPB;
-        exit(v.IsFilterPageBuilder());
-    end;
+    // ── FilterPageBuilder (false-only) ────────────────────────────────────────
+    // FilterPageBuilder is not directly Variant-assignable in BC AL.
 
     procedure IsFilterPageBuilder_ForInteger(): Boolean
     var
@@ -142,7 +93,8 @@ codeunit 60392 "VXT Src"
         exit(v.IsFilterPageBuilder());
     end;
 
-    // ── ReportFormat (always false — enum not detectable in Variant) ───────────
+    // ── ReportFormat (false-only) ─────────────────────────────────────────────
+    // ReportFormat enum is indistinguishable from NavOption in a Variant.
 
     procedure IsReportFormat_ForInteger(): Boolean
     var
@@ -152,7 +104,8 @@ codeunit 60392 "VXT Src"
         exit(v.IsReportFormat());
     end;
 
-    // ── PromptMode (always false — enum not detectable in Variant) ────────────
+    // ── PromptMode (false-only) ───────────────────────────────────────────────
+    // PromptMode enum is indistinguishable from NavOption in a Variant.
 
     procedure IsPromptMode_ForInteger(): Boolean
     var
