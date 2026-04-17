@@ -19,6 +19,7 @@ namespace AlRunner.Tests;
 /// Full end-to-end breakpoint-hit tests require a running AL pipeline;
 /// those are covered via DapServerBreakpointIntegrationTests.
 /// </summary>
+[Collection("Pipeline")]
 public class DapServerTests : IAsyncDisposable
 {
     private DapServer? _server;

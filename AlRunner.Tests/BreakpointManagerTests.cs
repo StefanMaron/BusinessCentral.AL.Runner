@@ -11,6 +11,7 @@ namespace AlRunner.Tests;
 /// - Unregistered statements are not blocked
 /// - Disable() suppresses all breakpoint checks
 /// </summary>
+[Collection("Pipeline")]
 public class BreakpointManagerTests : IDisposable
 {
     public BreakpointManagerTests()
