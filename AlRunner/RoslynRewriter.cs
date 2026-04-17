@@ -1721,6 +1721,23 @@ public void ClearApplicationMemberVariables()
         // AlScope implements ITreeObject, so 'this' is a valid non-null ITreeObject
         // for any Nav*/AL* type constructor — no CS1503 and no null-check failures.
 
+        // new NavJsonValue() -> MockJsonHelper.CreateUndefinedJsonValue()
+        // BC's NavJsonValue() constructor initialises the backing token to a non-undefined
+        // state, so the native IsUndefined property returns false for fresh variables.
+        // We replace the construction with a factory that sets JValue.CreateUndefined() as
+        // the backing token so that `var JV: JsonValue` correctly satisfies IsUndefined.
+        if (typeText == "NavJsonValue" &&
+            (visited.ArgumentList == null || visited.ArgumentList.Arguments.Count == 0))
+        {
+            return SyntaxFactory.InvocationExpression(
+                SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("MockJsonHelper"),
+                    SyntaxFactory.IdentifierName("CreateUndefinedJsonValue")),
+                SyntaxFactory.ArgumentList())
+                .WithTriviaFrom(visited);
+        }
+
         return visited;
     }
 
@@ -2145,13 +2162,6 @@ public void ClearApplicationMemberVariables()
         {
             var exprText = memberAccess.Expression.ToString();
             var methodName = memberAccess.Name.Identifier.Text;
-
-            // DEBUG: log any method calls that contain "Undefined" in the name
-            if (methodName.Contains("Undefined", StringComparison.OrdinalIgnoreCase)
-                || methodName.Contains("Undef", StringComparison.OrdinalIgnoreCase))
-            {
-                Console.Error.WriteLine($"[DEBUG-REWRITER] Invocation: {exprText}.{methodName}({string.Join(", ", visited.ArgumentList.Arguments.Select(a => a.ToString()))})");
-            }
 
             // NavDialog.ALConfirm(session, guid, question, [default]) -> MockDialog.ALConfirm(question, [default])
             if ((exprText == "NavDialog" || exprText == "MockDialog") && methodName == "ALConfirm")
