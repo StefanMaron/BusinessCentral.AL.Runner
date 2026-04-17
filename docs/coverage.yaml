@@ -4320,8 +4320,9 @@ Page.Activate:
 Page.CancelBackgroundTask:
   layer: runtime-api
   category: Page
-  status: gap
-  notes: overloads=1; AL0161 inaccessible from user AL code
+  status: covered
+  tests: tests/bucket-1/273-page-background-task
+  notes: overloads=1; no-op in standalone mode
 
 Page.Caption:
   layer: runtime-api
@@ -4344,14 +4345,16 @@ Page.Editable:
 Page.EnqueueBackgroundTask:
   layer: runtime-api
   category: Page
-  status: gap
-  notes: overloads=1; complex background task API requires CurrPage context
+  status: covered
+  tests: tests/bucket-1/273-page-background-task
+  notes: overloads=1; sets taskId=1 stub, no real dispatch in standalone mode
 
 Page.GetBackgroundParameters:
   layer: runtime-api
   category: Page
-  status: gap
-  notes: overloads=1; complex background task API requires CurrPage context
+  status: covered
+  tests: tests/bucket-1/273-page-background-task
+  notes: overloads=1; returns empty NavDictionary in standalone mode
 
 Page.GetRecord:
   layer: runtime-api
@@ -4403,8 +4406,9 @@ Page.SaveRecord:
 Page.SetBackgroundTaskResult:
   layer: runtime-api
   category: Page
-  status: gap
-  notes: overloads=1; complex background task API requires CurrPage context
+  status: covered
+  tests: tests/bucket-1/273-page-background-task
+  notes: overloads=1; no-op in standalone mode
 
 Page.SetRecord:
   layer: runtime-api

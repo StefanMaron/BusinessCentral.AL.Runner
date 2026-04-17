@@ -692,6 +692,12 @@ public void Activate() {{ }}
 public void SaveRecord() {{ }}
 public void SetTableView(MockRecordHandle rec) {{ }}
 {setSelectionFilter}
+public void EnqueueBackgroundTask(DataError errorLevel, ByRef<int> taskId, int codeunitId) {{ taskId.Value = 1; }}
+public void EnqueueBackgroundTask(DataError errorLevel, ByRef<int> taskId, int codeunitId, NavDictionary<NavText, NavText> parameters) {{ taskId.Value = 1; }}
+public void EnqueueBackgroundTask(DataError errorLevel, ByRef<int> taskId, int codeunitId, int timeout) {{ taskId.Value = 1; }}
+public void EnqueueBackgroundTask(DataError errorLevel, ByRef<int> taskId, int codeunitId, NavDictionary<NavText, NavText> parameters, int timeout) {{ taskId.Value = 1; }}
+public void CancelBackgroundTask(int taskId) {{ }}
+public void CancelBackgroundTask(DataError errorLevel, int taskId) {{ }}
 protected bool CallGetDecimalPlacesExtensionMethod(int fieldNo, ref string result) {{ return false; }}
 protected bool CallGetTableRelationExtensionMethod(int fieldNo, MockRecordHandle rec, ref bool result) {{ return false; }}
 protected bool CallGetFormatExtensionMethod(int fieldNo, ref string result) {{ return false; }}
@@ -2483,6 +2489,21 @@ public void ClearApplicationMemberVariables()
                     // Page.ObjectId([withName]) returns the page object ID as NavInteger.
                     return SyntaxFactory.DefaultExpression(
                         SyntaxFactory.ParseTypeName("NavInteger"));
+                }
+                if (methodName == "GetBackgroundParameters")
+                {
+                    // Page.GetBackgroundParameters() — no real page session standalone;
+                    // return an empty Dictionary of [Text, Text] default.
+                    return SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.GenericName("NavDictionary")
+                            .WithTypeArgumentList(SyntaxFactory.TypeArgumentList(
+                                SyntaxFactory.SeparatedList<TypeSyntax>(new[]
+                                {
+                                    SyntaxFactory.ParseTypeName("NavText"),
+                                    SyntaxFactory.ParseTypeName("NavText"),
+                                }))),
+                        SyntaxFactory.IdentifierName("Default"));
                 }
                 // Run and all other void methods: will be stripped at statement level.
                 return visited;

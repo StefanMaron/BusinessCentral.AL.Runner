@@ -306,6 +306,33 @@ public class MockCurrPage
     public void Close() { }
     public void Activate() { }
     public void SaveRecord() { }
+
+    // ── Background task API ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// CurrPage.EnqueueBackgroundTask — BC emits this on the CurrPage instance.
+    /// In standalone mode, there is no page session: set taskId to a stub value (1)
+    /// and return. No actual background task is dispatched.
+    /// </summary>
+    public void EnqueueBackgroundTask(DataError errorLevel, ByRef<int> taskId, int codeunitId)
+        => taskId.Value = 1;
+
+    public void EnqueueBackgroundTask(DataError errorLevel, ByRef<int> taskId, int codeunitId,
+        NavDictionary<NavText, NavText> parameters)
+        => taskId.Value = 1;
+
+    public void EnqueueBackgroundTask(DataError errorLevel, ByRef<int> taskId, int codeunitId, int timeout)
+        => taskId.Value = 1;
+
+    public void EnqueueBackgroundTask(DataError errorLevel, ByRef<int> taskId, int codeunitId,
+        NavDictionary<NavText, NavText> parameters, int timeout)
+        => taskId.Value = 1;
+
+    /// <summary>
+    /// CurrPage.CancelBackgroundTask — no-op in standalone mode (task already ran synchronously).
+    /// </summary>
+    public void CancelBackgroundTask(int taskId) { }
+    public void CancelBackgroundTask(DataError errorLevel, int taskId) { }
 }
 
 /// <summary>
