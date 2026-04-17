@@ -6194,7 +6194,10 @@ System.GetLastErrorCallStack:
   layer: runtime-api
   category: System
   status: covered
-  notes: overloads=1; returns AlScope.LastErrorCallStack (always "" in runner); tested in 176-system-error-utils
+  notes: overloads=1; returns AlScope.LastErrorCallStack (always "" in runner). Rewriter redirects ALSystemErrorHandling.ALGetLastErrorCallStack to AlScope.LastErrorCallStack.
+  tests:
+    - tests/bucket-1/176-system-error-utils
+    - tests/bucket-2/213-lasterrorcallstack
 
 System.GetLastErrorCode:
   layer: runtime-api
