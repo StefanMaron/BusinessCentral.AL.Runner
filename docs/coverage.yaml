@@ -5435,8 +5435,10 @@ ReportInstance.Break:
 ReportInstance.CreateTotals:
   layer: runtime-api
   category: ReportInstance
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; MockReportHandle.CreateTotals() (0-arg) and CreateTotals(params object[]) (N-arg) — both no-ops in standalone mode.
+  tests:
+    - tests/bucket-1/284-report-createtotals
 
 ReportInstance.DefaultLayout:
   layer: runtime-api

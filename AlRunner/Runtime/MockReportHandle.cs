@@ -81,6 +81,21 @@ public class MockReportHandle
     /// <summary>BC emits <c>rep.SaveAs(errorLevel, params, format, ByRef&lt;OutStream&gt;)</c> for <c>Report.SaveAs(Params, Format, OutStream)</c>. No-op in standalone mode.</summary>
     public void SaveAs(DataError errorLevel, string requestParams, NavReportFormat format, ByRef<MockOutStream> outStream) { }
 
+    // ── CreateTotals ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// BC emits <c>rep.CreateTotals()</c> for <c>ReportInstance.CreateTotals()</c> (0-arg overload).
+    /// No-op in standalone mode — the totals engine is a BC service-tier concept.
+    /// </summary>
+    public void CreateTotals() { }
+
+    /// <summary>
+    /// BC emits <c>rep.CreateTotals(field1 [, field2, ...])</c> for the N-arg overload of
+    /// <c>ReportInstance.CreateTotals(Field1 [, Field2, ...])</c>.
+    /// No-op in standalone mode.
+    /// </summary>
+    public void CreateTotals(params object[] fields) { }
+
     public MockReportHandle() { }
 
     public MockReportHandle(int reportId)
