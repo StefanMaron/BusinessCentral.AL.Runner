@@ -84,4 +84,25 @@ public struct MockVersion
     /// </summary>
     public NavText ALToText(object? session = null)
         => new NavText($"{_major}.{_minor}.{_build}.{_revision}");
+
+    // ── Comparison / equality operators ───────────────────────────────────────
+    // BC lowers AL's v1 = v2, v1 > v2 etc. to C# operator expressions on the
+    // emitted type. Provide MockVersion vs MockVersion overloads that compare
+    // lexicographically on (major, minor, build, revision).
+
+    private long ToSortKey()
+        => ((long)_major << 48) | ((long)(_minor & 0xFFFF) << 32) | ((long)(_build & 0xFFFF) << 16) | (long)(_revision & 0xFFFF);
+
+    public static bool operator ==(MockVersion a, MockVersion b)
+        => a._major == b._major && a._minor == b._minor && a._build == b._build && a._revision == b._revision;
+
+    public static bool operator !=(MockVersion a, MockVersion b) => !(a == b);
+
+    public static bool operator <(MockVersion a, MockVersion b) => a.ToSortKey() < b.ToSortKey();
+    public static bool operator >(MockVersion a, MockVersion b) => a.ToSortKey() > b.ToSortKey();
+    public static bool operator <=(MockVersion a, MockVersion b) => a.ToSortKey() <= b.ToSortKey();
+    public static bool operator >=(MockVersion a, MockVersion b) => a.ToSortKey() >= b.ToSortKey();
+
+    public override bool Equals(object? obj) => obj is MockVersion other && this == other;
+    public override int GetHashCode() => ToSortKey().GetHashCode();
 }
