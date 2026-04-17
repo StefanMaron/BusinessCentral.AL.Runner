@@ -42,7 +42,7 @@ public static class MockSystemOperatingSystem
     /// </summary>
     public static bool ALGuiAllowed => false;
 
-    public static string ALGetUrl(object clientType, string company, object objectType, int objectId, object record, bool useFilters = false)
+    public static string ALGetUrl(object clientType, string company, object objectType, int objectId, object? record = null, bool useFilters = false)
     {
         return $"/mock/{objectType}/{objectId}";
     }

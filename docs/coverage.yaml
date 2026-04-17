@@ -5759,12 +5759,14 @@ System.CanLoadType:
   layer: runtime-api
   category: System
   status: gap
-  notes: overloads=1
+  notes: overloads=1; requires DotNet type variable — not testable without DotNet package references; stub not implemented (DotNet type resolution unavailable in standalone mode)
 
 System.CaptionClassTranslate:
   layer: runtime-api
   category: System
-  status: gap
+  status: covered
+  tests: tests/bucket-1/196-system-misc-stubs
+  notes: overloads=1; ALSystemObject.ALCaptionClassTranslate → AlCompat.CaptionClassTranslate; returns input expression unchanged in standalone mode
   notes: overloads=1
 
 System.Clear:
@@ -5802,26 +5804,30 @@ System.ClosingDate:
 System.CodeCoverageInclude:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/196-system-misc-stubs
+  notes: overloads=1; ALCodeCoverageInclude → stripped (no-op) via StripEntireCallMethods in RoslynRewriter
 
 System.CodeCoverageLoad:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/196-system-misc-stubs
+  notes: overloads=1; ALCodeCoverageLoadFromTable → stripped (no-op) via StripEntireCallMethods in RoslynRewriter
 
 System.CodeCoverageLog:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/196-system-misc-stubs
+  notes: overloads=1; ALCodeCoverageLog → stripped (no-op) via StripEntireCallMethods in RoslynRewriter
 
 System.CodeCoverageRefresh:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/196-system-misc-stubs
+  notes: overloads=1; ALCodeCoverageRefreshTable → stripped (no-op) via StripEntireCallMethods in RoslynRewriter
 
 System.CompressArray:
   layer: runtime-api
@@ -5960,14 +5966,16 @@ System.ExportEncryptionKey:
 System.ExportObjects:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/196-system-misc-stubs
+  notes: overloads=1; ALExportObjects → stripped (no-op) via StripEntireCallMethods in RoslynRewriter; object export requires BC runtime
 
 System.Format:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=2
+  status: covered
+  tests: tests/bucket-1/196-system-misc-stubs
+  notes: overloads=3; 1-arg AlCompat.Format; 2-arg Format(value, formatNumber); 3-arg Format(value, length, formatString) with AL mask tokens; tested with decimal + mask
 
 System.GetCollectedErrors:
   layer: runtime-api
@@ -5978,14 +5986,15 @@ System.GetCollectedErrors:
 System.GetDocumentUrl:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/196-system-misc-stubs
+  notes: overloads=1; NavMedia.ALGetDocumentUrl → AlCompat.GetDocumentUrl; returns empty string stub in standalone mode
 
 System.GetDotNetType:
   layer: runtime-api
   category: System
   status: gap
-  notes: overloads=1
+  notes: overloads=1; requires DotNet variable — not testable without DotNet package references; stub not implemented
 
 System.GetLastErrorCallStack:
   layer: runtime-api
@@ -6014,8 +6023,9 @@ System.GetLastErrorText:
 System.GetUrl:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=4
+  status: covered
+  tests: tests/bucket-1/196-system-misc-stubs
+  notes: overloads=4; MockSystemOperatingSystem.ALGetUrl stub with optional record param; returns /mock/{objectType}/{objectId} path; tested with 4-arg form
 
 System.GlobalLanguage:
   layer: runtime-api
@@ -6053,14 +6063,16 @@ System.ImportEncryptionKey:
 System.ImportObjects:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/196-system-misc-stubs
+  notes: overloads=1; ALImportObjects → stripped (no-op) via StripEntireCallMethods in RoslynRewriter; object import requires BC runtime
 
 System.ImportStreamWithUrlAccess:
   layer: runtime-api
   category: System
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/196-system-misc-stubs
+  notes: overloads=1; NavMedia.ALImportWithUrlAccess → AlCompat.ImportStreamWithUrlAccess; returns Guid.Empty stub (BC lowers return value as Guid→Text via ALCompiler.GuidToNavText)
 
 System.IsCollectingErrors:
   layer: runtime-api
