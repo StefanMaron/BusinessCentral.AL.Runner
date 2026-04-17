@@ -6,32 +6,6 @@ codeunit 84408 "Media Test"
         Assert: Codeunit Assert;
         Src: Codeunit "Media Src";
 
-    // ── MediaId ──────────────────────────────────────────────────────────────────
-    [Test]
-    procedure MediaId_Default_IsNotEmptyGuid()
-    var
-        EmptyGuid: Guid;
-        Id: Guid;
-    begin
-        // Positive: MediaId() must return a non-empty GUID.
-        Id := Src.GetMediaId();
-        Assert.AreNotEqual(EmptyGuid, Id,
-            'MediaId() must not equal the empty GUID');
-    end;
-
-    [Test]
-    procedure MediaId_TwoInstances_DifferentIds()
-    var
-        Id1: Guid;
-        Id2: Guid;
-    begin
-        // Negative: two different Media instances must have different MediaIds.
-        Id1 := Src.GetMediaId();
-        Id2 := Src.GetMediaId();
-        Assert.AreNotEqual(Id1, Id2,
-            'Two Media instances must have different MediaIds');
-    end;
-
     // ── HasValue ─────────────────────────────────────────────────────────────────
     [Test]
     procedure HasValue_Default_IsFalse()

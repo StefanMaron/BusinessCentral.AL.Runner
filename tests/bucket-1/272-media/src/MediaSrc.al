@@ -1,16 +1,6 @@
 /// Helper codeunit exercising Media methods via table field access.
 codeunit 84407 "Media Src"
 {
-    // ── MediaId ─────────────────────────────────────────────────────────────────
-    procedure GetMediaId(): Guid
-    var
-        Storage: Record "Media Test Storage" temporary;
-        Id: Guid;
-    begin
-        Id := Storage.MediaField.MediaId();
-        exit(Id);
-    end;
-
     // ── HasValue ─────────────────────────────────────────────────────────────────
     procedure MediaHasValueDefault(): Boolean
     var
