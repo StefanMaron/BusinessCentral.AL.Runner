@@ -5966,7 +5966,9 @@ System.CaptionClassTranslate:
   layer: runtime-api
   category: System
   status: covered
-  tests: tests/bucket-1/196-system-misc-stubs
+  tests:
+    - tests/bucket-1/196-system-misc-stubs
+    - tests/bucket-2/214-captionclass
   notes: overloads=1; ALSystemObject.ALCaptionClassTranslate → AlCompat.CaptionClassTranslate; returns input expression unchanged in standalone mode
   notes: overloads=1
 
