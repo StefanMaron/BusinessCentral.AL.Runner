@@ -81,8 +81,8 @@ interface_declaration:
     - tests/bucket-2/42-list-of-interface
     - tests/bucket-2/53-enum-interface
 
-interface_is_operator:
-  layer: runtime
+Interface.IsInterfaceOfType:
+  layer: runtime-api
   category: interface
   status: covered
   notes: >
@@ -93,8 +93,8 @@ interface_is_operator:
   tests:
     - tests/bucket-1/287-interface-typecheck
 
-interface_as_operator:
-  layer: runtime
+Interface.AsInterfaceOfType:
+  layer: runtime-api
   category: interface
   status: covered
   notes: >
