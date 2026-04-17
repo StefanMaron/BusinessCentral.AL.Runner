@@ -2349,26 +2349,109 @@ public static class AlCompat
     }
 
     // NavXmlDeclaration.ALSelectNodes throws NavNCLNotSupportedOperationException.
-    // Declarations have no child nodes — populate nodeListRef with a new empty
-    // NavXmlNodeList so the caller's Count() call doesn't throw on a null ref.
+    // Declarations have no child nodes — return false and populate nodeListRef with
+    // an empty NavXmlNodeList so the caller's Count() call doesn't NullReferenceException.
     // ALSelectNodes takes ByRef<NavXmlNodeList> (BC's output-parameter wrapper).
     //
-    // NavXmlNodeList has no public parameterless constructor, so we bootstrap one
-    // by running ALSelectNodes on an empty NavXmlDocument — BC always populates the
-    // ByRef output even when SelectNodes returns false (no-match xpath).
+    // NavXmlNodeList has no public parameterless constructor.  We bootstrap a valid
+    // empty instance via ALSelectNodes on a childless NavXmlElement (xpath "*" matches
+    // nothing on an element with no children) or NavXmlDocument.  Multiple strategies
+    // are tried with exception suppression so a future BC version change can't break us.
     private static NavXmlNodeList? _emptyNavXmlNodeList;
     private static NavXmlNodeList GetEmptyNavXmlNodeList()
     {
-        if (_emptyNavXmlNodeList is null)
+        if (_emptyNavXmlNodeList is not null)
+            return _emptyNavXmlNodeList;
+
+        // Strategy 1: bootstrap via NavXmlElement.ALCreate + ALSelectNodes.
+        // NavXmlElement is the safest choice — XmlElement tests confirm it works.
+        // Use reflection so we never hard-code a signature that might vary by BC version.
+        try
+        {
+            var alCreate = typeof(NavXmlElement).GetMethods(
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+                .FirstOrDefault(m =>
+                {
+                    if (m.Name != "ALCreate") return false;
+                    var ps = m.GetParameters();
+                    return ps.Length >= 2
+                        && ps[0].ParameterType == typeof(DataError)
+                        && ps[1].ParameterType == typeof(NavText);
+                });
+            if (alCreate != null)
+            {
+                var args = new object[alCreate.GetParameters().Length];
+                args[0] = DataError.ThrowError;
+                args[1] = new NavText("__alrunner__");
+                for (int i = 2; i < args.Length; i++)
+                {
+                    var pt = alCreate.GetParameters()[i].ParameterType;
+                    args[i] = pt.IsValueType ? System.Activator.CreateInstance(pt)! : null!;
+                }
+                var elem = (NavXmlElement)alCreate.Invoke(null, args)!;
+                NavXmlNodeList? list = null;
+                var byRef = new ByRef<NavXmlNodeList>(() => list!, v => list = v);
+                elem.ALSelectNodes(DataError.ThrowError, new NavText("*"), byRef);
+                if (list is not null)
+                {
+                    _emptyNavXmlNodeList = list;
+                    return list;
+                }
+            }
+        }
+        catch { }
+
+        // Strategy 2: bootstrap via NavXmlDocument.ALSelectNodes.
+        // ALCreate (read-only) does not touch NavEnvironment, so it runs standalone.
+        try
         {
             var doc = NavXmlDocument.ALCreate(DataError.ThrowError);
             NavXmlNodeList? list = null;
             var byRef = new ByRef<NavXmlNodeList>(() => list!, v => list = v);
-            doc.ALSelectNodes(DataError.ThrowError, new NavText("/__alrunner_init__"), byRef);
-            _emptyNavXmlNodeList = list
-                ?? (NavXmlNodeList)System.Runtime.CompilerServices.RuntimeHelpers
-                    .GetUninitializedObject(typeof(NavXmlNodeList));
+            doc.ALSelectNodes(DataError.ThrowError, new NavText("*"), byRef);
+            if (list is not null)
+            {
+                _emptyNavXmlNodeList = list;
+                return list;
+            }
         }
+        catch { }
+
+        // Strategy 3: use any non-public constructor via reflection, passing an
+        // empty IEnumerable<XNode> where possible, or null/default for other params.
+        try
+        {
+            foreach (var ctor in typeof(NavXmlNodeList).GetConstructors(
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance))
+            {
+                try
+                {
+                    var ps = ctor.GetParameters();
+                    var args = new object?[ps.Length];
+                    for (int i = 0; i < ps.Length; i++)
+                    {
+                        var pt = ps[i].ParameterType;
+                        if (pt.IsAssignableFrom(
+                            typeof(System.Collections.Generic.IEnumerable<System.Xml.Linq.XNode>)))
+                            args[i] = System.Linq.Enumerable.Empty<System.Xml.Linq.XNode>();
+                        else if (pt.IsValueType)
+                            args[i] = System.Activator.CreateInstance(pt);
+                        else
+                            args[i] = null;
+                    }
+                    var instance = (NavXmlNodeList)ctor.Invoke(args);
+                    _emptyNavXmlNodeList = instance;
+                    return instance;
+                }
+                catch { }
+            }
+        }
+        catch { }
+
+        // Final fallback: uninitialized object.  Count() may still throw NRE on some
+        // BC versions, but this is better than propagating an exception.
+        _emptyNavXmlNodeList = (NavXmlNodeList)System.Runtime.CompilerServices.RuntimeHelpers
+            .GetUninitializedObject(typeof(NavXmlNodeList));
         return _emptyNavXmlNodeList;
     }
 
