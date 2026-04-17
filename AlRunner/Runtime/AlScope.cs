@@ -2455,7 +2455,9 @@ public static class AlCompat
         return _emptyNavXmlNodeList;
     }
 
-    public static bool XmlSelectNodes(object node, NavText xpath, ByRef<NavXmlNodeList> nodeListRef)
+    // BC transpiles the xpath argument to a plain string (not NavText), so both
+    // overloads accept string to match what the rewriter emits.
+    public static bool XmlSelectNodes(object node, string xpath, ByRef<NavXmlNodeList> nodeListRef)
     {
         if (node is NavXmlDeclaration)
         {
@@ -2471,7 +2473,7 @@ public static class AlCompat
     // NavXmlDeclaration.ALSelectSingleNode also throws NavNCLNotSupportedOperationException.
     // Declarations have no child nodes — return false.
     // ALSelectSingleNode takes ByRef<NavXmlNode> (BC's output-parameter wrapper).
-    public static bool XmlSelectSingleNode(object node, NavText xpath, ByRef<NavXmlNode> resultRef)
+    public static bool XmlSelectSingleNode(object node, string xpath, ByRef<NavXmlNode> resultRef)
     {
         if (node is NavXmlDeclaration)
             return false;
