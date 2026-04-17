@@ -66,6 +66,8 @@ public class RoslynRewriter : CSharpSyntaxRewriter
                         // without a UI. Stripping is safe — MockNotification tests that exist don't assert on stored action state.
         "ALAddNavigationAction",  // NavALErrorInfo.ALAddNavigationAction(caption [, description]) —
                         // navigation drill-downs require a UI client to open; no-op in standalone mode.
+        "ALActivate",  // ALDebugger.ALActivate(DataError) — no debugger standalone; no-op
+        "ALDeactivate",  // ALDebugger.ALDeactivate(DataError) — no debugger standalone; no-op
         "ALSendTraceTag",  // ALSession.ALSendTraceTag(session, tag, category, verbosity, msg, classification) — telemetry; no-op standalone
         "ALLogSecurityAudit",  // ALSession.ALLogSecurityAudit(session, desc, result, resultDesc, category, ...) — needs OpenTelemetry DLL; no-op standalone
         "ALEnableVerboseTelemetry",  // ALSession.ALEnableVerboseTelemetry(session, enabled, duration) — telemetry config; no-op standalone
@@ -2580,6 +2582,14 @@ public void ClearApplicationMemberVariables()
                         SyntaxKind.SimpleMemberAccessExpression,
                         SyntaxFactory.IdentifierName("AlScope"),
                         SyntaxFactory.IdentifierName(targetMethod)));
+            }
+
+            // ALDebugger.ALIsActive() -> false
+            // No debugger attached in standalone mode.
+            if (exprText == "ALDebugger" && methodName == "ALIsActive")
+            {
+                return SyntaxFactory.LiteralExpression(SyntaxKind.FalseLiteralExpression)
+                    .WithTriviaFrom(visited);
             }
 
             // ALSessionInformation.GetALCallstack(session) -> ""
