@@ -3547,20 +3547,22 @@ public void ClearApplicationMemberVariables()
 
             // ALSystemErrorHandling.ALClearLastError() -> AlScope.LastErrorText = ""
             // ALSystemErrorHandling.ALGetLastErrorTextFunc(...) -> AlScope.LastErrorText
+            // ALSystemErrorHandling.ALGetLastErrorObject(...) -> AlScope.GetLastErrorObject()
             if (exprText == "ALSystemErrorHandling")
             {
                 if (methodName == "ALClearLastError")
                 {
                     // Return an assignment expression: AlScope.LastErrorText = ""
-                    return SyntaxFactory.AssignmentExpression(
-                        SyntaxKind.SimpleAssignmentExpression,
+                    // Also resets AlScope.LastErrorObject = null via the property setter in AssertError,
+                    // but ClearLastError is a no-arg call so we chain the null-assignment here too.
+                    // Emit: (AlScope.LastErrorText = "") is a hack — instead emit a helper call:
+                    //   AlScope.ClearLastErrorState()
+                    // which resets both LastErrorText and LastErrorObject.
+                    return SyntaxFactory.InvocationExpression(
                         SyntaxFactory.MemberAccessExpression(
                             SyntaxKind.SimpleMemberAccessExpression,
                             SyntaxFactory.IdentifierName("AlScope"),
-                            SyntaxFactory.IdentifierName("LastErrorText")),
-                        SyntaxFactory.LiteralExpression(
-                            SyntaxKind.StringLiteralExpression,
-                            SyntaxFactory.Literal("")));
+                            SyntaxFactory.IdentifierName("ClearLastErrorState")));
                 }
 
                 if (methodName == "ALGetLastErrorTextFunc")
@@ -3570,6 +3572,16 @@ public void ClearApplicationMemberVariables()
                         SyntaxKind.SimpleMemberAccessExpression,
                         SyntaxFactory.IdentifierName("AlScope"),
                         SyntaxFactory.IdentifierName("LastErrorText"));
+                }
+
+                if (methodName == "ALGetLastErrorObject")
+                {
+                    // GetLastErrorObject() → AlScope.GetLastErrorObject()
+                    return SyntaxFactory.InvocationExpression(
+                        SyntaxFactory.MemberAccessExpression(
+                            SyntaxKind.SimpleMemberAccessExpression,
+                            SyntaxFactory.IdentifierName("AlScope"),
+                            SyntaxFactory.IdentifierName("GetLastErrorObject")));
                 }
             }
 
