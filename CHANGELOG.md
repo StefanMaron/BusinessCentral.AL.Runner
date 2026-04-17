@@ -7,12 +7,6 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
-- **`Dialog.Clear` (#964)** — `Clear(dlg)` on a `Dialog` variable now compiles and
-  runs. The BC compiler lowers AL `Clear(T)` to `T.Clear()` on the mock type;
-  `MockDialog` was missing this method, causing a Roslyn CS1061 error. Added a no-op
-  `Clear()` to `MockDialog` in `AlScope.cs`. New suite `tests/bucket-1/192-dialog-clear`
-  proves the fix with 4 tests (open-close-clear, clear without open, clear twice, inline).
-  Coverage map: `Dialog.Clear` added as `covered`.
 - **`actionref_declaration` coverage (#388)** — Pages and page extensions containing
   `actionref` sections (promoted-action bindings) now compile and run correctly.
   The existing `RoslynRewriter` already handles the BC-generated C# for actionref
