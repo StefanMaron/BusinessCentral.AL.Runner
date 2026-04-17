@@ -2426,6 +2426,27 @@ public void ClearApplicationMemberVariables()
                         SyntaxFactory.IdentifierName(methodName)));
             }
 
+            // JsonValue.ALSetValue: wrap the receiver with MockJsonHelper.ClearUndefined(x)
+            // so the ConditionalWeakTable "fresh/undefined" marker is cleared before the
+            // native BC ALSetValue runs.  Result: x.ALSetValue(args) →
+            //   MockJsonHelper.ClearUndefined(x).ALSetValue(args)
+            if (methodName == "ALSetValue" && memberAccess != null)
+            {
+                var wrappedReceiver = SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("MockJsonHelper"),
+                        SyntaxFactory.IdentifierName("ClearUndefined")),
+                    SyntaxFactory.ArgumentList(
+                        SyntaxFactory.SingletonSeparatedList(
+                            SyntaxFactory.Argument(memberAccess.Expression))));
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        wrappedReceiver,
+                        memberAccess.Name));
+            }
+
             // NavJsonToken/NavJsonObject/NavJsonArray/NavJsonValue: ALWriteTo, ALReadFrom,
             // ALSelectToken, ALSelectTokens, ALGetBoolean, and the object mutation/read methods
             // -> MockJsonHelper static methods.

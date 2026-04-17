@@ -770,44 +770,67 @@ public static class MockJsonHelper
     public static NavJsonToken AsToken(NavJsonToken token, DataError errorLevel = default)
         => token;
 
+    // -----------------------------------------------------------------------
+    // JsonValue IsUndefined / SetValueToUndefined support
+    //
+    // BC's SetBackingToken reflection call does not "stick" on a freshly-constructed
+    // NavJsonValue before any native ALSetValue has been called.  We therefore track
+    // the "fresh / undefined" state in a ConditionalWeakTable keyed by the instance:
+    //
+    //   MakeUndefined  : marks the instance as undefined in the table
+    //   ClearUndefined : removes the mark (called by the rewriter before ALSetValue)
+    //   IsUndefined    : checks the table first (fresh-variable case), then falls
+    //                    back to the backing-token check (SetValueToUndefined case)
+    //   SetValueToUndefined: sets the backing token to JValue.CreateUndefined()
+    //                    so the backing-token fallback in IsUndefined returns true
+    // -----------------------------------------------------------------------
+    private static readonly ConditionalWeakTable<NavJsonValue, object?> _undefinedInstances = new();
+
     /// <summary>
-    /// Creates a new NavJsonValue initialised to the "undefined" state.
-    /// BC's NavJsonValue() constructor sets a non-undefined backing token, so the
-    /// native IsUndefined property returns false for a fresh variable.  This factory
-    /// sets JValue.CreateUndefined() as the backing token so that the property
-    /// returns true — matching AL's "var JV: JsonValue" semantics.
-    /// AL: var JV: JsonValue  →  MockJsonHelper.CreateUndefinedJsonValue()
+    /// Called by the rewriter for every "new NavJsonValue(...)" construction.
+    /// The real constructor still runs (preserving scope/parent), then the instance
+    /// is registered as "undefined" in <see cref="_undefinedInstances"/> so that
+    /// <see cref="IsUndefined"/> returns true before any SetValue call.
+    /// AL: var JV: JsonValue  →  MockJsonHelper.MakeUndefined(new NavJsonValue(...))
     /// </summary>
-    public static NavJsonValue CreateUndefinedJsonValue()
+    public static NavJsonValue MakeUndefined(NavJsonValue instance)
     {
-        // NavJsonValue has no public parameterless constructor (see CreateJsonToken<T>).
-        // Use GetUninitializedObject to bypass the constructor, then set the backing
-        // token to JValue.CreateUndefined() so IsUndefined returns true.
-        var instance = (NavJsonValue)RuntimeHelpers.GetUninitializedObject(typeof(NavJsonValue));
-        SetBackingToken(instance, JValue.CreateUndefined());
+        _undefinedInstances.AddOrUpdate(instance, null);
         return instance;
     }
 
     /// <summary>
-    /// Replacement for NavJsonValue.ALIsUndefined().
-    /// Returns true if the JsonValue has not been assigned a value.
-    /// AL: JsonValue.IsUndefined()  →  MockJsonHelper.IsUndefined(token)
+    /// Clears the "undefined" marker for <paramref name="instance"/> and returns it.
+    /// Called by the rewriter as a wrapper around every "expr.ALSetValue(…)" call:
+    ///   MockJsonHelper.ClearUndefined(expr).ALSetValue(…)
+    /// so the ConditionalWeakTable entry is removed before the native SetValue runs.
+    /// </summary>
+    public static NavJsonValue ClearUndefined(NavJsonValue instance)
+    {
+        _undefinedInstances.Remove(instance);
+        return instance;
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonValue.ALIsUndefined() and the native IsUndefined property.
+    /// Returns true if the JsonValue has not been assigned a value (or was reset via
+    /// SetValueToUndefined).
     ///
-    /// Strategy: invoke BC's own ALIsUndefined via reflection (it reads internal
-    /// state without going through TrappableOperationExecutor). If that fails,
-    /// fall back to backing-token heuristics.
-    ///
-    /// Note: BC does NOT compile IsUndefined() to an ALIsUndefined() invocation —
-    /// it generates a native property access (IsUndefined) on NavJsonValue.  This
-    /// method is kept as a fallback for any path that does redirect to MockJsonHelper
-    /// (e.g. future BC versions).  The primary fix is CreateUndefinedJsonValue().
+    /// Two-path strategy:
+    ///  1. ConditionalWeakTable check — covers "var JV: JsonValue" (fresh variable)
+    ///     before any ALSetValue has been called.  The entry is added by MakeUndefined
+    ///     and removed by ClearUndefined (which the rewriter injects before ALSetValue).
+    ///  2. Backing-token check — covers SetValueToUndefined(), which sets the backing
+    ///     token to JValue.CreateUndefined() (JTokenType.Undefined) after ALSetValue
+    ///     has already been called and the ConditionalWeakTable entry was cleared.
     /// </summary>
     public static bool IsUndefined(NavJsonToken token, DataError errorLevel = default)
     {
-        // Fresh NavJsonValue variables are intercepted by the rewriter and created via
-        // CreateUndefinedJsonValue() which sets JValue.CreateUndefined() (JTokenType.Undefined)
-        // as the backing token.  SetValueToUndefined() also sets that token.
-        // So checking the backing token type is reliable for all cases.
+        // Path 1: fresh variable (never had ALSetValue called)
+        if (token is NavJsonValue jv && _undefinedInstances.TryGetValue(jv, out _))
+            return true;
+
+        // Path 2: SetValueToUndefined was called (backing token = JValue.CreateUndefined())
         var backing = BackingTokenProp.GetValue(token) as JToken;
         if (backing == null) return true;
         return backing.Type == JTokenType.None
@@ -817,26 +840,13 @@ public static class MockJsonHelper
 
     /// <summary>
     /// Replacement for NavJsonValue.ALSetValueToUndefined().
-    /// Sets the JsonValue to the undefined state.
+    /// Sets the backing token to JValue.CreateUndefined() so the backing-token
+    /// path in IsUndefined returns true.  This works correctly because it is always
+    /// called after at least one ALSetValue has already initialised the internal state.
     /// AL: JsonValue.SetValueToUndefined()  →  MockJsonHelper.SetValueToUndefined(token)
-    /// Sets the backing token to JValue.CreateUndefined() so that the native
-    /// IsUndefined property returns true after this call.
     /// </summary>
     public static void SetValueToUndefined(NavJsonToken token, DataError errorLevel = default)
         => SetBackingToken(token, JValue.CreateUndefined());
-
-    /// <summary>
-    /// Wraps a NavJsonValue construction so the real constructor is called
-    /// (preserving scope/parent) and then the backing token is overridden to
-    /// JValue.CreateUndefined() — matching AL's "var JV: JsonValue" semantics
-    /// where a fresh JsonValue is undefined.
-    /// Emitted by the rewriter as: MockJsonHelper.MakeUndefined(new NavJsonValue(...))
-    /// </summary>
-    public static NavJsonValue MakeUndefined(NavJsonValue instance)
-    {
-        SetBackingToken(instance, JValue.CreateUndefined());
-        return instance;
-    }
 
     private static bool IsSupportedTokenType(JToken token)
     {
