@@ -410,6 +410,10 @@ public class RoslynRewriter : CSharpSyntaxRewriter
             preservedMembers.Add(
                 SyntaxFactory.ParseMemberDeclaration(
                     "public bool PrintOnlyIfDetail { get; set; }")!);
+            // PageNo — CurrReport.PageNo() returns current page number; always 0 in standalone mode.
+            preservedMembers.Add(
+                SyntaxFactory.ParseMemberDeclaration(
+                    "public int PageNo() => 0;")!);
 
             // For report extensions: inject a CurrReport stub.
             // BC generates a CurrReport property that casts this.ParentObject to the

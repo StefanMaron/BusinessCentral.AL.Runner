@@ -5368,8 +5368,9 @@ ReportInstance.ExcelLayout:
 ReportInstance.Execute:
   layer: runtime-api
   category: ReportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/281-report-instance-ext
+  notes: overloads=1; MockReportHandle.StaticExecute(id, requestPage) — no-op in standalone mode.
 
 ReportInstance.FormatRegion:
   layer: runtime-api
@@ -5395,14 +5396,16 @@ ReportInstance.Language:
 ReportInstance.NewPage:
   layer: runtime-api
   category: ReportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/281-report-instance-ext
+  notes: overloads=1; Deprecated in BC; BC compiler compiles CurrReport.NewPage() to a blank statement — no injection needed.
 
 ReportInstance.NewPagePerRecord:
   layer: runtime-api
   category: ReportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/281-report-instance-ext
+  notes: overloads=1; Both CurrReport.NewPagePerRecord (in trigger) and Rep.NewPagePerRecord (instance setter) compile to blank statements — no injection needed.
 
 ReportInstance.ObjectId:
   layer: runtime-api
@@ -5414,14 +5417,16 @@ ReportInstance.ObjectId:
 ReportInstance.PageNo:
   layer: runtime-api
   category: ReportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/281-report-instance-ext
+  notes: overloads=1; Injected as public int PageNo() => 0 into stripped report class by RoslynRewriter.
 
 ReportInstance.PaperSource:
   layer: runtime-api
   category: ReportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/281-report-instance-ext
+  notes: overloads=1; Deprecated in BC; BC compiler compiles CurrReport.PaperSource() to a blank statement — no injection needed.
 
 ReportInstance.Preview:
   layer: runtime-api
@@ -5432,8 +5437,9 @@ ReportInstance.Preview:
 ReportInstance.Print:
   layer: runtime-api
   category: ReportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/281-report-instance-ext
+  notes: overloads=1; MockReportHandle.Print(requestPageXml) instance method — no-op in standalone mode.
 
 ReportInstance.PrintOnlyIfDetail:
   layer: runtime-api
@@ -5480,8 +5486,9 @@ ReportInstance.RunRequestPage:
 ReportInstance.SaveAs:
   layer: runtime-api
   category: ReportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/281-report-instance-ext
+  notes: overloads=1; MockReportHandle.SaveAs(errorLevel, requestParams, format, outStream) — no-op in standalone mode.
 
 ReportInstance.SaveAsExcel:
   layer: runtime-api
@@ -5528,8 +5535,9 @@ ReportInstance.SetTableView:
 ReportInstance.ShowOutput:
   layer: runtime-api
   category: ReportInstance
-  status: gap
-  notes: overloads=2
+  status: covered
+  tests: tests/bucket-1/281-report-instance-ext
+  notes: overloads=2; Deprecated in BC; BC compiler compiles CurrReport.ShowOutput to default(bool) = false — no injection needed.
 
 ReportInstance.Skip:
   layer: runtime-api
@@ -5548,8 +5556,9 @@ ReportInstance.TargetFormat:
 ReportInstance.TotalsCausedBy:
   layer: runtime-api
   category: ReportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/281-report-instance-ext
+  notes: overloads=1; Deprecated in BC; BC compiler compiles CurrReport.TotalsCausedBy to default(int) = 0 — no injection needed.
 
 ReportInstance.UseRequestPage:
   layer: runtime-api
@@ -5561,8 +5570,9 @@ ReportInstance.UseRequestPage:
 ReportInstance.ValidateAndPrepareLayout:
   layer: runtime-api
   category: ReportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/281-report-instance-ext
+  notes: overloads=1; MockReportHandle.StaticValidateAndPrepareLayout(errorLevel, id, inStreamIn, ByRef<inStreamOut>, layoutType) — no-op in standalone mode.
 
 ReportInstance.WordLayout:
   layer: runtime-api
