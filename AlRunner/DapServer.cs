@@ -422,5 +422,7 @@ public sealed class DapServer : IDisposable
         _cts.Cancel();
         _client?.Dispose();
         _listener.Stop();
+        _writeLock.Dispose();
+        _configDoneSemaphore.Dispose();
     }
 }
