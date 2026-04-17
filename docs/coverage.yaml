@@ -6510,6 +6510,7 @@ Table.Init:
   tests:
     - tests/bucket-1/47-initvalue
     - tests/bucket-1/56-init-reset
+    - tests/bucket-1/197-record-init-value
   notes: overloads=1; clears non-PK fields to defaults, preserves PK, applies InitValue
 
 Table.Insert:
