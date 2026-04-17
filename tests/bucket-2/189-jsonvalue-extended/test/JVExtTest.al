@@ -1,7 +1,7 @@
 /// Tests for JsonValue extended methods — covers 14 gap methods from issue #699.
 /// AsBigInteger, AsByte, AsChar, AsCode, AsDate, AsDateTime, AsDuration,
 /// AsOption, AsTime, AsToken, Clone, IsUndefined, Path, SetValueToUndefined
-codeunit 97701 "JVExt Tests"
+codeunit 97704 "JVExt Tests"
 {
     Subtype = Test;
 

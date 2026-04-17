@@ -1,6 +1,6 @@
 /// Source procedures for JsonValue extended-method coverage (issue #699).
 /// Wraps each of the 14 gap methods so the test codeunit can call them.
-codeunit 97700 "JVExt Src"
+codeunit 97703 "JVExt Src"
 {
     procedure AsBigIntegerRoundTrip(): BigInteger
     var
