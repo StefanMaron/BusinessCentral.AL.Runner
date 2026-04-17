@@ -283,12 +283,12 @@ public class MockTestPageHandle
 
     /// <summary>
     /// Returns a MockRecordHandle representing the underlying record of the page.
-    /// Stub returns an unbound empty record handle (table 0). In BC, GetRecord
-    /// returns the page's source table record, but we lack source-table metadata
-    /// here. Using 0 avoids polluting the global store under a wrong table ID.
+    /// Returns <c>_currentRecord</c> when the page is positioned (after GoToKey or
+    /// GoToRecord), so that GetRecord(var Rec) reflects the actual positioned record.
+    /// Falls back to an unbound empty handle (table 0) when no record is positioned.
     /// BC emits <c>tP.Target.ALGetRecord()</c> for <c>TestPage.GetRecord(var Rec)</c>.
     /// </summary>
-    public MockRecordHandle ALGetRecord() => new MockRecordHandle(0);
+    public MockRecordHandle ALGetRecord() => _currentRecord ?? new MockRecordHandle(0);
 
     /// <summary>
     /// Navigates to the record with the given primary key value(s).

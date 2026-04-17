@@ -7589,6 +7589,14 @@ TestPage.Yes:
   tests:
     - tests/bucket-1/187-testpage-methods
 
+TestPage.GetRecord:
+  layer: runtime-api
+  category: TestPage
+  status: covered
+  notes: overloads=1; ALGetRecord() returns _currentRecord after GoToKey/GoToRecord, falls back to empty MockRecordHandle(0) when no record is positioned.
+  tests:
+    - tests/bucket-1/281-testpage-getrecord
+
 # ── TestPart ────────────────────────────────────────────────────
 
 TestPart.Caption:
