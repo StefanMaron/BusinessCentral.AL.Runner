@@ -756,12 +756,10 @@ public static class MockJsonHelper
     /// </summary>
     public static NavJsonValue CreateUndefinedJsonValue()
     {
-        // Use the normal constructor so all internal NavJsonValue state is
-        // properly initialised, then override the backing token to the
-        // "undefined" sentinel.  This mirrors exactly what SetValueToUndefined
-        // does (and those tests pass), so the native IsUndefined property
-        // returns true for a fresh "var JV: JsonValue" variable.
-        var instance = new NavJsonValue();
+        // NavJsonValue has no public parameterless constructor (see CreateJsonToken<T>).
+        // Use GetUninitializedObject to bypass the constructor, then set the backing
+        // token to JValue.CreateUndefined() so IsUndefined returns true.
+        var instance = (NavJsonValue)RuntimeHelpers.GetUninitializedObject(typeof(NavJsonValue));
         SetBackingToken(instance, JValue.CreateUndefined());
         return instance;
     }

@@ -3975,6 +3975,24 @@ public void ClearApplicationMemberVariables()
                 .WithTriviaFrom(visited);
         }
 
+        // Pattern: expr.IsUndefined (NavJsonValue property) -> MockJsonHelper.IsUndefined(expr)
+        // BC compiles AL's JsonValue.IsUndefined() as a native C# PROPERTY ACCESS on NavJsonValue,
+        // not as a method call — so VisitInvocationExpression never intercepts it.
+        // MockJsonHelper.IsUndefined() correctly returns true when the backing token is null
+        // (fresh variable) or JValue.CreateUndefined() (after SetValueToUndefined).
+        if (memberName == "IsUndefined")
+        {
+            return SyntaxFactory.InvocationExpression(
+                SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("MockJsonHelper"),
+                    SyntaxFactory.IdentifierName("IsUndefined")),
+                SyntaxFactory.ArgumentList(
+                    SyntaxFactory.SingletonSeparatedList(
+                        SyntaxFactory.Argument(visited.Expression))))
+                .WithTriviaFrom(visited);
+        }
+
         return visited;
     }
 
