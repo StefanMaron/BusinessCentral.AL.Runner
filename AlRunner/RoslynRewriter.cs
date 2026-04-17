@@ -123,7 +123,7 @@ public class RoslynRewriter : CSharpSyntaxRewriter
         "ALGetFilters", "ALGetRangeMinSafe", "ALGetRangeMaxSafe",
         "ALHasFilter", "ALCurrentKey", "ALAscending", "ALCountApprox",
         "ALConsistent", "ALFieldActive", "ALAddLink", "ALDeleteLink", "ALDeleteLinks",
-        "ALHasLinks", "ALWritePermission", "ALSetPermissionFilter",
+        "ALHasLinks", "ALCopyLinks", "ALWritePermission", "ALSetPermissionFilter",
         "SetFieldValueSafe", "GetFieldValueSafe", "GetFieldRefSafe",
     };
 
@@ -627,11 +627,12 @@ public bool ALAscending { get => Rec.ALAscending; set => Rec.ALAscending = value
 public int ALCountApprox => Rec.ALCountApprox;
 public void ALConsistent(bool consistent) => Rec.ALConsistent(consistent);
 public bool ALFieldActive(int fieldNo) => Rec.ALFieldActive(fieldNo);
-public void ALAddLink(string link) => Rec.ALAddLink(link);
-public void ALAddLink(string link, string description) => Rec.ALAddLink(link, description);
+public int ALAddLink(string link) => Rec.ALAddLink(link);
+public int ALAddLink(string link, string description) => Rec.ALAddLink(link, description);
 public void ALDeleteLink(int linkId) => Rec.ALDeleteLink(linkId);
 public void ALDeleteLinks() => Rec.ALDeleteLinks();
 public bool ALHasLinks => Rec.ALHasLinks;
+public void ALCopyLinks(MockRecordHandle source) => Rec.ALCopyLinks(source);
 public bool ALWritePermission => Rec.ALWritePermission;
 public void ALSetPermissionFilter() => Rec.ALSetPermissionFilter();
 protected bool CallGetDecimalPlacesExtensionMethod(int fieldNo, ref string result) { return false; }
