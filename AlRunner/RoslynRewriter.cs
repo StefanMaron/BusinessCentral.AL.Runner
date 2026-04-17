@@ -2116,18 +2116,18 @@ public void ClearApplicationMemberVariables()
                         SyntaxFactory.Argument(secondArg)
                     }))).WithTriviaFrom(node);
             }
-            // ALSelectNodes(DataError, xpath, ref nodeList) — 3 args, first is DataError.
+            // ALSelectNodes(DataError, xpath, nodeList) — 3 args, first is DataError.
             // NavXmlDeclaration.ALSelectNodes throws NavNCLNotSupportedOperationException.
-            // Redirect through AlCompat.XmlSelectNodes which returns an empty list for
-            // NavXmlDeclaration and delegates to the normal NavXmlNode path otherwise.
+            // Redirect through AlCompat.XmlSelectNodes which is a no-op for declarations
+            // (leaves the caller's empty-initialized nodeList unchanged) and delegates to
+            // the normal NavXmlNode path otherwise.
             if (xmlMethodName == "ALSelectNodes" &&
                 node.ArgumentList.Arguments.Count == 3 &&
                 node.ArgumentList.Arguments[0].Expression.ToString().StartsWith("DataError"))
             {
                 var receiverExpr = (ExpressionSyntax)Visit(xmlDocMa.Expression)!;
                 var xpathExpr = (ExpressionSyntax)Visit(node.ArgumentList.Arguments[1].Expression)!;
-                var nodeListRawArg = node.ArgumentList.Arguments[2];
-                var nodeListExpr = (ExpressionSyntax)Visit(nodeListRawArg.Expression)!;
+                var nodeListExpr = (ExpressionSyntax)Visit(node.ArgumentList.Arguments[2].Expression)!;
                 return SyntaxFactory.InvocationExpression(
                     SyntaxFactory.MemberAccessExpression(
                         SyntaxKind.SimpleMemberAccessExpression,
@@ -2137,7 +2137,7 @@ public void ClearApplicationMemberVariables()
                     {
                         SyntaxFactory.Argument(receiverExpr),
                         SyntaxFactory.Argument(xpathExpr),
-                        SyntaxFactory.Argument(null, nodeListRawArg.RefKindKeyword, nodeListExpr)
+                        SyntaxFactory.Argument(nodeListExpr)
                     }))).WithTriviaFrom(node);
             }
         }

@@ -2349,21 +2349,14 @@ public static class AlCompat
     }
 
     // NavXmlDeclaration.ALSelectNodes throws NavNCLNotSupportedOperationException.
-    // Declarations have no child nodes, so SelectNodes must return an empty list.
-    // This helper checks for NavXmlDeclaration first, then delegates to the normal
-    // NavXmlNode path for all other XML node types.
-    public static bool XmlSelectNodes(object node, NavText xpath, ref NavXmlNodeList nodeList)
+    // Declarations have no child nodes — return false and leave the caller's
+    // (already-initialized empty) nodeList unchanged.
+    public static bool XmlSelectNodes(object node, NavText xpath, NavXmlNodeList nodeList)
     {
         if (node is NavXmlDeclaration)
-        {
-            nodeList = NavXmlElement.ALCreate(DataError.ThrowError, new NavText("_"))
-                                    .ALGetChildNodes(DataError.ThrowError);
             return false;
-        }
         if (node is NavXmlNode n)
-            return n.ALSelectNodes(DataError.ThrowError, xpath, ref nodeList);
-        nodeList = NavXmlElement.ALCreate(DataError.ThrowError, new NavText("_"))
-                                .ALGetChildNodes(DataError.ThrowError);
+            return n.ALSelectNodes(DataError.ThrowError, xpath, nodeList);
         return false;
     }
 
