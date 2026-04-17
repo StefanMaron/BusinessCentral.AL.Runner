@@ -6885,7 +6885,9 @@ TestAction.Invoke:
   layer: runtime-api
   category: TestAction
   status: covered
-  notes: overloads=1
+  notes: dispatches compiled OnAction trigger via IdSpace hash lookup; overloads=1
+  tests:
+    - tests/bucket-1/210-testpage-action-invoke
 
 TestAction.Visible:
   layer: runtime-api
