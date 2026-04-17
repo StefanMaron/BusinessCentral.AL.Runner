@@ -2951,14 +2951,18 @@ HttpRequestMessage.Content:
 HttpRequestMessage.GetCookie:
   layer: runtime-api
   category: HttpRequestMessage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALGetCookie(DataError, string, ByRef<MockCookie>) returns true/false and sets out-param.
+  tests:
+    - tests/bucket-1/186-httprequestmessage-cookies
 
 HttpRequestMessage.GetCookieNames:
   layer: runtime-api
   category: HttpRequestMessage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALGetCookieNames() returns NavList<NavText> of all stored cookie names.
+  tests:
+    - tests/bucket-1/186-httprequestmessage-cookies
 
 HttpRequestMessage.GetHeaders:
   layer: runtime-api
@@ -2975,8 +2979,10 @@ HttpRequestMessage.GetRequestUri:
 HttpRequestMessage.GetSecretRequestUri:
   layer: runtime-api
   category: HttpRequestMessage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALGetSecretRequestUri(DataError, ByRef<string>) returns true when secret URI set, false otherwise.
+  tests:
+    - tests/bucket-1/186-httprequestmessage-cookies
 
 HttpRequestMessage.Method:
   layer: runtime-api
@@ -2987,14 +2993,18 @@ HttpRequestMessage.Method:
 HttpRequestMessage.RemoveCookie:
   layer: runtime-api
   category: HttpRequestMessage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALRemoveCookie(DataError, string) removes cookie by name, no-op if not found.
+  tests:
+    - tests/bucket-1/186-httprequestmessage-cookies
 
 HttpRequestMessage.SetCookie:
   layer: runtime-api
   category: HttpRequestMessage
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; ALSetCookie(DataError, string, string) stores MockCookie keyed by name (case-insensitive).
+  tests:
+    - tests/bucket-1/186-httprequestmessage-cookies
 
 HttpRequestMessage.SetRequestUri:
   layer: runtime-api
@@ -3005,8 +3015,10 @@ HttpRequestMessage.SetRequestUri:
 HttpRequestMessage.SetSecretRequestUri:
   layer: runtime-api
   category: HttpRequestMessage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALSetSecretRequestUri(DataError, string) stores URI string (SecretText unwrapped by BC).
+  tests:
+    - tests/bucket-1/186-httprequestmessage-cookies
 
 # ── HttpResponseMessage ─────────────────────────────────────────
 
