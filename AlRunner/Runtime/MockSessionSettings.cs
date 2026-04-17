@@ -26,7 +26,7 @@ public class MockSessionSettings
         ALLocaleId = 0;
         ALProfileId = "";
         ALProfileAppId = new NavGuid(System.Guid.Empty);
-        ALProfileSystemScope = 0;
+        ALProfileSystemScope = false;
         ALTimeZone = "";
     }
 
@@ -45,8 +45,8 @@ public class MockSessionSettings
     /// <summary>ProfileAppId — GUID.</summary>
     public NavGuid ALProfileAppId { get; set; } = new NavGuid(System.Guid.Empty);
 
-    /// <summary>ProfileSystemScope — option (System / Tenant / Extension).</summary>
-    public int ALProfileSystemScope { get; set; }
+    /// <summary>ProfileSystemScope — Boolean (true = System scope, false = Tenant scope).</summary>
+    public bool ALProfileSystemScope { get; set; }
 
     /// <summary>TimeZone — IANA/Windows time-zone name.</summary>
     public string ALTimeZone { get; set; } = "";

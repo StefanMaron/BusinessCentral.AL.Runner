@@ -65,6 +65,40 @@ codeunit 60180 "SST Src"
         exit(s.ProfileId);
     end;
 
+    procedure GetProfileAppId(): Guid
+    var
+        s: SessionSettings;
+    begin
+        s.Init();
+        exit(s.ProfileAppId);
+    end;
+
+    procedure SetAndGetProfileAppId(value: Guid): Guid
+    var
+        s: SessionSettings;
+    begin
+        s.Init();
+        s.ProfileAppId := value;
+        exit(s.ProfileAppId);
+    end;
+
+    procedure GetProfileSystemScope(): Boolean
+    var
+        s: SessionSettings;
+    begin
+        s.Init();
+        exit(s.ProfileSystemScope);
+    end;
+
+    procedure SetAndGetProfileSystemScope(value: Boolean): Boolean
+    var
+        s: SessionSettings;
+    begin
+        s.Init();
+        s.ProfileSystemScope := value;
+        exit(s.ProfileSystemScope);
+    end;
+
     procedure RequestSessionUpdate_NoOp(): Boolean
     var
         s: SessionSettings;
