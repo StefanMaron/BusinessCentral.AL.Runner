@@ -282,11 +282,20 @@ public class MockTestPageHandle
     public bool ALFindPreviousField(DataError errorLevel, int fieldHash, object value) => false;
 
     /// <summary>
-    /// Returns a MockRecordHandle representing the underlying record of the page.
-    /// Returns <c>_currentRecord</c> when the page is positioned (after GoToKey or
-    /// GoToRecord), so that GetRecord(var Rec) reflects the actual positioned record.
-    /// Falls back to an unbound empty handle (table 0) when no record is positioned.
-    /// BC emits <c>tP.Target.ALGetRecord()</c> for <c>TestPage.GetRecord(var Rec)</c>.
+    /// 1-arg form: BC emits <c>tP.Target.ALGetRecord(rec.Target)</c> for
+    /// <c>TestPage.GetRecord(var Rec)</c>.  Copies the currently-positioned record
+    /// into <paramref name="rec"/> so that subsequent field reads reflect actual values.
+    /// Falls back to a no-op when no record is positioned (page has no source table
+    /// or has not been navigated via GoToKey / GoToRecord).
+    /// </summary>
+    public void ALGetRecord(MockRecordHandle rec)
+    {
+        if (_currentRecord != null) rec.ALAssign(_currentRecord);
+    }
+
+    /// <summary>
+    /// 0-arg fallback: returns the currently-positioned record or an empty handle.
+    /// Kept for BC versions that may emit a 0-arg call.
     /// </summary>
     public MockRecordHandle ALGetRecord() => _currentRecord ?? new MockRecordHandle(0);
 

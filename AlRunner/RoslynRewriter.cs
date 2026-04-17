@@ -2033,11 +2033,19 @@ public void ClearApplicationMemberVariables()
         }
 
         // NavRecordId.ALGetRecord(scope, target) -> new MockRecordRef()
-        // BC emits `recId.ALGetRecord(this, CompilationTarget.OnPrem)` for RecordId.GetRecord().
+        // BC emits `recId.ALGetRecord(this, CompilationTarget.OnPrem)` for RecordId.GetRecord()
+        // (older BC). In BC 26+, the form is `recId.ALGetRecord()` (0 args).
         // NavRecordId.ALGetRecord reaches into BC runtime infrastructure that doesn't exist in
         // standalone mode and throws "Parent.Tree cannot be null". Return an unbound MockRecordRef.
+        //
+        // TestPage.GetRecord(var Rec) is emitted as `tP.Target.ALGetRecord()` — the receiver
+        // contains a `.Target` property access, which is specific to TestPage/TestPart handles.
+        // Do NOT intercept that form; let it reach MockTestPageHandle.ALGetRecord() which
+        // returns the currently-positioned record.
         if (node.Expression is MemberAccessExpressionSyntax getRecordMa &&
-            getRecordMa.Name.Identifier.Text == "ALGetRecord")
+            getRecordMa.Name.Identifier.Text == "ALGetRecord" &&
+            !(getRecordMa.Expression is MemberAccessExpressionSyntax receiverMa2 &&
+              receiverMa2.Name.Identifier.Text == "Target"))
         {
             return SyntaxFactory.ObjectCreationExpression(
                 SyntaxFactory.IdentifierName("MockRecordRef"))
