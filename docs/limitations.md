@@ -84,7 +84,7 @@ dispatch, and report/request-page variables support a limited standalone surface
 - Field `Visible`, `Enabled`, and `Editable` are not evaluated against real page metadata.
 - `TestPage` methods like `GoToRecord`, `Next`, `New`, `GetPart`, and filter reads are
   mock-backed rather than UI-backed.
-- Actions beyond OK/Cancel/Close are not bound to real page action triggers.
+- `TestPage` action `Invoke()` dispatches the compiled `OnAction` trigger for custom actions; field `Visible`/`Enabled`/`Editable` are not evaluated against real page metadata.
 - `Page.Run()` is a no-op. `Page.RunModal()` dispatches to `[ModalPageHandler]` if
   registered, otherwise throws.
 - Request pages can be handled via `[RequestPageHandler]`, but this is handler dispatch

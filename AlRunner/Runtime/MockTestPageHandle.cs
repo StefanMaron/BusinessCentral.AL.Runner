@@ -1,3 +1,4 @@
+using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
 
@@ -14,6 +15,7 @@ namespace AlRunner.Runtime;
 /// - ALTrap() — marks page as expecting modal open (no-op)
 /// - GetField(fieldHash) — returns MockTestPageField for value get/set
 /// - GetBuiltInAction(FormResult) — returns MockTestPageAction for OK/Cancel/Close
+/// - GetAction(hash) — returns MockTestPageAction that dispatches to the compiled OnAction trigger
 /// - ModalResult — tracks the FormResult set by action invocation (OK/Cancel)
 /// </summary>
 public class MockTestPageHandle
@@ -22,6 +24,13 @@ public class MockTestPageHandle
 
     private readonly Dictionary<int, MockTestPageField> _fields = new();
     private readonly Dictionary<int, MockTestPageHandle> _parts = new();
+
+    // ── Custom action dispatch ────────────────────────────────────────────────
+    // Lazily created page instance (Page{N}) used to invoke compiled OnAction triggers.
+    private object? _pageInstance;
+    private MockRecordHandle? _currentRecord;
+    private readonly Dictionary<int, MethodInfo> _actionMethodCache = new();
+    private bool _actionCacheBuilt;
 
     /// <summary>
     /// The modal result set by invoking a built-in action (OK, Cancel, etc.).
@@ -138,10 +147,17 @@ public class MockTestPageHandle
     public bool ALFirst() => true;
 
     /// <summary>
-    /// Navigates to a specific record on the page. Standalone mode does not bind
-    /// page buffers, so this succeeds without changing state.
+    /// Navigates to a specific record on the page. Stores the record so that when
+    /// a custom action's OnAction trigger fires, the page instance operates on
+    /// this record instead of its default empty one.
     /// </summary>
-    public bool ALGoToRecord(MockRecordHandle rec) => true;
+    public bool ALGoToRecord(MockRecordHandle rec)
+    {
+        _currentRecord = rec;
+        LinkRecToPageInstance(rec);
+        return true;
+    }
+
     public bool ALGoToRecord(DataError errorLevel, MockRecordHandle rec) => ALGoToRecord(rec);
 
     /// <summary>
@@ -272,12 +288,22 @@ public class MockTestPageHandle
     /// <summary>
     /// Returns a MockTestPageAction for a custom page action.
     /// BC emits <c>tP.Target.GetAction(actionHash).ALInvoke()</c> for
-    /// <c>TestPage.MyAction.Invoke()</c>. Custom actions in standalone mode
-    /// are no-ops — the returned action's ALInvoke() does nothing.
+    /// <c>TestPage.MyAction.Invoke()</c>.
+    /// Looks up the compiled <c>OnAction</c> trigger in the page class and returns
+    /// an action that delegates to it, operating on the record set via GoToRecord.
+    /// Falls back to a no-op action if the page class or method is not found.
     /// </summary>
     public MockTestPageAction GetAction(int actionHash)
     {
-        return new MockTestPageAction();
+        EnsurePageInstance();
+        if (_pageInstance == null) return new MockTestPageAction();
+
+        EnsureActionCache();
+        if (!_actionMethodCache.TryGetValue(actionHash, out var method))
+            return new MockTestPageAction();
+
+        var page = _pageInstance;
+        return new MockTestPageAction(() => method.Invoke(page, null));
     }
 
     /// <summary>
@@ -289,6 +315,110 @@ public class MockTestPageHandle
     {
         var fr = (FormResult)formResult;
         return new MockTestPageAction(this, fr);
+    }
+
+    // ── Page instance lifecycle ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Lazily creates the compiled page instance (<c>Page{N}</c>) from the loaded
+    /// assembly so that custom action triggers can be dispatched to it.
+    /// </summary>
+    private void EnsurePageInstance()
+    {
+        if (_pageInstance != null) return;
+
+        var pageTypeName = $"Page{PageId}";
+        Type? pageType = null;
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            try
+            {
+                pageType = Array.Find(
+                    asm.GetTypes(),
+                    t => t.Name == pageTypeName &&
+                         t.Namespace?.Contains("BusinessApplication") == true);
+                if (pageType != null) break;
+            }
+            catch { }
+        }
+
+        if (pageType == null) return;
+        _pageInstance = Activator.CreateInstance(pageType);
+
+        if (_currentRecord != null)
+            LinkRecToPageInstance(_currentRecord);
+    }
+
+    /// <summary>
+    /// Sets the page instance's <c>Rec</c> backing field to the given record handle
+    /// so that the compiled OnAction trigger operates on the correct in-memory record.
+    /// The page Rec is an auto-property with a private backing field (<c>&lt;Rec&gt;k__BackingField</c>).
+    /// </summary>
+    private void LinkRecToPageInstance(MockRecordHandle rec)
+    {
+        if (_pageInstance == null) return;
+        var field = _pageInstance.GetType()
+            .GetField("<Rec>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic);
+        field?.SetValue(_pageInstance, rec);
+    }
+
+    /// <summary>
+    /// Scans the page class for <c>*_a{N}_OnAction</c> methods, extracts the AL action
+    /// name from each method name, and computes the BC member hash via
+    /// <see cref="IdSpaceHelper.GetMemberId"/>. Populates <c>_actionMethodCache</c>.
+    /// </summary>
+    private void EnsureActionCache()
+    {
+        if (_actionCacheBuilt) return;
+        _actionCacheBuilt = true;
+        if (_pageInstance == null) return;
+
+        foreach (var method in _pageInstance.GetType().GetMethods(
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+        {
+            var actionName = ExtractActionName(method.Name);
+            if (actionName == null) continue;
+
+            int hash = IdSpaceHelper.GetMemberId(PageId, actionName);
+            if (hash != 0)
+                _actionMethodCache[hash] = method;
+        }
+    }
+
+    /// <summary>
+    /// Extracts the AL action name from a compiled method name.
+    /// BC generates <c>{ActionName}_a{N}_OnAction</c> for each action trigger.
+    /// For example: <c>SetFlag_a45_OnAction</c> → <c>"SetFlag"</c>.
+    /// Returns <c>null</c> if the method name does not match the pattern.
+    /// </summary>
+    private static string? ExtractActionName(string methodName)
+    {
+        const string suffix = "_OnAction";
+        if (!methodName.EndsWith(suffix, StringComparison.Ordinal)) return null;
+
+        // Find the last "_a{digits}_OnAction" pattern
+        int onActionIdx = methodName.Length - suffix.Length;
+        int sepStart = -1;
+        for (int i = onActionIdx - 2; i >= 0; i--)
+        {
+            if (methodName[i] == '_' && i + 1 < onActionIdx)
+            {
+                // Check if everything from i+2 to onActionIdx-1 is digits
+                // and there's an 'a' at i+1
+                if (i + 1 < onActionIdx && methodName[i + 1] == 'a')
+                {
+                    var between = methodName.AsSpan(i + 2, onActionIdx - i - 2);
+                    if (!between.IsEmpty && between.IndexOfAnyExceptInRange('0', '9') < 0)
+                    {
+                        sepStart = i;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (sepStart <= 0) return null;
+        return methodName[..sepStart];
     }
 }
 
@@ -512,9 +642,17 @@ public class MockTestPageAction
 {
     private readonly MockTestPageHandle? _parent;
     private readonly FormResult _result;
+    private readonly Action? _customAction;
 
-    /// <summary>Parameterless ctor for backward compat (non-modal usage).</summary>
+    /// <summary>Parameterless ctor for backward compat (non-modal / no-op usage).</summary>
     public MockTestPageAction() { _result = FormResult.LookupOK; }
+
+    /// <summary>Create a custom page action that invokes the given delegate on ALInvoke().</summary>
+    public MockTestPageAction(Action customAction)
+    {
+        _customAction = customAction;
+        _result = FormResult.LookupOK;
+    }
 
     /// <summary>Create an action linked to a TestPage handle with a specific result.</summary>
     public MockTestPageAction(MockTestPageHandle parent, FormResult result)
@@ -537,6 +675,12 @@ public class MockTestPageAction
 
     public void ALInvoke()
     {
+        if (_customAction != null)
+        {
+            _customAction();
+            return;
+        }
+
         if (_parent != null)
         {
             // Map the "page action" FormResult to the "modal return" FormResult.
