@@ -165,6 +165,18 @@ public class MockMedia : NavValue
     public static string ALGetDocumentUrl(object? mediaId) => "";
     public static string ALGetDocumentUrl(DataError errorLevel, object? mediaId) => "";
 
+    // ── ImportStreamWithUrlAccess ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// BC emits <c>NavMedia.ALImportWithUrlAccess(stream, filename, duration)</c> for
+    /// the global <c>ImportStreamWithUrlAccess(InStream, Text, Integer)</c> built-in.
+    /// No BC Media service in standalone mode; returns empty Guid.
+    /// </summary>
+    public static Guid ALImportWithUrlAccess(MockInStream? stream, string filename, int duration) => Guid.Empty;
+    public static Guid ALImportWithUrlAccess(DataError errorLevel, MockInStream? stream, string filename, int duration) => Guid.Empty;
+    public static Guid ALImportWithUrlAccess(MockInStream? stream, NavText filename, int duration) => Guid.Empty;
+    public static Guid ALImportWithUrlAccess(DataError errorLevel, MockInStream? stream, NavText filename, int duration) => Guid.Empty;
+
     // ── FindOrphans ──────────────────────────────────────────────────────────────
 
     /// <summary>
