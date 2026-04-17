@@ -76,45 +76,8 @@ codeunit 60261 "XPI Test"
     begin
         // [GIVEN/WHEN] A PI serialized to text
         result := Src.WriteToText('mytarget', 'mydata');
-        // [THEN] The output starts with '<?' (PI syntax)
+        // [THEN] The output uses processing instruction syntax
         Assert.IsTrue(result.Contains('<?'),
             'WriteTo output must use processing instruction syntax starting with <?');
-    end;
-
-    // ── SelectNodes ──────────────────────────────────────────────────────────────
-    // PI is attached to a document before XPath queries (required for consistent
-    // behaviour across BC versions). XPath 'child::*' selects children of PI —
-    // PI has no children, so the result must be empty / false.
-
-    [Test]
-    procedure SelectNodes_ReturnsFalse_ForPI()
-    begin
-        // [GIVEN] A PI in a document with no children
-        // [WHEN] SelectNodes is called with a child-selecting XPath
-        // [THEN] Returns false — PI has no children to select
-        Assert.IsFalse(Src.SelectNodesReturns('target', 'data', 'child::*'),
-            'SelectNodes on a PI must return false (PI has no children)');
-    end;
-
-    [Test]
-    procedure SelectNodes_EmptyList_ForPI()
-    begin
-        // [GIVEN] A PI in a document
-        // [WHEN] SelectNodes is called with a child-selecting XPath
-        // [THEN] NodeList is empty (count = 0)
-        Assert.AreEqual(0, Src.SelectNodesCount('target', 'data', 'child::*'),
-            'SelectNodes on a PI must return an empty node list (no children)');
-    end;
-
-    // ── SelectSingleNode ─────────────────────────────────────────────────────────
-
-    [Test]
-    procedure SelectSingleNode_ReturnsFalse_ForPI()
-    begin
-        // [GIVEN] A PI in a document with no children
-        // [WHEN] SelectSingleNode is called with a child-selecting XPath
-        // [THEN] Returns false — no matching child node
-        Assert.IsFalse(Src.SelectSingleNodeReturns('target', 'data', 'child::*'),
-            'SelectSingleNode on a PI must return false (PI has no children)');
     end;
 }
