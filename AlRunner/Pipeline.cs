@@ -969,6 +969,63 @@ public class AlRunnerPipeline
                 "");
         }
 
+        // Strip fileupload(Name) { ... } action declarations inside page / pageextension
+        // action areas. fileupload() was introduced after BC 16 and is not recognised by
+        // the runner's AL compiler version. The action is UI-only (no runtime logic), so
+        // removing it entirely is safe.
+        if (Regex.IsMatch(source, @"\bpage(extension)?\s+\d+", RegexOptions.IgnoreCase) &&
+            Regex.IsMatch(source, @"\bfileupload\s*\(", RegexOptions.IgnoreCase))
+        {
+            source = StripPatternedBlock(source, @"\bfileupload\s*\([^)]*\)");
+        }
+
+        return source;
+    }
+
+    /// <summary>
+    /// Strips all blocks whose opening header matches <paramref name="headerPattern"/>.
+    /// The block extends from the header start to the matching closing brace (inclusive).
+    /// The entire block — header and body — is replaced with an empty string.
+    /// </summary>
+    private static string StripPatternedBlock(string source, string headerPattern)
+    {
+        int searchIndex = 0;
+        while (searchIndex < source.Length)
+        {
+            var match = Regex.Match(
+                source.Substring(searchIndex),
+                headerPattern + @"\s*\{",
+                RegexOptions.IgnoreCase);
+            if (!match.Success)
+                break;
+
+            int blockStart = searchIndex + match.Index;
+            int openBrace = source.IndexOf('{', blockStart + match.Length - 1);
+            if (openBrace < 0)
+                break;
+
+            // Brace-depth counting to find the matching closing brace.
+            int depth = 0;
+            int i = openBrace;
+            for (; i < source.Length; i++)
+            {
+                if (source[i] == '{')
+                    depth++;
+                else if (source[i] == '}')
+                {
+                    depth--;
+                    if (depth == 0)
+                        break;
+                }
+            }
+
+            if (i >= source.Length)
+                break;
+
+            source = source.Substring(0, blockStart) + source.Substring(i + 1);
+            // Don't advance searchIndex so we catch multiple consecutive blocks.
+        }
+
         return source;
     }
 

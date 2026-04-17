@@ -821,7 +821,9 @@ customaction_declaration:
 fileuploadaction_declaration:
   layer: syntax
   category: page
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/206-fileupload-action
 
 grid_section:
   layer: syntax
