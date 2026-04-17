@@ -474,6 +474,39 @@ public static class MockJsonHelper
         return CreateJsonToken<NavJsonArray>(jArr);
     }
 
+    /// <summary>
+    /// Stub replacement for NavJsonToken.ALWriteToYaml(DataError, ByRef&lt;NavText&gt;).
+    /// BC's WriteToYaml requires YamlDotNet which is not available in the runner.
+    /// Serializes as JSON instead — JSON is valid YAML, so this stub is sufficient for testing.
+    /// AL: JsonObject.WriteToYaml(var Text)  →  MockJsonHelper.WriteToYaml(token, error, data)
+    /// </summary>
+    public static bool WriteToYaml(NavJsonToken token, DataError errorLevel, ByRef<NavText> data)
+        => WriteTo(token, errorLevel, data);
+
+    /// <summary>
+    /// Stub replacement for NavJsonToken.ALWriteToYaml(DataError, OutStream).
+    /// See <see cref="WriteToYaml(NavJsonToken, DataError, ByRef{NavText})"/> for context.
+    /// </summary>
+    public static bool WriteToYaml(NavJsonToken token, DataError errorLevel, MockOutStream stream)
+        => WriteTo(token, errorLevel, stream);
+
+    /// <summary>
+    /// Stub replacement for NavJsonToken.ALReadFromYaml(DataError, string).
+    /// BC's ReadFromYaml requires YamlDotNet which is not available in the runner.
+    /// Parses as JSON instead — simple YAML using JSON notation (the common test case)
+    /// is parsed correctly.
+    /// AL: JsonObject.ReadFromYaml(Text)  →  MockJsonHelper.ReadFromYaml(token, error, text)
+    /// </summary>
+    public static bool ReadFromYaml(NavJsonToken token, DataError errorLevel, string data)
+        => ReadFrom(token, errorLevel, data);
+
+    /// <summary>
+    /// Stub replacement for NavJsonToken.ALReadFromYaml(DataError, InStream).
+    /// See <see cref="ReadFromYaml(NavJsonToken, DataError, string)"/> for context.
+    /// </summary>
+    public static bool ReadFromYaml(NavJsonToken token, DataError errorLevel, MockInStream stream)
+        => ReadFrom(token, errorLevel, stream);
+
     private static bool IsSupportedTokenType(JToken token)
     {
         return token.Type switch

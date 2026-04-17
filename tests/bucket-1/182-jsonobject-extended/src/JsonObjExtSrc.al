@@ -53,4 +53,27 @@ codeunit 109000 "JOEX Src"
         exit(Obj.Path());
     end;
 
+    // ── WriteToYaml ───────────────────────────────────────────────────────────
+
+    procedure WriteToYamlText(Obj: JsonObject): Text
+    var
+        Yaml: Text;
+    begin
+        Obj.WriteToYaml(Yaml);
+        exit(Yaml);
+    end;
+
+    // ── ReadFromYaml ──────────────────────────────────────────────────────────
+
+    procedure ReadFromYamlGetText(YamlText: Text; KeyName: Text): Text
+    var
+        Obj: JsonObject;
+        Tok: JsonToken;
+    begin
+        Obj.ReadFromYaml(YamlText);
+        if Obj.Get(KeyName, Tok) then
+            exit(Tok.AsValue().AsText());
+        exit('<not-found>');
+    end;
+
 }

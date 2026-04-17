@@ -3468,8 +3468,10 @@ JsonObject.ReadFrom:
 JsonObject.ReadFromYaml:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; rewriter redirects ALReadFromYaml to MockJsonHelper.ReadFromYaml; stub delegates to ReadFrom (JSON round-trip) — YamlDotNet not available in runner
+  tests:
+    - tests/bucket-1/182-jsonobject-extended
 
 JsonObject.Remove:
   layer: runtime-api
@@ -3510,8 +3512,10 @@ JsonObject.WriteTo:
 JsonObject.WriteToYaml:
   layer: runtime-api
   category: JsonObject
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; rewriter redirects ALWriteToYaml to MockJsonHelper.WriteToYaml; stub delegates to WriteTo (JSON serialization — valid YAML) — YamlDotNet not available in runner
+  tests:
+    - tests/bucket-1/182-jsonobject-extended
 
 JsonObject.WriteWithSecretsTo:
   layer: runtime-api

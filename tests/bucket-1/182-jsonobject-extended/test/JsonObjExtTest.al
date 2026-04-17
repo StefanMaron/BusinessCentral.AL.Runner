@@ -142,4 +142,28 @@ codeunit 109001 "JOEX Test"
         Assert.AreEqual('$', Src.PathRoot(Obj), 'Path() on root object must return "$"');
     end;
 
+    // ── WriteToYaml ───────────────────────────────────────────────────────────
+
+    [Test]
+    procedure WriteToYaml_ProducesNonEmptyOutput()
+    var
+        Obj: JsonObject;
+        Result: Text;
+    begin
+        Obj.Add('k', 'v');
+        Result := Src.WriteToYamlText(Obj);
+        Assert.IsTrue(Result <> '', 'WriteToYaml must produce non-empty output');
+    end;
+
+    // ── ReadFromYaml ──────────────────────────────────────────────────────────
+
+    [Test]
+    procedure ReadFromYaml_JsonCompatibleInput_ParsesKey()
+    var
+        Result: Text;
+    begin
+        Result := Src.ReadFromYamlGetText('{"key": "value"}', 'key');
+        Assert.AreEqual('value', Result, 'ReadFromYaml must parse JSON-compatible YAML input');
+    end;
+
 }
