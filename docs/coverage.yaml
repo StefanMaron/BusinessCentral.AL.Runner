@@ -2143,8 +2143,10 @@ ErrorInfo.ControlName:
 ErrorInfo.Create:
   layer: runtime-api
   category: ErrorInfo
-  status: gap
-  notes: overloads=2
+  status: covered
+  notes: overloads=2; NavALErrorInfo.ALCreate(...) loads Microsoft.Dynamics.Nav.CodeAnalysis at runtime. Intercepted in RoslynRewriter — rewritten to AlCompat.CreateErrorInfo(msg) which creates NavALErrorInfo() directly and sets ALMessage. Default (no-arg) variant also intercepted.
+  tests:
+    - tests/bucket-1/191-errorinfo-methods
 
 ErrorInfo.CustomDimensions:
   layer: runtime-api
@@ -2173,8 +2175,10 @@ ErrorInfo.DetailedMessage:
 ErrorInfo.ErrorType:
   layer: runtime-api
   category: ErrorInfo
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALErrorType property get/set on NavALErrorInfo works standalone. Default is Client (not Internal).
+  tests:
+    - tests/bucket-1/191-errorinfo-methods
 
 ErrorInfo.FieldNo:
   layer: runtime-api
@@ -2187,8 +2191,10 @@ ErrorInfo.FieldNo:
 ErrorInfo.Message:
   layer: runtime-api
   category: ErrorInfo
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; ALMessage property get/set on NavALErrorInfo works standalone. Empty string on default-initialised ErrorInfo.
+  tests:
+    - tests/bucket-1/191-errorinfo-methods
 
 ErrorInfo.PageNo:
   layer: runtime-api
