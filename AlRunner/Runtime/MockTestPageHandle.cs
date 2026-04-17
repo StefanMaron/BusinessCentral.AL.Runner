@@ -46,10 +46,11 @@ public class MockTestPageHandle
         PageId = pageId;
     }
 
-    // Lifecycle methods — no-ops in standalone mode
-    public void ALOpenEdit() { }
-    public void ALOpenView() { }
-    public void ALOpenNew() { }
+    private bool _editable = true;
+
+    public void ALOpenEdit() { _editable = true; }
+    public void ALOpenView() { _editable = false; }
+    public void ALOpenNew() { _editable = true; }
     public void ALClose() { }
     public void ALTrap() { }
     public void ALNew() { }
@@ -62,10 +63,10 @@ public class MockTestPageHandle
     public string ALCaption => "TestPage";
 
     /// <summary>
-    /// Whether the page is editable. Stub returns true.
+    /// Whether the page is editable. Set by ALOpenEdit/ALOpenView/ALOpenNew.
     /// BC emits <c>tP.Target.ALEditable</c> as a property access.
     /// </summary>
-    public bool ALEditable => true;
+    public bool ALEditable => _editable;
 
     /// <summary>
     /// Returns the number of validation errors on the page. Stub returns 0.

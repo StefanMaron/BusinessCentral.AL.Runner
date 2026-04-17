@@ -7332,20 +7332,23 @@ TestPage.OK:
 TestPage.OpenEdit:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/102-testpage-openmode
+  notes: overloads=1; sets ALEditable=true on MockTestPageHandle.
 
 TestPage.OpenNew:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/102-testpage-openmode
+  notes: overloads=1; sets ALEditable=true on MockTestPageHandle.
 
 TestPage.OpenView:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  tests: tests/bucket-1/102-testpage-openmode
+  notes: overloads=1; sets ALEditable=false on MockTestPageHandle.
 
 TestPage.Prev:
   layer: runtime-api
