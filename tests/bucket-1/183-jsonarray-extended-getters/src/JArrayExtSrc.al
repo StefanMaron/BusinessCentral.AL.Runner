@@ -1,7 +1,7 @@
 /// Helper codeunit for JsonArray typed getters: GetBigInteger, GetByte,
 /// GetChar, GetDate, GetDateTime, GetDuration, GetOption, GetTime.
 /// These BC 21+ single-arg overloads return the typed value directly.
-codeunit 114000 "JAEX Src"
+codeunit 115000 "JAEX Src"
 {
     // ── GetBigInteger ─────────────────────────────────────────────────────────
 
