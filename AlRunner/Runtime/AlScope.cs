@@ -2342,4 +2342,23 @@ public static class AlCompat
         if (node is NavXmlNode n) n.ALReplaceWith(DataError.ThrowError, replacement);
     }
 
+    // -----------------------------------------------------------------------
+    // ErrorInfo.Create(message) safe factory
+    // NavALErrorInfo.ALCreate(msg, ...) calls UpdateWithRecordInfo() which loads
+    // Microsoft.Dynamics.Nav.CodeAnalysis at runtime — unavailable in standalone mode.
+    // This factory creates NavALErrorInfo directly and sets ALMessage without
+    // going through the static factory method.
+    // -----------------------------------------------------------------------
+    public static NavALErrorInfo CreateErrorInfo(NavText message)
+    {
+        var ei = new NavALErrorInfo();
+        ei.ALMessage = message.ToString();
+        return ei;
+    }
+
+    public static NavALErrorInfo CreateErrorInfo()
+    {
+        return new NavALErrorInfo();
+    }
+
 }

@@ -1821,6 +1821,42 @@ public void ClearApplicationMemberVariables()
             }
         }
 
+        // NavALErrorInfo.ALCreate(msg, ...) → AlScope.CreateErrorInfo(msg)
+        // ALCreate calls UpdateWithRecordInfo(NavRecord record) which loads
+        // Microsoft.Dynamics.Nav.CodeAnalysis at runtime — unavailable standalone.
+        // Intercept before base.Visit so we control argument handling directly.
+        if (node.Expression is MemberAccessExpressionSyntax eiCreateMa &&
+            eiCreateMa.Expression is IdentifierNameSyntax eiIdent &&
+            eiIdent.Identifier.Text == "NavALErrorInfo" &&
+            eiCreateMa.Name.Identifier.Text == "ALCreate")
+        {
+            if (node.ArgumentList.Arguments.Count >= 1)
+            {
+                // ALCreate(message, ...) — pass the message to the safe factory
+                var msgArg = (ExpressionSyntax)Visit(node.ArgumentList.Arguments[0].Expression)!;
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("CreateErrorInfo")),
+                    SyntaxFactory.ArgumentList(
+                        SyntaxFactory.SingletonSeparatedList(
+                            SyntaxFactory.Argument(msgArg))))
+                    .WithTriviaFrom(node);
+            }
+            else
+            {
+                // ALCreate() — no message, return default empty ErrorInfo
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("CreateErrorInfo")),
+                    SyntaxFactory.ArgumentList())
+                    .WithTriviaFrom(node);
+            }
+        }
+
         // `NavOption.Create(existing.NavOptionMetadata, V)` — reassignment
         // pattern BC emits when an AL enum variable is re-assigned. Route
         // through AlCompat.CloneTaggedOption so the new instance inherits
