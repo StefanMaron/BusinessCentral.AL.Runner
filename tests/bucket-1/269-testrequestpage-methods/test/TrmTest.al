@@ -8,6 +8,7 @@ codeunit 84401 "TRM Test"
         NavResult: Boolean;
         ValidationCount: Integer;
         ValidationMsg: Text;
+        FieldDecimal: Decimal;
 
     // ── OK action ──────────────────────────────────────────────────────────────
     [Test]
@@ -433,4 +434,40 @@ codeunit 84401 "TRM Test"
     begin
         NavResult := RequestPage.IsExpanded();
     end;
+
+    // ── Field value set/get round-trip ─────────────────────────────────────────
+    [Test]
+    [HandlerFunctions('FieldValue_SetAndGet_Handler')]
+    procedure FieldValue_SetAndGet_RoundTrips_Decimal()
+    begin
+        // Positive: SetValue(42.5) then AsDecimal() must return 42.5.
+        // Proves field value write + read round-trips correctly.
+        Src.RunReport();
+        Assert.AreEqual(42.5, FieldDecimal, 'SetValue(42.5) then AsDecimal() must return 42.5');
+    end;
+
+    [RequestPageHandler]
+    procedure FieldValue_SetAndGet_Handler(var RequestPage: TestRequestPage "TRM Report")
+    begin
+        RequestPage."AmountFld".SetValue(42.5);
+        FieldDecimal := RequestPage."AmountFld".AsDecimal();
+    end;
+
+    [Test]
+    [HandlerFunctions('FieldValue_NotDefaultWhenSet_Handler')]
+    procedure FieldValue_NotDefaultWhenSet()
+    begin
+        // Negative: a no-op SetValue that discards the write would return 0.
+        // This test fails if the field value is not stored.
+        Src.RunReport();
+        Assert.AreNotEqual(0, FieldDecimal, 'Field value after SetValue must not be the zero default');
+    end;
+
+    [RequestPageHandler]
+    procedure FieldValue_NotDefaultWhenSet_Handler(var RequestPage: TestRequestPage "TRM Report")
+    begin
+        RequestPage."AmountFld".SetValue(99);
+        FieldDecimal := RequestPage."AmountFld".AsDecimal();
+    end;
+
 }

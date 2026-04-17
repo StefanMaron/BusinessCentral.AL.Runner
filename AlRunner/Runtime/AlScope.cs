@@ -1219,6 +1219,11 @@ public static class AlCompat
         if (value is decimal d) return d;
         if (value is double dbl) return (decimal)dbl;
         if (value is float f) return (decimal)f;
+        if (value is int i) return i;
+        if (value is long l) return l;
+        // BC numeric types via explicit cast operators
+        if (value is Microsoft.Dynamics.Nav.Runtime.NavInteger ni) return (decimal)(int)ni;
+        if (value is Microsoft.Dynamics.Nav.Runtime.NavBigInteger nbi) return (decimal)(long)nbi;
         var typeName = value.GetType().Name;
         if (typeName == "Decimal18" || typeName == "NavDecimal")
         {

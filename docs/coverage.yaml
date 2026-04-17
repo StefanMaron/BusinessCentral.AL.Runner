@@ -6944,9 +6944,10 @@ TestField.AsDecimal:
   layer: runtime-api
   category: TestField
   status: covered
-  notes: overloads=1; AlCompat.ObjectToDecimal(_value)
+  notes: overloads=1; AlCompat.ObjectToDecimal(_value); fixed NavInteger/NavBigInteger cast in ExtractDecimal (issue #848)
   tests:
     - tests/bucket-1/71-testpage
+    - tests/bucket-1/269-testrequestpage-methods
 
 TestField.AsInteger:
   layer: runtime-api
@@ -7064,9 +7065,10 @@ TestField.SetValue:
   layer: runtime-api
   category: TestField
   status: covered
-  notes: overloads=2; stores value in-memory
+  notes: overloads=2; stores value in-memory; integer SetValue then AsDecimal proved in TestRequestPage handler
   tests:
     - tests/bucket-1/71-testpage
+    - tests/bucket-1/269-testrequestpage-methods
 
 TestField.ShowMandatory:
   layer: runtime-api
