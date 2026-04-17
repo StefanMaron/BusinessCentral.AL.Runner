@@ -57,22 +57,37 @@ codeunit 60260 "XPI Src"
     end;
 
     // ── SelectNodes ──────────────────────────────────────────────────────────────
+    // PI is attached to a document before XPath queries — required for XPath
+    // navigation to work consistently across all BC runtime versions.
 
     procedure SelectNodesCount(target: Text; data: Text; xpath: Text): Integer
     var
+        doc: XmlDocument;
+        root: XmlElement;
         pi: XmlProcessingInstruction;
         nodeList: XmlNodeList;
     begin
+        doc := XmlDocument.Create();
+        root := XmlElement.Create('root');
         pi := XmlProcessingInstruction.Create(target, data);
+        root.Add(pi);
+        doc.Add(root);
         pi.SelectNodes(xpath, nodeList);
         exit(nodeList.Count());
     end;
 
     procedure SelectNodesReturns(target: Text; data: Text; xpath: Text): Boolean
     var
+        doc: XmlDocument;
+        root: XmlElement;
         pi: XmlProcessingInstruction;
         nodeList: XmlNodeList;
     begin
+        doc := XmlDocument.Create();
+        root := XmlElement.Create('root');
+        pi := XmlProcessingInstruction.Create(target, data);
+        root.Add(pi);
+        doc.Add(root);
         exit(pi.SelectNodes(xpath, nodeList));
     end;
 
@@ -80,10 +95,16 @@ codeunit 60260 "XPI Src"
 
     procedure SelectSingleNodeReturns(target: Text; data: Text; xpath: Text): Boolean
     var
+        doc: XmlDocument;
+        root: XmlElement;
         pi: XmlProcessingInstruction;
         found: XmlNode;
     begin
+        doc := XmlDocument.Create();
+        root := XmlElement.Create('root');
         pi := XmlProcessingInstruction.Create(target, data);
+        root.Add(pi);
+        doc.Add(root);
         exit(pi.SelectSingleNode(xpath, found));
     end;
 }

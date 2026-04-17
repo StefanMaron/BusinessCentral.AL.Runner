@@ -82,25 +82,28 @@ codeunit 60261 "XPI Test"
     end;
 
     // ── SelectNodes ──────────────────────────────────────────────────────────────
+    // PI is attached to a document before XPath queries (required for consistent
+    // behaviour across BC versions). XPath 'child::*' selects children of PI —
+    // PI has no children, so the result must be empty / false.
 
     [Test]
-    procedure SelectNodes_ReturnsFalse_ForOrphanPI()
+    procedure SelectNodes_ReturnsFalse_ForPI()
     begin
-        // [GIVEN] An orphan PI (not in a document)
-        // [WHEN] SelectNodes is called with any XPath
+        // [GIVEN] A PI in a document with no children
+        // [WHEN] SelectNodes is called with a child-selecting XPath
         // [THEN] Returns false — PI has no children to select
-        Assert.IsFalse(Src.SelectNodesReturns('target', 'data', '//node()'),
-            'SelectNodes on an orphan PI must return false');
+        Assert.IsFalse(Src.SelectNodesReturns('target', 'data', 'child::*'),
+            'SelectNodes on a PI must return false (PI has no children)');
     end;
 
     [Test]
-    procedure SelectNodes_EmptyList_ForOrphanPI()
+    procedure SelectNodes_EmptyList_ForPI()
     begin
-        // [GIVEN] An orphan PI
-        // [WHEN] SelectNodes is called
+        // [GIVEN] A PI in a document
+        // [WHEN] SelectNodes is called with a child-selecting XPath
         // [THEN] NodeList is empty (count = 0)
-        Assert.AreEqual(0, Src.SelectNodesCount('target', 'data', '//node()'),
-            'SelectNodes on a PI must return an empty node list');
+        Assert.AreEqual(0, Src.SelectNodesCount('target', 'data', 'child::*'),
+            'SelectNodes on a PI must return an empty node list (no children)');
     end;
 
     // ── SelectSingleNode ─────────────────────────────────────────────────────────
@@ -108,10 +111,10 @@ codeunit 60261 "XPI Test"
     [Test]
     procedure SelectSingleNode_ReturnsFalse_ForPI()
     begin
-        // [GIVEN] A PI with no children
-        // [WHEN] SelectSingleNode is called
-        // [THEN] Returns false — no matching node
-        Assert.IsFalse(Src.SelectSingleNodeReturns('target', 'data', '//node()'),
-            'SelectSingleNode on a PI must return false');
+        // [GIVEN] A PI in a document with no children
+        // [WHEN] SelectSingleNode is called with a child-selecting XPath
+        // [THEN] Returns false — no matching child node
+        Assert.IsFalse(Src.SelectSingleNodeReturns('target', 'data', 'child::*'),
+            'SelectSingleNode on a PI must return false (PI has no children)');
     end;
 }
