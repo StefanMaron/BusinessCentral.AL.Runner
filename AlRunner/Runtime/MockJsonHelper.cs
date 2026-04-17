@@ -825,6 +825,19 @@ public static class MockJsonHelper
     public static void SetValueToUndefined(NavJsonToken token, DataError errorLevel = default)
         => SetBackingToken(token, JValue.CreateUndefined());
 
+    /// <summary>
+    /// Wraps a NavJsonValue construction so the real constructor is called
+    /// (preserving scope/parent) and then the backing token is overridden to
+    /// JValue.CreateUndefined() — matching AL's "var JV: JsonValue" semantics
+    /// where a fresh JsonValue is undefined.
+    /// Emitted by the rewriter as: MockJsonHelper.MakeUndefined(new NavJsonValue(...))
+    /// </summary>
+    public static NavJsonValue MakeUndefined(NavJsonValue instance)
+    {
+        SetBackingToken(instance, JValue.CreateUndefined());
+        return instance;
+    }
+
     private static bool IsSupportedTokenType(JToken token)
     {
         return token.Type switch

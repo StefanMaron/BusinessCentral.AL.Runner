@@ -1728,23 +1728,24 @@ public void ClearApplicationMemberVariables()
         // AlScope implements ITreeObject, so 'this' is a valid non-null ITreeObject
         // for any Nav*/AL* type constructor — no CS1503 and no null-check failures.
 
-        // new NavJsonValue(...) -> MockJsonHelper.CreateUndefinedJsonValue()
+        // new NavJsonValue(...) -> MockJsonHelper.MakeUndefined(new NavJsonValue(...))
         // BC generates `new NavJsonValue(scope, parent)` (with arguments) for every
         // `var JV: JsonValue` local variable declaration.  The constructor sets a
         // non-undefined backing token, so the native IsUndefined property returns false
         // for fresh variables — violating AL semantics where fresh JsonValue IS undefined.
-        // We replace ALL NavJsonValue constructions (any argument count) with a factory
-        // that sets JValue.CreateUndefined() as the backing token; SetValue / AsBigInteger
-        // etc. operate via SetBackingToken which does not require a scope, so the lack of
-        // constructor argument forwarding is safe for all tested operations.
+        // We WRAP every NavJsonValue construction (any argument count) so the real
+        // constructor still runs (preserving scope/parent/internal state), but the
+        // backing token is then overridden to JValue.CreateUndefined().
         if (typeText == "NavJsonValue")
         {
             return SyntaxFactory.InvocationExpression(
                 SyntaxFactory.MemberAccessExpression(
                     SyntaxKind.SimpleMemberAccessExpression,
                     SyntaxFactory.IdentifierName("MockJsonHelper"),
-                    SyntaxFactory.IdentifierName("CreateUndefinedJsonValue")),
-                SyntaxFactory.ArgumentList())
+                    SyntaxFactory.IdentifierName("MakeUndefined")),
+                SyntaxFactory.ArgumentList(
+                    SyntaxFactory.SingletonSeparatedList(
+                        SyntaxFactory.Argument(visited))))
                 .WithTriviaFrom(visited);
         }
 
