@@ -26,6 +26,16 @@ public static class TableFieldRegistry
         @"\btable\s+(\d+)\s+(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))[^{]*?\{",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    // page Id "Name" { ... SourceTable = "TableName"; ... }
+    private static readonly Regex PageHeader = new(
+        @"\bpage\s+(\d+)\s+(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))[^{]*?\{",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    // SourceTable = "TableName"  or  SourceTable = TableName
+    private static readonly Regex SourceTableProp = new(
+        @"\bSourceTable\s*=\s*(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))\s*;",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     // tableextension Id "Name" extends "BaseTableName" { fields { ... } }
     private static readonly Regex TableExtHeader = new(
         @"\btableextension\s+\d+\s+(?:""[^""]*""|[A-Za-z_][A-Za-z0-9_]*)\s+extends\s+(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))[^{]*?\{",
@@ -67,6 +77,9 @@ public static class TableFieldRegistry
     // (tableId, fieldNo) -> comma-separated option members (for inline Option fields with OptionMembers = A,B,C)
     private static readonly Dictionary<(int TableId, int FieldNo), string> _optionMembersFields = new();
 
+    // pageId -> source tableId (parsed from page SourceTable declarations)
+    private static readonly Dictionary<int, int> _pageSourceTable = new();
+
     private static readonly Regex OptionMembersProp = new(
         @"\bOptionMembers\s*=\s*([^;]+);",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -85,6 +98,7 @@ public static class TableFieldRegistry
         _fieldMeta.Clear();
         _enumFields.Clear();
         _optionMembersFields.Clear();
+        _pageSourceTable.Clear();
     }
 
     public static void ParseAndRegister(string alSource)
@@ -215,13 +229,40 @@ public static class TableFieldRegistry
             }
         }
 
-        // Parse tableextension declarations: register extension fields under the base table ID.
-        // tableextension N "Name" extends "BaseTableName" { fields { field(...) ... } }
+        // Parse tableextension and page declarations: both need a name→ID reverse map.
+        // Build it once here so both sections can share it.
         // The base table must have been registered (from a prior table declaration in this or a
         // previously-processed source file) so we can resolve the name → ID mapping.
-        // Build a reverse map from table name → table ID for the lookup.
         var nameToId = new Dictionary<string, int>(_tableNames.Count, StringComparer.OrdinalIgnoreCase);
         foreach (var kv in _tableNames) nameToId[kv.Value] = kv.Key;
+
+        // Parse page declarations to record page → source table mappings.
+        // This lets MockTestPageHandle.EnsureFieldMapping() discover which table a page
+        // is backed by without relying on the rewritten Rec property (which loses the table ID).
+        foreach (Match pm in PageHeader.Matches(alSource))
+        {
+            if (!int.TryParse(pm.Groups[1].Value, out var pageId)) continue;
+
+            int pStart = pm.Index + pm.Length;
+            int pDepth = 1, pI = pStart;
+            while (pI < alSource.Length && pDepth > 0)
+            {
+                if (alSource[pI] == '{') pDepth++;
+                else if (alSource[pI] == '}') pDepth--;
+                pI++;
+            }
+            if (pDepth != 0) continue;
+            var pageBody = alSource.Substring(pStart, pI - pStart - 1);
+
+            var stMatch = SourceTableProp.Match(pageBody);
+            if (!stMatch.Success) continue;
+
+            var tableName = stMatch.Groups[1].Success ? stMatch.Groups[1].Value : stMatch.Groups[2].Value;
+            if (nameToId.TryGetValue(tableName, out var sourceTableId))
+                _pageSourceTable[pageId] = sourceTableId;
+        }
+
+        // Parse tableextension declarations: register extension fields under the base table ID.
 
         foreach (Match em in TableExtHeader.Matches(alSource))
         {
@@ -311,6 +352,28 @@ public static class TableFieldRegistry
             return id;
         return null;
     }
+
+    /// <summary>
+    /// Returns all (fieldId, fieldName) pairs registered for the given table.
+    /// Used by <see cref="AlRunner.Runtime.MockTestPageHandle"/> to build
+    /// hash→fieldId mappings for GoToKey/GoToRecord field population.
+    /// </summary>
+    public static IEnumerable<(int FieldId, string FieldName)> GetAllFields(int tableId)
+    {
+        if (_fieldMeta.TryGetValue(tableId, out var meta))
+            foreach (var kv in meta)
+                if (kv.Value.Name != null)
+                    yield return (kv.Key, kv.Value.Name);
+    }
+
+    /// <summary>
+    /// Returns the source table ID for the given page, as declared by
+    /// <c>SourceTable = "TableName"</c> in the page definition, or <c>null</c> if
+    /// not registered.  Populated by <see cref="ParseAndRegister"/> when it
+    /// processes page declarations.
+    /// </summary>
+    public static int? GetSourceTableId(int pageId)
+        => _pageSourceTable.TryGetValue(pageId, out var id) ? id : null;
 
     /// <summary>Returns the table name or null if not registered.</summary>
     public static string? GetTableName(int tableId)

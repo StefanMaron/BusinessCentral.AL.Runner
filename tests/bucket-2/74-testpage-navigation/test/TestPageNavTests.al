@@ -32,9 +32,16 @@ codeunit 56741 "TPN TestPage Nav Tests"
     [Test]
     procedure TestPageGoToKeyReturnsTrue()
     var
+        Rec: Record "TPN Test Record";
         TP: TestPage "TPN Test Card";
         Result: Boolean;
     begin
+        // GoToKey returns true when the record exists in the table.
+        Rec.Init();
+        Rec.Id := 1;
+        Rec.Name := 'Test';
+        Rec.Insert();
+
         TP.OpenView();
         Result := TP.GoToKey(1);
         Assert.IsTrue(Result, 'GoToKey should return true');
@@ -67,8 +74,9 @@ codeunit 56741 "TPN TestPage Nav Tests"
     var
         TP: TestPage "TPN Test Card";
     begin
+        // GoToKey returns false when the record does not exist in the table.
         TP.OpenView();
-        Assert.IsFalse(not TP.GoToKey(1), 'GoToKey should not return false');
+        Assert.IsFalse(TP.GoToKey(99999), 'GoToKey should return false for a missing record');
         TP.Close();
     end;
 }

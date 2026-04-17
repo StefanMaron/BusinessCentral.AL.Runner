@@ -7310,14 +7310,29 @@ TestPage.GetValidationError:
 TestPage.GoToKey:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: >
+    overloads=1; ALGoToKey(DataError, params NavValue[]) performs a real record lookup when the
+    page's SourceTable is registered in TableFieldRegistry (parsed from AL source). Returns true
+    when the record is found and positions the page cursor; returns false when the key does not
+    exist. Falls back to returning true for stub pages (e.g. TestRequestPage) that have no
+    registered source table. Field values are populated from the located record so that field
+    reads after GoToKey reflect the correct row.
+  tests:
+    - tests/bucket-1/274-testpage-gotokey
 
 TestPage.GoToRecord:
   layer: runtime-api
   category: TestPage
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: >
+    overloads=2; ALGoToRecord(MockRecordHandle) and ALGoToRecord(DataError, MockRecordHandle).
+    When the page's SourceTable is registered, re-fetches the record from the in-memory store
+    using its PK values; returns true if found, false if the record does not exist. Falls back
+    to accepting the passed record and returning true for pages without a registered source table.
+    Field values are populated from the located record.
+  tests:
+    - tests/bucket-1/274-testpage-gotokey
 
 TestPage.IsExpanded:
   layer: runtime-api
