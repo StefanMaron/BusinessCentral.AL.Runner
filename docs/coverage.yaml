@@ -2144,9 +2144,10 @@ ErrorInfo.Create:
   layer: runtime-api
   category: ErrorInfo
   status: covered
-  notes: overloads=2; NavALErrorInfo.ALCreate(session, msg) and ALCreate(session, msg, errorType) work via BC runtime DLL standalone.
+  notes: overloads=1 tested; 0-arg ErrorInfo.Create() works (suite 207 + suite 120). 1-arg and 2-arg overloads (Create(Message) / Create(Message, ErrorType)) require BC 17+ AL syntax not recognised by the BC 16.2 stage-1 compiler — tracked separately as a gap.
   tests:
     - tests/bucket-2/207-errorinfo-create
+    - tests/bucket-2/120-errorinfo
 
 ErrorInfo.CustomDimensions:
   layer: runtime-api
@@ -2175,10 +2176,8 @@ ErrorInfo.DetailedMessage:
 ErrorInfo.ErrorType:
   layer: runtime-api
   category: ErrorInfo
-  status: covered
-  notes: overloads=1; ALErrorType getter and ALErrorType(int) setter work via BC runtime DLL standalone.
-  tests:
-    - tests/bucket-2/207-errorinfo-create
+  status: gap
+  notes: overloads=1; ErrorType enum is BC 17+ and not recognised by the BC 16.2 stage-1 AL compiler. Requires either a newer compiler or a preprocessing workaround before coverage can be added.
 
 ErrorInfo.FieldNo:
   layer: runtime-api
@@ -2192,9 +2191,11 @@ ErrorInfo.Message:
   layer: runtime-api
   category: ErrorInfo
   status: covered
-  notes: overloads=1; ALMessage getter and ALMessage(string) setter work via BC runtime DLL standalone. Method form Message(text) is equivalent to the property setter.
+  notes: overloads=2; Message property getter/setter (suite 120) and Message(text)/Message() method forms (suite 207 + suite 263) all work via BC runtime DLL standalone.
   tests:
     - tests/bucket-2/207-errorinfo-create
+    - tests/bucket-2/120-errorinfo
+    - tests/bucket-1/263-errorinfo-addnavigationaction
 
 ErrorInfo.PageNo:
   layer: runtime-api
