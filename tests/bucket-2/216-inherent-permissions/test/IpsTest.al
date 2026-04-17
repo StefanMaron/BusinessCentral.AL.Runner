@@ -1,10 +1,10 @@
-/// Tests proving that codeunits with [InherentPermissions] attribute compile and
+/// Tests proving that codeunits with the Permissions object property compile and
 /// execute correctly in standalone mode (issue #978).
 ///
 /// The BC compiler emits 'protected override NavPermissionList InherentPermissionsList'
-/// in codeunit classes annotated with [InherentPermissions].  The RoslynRewriter must
-/// strip that member because AlScope has no virtual InherentPermissionsList to override
-/// (CS0115 otherwise).
+/// in codeunit classes that declare a Permissions property (in newer BC versions).
+/// The RoslynRewriter must strip that member because AlScope has no virtual
+/// InherentPermissionsList to override (CS0115 otherwise).
 ///
 /// Test strategy:
 ///   Echo — round-trips a Text value; proves the codeunit body executes.

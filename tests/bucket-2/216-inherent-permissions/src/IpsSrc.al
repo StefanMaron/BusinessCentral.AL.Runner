@@ -1,12 +1,12 @@
-/// Source codeunit with InherentPermissions object property (issue #978).
+/// Source codeunit with Permissions object property (issue #978).
 /// The BC compiler generates a 'protected override NavPermissionList InherentPermissionsList'
-/// member in the codeunit class and its inner scope classes when the AL
-/// InherentPermissions object property is set.  The RoslynRewriter must strip
-/// that member (like IndirectPermissionList) because AlScope does not expose a
-/// virtual InherentPermissionsList to override.
+/// member in codeunit classes (alongside the existing IndirectPermissionList) when the
+/// Permissions property is present in newer BC versions.  The RoslynRewriter must strip
+/// that member because AlScope does not expose a virtual InherentPermissionsList to
+/// override (CS0115 otherwise).
 codeunit 97905 "IPS Src"
 {
-    InherentPermissions = tabledata "IPS Table" = R;
+    Permissions = tabledata "IPS Table" = R;
 
     procedure Echo(s: Text): Text
     begin
@@ -19,7 +19,7 @@ codeunit 97905 "IPS Src"
     end;
 }
 
-/// Minimal table for InherentPermissions reference.
+/// Minimal table for Permissions reference.
 table 97904 "IPS Table"
 {
     fields
