@@ -1,23 +1,37 @@
-/// Exercises ErrorInfo.Create (static factory), ErrorInfo.Message (method setter),
-/// and ErrorInfo.ErrorType.  All three are listed as gaps in coverage.yaml.
+/// Exercises ErrorInfo.Create (0-arg static factory) + Message property roundtrip
+/// and Message(text) / Message() method-form setter/getter.
+/// ErrorInfo.Create(msg) overloads and ErrorType are BC 17+ and not recognised
+/// by the BC 16.2 AL compiler (stage-1); they are tracked separately as gaps.
 codeunit 97900 "EIC Src"
 {
-    procedure CreateWithMessage(Msg: Text): ErrorInfo
+    // ------------------------------------------------------------------
+    // ErrorInfo.Create() — 0-arg static factory
+    // ------------------------------------------------------------------
+
+    /// Create() + Message property setter + Message property getter roundtrip.
+    procedure GetMessageFromCreated(Msg: Text): Text
     var
         ErrInfo: ErrorInfo;
     begin
-        ErrInfo := ErrorInfo.Create(Msg);
-        exit(ErrInfo);
+        ErrInfo := ErrorInfo.Create();
+        ErrInfo.Message := Msg;
+        exit(ErrInfo.Message);
     end;
 
-    procedure CreateWithMessageAndType(Msg: Text): ErrorInfo
+    /// Create() returns a fresh instance — default Message is empty.
+    procedure GetDefaultMessage(): Text
     var
         ErrInfo: ErrorInfo;
     begin
-        ErrInfo := ErrorInfo.Create(Msg, ErrorType::Client);
-        exit(ErrInfo);
+        ErrInfo := ErrorInfo.Create();
+        exit(ErrInfo.Message);
     end;
 
+    // ------------------------------------------------------------------
+    // Message(text) / Message() — method-form setter and getter
+    // ------------------------------------------------------------------
+
+    /// Message(text) method setter, then Message property getter.
     procedure SetMessageViaMethod(Msg: Text): Text
     var
         ErrInfo: ErrorInfo;
@@ -26,19 +40,12 @@ codeunit 97900 "EIC Src"
         exit(ErrInfo.Message);
     end;
 
-    procedure SetErrorTypeAndRead(ET: ErrorType): ErrorType
+    /// Message property setter, then Message() method getter.
+    procedure GetMessageViaMethodGetter(Msg: Text): Text
     var
         ErrInfo: ErrorInfo;
     begin
-        ErrInfo.ErrorType(ET);
-        exit(ErrInfo.ErrorType);
-    end;
-
-    procedure GetMessageFromCreated(Msg: Text): Text
-    var
-        ErrInfo: ErrorInfo;
-    begin
-        ErrInfo := ErrorInfo.Create(Msg);
-        exit(ErrInfo.Message);
+        ErrInfo.Message := Msg;
+        exit(ErrInfo.Message());
     end;
 }
