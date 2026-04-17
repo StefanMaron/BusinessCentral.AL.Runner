@@ -51,10 +51,18 @@ public class DapServerTests : IAsyncDisposable
     {
         _cts.Cancel();
         BreakpointManager.Continue(); // unblock any paused thread
-        if (_server != null) await _server.StopAsync();
+        if (_server != null)
+        {
+            try { await _server.StopAsync(); }
+            catch (Exception) { }
+        }
         _client?.Dispose();
         if (_serverTask != null)
-            await _serverTask.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+        {
+            try { await _serverTask.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false); }
+            catch (Exception) { }
+        }
+        BreakpointManager.Reset();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

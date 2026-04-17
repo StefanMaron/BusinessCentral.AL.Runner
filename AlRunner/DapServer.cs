@@ -94,15 +94,23 @@ public sealed class DapServer : IDisposable
             {
                 BreakpointManager.Disable();
                 BreakpointManager.BreakpointHit = null;
-                // Signal termination after pipeline finishes
-                await SendEventAsync("terminated", new { });
-                await SendEventAsync("exited", new { exitCode = 0 });
+                try
+                {
+                    // Signal termination after pipeline finishes
+                    await SendEventAsync("terminated", new { });
+                    await SendEventAsync("exited", new { exitCode = 0 });
+                }
+                catch (IOException) { }
+                catch (InvalidOperationException) { }
             }
         }, ct);
 
         await readTask;
         if (_runTask != null)
-            await _runTask;
+        {
+            try { await _runTask; }
+            catch (OperationCanceledException) { }
+        }
     }
 
     private async Task ReadLoopAsync(CancellationToken ct)
@@ -388,7 +396,11 @@ public sealed class DapServer : IDisposable
         BreakpointManager.Continue();
         _listener.Stop();
         if (_runTask != null)
-            await _runTask.WaitAsync(TimeSpan.FromSeconds(5));
+        {
+            try { await _runTask.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (OperationCanceledException) { }
+            catch (TimeoutException) { }
+        }
     }
 
     public void Dispose()
