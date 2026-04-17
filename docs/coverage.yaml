@@ -4054,14 +4054,18 @@ Media.MediaId:
 MediaSet.Count:
   layer: runtime-api
   category: MediaSet
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: "MockMediaSet.ALCount property; returns count of inserted items"
+  tests:
+    - tests/bucket-1/278-mediaset-methods
 
 MediaSet.ExportFile:
   layer: runtime-api
   category: MediaSet
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: "MockMediaSet.ALExport returns 0 (no blob data in standalone mode); BC return type is Integer, not Boolean"
+  tests:
+    - tests/bucket-1/278-mediaset-methods
 
 MediaSet.FindOrphans:
   layer: runtime-api
@@ -4072,38 +4076,50 @@ MediaSet.FindOrphans:
 MediaSet.ImportFile:
   layer: runtime-api
   category: MediaSet
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: "MockMediaSet.ALImport returns a new Guid (media ID); BC return type is Guid, not Boolean"
+  tests:
+    - tests/bucket-1/278-mediaset-methods
 
 MediaSet.ImportStream:
   layer: runtime-api
   category: MediaSet
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: "MockMediaSet.ALImport(DataError, MockInStream, string) overload; adds a new Guid to the set"
+  tests:
+    - tests/bucket-1/278-mediaset-methods
 
 MediaSet.Insert:
   layer: runtime-api
   category: MediaSet
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: "MockMediaSet.ALInsert(DataError, Guid) returns true; adds GUID to in-memory list"
+  tests:
+    - tests/bucket-1/278-mediaset-methods
 
 MediaSet.Item:
   layer: runtime-api
   category: MediaSet
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: "MockMediaSet.ALItem(int index) returns 1-based GUID from in-memory list"
+  tests:
+    - tests/bucket-1/278-mediaset-methods
 
 MediaSet.MediaId:
   layer: runtime-api
   category: MediaSet
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: "MockMediaSet.ALMediaId property; stable per-instance GUID"
+  tests:
+    - tests/bucket-1/278-mediaset-methods
 
 MediaSet.Remove:
   layer: runtime-api
   category: MediaSet
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: "MockMediaSet.ALRemove(DataError, Guid) returns true if found, false if absent"
+  tests:
+    - tests/bucket-1/278-mediaset-methods
 
 # ── ModuleDependencyInfo ────────────────────────────────────────
 
