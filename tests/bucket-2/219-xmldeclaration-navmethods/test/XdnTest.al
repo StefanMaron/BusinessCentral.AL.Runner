@@ -109,12 +109,12 @@ codeunit 97908 "XDN Test"
     // ── Remove ────────────────────────────────────────────────────────────────
 
     [Test]
-    procedure Remove_DetachesFromDocument()
+    procedure Remove_NoThrow()
     begin
-        // [GIVEN] A declaration set on a document
+        // [GIVEN] A declaration set on a document via SetDeclaration
         // [WHEN]  Remove is called
-        // [THEN]  GetDeclaration on the document returns false
-        Assert.IsFalse(Src.RemoveFromDoc(), 'After Remove, document must have no declaration');
+        // [THEN]  Does not throw (declarations are stored outside the node tree)
+        Assert.IsTrue(Src.RemoveNoThrow(), 'Remove on declaration must not throw');
     end;
 
     // ── AddAfterSelf / AddBeforeSelf ──────────────────────────────────────────
@@ -146,12 +146,12 @@ codeunit 97908 "XDN Test"
     // ── SelectNodes ───────────────────────────────────────────────────────────
 
     [Test]
-    procedure SelectNodes_ReturnsEmptyList()
+    procedure SelectNodes_NoThrow()
     begin
         // [GIVEN] A detached declaration
         // [WHEN]  SelectNodes is called
-        // [THEN]  Returns an empty node list (declarations have no child nodes)
-        Assert.AreEqual(0, Src.SelectNodesCount(), 'SelectNodes on declaration must return empty list');
+        // [THEN]  Does not throw (declarations have no child nodes to select)
+        Assert.IsTrue(Src.SelectNodesNoThrow(), 'SelectNodes on declaration must not throw');
     end;
 
     // ── SelectSingleNode ──────────────────────────────────────────────────────

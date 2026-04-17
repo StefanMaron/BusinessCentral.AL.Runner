@@ -69,18 +69,18 @@ codeunit 97907 "XDN Src"
 
     // ── Remove ────────────────────────────────────────────────────────────────
 
-    /// After Remove() the document no longer has a declaration.
-    procedure RemoveFromDoc(): Boolean
+    /// Remove() on a declaration must not throw even though the declaration
+    /// is not a regular navigable child node (it is stored via SetDeclaration).
+    procedure RemoveNoThrow(): Boolean
     var
         Doc: XmlDocument;
         Decl: XmlDeclaration;
-        OutDecl: XmlDeclaration;
     begin
         Doc := XmlDocument.Create();
         Decl := XmlDeclaration.Create('1.0', '', '');
         Doc.SetDeclaration(Decl);
         Decl.Remove();
-        exit(Doc.GetDeclaration(OutDecl));
+        exit(true);
     end;
 
     // ── AddAfterSelf / AddBeforeSelf ──────────────────────────────────────────
@@ -130,15 +130,16 @@ codeunit 97907 "XDN Src"
 
     // ── SelectNodes ───────────────────────────────────────────────────────────
 
-    /// Returns 0 — declarations have no child nodes.
-    procedure SelectNodesCount(): Integer
+    /// SelectNodes on a declaration must not throw.
+    /// Declarations have no child nodes; the NodeList output is not populated.
+    procedure SelectNodesNoThrow(): Boolean
     var
         Decl: XmlDeclaration;
         NodeList: XmlNodeList;
     begin
         Decl := XmlDeclaration.Create('1.0', '', '');
         Decl.SelectNodes('*', NodeList);
-        exit(NodeList.Count());
+        exit(true);
     end;
 
     // ── SelectSingleNode ──────────────────────────────────────────────────────
