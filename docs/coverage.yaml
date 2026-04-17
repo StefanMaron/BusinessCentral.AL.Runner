@@ -1461,20 +1461,26 @@ CodeunitInstance.Run:
 CompanyProperty.DisplayName:
   layer: runtime-api
   category: CompanyProperty
-  status: stub
-  notes: overloads=1; ALCompanyProperty.ALDisplayName() → AlCompat.CompanyPropertyDisplayName() → "My Company"
+  status: covered
+  notes: "overloads=1; configurable via AL Runner Config.SetCompanyDisplayName(); default: \"My Company\""
+  tests:
+    - tests/bucket-1/271-companyproperty
 
 CompanyProperty.ID:
   layer: runtime-api
   category: CompanyProperty
-  status: stub
-  notes: overloads=1; ALCompanyProperty.ALID() → AlCompat.CompanyPropertyID() → fixed non-empty GUID
+  status: covered
+  notes: "overloads=1; configurable via AL Runner Config.SetCompanyId(); default: fixed non-empty GUID"
+  tests:
+    - tests/bucket-1/271-companyproperty
 
 CompanyProperty.UrlName:
   layer: runtime-api
   category: CompanyProperty
-  status: stub
-  notes: overloads=1; ALCompanyProperty.ALUrlName() → AlCompat.CompanyPropertyUrlName() → "My%20Company"
+  status: covered
+  notes: "overloads=1; configurable via AL Runner Config.SetCompanyUrlName(); default: \"My%20Company\""
+  tests:
+    - tests/bucket-1/271-companyproperty
 
 # ── Cookie ──────────────────────────────────────────────────────
 

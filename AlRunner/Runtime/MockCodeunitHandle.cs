@@ -596,7 +596,7 @@ public class MockCodeunitHandle
 
     /// <summary>
     /// Routes "AL Runner Config" (131100) method calls to MockSession.
-    /// Exposes runner-only configuration — currently CompanyName — to AL code.
+    /// Exposes runner-only configuration — CompanyName and CompanyProperty values — to AL code.
     /// </summary>
     private static object? InvokeRunnerConfig(int memberId, object[] args)
     {
@@ -609,9 +609,40 @@ public class MockCodeunitHandle
             return null;
         }
         if (methodName != null && methodName.Equals("GetCompanyName", StringComparison.OrdinalIgnoreCase))
-        {
             return new NavText(MockSession.GetCompanyName());
+
+        if (methodName != null && methodName.Equals("SetCompanyDisplayName", StringComparison.OrdinalIgnoreCase))
+        {
+            var name = args.Length >= 1 ? (args[0]?.ToString() ?? string.Empty) : string.Empty;
+            MockSession.SetCompanyDisplayName(name);
+            return null;
         }
+        if (methodName != null && methodName.Equals("GetCompanyDisplayName", StringComparison.OrdinalIgnoreCase))
+            return new NavText(MockSession.GetCompanyDisplayName());
+
+        if (methodName != null && methodName.Equals("SetCompanyUrlName", StringComparison.OrdinalIgnoreCase))
+        {
+            var name = args.Length >= 1 ? (args[0]?.ToString() ?? string.Empty) : string.Empty;
+            MockSession.SetCompanyUrlName(name);
+            return null;
+        }
+        if (methodName != null && methodName.Equals("GetCompanyUrlName", StringComparison.OrdinalIgnoreCase))
+            return new NavText(MockSession.GetCompanyUrlName());
+
+        if (methodName != null && methodName.Equals("SetCompanyId", StringComparison.OrdinalIgnoreCase))
+        {
+            Guid id = Guid.Empty;
+            if (args.Length >= 1)
+            {
+                if (args[0] is NavGuid ng) id = ng.Value;
+                else if (args[0] is Guid g) id = g;
+                else Guid.TryParse(args[0]?.ToString(), out id);
+            }
+            MockSession.SetCompanyId(id);
+            return null;
+        }
+        if (methodName != null && methodName.Equals("GetCompanyId", StringComparison.OrdinalIgnoreCase))
+            return new NavGuid(MockSession.GetCompanyId());
 
         // Fallback: 1 string arg = SetCompanyName, 0 args = GetCompanyName
         if (args.Length >= 1)

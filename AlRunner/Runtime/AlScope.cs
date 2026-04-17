@@ -1813,20 +1813,23 @@ public static class AlCompat
     public static Microsoft.Dynamics.Nav.Types.ExecutionContext GetExecutionContext() => Microsoft.Dynamics.Nav.Types.ExecutionContext.Normal;
 
     /// <summary>
-    /// CompanyProperty.DisplayName() stub — returns a default company name.
+    /// CompanyProperty.DisplayName() — returns the configurable company display name.
+    /// Defaults to "My Company"; override via <c>AL Runner Config</c> → <c>SetCompanyDisplayName()</c>.
     /// </summary>
-    public static string CompanyPropertyDisplayName() => "My Company";
+    public static string CompanyPropertyDisplayName() => MockSession.GetCompanyDisplayName();
 
     /// <summary>
-    /// CompanyProperty.UrlName() stub — returns a URL-encoded company name.
+    /// CompanyProperty.UrlName() — returns the configurable URL-encoded company name.
+    /// Defaults to "My%20Company"; override via <c>AL Runner Config</c> → <c>SetCompanyUrlName()</c>.
     /// </summary>
-    public static string CompanyPropertyUrlName() => "My%20Company";
+    public static string CompanyPropertyUrlName() => MockSession.GetCompanyUrlName();
 
     /// <summary>
-    /// CompanyProperty.ID() stub — returns a fixed non-empty GUID representing the company.
+    /// CompanyProperty.ID() — returns the configurable company GUID.
+    /// Defaults to a fixed non-empty GUID; override via <c>AL Runner Config</c> → <c>SetCompanyId()</c>.
     /// BC lowers this to ALCompanyProperty.ALID() which requires NavEnvironment.
     /// </summary>
-    public static NavGuid CompanyPropertyID() => new NavGuid(new Guid("5f5f5f5f-5f5f-5f5f-5f5f-5f5f5f5f5f5f"));
+    public static NavGuid CompanyPropertyID() => new NavGuid(MockSession.GetCompanyId());
 
     // ── Media stubs ──────────────────────────────────────────────────────────
 

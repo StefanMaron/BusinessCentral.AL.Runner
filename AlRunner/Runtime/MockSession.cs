@@ -13,6 +13,9 @@ public static class MockSession
 {
     private static int _nextSessionId = 1;
     private static string _companyName = "CRONUS";
+    private static string _companyDisplayName = "My Company";
+    private static string _companyUrlName = "My%20Company";
+    private static Guid _companyId = new Guid("5f5f5f5f-5f5f-5f5f-5f5f-5f5f5f5f5f5f");
 
     /// <summary>
     /// Default company name applied between tests (settable via the
@@ -21,10 +24,26 @@ public static class MockSession
     /// </summary>
     public static string DefaultCompanyName { get; set; } = "CRONUS";
 
-    /// <summary>
-    /// Value returned by the AL <c>CompanyName()</c> built-in.
-    /// </summary>
+    /// <summary>Default DisplayName returned by CompanyProperty.DisplayName().</summary>
+    public static string DefaultCompanyDisplayName { get; set; } = "My Company";
+
+    /// <summary>Default UrlName returned by CompanyProperty.UrlName().</summary>
+    public static string DefaultCompanyUrlName { get; set; } = "My%20Company";
+
+    /// <summary>Default ID returned by CompanyProperty.ID().</summary>
+    public static Guid DefaultCompanyId { get; set; } = new Guid("5f5f5f5f-5f5f-5f5f-5f5f-5f5f5f5f5f5f");
+
+    /// <summary>Value returned by the AL <c>CompanyName()</c> built-in.</summary>
     public static string GetCompanyName() => _companyName;
+
+    /// <summary>Value returned by <c>CompanyProperty.DisplayName()</c>.</summary>
+    public static string GetCompanyDisplayName() => _companyDisplayName;
+
+    /// <summary>Value returned by <c>CompanyProperty.UrlName()</c>.</summary>
+    public static string GetCompanyUrlName() => _companyUrlName;
+
+    /// <summary>Value returned by <c>CompanyProperty.ID()</c>.</summary>
+    public static Guid GetCompanyId() => _companyId;
 
     /// <summary>
     /// Value returned by the AL <c>SessionId()</c> built-in.
@@ -39,6 +58,15 @@ public static class MockSession
     /// </summary>
     public static void SetCompanyName(string name) => _companyName = name ?? string.Empty;
 
+    /// <summary>Sets the value returned by <c>CompanyProperty.DisplayName()</c>.</summary>
+    public static void SetCompanyDisplayName(string name) => _companyDisplayName = name ?? string.Empty;
+
+    /// <summary>Sets the value returned by <c>CompanyProperty.UrlName()</c>.</summary>
+    public static void SetCompanyUrlName(string name) => _companyUrlName = name ?? string.Empty;
+
+    /// <summary>Sets the GUID returned by <c>CompanyProperty.ID()</c>.</summary>
+    public static void SetCompanyId(Guid id) => _companyId = id;
+
     /// <summary>
     /// Resets the session counter and company name between tests.
     /// </summary>
@@ -46,6 +74,9 @@ public static class MockSession
     {
         _nextSessionId = 1;
         _companyName = DefaultCompanyName;
+        _companyDisplayName = DefaultCompanyDisplayName;
+        _companyUrlName = DefaultCompanyUrlName;
+        _companyId = DefaultCompanyId;
     }
 
     /// <summary>

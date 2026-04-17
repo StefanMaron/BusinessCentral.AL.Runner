@@ -367,7 +367,11 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   - Session.ApplicationArea() — returns empty string
   - Session.GetExecutionContext() / GetModuleExecutionContext() — returns ExecutionContext.Normal
   - Database.LockTimeout(bool) — no-op (no real database)
-  - CompanyProperty.DisplayName() / UrlName() / ID() — returns stub company name / URL-name / fixed GUID
+  - CompanyProperty.DisplayName() / UrlName() / ID() — configurable via AL Runner Config:
+      SetCompanyDisplayName(Text) / GetCompanyDisplayName(): Text
+      SetCompanyUrlName(Text) / GetCompanyUrlName(): Text
+      SetCompanyId(Guid) / GetCompanyId(): Guid
+    Defaults: "My Company" / "My%20Company" / fixed non-empty GUID; reset between tests.
   - ProductName.Full() / Short() / Marketing() — returns real BC product names
   - RoundDateTime(dt [, precision] [, direction]) — rounds DateTime with ms precision;
     direction: '>' (up), '<' (down), '=' (nearest, default). Default precision 1000ms.
