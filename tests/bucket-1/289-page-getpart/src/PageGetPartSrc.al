@@ -1,4 +1,4 @@
-table 163000 "PGP Item"
+table 164000 "PGP Item"
 {
     DataClassification = ToBeClassified;
     fields
@@ -15,7 +15,7 @@ table 163000 "PGP Item"
 /// <summary>
 /// Subpage with a procedure that can be called via CurrPage.SubPart.Page.GetSelectedValue().
 /// </summary>
-page 163000 "PGP Sub Page"
+page 164000 "PGP Sub Page"
 {
     PageType = ListPart;
     SourceTable = "PGP Item";
@@ -46,7 +46,7 @@ page 163000 "PGP Sub Page"
 /// Card page that accesses its subpage via CurrPage.SubItems.Page.
 /// The BC compiler lowers this to CurrPage.GetPart(hash).CreateNavFormHandle(scope).Invoke(hash, args).
 /// </summary>
-page 163001 "PGP Card Page"
+page 164001 "PGP Card Page"
 {
     PageType = Card;
     SourceTable = "PGP Item";
