@@ -58,7 +58,7 @@ public class AlScopeParentTests
     /// shadow it with their own injected `public T Parent => _parent` property.
     /// </summary>
     [Fact]
-    public void AlScope_InstanceParent_ReturnsNull()
+    public void AlScope_InstanceParent_ReturnsSelf()
     {
         var prop = typeof(AlScope).GetProperty(
             "Parent",
@@ -70,7 +70,8 @@ public class AlScopeParentTests
         var instance = new MinimalAlScope();
         var value = prop!.GetValue(instance);
 
-        Assert.Null(value);
+        // Parent returns `this` (not null) so base.Parent.Bind() doesn't NPE
+        Assert.Same(instance, value);
     }
 
     /// <summary>
