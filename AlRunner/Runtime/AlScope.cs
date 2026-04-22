@@ -863,6 +863,37 @@ public static class AlCompat
     }
 
     /// <summary>
+    /// Replacement for ALCompiler.ObjectToNavOutStream on the chained-call path.
+    /// BC emits ALCompiler.ObjectToNavOutStream(parent, expr) when an expression
+    /// that returns OutStream is used directly (chained), e.g.:
+    ///   TempBlob.CreateOutStream().WriteText(...)
+    /// After the rewriter renames NavOutStream → MockOutStream in type identifiers,
+    /// the method invocation is still wired to ALCompiler.ObjectToNavOutStream which
+    /// returns NavOutStream. This replacement returns MockOutStream instead.
+    /// </summary>
+    public static MockOutStream ObjectToMockOutStream(object? parent, object? value)
+    {
+        if (value is MockOutStream mockOutStream)
+            return mockOutStream;
+
+        // Fallback: return an empty stream rather than throw, so callers that
+        // just chain a write-and-discard don't crash.
+        return MockOutStream.Default();
+    }
+
+    /// <summary>
+    /// Replacement for ALCompiler.ObjectToNavInStream on the chained-call path.
+    /// See ObjectToMockOutStream for the symmetric explanation.
+    /// </summary>
+    public static MockInStream ObjectToMockInStream(object? parent, object? value)
+    {
+        if (value is MockInStream mockInStream)
+            return mockInStream;
+
+        return MockInStream.Default();
+    }
+
+    /// <summary>
     /// Replacement for ALCompiler.NavIndirectValueToBoolean.
     /// Extracts a boolean from a variant/indirect value holder.
     /// </summary>
