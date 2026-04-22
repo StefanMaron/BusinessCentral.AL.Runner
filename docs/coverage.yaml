@@ -11149,3 +11149,14 @@ RoslynRewriter.CompareToEquality:
     to x == y (and != 0 to x != y). The == operator works correctly standalone.
   tests:
     - tests/bucket-2/105-validate-case
+
+MockCodeunitHandle.LibraryTestInitialize:
+  layer: runtime-api
+  category: test-toolkit
+  status: covered
+  notes: >
+    AL stub for codeunit 132250 (Library - Test Initialize). Provides three
+    integration event publishers (OnTestInitialize, OnBeforeTestSuiteInitialize,
+    OnAfterTestSuiteInitialize) used by BC test codeunits for setup hooks.
+  tests:
+    - tests/bucket-2/107-library-test-init
