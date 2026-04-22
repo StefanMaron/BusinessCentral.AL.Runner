@@ -716,6 +716,14 @@ public MockCurrPage CurrPage { get; } = new MockCurrPage();
                 // Page has no SourceTable — no Rec field, so just apply the record filter.
                 : "public void SetSelectionFilter(MockRecordHandle rec) { rec.ALSetRecFilter(); }";
 
+            // Extract the page ID from the class name "Page<N>" so that RunModal()
+            // can dispatch to the correct ModalPageHandler (issue #1079).
+            var className = visited.Identifier.Text;
+            var pageIdStr = "0";
+            if (className.StartsWith("Page", StringComparison.Ordinal) &&
+                int.TryParse(className.AsSpan(4), out var extractedId))
+                pageIdStr = extractedId.ToString();
+
             var pageMemberCode = $@"
 public void Update(bool saveRecord = true) {{ }}
 public void Close() {{ }}
@@ -736,6 +744,18 @@ protected bool CallGetFormatExtensionMethod(int fieldNo, ref string result) {{ r
 // CurrPage.GetPart(partHash).CreateNavFormHandle(scope).Invoke(methodHash, args).
 // Returns a MockPagePartHandle that dispatches the call to the subpage class.
 public MockPagePartHandle GetPart(int partHash) {{ return new MockPagePartHandle(partHash); }}
+// RunModal() — dispatches to ModalPageHandler if registered, otherwise no-op.
+// BC generates CurrPage.RunModal() as a call on the Page<N> class directly (issue #1079).
+public FormResult RunModal() {{ return HandlerRegistry.InvokeModalPageHandler({pageIdStr}); }}
+// LookupMode — bool property on the page class.
+// BC generates CurrPage.LookupMode as a property access on the Page<N> class (issue #1079).
+public bool LookupMode {{ get; set; }}
+// Editable, PageCaption, PromptMode, ObjectID — other CurrPage properties/methods that
+// BC generates as calls on the Page<N> class directly (same pattern as LookupMode/#1079).
+public bool Editable {{ get; set; }} = true;
+public string PageCaption {{ get; set; }} = string.Empty;
+public NavOption? PromptMode {{ get; set; }}
+public NavText ObjectID(bool withCaption = false) {{ return NavText.Empty; }}
 ";
             var pageMembers = CSharpSyntaxTree.ParseText(
                 $"class _Temp_ {{ {pageMemberCode} }}").GetRoot()

@@ -4618,7 +4618,8 @@ Page.LookupMode:
   tests:
     - tests/bucket-1/89-page-static
     - tests/bucket-2/218-page-runmodal-lookup
-  notes: overloads=1. Also proven on instance Page<N> — setter + getter round-trip.
+    - tests/bucket-2/221-page-class-members
+  notes: overloads=1. Also proven on instance Page<N> — setter + getter round-trip. Injected on Page<N> class so CurrPage.LookupMode inside a page trigger compiles (issue #1079).
 
 Page.ObjectId:
   layer: runtime-api
@@ -4632,7 +4633,7 @@ Page.PromptMode:
   category: Page
   status: covered
   tests: tests/bucket-1/100-page-promptmode
-  notes: overloads=1; MockCurrPage.PromptMode and MockFormHandle.PromptMode NavOption stubs
+  notes: overloads=1; MockCurrPage.PromptMode and MockFormHandle.PromptMode NavOption stubs; also injected on Page<N> class for CurrPage.PromptMode access inside page triggers (issue #1079)
 
 Page.Run:
   layer: runtime-api
@@ -4648,7 +4649,8 @@ Page.RunModal:
   tests:
     - tests/bucket-1/89-page-static
     - tests/bucket-2/218-page-runmodal-lookup
-  notes: overloads=4. Instance form Page<N>.RunModal() dispatches to ModalPageHandler.
+    - tests/bucket-2/221-page-class-members
+  notes: overloads=4. Instance form Page<N>.RunModal() dispatches to ModalPageHandler. Injected on Page<N> class so CurrPage.RunModal() inside a page trigger compiles (issue #1079).
 
 Page.SaveRecord:
   layer: runtime-api
