@@ -32,6 +32,13 @@
     <Reference Include="Microsoft.Dynamics.Nav.CodeAnalysis">
       <HintPath>../AlRunner/bin/$(Configuration)/$(TargetFramework)/Microsoft.Dynamics.Nav.CodeAnalysis.dll</HintPath>
     </Reference>
+    <!-- BC runtime types needed for MockFile/MockInStream unit tests (issue #1021) -->
+    <Reference Include="Microsoft.Dynamics.Nav.Types">
+      <HintPath>../AlRunner/bin/$(Configuration)/$(TargetFramework)/Microsoft.Dynamics.Nav.Types.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Dynamics.Nav.Ncl">
+      <HintPath>../AlRunner/bin/$(Configuration)/$(TargetFramework)/Microsoft.Dynamics.Nav.Ncl.dll</HintPath>
+    </Reference>
   </ItemGroup>
 
   <!-- Copy BC compiler and service tier DLLs from AlRunner output so in-process tests can find them -->

@@ -325,7 +325,7 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   round-trips text. HttpResponseMessage default status is 200. HttpHeaders supports
   Add/Contains/Remove. HttpClient.Send/Get/Post/Put/Delete/Patch throw
   NotSupportedException (use AL interface injection for HTTP-dependent code).
-- File dialog stubs: UploadIntoStream (5-arg and 6-arg), DownloadFromStream (4 overloads) —
+- File dialog stubs: UploadIntoStream (4-arg, 5-arg, 6-arg), DownloadFromStream (4 overloads) —
   all return false in standalone mode (no client UI). Compile and run without error.
 - Library - Variable Storage (codeunit 131004) — Enqueue, DequeueText, DequeueInteger,
   DequeueDecimal, DequeueBoolean, DequeueDate, DequeueVariant, AssertEmpty, Clear, IsEmpty

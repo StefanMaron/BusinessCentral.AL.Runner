@@ -2665,7 +2665,8 @@ File.UploadIntoStream:
   layer: runtime-api
   category: File
   status: covered
-  notes: overloads=2
+  notes: overloads=3; 5-arg and 6-arg (with/without Guid) for BC≤25 5-param AL form; 4-arg (no DataError/Folder/Guid) for newer BC 4-param AL form — all no-op stubs returning false
+  test: AlRunner.Tests/MockFile4ArgTests.cs
 
 File.View:
   layer: runtime-api
