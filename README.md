@@ -98,6 +98,16 @@ Results in milliseconds
 
 AL Runner targets **broad AL language compatibility**. Core AL constructs (records, codeunits, interfaces, JSON, BLOB, TextBuilder, RecordRef/FieldRef, TestPage, report variables, HTTP mocks, and more) are supported. For the full coverage map, see [`docs/coverage.yaml`](docs/coverage.yaml).
 
+**Built-in test toolkit codeunits** (auto-loaded, no stubs needed):
+
+| Codeunit | ID | Purpose |
+|---|---|---|
+| Library Assert | 130 / 130002 | AreEqual, IsTrue, IsFalse, ExpectedError |
+| Library - Variable Storage | 131004 | Enqueue/Dequeue for handler communication |
+| Any | 130500 | Random test data (IntegerInRange, AlphanumericText, GuidValue) |
+| Library - Random | 130440 | Pseudo-random numbers, dates, text (RandInt, RandDec, RandText) |
+| Library - Test Initialize | 132250 | Integration events for test setup hooks |
+
 For AI agents writing tests against the runner, use:
 
 ```bash

@@ -454,10 +454,17 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 ### Writing a compatible test codeunit
 
 1. Use `Subtype = Test` on the codeunit
-2. Reference `Assert` as `Codeunit "Library Assert"` or `Codeunit Assert` (both are supported)
-3. Reference `Library - Variable Storage` as `Codeunit ""Library - Variable Storage""` for
+2. Reference `Assert` as `Codeunit "Library Assert"` or `Codeunit Assert` (both are supported).
+   Both the runner's built-in stub (ID 130) and BC's real ID (130002) are routed to MockAssert.
+3. Reference `Library - Variable Storage` as `Codeunit "Library - Variable Storage"` for
    passing values between test setup and handler functions (Enqueue/DequeueText/etc.)
-4. Mark each test procedure with `[Test]`
+4. The following BC test toolkit codeunits are built-in (auto-loaded, no stubs needed):
+   - `Library Assert` (130 / 130002) — AreEqual, IsTrue, IsFalse, ExpectedError, etc.
+   - `Library - Variable Storage` (131004) — Enqueue/Dequeue for handler communication
+   - `Any` (130500) — random test data generation (IntegerInRange, AlphanumericText, etc.)
+   - `Library - Random` (130440) — pseudo-random numbers/dates/text (RandInt, RandDec, etc.)
+   - `Library - Test Initialize` (132250) — integration event publishers for test setup hooks
+5. Mark each test procedure with `[Test]`
 5. Tests must be self-contained: insert test data, call logic, assert results
 6. Use `asserterror` + `Assert.ExpectedError` for error path testing
 7. For external dependencies (mail, HTTP, pages, XmlPort I/O), define an AL interface and
@@ -534,8 +541,9 @@ the codeunit uses an unsupported BC feature (Page, HTTP, etc.). Either:
 - Correct procedure signatures: all parameters, `var` modifiers, `Record "X"`,
   `Enum "X"`, and return types
 - Default `exit(...)` bodies (false for Boolean, 0 for Integer/Decimal, '' for Text/Code)
-- Codeunits already natively mocked by al-runner (e.g. codeunit 130 "Library Assert")
-  are skipped automatically
+- Codeunits already natively mocked by al-runner (Library Assert 130/130002,
+  Library - Variable Storage 131004, Any 130500, Library - Random 130440,
+  Library - Test Initialize 132250) are skipped automatically
 - Existing files in the output dir are never overwritten (re-run is safe)
 
 **Maintaining stubs over time:**
