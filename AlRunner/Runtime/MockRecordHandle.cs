@@ -210,7 +210,7 @@ public class MockRecordHandle
 
     public void SetFieldValueSafe(int fieldNo, NavType expectedType, NavValue value)
     {
-        _fields[fieldNo] = value;
+        _fields[fieldNo] = CoerceToExpectedType(fieldNo, expectedType, value);
     }
 
     /// <summary>
@@ -220,7 +220,25 @@ public class MockRecordHandle
     /// </summary>
     public void SetFieldValueSafe(int fieldNo, NavType expectedType, NavValue value, bool validate)
     {
-        _fields[fieldNo] = value;
+        _fields[fieldNo] = CoerceToExpectedType(fieldNo, expectedType, value);
+    }
+
+    /// <summary>
+    /// Coerce <paramref name="value"/> to match <paramref name="expectedType"/> when the
+    /// incoming type differs.  The primary case is NavText stored in a Code[N] field slot:
+    /// FieldRef.Value setter always calls SetFieldValue with NavType.Text, so a Code field
+    /// receives a NavText.  A subsequent direct field read emits
+    /// <c>(NavCode)GetFieldValueSafe(fieldNo, NavType.Code)</c> which throws
+    /// InvalidCastException unless we store a NavCode here.
+    /// </summary>
+    private NavValue CoerceToExpectedType(int fieldNo, NavType expectedType, NavValue value)
+    {
+        if (expectedType == NavType.Code && value is NavText nt)
+        {
+            int length = TableFieldRegistry.GetFieldLength(_tableId, fieldNo) ?? 250;
+            return new NavCode(length, ((string)nt).ToUpperInvariant());
+        }
+        return value;
     }
 
     /// <summary>
@@ -245,7 +263,7 @@ public class MockRecordHandle
     public NavValue GetFieldValueSafe(int fieldNo, NavType expectedType)
     {
         if (_fields.TryGetValue(fieldNo, out var val))
-            return val;
+            return CoerceToExpectedType(fieldNo, expectedType, val);
         // For Media/MediaSet types, auto-generate and persist a unique value
         // so that repeated reads return the same value, and different records
         // (or re-inserted records) get different MediaIds.

@@ -4426,6 +4426,15 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
                 if (targetExpr is MemberAccessExpressionSyntax targetMa &&
                     targetMa.Name.Identifier.Text == "Target")
                     targetExpr = targetMa.Expression;
+                // base.Parent (inside a scope class) → _parent.
+                // The VisitMemberAccessExpression rule (base.Parent.xxx → _parent.xxx) only
+                // fires when base.Parent appears as the inner half of a 3-part chain.  Here
+                // base.Parent is a bare argument, so the rule never fires.  Resolve it now
+                // before creating the new call node (which won't be re-visited).
+                if (targetExpr is MemberAccessExpressionSyntax baseParentMa &&
+                    baseParentMa.Name.Identifier.Text == "Parent" &&
+                    baseParentMa.Expression is BaseExpressionSyntax)
+                    targetExpr = SyntaxFactory.IdentifierName("_parent");
                 var call = SyntaxFactory.InvocationExpression(
                     SyntaxFactory.MemberAccessExpression(
                         SyntaxKind.SimpleMemberAccessExpression,
