@@ -53,33 +53,52 @@ class TestClassifyCompilationGap(unittest.TestCase):
         msg = "CS0103 on 'myLocalVar': The name 'myLocalVar' does not exist"
         self.assertEqual(_classify_compilation_gap(msg), "CS0103 on 'myLocalVar'")
 
-    # ── CS1061: generated types group by target ──
+    # ── CS1061: generated types group by normalized target (numeric ID → <N>) ──
 
-    def test_cs1061_report_groups_by_target(self):
+    def test_cs1061_report_groups_by_normalized_target(self):
         msg1 = "CS1061 on 'Report70400': 'Report70400' does not contain a definition for 'amountDue'"
         msg2 = "CS1061 on 'Report70400': 'Report70400' does not contain a definition for 'columnHead'"
         key1 = _classify_compilation_gap(msg1)
         key2 = _classify_compilation_gap(msg2)
         self.assertEqual(key1, key2)
-        self.assertEqual(key1, "CS1061 on 'Report70400'")
+        self.assertEqual(key1, "CS1061 on 'Report<N>'")
 
-    def test_cs1061_page_groups_by_target(self):
+    def test_cs1061_different_report_ids_same_member_collapse(self):
+        """CS1061 on Report70400 and Report72000 with same missing member → same group key."""
+        msg1 = "CS1061 on 'Report70400': 'Report70400' does not contain a definition for 'RunModal'"
+        msg2 = "CS1061 on 'Report72000': 'Report72000' does not contain a definition for 'RunModal'"
+        self.assertEqual(_classify_compilation_gap(msg1), _classify_compilation_gap(msg2))
+        self.assertEqual(_classify_compilation_gap(msg1), "CS1061 on 'Report<N>'")
+
+    def test_cs1061_different_page_ids_collapse(self):
+        """CS1061 on different page IDs with same missing member → one group key."""
+        msg1 = "CS1061 on 'Page72336669': 'Page72336669' does not contain a definition for 'RunModal'"
+        msg2 = "CS1061 on 'Page50100': 'Page50100' does not contain a definition for 'RunModal'"
+        msg3 = "CS1061 on 'Page99999': 'Page99999' does not contain a definition for 'RunModal'"
+        key1 = _classify_compilation_gap(msg1)
+        key2 = _classify_compilation_gap(msg2)
+        key3 = _classify_compilation_gap(msg3)
+        self.assertEqual(key1, key2)
+        self.assertEqual(key2, key3)
+        self.assertEqual(key1, "CS1061 on 'Page<N>'")
+
+    def test_cs1061_page_groups_by_normalized_target(self):
         msg = "CS1061 on 'Page50100': 'Page50100' does not contain a definition for 'SomeField'"
-        self.assertEqual(_classify_compilation_gap(msg), "CS1061 on 'Page50100'")
+        self.assertEqual(_classify_compilation_gap(msg), "CS1061 on 'Page<N>'")
 
-    def test_cs1061_report_extension_groups_by_base_target(self):
+    def test_cs1061_report_extension_groups_by_normalized_base_target(self):
         msg = ("CS1061 on 'ReportExtension50506.DtldCustLedgEntries_a45_OnBeforeAfterGetRecord_Scope': "
                "'ReportExtension50506.DtldCustLedgEntries_a45_OnBeforeAfterGetRecord_Scope' "
                "does not contain a definition for 'Pa…")
-        self.assertEqual(_classify_compilation_gap(msg), "CS1061 on 'ReportExtension50506'")
+        self.assertEqual(_classify_compilation_gap(msg), "CS1061 on 'ReportExtension<N>'")
 
-    def test_cs1061_page_extension_groups_by_base_target(self):
+    def test_cs1061_page_extension_groups_by_normalized_base_target(self):
         msg = "CS1061 on 'PageExtension50100': 'PageExtension50100' does not contain a definition for 'SomeField'"
-        self.assertEqual(_classify_compilation_gap(msg), "CS1061 on 'PageExtension50100'")
+        self.assertEqual(_classify_compilation_gap(msg), "CS1061 on 'PageExtension<N>'")
 
-    def test_cs1061_table_extension_groups_by_base_target(self):
+    def test_cs1061_table_extension_groups_by_normalized_base_target(self):
         msg = "CS1061 on 'TableExtension50200': 'TableExtension50200' does not contain a definition for 'X'"
-        self.assertEqual(_classify_compilation_gap(msg), "CS1061 on 'TableExtension50200'")
+        self.assertEqual(_classify_compilation_gap(msg), "CS1061 on 'TableExtension<N>'")
 
     # ── CS1061: mock types group by target + member ──
 
@@ -104,9 +123,9 @@ class TestClassifyCompilationGap(unittest.TestCase):
         self.assertEqual(key, "CS1061:'MockRecordRef'.ALSomeVeryLongMethodNam")
 
     def test_cs1061_scope_qualified_report_strips_scope(self):
-        """Report70400.SomeTrigger_Scope → groups under Report70400."""
+        """Report70400.SomeTrigger_Scope → normalizes to Report<N>."""
         msg = "CS1061 on 'Report70400.OnAfterGetRecord_Scope': 'Report70400.OnAfterGetRecord_Scope' does not contain a definition for 'foo'"
-        self.assertEqual(_classify_compilation_gap(msg), "CS1061 on 'Report70400'")
+        self.assertEqual(_classify_compilation_gap(msg), "CS1061 on 'Report<N>'")
 
     # ── Other CS codes ──
 
@@ -158,8 +177,8 @@ class TestAggregateByRootCause(unittest.TestCase):
         self.assertEqual(result[0]["occurrences"], 20)
         self.assertEqual(len(result[0]["_original_rows"]), 20)
 
-    def test_report_members_aggregate_by_target(self):
-        """Multiple CS1061 on Report70400 → 1 aggregated row."""
+    def test_report_members_aggregate_by_normalized_target(self):
+        """Multiple CS1061 on Report70400 → 1 aggregated row with normalized key."""
         rows = [
             self._make_gap("CS1061 on 'Report70400': 'Report70400' does not contain a definition for 'amountDue'", 3),
             self._make_gap("CS1061 on 'Report70400': 'Report70400' does not contain a definition for 'columnHead'", 2),
@@ -167,9 +186,32 @@ class TestAggregateByRootCause(unittest.TestCase):
         ]
         result = aggregate_by_root_cause(rows)
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["_group_key"], "CS1061 on 'Report70400'")
+        self.assertEqual(result[0]["_group_key"], "CS1061 on 'Report<N>'")
         self.assertEqual(result[0]["occurrences"], 6)
         self.assertEqual(result[0]["distinct_errors"], 3)
+
+    def test_different_page_ids_same_missing_member_collapse_to_one(self):
+        """CS1061 on different page IDs with same missing member → 1 aggregated row."""
+        rows = [
+            self._make_gap("CS1061 on 'Page72336669': 'Page72336669' does not contain a definition for 'RunModal'", 2),
+            self._make_gap("CS1061 on 'Page50100': 'Page50100' does not contain a definition for 'RunModal'", 1),
+            self._make_gap("CS1061 on 'Page99999': 'Page99999' does not contain a definition for 'RunModal'", 3),
+            self._make_gap("CS1061 on 'Page11111': 'Page11111' does not contain a definition for 'RunModal'", 1),
+        ]
+        result = aggregate_by_root_cause(rows)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["_group_key"], "CS1061 on 'Page<N>'")
+        self.assertEqual(result[0]["occurrences"], 7)
+        self.assertEqual(result[0]["distinct_errors"], 4)
+
+    def test_mock_type_not_normalized(self):
+        """CS1061 on MockRecordRef uses exact type name (no numeric suffix to normalize)."""
+        rows = [
+            self._make_gap("CS1061 on 'MockRecordRef': 'MockRecordRef' does not contain a definition for 'ALFieldExists'"),
+        ]
+        result = aggregate_by_root_cause(rows)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["_group_key"], "CS1061:'MockRecordRef'.ALFieldExists")
 
     def test_mock_methods_stay_split(self):
         """Different missing methods on same mock type → separate rows."""
@@ -211,7 +253,7 @@ class TestAggregateByRootCause(unittest.TestCase):
         keys = {r["_group_key"] for r in result}
         self.assertEqual(keys, {
             "CS0103:label-vars",
-            "CS1061 on 'Report70400'",
+            "CS1061 on 'Report<N>'",
             "CS1061:'MockRecordRef'.ALFieldExists",
             "CS1061:'MockFieldRef'.ALSetTable",
             "System.NullReferenceException",
@@ -259,7 +301,7 @@ class TestBuildBody(unittest.TestCase):
         r1 = self._make_raw_row("CS0103 on 'agedLbl': ...")
         r2 = self._make_raw_row("CS0103 on 'currentLbl': ...")
         agg = self._make_aggregated_row("CS0103:label-vars", [r1, r2])
-        other = self._make_aggregated_row("CS1061 on 'Report70400'", [
+        other = self._make_aggregated_row("CS1061 on 'Report<N>'", [
             self._make_raw_row("CS1061 on 'Report70400': ... 'amountDue'"),
         ])
 
