@@ -78,6 +78,8 @@ public class RoslynRewriter : CSharpSyntaxRewriter
         "ALCodeCoverageInclude",        // ALCodeCoverage.ALCodeCoverageInclude(record) — no code coverage engine standalone; no-op
         "ALImportObjects",              // ALDatabase.ALImportObjects(stream) — object import requires BC runtime; no-op standalone
         "ALExportObjects",              // ALDatabase.ALExportObjects(stream, ...) — object export requires BC runtime; no-op standalone
+        "ALKeyGroupDisable",            // ALDatabase.ALKeyGroupDisable(keyGroupName) — key groups require live BC DB context; no-op standalone
+        "ALKeyGroupEnable",             // ALDatabase.ALKeyGroupEnable(keyGroupName) — key groups require live BC DB context; no-op standalone
     };
 
     private static readonly HashSet<string> StripITreeObjectArgMethods = new(StringComparer.Ordinal)
@@ -3297,6 +3299,16 @@ public void ClearApplicationMemberVariables()
             if (exprText == "ALDatabase" && methodName == "ALIsInWriteTransaction")
             {
                 return SyntaxFactory.LiteralExpression(SyntaxKind.FalseLiteralExpression)
+                    .WithTriviaFrom(visited);
+            }
+
+            // ALDatabase.ALKeyGroupEnabled(keyGroupName) -> true
+            // Key groups are a BC database feature requiring a live NavSession. The runner
+            // has no real DB, so we stub this as always-enabled (true) — the conservative
+            // default that keeps AL logic that gates on KeyGroupEnabled running correctly.
+            if (exprText == "ALDatabase" && methodName == "ALKeyGroupEnabled")
+            {
+                return SyntaxFactory.LiteralExpression(SyntaxKind.TrueLiteralExpression)
                     .WithTriviaFrom(visited);
             }
 
