@@ -43,7 +43,7 @@ public class PipelineOptions
     /// methods share table state (BC's default TestIsolation::Codeunit behaviour).
     /// Method — reset before every individual test method (the previous runner default).
     /// </summary>
-    public TestIsolation TestIsolation { get; set; } = TestIsolation.Codeunit;
+    public TestIsolation TestIsolation { get; set; } = TestIsolation.Method;
 
     /// <summary>
     /// Optional override for the C# rewriter step, intended for unit-testing the pipeline's
