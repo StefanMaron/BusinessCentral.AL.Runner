@@ -47,6 +47,8 @@ alscope_parent_instance:
     others emit AlScope.Parent (static class access). A static stub fixed CS0117 (#1092)
     but introduced CS0176 for instance access (#1105). The fix changes Parent to a virtual
     instance property so both this.Parent and base.Parent compile and resolve correctly.
+    Changed return type to dynamic? so that base.Parent.Bind()/Unbind() compiles via
+    dynamic dispatch when the rewriter has not yet converted base.Parent to _parent.
     Concrete scope subclasses shadow the base stub with their injected typed Parent property.
     Verified by reflection unit tests and AL integration tests.
   tests:
@@ -2849,8 +2851,14 @@ FilterPageBuilder.GetView:
   layer: runtime-api
   category: FilterPageBuilder
   status: covered
-  notes: overloads=1; MockFilterPageBuilder; round-trips with SetView
-  tests: tests/bucket-2/179-filter-page-builder
+  notes: >
+    overloads=3; MockFilterPageBuilder; round-trips with SetView.
+    Added two-argument overloads (NavText/string caption, bool useNames) — BC emits
+    ALGetView(NavText, bool) for the FilterPageBuilder.GetView(caption, useNames) form,
+    causing CS1503 without the overloads.
+  tests:
+    - tests/bucket-2/179-filter-page-builder
+    - tests/bucket-2/224-filterpagebuilder-getview-bool
 
 FilterPageBuilder.Name:
   layer: runtime-api
@@ -3061,7 +3069,12 @@ HttpHeaders.ContainsSecret:
   layer: runtime-api
   category: HttpHeaders
   status: covered
-  notes: overloads=1
+  notes: >
+    overloads=2; MockHttpHeaders.ALIsHeaderValueSecret — NavText and string overloads.
+    BC emits ALIsHeaderValueSecret with a raw string literal when the header name is a
+    text constant (e.g. 'Content-Type'). The string overload was added to fix CS1503.
+  tests:
+    - tests/bucket-2/223-httpheaders-isheadervaluesecret-string
 
 HttpHeaders.GetSecretValues:
   layer: runtime-api
