@@ -7067,8 +7067,15 @@ Table.TestField:
   tests:
     - tests/bucket-1/27-testfield-error
     - tests/bucket-1/54-testfield-enum
+    - tests/bucket-1/288-testfield-navvalue-overload
     - tests/bucket-2/100-testfield-value
-  notes: overloads=26; non-empty check, enum value comparison, and scalar value comparison (Text/Code/Integer/Decimal) covered
+  notes: >
+    overloads=26; non-empty check, enum value comparison, and scalar value comparison
+    (Text/Code/Integer/Decimal/Boolean) covered. CS0121 ambiguity between NavValue and
+    primitive overloads (bool/string/int/Decimal18) resolved via a single object catch-all
+    in ALTestFieldSafe — same pattern as MockFieldRef.ALSetRange(object) (issue #1018).
+    CLR primitives are wrapped to the matching NavValue type before comparison so that
+    NavValueToString produces locale-consistent output on both sides.
 
 Table.TransferFields:
   layer: runtime-api
