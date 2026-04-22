@@ -1,5 +1,5 @@
 /// A table holding a Blob, used internally by BSC TempBlobLike codeunit.
-table 160002 "BSC TempBlobData"
+table 163100 "BSC TempBlobData"
 {
     fields
     {
@@ -11,7 +11,7 @@ table 160002 "BSC TempBlobData"
 /// A codeunit that exposes CreateOutStream() returning OutStream and
 /// CreateInStream() returning InStream — mimicking the pattern of
 /// Codeunit "Temp Blob" from BC standard library (issue #1026).
-codeunit 160003 "BSC TempBlobLike"
+codeunit 163101 "BSC TempBlobLike"
 {
     var
         Rec: Record "BSC TempBlobData";
@@ -41,7 +41,7 @@ codeunit 160003 "BSC TempBlobLike"
 }
 
 /// Exercises the chained-call pattern: TempBlobLike.CreateOutStream().WriteText(...)
-codeunit 160004 "BSC ChainedStreamSrc"
+codeunit 163102 "BSC ChainedStreamSrc"
 {
     procedure WriteTextChained(var TempBlob: Codeunit "BSC TempBlobLike"; InputText: Text)
     begin

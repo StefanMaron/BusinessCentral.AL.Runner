@@ -1,4 +1,4 @@
-codeunit 160005 "BSC TestBlobStreamChained"
+codeunit 163103 "BSC TestBlobStreamChained"
 {
     Subtype = Test;
 
