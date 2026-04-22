@@ -491,6 +491,11 @@ public class MockRecordHandle
         try { instance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(recordType); }
         catch { return; }
 
+        // Initialize null fields (global table variables, etc.) before wiring Rec/xRec,
+        // so that any MockRecordHandle fields created by InitializeComponent are in place
+        // and the explicit Rec/xRec assignments below can override them with this handle.
+        AlCompat.InitializeUninitializedObject(instance);
+
         var recBackingField = recordType.GetField("<Rec>k__BackingField",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
         if (recBackingField != null && recBackingField.FieldType.IsInstanceOfType(this))
