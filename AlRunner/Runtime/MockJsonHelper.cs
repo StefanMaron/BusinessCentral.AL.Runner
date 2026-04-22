@@ -418,6 +418,25 @@ public static class MockJsonHelper
     }
 
     /// <summary>
+    /// Replacement for NavJsonObject.ALGetText(key, requireValueExists).
+    /// Returns the string value of the named property, with optional existence check.
+    /// AL: JsonObject.GetText('key', true)  →  MockJsonHelper.GetText(token, key, requireValueExists)
+    /// </summary>
+    public static NavText GetText(NavJsonToken token, string key, bool requireValueExists)
+    {
+        var backingToken = GetBackingToken(token);
+        if (backingToken is not JObject obj)
+            throw new Exception("The JSON token is not an object.");
+        if (!obj.TryGetValue(key, out var val))
+        {
+            if (requireValueExists)
+                throw new Exception($"The JSON object does not contain a property with the name '{key}'.");
+            return new NavText(string.Empty);
+        }
+        return new NavText(val.Value<string>() ?? string.Empty);
+    }
+
+    /// <summary>
     /// Replacement for NavJsonObject.ALGetInteger(key).
     /// Returns the integer value of the named property.
     /// AL: JsonObject.GetInteger('key')  →  MockJsonHelper.GetInteger(token, key)
@@ -461,6 +480,24 @@ public static class MockJsonHelper
             throw new Exception($"The JSON object does not contain a property with the name '{key}'.");
         if (val is not JObject jObj)
             throw new Exception($"The value of JSON property '{key}' is not an object.");
+        return CreateJsonToken<NavJsonObject>(jObj);
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonArray.ALGetObject(index).
+    /// Returns the JsonObject element at the given integer index.
+    /// AL: JsonArray.GetObject(0)  →  MockJsonHelper.GetObject(token, 0)
+    /// </summary>
+    public static NavJsonObject GetObject(NavJsonToken token, int index)
+    {
+        var backingToken = GetBackingToken(token);
+        if (backingToken is not JArray arr)
+            throw new Exception("The JSON token is not an array.");
+        if (index < 0 || index >= arr.Count)
+            throw new Exception($"The index {index} is outside the bounds of the JSON array.");
+        var elem = arr[index];
+        if (elem is not JObject jObj)
+            throw new Exception($"The element at index {index} is not a JSON object.");
         return CreateJsonToken<NavJsonObject>(jObj);
     }
 

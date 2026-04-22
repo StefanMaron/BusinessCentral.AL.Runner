@@ -3335,8 +3335,10 @@ JsonArray.GetObject:
   layer: runtime-api
   category: JsonArray
   status: covered
-  tests: tests/bucket-2/187-jsonarray-typed-getters
-  notes: overloads=1. Indirectly covered via JsonArray.Get + JsonToken.AsObject(). The BC 21+ typed GetObject(idx) overload is not present in the AL 16.2 compiler bundled with the runner.
+  tests:
+    - tests/bucket-2/187-jsonarray-typed-getters
+    - tests/bucket-1/100-json-overloads
+  notes: overloads=2. Integer-indexed overload GetObject(idx) now covered via MockJsonHelper.GetObject(token, int) — issue #1025.
 
 JsonArray.GetOption:
   layer: runtime-api
@@ -3561,9 +3563,10 @@ JsonObject.GetText:
   layer: runtime-api
   category: JsonObject
   status: covered
-  notes: overloads=1; rewriter redirects ALGetText to MockJsonHelper.GetText
+  notes: overloads=2; rewriter redirects ALGetText to MockJsonHelper.GetText; 2-arg bool overload GetText(key, requireValueExists) now covered — issue #1025
   tests:
     - tests/bucket-1/268-jsonobject-methods
+    - tests/bucket-1/100-json-overloads
 
 JsonObject.GetTime:
   layer: runtime-api
