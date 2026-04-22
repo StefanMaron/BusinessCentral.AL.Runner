@@ -189,10 +189,26 @@ public static class TelemetryReporter
 
     // ─── Internals ────────────────────────────────────────────────────────────
 
-    // Regex to parse the missing member name from a CS1061 diagnostic message:
+    // Regex to parse the missing member name from a CS1061/CS0117 diagnostic message:
     // "'TypeName' does not contain a definition for 'MemberName' and …"
     private static readonly Regex MemberNameRx =
         new(@"does not contain a definition for '([^']+)'", RegexOptions.Compiled);
+
+    // Regex for CS1503: "Argument N: cannot convert from 'FromType' to 'ToType'"
+    private static readonly Regex Cs1503Rx =
+        new(@"cannot convert from '([^']+)' to '([^']+)'", RegexOptions.Compiled);
+
+    // Regex for CS1501: "No overload for method 'Method' takes N arguments"
+    private static readonly Regex Cs1501Rx =
+        new(@"No overload for method '([^']+)' takes (\d+) arguments", RegexOptions.Compiled);
+
+    // Regex for CS1729: "'Type' does not contain a constructor that takes N arguments"
+    private static readonly Regex Cs1729Rx =
+        new(@"'([^']+)' does not contain a constructor that takes (\d+) arguments", RegexOptions.Compiled);
+
+    // Regex for CS1674: "'Type': type used in a using statement must be implicitly convertible to …"
+    private static readonly Regex Cs1674Rx =
+        new(@"'([^']+)':\s*type used in a using statement", RegexOptions.Compiled);
 
     // Known BC platform AL object type prefixes used in generated C# class names.
     private static readonly string[] KnownObjectTypePrefixes = new[]
@@ -218,18 +234,67 @@ public static class TelemetryReporter
         // Extract CS code from formatted error: "ObjectName.cs(line,col): error CS1061: ..."
         var csCodeRx = new Regex(@"\berror (CS\d+):");
 
-        // First pass — build a grouping key from CS code + first quoted type name token.
+        // First pass — build a grouping key from CS code + enriched detail per error code.
         // For CS1061 we also accumulate the member names per group.
         return errors
             .GroupBy(err =>
             {
                 var codeMatch = csCodeRx.Match(err);
                 var code = codeMatch.Success ? codeMatch.Groups[1].Value : "CS????";
-                // Extract first single-quoted token from the message portion (after "error CSxxxx: ")
+                // Extract message portion (after "error CSxxxx: ")
                 var msgStart = codeMatch.Success ? codeMatch.Index + codeMatch.Length : 0;
                 var msgPortion = err[msgStart..];
-                var tokenMatch = singleQuoteRx.Match(msgPortion);
-                return tokenMatch.Success ? $"{code} on '{tokenMatch.Groups[1].Value}'" : code;
+
+                switch (code)
+                {
+                    case "CS1503":
+                    {
+                        // "Argument N: cannot convert from 'FromType' to 'ToType'"
+                        // Key captures both type names so different target types don't collapse.
+                        var m = Cs1503Rx.Match(msgPortion);
+                        if (m.Success)
+                            return $"{code}: '{m.Groups[1].Value}' → '{m.Groups[2].Value}'";
+                        break;
+                    }
+                    case "CS1501":
+                    {
+                        // "No overload for method 'Method' takes N arguments"
+                        var m = Cs1501Rx.Match(msgPortion);
+                        if (m.Success)
+                            return $"{code}: '{m.Groups[1].Value}' ({m.Groups[2].Value} args)";
+                        break;
+                    }
+                    case "CS0117":
+                    {
+                        // "'Type' does not contain a definition for 'Member'"
+                        // Key combines type (first token) AND missing member.
+                        var tokenMatch = singleQuoteRx.Match(msgPortion);
+                        var memberMatch = MemberNameRx.Match(msgPortion);
+                        if (tokenMatch.Success && memberMatch.Success)
+                            return $"{code}: '{tokenMatch.Groups[1].Value}.{memberMatch.Groups[1].Value}'";
+                        break;
+                    }
+                    case "CS1729":
+                    {
+                        // "'Type' does not contain a constructor that takes N arguments"
+                        var m = Cs1729Rx.Match(msgPortion);
+                        if (m.Success)
+                            return $"{code}: '{m.Groups[1].Value}' ctor({m.Groups[2].Value} args)";
+                        break;
+                    }
+                    case "CS1674":
+                    {
+                        // "'Type': type used in a using statement must be implicitly convertible to …"
+                        var m = Cs1674Rx.Match(msgPortion);
+                        if (m.Success)
+                            return $"{code}: '{m.Groups[1].Value}' not IDisposable";
+                        break;
+                    }
+                }
+
+                // Default: group by CS code + first quoted token (original behaviour, covers CS1061, CS0246, etc.)
+                var firstToken = singleQuoteRx.Match(msgPortion);
+                return firstToken.Success ? $"{code} on '{firstToken.Groups[1].Value}'" : code;
             })
             .Select(g =>
             {

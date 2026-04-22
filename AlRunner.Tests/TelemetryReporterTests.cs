@@ -84,6 +84,205 @@ public class TelemetryReporterTests
         Assert.Equal(2, result[0].Count);
     }
 
+    // ─── CS1503: cannot convert from 'X' to 'Y' ──────────────────────────────
+
+    [Fact]
+    public void Dedup_CS1503_IncludesBothTypes()
+    {
+        // CS1503: "Argument N: cannot convert from 'FromType' to 'ToType'"
+        // The key must capture BOTH the source and destination types.
+        var errors = new List<string>
+        {
+            "Codeunit50100.cs(10,5): error CS1503: Argument 1: cannot convert from 'NavText' to 'System.String'",
+            "Codeunit50100.cs(20,5): error CS1503: Argument 2: cannot convert from 'NavText' to 'System.String'",
+        };
+
+        var result = TelemetryReporter.DeduplicateCompilationErrors(errors);
+
+        // Both map to the same key because FromType and ToType are the same
+        Assert.Single(result);
+        var (key, count, _) = result[0];
+        Assert.Equal(2, count);
+        Assert.Contains("NavText", key);
+        Assert.Contains("System.String", key);
+    }
+
+    [Fact]
+    public void Dedup_CS1503_DifferentToType_DoesNotMerge()
+    {
+        // Different target types must produce distinct keys.
+        var errors = new List<string>
+        {
+            "Codeunit50100.cs(10,5): error CS1503: Argument 1: cannot convert from 'NavText' to 'System.String'",
+            "Codeunit50100.cs(20,5): error CS1503: Argument 1: cannot convert from 'NavText' to 'System.Int32'",
+        };
+
+        var result = TelemetryReporter.DeduplicateCompilationErrors(errors);
+
+        Assert.Equal(2, result.Count);
+        var keys = result.Select(r => r.Key).ToList();
+        Assert.True(keys.Any(k => k.Contains("System.String")), "Key for String conversion missing");
+        Assert.True(keys.Any(k => k.Contains("System.Int32")), "Key for Int32 conversion missing");
+    }
+
+    // ─── CS1501: no overload for method 'X' takes N arguments ────────────────
+
+    [Fact]
+    public void Dedup_CS1501_IncludesMethodNameAndArgCount()
+    {
+        // CS1501: "No overload for method 'Method' takes N arguments"
+        // Key must include method name and argument count.
+        var errors = new List<string>
+        {
+            "Codeunit50100.cs(5,1): error CS1501: No overload for method 'ALSetRange' takes 3 arguments",
+            "Codeunit50100.cs(9,1): error CS1501: No overload for method 'ALSetRange' takes 3 arguments",
+        };
+
+        var result = TelemetryReporter.DeduplicateCompilationErrors(errors);
+
+        Assert.Single(result);
+        var (key, count, _) = result[0];
+        Assert.Equal(2, count);
+        Assert.Contains("ALSetRange", key);
+        Assert.Contains("3", key);
+    }
+
+    [Fact]
+    public void Dedup_CS1501_DifferentArgCount_DoesNotMerge()
+    {
+        // Same method, different arg count = different key.
+        var errors = new List<string>
+        {
+            "Codeunit50100.cs(5,1): error CS1501: No overload for method 'ALSetRange' takes 2 arguments",
+            "Codeunit50100.cs(9,1): error CS1501: No overload for method 'ALSetRange' takes 3 arguments",
+        };
+
+        var result = TelemetryReporter.DeduplicateCompilationErrors(errors);
+
+        Assert.Equal(2, result.Count);
+        var keys = result.Select(r => r.Key).ToList();
+        Assert.True(keys.Any(k => k.Contains("2")), "Key for 2-arg variant missing");
+        Assert.True(keys.Any(k => k.Contains("3")), "Key for 3-arg variant missing");
+    }
+
+    // ─── CS0117: 'Type' does not contain a definition for 'Member' ───────────
+
+    [Fact]
+    public void Dedup_CS0117_IncludesTypeAndMember()
+    {
+        // CS0117: "'Type' does not contain a definition for 'Member'"
+        // Key must capture both type and member.
+        var errors = new List<string>
+        {
+            "Codeunit50100.cs(5,1): error CS0117: 'AlRunner.Runtime.AlScope' does not contain a definition for 'FooBar'",
+            "Codeunit50100.cs(9,1): error CS0117: 'AlRunner.Runtime.AlScope' does not contain a definition for 'FooBar'",
+        };
+
+        var result = TelemetryReporter.DeduplicateCompilationErrors(errors);
+
+        Assert.Single(result);
+        var (key, count, _) = result[0];
+        Assert.Equal(2, count);
+        Assert.Contains("AlRunner.Runtime.AlScope", key);
+        Assert.Contains("FooBar", key);
+    }
+
+    [Fact]
+    public void Dedup_CS0117_DifferentMember_DoesNotMerge()
+    {
+        // Same type, different missing member = different key.
+        var errors = new List<string>
+        {
+            "Codeunit50100.cs(5,1): error CS0117: 'AlRunner.Runtime.AlScope' does not contain a definition for 'FooBar'",
+            "Codeunit50100.cs(9,1): error CS0117: 'AlRunner.Runtime.AlScope' does not contain a definition for 'BazQux'",
+        };
+
+        var result = TelemetryReporter.DeduplicateCompilationErrors(errors);
+
+        Assert.Equal(2, result.Count);
+        var keys = result.Select(r => r.Key).ToList();
+        Assert.True(keys.Any(k => k.Contains("FooBar")), "Key for FooBar missing");
+        Assert.True(keys.Any(k => k.Contains("BazQux")), "Key for BazQux missing");
+    }
+
+    // ─── CS1729: type has no constructor taking N arguments ──────────────────
+
+    [Fact]
+    public void Dedup_CS1729_IncludesTypeAndArgCount()
+    {
+        // CS1729: "'Type' does not contain a constructor that takes N arguments"
+        // Key must capture type name and arg count.
+        var errors = new List<string>
+        {
+            "Codeunit50100.cs(5,1): error CS1729: 'MockRecordHandle' does not contain a constructor that takes 3 arguments",
+            "Codeunit50200.cs(5,1): error CS1729: 'MockRecordHandle' does not contain a constructor that takes 3 arguments",
+        };
+
+        var result = TelemetryReporter.DeduplicateCompilationErrors(errors);
+
+        Assert.Single(result);
+        var (key, count, _) = result[0];
+        Assert.Equal(2, count);
+        Assert.Contains("MockRecordHandle", key);
+        Assert.Contains("3", key);
+    }
+
+    [Fact]
+    public void Dedup_CS1729_DifferentArgCount_DoesNotMerge()
+    {
+        var errors = new List<string>
+        {
+            "Codeunit50100.cs(5,1): error CS1729: 'MockRecordHandle' does not contain a constructor that takes 2 arguments",
+            "Codeunit50100.cs(9,1): error CS1729: 'MockRecordHandle' does not contain a constructor that takes 4 arguments",
+        };
+
+        var result = TelemetryReporter.DeduplicateCompilationErrors(errors);
+
+        Assert.Equal(2, result.Count);
+        var keys = result.Select(r => r.Key).ToList();
+        Assert.True(keys.Any(k => k.Contains("2")), "Key for 2-arg ctor missing");
+        Assert.True(keys.Any(k => k.Contains("4")), "Key for 4-arg ctor missing");
+    }
+
+    // ─── CS1674: type not disposable ─────────────────────────────────────────
+
+    [Fact]
+    public void Dedup_CS1674_IncludesTypeName()
+    {
+        // CS1674: "'Type': type used in a using statement must be implicitly convertible to 'System.IDisposable'"
+        // Key must capture the type name.
+        var errors = new List<string>
+        {
+            "Codeunit50100.cs(5,1): error CS1674: 'NavText': type used in a using statement must be implicitly convertible to 'System.IDisposable'",
+            "Codeunit50200.cs(7,1): error CS1674: 'NavText': type used in a using statement must be implicitly convertible to 'System.IDisposable'",
+        };
+
+        var result = TelemetryReporter.DeduplicateCompilationErrors(errors);
+
+        Assert.Single(result);
+        var (key, count, _) = result[0];
+        Assert.Equal(2, count);
+        Assert.Contains("NavText", key);
+        Assert.Contains("not IDisposable", key);
+    }
+
+    [Fact]
+    public void Dedup_CS1674_DifferentTypes_DoesNotMerge()
+    {
+        var errors = new List<string>
+        {
+            "Codeunit50100.cs(5,1): error CS1674: 'NavText': type used in a using statement must be implicitly convertible to 'System.IDisposable'",
+            "Codeunit50100.cs(9,1): error CS1674: 'Decimal18': type used in a using statement must be implicitly convertible to 'System.IDisposable'",
+        };
+
+        var result = TelemetryReporter.DeduplicateCompilationErrors(errors);
+
+        Assert.Equal(2, result.Count);
+        var keys = result.Select(r => r.Key).ToList();
+        Assert.True(keys.Any(k => k.Contains("NavText")), "Key for NavText missing");
+        Assert.True(keys.Any(k => k.Contains("Decimal18")), "Key for Decimal18 missing");
+    }
+
     // ─── ScrubMessage ─────────────────────────────────────────────────────────
 
     [Fact]
