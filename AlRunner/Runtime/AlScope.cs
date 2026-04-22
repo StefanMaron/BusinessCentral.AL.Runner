@@ -209,7 +209,7 @@ public class AlScope : IDisposable, ITreeObject
     public static string LastErrorCallStack { get; set; } = "";
 
     /// <summary>
-    /// Instance null-returning stub for <c>Parent</c> — issues #1092 and #1105.
+    /// Instance <c>this</c>-returning stub for <c>Parent</c> — issues #1092, #1105, #1111.
     ///
     /// Some BC compiler versions emit <c>this.Parent</c> (instance access) in
     /// generated scope class code when a scope class body references a parent
@@ -223,16 +223,22 @@ public class AlScope : IDisposable, ITreeObject
     ///
     /// The real parent reference is always accessed through the injected instance
     /// property on the concrete scope subclass (e.g. <c>public Codeunit123 Parent => _parent;</c>)
-    /// which shadows this base stub, so returning null here is safe — this base
-    /// stub is only reached when the rewriter did not inject a typed Parent.
+    /// which shadows this base stub.
     ///
-    /// Returning <c>dynamic?</c> instead of <c>object?</c> allows calls such as
-    /// <c>base.Parent.Bind()</c> to compile via dynamic dispatch when the rewriter
-    /// has not yet converted <c>base.Parent</c> to <c>_parent</c> — issue #1xxx.
-    /// Concrete scope classes shadow this with a strongly-typed property so the
-    /// dynamic dispatch penalty only affects the rare unresolved case.
+    /// Returning <c>this</c> (rather than null) prevents a runtime null-dereference when
+    /// BC emits <c>ALSession.ALBindSubscription(DataError, base.Parent)</c> inside a scope
+    /// class and the rewriter rewrites this to <c>base.Parent.Bind()</c> but does NOT
+    /// further rewrite <c>base.Parent</c> to <c>_parent</c> (because the new node is not
+    /// re-visited — issue #1111).  With <c>Parent => this</c>, <c>base.Parent.Bind()</c>
+    /// calls <c>AlScope.Bind()</c> (the no-op stub) instead of throwing
+    /// "Cannot perform runtime binding on a null reference".
+    ///
+    /// Returning <c>dynamic</c> instead of <c>object</c> allows calls such as
+    /// <c>base.Parent.Bind()</c> to compile via dynamic dispatch.  Concrete scope
+    /// classes shadow this with a strongly-typed property so the dynamic dispatch
+    /// penalty only affects the rare unresolved case.
     /// </summary>
-    public virtual dynamic? Parent => null;
+    public virtual dynamic Parent => this;
 
     // ── Collectible errors ──────────────────────────────────────────────
     // Thread-static to avoid cross-test contamination in parallel scenarios.

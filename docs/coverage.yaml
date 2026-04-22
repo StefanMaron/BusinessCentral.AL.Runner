@@ -42,15 +42,16 @@ alscope_parent_instance:
   category: object
   status: covered
   notes: >
-    AlScope.Parent instance property stub — issues #1092 and #1105.
+    AlScope.Parent instance property stub — issues #1092, #1105, #1111.
     Some BC compiler versions emit this.Parent (instance access) in scope class bodies;
     others emit AlScope.Parent (static class access). A static stub fixed CS0117 (#1092)
     but introduced CS0176 for instance access (#1105). The fix changes Parent to a virtual
     instance property so both this.Parent and base.Parent compile and resolve correctly.
-    Changed return type to dynamic? so that base.Parent.Bind()/Unbind() compiles via
-    dynamic dispatch when the rewriter has not yet converted base.Parent to _parent.
-    Concrete scope subclasses shadow the base stub with their injected typed Parent property.
-    Verified by reflection unit tests and AL integration tests.
+    Changed return type to dynamic so that base.Parent.Bind()/Unbind() compiles via
+    dynamic dispatch. Returns `this` (not null) so that base.Parent.Bind() falls back to
+    AlScope.Bind() (no-op) rather than throwing "Cannot perform runtime binding on a null
+    reference" — issue #1111. Concrete scope subclasses shadow the base stub with their
+    injected typed Parent property.
   tests:
     - tests/bucket-1/290-alscope-parent
     - tests/bucket-2/100-alscope-parent-instance
@@ -80,9 +81,14 @@ alscope_bind_unbind:
     The rewriter injects Bind()/Unbind() into every codeunit class (delegating to
     EventSubscriberRegistry). AlScope also gets virtual no-op stubs as a fallback.
     Issue #1106 / Gap 2.
+    Additional fix (issue #1111): when BC emits ALSession.ALBindSubscription(DataError, base.Parent)
+    with base.Parent as a bare argument (not base.Parent.field), the VisitMemberAccessExpression
+    base.Parent→_parent rule never fired on the newly created node. The rewriter now resolves
+    base.Parent → _parent directly in the ALBindSubscription handler before creating target.Bind().
   tests:
     - tests/bucket-1/168-scope-bind-unbind
     - tests/bucket-2/100-bind-subscription
+    - tests/bucket-2/101-base-parent-bind
 
 codeunit_permissions_property:
   layer: syntax
@@ -2588,7 +2594,16 @@ FieldRef.Value:
   layer: runtime-api
   category: FieldRef
   status: covered
-  notes: overloads=1
+  notes: >
+    overloads=1; get/set via MockFieldRef.ALValue.
+    Fix (issue #1111): FieldRef.Value setter stores NavText via MockRecordRef.SetFieldValue
+    (always NavType.Text). A subsequent direct Code[N] field read emits
+    (NavCode)GetFieldValueSafe(fieldNo, NavType.Code) which threw InvalidCastException when
+    the stored value was NavText. GetFieldValueSafe now coerces NavText → NavCode (uppercased,
+    length from TableFieldRegistry or 250 fallback) when expectedType is Code.
+    SetFieldValueSafe applies the same coercion so the field bag stays consistent.
+  tests:
+    - tests/bucket-2/101-navtext-to-navcode
 
 # ── File ────────────────────────────────────────────────────────
 
