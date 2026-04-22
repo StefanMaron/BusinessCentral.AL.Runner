@@ -719,9 +719,7 @@ public static class AlCompat
             try
             {
                 instance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(ownerType);
-                var initMethod = ownerType.GetMethod("InitializeComponent",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-                initMethod?.Invoke(instance, null);
+                AlCompat.InitializeUninitializedObject(instance);
             }
             catch { continue; }
 
@@ -2722,6 +2720,67 @@ public static class AlCompat
     public static NavALErrorInfo CreateErrorInfo()
     {
         return new NavALErrorInfo();
+    }
+
+    /// <summary>
+    /// After <c>RuntimeHelpers.GetUninitializedObject</c>, call
+    /// <c>InitializeComponent</c> (and <c>InitializeGlobalVariables</c> if present)
+    /// on the instance to run field initializers that the constructor would have run.
+    /// Then, for any remaining reference-type backing fields that are still null,
+    /// initialize them to safe defaults:
+    /// <list type="bullet">
+    ///   <item><description><see cref="MockRecordHandle"/> — <c>new MockRecordHandle(0)</c></description></item>
+    ///   <item><description>Any other type with a public parameterless constructor — <c>Activator.CreateInstance</c></description></item>
+    /// </list>
+    /// This prevents <see cref="NullReferenceException"/> in event subscriber and
+    /// record trigger bodies when the generated class has global variable backing
+    /// fields that are not covered by the explicit Rec/xRec wiring in
+    /// <see cref="MockRecordHandle.TryFireRecordTrigger"/> or the
+    /// <c>InitializeComponent</c> call in <see cref="FireEvent"/>.
+    /// </summary>
+    /// <param name="instance">Object created via <c>GetUninitializedObject</c>.</param>
+    public static void InitializeUninitializedObject(object instance)
+    {
+        var type = instance.GetType();
+
+        // 1. Run InitializeComponent (sets fields with initializer expressions).
+        var initMethod = type.GetMethod("InitializeComponent",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.Instance);
+        try { initMethod?.Invoke(instance, null); } catch { /* swallow — better a default than a crash */ }
+
+        // 2. Run InitializeGlobalVariables if present (some generated classes use this wrapper).
+        var initGlobals = type.GetMethod("InitializeGlobalVariables",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.Instance);
+        if (initGlobals != null && initGlobals != initMethod)
+            try { initGlobals.Invoke(instance, null); } catch { /* swallow */ }
+
+        // 3. Walk all instance fields; default-initialize any reference-type field still null.
+        foreach (var field in type.GetFields(
+            System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.NonPublic))
+        {
+            if (field.FieldType.IsValueType) continue;
+            if (field.GetValue(instance) != null) continue;
+
+            // MockRecordHandle — safe default with table 0.
+            if (field.FieldType == typeof(MockRecordHandle))
+            {
+                field.SetValue(instance, new MockRecordHandle(0));
+                continue;
+            }
+
+            // Other reference types — try a parameterless constructor.
+            try
+            {
+                var ctor = field.FieldType.GetConstructor(System.Type.EmptyTypes);
+                if (ctor != null)
+                    field.SetValue(instance, ctor.Invoke(null));
+            }
+            catch { /* swallow — better null than crash-on-construction */ }
+        }
     }
 
 }

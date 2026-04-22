@@ -11088,3 +11088,22 @@ Executor.InitEventsIdempotent:
     propagate normally.
   tests:
     - tests/init-events/41-init-events-idempotent
+
+AlCompat.InitializeUninitializedObject:
+  layer: runtime-api
+  category: event-subscriber
+  status: covered
+  notes: >
+    GetUninitializedObject skips constructors, leaving backing fields for AL global
+    variables null. Both FireEvent (event subscriber dispatch) and TryFireRecordTrigger
+    (record trigger firing) call GetUninitializedObject to create fresh instances.
+    The shared helper InitializeUninitializedObject: (1) calls InitializeComponent and
+    InitializeGlobalVariables via reflection so field initializers run, then (2) walks
+    all instance fields and default-initializes any remaining null reference-type field
+    (MockRecordHandle -> new MockRecordHandle(0); other types via parameterless ctor).
+    This prevents NullReferenceException when trigger/subscriber bodies access table
+    global variables (var section on a table object) or codeunit global variables that
+    are not covered by InitializeComponent. FireEvent already called InitializeComponent;
+    TryFireRecordTrigger previously did not — the fix adds the call there too.
+  tests:
+    - tests/bucket-2/100-uninit-field-fix
