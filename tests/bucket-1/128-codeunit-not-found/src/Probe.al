@@ -12,6 +12,13 @@ codeunit 56280 "Missing CU Probe"
         Codeunit.Run(130512);
     end;
 
+    procedure CallLibraryERM()
+    begin
+        // Call Library - ERM (132217) — a test toolkit codeunit not in the assembly
+        // After the fix, this should be a no-op
+        Codeunit.Run(132217);
+    end;
+
     procedure CallMissingSystemCodeunit()
     begin
         // Call a system-range codeunit (1-9999) that doesn't exist — should be a no-op
