@@ -345,9 +345,14 @@ namespace AlRunnerGenerated {
 
         var grouped = TelemetryReporter.DeduplicateCompilationErrors(errors);
 
-        // CS1061 on 'Report70400' should be one group with count 3
-        var cs1061 = grouped.Single(g => g.Key == "CS1061 on 'Report70400'");
+        // CS1061 on 'Report70400' should be one group with count 3;
+        // member names are now embedded in the key for actionable issue creation.
+        var cs1061 = grouped.Single(g => g.Key.StartsWith("CS1061 on 'Report70400'"));
         Assert.Equal(3, cs1061.Count);
+        // All three distinct member names must appear in the key
+        Assert.Contains("amountDue", cs1061.Key);
+        Assert.Contains("Totals", cs1061.Key);
+        Assert.Contains("columnHead", cs1061.Key);
 
         // CS0103 on 'privacyBlockedTxt' should be a separate group with count 1
         var cs0103 = grouped.Single(g => g.Key == "CS0103 on 'privacyBlockedTxt'");
@@ -376,7 +381,8 @@ namespace AlRunnerGenerated {
         var grouped = TelemetryReporter.DeduplicateCompilationErrors(errors);
 
         Assert.Equal(2, grouped.Count);
-        Assert.Equal("CS1061 on 'Foo'", grouped[0].Key); // 3× comes first
+        // CS1061 group now carries member names in the key; starts with the type prefix
+        Assert.StartsWith("CS1061 on 'Foo'", grouped[0].Key); // 3× comes first
         Assert.Equal(3, grouped[0].Count);
         Assert.Equal("CS0103 on 'x'", grouped[1].Key);
         Assert.Equal(1, grouped[1].Count);
