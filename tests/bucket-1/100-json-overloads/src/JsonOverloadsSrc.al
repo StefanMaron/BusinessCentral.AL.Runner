@@ -1,5 +1,5 @@
 /// Source helpers for JsonObject.GetText(key, bool) and JsonArray.GetObject(int) overloads.
-codeunit 161000 "JSON Overloads Src"
+codeunit 162000 "JSON Overloads Src"
 {
     // ── JsonObject.GetText(key, requireValueExists) ────────────────────────────
 
