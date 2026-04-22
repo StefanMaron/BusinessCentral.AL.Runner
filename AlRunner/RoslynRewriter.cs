@@ -587,6 +587,7 @@ public bool ALFind(DataError errorLevel, string searchMethod = ""-"") => Rec.ALF
 public bool ALFind(NavText searchMethod, bool forceNewQuery = false) => Rec.ALFind(searchMethod, forceNewQuery);
 public bool ALFind(string searchMethod, bool forceNewQuery) => Rec.ALFind(searchMethod, forceNewQuery);
 public bool ALFindSet(DataError errorLevel = DataError.ThrowError, bool forUpdate = false) => Rec.ALFindSet(errorLevel, forUpdate);
+public bool ALFindSet(DataError errorLevel, bool forUpdate, bool forceNewQuery) => Rec.ALFindSet(errorLevel, forUpdate, forceNewQuery);
 public bool ALFindFirst(DataError errorLevel = DataError.ThrowError) => Rec.ALFindFirst(errorLevel);
 public bool ALFindLast(DataError errorLevel = DataError.ThrowError) => Rec.ALFindLast(errorLevel);
 public int ALNext() => Rec.ALNext();
@@ -787,6 +788,11 @@ public void ClearApplicationMemberVariables()
         System.Reflection.BindingFlags.Public);
     m?.Invoke(this, null);
 }
+// BC emits ALSession.ALBindSubscription(DataError, target) which the rewriter converts
+// to target.Bind(). When target is base.Parent (→ _parent, the codeunit instance), the
+// codeunit class itself must expose Bind()/Unbind() — issues #1105 / Gap 2.
+public void Bind() { AlRunner.Runtime.EventSubscriberRegistry.Bind(this); }
+public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
 ";
             var codeunitMembers = CSharpSyntaxTree.ParseText(
                 $"class _Temp_ {{ {codeunitMemberCode} }}").GetRoot()
@@ -1309,15 +1315,32 @@ public void ClearApplicationMemberVariables()
             return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.ObjectKeyword))
                 .WithTriviaFrom(node);
 
-        // NavScope -> object
-        // The BC compiler adds a hidden NavScope γReturnValueParent parameter
-        // to methods that return a Record or Interface. The parameter is used
-        // for ownership tracking. After rewriting, scope classes extend AlScope
-        // (not NavScope), so direct same-codeunit calls fail with CS1503. We
-        // replace NavScope with object so any scope or null can be passed.
+        // NavScope — context-sensitive rewrite:
+        //
+        //   Role 1 (ObjectCreationExpression): "new NavScope(this)"
+        //     → "new MockNavScope(this)"
+        //     The BC compiler emits using-blocks for FindSet/Find iteration:
+        //       "using (var δretValParent = new NavScope(this)) { ... }"
+        //     MockNavScope has a 1-arg ctor and implements IDisposable (no-op).
+        //     Fixes CS1729 ('object' ctor 1 arg) and CS1674 (not IDisposable)
+        //     — issues #1085 and #1090.
+        //
+        //   Role 2 (parameter type, variable declaration, etc.): "NavScope γparent"
+        //     → "object"
+        //     The BC compiler also uses NavScope as the type of a hidden parameter
+        //     γReturnValueParent on record/interface-returning methods. After rewriting,
+        //     scope classes extend AlScope (not NavScope), so direct same-codeunit calls
+        //     pass an AlScope-derived instance where NavScope was expected. Using object
+        //     accepts any reference and avoids CS1503.
         if (text == "NavScope")
+        {
+            // If the identifier is the type in a "new NavScope(...)" expression, use MockNavScope.
+            if (node.Parent is ObjectCreationExpressionSyntax oce && oce.Type == node)
+                return node.WithIdentifier(SyntaxFactory.Identifier("MockNavScope"));
+            // All other uses (parameter type, variable type annotation, etc.) → object.
             return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.ObjectKeyword))
                 .WithTriviaFrom(node);
+        }
 
         // NavVariant -> MockVariant (Variant in AL needs Default/ALAssign methods)
         if (text == "NavVariant")

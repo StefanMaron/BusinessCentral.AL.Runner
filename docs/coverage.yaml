@@ -53,6 +53,35 @@ alscope_parent_instance:
     - tests/bucket-1/290-alscope-parent
     - tests/bucket-2/100-alscope-parent-instance
 
+navscope_using_block:
+  layer: syntax
+  category: object
+  status: covered
+  notes: >
+    NavScope using-block — BC emits "using (var δretValParent = new NavScope(this))"
+    around FindSet/Find iteration. Previously NavScope was rewritten to object, causing
+    CS1729 (object has no 1-arg ctor) and CS1674 (object not IDisposable). The fix
+    uses context-sensitive rewriting: in ObjectCreationExpression context NavScope →
+    MockNavScope (IDisposable, 1-arg ctor); in parameter/declaration context → object
+    (still accepts any AlScope-derived instance). Issues #1085 and #1090.
+  tests:
+    - tests/bucket-1/167-navscope-using
+
+alscope_bind_unbind:
+  layer: syntax
+  category: object
+  status: covered
+  notes: >
+    AlScope.Bind()/Unbind() stubs — BC emits ALSession.ALBindSubscription(DataError, target)
+    which the rewriter converts to target.Bind(). When target is base.Parent (rewritten to
+    _parent, the enclosing codeunit instance), the codeunit class must expose Bind()/Unbind().
+    The rewriter injects Bind()/Unbind() into every codeunit class (delegating to
+    EventSubscriberRegistry). AlScope also gets virtual no-op stubs as a fallback.
+    Issue #1106 / Gap 2.
+  tests:
+    - tests/bucket-1/168-scope-bind-unbind
+    - tests/bucket-2/100-bind-subscription
+
 codeunit_permissions_property:
   layer: syntax
   category: object
@@ -4391,20 +4420,30 @@ NavApp.GetResource:
   tests:
     - tests/bucket-1/99-misc-stubs
     - tests/bucket-2/221-navapp-getresource-encoding
-  notes: overloads=2 (with/without TextEncoding); no-op standalone — no .app bundle to read resource from. Stub on MockNavApp. Fixes #1087.
+    - tests/bucket-1/169-navapp-string-resource
+  notes: >
+    overloads=2 (with/without TextEncoding); no-op standalone — no .app bundle to read
+    resource from. Stub on MockNavApp. Fixes #1087. Additional string overloads added for
+    ALGetResource, ALGetResourceAsText, ALGetResourceAsJson to handle BC emitting the
+    resource name as a C# string literal (CS1503: string → NavText) — issue #1107.
 
 NavApp.GetResourceAsJson:
   layer: runtime-api
   category: NavApp
   status: covered
-  notes: overloads=2 (with/without TextEncoding); MockNavApp.ALGetResourceAsJson() returns default NavJsonObject — no .app in standalone mode
-  test: tests/bucket-1/267-navapp-resources/test/NavAppResourceTest.al
+  notes: overloads=4 (NavText/string × with/without TextEncoding); MockNavApp.ALGetResourceAsJson() returns default NavJsonObject — no .app in standalone mode; string overloads fix CS1503 (issue #1107)
+  tests:
+    - tests/bucket-1/267-navapp-resources
+    - tests/bucket-1/169-navapp-string-resource
 
 NavApp.GetResourceAsText:
   layer: runtime-api
   category: NavApp
   status: covered
-  notes: overloads=2 (with/without TextEncoding); MockNavApp.ALGetResourceAsText() returns NavText.Empty — no .app in standalone mode
+  notes: overloads=4 (NavText/string × with/without TextEncoding); MockNavApp.ALGetResourceAsText() returns NavText.Empty — no .app in standalone mode; string overloads fix CS1503 (issue #1107)
+  tests:
+    - tests/bucket-1/267-navapp-resources
+    - tests/bucket-1/169-navapp-string-resource
   test: tests/bucket-1/267-navapp-resources/test/NavAppResourceTest.al
 
 NavApp.IsEntitled:
@@ -6809,7 +6848,12 @@ Table.FindSet:
   tests:
     - tests/bucket-1/53-findset
     - tests/bucket-1/283-overload-gaps
-  notes: overloads=3; 0-arg, 1-arg (ForUpdate), 2-arg (ForUpdate, ForceNewQuery); BC 26+ emits 3-arg C# form; ForUpdate/ForceNewQuery ignored in standalone mode
+    - tests/bucket-1/167-navscope-using
+  notes: >
+    overloads=4; 0-arg, 1-arg (ForUpdate), 2-arg (ForUpdate, ForceNewQuery); BC 26+ emits
+    3-arg C# form (DataError, ForUpdate, ForceNewQuery) — also added proxy overload
+    ALFindSet(DataError, bool, bool) that delegates to the 2-arg form; ForUpdate/ForceNewQuery
+    ignored in standalone mode
 
 Table.Get:
   layer: runtime-api
