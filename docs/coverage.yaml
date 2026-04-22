@@ -10999,7 +10999,7 @@ Codeunit.InitEvents:
   tests:
     - tests/init-events/40-init-events
 
-implicit_db_event_byref_params:
+Table.ImplicitDbEventByRefParams:
   layer: runtime-api
   category: table
   status: covered
