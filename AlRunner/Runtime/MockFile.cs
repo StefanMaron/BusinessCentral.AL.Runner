@@ -233,6 +233,17 @@ public class MockFile
     }
 
     /// <summary>
+    /// 4-arg AL form: UploadIntoStream(DialogTitle, Filter, FileName, InStream).
+    /// Newer BC versions emit this without DataError, fromFolder, or Guid args.
+    /// Always returns false (no UI in standalone mode).
+    /// </summary>
+    public static bool ALUploadIntoStream(string dialogTitle, string fromFilter, ByRef<NavText> fileName, MockInStream inStream)
+    {
+        fileName.Value = NavText.Empty;
+        return false;
+    }
+
+    /// <summary>
     /// ALDownloadFromStream — BC standalone DownloadFromStream maps here as a static.
     /// BC emits (scope, MockInStream inStream, title, folder, filter, ByRef&lt;NavText&gt; fileName, NavText extra).
     /// No-op (no UI in standalone mode).
