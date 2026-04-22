@@ -11055,3 +11055,36 @@ Codeunit.InitEventsPublisherIDs:
     in codeunit mode, per method in method mode).
   tests:
     - tests/init-events/40-init-events
+
+Executor.UserTableSeed:
+  layer: runtime-api
+  category: executor
+  status: covered
+  notes: >
+    The runner pre-seeds the User system table (2000000120) after every table reset.
+    One row is inserted with "User Security ID" = the stable AlCompat.UserSecurityId()
+    GUID (22222222-2222-2222-2222-222222222222) and "User Name" = AlScope.UserId
+    (default "TESTUSER", configurable via --user-id). This allows AL code that calls
+    User.Get(UserSecurityId()) to succeed without a "record not found" error.
+    The seeding is idempotent — multiple calls without an intervening ResetAll() are
+    safe. Tests that need a custom User record can Insert() additional rows or modify
+    the seeded row.
+  tests:
+    - tests/bucket-2/227-user-table-seed
+
+Executor.InitEventsIdempotent:
+  layer: runtime-api
+  category: executor
+  status: covered
+  notes: >
+    The runner's init-event firing (--init-events) now silently swallows
+    "record already exists" errors thrown by subscribers. Real-world extension
+    subscribers sometimes unconditionally call Record.Insert() without a prior
+    Get/FindFirst guard. Because the runner fires both codeunit-2 and codeunit-27
+    OnCompanyInitialize events in a single init cycle, a subscriber registered for
+    both (or two subscribers inserting the same primary key) would throw on the
+    second Insert(). The fix wraps each FireEvent call during init-event firing in
+    a try/catch that discards duplicate-PK errors; all other exceptions still
+    propagate normally.
+  tests:
+    - tests/init-events/41-init-events-idempotent

@@ -78,6 +78,53 @@ public class MockRecordHandle
         // Keep PK and field name registrations — they are structural, not data
     }
 
+    // ── System table IDs ────────────────────────────────────────────────────
+    private const int UserTableId = 2000000120;
+
+    // User table field numbers (BC standard)
+    private const int UserSecurityIdFieldNo = 1;
+    private const int UserNameFieldNo       = 2;
+
+    /// <summary>
+    /// Pre-seed system tables required by common AL patterns.
+    /// Called after every table reset so the standard runner user is always present.
+    ///
+    /// Currently seeded:
+    ///   Table 2000000120 "User" — one row for the configured user so that
+    ///   <c>User.Get(UserSecurityId())</c> succeeds without a "record not found" error.
+    /// </summary>
+    public static void SeedSystemTables()
+    {
+        // Ensure the User table PK is registered on field 1 (User Security ID).
+        if (!_primaryKeys.ContainsKey(UserTableId))
+            _primaryKeys[UserTableId] = new[] { UserSecurityIdFieldNo };
+
+        // Ensure the table bucket exists.
+        if (!_tables.ContainsKey(UserTableId))
+            _tables[UserTableId] = new List<Dictionary<int, NavValue>>();
+
+        var userTable = _tables[UserTableId];
+
+        // Seed exactly one row — idempotent so multiple calls are harmless.
+        var secId = AlCompat.UserSecurityId();            // stable GUID 22222222-…
+        var userName = AlScope.UserId;                    // default "TESTUSER"
+
+        // Skip if already seeded (e.g. when called more than once without ResetAll).
+        foreach (var row in userTable)
+        {
+            if (row.TryGetValue(UserSecurityIdFieldNo, out var existing) &&
+                existing is NavGuid existingGuid &&
+                existingGuid.ToGuid() == secId)
+                return;
+        }
+
+        userTable.Add(new Dictionary<int, NavValue>
+        {
+            [UserSecurityIdFieldNo] = new NavGuid(secId),
+            [UserNameFieldNo]       = new NavCode(50, userName.ToUpperInvariant()),
+        });
+    }
+
     /// <summary>
     /// Register the primary key field numbers for a table.
     /// Call this before inserting/getting records for tables with composite PKs.

@@ -2317,6 +2317,31 @@ public static class Executor
         }
     }
 
+    /// <summary>
+    /// Fire an init-lifecycle event, silently swallowing "record already exists"
+    /// errors from subscribers.
+    ///
+    /// Why: the runner fires both codeunit-2 and codeunit-27 OnCompanyInitialize
+    /// events in a single init cycle. Real-world extension subscribers sometimes
+    /// unconditionally call Record.Insert() without a prior Get/FindFirst guard.
+    /// When the same subscriber (or two subscribers inserting the same PK) fires
+    /// more than once per init cycle, the second Insert() raises "already exists".
+    /// Aborting the entire test run for that would be too harsh — BC itself ignores
+    /// double-init scenarios. We swallow duplicate-PK errors during init firing only.
+    /// </summary>
+    private static void FireInitEvent(int publisherId, string eventName)
+    {
+        try
+        {
+            AlRunner.Runtime.AlCompat.FireEvent(publisherId, eventName);
+        }
+        catch (Exception ex) when (ex.Message.Contains("already exists"))
+        {
+            // Duplicate-PK from an always-insert subscriber — harmless during init.
+            // The first insert succeeded; swallow the rest.
+        }
+    }
+
     public static List<AlRunner.TestResult> RunTests(Assembly assembly, bool captureValues = false, string? runProcedure = null, bool initEvents = false, AlRunner.TestIsolation testIsolation = AlRunner.TestIsolation.Codeunit)
     {
         // Find test methods using [NavTest] attribute on the parent method,
@@ -2405,6 +2430,10 @@ public static class Executor
                 AlRunner.Runtime.MockIsolatedStorage.ResetAll();
                 AlRunner.Runtime.MockVariableStorage.Reset();
 
+                // Pre-seed system tables (e.g. User table 2000000120) so that common
+                // AL patterns like User.Get(UserSecurityId()) work out of the box.
+                AlRunner.Runtime.MockRecordHandle.SeedSystemTables();
+
                 // Fire lifecycle integration events ONCE per codeunit reset when --init-events is set.
                 // This seeds company-initialization data so subscribers' setup data is present
                 // for all tests in the codeunit, matching BC's behaviour where company data
@@ -2416,10 +2445,10 @@ public static class Executor
                 //   OnCompanyInitialize     → publisher 2 or 27 (differs across BC versions)
                 if (initEvents)
                 {
-                    AlRunner.Runtime.AlCompat.FireEvent(2000000010, "OnInstallAppPerDatabase");
-                    AlRunner.Runtime.AlCompat.FireEvent(2000000010, "OnInstallAppPerCompany");
-                    AlRunner.Runtime.AlCompat.FireEvent(2, "OnCompanyInitialize");
-                    AlRunner.Runtime.AlCompat.FireEvent(27, "OnCompanyInitialize");
+                    FireInitEvent(2000000010, "OnInstallAppPerDatabase");
+                    FireInitEvent(2000000010, "OnInstallAppPerCompany");
+                    FireInitEvent(2, "OnCompanyInitialize");
+                    FireInitEvent(27, "OnCompanyInitialize");
                 }
 
                 currentCodeunitType = parentType;
