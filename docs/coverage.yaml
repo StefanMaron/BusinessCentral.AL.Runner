@@ -11015,8 +11015,8 @@ implicit_db_event_byref_params:
   tests:
     - tests/bucket-2/225-db-event-byref-params
 
-Boolean_to_NavText_cast:
-  layer: transpiler
+AlCompat.ObjectToExactNavValue:
+  layer: runtime-api
   category: Boolean
   status: covered
   notes: >
@@ -11030,8 +11030,8 @@ Boolean_to_NavText_cast:
   tests:
     - tests/bucket-1/293-variant-to-navtext
 
-TestIsolation_flag:
-  layer: cli
+Executor.TestIsolation:
+  layer: runtime-api
   category: executor
   status: covered
   notes: >
@@ -11043,7 +11043,7 @@ TestIsolation_flag:
   tests:
     - tests/bucket-2/226-codeunit-isolation
 
-InitEvents_OnCompanyInitialize_BothPublisherIDs:
+Codeunit.InitEventsPublisherIDs:
   layer: runtime-api
   category: codeunit
   status: covered
