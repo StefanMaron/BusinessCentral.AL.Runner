@@ -7,7 +7,7 @@
 /// Before fix: both produced CS1501 (no 4-arg overload) or CS1503 (wrong type match).
 /// After fix:  compile and execute correctly — the ErrorInfo is used as error context
 ///             when the check fails, and ignored when it passes (issues #1083, #1084, #1089).
-codeunit 165001 "TFEi Test"
+codeunit 166001 "TFEi Test"
 {
     Subtype = Test;
 

@@ -2,7 +2,7 @@
 /// Tests that TestField(Field, Value, ErrorInfo) and TestField(Field, ErrorInfo)
 /// compile and behave correctly — resolves CS1501 (4-arg ALTestFieldSafe overload
 /// missing) tracked in issues #1083, #1084, #1089.
-table 165001 "TFEi Record"
+table 166001 "TFEi Record"
 {
     fields
     {
