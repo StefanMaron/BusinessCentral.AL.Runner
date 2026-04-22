@@ -238,6 +238,13 @@ public class MockRecordHandle
             int length = TableFieldRegistry.GetFieldLength(_tableId, fieldNo) ?? 250;
             return new NavCode(length, ((string)nt).ToUpperInvariant());
         }
+        // When a Boolean value (NavBoolean) ends up in a Text/Code field slot — e.g. via
+        // FieldRef.Value := BooleanFieldRef.Value — the BC runtime casts the stored value
+        // to NavText with (NavText)GetFieldValueSafe(fieldNo, NavType.Text), which throws
+        // "Unable to cast NavBoolean to NavText". Convert using AL's standard Boolean→Text
+        // representation: true → "Yes", false → "No".
+        if (expectedType == NavType.Text && value is NavBoolean nb)
+            return new NavText((bool)nb ? "Yes" : "No");
         return value;
     }
 

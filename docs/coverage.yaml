@@ -2624,8 +2624,13 @@ FieldRef.Value:
     the stored value was NavText. GetFieldValueSafe now coerces NavText → NavCode (uppercased,
     length from TableFieldRegistry or 250 fallback) when expectedType is Code.
     SetFieldValueSafe applies the same coercion so the field bag stays consistent.
+    Fix (bool-cast-fix): Copying a Boolean FieldRef.Value into a Text FieldRef.Value stores
+    NavBoolean in the Text field slot. A subsequent (NavText)GetFieldValueSafe(fieldNo,
+    NavType.Text) cast then threw "Unable to cast NavBoolean to NavText". CoerceToExpectedType
+    now converts NavBoolean → NavText ("Yes"/"No") when expectedType is Text.
   tests:
     - tests/bucket-2/101-navtext-to-navcode
+    - tests/bucket-1/100-bool-to-text
 
 # ── File ────────────────────────────────────────────────────────
 
