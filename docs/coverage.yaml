@@ -1437,17 +1437,19 @@ Blob.CreateInStream:
   layer: runtime-api
   category: Blob
   status: covered
-  notes: overloads=1
+  notes: overloads=1; chained-call pattern (CreateInStream().ReadText()) supported via ALCompiler.ObjectToNavInStream→AlCompat.ObjectToMockInStream rewrite (issue #1026)
   tests:
     - tests/bucket-2/151-blob-stream
+    - tests/bucket-1/96-blob-stream-chained
 
 Blob.CreateOutStream:
   layer: runtime-api
   category: Blob
   status: covered
-  notes: overloads=1
+  notes: overloads=1; chained-call pattern (CreateOutStream().WriteText()) supported via ALCompiler.ObjectToNavOutStream→AlCompat.ObjectToMockOutStream rewrite (issue #1026)
   tests:
     - tests/bucket-2/151-blob-stream
+    - tests/bucket-1/96-blob-stream-chained
 
 Blob.Export:
   layer: runtime-api
@@ -3179,7 +3181,9 @@ InStream.ReadText:
   layer: runtime-api
   category: InStream
   status: covered
-  notes: overloads=1
+  notes: overloads=1; chained-call pattern supported (e.g. blob.CreateInStream().ReadText(...)) — see issue #1026
+  tests:
+    - tests/bucket-1/96-blob-stream-chained
 
 InStream.ResetPosition:
   layer: runtime-api
@@ -4500,13 +4504,17 @@ OutStream.Write:
   layer: runtime-api
   category: OutStream
   status: covered
-  notes: overloads=23
+  notes: overloads=23; chained-call pattern supported (e.g. blob.CreateOutStream().Write(...)) — see issue #1026
+  tests:
+    - tests/bucket-1/96-blob-stream-chained
 
 OutStream.WriteText:
   layer: runtime-api
   category: OutStream
   status: covered
-  notes: overloads=1
+  notes: overloads=1; chained-call pattern supported (e.g. blob.CreateOutStream().WriteText(...)) — see issue #1026
+  tests:
+    - tests/bucket-1/96-blob-stream-chained
 
 # ── Page ────────────────────────────────────────────────────────
 

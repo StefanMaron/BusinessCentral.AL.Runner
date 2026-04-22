@@ -3675,6 +3675,31 @@ public void ClearApplicationMemberVariables()
                         newName));
             }
 
+            // ALCompiler.ObjectToNavOutStream(parent, expr) -> AlCompat.ObjectToMockOutStream(parent, expr)
+            // BC emits this wrapper when an expression returning OutStream is used directly (chained),
+            // e.g. TempBlob.CreateOutStream().WriteText(...). After the NavOutStream→MockOutStream rename
+            // the inner expression already returns MockOutStream but the wrapper still returns NavOutStream,
+            // causing CS1503. AlCompat.ObjectToMockOutStream performs the same extraction with MockOutStream.
+            if (exprText == "ALCompiler" && methodName == "ObjectToNavOutStream")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("ObjectToMockOutStream")));
+            }
+
+            // ALCompiler.ObjectToNavInStream(parent, expr) -> AlCompat.ObjectToMockInStream(parent, expr)
+            // Symmetric to ObjectToNavOutStream — see comment above.
+            if (exprText == "ALCompiler" && methodName == "ObjectToNavInStream")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("ObjectToMockInStream")));
+            }
+
             // ALSystemErrorHandling.ALClearLastError() -> AlScope.LastErrorText = ""
             // ALSystemErrorHandling.ALGetLastErrorTextFunc(...) -> AlScope.LastErrorText
             // ALSystemErrorHandling.ALGetLastErrorObject(...) -> AlScope.GetLastErrorObject()
