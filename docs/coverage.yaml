@@ -655,6 +655,7 @@ event_declaration:
   status: covered
   tests:
     - tests/bucket-2/100-bind-subscription
+    - tests/bucket-2/225-db-event-byref-params
     - tests/bucket-2/37-event-scope
     - tests/bucket-2/66-event-subscribers
     - tests/bucket-2/97-event-params
@@ -698,6 +699,7 @@ trigger_declaration:
   status: covered
   tests:
     - tests/bucket-1/18-validate-trigger
+    - tests/bucket-2/225-db-event-byref-params
     - tests/bucket-2/63-oninsert-trigger
     - tests/bucket-2/98-db-trigger-events
     - tests/bucket-2/99-validate-events
@@ -10989,3 +10991,19 @@ init_events_lifecycle:
     --init-events CLI flag fires BC lifecycle integration events (OnCompanyInitialize from Codeunit 27, OnInstallAppPerCompany from Codeunit 2) before each test (after per-test table reset). Allows [EventSubscriber] handlers on system events to perform setup work without the system codeunits being present. Subscriber code is discovered by reflection on compiled classes.
   tests:
     - tests/init-events/40-init-events
+
+implicit_db_event_byref_params:
+  layer: runtime-api
+  category: table
+  status: covered
+  notes: >
+    InvokeSubscriber now coerces plain-T event args to ByRef<T> when the subscriber
+    method parameter is ByRef<T>. This fixes crashes for subscribers that declare
+    "var RunTrigger: Boolean" (BC emits ByRef<bool>) for implicit DB trigger events
+    (OnBefore/AfterInsertEvent, OnBefore/AfterModifyEvent, OnBefore/AfterDeleteEvent).
+    Without the fix, method.Invoke threw ArgumentException:
+    "Object of type 'System.Boolean' cannot be converted to type
+    'Microsoft.Dynamics.Nav.Runtime.ByRef`1[System.Boolean]'".
+    Also handles value-type parameters with null args (fills in default(T)).
+  tests:
+    - tests/bucket-2/225-db-event-byref-params

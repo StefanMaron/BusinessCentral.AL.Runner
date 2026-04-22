@@ -759,6 +759,9 @@ is used, the publishing codeunit instance is passed as the first subscriber para
 `OnBeforeModifyEvent`, `OnAfterModifyEvent`, `OnBeforeDeleteEvent`,
 `OnAfterDeleteEvent`, `OnBeforeValidateEvent`, `OnAfterValidateEvent` fire from
 record operations. The `Rec` and `xRec` references are passed to subscribers.
+Subscribers may declare `var RunTrigger: Boolean` (BC compiles this as `ByRef<bool>`);
+al-runner automatically coerces the plain `bool` into `ByRef<bool>` so the
+subscriber is invoked correctly.
 
 **Manual binding** — Codeunits with `EventSubscriberInstance = Manual` only fire
 after `BindSubscription(Sub)`. Call `UnbindSubscription(Sub)` to stop. Bindings

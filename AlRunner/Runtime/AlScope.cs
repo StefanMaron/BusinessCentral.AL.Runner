@@ -729,18 +729,116 @@ public static class AlCompat
         }
     }
 
+    // Open generic type for ByRef<T> from the BC runtime.
+    // Used in InvokeSubscriber to detect when a subscriber parameter is ByRef<T>
+    // and the event arg is a plain T — e.g. "var RunTrigger: Boolean" compiles
+    // to ByRef<bool> but FireImplicitDbEvent passes a raw bool.
+    private static readonly System.Type? _byRefOpenGeneric = typeof(ByRef<bool>).GetGenericTypeDefinition();
+
+    /// <summary>
+    /// Invoke an event subscriber method, coercing each argument to the
+    /// declared parameter type.  The most common mismatch is a plain value
+    /// being passed for a <c>ByRef&lt;T&gt;</c> parameter (e.g. a subscriber
+    /// that declares <c>var RunTrigger: Boolean</c> where BC emits
+    /// <c>ByRef&lt;bool&gt;</c> but <see cref="MockRecordHandle.FireImplicitDbEvent"/>
+    /// passes a plain <c>bool</c>).
+    ///
+    /// When the arg count is less than the parameter count (subscriber declares
+    /// extra optional-style params) the remaining args stay null; reference-type
+    /// params accept null, and value-type params are left as default(T).
+    /// </summary>
     private static void InvokeSubscriber(object? instance, System.Reflection.MethodInfo method, object?[] eventArgs)
     {
         var parameters = method.GetParameters();
         var args = new object?[parameters.Length];
-        for (int i = 0; i < args.Length && i < eventArgs.Length; i++)
-            args[i] = eventArgs[i];
+        for (int i = 0; i < args.Length; i++)
+        {
+            var raw = i < eventArgs.Length ? eventArgs[i] : null;
+            args[i] = CoerceArgForParameter(parameters[i], raw);
+        }
         try { method.Invoke(instance, args); }
         catch (System.Reflection.TargetInvocationException tie)
         {
             if (tie.InnerException != null) throw tie.InnerException;
             throw;
         }
+    }
+
+    /// <summary>
+    /// Coerce <paramref name="arg"/> so it is assignable to the declared
+    /// <paramref name="param"/> type.
+    ///
+    /// <list type="bullet">
+    ///   <item><c>ByRef&lt;T&gt;</c> param + plain <c>T</c> arg — wraps the value
+    ///   in a <c>ByRef&lt;T&gt;</c> using a getter/setter backed by a local
+    ///   variable so mutation inside the subscriber is captured (though the
+    ///   writeback currently only matters to the subscriber itself, not to the
+    ///   caller, since implicit DB event firers do not use the returned value).</item>
+    ///   <item>Value-type param + null arg — returns <c>Activator.CreateInstance(T)</c>
+    ///   (the default value) so reflection does not throw on the unboxing.</item>
+    ///   <item>All other cases — returns <paramref name="arg"/> unchanged.</item>
+    /// </list>
+    /// </summary>
+    private static object? CoerceArgForParameter(System.Reflection.ParameterInfo param, object? arg)
+    {
+        var paramType = param.ParameterType;
+
+        // ByRef<T> wrapping: subscriber declared "var X: SomeType" for a
+        // value or non-record type, so BC emits ByRef<T>.  The event fires
+        // with a plain T — we wrap it.
+        if (_byRefOpenGeneric != null
+            && paramType.IsGenericType
+            && paramType.GetGenericTypeDefinition() == _byRefOpenGeneric)
+        {
+            // If arg is already ByRef<T>, pass it through.
+            if (arg != null && paramType.IsInstanceOfType(arg))
+                return arg;
+
+            var innerType = paramType.GetGenericArguments()[0];
+            // Build a ByRef<T> using its (Func<T>, Action<T>) constructor.
+            // We use a single-element object array as the backing store so that
+            // mutations inside the subscriber are captured even though we don't
+            // propagate them back to the original eventArgs.
+            var store = new object?[] { arg };
+            try
+            {
+                // Build Func<T>: () => (T)store[0]
+                var funcType = typeof(System.Func<>).MakeGenericType(innerType);
+                var actionType = typeof(System.Action<>).MakeGenericType(innerType);
+
+                // Use a generic helper to avoid per-type Activator overheads.
+                var helperMethod = typeof(AlCompat).GetMethod(
+                    nameof(MakeByRef),
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                    ?.MakeGenericMethod(innerType);
+
+                if (helperMethod != null)
+                    return helperMethod.Invoke(null, new[] { store });
+            }
+            catch { /* fall through — return arg as-is and let Invoke give a clearer error */ }
+
+            return arg;
+        }
+
+        // Value-type param with null arg: supply the type default so Invoke
+        // does not throw "Object of type 'null' cannot be converted to type T".
+        if (arg == null && paramType.IsValueType)
+            return System.Activator.CreateInstance(paramType);
+
+        return arg;
+    }
+
+    /// <summary>
+    /// Generic helper that creates a <c>ByRef&lt;T&gt;</c> backed by
+    /// <paramref name="store"/>[0] via getter/setter lambdas.
+    /// Called reflectively from <see cref="CoerceArgForParameter"/> to avoid
+    /// generating per-type IL at runtime.
+    /// </summary>
+    private static ByRef<T> MakeByRef<T>(object?[] store)
+    {
+        return new ByRef<T>(
+            () => store[0] is T v ? v : default!,
+            v => store[0] = v);
     }
 
     /// <summary>
