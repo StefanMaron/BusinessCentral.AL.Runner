@@ -6,6 +6,61 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.17] - 2026-04-22
+
+### Added
+- **JsonObject.GetText(key, bool) and JsonArray.GetObject(int) overloads (#1025)** —
+  `GetText(key, requireValueExists)` throws when key is missing and `true`, returns
+  empty when `false`. `GetObject(index)` retrieves by integer index from arrays.
+- **ALUploadIntoStream 4-arg overload (#1021)** — the BC 4-arg AL form
+  `UploadIntoStream(Title, Filter, FileName, InStream)` (without fromFolder) now
+  compiles. No-op stub matching existing behavior.
+- **Report.RunModal 2/3/4-arg static overloads (#1043)** — all four overloads of
+  `Report.RunModal` now compile and dispatch to handler when registered.
+- **Page.GetPart(partHash) for subpage access (#1042)** — generated page classes now
+  support `CurrPage.SubPart.Page.MyProc()` chained calls via `MockPagePartHandle`.
+- **CurrReport.Preview / PreviewCanPrint stubs (#1055)** — stub properties returning
+  `false` so report code referencing preview mode compiles without CS1061.
+- **Database.KeyGroupEnabled/Disable/Enable stubs (#1054)** — `KeyGroupEnabled`
+  returns `true`; `KeyGroupDisable`/`KeyGroupEnable` are no-ops. Forward-compatible
+  with newer AL compiler versions.
+- **customaction FlowTemplateGallery coverage (#1044)** — pages with Power Automate
+  `customaction` blocks compile; BC emits no C# for these elements.
+- **Auto-detect .alpackages folder (#1033)** — when `--packages` is not specified,
+  the runner now auto-discovers `.alpackages` directories adjacent to source paths.
+  No manual `--packages` flag needed for standard BC project layouts.
+- **Coverage gap audit (#1053)** — reflected over BC Service Tier DLLs to identify
+  undocumented coverage; added 11 entries to coverage.yaml (7 already covered but
+  undocumented, 4 new gaps now resolved).
+
+### Fixed
+- **CS0121 ambiguous ALTestFieldSafe overload (#1018)** — consolidated type-specific
+  `ALTestFieldSafe` overloads (bool/string/int/Decimal18) into a single `object`
+  catch-all. Same proven pattern as the earlier ALSetRange fix.
+- **NavOutStream/MockOutStream on chained calls (#1026)** — `TempBlob.CreateOutStream().Write(...)`
+  now works. Rewriter redirects `ALCompiler.ObjectToNavOutStream/InStream` to
+  `AlCompat.ObjectToMockOutStream/InStream`.
+- **ReportExtension scope _parent assignment (#1013)** — nested BC inner types like
+  `RequestPageExtension` inside `ReportExtension` now get `_parent` assigned in their
+  constructor, fixing NullReferenceException when trigger bodies access parent fields.
+- **Silent object removal from compilation (#1040)** — the pipeline no longer drops
+  objects whose rewriter throws. Failed objects get a minimal fallback class so
+  dependent objects can still compile and tests are not silently absent.
+- **Duplicate object errors with .alpackages (#1034)** — when .alpackages contains
+  a compiled .app of the same extension being compiled from source, the runner now
+  skips the redundant package reference. Source always wins.
+
+### Changed
+- **Telemetry enrichment (#1039)** — CompilationGap messages now include specific
+  missing member names (e.g., `CS1061: missing 'ParentObject', 'GetPart'`), AL line
+  hints are preserved through scrubbing, RuntimeGap includes test codeunit/procedure
+  identity, and RewriterGap includes the AL object type prefix.
+- **README streamlined (#1032)** — README trimmed from ~296 to ~170 lines; detailed
+  feature lists moved to docs/coverage.yaml and `--guide`. Fixed stale InitValue
+  claim in docs/limitations.md.
+- **Agent prompt improvements** — implementation agents now required to track coverage
+  at overload level and check for merge conflicts after PR creation.
+
 ### Added
 - **`actionref_declaration` coverage (#388)** — Pages and page extensions containing
   `actionref` sections (promoted-action bindings) now compile and run correctly.
