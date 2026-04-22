@@ -4570,6 +4570,13 @@ Page.GetRecord:
   status: covered
   notes: overloads=1
 
+Page.GetPart:
+  layer: runtime-api
+  category: Page
+  status: covered
+  tests: tests/bucket-1/289-page-getpart
+  notes: overloads=1; GetPart(partHash) on generated page class returns MockPagePartHandle; CreateNavFormHandle().Invoke() dispatches to subpage method by searching all Page* types for matching scope-class hash; also available on MockCurrPage for page extension code
+
 Page.LookupMode:
   layer: runtime-api
   category: Page

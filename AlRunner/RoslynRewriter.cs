@@ -715,6 +715,10 @@ public void CancelBackgroundTask(DataError errorLevel, int taskId) {{ }}
 protected bool CallGetDecimalPlacesExtensionMethod(int fieldNo, ref string result) {{ return false; }}
 protected bool CallGetTableRelationExtensionMethod(int fieldNo, MockRecordHandle rec, ref bool result) {{ return false; }}
 protected bool CallGetFormatExtensionMethod(int fieldNo, ref string result) {{ return false; }}
+// BC emits CurrPage.SubPart.Page.SomeProcedure() as
+// CurrPage.GetPart(partHash).CreateNavFormHandle(scope).Invoke(methodHash, args).
+// Returns a MockPagePartHandle that dispatches the call to the subpage class.
+public MockPagePartHandle GetPart(int partHash) {{ return new MockPagePartHandle(partHash); }}
 ";
             var pageMembers = CSharpSyntaxTree.ParseText(
                 $"class _Temp_ {{ {pageMemberCode} }}").GetRoot()

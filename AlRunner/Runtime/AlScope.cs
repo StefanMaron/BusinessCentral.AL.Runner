@@ -377,6 +377,14 @@ public class MockCurrPage
     /// </summary>
     public void CancelBackgroundTask(int taskId) { }
     public void CancelBackgroundTask(DataError errorLevel, int taskId) { }
+
+    /// <summary>
+    /// CurrPage.GetPart(partHash) — used by page extension code when accessing subpages
+    /// via <c>CurrPage.SubPart.Page.SomeProcedure()</c>.
+    /// BC lowers this to <c>CurrPage.GetPart(hash).CreateNavFormHandle(scope).Invoke(methodHash, args)</c>.
+    /// Returns a <see cref="MockPagePartHandle"/> that searches all Page* types for the method.
+    /// </summary>
+    public MockPagePartHandle GetPart(int partHash) => new MockPagePartHandle(partHash);
 }
 
 /// <summary>
