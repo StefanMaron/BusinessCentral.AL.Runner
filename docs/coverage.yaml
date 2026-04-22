@@ -4655,7 +4655,7 @@ Page.PromptMode:
   notes: overloads=1; MockCurrPage.PromptMode and MockFormHandle.PromptMode NavOption stubs; also injected on Page<N> class for CurrPage.PromptMode access inside page triggers (issue #1079)
 
 Page.NavFormImplicitConversion:
-  layer: compiler-rewriter
+  layer: runtime-api
   category: Page
   status: covered
   tests: tests/bucket-1/291-page-run-with-var

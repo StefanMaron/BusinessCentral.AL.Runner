@@ -36,7 +36,7 @@ codeunit 62102 "TFNvBl Test"
 
         // [WHEN] TestField(Name, TextVariable) is called with the matching value
         ExpVal := 'Widget';
-        Src.TestFieldTextVar(Rec, ExpVal);  // must not throw
+        Src.VerifyFieldTextVar(Rec, ExpVal);  // must not throw
 
         // [THEN] No exception raised — field matches
         Assert.IsTrue(true, 'TestField(Name, TextVar) must pass when value matches');
@@ -59,7 +59,7 @@ codeunit 62102 "TFNvBl Test"
         ExpVal := 'Gadget';
 
         // [THEN] An error is raised
-        asserterror Src.TestFieldTextVar(Rec, ExpVal);
+        asserterror Src.VerifyFieldTextVar(Rec, ExpVal);
         Assert.ExpectedError('TestField failed');
     end;
 
@@ -83,7 +83,7 @@ codeunit 62102 "TFNvBl Test"
 
         // [WHEN] TestField(Flag, BoolVariable) is called with true
         ExpBool := true;
-        Src.TestFieldBoolVar(Rec, ExpBool);  // must not throw
+        Src.VerifyFieldBoolVar(Rec, ExpBool);  // must not throw
 
         // [THEN] No exception raised — field matches
         Assert.IsTrue(true, 'TestField(Flag, BoolVar) must pass when value matches');
@@ -106,7 +106,7 @@ codeunit 62102 "TFNvBl Test"
         ExpBool := true;
 
         // [THEN] An error is raised
-        asserterror Src.TestFieldBoolVar(Rec, ExpBool);
+        asserterror Src.VerifyFieldBoolVar(Rec, ExpBool);
         Assert.ExpectedError('TestField failed');
     end;
 
@@ -132,7 +132,7 @@ codeunit 62102 "TFNvBl Test"
         // [WHEN] TestField(Name, TextVar, ErrorInfo) with matching value
         ExpVal := 'Alpha';
         EI.Message := 'Name must be Alpha';
-        Src.TestFieldTextVarEI(Rec, ExpVal, EI);  // must not throw
+        Src.VerifyFieldTextVarEI(Rec, ExpVal, EI);  // must not throw
 
         // [THEN] No exception raised
         Assert.IsTrue(true, 'TestField(Name, TextVar, EI) must pass when value matches');
@@ -157,7 +157,7 @@ codeunit 62102 "TFNvBl Test"
         EI.Message := 'Name must be Alpha';
 
         // [THEN] An error is raised
-        asserterror Src.TestFieldTextVarEI(Rec, ExpVal, EI);
+        asserterror Src.VerifyFieldTextVarEI(Rec, ExpVal, EI);
         Assert.ExpectedError('TestField failed');
     end;
 
@@ -183,7 +183,7 @@ codeunit 62102 "TFNvBl Test"
         // [WHEN] TestField(Flag, BoolVar, ErrorInfo) with true
         ExpBool := true;
         EI.Message := 'Flag must be true';
-        Src.TestFieldBoolVarEI(Rec, ExpBool, EI);  // must not throw
+        Src.VerifyFieldBoolVarEI(Rec, ExpBool, EI);  // must not throw
 
         // [THEN] No exception raised
         Assert.IsTrue(true, 'TestField(Flag, BoolVar, EI) must pass when value matches');
@@ -208,7 +208,7 @@ codeunit 62102 "TFNvBl Test"
         EI.Message := 'Flag must be true';
 
         // [THEN] An error is raised
-        asserterror Src.TestFieldBoolVarEI(Rec, ExpBool, EI);
+        asserterror Src.VerifyFieldBoolVarEI(Rec, ExpBool, EI);
         Assert.ExpectedError('TestField failed');
     end;
 

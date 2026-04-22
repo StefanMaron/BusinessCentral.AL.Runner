@@ -35,28 +35,28 @@ codeunit 62101 "TFNvBl Helper"
 {
     // ── TestField(Field, TextVar) ────────────────────────────────────────────
 
-    procedure TestFieldTextVar(var Rec: Record "TFNvBl Record"; ExpectedName: Text)
+    procedure VerifyFieldTextVar(var Rec: Record "TFNvBl Record"; ExpectedName: Text)
     begin
         Rec.TestField(Name, ExpectedName);
     end;
 
     // ── TestField(Field, BoolVar) ────────────────────────────────────────────
 
-    procedure TestFieldBoolVar(var Rec: Record "TFNvBl Record"; ExpectedFlag: Boolean)
+    procedure VerifyFieldBoolVar(var Rec: Record "TFNvBl Record"; ExpectedFlag: Boolean)
     begin
         Rec.TestField(Flag, ExpectedFlag);
     end;
 
     // ── TestField(Field, TextVar, ErrorInfo) ─────────────────────────────────
 
-    procedure TestFieldTextVarEI(var Rec: Record "TFNvBl Record"; ExpectedName: Text; EI: ErrorInfo)
+    procedure VerifyFieldTextVarEI(var Rec: Record "TFNvBl Record"; ExpectedName: Text; EI: ErrorInfo)
     begin
         Rec.TestField(Name, ExpectedName, EI);
     end;
 
     // ── TestField(Field, BoolVar, ErrorInfo) ─────────────────────────────────
 
-    procedure TestFieldBoolVarEI(var Rec: Record "TFNvBl Record"; ExpectedFlag: Boolean; EI: ErrorInfo)
+    procedure VerifyFieldBoolVarEI(var Rec: Record "TFNvBl Record"; ExpectedFlag: Boolean; EI: ErrorInfo)
     begin
         Rec.TestField(Flag, ExpectedFlag, EI);
     end;
