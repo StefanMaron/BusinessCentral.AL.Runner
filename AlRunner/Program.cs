@@ -30,6 +30,7 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("Options:");
     Console.Error.WriteLine("  --coverage            Show statement-level coverage report and write cobertura.xml");
     Console.Error.WriteLine("  --packages <dir>      Add symbol references from .app files in directory");
+    Console.Error.WriteLine("                        (auto-detected: .alpackages in/near source dirs when omitted)");
     Console.Error.WriteLine("  --stubs <dir>         Override dependency objects with stub AL files");
     Console.Error.WriteLine("  --dump-csharp         Print generated C# (before rewriting) and exit");
     Console.Error.WriteLine("  --dump-rewritten      Print rewritten C# (after rewriting) and exit");
@@ -463,8 +464,12 @@ AL interface and provide a mock implementation in the test.
 
 Step 1 — Run normally and note the gaps:
 ```
-al-runner --packages .alpackages ./src ./test
+al-runner ./src ./test
 ```
+If a `.alpackages` directory exists in or near your source paths, al-runner
+auto-detects it — no `--packages` flag required. Pass `--packages <dir>`
+explicitly only when the packages are in a non-standard location.
+
 If you see `Tip: use --stubs to provide stub AL files for unsupported dependencies`,
 one or more objects were excluded from compilation. Stubs can restore them.
 
@@ -867,74 +872,72 @@ public static class AlTranspiler
         );
 
         // --- Symbol reference support ---
-        // Only enable symbol references when --packages is explicitly provided.
-        // This avoids conflicts when compiling self-contained multi-project spikes from source.
+        // Always call ResolvePackagePaths so that .alpackages directories adjacent to
+        // the input paths are auto-discovered even when --packages is not specified.
         bool hasExplicitPackages = packagePaths != null && packagePaths.Count > 0;
-        var allPackagePaths = hasExplicitPackages ? ResolvePackagePaths(packagePaths, inputPaths) : new List<string>();
+        var allPackagePaths = ResolvePackagePaths(packagePaths, inputPaths);
+        bool hasAnyPackages = allPackagePaths.Count > 0;
+
+        if (!hasExplicitPackages && hasAnyPackages)
+            Log.Info($"Auto-detected package directories: {string.Join(", ", allPackagePaths)}");
+
         // Populated during the "load all packages" path for use in the reactive conflict resolver.
         var loadedPackageSpecs = new List<PackageSpec>();
         Microsoft.Dynamics.Nav.CodeAnalysis.ISymbolReferenceLoader? refLoader = null;
 
-        if (hasExplicitPackages)
+        if (hasAnyPackages)
         {
-            var depSpecs = DiscoverDependencies(inputPaths, forceResolve: true);
+            var depSpecs = DiscoverDependencies(inputPaths, forceResolve: hasExplicitPackages);
 
-            if (allPackagePaths.Count > 0)
+            Log.Info($"Symbol references: scanning {allPackagePaths.Count} package directories");
+            foreach (var p in allPackagePaths)
+                Log.Info($"  {p}");
+
+            refLoader = ReferenceLoaderFactory.CreateReferenceLoader(allPackagePaths);
+
+            if (depSpecs.Count > 0)
             {
-                Log.Info($"Symbol references: scanning {allPackagePaths.Count} package directories");
-                foreach (var p in allPackagePaths)
-                    Log.Info($"  {p}");
+                Log.Info($"Adding {depSpecs.Count} symbol reference specifications:");
+                foreach (var spec in depSpecs)
+                    Log.Info($"  {FormatSpec(spec)}");
 
-                refLoader = ReferenceLoaderFactory.CreateReferenceLoader(allPackagePaths);
-
-                if (depSpecs.Count > 0)
-                {
-                    Log.Info($"Adding {depSpecs.Count} symbol reference specifications:");
-                    foreach (var spec in depSpecs)
-                        Log.Info($"  {FormatSpec(spec)}");
-
-                    compilation = compilation
-                        .WithReferenceLoader(refLoader)
-                        .AddReferences(depSpecs.ToArray());
-                }
-                else
-                {
-                    // No explicit dependencies in app.json — load all .app files from
-                    // the packages directory as symbol references. This handles the BC
-                    // convention where Application/System dependencies are implicit.
-                    // PackageScanner deduplicates: first by GUID (keeping highest version),
-                    // then by (publisher+name+version) to eliminate self-duplicates that
-                    // would otherwise produce AL0275 "ambiguous reference" errors.
-                    Log.Info("No explicit dependencies found. Loading all .app packages as symbols...");
-
-                    var scannedSpecs = PackageScanner.ScanForSpecs(
-                        allPackagePaths,
-                        excludeGuid: appIdentity.AppId,
-                        excludeName: appIdentity.Name);
-
-                    loadedPackageSpecs.AddRange(scannedSpecs);
-
-                    if (loadedPackageSpecs.Count > 0)
-                    {
-                        var allAppSpecs = loadedPackageSpecs
-                            .Select(s => new SymbolReferenceSpecification(
-                                s.Publisher, s.Name, s.Version,
-                                false, s.AppId, false, ImmutableArray<Guid>.Empty))
-                            .ToArray();
-                        Log.Info($"  Loaded {allAppSpecs.Length} symbol packages (deduplicated by identity)");
-                        compilation = compilation
-                            .WithReferenceLoader(refLoader)
-                            .AddReferences(allAppSpecs);
-                    }
-                    else
-                    {
-                        compilation = compilation.WithReferenceLoader(refLoader);
-                    }
-                }
+                compilation = compilation
+                    .WithReferenceLoader(refLoader)
+                    .AddReferences(depSpecs.ToArray());
             }
             else
             {
-                Console.Error.WriteLine("Warning: --packages specified but no package directories with .app files found.");
+                // No explicit dependencies in app.json — load all .app files from
+                // the packages directory as symbol references. This handles the BC
+                // convention where Application/System dependencies are implicit.
+                // PackageScanner deduplicates: first by GUID (keeping highest version),
+                // then by (publisher+name+version) to eliminate self-duplicates that
+                // would otherwise produce AL0275 "ambiguous reference" errors.
+                Log.Info("No explicit dependencies found. Loading all .app packages as symbols...");
+
+                var scannedSpecs = PackageScanner.ScanForSpecs(
+                    allPackagePaths,
+                    excludeGuid: appIdentity.AppId,
+                    excludeName: appIdentity.Name);
+
+                loadedPackageSpecs.AddRange(scannedSpecs);
+
+                if (loadedPackageSpecs.Count > 0)
+                {
+                    var allAppSpecs = loadedPackageSpecs
+                        .Select(s => new SymbolReferenceSpecification(
+                            s.Publisher, s.Name, s.Version,
+                            false, s.AppId, false, ImmutableArray<Guid>.Empty))
+                        .ToArray();
+                    Log.Info($"  Loaded {allAppSpecs.Length} symbol packages (deduplicated by identity)");
+                    compilation = compilation
+                        .WithReferenceLoader(refLoader)
+                        .AddReferences(allAppSpecs);
+                }
+                else
+                {
+                    compilation = compilation.WithReferenceLoader(refLoader);
+                }
             }
         }
 
