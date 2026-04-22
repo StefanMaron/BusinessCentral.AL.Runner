@@ -11107,3 +11107,4 @@ AlCompat.InitializeUninitializedObject:
     TryFireRecordTrigger previously did not — the fix adds the call there too.
   tests:
     - tests/bucket-2/100-uninit-field-fix
+    - tests/bucket-2/101-validate-uninit

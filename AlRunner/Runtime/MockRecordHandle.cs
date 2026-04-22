@@ -1183,8 +1183,9 @@ public class MockRecordHandle
             // FieldTriggerType.OnValidate == 0
             if (triggerType?.ToString() == "OnValidate" && triggerFieldNo is int fno && fno == fieldNo)
             {
-                // Create instance and wire Rec to this MockRecordHandle
+                // Create instance, initialize null fields, and wire Rec to this MockRecordHandle
                 var instance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(type);
+                AlCompat.InitializeUninitializedObject(instance);
                 var backingField = type.GetField("<Rec>k__BackingField",
                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
                 backingField?.SetValue(instance, this);
@@ -3248,6 +3249,7 @@ public class MockRecordHandle
                 if (method == null) continue;
 
                 var instance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(recordType);
+                AlCompat.InitializeUninitializedObject(instance);
                 // Wire the Rec property to point to this MockRecordHandle instance.
                 // The generated Record class has: public MockRecordHandle Rec { get; } = new MockRecordHandle(tableId);
                 // Since GetUninitializedObject doesn't run initializers, Rec is null.
