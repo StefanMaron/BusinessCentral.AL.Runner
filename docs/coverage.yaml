@@ -2988,8 +2988,8 @@ HttpContent.WriteFrom:
   layer: runtime-api
   category: HttpContent
   status: covered
-  tests: tests/bucket-1/173-httpcontent-response-methods
-  notes: overloads=3; text overload via ALLoadFrom(NavText); stream/secret overloads via AlCompat redirect
+  tests: tests/bucket-1/173-httpcontent-response-methods, tests/bucket-1/290-secrettext-http
+  notes: overloads=3; text overload via ALLoadFrom(NavText); stream overload via AlCompat.HttpContentLoadFrom(MockInStream); SecretText overload via AlCompat.HttpContentLoadFrom(NavSecretText) — unwraps secret and stores as plain text (#1086)
 
 # ── HttpHeaders ─────────────────────────────────────────────────
 
@@ -2997,7 +2997,8 @@ HttpHeaders.Add:
   layer: runtime-api
   category: HttpHeaders
   status: covered
-  notes: overloads=2
+  tests: tests/bucket-1/290-secrettext-http
+  notes: overloads=3; Text overload (string key, string value); SecretText overload (string key, NavSecretText) — unwraps secret (#1086)
 
 HttpHeaders.Clear:
   layer: runtime-api
@@ -3045,7 +3046,8 @@ HttpHeaders.TryAddWithoutValidation:
   layer: runtime-api
   category: HttpHeaders
   status: covered
-  notes: overloads=2
+  tests: tests/bucket-1/290-secrettext-http
+  notes: overloads=3; NavText/NavText overload; string/NavSecretText overload for literal-name + SecretText-value pattern — resolves string→NavText (#1091) and NavSecretText→NavText gaps
 
 # ── HttpRequestMessage ──────────────────────────────────────────
 

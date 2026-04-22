@@ -1906,6 +1906,16 @@ public static class AlCompat
         => content.ALLoadFrom(text);
 
     /// <summary>
+    /// Overload for <c>HttpContent.WriteFrom(SecretText)</c>.
+    /// BC emits <c>AlCompat.HttpContentLoadFrom(content, NavSecretText)</c> after
+    /// the ALLoadFrom redirect — resolving the <c>NavSecretText → MockInStream</c>
+    /// type mismatch (#1086). In standalone mode secrets are treated as plain text:
+    /// the value is unwrapped and stored as UTF-8 text content.
+    /// </summary>
+    public static void HttpContentLoadFrom(MockHttpContent content, NavSecretText secret)
+        => content.ALLoadFrom(Unwrap(secret));
+
+    /// <summary>
     /// Replacement for MockHttpContent.ALReadAs(ITreeObject, DataError, ByRef&lt;MockInStream&gt;).
     /// BC emits content.ALReadAs(this, DataError.ThrowError, stream) for
     /// HttpContent.ReadAs(var Stream: InStream). Returns a MockInStream whose data

@@ -27,7 +27,7 @@ public class MockHttpHeaders
 
     /// <summary>
     /// BC emits: <c>headers.ALAdd(DataError, key, value)</c>
-    /// for <c>HttpHeaders.Add(key, value)</c>.
+    /// for <c>HttpHeaders.Add(key, value)</c> (Text overload).
     /// </summary>
     public void ALAdd(DataError errorLevel, string key, string value)
     {
@@ -38,6 +38,15 @@ public class MockHttpHeaders
         }
         list.Add(value);
     }
+
+    /// <summary>
+    /// BC emits: <c>headers.ALAdd(DataError, key, secretValue)</c>
+    /// for <c>HttpHeaders.Add(key, SecretText)</c>.
+    /// In standalone mode secrets are treated as plain text — the value
+    /// is extracted via <see cref="AlCompat.Unwrap"/> and stored normally.
+    /// </summary>
+    public void ALAdd(DataError errorLevel, string key, NavSecretText secretValue)
+        => ALAdd(errorLevel, key, (string)AlCompat.Unwrap(secretValue));
 
     /// <summary>
     /// BC emits: <c>headers.ALContains(key)</c>
@@ -98,12 +107,25 @@ public class MockHttpHeaders
 
     /// <summary>
     /// BC emits: <c>headers.ALTryAddWithoutValidation(DataError, name, value)</c>
-    /// for <c>HttpHeaders.TryAddWithoutValidation(name, value)</c>.
+    /// for <c>HttpHeaders.TryAddWithoutValidation(name, value)</c> (Text overload).
     /// Adds the header without format validation; always succeeds.
     /// </summary>
     public bool ALTryAddWithoutValidation(DataError errorLevel, NavText name, NavText value)
     {
         ALAdd(errorLevel, (string)name, (string)value);
+        return true;
+    }
+
+    /// <summary>
+    /// Overload for <c>HttpHeaders.TryAddWithoutValidation(name, SecretText)</c>.
+    /// BC emits <c>ALTryAddWithoutValidation(DataError, string-literal, NavSecretText)</c>
+    /// when the header name is a text literal and the value is a SecretText — resolving
+    /// both the <c>string → NavText</c> (#1091) and <c>NavSecretText → NavText</c> (#1086)
+    /// type mismatches. In standalone mode secrets are treated as plain text.
+    /// </summary>
+    public bool ALTryAddWithoutValidation(DataError errorLevel, string name, NavSecretText secretValue)
+    {
+        ALAdd(errorLevel, name, (string)AlCompat.Unwrap(secretValue));
         return true;
     }
 
