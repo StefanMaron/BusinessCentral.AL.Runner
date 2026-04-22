@@ -42,7 +42,27 @@ page 59600 "CA Order Card"
                 FlowId = '00000000-0000-0000-0000-000000000001';
             }
         }
+        area(Navigation)
+        {
+            customaction(CreateFlowFromTemplate)
+            {
+                Caption = 'Create approval flow';
+                CustomActionType = FlowTemplateGallery;
+                FlowTemplateCategoryName = 'd365bc_approval_salesOrder';
+            }
+        }
     }
+}
+
+/// Helper procedure for page-instantiation test.
+codeunit 59602 "CA Page Runner"
+{
+    procedure RunOrderCard()
+    var
+        P: Page "CA Order Card";
+    begin
+        P.Run();
+    end;
 }
 
 /// Business logic helper — proves that the compilation unit containing

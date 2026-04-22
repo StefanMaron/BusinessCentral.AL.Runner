@@ -863,6 +863,18 @@ customaction_declaration:
   tests:
     - tests/bucket-1/75-customaction
 
+customaction_flowtemplategallery:
+  layer: syntax
+  category: page
+  status: covered
+  notes: >
+    customaction with CustomActionType = FlowTemplateGallery — Power Automate
+    template gallery integration is out of scope at runtime (no network I/O),
+    but the page element must not prevent compilation or page instantiation.
+    The BC compiler emits no C# for this element; it is pure metadata.
+  tests:
+    - tests/bucket-1/75-customaction
+
 fileuploadaction_declaration:
   layer: syntax
   category: page

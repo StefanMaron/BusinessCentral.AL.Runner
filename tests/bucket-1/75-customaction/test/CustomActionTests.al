@@ -5,6 +5,7 @@ codeunit 59601 "CA Custom Action Tests"
     var
         Assert: Codeunit Assert;
         Helper: Codeunit "CA Order Helper";
+        PageRunner: Codeunit "CA Page Runner";
 
     // -----------------------------------------------------------------------
     // Positive: pages with customaction declarations compile; logic runs
@@ -29,9 +30,21 @@ codeunit 59601 "CA Custom Action Tests"
     end;
 
     [Test]
+    procedure CustomAction_FlowTemplateGallery_PageInstantiates()
+    begin
+        // [GIVEN] A page with customaction(FlowTemplateGallery) in the action area
+        // [WHEN]  The page is instantiated and run
+        // [THEN]  Compilation succeeds and Run() is a no-op — FlowTemplateGallery
+        //         is out of scope at runtime (no Power Automate integration) but
+        //         must not prevent the page from compiling or being used.
+        PageRunner.RunOrderCard();
+        Assert.IsTrue(true, 'Page with FlowTemplateGallery customaction must compile and run as no-op');
+    end;
+
+    [Test]
     procedure CustomAction_MultipleCustomActions_Compile()
     begin
-        // [GIVEN] A page with multiple customaction declarations (Flow + FlowTemplate)
+        // [GIVEN] A page with multiple customaction declarations (Flow + FlowTemplateGallery)
         // [WHEN]  Business logic is called
         // [THEN]  Multiple customactions in different areas compile together
         Assert.AreEqual(25, Helper.CalcTax(500, 5), 'customaction: 5% tax on 500 must be 25');
