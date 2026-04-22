@@ -675,6 +675,8 @@ namespace AlRunnerGenerated {
         {
             Directory.Delete(tmp, recursive: true);
         }
+    }
+
     // ─── Issue #1040: rewriter failure must not silently drop objects ──────────
 
     /// <summary>
