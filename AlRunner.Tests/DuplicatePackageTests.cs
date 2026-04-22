@@ -151,6 +151,127 @@ public class DuplicatePackageTests
         }
     }
 
+    // --- Source-overlaps-packages filtering (issue #1034) ---
+
+    /// <summary>
+    /// RED test: when a source app's GUID appears in a packages directory (common when
+    /// .alpackages contains the compiled .app of the extension being compiled from source),
+    /// the runner must not include that .app's GUID in the symbol-reference dependencies.
+    /// ExtractAllSourceAppIds must return the GUID so the caller can filter depSpecs.
+    /// </summary>
+    [Fact]
+    public void ExtractAllSourceAppIds_ReturnsAllAppIdsFromInputPaths()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "al-runner-srcids-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            var mainAppDir = Path.Combine(dir, "main-app", "src");
+            var testAppDir = Path.Combine(dir, "test-app", "src");
+            Directory.CreateDirectory(mainAppDir);
+            Directory.CreateDirectory(testAppDir);
+
+            var mainAppId = new Guid("aaaa0000-0000-0000-0000-000000000001");
+            var testAppId = new Guid("bbbb0000-0000-0000-0000-000000000002");
+
+            // Write app.json files directly in the src dirs (standard BC layout)
+            WriteAppJson(mainAppDir, "Main App", "TestPublisher", "1.0.0.0", mainAppId);
+            WriteAppJson(testAppDir, "Test App", "TestPublisher", "1.0.0.0", testAppId);
+
+            var ids = AlTranspiler.ExtractAllSourceAppIds(new List<string> { mainAppDir, testAppDir });
+
+            Assert.Contains(mainAppId, ids);
+            Assert.Contains(testAppId, ids);
+        }
+        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+    }
+
+    /// <summary>
+    /// When source app IDs are extracted, those IDs must not appear in the depSpecs
+    /// that get loaded as symbol references. This tests the pipeline integration:
+    /// passing source for both main-app and test-app, with the main-app's .app also
+    /// present in the packages directory, must NOT produce duplicate-object errors.
+    /// </summary>
+    [Fact]
+    public void Pipeline_SourceAppInPackages_DoesNotCauseDuplicateErrors()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "al-runner-srcpkg-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            var mainSrcDir = Path.Combine(dir, "main", "src");
+            var testSrcDir = Path.Combine(dir, "testapp", "src");
+            var pkgDir = Path.Combine(dir, "packages");
+            Directory.CreateDirectory(mainSrcDir);
+            Directory.CreateDirectory(testSrcDir);
+            Directory.CreateDirectory(pkgDir);
+
+            var mainAppId = new Guid("cccc0000-0000-0000-0000-000000000003");
+            var testAppId = new Guid("dddd0000-0000-0000-0000-000000000004");
+
+            // Main app: a table
+            File.WriteAllText(Path.Combine(mainSrcDir, "Table.al"), @"
+table 73001 ""Overlap Source Table""
+{
+    fields
+    {
+        field(1; Id; Integer) { }
+    }
+    keys { key(PK; Id) { Clustered = true; } }
+}
+codeunit 73001 ""Overlap Source Logic""
+{
+    procedure GetFortyTwo(): Integer
+    begin
+        exit(42);
+    end;
+}
+");
+            WriteAppJson(mainSrcDir, "Overlap Main App", "OverlapPublisher", "1.0.0.0", mainAppId);
+
+            // Test app: a test codeunit referencing the main app's codeunit
+            File.WriteAllText(Path.Combine(testSrcDir, "Test.al"), @"
+codeunit 73002 ""Overlap Tests""
+{
+    Subtype = Test;
+    var Assert: Codeunit Assert;
+
+    [Test]
+    procedure TestGetFortyTwo()
+    var
+        Logic: Codeunit ""Overlap Source Logic"";
+    begin
+        Assert.AreEqual(42, Logic.GetFortyTwo(), 'Expected 42');
+    end;
+}
+");
+            WriteAppJsonWithDep(testSrcDir, "Overlap Test App", "OverlapPublisher", "1.0.0.0", testAppId,
+                mainAppId, "Overlap Main App", "OverlapPublisher", "1.0.0.0");
+
+            // Put a minimal .app for the main app in the packages directory.
+            // This simulates .alpackages containing the compiled version of the source app.
+            CreateMinimalApp(pkgDir, "OverlapMainApp_1.0.0.0.app", "OverlapPublisher", "Overlap Main App", "1.0.0.0", mainAppId);
+
+            // Run the pipeline with both source dirs and the packages dir.
+            // Use verbose so we can confirm the filter fired.
+            var pipeline = new AlRunnerPipeline();
+            var result = pipeline.Run(new PipelineOptions
+            {
+                InputPaths = { mainSrcDir, testSrcDir },
+                PackagePaths = { pkgDir },
+                Verbose = true
+            });
+
+            // Must not contain duplicate-object errors
+            Assert.DoesNotContain("AL0275", result.StdErr);
+            Assert.DoesNotContain("duplicate", result.StdErr, StringComparison.OrdinalIgnoreCase);
+            // The filter must have logged that it skipped the source app's package reference
+            Assert.Contains("Skipped", result.StdErr);
+            // Pipeline must succeed and run the test
+            Assert.Equal(0, result.ExitCode);
+            Assert.Contains("PASS", result.StdOut);
+        }
+        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+    }
+
     // --- DiagnosticClassifier integration: AL0275 self-duplicate suppression ---
 
     [Fact]
@@ -306,6 +427,30 @@ codeunit 50300 ""Dup Test Tests""
               "version": "{{version}}",
               "platform": "27.0.0.0",
               "runtime": "14.0"
+            }
+            """);
+    }
+
+    private static void WriteAppJsonWithDep(
+        string dir, string name, string publisher, string version, Guid id,
+        Guid depId, string depName, string depPublisher, string depVersion)
+    {
+        File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
+            {
+              "id": "{{id}}",
+              "name": "{{name}}",
+              "publisher": "{{publisher}}",
+              "version": "{{version}}",
+              "platform": "27.0.0.0",
+              "runtime": "14.0",
+              "dependencies": [
+                {
+                  "id": "{{depId}}",
+                  "name": "{{depName}}",
+                  "publisher": "{{depPublisher}}",
+                  "version": "{{depVersion}}"
+                }
+              ]
             }
             """);
     }

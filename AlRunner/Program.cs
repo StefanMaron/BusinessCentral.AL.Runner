@@ -889,6 +889,23 @@ public static class AlTranspiler
         {
             var depSpecs = DiscoverDependencies(inputPaths, forceResolve: hasExplicitPackages);
 
+            // Filter out any dependency that is already present as AL source.
+            // This is the common case when .alpackages contains the compiled .app of the
+            // extension being compiled from source: without filtering, the BC compiler sees
+            // the same objects twice (once from source, once from the .app symbol reference)
+            // and emits AL0275 "ambiguous reference" errors.
+            var sourceAppIds = ExtractAllSourceAppIds(inputPaths);
+            if (sourceAppIds.Count > 0 && depSpecs.Count > 0)
+            {
+                var before = depSpecs.Count;
+                depSpecs = depSpecs
+                    .Where(s => !sourceAppIds.Contains(s.AppId))
+                    .ToList();
+                var skipped = before - depSpecs.Count;
+                if (skipped > 0)
+                    Log.Info($"  Skipped {skipped} package reference(s) already provided as AL source.");
+            }
+
             Log.Info($"Symbol references: scanning {allPackagePaths.Count} package directories");
             foreach (var p in allPackagePaths)
                 Log.Info($"  {p}");
@@ -1351,6 +1368,75 @@ public static class AlTranspiler
         }
 
         return defaults;
+    }
+
+    /// <summary>
+    /// Collect all app GUIDs from manifests (app.json or NavxManifest.xml) found in or near
+    /// each input path.  Unlike <see cref="ExtractAppIdentity"/> (which returns the first match),
+    /// this method walks every input path so that multi-project runs (e.g. main-app source +
+    /// test-app source compiled together) produce a complete set of "source" app IDs.
+    ///
+    /// These IDs are used to filter symbol-reference specifications so that a .app package
+    /// whose GUID matches an app already present in the source tree is never loaded a second
+    /// time as a symbol reference (which would cause AL0275 duplicate-object errors).
+    /// </summary>
+    public static HashSet<Guid> ExtractAllSourceAppIds(List<string>? inputPaths)
+    {
+        var result = new HashSet<Guid>();
+        if (inputPaths == null || inputPaths.Count == 0) return result;
+
+        var seenDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var inputPath in inputPaths)
+        {
+            // Walk up the directory tree looking for app.json
+            var dir = Directory.Exists(inputPath)
+                ? Path.GetFullPath(inputPath)
+                : Path.GetDirectoryName(Path.GetFullPath(inputPath));
+
+            while (dir != null)
+            {
+                if (!seenDirs.Add(dir)) break; // already processed this dir
+
+                var appJsonPath = Path.Combine(dir, "app.json");
+                if (File.Exists(appJsonPath))
+                {
+                    try
+                    {
+                        var json = JsonDocument.Parse(File.ReadAllText(appJsonPath));
+                        var root = json.RootElement;
+                        if (root.TryGetProperty("id", out var idProp) && Guid.TryParse(idProp.GetString(), out var guid))
+                            result.Add(guid);
+                    }
+                    catch { /* corrupt or unreadable — skip */ }
+                    break; // found the manifest for this input — stop walking up
+                }
+
+                var parent = Path.GetDirectoryName(dir);
+                if (parent == dir) break; // filesystem root
+                dir = parent;
+            }
+
+            // Try NavxManifest.xml (for .app file inputs)
+            if (inputPath.EndsWith(".app", StringComparison.OrdinalIgnoreCase) && File.Exists(inputPath))
+            {
+                try
+                {
+                    var doc = LoadNavxManifest(inputPath);
+                    if (doc != null)
+                    {
+                        XNamespace ns = "http://schemas.microsoft.com/navx/2015/manifest";
+                        var appElement = doc.Root?.Element(ns + "App");
+                        var idStr = appElement?.Attribute("Id")?.Value;
+                        if (idStr != null && Guid.TryParse(idStr, out var guid))
+                            result.Add(guid);
+                    }
+                }
+                catch { /* fall through */ }
+            }
+        }
+
+        return result;
     }
 
     public static List<string> ResolvePackagePaths(List<string>? explicitPaths, List<string>? inputPaths)
