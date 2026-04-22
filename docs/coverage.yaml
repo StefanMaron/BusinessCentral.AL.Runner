@@ -11137,3 +11137,15 @@ MockCodeunitHandle.InvokeAssert130002:
     than the runner's built-in stub ID 130.
   tests:
     - tests/bucket-2/103-assert-130002
+
+RoslynRewriter.CompareToEquality:
+  layer: syntax
+  category: rewriter
+  status: covered
+  notes: >
+    BC emits case-statement Text/Code comparisons as x.CompareTo(y) == 0.
+    NavStringValue.CompareTo throws NullReferenceException in standalone mode
+    (BC runtime DLL limitation). The rewriter transforms x.CompareTo(y) == 0
+    to x == y (and != 0 to x != y). The == operator works correctly standalone.
+  tests:
+    - tests/bucket-2/105-validate-case
