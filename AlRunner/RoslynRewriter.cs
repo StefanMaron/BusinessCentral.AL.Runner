@@ -584,6 +584,8 @@ public bool ALModify(DataError errorLevel) => Rec.ALModify(errorLevel);
 public bool ALModify(DataError errorLevel, bool runTrigger) => Rec.ALModify(errorLevel, runTrigger);
 public bool ALGet(DataError errorLevel, params NavValue[] keyValues) => Rec.ALGet(errorLevel, keyValues);
 public bool ALFind(DataError errorLevel, string searchMethod = ""-"") => Rec.ALFind(errorLevel, searchMethod);
+public bool ALFind(NavText searchMethod, bool forceNewQuery = false) => Rec.ALFind(searchMethod, forceNewQuery);
+public bool ALFind(string searchMethod, bool forceNewQuery) => Rec.ALFind(searchMethod, forceNewQuery);
 public bool ALFindSet(DataError errorLevel = DataError.ThrowError, bool forUpdate = false) => Rec.ALFindSet(errorLevel, forUpdate);
 public bool ALFindFirst(DataError errorLevel = DataError.ThrowError) => Rec.ALFindFirst(errorLevel);
 public bool ALFindLast(DataError errorLevel = DataError.ThrowError) => Rec.ALFindLast(errorLevel);
@@ -611,6 +613,7 @@ public void ALTestFieldSafe(int fieldNo, NavType expectedType, NavValue expected
 public void ALTestFieldSafe(int fieldNo, NavType expectedType, NavALErrorInfo errorInfo) => Rec.ALTestFieldSafe(fieldNo, expectedType, errorInfo);
 public void ALTestFieldSafe(int fieldNo, NavType expectedType, object expectedValue) => Rec.ALTestFieldSafe(fieldNo, expectedType, expectedValue);
 public void ALTestFieldSafe(int fieldNo, NavType expectedType, object expectedValue, NavALErrorInfo errorInfo) => Rec.ALTestFieldSafe(fieldNo, expectedType, expectedValue, errorInfo);
+public void ALTestFieldSafe(int fieldNo, NavType expectedType, object expectedValue, bool suppressError) => Rec.ALTestFieldSafe(fieldNo, expectedType, expectedValue, suppressError);
 public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType) => Rec.ALTestField(errorLevel, fieldNo, expectedType);
 public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType, NavValue expectedValue) => Rec.ALTestField(errorLevel, fieldNo, expectedType, expectedValue);
 public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType, object expectedValue) => Rec.ALTestField(errorLevel, fieldNo, expectedType, expectedValue);

@@ -6776,10 +6776,15 @@ Table.Find:
   layer: runtime-api
   category: Table
   status: covered
-  notes: overloads=1; ALFind(DataError, string searchMethod="-") positions cursor on first/last/next matching record.
+  notes: >
+    overloads=3; ALFind(DataError, string searchMethod="-") positions cursor on first/last/next matching record.
+    ALFind(NavText, bool forceNewQuery) and ALFind(string, bool forceNewQuery) overloads added for BC versions
+    that emit Find(SearchExpr, ForceNew) as a 2-arg call without the DataError prefix — resolves CS1503
+    (NavText → DataError, bool → string) — issues #1108, #1109.
   tests:
     - tests/bucket-1/188-table-crud
     - tests/bucket-1/08-sort-ordering
+    - tests/bucket-1/291-testfield-find-navtext-bool
 
 Table.FindFirst:
   layer: runtime-api
@@ -7166,9 +7171,10 @@ Table.TestField:
     - tests/bucket-1/54-testfield-enum
     - tests/bucket-1/288-testfield-navvalue-overload
     - tests/bucket-1/290-testfield-errorinfo
+    - tests/bucket-1/291-testfield-find-navtext-bool
     - tests/bucket-2/100-testfield-value
   notes: >
-    overloads=31; non-empty check, enum value comparison, and scalar value comparison
+    overloads=32; non-empty check, enum value comparison, and scalar value comparison
     (Text/Code/Integer/Decimal/Boolean) covered. CS0121 ambiguity between NavValue and
     primitive overloads (bool/string/int/Decimal18) resolved via a single object catch-all
     in ALTestFieldSafe — same pattern as MockFieldRef.ALSetRange(object) (issue #1018).
@@ -7179,6 +7185,9 @@ Table.TestField:
     for non-empty check with error context, and ALTestFieldSafe(fieldNo, NavType, value,
     NavALErrorInfo) for value equality check with error context. ErrorInfo is used as context
     only — the assertion logic is identical to the non-ErrorInfo variants.
+    ALTestFieldSafe(fieldNo, NavType, object, bool) overload added for BC versions that emit
+    TestField(Field, Value) as a 4-arg call with a bool suppressError flag instead of
+    NavALErrorInfo — resolves CS1503 (bool → string) — issues #1108, #1109.
 
 Table.TransferFields:
   layer: runtime-api

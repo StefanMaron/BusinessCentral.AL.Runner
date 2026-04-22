@@ -646,6 +646,24 @@ public class MockRecordHandle
         return true;
     }
 
+    /// <summary>
+    /// ALFind(NavText, bool) — 2-arg form emitted by some BC versions for
+    /// <c>Find(SearchExpression, ForceNewQuery)</c> where the DataError prefix is
+    /// omitted and ForceNewQuery is a Boolean flag.  Resolves CS1503
+    /// (NavText → DataError, bool → string) errors — issues #1108, #1109.
+    /// ForceNewQuery is a runtime hint and is ignored in standalone mode.
+    /// </summary>
+    public bool ALFind(NavText searchMethod, bool forceNewQuery = false)
+        => ALFind(DataError.ThrowError, searchMethod.ToString());
+
+    /// <summary>
+    /// ALFind(string, bool) — same as ALFind(NavText, bool) but for string literals.
+    /// Defensive overload so that C# overload resolution always finds an exact match
+    /// rather than falling back to the (DataError, string) candidate.
+    /// </summary>
+    public bool ALFind(string searchMethod, bool forceNewQuery)
+        => ALFind(DataError.ThrowError, searchMethod);
+
     public bool ALFindSet(DataError errorLevel = DataError.ThrowError, bool forUpdate = false)
     {
         return ALFind(errorLevel, "-");
@@ -1191,6 +1209,18 @@ public class MockRecordHandle
     /// Fixes CS1501 (no overload for ALTestFieldSafe with 4 arguments) — issue #1083.
     /// </summary>
     public void ALTestFieldSafe(int fieldNo, NavType expectedType, object expectedValue, NavALErrorInfo errorInfo)
+    {
+        ALTestFieldSafe(fieldNo, expectedType, expectedValue);
+    }
+
+    /// <summary>
+    /// ALTestFieldSafe(object, bool) — 4-arg form emitted by some BC versions for
+    /// TestField(Field, Value, SuppressError) where the 4th arg is a Boolean flag
+    /// controlling error behaviour rather than an ErrorInfo.  The bool is treated as
+    /// a no-op in standalone mode (the assertion always runs).  Resolves CS1503
+    /// (NavText → DataError, bool → string) errors — issues #1108, #1109.
+    /// </summary>
+    public void ALTestFieldSafe(int fieldNo, NavType expectedType, object expectedValue, bool suppressError)
     {
         ALTestFieldSafe(fieldNo, expectedType, expectedValue);
     }
