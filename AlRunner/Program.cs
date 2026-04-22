@@ -2384,13 +2384,19 @@ public static class Executor
             AlRunner.Runtime.EventSubscriberRegistry.ResetBindings();
 
             // Re-fire lifecycle integration events after each table reset when --init-events is set.
-            // This ensures that company-initialization setup data (created by [EventSubscriber]
-            // handlers on e.g. Codeunit 27 OnCompanyInitialize) is present before every test,
-            // matching BC's behaviour where company data persists across tests.
+            // This ensures that install/company-initialization setup data (created by
+            // [EventSubscriber] handlers and install codeunit triggers) is present before
+            // every test, matching BC's behaviour where company data persists across tests.
+            //
+            // Publisher IDs come from the [NavEventSubscriber] attributes in BC-generated C#:
+            //   OnCompanyInitialize     → publisher 2  (Codeunit "Company-Initialize")
+            //   OnInstallAppPerDatabase → publisher 2000000010 (BC internal install dispatcher)
+            //   OnInstallAppPerCompany  → publisher 2000000010 (BC internal install dispatcher)
             if (initEvents)
             {
-                AlRunner.Runtime.AlCompat.FireEvent(27, "OnCompanyInitialize");
-                AlRunner.Runtime.AlCompat.FireEvent(2, "OnInstallAppPerCompany");
+                AlRunner.Runtime.AlCompat.FireEvent(2000000010, "OnInstallAppPerDatabase");
+                AlRunner.Runtime.AlCompat.FireEvent(2000000010, "OnInstallAppPerCompany");
+                AlRunner.Runtime.AlCompat.FireEvent(2, "OnCompanyInitialize");
             }
 
             try
