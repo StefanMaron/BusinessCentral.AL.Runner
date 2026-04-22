@@ -3042,7 +3042,10 @@ HttpHeaders.GetValues:
   layer: runtime-api
   category: HttpHeaders
   status: covered
-  notes: overloads=2
+  notes: overloads=3; array-form (MockArray<NavText>) and list-form (NavList<NavText>) both covered; fixes issue #1080
+  tests:
+    - tests/bucket-1/170-httpheaders-methods
+    - tests/bucket-2/221-httpheaders-getvalues-list
 
 HttpHeaders.Keys:
   layer: runtime-api
@@ -9734,9 +9737,10 @@ XmlDocument.ReadFrom:
   layer: runtime-api
   category: XmlDocument
   status: covered
-  notes: overloads=4; BC native NavXmlDocument.ALReadFrom works standalone; rewriter fixed to not intercept NavXml* with JSON rule.
+  notes: overloads=6; Text and InStream forms (with and without XmlReadOptions); rewriter redirects NavXmlDocument.ALReadFrom to AlCompat.XmlDocumentReadFrom which handles both NavText/string and MockInStream; fixes issue #1081
   tests:
     - tests/bucket-1/195-xmldocument
+    - tests/bucket-2/222-instream-string-compat
 
 XmlDocument.Remove:
   layer: runtime-api

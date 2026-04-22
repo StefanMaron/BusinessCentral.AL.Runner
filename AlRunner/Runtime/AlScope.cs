@@ -1953,6 +1953,68 @@ public static class AlCompat
         }
     }
 
+    // -----------------------------------------------------------------------
+    // XmlDocument.ReadFrom(InStream, ...) — CS1503 after NavInStream→MockInStream rename.
+    // BC emits NavXmlDocument.ALReadFrom(DataError, NavInStream, ByRef<NavXmlDocument>) for the
+    // InStream overload, and NavXmlDocument.ALReadFrom(DataError, NavText, ByRef<NavXmlDocument>)
+    // for the Text overload. After NavInStream→MockInStream rewrite the InStream form breaks
+    // because NavXmlDocument only has a string overload in BC's DLL.
+    // The rewriter redirects ALL NavXmlDocument.ALReadFrom calls here; both string and
+    // MockInStream variants are handled via overloads.
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Replacement for <c>NavXmlDocument.ALReadFrom(DataError, InStream, ByRef&lt;NavXmlDocument&gt;)</c>.
+    /// AL: <c>XmlDocument.ReadFrom(InStream, var Document)</c>.
+    /// Reads all text from the stream and delegates to the BC string overload.
+    /// </summary>
+    public static bool XmlDocumentReadFrom(DataError errorLevel, MockInStream stream, ByRef<NavXmlDocument> document)
+    {
+        string text = stream.ReadAll();
+        return NavXmlDocument.ALReadFrom(errorLevel, text, document);
+    }
+
+    /// <summary>
+    /// Passthrough for <c>NavXmlDocument.ALReadFrom(DataError, NavText, ByRef&lt;NavXmlDocument&gt;)</c>.
+    /// AL: <c>XmlDocument.ReadFrom(Text, var Document)</c>.
+    /// Text form routes here after the rewriter redirect so the same helper name covers both overloads.
+    /// </summary>
+    public static bool XmlDocumentReadFrom(DataError errorLevel, NavText text, ByRef<NavXmlDocument> document)
+        => NavXmlDocument.ALReadFrom(errorLevel, text, document);
+
+    /// <summary>
+    /// Passthrough for BC-emitted string literals: <c>NavXmlDocument.ALReadFrom(DataError, "...", ByRef&lt;NavXmlDocument&gt;)</c>.
+    /// BC emits string literals as C# <c>string</c>; this overload prevents ambiguity between
+    /// <c>NavText</c> and <c>MockInStream</c> overloads.
+    /// </summary>
+    public static bool XmlDocumentReadFrom(DataError errorLevel, string text, ByRef<NavXmlDocument> document)
+        => NavXmlDocument.ALReadFrom(errorLevel, text, document);
+
+    /// <summary>
+    /// Replacement for <c>NavXmlDocument.ALReadFrom(DataError, InStream, XmlReadOptions, ByRef&lt;NavXmlDocument&gt;)</c>.
+    /// AL: <c>XmlDocument.ReadFrom(InStream, Options, var Document)</c>.
+    /// Reads all text from the stream and delegates to the BC string+options overload.
+    /// </summary>
+    public static bool XmlDocumentReadFrom(DataError errorLevel, MockInStream stream, NavXmlReadOptions options, ByRef<NavXmlDocument> document)
+    {
+        string text = stream.ReadAll();
+        return NavXmlDocument.ALReadFrom(errorLevel, text, options, document);
+    }
+
+    /// <summary>
+    /// Passthrough for <c>NavXmlDocument.ALReadFrom(DataError, NavText, XmlReadOptions, ByRef&lt;NavXmlDocument&gt;)</c>.
+    /// AL: <c>XmlDocument.ReadFrom(Text, Options, var Document)</c>.
+    /// </summary>
+    public static bool XmlDocumentReadFrom(DataError errorLevel, NavText text, NavXmlReadOptions options, ByRef<NavXmlDocument> document)
+        => NavXmlDocument.ALReadFrom(errorLevel, text, options, document);
+
+    /// <summary>
+    /// Passthrough for BC-emitted string literals with options:
+    /// <c>NavXmlDocument.ALReadFrom(DataError, "...", XmlReadOptions, ByRef&lt;NavXmlDocument&gt;)</c>.
+    /// </summary>
+    public static bool XmlDocumentReadFrom(DataError errorLevel, string text, NavXmlReadOptions options, ByRef<NavXmlDocument> document)
+        => NavXmlDocument.ALReadFrom(errorLevel, text, options, document);
+
     /// <summary>
     /// Session.ApplicationArea() stub — returns empty string in standalone mode.
     /// </summary>

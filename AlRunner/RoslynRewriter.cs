@@ -3853,6 +3853,26 @@ public void ClearApplicationMemberVariables()
                             args[2]
                         })));
             }
+
+            // NavXmlDocument.ALReadFrom(DataError, MockInStream, ByRef<NavXmlDocument>) — CS1503.
+            // BC emits NavXmlDocument.ALReadFrom(DataError, NavInStream, ...) for
+            // XmlDocument.ReadFrom(InStream, var Document [, Options]).
+            // After NavInStream→MockInStream rename the InStream form is incompatible with
+            // NavXmlDocument's string overload. Redirect ALL ALReadFrom calls on NavXmlDocument
+            // to AlCompat.XmlDocumentReadFrom which has overloads for both NavText and MockInStream.
+            // This covers:
+            //   3-arg: ALReadFrom(DataError, text/stream, ByRef<NavXmlDocument>)
+            //   4-arg: ALReadFrom(DataError, text/stream, NavXmlReadOptions, ByRef<NavXmlDocument>)
+            if (exprText == "NavXmlDocument" && methodName == "ALReadFrom")
+            {
+                var args = visited.ArgumentList.Arguments;
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("XmlDocumentReadFrom")),
+                    visited.ArgumentList);
+            }
         }
 
         return visited;
