@@ -229,8 +229,14 @@ reportextension_declaration:
   layer: syntax
   category: extension
   status: covered
+  notes: >
+    Covers modify(DataItem) triggers — the scope class Parent property is injected
+    so CS1061 does not occur. Also covers _parent assignment in scope constructors
+    for nested types (e.g. RequestPageExtension) whose name does not match standard
+    BC object-type prefixes. Issue #1013.
   tests:
     - tests/bucket-2/129-reportext-parent
+    - tests/bucket-1/130-reportext-header-scope
 
 tableextension_declaration:
   layer: syntax

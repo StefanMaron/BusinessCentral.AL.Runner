@@ -1003,6 +1003,7 @@ public void ClearApplicationMemberVariables()
         // For scope constructors (internal constructors in nested classes that inherit from AlScope),
         // the base class has been replaced with AlScope which has a parameterless constructor.
         // Remove ALL base(...) initializers from these constructors.
+        bool strippedScopeBaseInit = false;
         if (visited.Initializer != null && visited.Initializer.Kind() == SyntaxKind.BaseConstructorInitializer)
         {
             // Check if this is a scope constructor by looking for parent or βparent references,
@@ -1015,11 +1016,20 @@ public void ClearApplicationMemberVariables()
             if (hasParentArg || isInternal)
             {
                 visited = visited.WithInitializer(null);
+                strippedScopeBaseInit = true;
             }
         }
 
         // Handle βparent parameter: KEEP it but add _parent assignment to constructor body.
         // Instead of removing the parameter, we keep it and add: this._parent = βparent;
+        // This fires when:
+        //  (a) the first parameter contains "parent" AND the type starts with a known BC object
+        //      prefix (Codeunit, Record, Page, Query, Report, XmlPort, TableExtension, PageExtension), OR
+        //  (b) the base initializer was stripped — meaning this is a scope constructor whose
+        //      base(βparent) call was removed above. In that case the _parent field (injected
+        //      by VisitClassDeclaration for scope classes) would remain null at runtime without
+        //      this assignment. This covers nested BC types like RequestPageExtension whose name
+        //      does not start with any of the standard AL object-type prefixes.
         if (visited.ParameterList.Parameters.Count > 0)
         {
             var firstParam = visited.ParameterList.Parameters[0];
@@ -1027,9 +1037,12 @@ public void ClearApplicationMemberVariables()
             if (paramName.Contains("parent") || firstParam.Identifier.Text.Contains("parent"))
             {
                 var typeText = firstParam.Type?.ToString() ?? "";
-                if (typeText.StartsWith("Codeunit") || typeText.StartsWith("Record") || typeText.StartsWith("Page")
-                    || typeText.StartsWith("Query") || typeText.StartsWith("Report") || typeText.StartsWith("XmlPort")
-                    || typeText.StartsWith("TableExtension") || typeText.StartsWith("PageExtension"))
+                bool isKnownBcType = typeText.StartsWith("Codeunit") || typeText.StartsWith("Record")
+                    || typeText.StartsWith("Page") || typeText.StartsWith("Query")
+                    || typeText.StartsWith("Report") || typeText.StartsWith("XmlPort")
+                    || typeText.StartsWith("TableExtension") || typeText.StartsWith("PageExtension");
+
+                if (isKnownBcType || strippedScopeBaseInit)
                 {
                     // Keep the parameter, but add _parent assignment at the start of the body
                     var paramIdentifier = firstParam.Identifier.Text;
