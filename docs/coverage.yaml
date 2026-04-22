@@ -1872,26 +1872,26 @@ Database.UserSecurityId:
 Database.UserName:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1; ALDatabase.UserName(userId: String) returns the display name for the given security-id string; requires a live BC session/directory; runner has no user directory. Requires a MockSession.GetUserName() stub.
+  status: not-possible
+  notes: overloads=1; ALDatabase.UserName(userId) returns display name for a security-id; requires a live BC user directory which the runner cannot provide.
 
 Database.KeyGroupDisable:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1; ALDatabase.ALKeyGroupDisable(keyGroupName: String) disables a key group; requires a live BC database context. No equivalent in runner mocks.
+  status: covered
+  notes: overloads=1; ALDatabase.ALKeyGroupDisable(keyGroupName: String) stripped to no-op by RoslynRewriter (StripEntireCallMethods). No live BC database context required in runner.
 
 Database.KeyGroupEnable:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1; ALDatabase.ALKeyGroupEnable(keyGroupName: String) enables a key group; requires a live BC database context. No equivalent in runner mocks.
+  status: covered
+  notes: overloads=1; ALDatabase.ALKeyGroupEnable(keyGroupName: String) stripped to no-op by RoslynRewriter (StripEntireCallMethods). No live BC database context required in runner.
 
 Database.KeyGroupEnabled:
   layer: runtime-api
   category: Database
-  status: gap
-  notes: overloads=1; ALDatabase.ALKeyGroupEnabled(keyGroupName: String) returns whether a key group is enabled; requires a live BC database context. Could stub to always return true.
+  status: covered
+  notes: overloads=1; ALDatabase.ALKeyGroupEnabled(keyGroupName: String) rewritten to literal true by RoslynRewriter — all key groups treated as enabled in standalone mode.
 
 # ── Date ────────────────────────────────────────────────────────
 
