@@ -543,9 +543,14 @@ public class AlRunnerPipeline
         Timer.StartStage("Roslyn rewriting");
         var refsTask = Task.Run(() => RoslynCompiler.LoadReferences());
 
-        var rewrittenTrees = new (string Name, Microsoft.CodeAnalysis.SyntaxTree? Tree)[generatedCSharpList.Count];
+        var rewrittenTrees = new (string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)[generatedCSharpList.Count];
         int rewriteHits = 0;
         var rewriteFailures = new System.Collections.Concurrent.ConcurrentBag<(string Name, string Error)>();
+        // Regex to extract the first class name from generated C# — used to build
+        // minimal fallback classes that preserve the type name for dependent objects.
+        var classNamePattern = new System.Text.RegularExpressions.Regex(
+            @"^\s*public\s+(?:\w+\s+)*class\s+(\w+)",
+            System.Text.RegularExpressions.RegexOptions.Multiline);
         Parallel.For(0, generatedCSharpList.Count, i =>
         {
             var (name, code) = generatedCSharpList[i];
@@ -580,7 +585,15 @@ public class AlRunnerPipeline
             }
             catch (Exception ex)
             {
-                rewrittenTrees[i] = (name, null);
+                // Generate a minimal fallback class that preserves the type name so
+                // that dependent objects can still reference it during Roslyn compilation.
+                // This avoids silently dropping the object and causing a cascade of
+                // "type not found" errors in unrelated objects.
+                var classMatch = classNamePattern.Match(code);
+                var className = classMatch.Success ? classMatch.Groups[1].Value : $"FallbackClass_{i}";
+                var fallback = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(
+                    $"// Rewriter failed: {ex.Message}\npublic class {className} {{ }}");
+                rewrittenTrees[i] = (name, fallback);
                 var msg = $"{ex.GetType().Name}: {ex.Message}";
                 rewriteFailures.Add((name, msg));
                 if (Log.Verbose)
@@ -588,6 +601,9 @@ public class AlRunnerPipeline
             }
         });
 
+        // Track rewriter exit code but do NOT bail out early — continue with fallback
+        // trees so that dependent objects can still compile and their tests can run.
+        int rewriterExitCode = 0;
         if (rewriteFailures.Count > 0)
         {
             var failures = rewriteFailures.OrderBy(f => f.Name).ToList();
@@ -600,15 +616,14 @@ public class AlRunnerPipeline
             stderr.WriteLine("  To debug: run with --dump-csharp to see the generated C# before rewriting.");
             stderr.WriteLine("  You may be prompted to report this via telemetry in interactive mode (run with --no-telemetry to opt out).");
             _rewriterErrors = failures;
-            Timer.EndStage("Roslyn rewriting");
-            return options.Strict ? 1 : 2;
+            rewriterExitCode = options.Strict ? 1 : 2;
         }
 
         if (rewriteHits > 0)
             Log.Info($"Rewrite cache: {rewriteHits}/{generatedCSharpList.Count} hits");
+        // All objects now have trees (failures use a minimal fallback class), so no filtering needed.
         var rewrittenTreeList = rewrittenTrees
-            .Where(t => t.Tree != null)
-            .Select(t => (t.Name, Tree: t.Tree!))
+            .Select(t => (t.Name, t.Tree))
             .ToList();
 
         List<(string Name, string Code)>? _rewrittenStringList = null;
@@ -750,6 +765,21 @@ public class AlRunnerPipeline
         }
         Timer.EndStage("Test execution");
         Timer.Print();
+
+        // If rewriting failed for some objects, ensure the exit code reflects the
+        // limitation.  We distinguish two cases:
+        //   • No test/run results (testResults.Count == 0): the "exit 1" from the
+        //     executor just means "nothing ran", which is itself a consequence of the
+        //     rewriter failure — so the rewriterExitCode (2 or 1 strict) governs.
+        //   • Real test results exist and they failed (exitCode == 1): a genuine test
+        //     assertion failure is more specific, so exit code 1 is kept as-is.
+        if (rewriterExitCode != 0)
+        {
+            if (exitCode == 0 || testResults.Count == 0)
+                exitCode = rewriterExitCode;
+            // If exitCode is already 1 and testResults.Count > 0, keep exit code 1
+            // (real test failures take precedence over the soft limitation flag).
+        }
 
         return exitCode;
     }
