@@ -225,8 +225,14 @@ public class AlScope : IDisposable, ITreeObject
     /// property on the concrete scope subclass (e.g. <c>public Codeunit123 Parent => _parent;</c>)
     /// which shadows this base stub, so returning null here is safe — this base
     /// stub is only reached when the rewriter did not inject a typed Parent.
+    ///
+    /// Returning <c>dynamic?</c> instead of <c>object?</c> allows calls such as
+    /// <c>base.Parent.Bind()</c> to compile via dynamic dispatch when the rewriter
+    /// has not yet converted <c>base.Parent</c> to <c>_parent</c> — issue #1xxx.
+    /// Concrete scope classes shadow this with a strongly-typed property so the
+    /// dynamic dispatch penalty only affects the rare unresolved case.
     /// </summary>
-    public virtual object? Parent => null;
+    public virtual dynamic? Parent => null;
 
     // ── Collectible errors ──────────────────────────────────────────────
     // Thread-static to avoid cross-test contamination in parallel scenarios.

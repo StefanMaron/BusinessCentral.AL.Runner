@@ -137,6 +137,14 @@ public class MockHttpHeaders
     public bool ALIsHeaderValueSecret(NavText name) => false;
 
     /// <summary>
+    /// String-key overload for <c>HttpHeaders.ContainsSecret(name)</c>.
+    /// BC emits <c>headers.ALIsHeaderValueSecret("Content-Type")</c> (raw string literal)
+    /// when the header name is a text constant — issue #1xxx.
+    /// Plain in-memory headers are never secret — always returns false.
+    /// </summary>
+    public bool ALIsHeaderValueSecret(string name) => false;
+
+    /// <summary>
     /// Overload for <c>HttpHeaders.GetValues(name, values)</c> when the caller declares
     /// <c>values: List of [Text]</c>.
     /// BC emits <c>ALGetValues(DataError, key, NavList&lt;NavText&gt;)</c> for this form —
