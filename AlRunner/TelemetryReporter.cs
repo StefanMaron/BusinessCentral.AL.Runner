@@ -165,9 +165,29 @@ public static class TelemetryReporter
             foreach (var (key, count, sample) in compilationGrouped)
             {
                 var msg = count > 1 ? $"{key} ({count}×)" : $"{key}: {sample}";
+
+                // Enrich with the AL source line where the gap occurred.
+                // We use the sample error (which contains the [AL line ~N] hint) to resolve
+                // the object name → file path → single AL source line (string literals redacted).
+                // This makes telemetry issues actionable without a full reproduction.
+                var alLine = ExtractAlSourceLineFromError(
+                    // sample may be the snippet only; try the full error from compilationErrors first
+                    compilationErrors!.FirstOrDefault(e => e.Contains(sample)) ?? sample,
+                    objectName =>
+                    {
+                        var filePath = SourceFileMapper.GetFile(objectName);
+                        if (filePath == null || !File.Exists(filePath)) return null;
+                        try { return File.ReadAllText(filePath); }
+                        catch { return null; }
+                    });
+
+                var scrubbedMsg = ScrubMessage(msg);
+                if (alLine != null)
+                    scrubbedMsg = $"{scrubbedMsg}  [AL: {alLine}]";
+
                 var report = new TelemetryReport(
                     ExceptionType: "AlRunner.CompilationGap",
-                    ScrubbedMessage: ScrubMessage(msg),
+                    ScrubbedMessage: scrubbedMsg,
                     StackText: "",
                     FrameCount: 0,
                     RunnerVersion: GetVersionString(),
@@ -188,6 +208,57 @@ public static class TelemetryReporter
     }
 
     // ─── Internals ────────────────────────────────────────────────────────────
+
+    // Regex to parse the [AL line ~N col M in ObjectName] hint embedded by SourceLineMapper.FormatDiagnostic.
+    private static readonly Regex AlLineHintInErrorRx =
+        new(@"\[AL line ~(\d+) col \d+ in ([^\]]+)\]", RegexOptions.Compiled);
+
+    // Regex to replace AL string literal content with '...' for privacy scrubbing.
+    // Matches single-quoted AL strings: '...' (including empty '' and escaped '' inside).
+    // AL uses '' (double single-quote) as the escape sequence for a literal quote inside a string.
+    // The pattern captures the delimiters and replaces the contents with '...'.
+    private static readonly Regex AlStringLiteralRx =
+        new(@"'[^']*(?:''[^']*)*'", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Replace the content of all AL single-quoted string literals in <paramref name="line"/>
+    /// with the placeholder '...' to avoid leaking user data via telemetry.
+    /// The surrounding quotes and all non-string-literal content are preserved.
+    /// </summary>
+    private static string SanitizeAlLine(string line) =>
+        AlStringLiteralRx.Replace(line.Trim(), "'...'");
+
+    /// <summary>
+    /// Given a formatted compilation error string (as produced by
+    /// <see cref="SourceLineMapper.FormatDiagnostic"/>), extract the single AL source
+    /// line referenced by the embedded <c>[AL line ~N col M in ObjectName]</c> hint.
+    ///
+    /// <paramref name="fileReader"/> is called with the AL object name from the hint;
+    /// it should return the full AL source text, or null if not available.
+    ///
+    /// Returns the sanitized line (string literals redacted), or null when the hint is
+    /// absent, the file is unavailable, or the line number is out of range.
+    /// </summary>
+    private static string? ExtractAlSourceLineFromError(string compilationError, Func<string, string?> fileReader)
+    {
+        var m = AlLineHintInErrorRx.Match(compilationError);
+        if (!m.Success) return null;
+
+        if (!int.TryParse(m.Groups[1].Value, out int lineNumber) || lineNumber < 1) return null;
+        var objectName = m.Groups[2].Value;
+
+        var source = fileReader(objectName);
+        if (source == null) return null;
+
+        // Split lines — support both \r\n and \n
+        var lines = source.Split('\n');
+        int idx = lineNumber - 1; // convert 1-based to 0-based
+        if (idx >= lines.Length) return null;
+
+        // Strip any trailing \r (Windows line endings)
+        var rawLine = lines[idx].TrimEnd('\r');
+        return SanitizeAlLine(rawLine);
+    }
 
     // Regex to parse the missing member name from a CS1061/CS0117 diagnostic message:
     // "'TypeName' does not contain a definition for 'MemberName' and …"
@@ -370,6 +441,17 @@ public static class TelemetryReporter
 
     /// <summary>Public test seam — wraps the internal <see cref="ScrubMessage"/> method.</summary>
     public static string ScrubMessagePublic(string message) => ScrubMessage(message);
+
+    /// <summary>Public test seam — wraps the internal <see cref="SanitizeAlLine"/> method.</summary>
+    public static string SanitizeAlLinePub(string line) => SanitizeAlLine(line);
+
+    /// <summary>
+    /// Public test seam — wraps the internal <see cref="ExtractAlSourceLineFromError"/> method.
+    /// <paramref name="fileReader"/> is called with the AL object name extracted from the hint
+    /// and should return the full AL source content (or null when not available).
+    /// </summary>
+    public static string? ExtractAlSourceLineFromErrorPub(string compilationError, Func<string, string?> fileReader)
+        => ExtractAlSourceLineFromError(compilationError, fileReader);
 
     /// <summary>Public test seam — wraps the internal <see cref="BuildTestErrorReport"/> method.</summary>
     public static TelemetryReportPublic? BuildTestErrorReportPublic(TestResult result)

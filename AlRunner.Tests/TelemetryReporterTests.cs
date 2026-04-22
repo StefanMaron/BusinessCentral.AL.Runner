@@ -403,6 +403,128 @@ public class TelemetryReporterTests
         Assert.Null(TelemetryReporter.ExtractObjectTypeFromName("SomethingUnknown"));
         Assert.Null(TelemetryReporter.ExtractObjectTypeFromName(""));
     }
+
+    // ─── SanitizeAlLine ───────────────────────────────────────────────────────
+
+    [Fact]
+    public void SanitizeAlLine_StringLiteralContent_IsRedacted()
+    {
+        // String literal content is replaced with '...' to avoid leaking user data.
+        var line = "    TempBlob.CreateOutStream().Write(Base64Convert.FromBase64('secret-api-key'));";
+        var result = TelemetryReporter.SanitizeAlLinePub(line);
+        Assert.DoesNotContain("secret-api-key", result);
+        Assert.Contains("'...'", result);
+        // Method call structure is preserved
+        Assert.Contains("Base64Convert.FromBase64", result);
+    }
+
+    [Fact]
+    public void SanitizeAlLine_EmptyStringLiteral_IsRedacted()
+    {
+        // Empty string literal '' should become '...'
+        var line = "    MyProc('');";
+        var result = TelemetryReporter.SanitizeAlLinePub(line);
+        // Even empty literal is redacted to uniform '...'
+        Assert.Contains("'...'", result);
+    }
+
+    [Fact]
+    public void SanitizeAlLine_MultipleStringLiterals_AllRedacted()
+    {
+        // Multiple string literals in the same line — all should be redacted.
+        var line = "    Format(MyRecord.Name, 0, '<Precision,2:2>') + ' ' + 'USD';";
+        var result = TelemetryReporter.SanitizeAlLinePub(line);
+        Assert.DoesNotContain("<Precision,2:2>", result);
+        Assert.DoesNotContain("'USD'", result);
+        // Structure preserved
+        Assert.Contains("Format(MyRecord.Name", result);
+    }
+
+    [Fact]
+    public void SanitizeAlLine_NoStringLiterals_Unchanged()
+    {
+        // A line with no string literals should be returned unchanged (trimmed).
+        var line = "    Result := MyCodeunit.Calculate(Amount, Qty);";
+        var result = TelemetryReporter.SanitizeAlLinePub(line);
+        Assert.Equal(line.Trim(), result);
+    }
+
+    // ─── ExtractAlSourceLineFromError ─────────────────────────────────────────
+
+    [Fact]
+    public void ExtractAlSourceLine_HintPresent_ReturnsCorrectLine()
+    {
+        // The error message contains [AL line ~3 col 1 in MyCodeunit].
+        // The file reader returns 3 lines; line 3 is the target.
+        var error = "MyCodeunit.cs(10,5): error CS1061: 'MyCodeunit' does not contain a definition for 'ALRun'  [AL line ~3 col 1 in MyCodeunit]";
+        var alSource = "codeunit 50 MyCodeunit\n{\n    procedure Foo() begin MyProc('hello'); end;\n}";
+
+        string? ReadFile(string objName) => objName == "MyCodeunit" ? alSource : null;
+
+        var result = TelemetryReporter.ExtractAlSourceLineFromErrorPub(error, ReadFile);
+
+        Assert.NotNull(result);
+        // Line 3 is "    procedure Foo() begin MyProc('hello'); end;"
+        // String literal is redacted:
+        Assert.Contains("MyProc", result);
+        Assert.DoesNotContain("hello", result);
+        Assert.Contains("'...'", result);
+    }
+
+    [Fact]
+    public void ExtractAlSourceLine_NoHint_ReturnsNull()
+    {
+        // Errors without the [AL line ~N] hint should return null gracefully.
+        var error = "MyCodeunit.cs(10,5): error CS1061: 'MyCodeunit' does not contain a definition for 'ALRun'";
+        string? ReadFile(string objName) => "codeunit 50 MyCodeunit\n{\n}";
+
+        var result = TelemetryReporter.ExtractAlSourceLineFromErrorPub(error, ReadFile);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void ExtractAlSourceLine_FileNotFound_ReturnsNull()
+    {
+        // When the file reader returns null (object not registered), result is null.
+        var error = "MyCodeunit.cs(10,5): error CS1061: 'MyCodeunit' does not contain a definition for 'ALRun'  [AL line ~3 col 1 in MyCodeunit]";
+
+        string? ReadFile(string objName) => null;
+
+        var result = TelemetryReporter.ExtractAlSourceLineFromErrorPub(error, ReadFile);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void ExtractAlSourceLine_LineNumberOutOfRange_ReturnsNull()
+    {
+        // When the hint points to a line beyond the file, return null safely.
+        var error = "Foo.cs(1,1): error CS1061: 'X' error  [AL line ~99 col 1 in Foo]";
+        var alSource = "codeunit 50 Foo\n{\n}"; // only 3 lines
+
+        string? ReadFile(string objName) => alSource;
+
+        var result = TelemetryReporter.ExtractAlSourceLineFromErrorPub(error, ReadFile);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void ExtractAlSourceLine_StringLiteralsSanitized()
+    {
+        // Full end-to-end sanitization: string content must not appear in result.
+        var error = "Proc.cs(5,1): error CS1061  [AL line ~2 col 1 in ApiConnector]";
+        var alSource = "codeunit 50 ApiConnector\n    HttpClient.SetBaseAddress('https://api.example.com/secret');";
+
+        string? ReadFile(string objName) => alSource;
+
+        var result = TelemetryReporter.ExtractAlSourceLineFromErrorPub(error, ReadFile);
+
+        Assert.NotNull(result);
+        Assert.DoesNotContain("https://api.example.com/secret", result);
+        Assert.Contains("'...'", result);
+    }
 }
 
 /// <summary>
