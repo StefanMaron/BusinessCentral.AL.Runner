@@ -218,6 +218,20 @@ public static class TelemetryReporter
         "Profile", "PermissionSet",
     };
 
+    // Regex matching generated BC type names like Page72336585, ReportExtension50500, etc.
+    private static readonly Regex GeneratedTypeIdRx =
+        new(@"(?:ReportExtension|TableExtension|PageExtension|EnumExtension|Codeunit|Report|Table|Page|Query|XmlPort|Enum)\d+",
+            RegexOptions.Compiled);
+
+    /// <summary>
+    /// Normalizes generated BC type IDs in a string to placeholders so that
+    /// Page72336585 and Page72336666 collapse to Page&lt;N&gt;.
+    /// Also normalizes fully-qualified forms like Microsoft.Dynamics.Nav.BusinessApplication.Page72336585.
+    /// </summary>
+    private static string NormalizeGeneratedTypeIds(string input) =>
+        GeneratedTypeIdRx.Replace(input, m =>
+            System.Text.RegularExpressions.Regex.Replace(m.Value, @"\d+$", "<N>"));
+
     /// <summary>
     /// Groups compilation error messages by CS error code + first single-quoted token
     /// (the type name). For CS1061 errors, the distinct missing member names are
@@ -251,9 +265,12 @@ public static class TelemetryReporter
                     {
                         // "Argument N: cannot convert from 'FromType' to 'ToType'"
                         // Key captures both type names so different target types don't collapse.
+                        // Generated type IDs are normalized (Page72336585 → Page<N>) so all
+                        // pages with the same conversion problem become one group.
                         var m = Cs1503Rx.Match(msgPortion);
                         if (m.Success)
-                            return $"{code}: '{m.Groups[1].Value}' → '{m.Groups[2].Value}'";
+                            return NormalizeGeneratedTypeIds(
+                                $"{code}: '{m.Groups[1].Value}' → '{m.Groups[2].Value}'");
                         break;
                     }
                     case "CS1501":
@@ -294,7 +311,8 @@ public static class TelemetryReporter
 
                 // Default: group by CS code + first quoted token (original behaviour, covers CS1061, CS0246, etc.)
                 var firstToken = singleQuoteRx.Match(msgPortion);
-                return firstToken.Success ? $"{code} on '{firstToken.Groups[1].Value}'" : code;
+                var defaultKey = firstToken.Success ? $"{code} on '{firstToken.Groups[1].Value}'" : code;
+                return NormalizeGeneratedTypeIds(defaultKey);
             })
             .Select(g =>
             {
