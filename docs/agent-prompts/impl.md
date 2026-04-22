@@ -48,6 +48,12 @@ Collisions → CS0101 build errors on all BC versions. IDs may repeat across buc
 
 Required doc updates:
 - docs/coverage.yaml — REQUIRED for every feature implemented (orchestrator blocks merge without it)
+  - Track at **overload level**: if a method has multiple overloads, each must have its own entry
+    (e.g. `File.UploadIntoStream (5-arg)` and `File.UploadIntoStream (6-arg)` are separate entries).
+    The auto-generated coverage scan only sees method names, not overloads — telemetry issues
+    often surface missing overloads that the scan missed. Always add the specific overload you implemented.
+  - When implementing a fix surfaced by telemetry (compilation gaps, runtime gaps), add a coverage
+    entry even if the parent method already appears as "covered" — the overload was the gap.
 - README.md, PrintGuide() in AlRunner/Program.cs, docs/limitations.md — only if behavior changes
 - Do NOT edit CHANGELOG.md
 
