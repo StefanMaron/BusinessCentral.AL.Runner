@@ -137,6 +137,21 @@ public class MockHttpHeaders
     public bool ALIsHeaderValueSecret(NavText name) => false;
 
     /// <summary>
+    /// Overload for <c>HttpHeaders.GetValues(name, values)</c> when the caller declares
+    /// <c>values: List of [Text]</c>.
+    /// BC emits <c>ALGetValues(DataError, key, NavList&lt;NavText&gt;)</c> for this form —
+    /// the existing <c>MockArray&lt;NavText&gt;</c> overload only covers <c>array[N] of Text</c>.
+    /// Populates the list with all stored header values for the given key.
+    /// </summary>
+    public bool ALGetValues(DataError errorLevel, string key, NavList<NavText> values)
+    {
+        if (!_headers.TryGetValue(key, out var list) || list.Count == 0) return false;
+        foreach (var v in list)
+            values.ALAdd(new NavText(0, v));
+        return true;
+    }
+
+    /// <summary>
     /// Overload for <c>HttpHeaders.GetSecretValues(name, secrets)</c>:
     /// BC emits <c>ALGetValues(DataError, NavText, NavList&lt;NavSecretText&gt;)</c>.
     /// Plain headers have no secret values; the list is left empty.
