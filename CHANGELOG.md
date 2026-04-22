@@ -6,6 +6,38 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.18] - 2026-04-22
+
+### Added
+- **Page<N>.RunModal / LookupMode / CurrPage members (#1079, #1082)** — generated page
+  classes now have `RunModal()`, `LookupMode`, `Editable`, `PageCaption`, `PromptMode`,
+  and `ObjectID()`. Fixes CS1061 and CS1503 Page→NavForm conversion errors.
+- **TestField with ErrorInfo overloads (#1083, #1084, #1089)** — `TestField(Field, Value,
+  ErrorInfo)` and `TestField(Field, ErrorInfo)` forms now compile. Adds `NavALErrorInfo`-
+  specific overloads to `MockRecordHandle.ALTestFieldSafe`.
+- **NavSecretText in HTTP patterns (#1086, #1091)** — `HttpContent.WriteFrom(SecretText)`,
+  `HttpHeaders.Add(name, SecretText)`, and `TryAddWithoutValidation` now compile. Secrets
+  treated as plain text in standalone mode.
+- **ALGetResource 4-arg and Report.SaveAs 5/6-arg overloads (#1087, #1088)** —
+  `NavApp.GetResource(Name, InStream, Encoding)` and `Report.SaveAs(Id, RequestData,
+  Format, OutStream, RecordRef)` forms now compile as no-op stubs.
+- **NavList<NavText> → MockArray conversion (#1080)** — `HttpHeaders.GetValues` with
+  `List of [Text]` parameter now compiles via a `NavList<NavText>` overload.
+- **XmlDocument.ReadFrom(InStream) (#1081)** — rewriter redirects `NavXmlDocument.ALReadFrom`
+  to `AlCompat.XmlDocumentReadFrom` with MockInStream/NavText/string overloads.
+- **AlScope.Parent static stub (#1092)** — fixes CS0117 when BC compiler emits static
+  `AlScope.Parent` access in certain scope class patterns.
+- **Telemetry: AL source line in CompilationGap (#1093)** — telemetry now includes the
+  sanitized AL source line that triggered each compilation error (string literals replaced
+  with `'...'`). Enables fully actionable issue creation without source access.
+
+### Changed
+- **Telemetry dedup precision (#1074, #1077, #1078)** — CS1503 keys now show both types
+  (`'FromType' → 'ToType'`), CS1501 shows arg count, CS0117 shows member name, CS1729/1674
+  show constructor args. Generated type IDs normalized (`Page<N>` not `Page72336585`).
+- **Triage script grouping (#1075, #1076)** — generated type IDs in triage grouping
+  normalized to `<N>` so all pages with the same missing member collapse to one issue.
+
 ## [1.0.17] - 2026-04-22
 
 ### Added
