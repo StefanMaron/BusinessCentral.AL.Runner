@@ -209,19 +209,24 @@ public class AlScope : IDisposable, ITreeObject
     public static string LastErrorCallStack { get; set; } = "";
 
     /// <summary>
-    /// Static null-returning stub for <c>AlScope.Parent</c> — issue #1092.
+    /// Instance null-returning stub for <c>Parent</c> — issues #1092 and #1105.
     ///
-    /// Some BC compiler versions emit <c>AlScope.Parent</c> as a static member
-    /// access in generated scope class code (e.g. when a test codeunit trigger
-    /// references a parent scope). Without this static property, the generated
-    /// C# fails with CS0117: 'AlScope' does not contain a definition for 'Parent'.
+    /// Some BC compiler versions emit <c>this.Parent</c> (instance access) in
+    /// generated scope class code when a scope class body references a parent
+    /// codeunit field. Without this instance property, the generated C# fails with:
+    ///   CS0176: 'AlScope.Parent' cannot be accessed with an instance reference.
     ///
-    /// The real parent reference is always accessed through the instance <c>Parent</c>
-    /// property injected by <see cref="RoslynRewriter"/> into the concrete scope
-    /// subclass, so returning null here is safe — this static stub is never reached
-    /// at runtime when the rewriter has correctly wired the <c>_parent</c> field.
+    /// Earlier versions (issue #1092) emitted a static class-qualified access that
+    /// was fixed with a static property, but that caused CS0176 for the instance
+    /// pattern. The correct fix is an instance (virtual) property so that both
+    /// <c>this.Parent</c> and <c>base.Parent</c> compile and resolve correctly.
+    ///
+    /// The real parent reference is always accessed through the injected instance
+    /// property on the concrete scope subclass (e.g. <c>public Codeunit123 Parent => _parent;</c>)
+    /// which shadows this base stub, so returning null here is safe — this base
+    /// stub is only reached when the rewriter did not inject a typed Parent.
     /// </summary>
-    public static object? Parent => null;
+    public virtual object? Parent => null;
 
     // ── Collectible errors ──────────────────────────────────────────────
     // Thread-static to avoid cross-test contamination in parallel scenarios.

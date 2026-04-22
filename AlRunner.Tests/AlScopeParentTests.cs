@@ -5,52 +5,82 @@ using Xunit;
 namespace AlRunner.Tests;
 
 /// <summary>
-/// Unit tests for AlScope.Parent static property — issue #1092.
+/// Unit tests for AlScope.Parent instance property — issues #1092 and #1105.
 ///
-/// The BC compiler emits `AlScope.Parent` as a static member access in some
-/// scope class contexts (e.g. when a test codeunit trigger references a parent
-/// scope through the class name rather than the base instance). Without a static
-/// `Parent` property on AlScope, the generated C# fails with:
-///   CS0117: 'AlScope' does not contain a definition for 'Parent'
+/// The BC compiler emits `Parent` access in scope class bodies in two patterns:
+///   • Some versions use `base.Parent.xxx` (handled by the RoslynRewriter rewrite)
+///   • Other versions use `this.Parent` (instance access on the scope class)
 ///
-/// The fix adds a static null-returning stub so the generated code compiles.
-/// Because the real parent reference is always accessed through the injected
-/// instance property on the concrete scope subclass, returning null here is safe.
+/// Issue #1092 (CS0117) was fixed by adding a static `Parent` stub.
+/// Issue #1105 (CS0176) shows that `this.Parent` in a scope class where the
+/// enclosing-type injection was skipped causes CS0176 ("static member accessed
+/// with an instance reference") because the static `AlScope.Parent` is resolved.
+///
+/// The correct fix: `Parent` must be an **instance** property on `AlScope`.
+/// This allows `this.Parent` to resolve correctly at both compile-time and runtime.
+/// The injected `public TParent Parent => _parent` on concrete scope subclasses
+/// hides (not overrides) the base instance property, so both levels work.
 /// </summary>
 public class AlScopeParentTests
 {
     /// <summary>
-    /// Positive: AlScope.Parent is a static property accessible as a class-level member.
-    /// This is a no-op stub test — the entire claim is "AlScope.Parent exists and does not crash."
-    /// Without this property, CS0117 fires when BC-generated C# accesses AlScope.Parent statically.
+    /// Positive: AlScope.Parent is an *instance* property (not static).
+    /// An instance property prevents CS0176 when BC-generated C# accesses Parent
+    /// via `this.Parent` on a scope class that inherits from AlScope.
     /// </summary>
     [Fact]
-    public void AlScope_StaticParent_Exists()
+    public void AlScope_InstanceParent_Exists()
     {
         var prop = typeof(AlScope).GetProperty(
             "Parent",
-            BindingFlags.Public | BindingFlags.Static);
+            BindingFlags.Public | BindingFlags.Instance);
 
         Assert.NotNull(prop);
     }
 
     /// <summary>
-    /// Positive: AlScope.Parent returns null (the safe no-op stub value).
-    /// Verifies the stub is not a throwing accessor — static access must succeed.
+    /// Negative: AlScope.Parent must NOT be static, so that `this.Parent` in scope
+    /// subclasses does not trigger CS0176.
     /// </summary>
     [Fact]
-    public void AlScope_StaticParent_ReturnsNull()
+    public void AlScope_Parent_IsNotStatic()
     {
-        // Access AlScope.Parent directly at the type level (not through an instance).
-        // This is exactly what the BC-generated code does when it emits AlScope.Parent.
-        var prop = typeof(AlScope).GetProperty(
+        var staticProp = typeof(AlScope).GetProperty(
             "Parent",
             BindingFlags.Public | BindingFlags.Static);
 
+        Assert.Null(staticProp);
+    }
+
+    /// <summary>
+    /// Positive: AlScope.Parent returns null on a base instance.
+    /// The instance property is a safe no-op stub — concrete scope subclasses
+    /// shadow it with their own injected `public T Parent => _parent` property.
+    /// </summary>
+    [Fact]
+    public void AlScope_InstanceParent_ReturnsNull()
+    {
+        var prop = typeof(AlScope).GetProperty(
+            "Parent",
+            BindingFlags.Public | BindingFlags.Instance);
+
         Assert.NotNull(prop);
 
-        var value = prop!.GetValue(null);
+        // AlScope is abstract — use a minimal concrete subclass to access via instance.
+        var instance = new MinimalAlScope();
+        var value = prop!.GetValue(instance);
 
         Assert.Null(value);
+    }
+
+    /// <summary>
+    /// Minimal concrete AlScope subclass for reflection-based instance tests.
+    /// Mimics the structure of a BC-generated scope class (after rewriting) that
+    /// does NOT shadow Parent with its own injected property — i.e., the worst case
+    /// where the fallback to AlScope.Parent must succeed as an instance access.
+    /// </summary>
+    private sealed class MinimalAlScope : AlScope
+    {
+        protected override void OnRun() { }
     }
 }
