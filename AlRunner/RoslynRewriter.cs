@@ -756,6 +756,11 @@ public bool Editable {{ get; set; }} = true;
 public string PageCaption {{ get; set; }} = string.Empty;
 public NavOption? PromptMode {{ get; set; }}
 public NavText ObjectID(bool withCaption = false) {{ return NavText.Empty; }}
+// Implicit conversion to NavForm — allows Page<N> instances to be passed wherever
+// NavForm is expected (e.g. NavForm.SetSubPageView, helper methods in generated page scope).
+// Without this, stripping NavForm from the base class list causes CS1503 at Roslyn
+// compilation time (issue #1106).
+public static implicit operator Microsoft.Dynamics.Nav.Runtime.NavForm({className} p) => default!;
 ";
             var pageMembers = CSharpSyntaxTree.ParseText(
                 $"class _Temp_ {{ {pageMemberCode} }}").GetRoot()

@@ -4652,11 +4652,20 @@ Page.PromptMode:
   tests: tests/bucket-1/100-page-promptmode
   notes: overloads=1; MockCurrPage.PromptMode and MockFormHandle.PromptMode NavOption stubs; also injected on Page<N> class for CurrPage.PromptMode access inside page triggers (issue #1079)
 
+Page.NavFormImplicitConversion:
+  layer: compiler-rewriter
+  category: Page
+  status: covered
+  tests: tests/bucket-1/291-page-run-with-var
+  notes: Each generated Page<N> class gets `public static implicit operator NavForm(PageN p) => default!` injected so that Page<N> instances can be passed where NavForm is expected in BC-generated code (issue #1106).
+
 Page.Run:
   layer: runtime-api
   category: Page
   status: covered
-  tests: tests/bucket-1/89-page-static
+  tests:
+    - tests/bucket-1/89-page-static
+    - tests/bucket-1/291-page-run-with-var
   notes: overloads=3
 
 Page.RunModal:
