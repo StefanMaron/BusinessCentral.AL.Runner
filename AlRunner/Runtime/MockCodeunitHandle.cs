@@ -163,6 +163,12 @@ public class MockCodeunitHandle
         var codeunitType = FindCodeunitType(assembly);
         if (codeunitType == null)
         {
+            // System codeunits (IDs 1-9999) are part of the BC platform and cannot be provided
+            // as user stubs. Treat calls to missing system codeunits as no-ops instead of
+            // throwing: the subscriber dispatch path works independently of the publisher class.
+            if (IsSystemCodeunitId(_codeunitId))
+                return null;
+
             throw new InvalidOperationException(BuildCodeunitNotFoundMessage(_codeunitId, assembly));
         }
 
@@ -284,7 +290,16 @@ public class MockCodeunitHandle
             var assembly = CurrentAssembly ?? Assembly.GetExecutingAssembly();
             var codeunitType = FindCodeunitType(assembly);
             if (codeunitType == null)
+            {
+                // System codeunits are treated as no-ops — fire OnRun event for subscribers
+                // but don't throw (the publisher body is a platform implementation).
+                if (IsSystemCodeunitId(_codeunitId))
+                {
+                    AlCompat.FireEvent(EventSubscriberRegistry.ObjectTypeCodeunit, _codeunitId, "OnRun");
+                    return true;
+                }
                 throw new InvalidOperationException(BuildCodeunitNotFoundMessage(_codeunitId, assembly));
+            }
 
             EnsureInstance(codeunitType);
             InvokeOnRun(codeunitType, _codeunitInstance!, record as MockRecordHandle);
@@ -359,6 +374,14 @@ public class MockCodeunitHandle
         var codeunitType = handle.FindCodeunitType(assembly);
         if (codeunitType == null)
         {
+            // System codeunits (IDs 1-9999) are platform implementations that cannot be
+            // provided as user stubs. Treat them as no-ops: fire the OnRun event so any
+            // compiled event subscribers still execute, but don't throw.
+            if (IsSystemCodeunitId(codeunitId))
+            {
+                AlCompat.FireEvent(EventSubscriberRegistry.ObjectTypeCodeunit, codeunitId, "OnRun");
+                return;
+            }
             throw new InvalidOperationException(BuildCodeunitNotFoundMessage(codeunitId, assembly));
         }
 
@@ -728,6 +751,14 @@ public class MockCodeunitHandle
         var expectedName = $"Codeunit{_codeunitId}";
         return assembly.GetTypes().FirstOrDefault(t => t.Name == expectedName);
     }
+
+    /// <summary>
+    /// Returns true when <paramref name="codeunitId"/> falls in the BC system/platform
+    /// range (1–9999). System codeunits are part of the BC service tier and cannot be
+    /// provided as user stubs; calls to missing system codeunits are treated as no-ops.
+    /// </summary>
+    private static bool IsSystemCodeunitId(int codeunitId)
+        => codeunitId is >= 1 and <= 9999;
 
     /// <summary>
     /// Build a descriptive error message when a codeunit is not found in the assembly.

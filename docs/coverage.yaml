@@ -1567,7 +1567,11 @@ Codeunit.Run:
   tests:
     - tests/bucket-1/64-codeunit-run-record
     - tests/bucket-1/112-codeunit-onrun-record
-  notes: overloads=2 (no-record and with-record variants); returns true on success, false on trapped error
+    - tests/bucket-1/128-codeunit-not-found
+  notes: >
+    overloads=2 (no-record and with-record variants); returns true on success, false on trapped error.
+    Missing system codeunits (IDs 1-9999) are treated as no-ops (fire OnRun event for subscribers, no throw);
+    missing user/test-toolkit codeunits still throw with a descriptive error.
 
 # ── CodeunitInstance ────────────────────────────────────────────
 

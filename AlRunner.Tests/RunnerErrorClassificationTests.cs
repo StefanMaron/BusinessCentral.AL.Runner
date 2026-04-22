@@ -40,6 +40,64 @@ public class RunnerErrorClassificationTests
     }
 
     /// <summary>
+    /// System codeunits (IDs 1–9999) are BC platform codeunits that cannot be
+    /// provided as user stubs. Invoke on a missing system codeunit must return null
+    /// (no-op) rather than throwing, so event-subscriber code that happens to call
+    /// methods on the publisher codeunit handle does not crash the runner.
+    /// </summary>
+    [Fact]
+    public void MockCodeunitHandle_SystemCodeunitInvoke_ReturnsNullNoOp()
+    {
+        // Codeunit 27 = "Company-Initialize" (system codeunit, never compiled into the test assembly)
+        var handle = new AlRunner.Runtime.MockCodeunitHandle(27);
+        // Must NOT throw — system codeunits are no-ops
+        var result = handle.Invoke(0, Array.Empty<object>());
+        // Return value should be null (no-op default)
+        Assert.Null(result);
+    }
+
+    /// <summary>
+    /// System codeunit IDs at boundary (1 and 9999) are also treated as no-ops.
+    /// User codeunit IDs (50000+) still throw for missing codeunits.
+    /// Proves the range check is correct.
+    /// </summary>
+    [Theory]
+    [InlineData(1)]
+    [InlineData(9999)]
+    public void MockCodeunitHandle_SystemCodeunitBoundary_InvokeIsNoOp(int codeunitId)
+    {
+        var handle = new AlRunner.Runtime.MockCodeunitHandle(codeunitId);
+        // Must not throw — boundary system codeunits are still no-ops
+        var result = handle.Invoke(0, Array.Empty<object>());
+        Assert.Null(result);
+    }
+
+    /// <summary>
+    /// ID 10000 is NOT a system codeunit — it falls outside the 1-9999 range.
+    /// Missing non-system codeunits must still throw.
+    /// </summary>
+    [Fact]
+    public void MockCodeunitHandle_NonSystemMissingCodeunit_StillThrows()
+    {
+        var handle = new AlRunner.Runtime.MockCodeunitHandle(10000);
+        Assert.Throws<InvalidOperationException>(() =>
+            handle.Invoke(0, Array.Empty<object>()));
+    }
+
+    /// <summary>
+    /// Static RunCodeunit(int) overload for a missing system codeunit must not throw.
+    /// </summary>
+    [Fact]
+    public void MockCodeunitHandle_RunCodeunit_SystemId_DoesNotThrow()
+    {
+        // RunCodeunit(27) — system codeunit "Company-Initialize", not compiled into test assembly
+        // Must not throw — system codeunits are treated as no-ops
+        var ex = Record.Exception(() =>
+            AlRunner.Runtime.MockCodeunitHandle.RunCodeunit(27));
+        Assert.Null(ex);
+    }
+
+    /// <summary>
     /// Regular assertion failures (user logic wrong) must NOT be classified as
     /// runner bugs. IsRunnerBug must stay false for plain Fail outcomes.
     /// </summary>

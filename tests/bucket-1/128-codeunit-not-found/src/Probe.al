@@ -14,7 +14,7 @@ codeunit 56280 "Missing CU Probe"
 
     procedure CallMissingSystemCodeunit()
     begin
-        // Call a system-range codeunit (1-9999) that doesn't exist
+        // Call a system-range codeunit (1-9999) that doesn't exist — should be a no-op
         Codeunit.Run(9999);
     end;
 
@@ -22,5 +22,10 @@ codeunit 56280 "Missing CU Probe"
     begin
         // Call a codeunit that does exist in the assembly (positive path)
         Codeunit.Run(56282);
+    end;
+
+    procedure SetFiredFlag(var Fired: Boolean)
+    begin
+        Fired := true;
     end;
 }

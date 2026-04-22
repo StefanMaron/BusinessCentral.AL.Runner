@@ -50,12 +50,11 @@ codeunit 56281 "Missing CU Tests"
     end;
 
     [Test]
-    procedure MissingSystemCodeunitIdentifiesRange()
+    procedure MissingSystemCodeunit_IsNoOp()
     begin
-        // [WHEN]  A system-range codeunit (1-9999) that does not exist is called
-        asserterror Probe.CallMissingSystemCodeunit();
-        // [THEN]  Error message identifies it as a system codeunit
-        Assert.ExpectedMessage('system', GetLastErrorText());
+        // [WHEN]  A system-range codeunit (1-9999) that does not exist is called via Codeunit.Run
+        // [THEN]  No error is raised — system codeunits are treated as no-ops
+        Probe.CallMissingSystemCodeunit();
     end;
 
     [Test]
