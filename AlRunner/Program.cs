@@ -1353,7 +1353,7 @@ public static class AlTranspiler
         return defaults;
     }
 
-    private static List<string> ResolvePackagePaths(List<string>? explicitPaths, List<string>? inputPaths)
+    public static List<string> ResolvePackagePaths(List<string>? explicitPaths, List<string>? inputPaths)
     {
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 

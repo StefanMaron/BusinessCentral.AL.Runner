@@ -572,4 +572,102 @@ namespace AlRunnerGenerated {
         Assert.True(result.Passed > 0);
         Assert.Equal(0, result.Failed);
     }
+
+    // ─── ResolvePackagePaths auto-detection (issue #1033) ──────────────────────
+
+    [Fact]
+    public void ResolvePackagePaths_NullInputs_ReturnsEmpty()
+    {
+        // No explicit paths, no input paths → no packages discovered
+        var result = AlTranspiler.ResolvePackagePaths(null, null);
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void ResolvePackagePaths_AutoDiscovers_AlpackagesInInputDir()
+    {
+        // Positive: .alpackages next to the input dir is auto-discovered
+        var tmp = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        var srcDir = Path.Combine(tmp, "src");
+        var pkgDir = Path.Combine(tmp, "src", ".alpackages");
+        Directory.CreateDirectory(srcDir);
+        Directory.CreateDirectory(pkgDir);
+
+        // Plant a dummy .app file so the directory qualifies
+        File.WriteAllBytes(Path.Combine(pkgDir, "Dummy.app"), new byte[] { 0x50, 0x4B });
+
+        try
+        {
+            var result = AlTranspiler.ResolvePackagePaths(null, new List<string> { srcDir });
+            Assert.Single(result);
+            Assert.Equal(Path.GetFullPath(pkgDir), result[0], StringComparer.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(tmp, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolvePackagePaths_AutoDiscovers_AlpackagesInParentDir()
+    {
+        // Positive: .alpackages in the parent of the input dir is also found
+        var tmp = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        var srcDir = Path.Combine(tmp, "src");
+        var pkgDir = Path.Combine(tmp, ".alpackages");
+        Directory.CreateDirectory(srcDir);
+        Directory.CreateDirectory(pkgDir);
+        File.WriteAllBytes(Path.Combine(pkgDir, "Dummy.app"), new byte[] { 0x50, 0x4B });
+
+        try
+        {
+            var result = AlTranspiler.ResolvePackagePaths(null, new List<string> { srcDir });
+            Assert.Single(result);
+            Assert.Equal(Path.GetFullPath(pkgDir), result[0], StringComparer.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(tmp, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolvePackagePaths_NoAlpackagesDir_ReturnsEmpty()
+    {
+        // Negative: when no .alpackages folder exists, nothing is discovered
+        var tmp = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        var srcDir = Path.Combine(tmp, "src");
+        Directory.CreateDirectory(srcDir);
+
+        try
+        {
+            var result = AlTranspiler.ResolvePackagePaths(null, new List<string> { srcDir });
+            Assert.Empty(result);
+        }
+        finally
+        {
+            Directory.Delete(tmp, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolvePackagePaths_ExplicitPaths_StillIncluded()
+    {
+        // When --packages is given explicitly, those paths are included in the result
+        var tmp = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        var pkgDir = Path.Combine(tmp, "mypkgs");
+        Directory.CreateDirectory(pkgDir);
+        File.WriteAllBytes(Path.Combine(pkgDir, "Dummy.app"), new byte[] { 0x50, 0x4B });
+
+        try
+        {
+            var result = AlTranspiler.ResolvePackagePaths(new List<string> { pkgDir }, null);
+            Assert.Single(result);
+            Assert.Equal(Path.GetFullPath(pkgDir), result[0], StringComparer.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(tmp, recursive: true);
+        }
+    }
 }
