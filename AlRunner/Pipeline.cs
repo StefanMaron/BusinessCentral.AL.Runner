@@ -38,6 +38,14 @@ public class PipelineOptions
     public string? UserId { get; set; }
 
     /// <summary>
+    /// Controls when in-memory tables are reset between tests.
+    /// Codeunit (default) — reset between test codeunits; within a codeunit all test
+    /// methods share table state (BC's default TestIsolation::Codeunit behaviour).
+    /// Method — reset before every individual test method (the previous runner default).
+    /// </summary>
+    public TestIsolation TestIsolation { get; set; } = TestIsolation.Codeunit;
+
+    /// <summary>
     /// Optional override for the C# rewriter step, intended for unit-testing the pipeline's
     /// rewriter-error-handling path. When set, replaces <see cref="RoslynRewriter.RewriteToTree"/>
     /// for every object. Throw to simulate a rewriter gap; return a tree with bad C# to simulate
@@ -47,6 +55,25 @@ public class PipelineOptions
 }
 
 public enum TestStatus { Pass, Fail, Error }
+
+/// <summary>
+/// Controls when in-memory tables are reset between tests.
+/// Matches BC's TestIsolation property on test codeunits.
+/// </summary>
+public enum TestIsolation
+{
+    /// <summary>
+    /// Reset tables between test codeunits. Within the same codeunit all test
+    /// methods share table state. This is BC's default TestIsolation::Codeunit.
+    /// </summary>
+    Codeunit,
+
+    /// <summary>
+    /// Reset tables before every individual test method. The previous runner
+    /// default; useful when tests are not designed for shared state.
+    /// </summary>
+    Method,
+}
 
 public class TestResult
 {
@@ -723,7 +750,7 @@ public class AlRunnerPipeline
             }
 
             var runSw = System.Diagnostics.Stopwatch.StartNew();
-            var results = Executor.RunTests(assembly, captureValues: options.CaptureValues, runProcedure: options.RunProcedure, initEvents: options.InitEvents);
+            var results = Executor.RunTests(assembly, captureValues: options.CaptureValues, runProcedure: options.RunProcedure, initEvents: options.InitEvents, testIsolation: options.TestIsolation);
             runSw.Stop();
             testResults.AddRange(results);
             if (results.Count == 0 && options.RunProcedure != null)

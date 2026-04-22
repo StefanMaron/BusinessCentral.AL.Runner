@@ -3050,22 +3050,18 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
                         SyntaxFactory.IdentifierName("ToNavValue")));
             }
 
-            // ALCompiler.ObjectToExactNavValue<T>(x) -> (T)(object)x
+            // ALCompiler.ObjectToExactNavValue<T>(x) -> AlCompat.ObjectToExactNavValue<T>(x)
+            // Previously emitted (T)(object)x which fails at runtime when x is a C# primitive
+            // (e.g. System.Boolean when a bool local is passed to a Text parameter via dynamic
+            // dispatch in OnInvoke). AlCompat.ObjectToExactNavValue<T> handles the coercions.
             if (exprText == "ALCompiler" && methodName == "ObjectToExactNavValue")
             {
-                var arg = visited.ArgumentList.Arguments[0].Expression;
-                // Extract T from the generic method name
-                if (memberAccess.Name is GenericNameSyntax genericName &&
-                    genericName.TypeArgumentList.Arguments.Count == 1)
-                {
-                    var targetType = genericName.TypeArgumentList.Arguments[0];
-                    return SyntaxFactory.CastExpression(
-                        targetType,
-                        SyntaxFactory.ParenthesizedExpression(
-                            SyntaxFactory.CastExpression(
-                                SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.ObjectKeyword)),
-                                SyntaxFactory.ParenthesizedExpression(arg))));
-                }
+                // Replace ALCompiler with AlCompat, keep the generic type arg and argument list
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        memberAccess.Name)); // keep GenericNameSyntax with type args
             }
 
             // ALCompiler.ObjectToDecimal -> AlCompat.ObjectToDecimal

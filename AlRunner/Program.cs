@@ -32,8 +32,11 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("  --packages <dir>      Add symbol references from .app files in directory");
     Console.Error.WriteLine("                        (auto-detected: .alpackages in/near source dirs when omitted)");
     Console.Error.WriteLine("  --stubs <dir>         Override dependency objects with stub AL files");
-    Console.Error.WriteLine("  --init-events         Fire BC lifecycle integration events before test execution");
-    Console.Error.WriteLine("                        (OnCompanyInitialize from CU 27, OnInstallAppPerCompany from CU 2)");
+    Console.Error.WriteLine("  --init-events         Fire BC lifecycle integration events before each codeunit");
+    Console.Error.WriteLine("                        (OnCompanyInitialize from CU 2/27, OnInstallAppPerCompany from CU 2)");
+    Console.Error.WriteLine("  --test-isolation <mode>  codeunit (default) — reset tables between test codeunits,");
+    Console.Error.WriteLine("                           sharing state within a codeunit (BC default behaviour);");
+    Console.Error.WriteLine("                           method — reset tables before every test method (legacy).");
     Console.Error.WriteLine("  --dump-csharp         Print generated C# (before rewriting) and exit");
     Console.Error.WriteLine("  --dump-rewritten      Print rewritten C# (after rewriting) and exit");
     Console.Error.WriteLine("  -e '<al code>'        Run inline AL code");
@@ -203,6 +206,17 @@ while (argIdx < args.Length)
             break;
         case "--init-events":
             options.InitEvents = true;
+            argIdx++;
+            break;
+        case "--test-isolation":
+            argIdx++;
+            if (argIdx >= args.Length) { Console.Error.WriteLine("Error: --test-isolation requires a value (codeunit|method)"); return 1; }
+            options.TestIsolation = args[argIdx].ToLowerInvariant() switch
+            {
+                "codeunit" => AlRunner.TestIsolation.Codeunit,
+                "method" => AlRunner.TestIsolation.Method,
+                _ => throw new ArgumentException($"Unknown --test-isolation value '{args[argIdx]}'. Use 'codeunit' or 'method'.")
+            };
             argIdx++;
             break;
         case "--stubs":
@@ -2303,7 +2317,7 @@ public static class Executor
         }
     }
 
-    public static List<AlRunner.TestResult> RunTests(Assembly assembly, bool captureValues = false, string? runProcedure = null, bool initEvents = false)
+    public static List<AlRunner.TestResult> RunTests(Assembly assembly, bool captureValues = false, string? runProcedure = null, bool initEvents = false, AlRunner.TestIsolation testIsolation = AlRunner.TestIsolation.Codeunit)
     {
         // Find test methods using [NavTest] attribute on the parent method,
         // then find the corresponding _Scope_ nested class.
@@ -2364,15 +2378,55 @@ public static class Executor
 
         var results = new List<AlRunner.TestResult>();
 
+        // Track codeunit-level isolation state.
+        // Null means no reset has happened yet (first test).
+        Type? currentCodeunitType = null;
+        bool firstReset = true;
+
         foreach (var (testName, scopeType, parentType) in testScopes)
         {
             // Resolve the AL codeunit name for grouping in JUnit output
             var codeunitName = AlRunner.SourceFileMapper.GetObjectForClass(parentType.Name);
 
-            // Reset in-memory state before each test
-            AlRunner.Runtime.MockRecordHandle.ResetAll();
-            AlRunner.Runtime.MockIsolatedStorage.ResetAll();
-            AlRunner.Runtime.MockVariableStorage.Reset();
+            // ---------------------------------------------------------------
+            // Isolation logic
+            // Codeunit isolation (BC default):  reset tables between codeunits.
+            //   Within a codeunit all test methods share the same table state.
+            // Method isolation (legacy):         reset tables before every test.
+            // ---------------------------------------------------------------
+            bool doTableReset = testIsolation == AlRunner.TestIsolation.Method
+                || firstReset
+                || parentType != currentCodeunitType;
+
+            if (doTableReset)
+            {
+                // Reset persistent state (tables, isolated storage, variable storage)
+                AlRunner.Runtime.MockRecordHandle.ResetAll();
+                AlRunner.Runtime.MockIsolatedStorage.ResetAll();
+                AlRunner.Runtime.MockVariableStorage.Reset();
+
+                // Fire lifecycle integration events ONCE per codeunit reset when --init-events is set.
+                // This seeds company-initialization data so subscribers' setup data is present
+                // for all tests in the codeunit, matching BC's behaviour where company data
+                // persists across tests within the same codeunit.
+                //
+                // Publisher IDs from [NavEventSubscriber] attributes in BC-generated C#:
+                //   OnInstallAppPerDatabase → publisher 2000000010 (BC internal install dispatcher)
+                //   OnInstallAppPerCompany  → publisher 2000000010 (BC internal install dispatcher)
+                //   OnCompanyInitialize     → publisher 2 or 27 (differs across BC versions)
+                if (initEvents)
+                {
+                    AlRunner.Runtime.AlCompat.FireEvent(2000000010, "OnInstallAppPerDatabase");
+                    AlRunner.Runtime.AlCompat.FireEvent(2000000010, "OnInstallAppPerCompany");
+                    AlRunner.Runtime.AlCompat.FireEvent(2, "OnCompanyInitialize");
+                    AlRunner.Runtime.AlCompat.FireEvent(27, "OnCompanyInitialize");
+                }
+
+                currentCodeunitType = parentType;
+                firstReset = false;
+            }
+
+            // Always reset per-test non-persistent state (error state, handlers, session, etc.)
             AlRunner.Runtime.AlScope.ResetLastStatement();
             AlRunner.Runtime.AlScope.LastErrorText = "";
             AlRunner.Runtime.AlScope.LastErrorCode = "";
@@ -2382,22 +2436,6 @@ public static class Executor
             AlRunner.Runtime.MockSession.Reset();
             AlRunner.Runtime.MockLanguage.Reset();
             AlRunner.Runtime.EventSubscriberRegistry.ResetBindings();
-
-            // Re-fire lifecycle integration events after each table reset when --init-events is set.
-            // This ensures that install/company-initialization setup data (created by
-            // [EventSubscriber] handlers and install codeunit triggers) is present before
-            // every test, matching BC's behaviour where company data persists across tests.
-            //
-            // Publisher IDs come from the [NavEventSubscriber] attributes in BC-generated C#:
-            //   OnCompanyInitialize     → publisher 2  (Codeunit "Company-Initialize")
-            //   OnInstallAppPerDatabase → publisher 2000000010 (BC internal install dispatcher)
-            //   OnInstallAppPerCompany  → publisher 2000000010 (BC internal install dispatcher)
-            if (initEvents)
-            {
-                AlRunner.Runtime.AlCompat.FireEvent(2000000010, "OnInstallAppPerDatabase");
-                AlRunner.Runtime.AlCompat.FireEvent(2000000010, "OnInstallAppPerCompany");
-                AlRunner.Runtime.AlCompat.FireEvent(2, "OnCompanyInitialize");
-            }
 
             try
             {

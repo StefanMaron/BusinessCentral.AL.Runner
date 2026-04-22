@@ -11014,3 +11014,44 @@ implicit_db_event_byref_params:
     Also handles value-type parameters with null args (fills in default(T)).
   tests:
     - tests/bucket-2/225-db-event-byref-params
+
+Boolean_to_NavText_cast:
+  layer: transpiler
+  category: Boolean
+  status: covered
+  notes: >
+    ALCompiler.ObjectToExactNavValue<NavText>(boolVar) was emitting (NavText)(object)boolVar
+    which throws InvalidCastException at runtime (bool → NavText). The rewriter now
+    redirects these calls to AlCompat.ObjectToExactNavValue<T>() which handles bool→NavText
+    via "Yes"/"No" conversion. Also adds a 2-arg NavIndirectValueToNavValue<T>(value, metadata)
+    overload (the 1-arg overload already existed). Fixes ~37 tests that crashed with
+    "Unable to cast object of type 'System.Boolean' to type
+    'Microsoft.Dynamics.Nav.Runtime.NavText'".
+  tests:
+    - tests/bucket-1/293-variant-to-navtext
+
+TestIsolation_flag:
+  layer: cli
+  category: executor
+  status: covered
+  notes: >
+    --test-isolation codeunit|method CLI flag controls table reset granularity.
+    codeunit (BC default): tables reset between test codeunits, shared within codeunit.
+    method: tables reset before every test method (old al-runner behavior).
+    CI runs buckets with --test-isolation method to preserve existing test expectations.
+    The flag is documented in --guide output.
+  tests:
+    - tests/bucket-2/226-codeunit-isolation
+
+InitEvents_OnCompanyInitialize_BothPublisherIDs:
+  layer: runtime-api
+  category: codeunit
+  status: covered
+  notes: >
+    --init-events now fires OnCompanyInitialize on BOTH publisher codeunit 2 AND 27.
+    BC has used both IDs across versions; firing only one missed subscribers registered
+    under the other ID. Also fires OnInstallAppPerDatabase and OnInstallAppPerCompany
+    from Codeunit 2000000010. Init events fire once per isolation boundary (per codeunit
+    in codeunit mode, per method in method mode).
+  tests:
+    - tests/init-events/40-init-events

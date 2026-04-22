@@ -1089,12 +1089,61 @@ public static class AlCompat
     public static T NavIndirectValueToNavValue<T>(object? value) where T : NavValue
     {
         if (value is T directValue) return directValue;
-        if (value is MockVariant mv && mv.Value is T mvValue) return mvValue;
+        if (value is MockVariant mv)
+        {
+            if (mv.Value is T mvValue) return mvValue;
+            // Unwrap variant and retry
+            return NavIndirectValueToNavValue<T>(mv.Value);
+        }
         if (value is NavValue nv && nv is T typedValue) return typedValue;
-        // Try conversion from string
+        // Coerce bool/NavBoolean → NavText using AL's "Yes"/"No" representation
         if (typeof(T) == typeof(NavText))
-            return (T)(NavValue)new NavText(value?.ToString() ?? "");
+        {
+            if (value is bool boolVal)
+                return (T)(NavValue)new NavText(boolVal ? "Yes" : "No");
+            if (value is NavBoolean nb)
+                return (T)(NavValue)new NavText((bool)nb ? "Yes" : "No");
+            return (T)(NavValue)new NavText(Format(value));
+        }
         throw new InvalidCastException($"Cannot convert {value?.GetType().Name ?? "null"} to {typeof(T).Name}");
+    }
+
+    /// <summary>
+    /// 2-argument overload of NavIndirectValueToNavValue for the BC compiler's
+    /// <c>ALCompiler.NavIndirectValueToNavValue&lt;T&gt;(value, metadata)</c> pattern.
+    /// The metadata argument (NavValueDefinedLengthMetadata) is ignored — only the
+    /// value conversion matters in standalone mode.
+    /// </summary>
+    public static T NavIndirectValueToNavValue<T>(object? value, object? metadata) where T : NavValue
+        => NavIndirectValueToNavValue<T>(value);
+
+    /// <summary>
+    /// Safe replacement for ALCompiler.ObjectToExactNavValue&lt;T&gt;(x).
+    /// The rewriter converts <c>ALCompiler.ObjectToExactNavValue&lt;T&gt;(x)</c> to
+    /// <c>(T)(object)(x)</c>, which fails at runtime when x is a C# primitive (bool, int)
+    /// that cannot be directly cast to the BC NavValue type T.
+    /// This helper handles the common coercions, matching BC's implicit conversions.
+    /// Note: T is unconstrained so it also handles NavVariant → MockVariant cases.
+    /// </summary>
+    public static T ObjectToExactNavValue<T>(object? value)
+    {
+        if (value is T direct) return direct;
+        // Unwrap MockVariant for NavValue targets
+        if (value is MockVariant mv && typeof(T) != typeof(MockVariant))
+            return ObjectToExactNavValue<T>(mv.Value);
+        // bool/NavBoolean → NavText: AL uses "Yes"/"No" representation
+        if (typeof(T) == typeof(NavText))
+        {
+            if (value is bool boolVal)
+                return (T)(object)new NavText(boolVal ? "Yes" : "No");
+            if (value is NavBoolean nb)
+                return (T)(object)new NavText((bool)nb ? "Yes" : "No");
+            if (value is NavValue src)
+                return (T)(object)new NavText(Format(src));
+            return (T)(object)new NavText(Format(value));
+        }
+        // Fallback: try direct cast (may throw for truly incompatible types, matching BC behaviour)
+        return (T)(object)value!;
     }
 
     /// <summary>
@@ -1113,6 +1162,8 @@ public static class AlCompat
         if (value is double dbl) return FormatDecimal((decimal)dbl);
         if (value is float f) return FormatDecimal((decimal)f);
         if (value is int or long or short or byte) return value.ToString()!;
+        // System.Boolean — BC scopes declare Boolean locals as C# bool. AL Format(true)="Yes", Format(false)="No".
+        if (value is bool boolV) return boolV ? "Yes" : "No";
         // System.Guid — BC 26.x compiles AL Guid variables as System.Guid (not NavGuid).
         // Default AL format is "B" = {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX} (38 chars, uppercase).
         if (value is Guid sysGuid) return sysGuid.ToString("B").ToUpperInvariant();
