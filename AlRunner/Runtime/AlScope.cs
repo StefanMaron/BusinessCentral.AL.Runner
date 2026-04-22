@@ -298,6 +298,22 @@ public class AlScope : IDisposable, ITreeObject
     }
 
     /// <summary>
+    /// Bind — no-op stub on AlScope base.
+    ///
+    /// BC emits <c>ALSession.ALBindSubscription(DataError, base.Parent)</c> in scope
+    /// classes. The rewriter converts this to <c>base.Parent.Bind()</c> → <c>_parent.Bind()</c>.
+    /// The concrete codeunit class gets its own <c>Bind()</c> injected by the rewriter
+    /// (see <c>isCodeunitClass</c> block); this base virtual stub covers edge-cases
+    /// where the enclosing type is not a codeunit — issue #1106 / Gap 2.
+    /// </summary>
+    public virtual void Bind() { }
+
+    /// <summary>
+    /// Unbind — no-op stub on AlScope base (symmetric to <see cref="Bind"/>).
+    /// </summary>
+    public virtual void Unbind() { }
+
+    /// <summary>
     /// AL's [TryFunction] attribute. BC emits
     /// <c>TryInvoke(() =&gt; base.Parent.TryMethod())</c> at call sites.
     /// Executes the delegate; returns true if it completes without throwing,
