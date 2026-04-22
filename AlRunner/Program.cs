@@ -32,6 +32,8 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("  --packages <dir>      Add symbol references from .app files in directory");
     Console.Error.WriteLine("                        (auto-detected: .alpackages in/near source dirs when omitted)");
     Console.Error.WriteLine("  --stubs <dir>         Override dependency objects with stub AL files");
+    Console.Error.WriteLine("  --init-events         Fire BC lifecycle integration events before test execution");
+    Console.Error.WriteLine("                        (OnCompanyInitialize from CU 27, OnInstallAppPerCompany from CU 2)");
     Console.Error.WriteLine("  --dump-csharp         Print generated C# (before rewriting) and exit");
     Console.Error.WriteLine("  --dump-rewritten      Print rewritten C# (after rewriting) and exit");
     Console.Error.WriteLine("  -e '<al code>'        Run inline AL code");
@@ -197,6 +199,10 @@ while (argIdx < args.Length)
             argIdx++;
             if (argIdx >= args.Length) { Console.Error.WriteLine("Error: --user-id requires a value argument"); return 1; }
             options.UserId = args[argIdx];
+            argIdx++;
+            break;
+        case "--init-events":
+            options.InitEvents = true;
             argIdx++;
             break;
         case "--stubs":
@@ -612,6 +618,35 @@ al-runner --iteration-tracking ./src ./test                   # track loop itera
 al-runner --server                                         # long-running JSON-RPC daemon (stdin/stdout)
 al-runner --generate-stubs .alpackages ./stubs             # scaffold stubs from .app packages (all codeunits)
 al-runner --generate-stubs .alpackages ./stubs ./src ./test  # only stubs referenced in source
+al-runner --init-events ./src ./test                          # fire OnCompanyInitialize before each test
+```
+
+### --init-events: lifecycle event pre-seeding
+
+Pass `--init-events` when your extension has `[EventSubscriber]` methods that listen
+to BC system lifecycle events and need to run their setup logic before each test.
+
+Events fired before every test (after the per-test table reset):
+- `OnCompanyInitialize` from Codeunit 27 "Company-Initialize"
+- `OnInstallAppPerCompany` from Codeunit 2 "Install"
+
+The publisher codeunits (27, 2) do not need to be present in the assembly — al-runner
+will look up subscribers by reflection and dispatch to them directly. Missing publisher
+codeunits are silently skipped (graceful fallback, not a crash).
+
+Use case: extensions like Cash365 that use `[EventSubscriber(ObjectType::Codeunit, 27, 'OnCompanyInitialize', '', false, false)]`
+to create required setup records (number series, posting groups, etc.) before any
+business logic runs. With `--init-events`, those subscribers fire automatically before
+each test, eliminating the need to manually call setup procedures in every test.
+
+```al
+// This subscriber fires automatically with --init-events:
+[EventSubscriber(ObjectType::Codeunit, 27, 'OnCompanyInitialize', '', false, false)]
+local procedure OnCompanyInitialize()
+begin
+    // Create required setup records for your extension
+    InsertDefaultSetup();
+end;
 ```
 
 ### Machine-readable output (--output-json)
@@ -2265,7 +2300,7 @@ public static class Executor
         }
     }
 
-    public static List<AlRunner.TestResult> RunTests(Assembly assembly, bool captureValues = false, string? runProcedure = null)
+    public static List<AlRunner.TestResult> RunTests(Assembly assembly, bool captureValues = false, string? runProcedure = null, bool initEvents = false)
     {
         // Find test methods using [NavTest] attribute on the parent method,
         // then find the corresponding _Scope_ nested class.
@@ -2344,6 +2379,16 @@ public static class Executor
             AlRunner.Runtime.MockSession.Reset();
             AlRunner.Runtime.MockLanguage.Reset();
             AlRunner.Runtime.EventSubscriberRegistry.ResetBindings();
+
+            // Re-fire lifecycle integration events after each table reset when --init-events is set.
+            // This ensures that company-initialization setup data (created by [EventSubscriber]
+            // handlers on e.g. Codeunit 27 OnCompanyInitialize) is present before every test,
+            // matching BC's behaviour where company data persists across tests.
+            if (initEvents)
+            {
+                AlRunner.Runtime.AlCompat.FireEvent(27, "OnCompanyInitialize");
+                AlRunner.Runtime.AlCompat.FireEvent(2, "OnInstallAppPerCompany");
+            }
 
             try
             {

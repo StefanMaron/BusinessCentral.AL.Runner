@@ -26,6 +26,14 @@ public class PipelineOptions
     /// <summary>When true, promote exit code 2 (runner limitations) to exit code 1 (failure).</summary>
     public bool Strict { get; set; }
 
+    /// <summary>
+    /// When true, fire standard BC lifecycle integration events (OnCompanyInitialize from
+    /// Codeunit 27, OnInstallAppPerCompany from Codeunit 2) before test execution.
+    /// This allows extensions with [EventSubscriber] on system events to perform
+    /// setup work without the actual system codeunits being present.
+    /// </summary>
+    public bool InitEvents { get; set; }
+
     /// <summary>Configures the value returned by UserId() — defaults to "TESTUSER".</summary>
     public string? UserId { get; set; }
 
@@ -703,7 +711,7 @@ public class AlRunnerPipeline
             }
 
             var runSw = System.Diagnostics.Stopwatch.StartNew();
-            var results = Executor.RunTests(assembly, captureValues: options.CaptureValues, runProcedure: options.RunProcedure);
+            var results = Executor.RunTests(assembly, captureValues: options.CaptureValues, runProcedure: options.RunProcedure, initEvents: options.InitEvents);
             runSw.Stop();
             testResults.AddRange(results);
             if (results.Count == 0 && options.RunProcedure != null)

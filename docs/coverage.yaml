@@ -10958,3 +10958,20 @@ XmlportInstance.TextEncoding:
   notes: overloads=1; property on MockXmlPortHandle
   tests:
     - tests/bucket-1/90-xmlport-instance
+
+codeunit_not_found_graceful_fallback:
+  layer: runtime-api
+  category: codeunit
+  status: covered
+  notes: Missing codeunits (not in the compiled assembly) are now a soft warning instead of a fatal throw. RunCodeunit, Run(), and Invoke() log a warning to stderr and return a default value (null/true), allowing the calling test to continue. Tests prove execution continues after Codeunit.Run(99999) and Codeunit.Run(27).
+  tests:
+    - tests/bucket-1/128-codeunit-not-found
+
+init_events_lifecycle:
+  layer: runtime-api
+  category: codeunit
+  status: covered
+  notes: >
+    --init-events CLI flag fires BC lifecycle integration events (OnCompanyInitialize from Codeunit 27, OnInstallAppPerCompany from Codeunit 2) before each test (after per-test table reset). Allows [EventSubscriber] handlers on system events to perform setup work without the system codeunits being present. Subscriber code is discovered by reflection on compiled classes.
+  tests:
+    - tests/init-events/40-init-events
