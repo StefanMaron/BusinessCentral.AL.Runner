@@ -314,6 +314,39 @@ public class MockReportHandle
     }
 
     /// <summary>
+    /// Static Report.RunModal(reportId, requestWindow) — 2-argument overload.
+    /// <paramref name="requestWindow"/> is ignored in standalone mode (no UI).
+    /// </summary>
+    public static void StaticRunModal(int reportId, bool requestWindow)
+    {
+        var handle = new MockReportHandle(reportId) { UseRequestForm = requestWindow };
+        handle.RunModal();
+    }
+
+    /// <summary>
+    /// Static Report.RunModal(reportId, requestWindow, systemPrinter) — 3-argument overload.
+    /// <paramref name="requestWindow"/> and <paramref name="systemPrinter"/> are ignored in standalone mode.
+    /// </summary>
+    public static void StaticRunModal(int reportId, bool requestWindow, bool systemPrinter)
+    {
+        var handle = new MockReportHandle(reportId) { UseRequestForm = requestWindow };
+        handle.RunModal();
+    }
+
+    /// <summary>
+    /// Static Report.RunModal(reportId, requestWindow, systemPrinter, record) — 4-argument overload.
+    /// <paramref name="requestWindow"/>, <paramref name="systemPrinter"/>, and <paramref name="record"/>
+    /// are ignored in standalone mode (no rendering, no service-tier table filtering).
+    /// </summary>
+    public static void StaticRunModal(int reportId, bool requestWindow, bool systemPrinter, object record)
+    {
+        var handle = new MockReportHandle(reportId) { UseRequestForm = requestWindow };
+        if (record is MockRecordHandle rec)
+            handle.SetTableView(rec);
+        handle.RunModal();
+    }
+
+    /// <summary>
     /// AL's <c>Clear(rep)</c> — the rewriter emits <c>rep.Clear()</c>. Resets the
     /// report handle to its default (un-run) state. No-op in standalone mode.
     /// </summary>

@@ -5343,9 +5343,10 @@ Report.RunModal:
   layer: runtime-api
   category: Report
   status: covered
-  notes: overloads=1; NavReport.RunModal → MockReportHandle.StaticRunModal (no-op/handler dispatch).
+  notes: "overloads=4 (1-arg, 2-arg, 3-arg, 4-arg); NavReport.RunModal → MockReportHandle.StaticRunModal. 2-arg adds requestWindow; 3-arg adds systemPrinter; 4-arg adds record Variant (stored via SetTableView if MockRecordHandle). All are no-op/handler dispatch in standalone mode."
   tests:
     - tests/bucket-1/90-report-static
+    - tests/bucket-1/287-report-runmodal-4arg
 
 Report.RunRequestPage:
   layer: runtime-api
