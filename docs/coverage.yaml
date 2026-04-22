@@ -1184,6 +1184,20 @@ xmlport_element:
 
 # ── enum ────────────────────────────────────────────────────────
 
+enum_uninitialized_null_guard:
+  layer: runtime
+  category: enum
+  status: covered
+  notes: >
+    AlCompat.CloneTaggedOption(null, ordinal) — null guard for uninitialized
+    NavOption fields/variables.  Before the fix, ConditionalWeakTable.TryGetValue
+    threw ArgumentNullException("key") when the enum field had never been assigned.
+    Fix returns NavOption.Create(ordinal) for null existing.
+  tests:
+    - tests/bucket-1/292-null-option-default
+  unit_tests:
+    - AlRunner.Tests/CloneTaggedOptionTests.cs
+
 enum_value_declaration:
   layer: syntax
   category: enum

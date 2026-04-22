@@ -790,6 +790,17 @@ public static class AlCompat
     /// </summary>
     public static NavOption CloneTaggedOption(NavOption existing, int ordinal)
     {
+        // Guard: when an AL enum/option field or variable has never been assigned,
+        // the underlying NavOption reference at the C# level is null.  The BC
+        // compiler emits NavOption.Create(existing.NavOptionMetadata, V) which
+        // the rewriter transforms to CloneTaggedOption(existing, V).  With a null
+        // existing, ConditionalWeakTable.TryGetValue throws
+        // "Value cannot be null (Parameter 'key')".  Treat null as an
+        // uninitialized option and just create a fresh NavOption — BC behaviour
+        // is that uninitialized option fields default to ordinal 0.
+        if (existing == null)
+            return AlRunner.Runtime.MockRecordHandle.CreateOptionValue(ordinal);
+
         var opt = AlRunner.Runtime.MockRecordHandle.CreateOptionValue(ordinal);
         if (_optionEnumId.TryGetValue(existing, out var id))
             _optionEnumId.AddOrUpdate(opt, id);
