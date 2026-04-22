@@ -1585,7 +1585,9 @@ Codeunit.Run:
   notes: >
     overloads=2 (no-record and with-record variants); returns true on success, false on trapped error.
     Missing system codeunits (IDs 1-9999) are treated as no-ops (fire OnRun event for subscribers, no throw);
-    missing user/test-toolkit codeunits still throw with a descriptive error.
+    missing test-toolkit codeunits (130000-139999) are auto-stubbed at compile time — FindCodeunitType finds an
+    empty class, InvokeOnRun silently returns (no OnRun method), so calls are no-ops without throwing;
+    missing user-range codeunits (e.g. 50xxx) still throw with a descriptive error.
 
 # ── CodeunitInstance ────────────────────────────────────────────
 

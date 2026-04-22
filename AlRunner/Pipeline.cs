@@ -657,6 +657,18 @@ public class AlRunnerPipeline
         }
         Timer.EndStage("Roslyn rewriting");
 
+        // Inject minimal C# stub classes for test-toolkit codeunits (130000–139999) that
+        // are referenced in the generated C# but were NOT compiled from source.
+        // This allows MockCodeunitHandle.FindCodeunitType to find them at runtime and
+        // execute as no-ops (no OnRun method → InvokeOnRun silently returns) instead of
+        // throwing InvalidOperationException.
+        var testToolkitStubs = GenerateTestToolkitStubs(generatedCSharpList);
+        if (testToolkitStubs.Count > 0)
+        {
+            rewrittenTreeList.AddRange(testToolkitStubs);
+            Log.Info($"Injected {testToolkitStubs.Count} test-toolkit codeunit stub(s)");
+        }
+
         // Step 3: Compile
         Timer.StartStage("Roslyn compilation");
         var mapperTask = Task.Run(() =>
@@ -1239,6 +1251,66 @@ public class AlRunnerPipeline
         }
 
         return generatedCSharpList;
+    }
+
+    /// <summary>
+    /// Scans the generated C# for test-toolkit codeunit IDs (130000–139999) referenced
+    /// via <c>NavCodeunit.RunCodeunit</c> or <c>new NavCodeunitHandle(..., id)</c> patterns,
+    /// then returns a minimal rewritten C# syntax tree for each ID that does NOT already
+    /// have a compiled class in <paramref name="generatedCSharpList"/>. The generated stub
+    /// classes are empty (no methods) so that <see cref="AlRunner.Runtime.MockCodeunitHandle.FindCodeunitType"/>
+    /// finds them at runtime and treats any call as a silent no-op instead of throwing.
+    /// Codeunits with runner-native mock implementations (130/131/130000, 131004, 131100) are
+    /// excluded — they are never looked up by <c>FindCodeunitType</c>.
+    /// </summary>
+    internal static List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)> GenerateTestToolkitStubs(
+        List<(string Name, string Code)> generatedCSharpList)
+    {
+        // IDs already compiled from source — no stub needed.
+        var alreadyPresent = new HashSet<int>();
+        var classPattern = new Regex(@"class\s+Codeunit(\d+)", RegexOptions.Compiled);
+        foreach (var (_, code) in generatedCSharpList)
+        {
+            foreach (Match m in classPattern.Matches(code))
+            {
+                if (int.TryParse(m.Groups[1].Value, out int id))
+                    alreadyPresent.Add(id);
+            }
+        }
+
+        // Codeunits that have dedicated runner-native mock implementations and are
+        // dispatched via InvokeAssert / InvokeVariableStorage / InvokeRunnerConfig
+        // before FindCodeunitType is ever consulted — never need a stub class.
+        var nativeMockIds = new HashSet<int> { 130, 131, 130000, 131004, 131100 };
+
+        // Scan all generated C# for test-toolkit ID literals that appear as the
+        // codeunit ID argument in a RunCodeunit / NavCodeunitHandle call.
+        // Pattern: a comma or opening-paren followed by a 6-digit ID in 130000-139999.
+        var idPattern = new Regex(@"(?:,\s*|[\(\s])1(3[0-9]{4})\b", RegexOptions.Compiled);
+        var referencedIds = new HashSet<int>();
+        foreach (var (_, code) in generatedCSharpList)
+        {
+            foreach (Match m in idPattern.Matches(code))
+            {
+                if (int.TryParse("1" + m.Groups[1].Value, out int id)
+                    && id is >= 130000 and <= 139999
+                    && !nativeMockIds.Contains(id))
+                {
+                    referencedIds.Add(id);
+                }
+            }
+        }
+
+        var stubs = new List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)>();
+        foreach (var id in referencedIds.Where(id => !alreadyPresent.Contains(id)).OrderBy(id => id))
+        {
+            // Minimal class — no OnRun method so MockCodeunitHandle.InvokeOnRun silently returns.
+            var stubCode = $"namespace Microsoft.Dynamics.Nav.BusinessApplication {{ public class Codeunit{id} {{ }} }}";
+            var tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(
+                stubCode, path: $"TestToolkitStub{id}.cs");
+            stubs.Add(($"TestToolkitStub{id}", tree));
+        }
+        return stubs;
     }
 
     private static List<string> GetSeparateStubSources(List<string> stubSources, List<string> alSources)

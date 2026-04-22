@@ -41,12 +41,19 @@ codeunit 56281 "Missing CU Tests"
     end;
 
     [Test]
-    procedure MissingTestToolkitCodeunitIdentifiesRange()
+    procedure MissingTestToolkitCodeunit_IsNoOp()
     begin
-        // [WHEN]  A test-toolkit-range codeunit (130xxx) that does not exist is called
-        asserterror Probe.CallMissingTestToolkitCodeunit();
-        // [THEN]  Error message identifies the test toolkit range
-        Assert.ExpectedMessage('test toolkit', GetLastErrorText());
+        // [WHEN]  A test-toolkit-range codeunit (130xxx-139999) not in the assembly is called
+        // [THEN]  No error is raised — test toolkit codeunits are treated as no-ops
+        Probe.CallMissingTestToolkitCodeunit();
+    end;
+
+    [Test]
+    procedure LibraryERM_IsNoOp()
+    begin
+        // [WHEN]  Library - ERM (132217) not in the assembly is called via Codeunit.Run
+        // [THEN]  No error is raised — test toolkit codeunits are treated as no-ops
+        Probe.CallLibraryERM();
     end;
 
     [Test]
