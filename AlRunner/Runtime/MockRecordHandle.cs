@@ -1138,6 +1138,18 @@ public class MockRecordHandle
     }
 
     /// <summary>
+    /// ALTestFieldSafe(NavALErrorInfo) — non-empty check where the transpiler passes an
+    /// ErrorInfo as the "expected value" slot.  BC emits this for TestField(Field, ErrorInfo)
+    /// — the ErrorInfo provides error context but the semantic is identical to the 2-arg
+    /// non-empty check.  Must be declared before the object catch-all so it takes precedence.
+    /// Resolves the CS1503 (NavText/bool → DataError) errors tracked in issues #1084/#1089.
+    /// </summary>
+    public void ALTestFieldSafe(int fieldNo, NavType expectedType, NavALErrorInfo errorInfo)
+    {
+        ALTestFieldSafe(fieldNo, expectedType);
+    }
+
+    /// <summary>
     /// ALTestFieldSafe(object) — catch-all overload that resolves the CS0121 ambiguity.
     /// When the transpiler emits ALTestFieldSafe(fieldNo, NavType, NavValue-subtype), C#
     /// cannot choose between the NavValue overload and the primitive overloads (bool/string/
@@ -1172,6 +1184,17 @@ public class MockRecordHandle
             throw new Exception($"TestField failed: field {fieldNo} in table {_tableId} expected '{expectedStr}' but was '{actualStr}'");
     }
 
+    /// <summary>
+    /// ALTestFieldSafe(object, NavALErrorInfo) — 4-arg form emitted by the BC transpiler for
+    /// TestField(Field, Value, ErrorInfo).  The ErrorInfo provides error context but does not
+    /// change the assertion logic — the check delegates to the existing 3-arg object overload.
+    /// Fixes CS1501 (no overload for ALTestFieldSafe with 4 arguments) — issue #1083.
+    /// </summary>
+    public void ALTestFieldSafe(int fieldNo, NavType expectedType, object expectedValue, NavALErrorInfo errorInfo)
+    {
+        ALTestFieldSafe(fieldNo, expectedType, expectedValue);
+    }
+
     /// <summary>AL's TestField for NavValue comparisons (used in some transpiler patterns).</summary>
     public void ALTestFieldNavValueSafe(int fieldNo, NavType expectedType, NavValue expectedValue)
     {
@@ -1194,6 +1217,15 @@ public class MockRecordHandle
     }
 
     /// <summary>
+    /// ALTestField(DataError, int, NavType, object, NavALErrorInfo) — 5-arg DataError + ErrorInfo form.
+    /// Mirrors the 4-arg ALTestFieldSafe(object, NavALErrorInfo) but with the DataError prefix.
+    /// </summary>
+    public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType, object expectedValue, NavALErrorInfo errorInfo)
+    {
+        ALTestFieldSafe(fieldNo, expectedType, expectedValue);
+    }
+
+    /// <summary>
     /// AL's TESTFIELD(FieldNo) — asserts the field is non-empty/non-default.
     /// </summary>
     public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType)
@@ -1203,6 +1235,15 @@ public class MockRecordHandle
         var defaultStr = NavValueToString(DefaultForType(expectedType));
         if (actualStr == defaultStr)
             throw new Exception($"TestField failed: field {fieldNo} in table {_tableId} must have a value");
+    }
+
+    /// <summary>
+    /// ALTestField(DataError, int, NavType, NavALErrorInfo) — non-empty check with DataError + ErrorInfo.
+    /// Mirrors ALTestFieldSafe(int, NavType, NavALErrorInfo) but with the DataError prefix.
+    /// </summary>
+    public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType, NavALErrorInfo errorInfo)
+    {
+        ALTestField(errorLevel, fieldNo, expectedType);
     }
 
     // -----------------------------------------------------------------------

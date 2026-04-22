@@ -269,6 +269,9 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - TransferFields, CountApprox, Consistent (no-op), FieldActive (true), AddLink/HasLinks/DeleteLinks
 - FieldError(Field) / FieldError(Field, Text) — raise a field-level error message
   formatted as "<FieldCaption> <Message> in <TableCaption>: <PK>", catchable via asserterror
+- TestField(Field) / TestField(Field, Value) — assert field is non-empty or equals a value.
+  Also supports ErrorInfo overloads: TestField(Field, ErrorInfo) and TestField(Field, Value, ErrorInfo).
+  The ErrorInfo is accepted as error context but the assertion logic is identical to the non-ErrorInfo variants.
 - WritePermission/ReadPermission (true), SetPermissionFilter (no-op), LockTable (no-op)
 - Composite primary keys, sort ordering (SetCurrentKey / SetAscending), CurrentKey, Ascending
 - SETRANGE / SETFILTER filtering (=, <>, <, <=, >, >=, wildcards, OR via |)
