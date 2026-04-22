@@ -1627,6 +1627,23 @@ CompanyProperty.UrlName:
   tests:
     - tests/bucket-1/271-companyproperty
 
+# ── Library - Random (codeunit 130440) ───────────────────────────
+
+MockCodeunitHandle.LibraryRandom:
+  layer: runtime-api
+  category: LibraryRandom
+  status: covered
+  tests:
+    - tests/bucket-2/106-library-random
+  notes: >
+    AL stub for codeunit 130440 "Library - Random" (Test-TestLibraries).
+    Provides pseudo-random value generation for AL tests via BC built-ins (Random,
+    Randomize, Power, CreateGuid, CalcDate, WorkDate). SingleInstance = true.
+    Auto-loaded from AlRunner/stubs/LibraryRandom.al alongside other built-in stubs.
+    Methods covered: RandInt, RandIntInRange, RandDec, RandDecInRange,
+    RandDecInDecimalRange, RandDate, RandDateFrom, RandDateFromInRange,
+    RandPrecision, RandText, Init, SetSeed.
+
 # ── Any (codeunit 130500) ────────────────────────────────────────
 
 MockCodeunitHandle.LibraryAny:
