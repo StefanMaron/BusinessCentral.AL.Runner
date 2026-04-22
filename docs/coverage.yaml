@@ -1627,6 +1627,23 @@ CompanyProperty.UrlName:
   tests:
     - tests/bucket-1/271-companyproperty
 
+# ── Any (codeunit 130500) ────────────────────────────────────────
+
+MockCodeunitHandle.LibraryAny:
+  layer: runtime-api
+  category: Any
+  status: covered
+  tests:
+    - tests/bucket-2/102-library-any
+  notes: >
+    overloads=many; AL stub for codeunit 130500 "Any" (System.TestLibraries.Utilities).
+    Provides pseudo-random test-data generation via BC built-ins (Random, CreateGuid,
+    CalcDate). Auto-loaded from AlRunner/stubs/LibraryAny.al alongside other built-in stubs.
+    Methods covered: Boolean, IntegerInRange (1-arg + 2-arg), DecimalInRange (2-arg, 3-arg
+    Integer, 3-arg Decimal), DateInRange (1-arg, 2-arg, 3-arg), AlphabeticText,
+    AlphanumericText, UnicodeText, Email (0-arg + 2-arg), GuidValue, SetSeed, GetSeed,
+    SetDefaultSeed.
+
 # ── Cookie ──────────────────────────────────────────────────────
 
 Cookie.Domain:
