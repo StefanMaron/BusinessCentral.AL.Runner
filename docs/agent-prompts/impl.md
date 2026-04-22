@@ -63,7 +63,25 @@ Required doc updates:
   <description>" --repo StefanMaron/BusinessCentral.AL.Runner
   gh pr edit <pr-N> --add-label "agent: <AGENT-ID>" --add-label "status: review-ready" --repo StefanMaron/BusinessCentral.AL.Runner
 
-## Step 5 — Monitor
+## Step 5 — Monitor until merged
+After creating the PR, you MUST actively monitor it until CI is green and it merges.
+Do NOT stop or assume "done" just because you pushed and created the PR.
+
+### Check for merge conflicts FIRST
+  gh pr view <pr-N> --json mergeStateStatus --repo StefanMaron/BusinessCentral.AL.Runner
+If mergeStateStatus is "DIRTY" or "CONFLICTING":
+  1. Rebase on main: git fetch origin main && git rebase origin/main
+  2. Resolve any conflicts
+  3. Force-push: git push --force-with-lease
+  4. Verify: gh pr view <pr-N> --json mergeStateStatus (must be "BLOCKED" or "CLEAN")
+CI will NOT run on a PR with conflicts — always check this before investigating CI issues.
+
+### Check CI status
+  gh pr checks <pr-N> --repo StefanMaron/BusinessCentral.AL.Runner
+- "no checks reported" → almost always means merge conflicts. Check mergeStateStatus above.
+- CI failing → read the job log, fix the issue, push a new commit.
+- CI green → done, wait for merge.
+
 Fix CI failures, address review comments. Once merged, return to Step 1.
 One issue at a time — do not claim another while a PR is open.
 
