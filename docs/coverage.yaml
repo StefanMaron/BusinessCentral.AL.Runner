@@ -5586,8 +5586,8 @@ ReportInstance.PaperSource:
 ReportInstance.Preview:
   layer: runtime-api
   category: ReportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC emits CurrReport.Preview (bool property) and CurrReport.PreviewCanPrint (bool property) on the report class — both return false in standalone mode (no print-preview UI); injected as CurrReport stubs in RoslynRewriter.cs
 
 ReportInstance.Print:
   layer: runtime-api

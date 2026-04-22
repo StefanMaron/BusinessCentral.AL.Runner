@@ -418,6 +418,15 @@ public class RoslynRewriter : CSharpSyntaxRewriter
             preservedMembers.Add(
                 SyntaxFactory.ParseMemberDeclaration(
                     "public int PageNo() => 0;")!);
+            // Preview — CurrReport.Preview() returns false in standalone mode (no print-preview UI).
+            // BC emits: shown = (CurrReport.PreviewCanPrint == false ? true : CurrReport.Preview)
+            // Both are bool properties that default to false in standalone mode.
+            preservedMembers.Add(
+                SyntaxFactory.ParseMemberDeclaration(
+                    "public bool Preview => false;")!);
+            preservedMembers.Add(
+                SyntaxFactory.ParseMemberDeclaration(
+                    "public bool PreviewCanPrint => false;")!);
 
             // For report extensions: inject a CurrReport stub.
             // BC generates a CurrReport property that casts this.ParentObject to the
