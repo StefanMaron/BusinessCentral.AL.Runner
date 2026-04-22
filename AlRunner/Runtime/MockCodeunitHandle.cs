@@ -147,8 +147,8 @@ public class MockCodeunitHandle
     /// </summary>
     public object? Invoke(int memberId, object[] args)
     {
-        // Route codeunit 130 ("Library Assert"), 131 ("Assert" alias stub), and 130000 (Assert from BC test toolkit) to MockAssert
-        if (_codeunitId is 130 or 131 or 130000)
+        // Route codeunit 130 ("Library Assert"), 131 ("Assert" alias stub), 130000 (Assert from BC test toolkit), and 130002 (real BC "Library Assert" ID) to MockAssert
+        if (_codeunitId is 130 or 131 or 130000 or 130002)
             return InvokeAssert(memberId, args);
 
         // Route codeunit 131004 (Library - Variable Storage) to MockVariableStorage

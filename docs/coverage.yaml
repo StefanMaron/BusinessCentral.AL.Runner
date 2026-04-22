@@ -11125,3 +11125,15 @@ AlCompat.InitializeUninitializedObject:
   tests:
     - tests/bucket-2/100-uninit-field-fix
     - tests/bucket-2/101-validate-uninit
+
+MockCodeunitHandle.InvokeAssert130002:
+  layer: runtime-api
+  category: test-toolkit
+  status: covered
+  notes: >
+    Route codeunit 130002 (the real BC "Library Assert" ID) to MockAssert,
+    matching the existing routing for IDs 130, 131, and 130000. External
+    projects compiled against BC's real test toolkit reference 130002 rather
+    than the runner's built-in stub ID 130.
+  tests:
+    - tests/bucket-2/103-assert-130002
