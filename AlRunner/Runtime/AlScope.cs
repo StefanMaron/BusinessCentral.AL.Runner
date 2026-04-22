@@ -208,6 +208,21 @@ public class AlScope : IDisposable, ITreeObject
     public static int MaxStackDepth { get; set; } = 1000;
     public static string LastErrorCallStack { get; set; } = "";
 
+    /// <summary>
+    /// Static null-returning stub for <c>AlScope.Parent</c> — issue #1092.
+    ///
+    /// Some BC compiler versions emit <c>AlScope.Parent</c> as a static member
+    /// access in generated scope class code (e.g. when a test codeunit trigger
+    /// references a parent scope). Without this static property, the generated
+    /// C# fails with CS0117: 'AlScope' does not contain a definition for 'Parent'.
+    ///
+    /// The real parent reference is always accessed through the instance <c>Parent</c>
+    /// property injected by <see cref="RoslynRewriter"/> into the concrete scope
+    /// subclass, so returning null here is safe — this static stub is never reached
+    /// at runtime when the rewriter has correctly wired the <c>_parent</c> field.
+    /// </summary>
+    public static object? Parent => null;
+
     // ── Collectible errors ──────────────────────────────────────────────
     // Thread-static to avoid cross-test contamination in parallel scenarios.
 

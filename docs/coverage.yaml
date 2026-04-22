@@ -37,6 +37,20 @@ codeunit_declaration:
     - tests/bucket-1/112-codeunit-onrun-record
     - tests/bucket-2/216-inherent-permissions
 
+alscope_parent_static:
+  layer: syntax
+  category: object
+  status: covered
+  notes: >
+    AlScope.Parent static property stub — issue #1092.
+    Some BC compiler versions emit AlScope.Parent as a static member access in
+    generated scope class code, causing CS0117. The fix adds a static null-returning
+    stub on AlScope so the generated C# compiles. The real parent reference is always
+    accessed through the instance Parent property injected by RoslynRewriter into the
+    concrete scope subclass. Verified by reflection unit tests and AL integration tests.
+  tests:
+    - tests/bucket-1/290-alscope-parent
+
 codeunit_permissions_property:
   layer: syntax
   category: object
