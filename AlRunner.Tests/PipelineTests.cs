@@ -345,9 +345,9 @@ namespace AlRunnerGenerated {
 
         var grouped = TelemetryReporter.DeduplicateCompilationErrors(errors);
 
-        // CS1061 on 'Report70400' should be one group with count 3;
+        // CS1061 on 'Report<N>' (normalized) should be one group with count 3;
         // member names are now embedded in the key for actionable issue creation.
-        var cs1061 = grouped.Single(g => g.Key.StartsWith("CS1061 on 'Report70400'"));
+        var cs1061 = grouped.Single(g => g.Key.StartsWith("CS1061 on 'Report<N>'"));
         Assert.Equal(3, cs1061.Count);
         // All three distinct member names must appear in the key
         Assert.Contains("amountDue", cs1061.Key);

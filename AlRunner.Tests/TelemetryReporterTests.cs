@@ -28,8 +28,8 @@ public class TelemetryReporterTests
         Assert.Single(result);
         var (key, count, _) = result[0];
         Assert.Equal(3, count);
-        // Key must mention the type name
-        Assert.Contains("ReportExtension50500", key);
+        // Key must mention the normalized type name (ID replaced with <N>)
+        Assert.Contains("ReportExtension<N>", key);
         // Key must list all three distinct member names
         Assert.Contains("ParentObject", key);
         Assert.Contains("GetReportDataItems", key);
