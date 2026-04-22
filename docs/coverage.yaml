@@ -4367,8 +4367,10 @@ NavApp.GetResource:
   layer: runtime-api
   category: NavApp
   status: covered
-  tests: tests/bucket-1/99-misc-stubs
-  notes: overloads=1; no-op standalone — no .app bundle to read resource from. Stub on MockNavApp.
+  tests:
+    - tests/bucket-1/99-misc-stubs
+    - tests/bucket-2/221-navapp-getresource-encoding
+  notes: overloads=2 (with/without TextEncoding); no-op standalone — no .app bundle to read resource from. Stub on MockNavApp. Fixes #1087.
 
 NavApp.GetResourceAsJson:
   layer: runtime-api
@@ -5417,9 +5419,10 @@ Report.SaveAs:
   layer: runtime-api
   category: Report
   status: covered
-  notes: overloads=1; NavReport.SaveAs → MockReportHandle.StaticSaveAs (no-op).
+  notes: overloads=3 (path-only, OutStream, OutStream+RecordRef); NavReport.SaveAs → MockReportHandle.StaticSaveAs (no-op). Fixes #1088.
   tests:
     - tests/bucket-1/90-report-static
+    - tests/bucket-2/222-report-saveas-recordref
 
 Report.SaveAsExcel:
   layer: runtime-api
