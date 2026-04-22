@@ -1184,8 +1184,8 @@ xmlport_element:
 
 # ── enum ────────────────────────────────────────────────────────
 
-enum_uninitialized_null_guard:
-  layer: runtime
+Enum.CloneTaggedOption:
+  layer: runtime-api
   category: enum
   status: covered
   notes: >
@@ -10973,7 +10973,7 @@ XmlportInstance.TextEncoding:
   tests:
     - tests/bucket-1/90-xmlport-instance
 
-codeunit_not_found_graceful_fallback:
+Codeunit.GracefulFallback:
   layer: runtime-api
   category: codeunit
   status: covered
@@ -10981,7 +10981,7 @@ codeunit_not_found_graceful_fallback:
   tests:
     - tests/bucket-1/128-codeunit-not-found
 
-init_events_lifecycle:
+Codeunit.InitEvents:
   layer: runtime-api
   category: codeunit
   status: covered
