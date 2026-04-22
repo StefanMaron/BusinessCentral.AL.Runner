@@ -368,6 +368,18 @@ public class MockReportHandle
     // Report.SaveAs* — no-ops (no real file I/O in standalone mode)
     // BC emits NavReport.SaveAs*(DataError, int, string) — first arg is a DataError status object
     public static void StaticSaveAs(int reportId, string format, string path) { }
+
+    /// <summary>
+    /// BC emits <c>MockReportHandle.StaticSaveAs(DataError, reportId, requestData, format, ByRef&lt;OutStream&gt;)</c>
+    /// for <c>Report.SaveAs(ReportId, RequestData, Format, OutStream)</c>. No-op in standalone mode.
+    /// </summary>
+    public static void StaticSaveAs(object err, int reportId, string requestData, object format, MockOutStream outStream) { }
+
+    /// <summary>
+    /// BC emits <c>MockReportHandle.StaticSaveAs(DataError, reportId, requestData, format, ByRef&lt;OutStream&gt;, RecordRef)</c>
+    /// for <c>Report.SaveAs(ReportId, RequestData, Format, OutStream, RecordRef)</c>. No-op in standalone mode.
+    /// </summary>
+    public static void StaticSaveAs(object err, int reportId, string requestData, object format, MockOutStream outStream, MockRecordRef recordRef) { }
     public static void StaticSaveAsPdf(int reportId, string path) { }
     public static void StaticSaveAsPdf(object err, int reportId, string path) { }
     public static void StaticSaveAsWord(int reportId, string path) { }

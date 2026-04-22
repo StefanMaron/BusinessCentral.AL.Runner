@@ -118,8 +118,12 @@ public static class MockNavApp
     public static void ALNavAppGetArchiveRecordRef(int tableId, MockRecordRef recordRef) { }
 
     /// NavApp.GetResource(ResourceName; var InStream) — no-op in standalone mode.
-    /// BC emits: ALNavApp.ALGetResource(null!, NavText, MockInStream)
+    /// BC emits: ALNavApp.ALGetResource(null!, NavText, ByRef&lt;MockInStream&gt;)
     public static void ALGetResource(object? errorLevel, NavText resourceName, MockInStream inStream) { }
+
+    /// NavApp.GetResource(ResourceName; var InStream; TextEncoding) — no-op in standalone mode.
+    /// BC emits: ALNavApp.ALGetResource(null!, NavText, ByRef&lt;MockInStream&gt;, TextEncoding)
+    public static void ALGetResource(object? errorLevel, NavText resourceName, MockInStream inStream, object? encoding) { }
 
     public static void ALNavAppLoadPackageData(object? errorLevel, int tableNo) { }
     public static void ALNavAppLoadPackageData(int tableNo) { }
