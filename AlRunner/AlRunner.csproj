@@ -8,8 +8,6 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <NoWarn>MSB3277;CA1416</NoWarn>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
-    <InternalsVisibleTo>AlRunner.Tests</InternalsVisibleTo>
-    <InternalsVisibleTo>AlRunner.Benchmarks</InternalsVisibleTo>
 
     <!-- Cold-start: disable Dynamic PGO profiler overhead (never pays back in <2s process),
          allow QuickJit for loopy methods (BC compiler + Roslyn have many). -->
@@ -38,6 +36,8 @@
   <ItemGroup>
     <None Include="../README.md" Pack="true" PackagePath="/" />
     <None Include="../CHANGELOG.md" Pack="true" PackagePath="/" />
+    <InternalsVisibleTo Include="AlRunner.Tests" />
+    <InternalsVisibleTo Include="AlRunner.Benchmarks" />
   </ItemGroup>
 
   <PropertyGroup>

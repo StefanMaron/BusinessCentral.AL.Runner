@@ -2322,31 +2322,49 @@ public static class AlCompat
     }
 
     /// <summary>
-    /// DaTi2Variant(date, time) — pack a NavDate + NavTime into a DateTime MockVariant.
-    /// BC emits ALSystemDate.ALDaTi2Variant(scope, d, t) but scope is AlScope not
-    /// NavMethodScope; the rewriter strips it and calls here.
-    /// The result must satisfy Variant.IsDateTime() → wrap as NavDateTime.
+    /// CreateDateTime(date, time) — wrap a NavDate + NavTime into a NavDateTime.
+    /// BC emits ALSystemDate.ALCreateDateTime(session, d, t); the rewriter strips
+    /// the session and redirects here so we can apply the wall-clock → UTC
+    /// conversion BC's read-side ConvertTimeFromUtc expects.
+    /// </summary>
+    public static NavDateTime CreateDateTime(NavDate d, NavTime t)
+        => CreateNavDateTime(SafeLocalToUtc(CombineDateTime(d, t), TimeZoneInfo.Local));
+
+    /// <summary>
+    /// DaTi2Variant(date, time) — pack a NavDate + NavTime into a NavDateTime MockVariant.
+    /// BC emits ALSystemDate.ALDaTi2Variant(scope, d, t); the rewriter strips the scope
+    /// and redirects here. The stored value is UTC-converted (see CreateDateTime) so that
+    /// BC's read-side ConvertTimeFromUtc inverts the write correctly on any host.
     /// </summary>
     public static MockVariant DaTi2Variant(NavDate d, NavTime t)
+        => new(CreateNavDateTime(SafeLocalToUtc(CombineDateTime(d, t), TimeZoneInfo.Local)));
+
+    /// <summary>
+    /// Combine the date components of <paramref name="d"/> and the time-of-day
+    /// components of <paramref name="t"/> into a single wall-clock DateTime with
+    /// DateTimeKind.Unspecified. Extracts values via reflection on the backing
+    /// field because NavDate/NavTime do not implement IConvertible outside a
+    /// NavSession (Convert.ChangeType throws "Object must implement IConvertible").
+    /// </summary>
+    private static DateTime CombineDateTime(NavDate d, NavTime t)
     {
-        // Extract DateTime from NavDate (time part is midnight)
-        DateTime? dateOnly = null;
-        try { dateOnly = (DateTime)Convert.ChangeType(d, typeof(DateTime)); } catch { }
-        // Extract DateTime from NavTime (date part is meaningless)
-        DateTime? timeOnly = null;
-        try { timeOnly = (DateTime)Convert.ChangeType(t, typeof(DateTime)); } catch { }
-
-        var combined = new DateTime(
-            (dateOnly ?? DateTime.MinValue).Year,
-            (dateOnly ?? DateTime.MinValue).Month,
-            (dateOnly ?? DateTime.MinValue).Day,
-            (timeOnly ?? DateTime.MinValue).Hour,
-            (timeOnly ?? DateTime.MinValue).Minute,
-            (timeOnly ?? DateTime.MinValue).Second,
-            (timeOnly ?? DateTime.MinValue).Millisecond);
-
-        return new MockVariant(CreateNavDateTime(combined));
+        var date = NavDateValueField is null ? DateTime.MinValue
+            : (NavDateValueField.GetValue(d) as DateTime?) ?? DateTime.MinValue;
+        var time = NavTimeValueField is null ? DateTime.MinValue
+            : (NavTimeValueField.GetValue(t) as DateTime?) ?? DateTime.MinValue;
+        return new DateTime(
+            date.Year, date.Month, date.Day,
+            time.Hour, time.Minute, time.Second, time.Millisecond,
+            DateTimeKind.Unspecified);
     }
+
+    private static readonly System.Reflection.FieldInfo? NavDateValueField =
+        typeof(NavDate).BaseType?.GetField("value",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+    private static readonly System.Reflection.FieldInfo? NavTimeValueField =
+        typeof(NavTime).BaseType?.GetField("value",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
 
     /// <summary>
     /// NormalDate(date) — wraps ALSystemDate.ALNormalDate with 0D handling.
@@ -2419,6 +2437,39 @@ public static class AlCompat
         if (diffTicks == 0) return dt;
 
         return CreateNavDateTime(new DateTime(ticks + diffTicks, dateTime.Kind));
+    }
+
+    /// <summary>
+    /// Convert a local-wall-clock DateTime to UTC, using the supplied timezone as the
+    /// local reference. Applied on the write side of CreateDateTime / DaTi2Variant so
+    /// that BC's read-side ConvertTimeFromUtc(value, TimeZoneInfo.Local) correctly
+    /// inverts it, making DT2Time(CreateDateTime(D, T)) round-trip on any host. On
+    /// UTC hosts (CI) this is a no-op, matching the baseline; on non-UTC hosts
+    /// (typical Windows dev boxes) it removes the +offset that would otherwise
+    /// appear in DT2Time.
+    ///
+    /// DST policy is deterministic so Windows and Linux produce identical
+    /// NavDateTime.value ticks on the same input:
+    /// - Ambiguous local times (fall-back hour): use the standard-time offset.
+    /// - Invalid local times (spring-forward gap): shift forward to the first
+    ///   valid local instant (end of the gap).
+    /// </summary>
+    internal static DateTime SafeLocalToUtc(DateTime wallClockLocal, TimeZoneInfo localTz)
+    {
+        var unspec = DateTime.SpecifyKind(wallClockLocal, DateTimeKind.Unspecified);
+        if (localTz.IsInvalidTime(unspec))
+        {
+            while (localTz.IsInvalidTime(unspec))
+                unspec = unspec.AddMinutes(1);
+            return TimeZoneInfo.ConvertTimeToUtc(
+                DateTime.SpecifyKind(unspec, DateTimeKind.Unspecified), localTz);
+        }
+        if (localTz.IsAmbiguousTime(unspec))
+        {
+            var offsets = localTz.GetAmbiguousTimeOffsets(unspec);
+            return DateTime.SpecifyKind(unspec - offsets[0], DateTimeKind.Utc);
+        }
+        return TimeZoneInfo.ConvertTimeToUtc(unspec, localTz);
     }
 
     // Cache the backing field for NavDateTime construction via reflection.

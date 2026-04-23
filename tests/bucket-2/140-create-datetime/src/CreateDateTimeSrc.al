@@ -32,4 +32,26 @@ codeunit 60500 "CDT Helper"
     begin
         exit(DT2Date(dt) = 0D);
     end;
+
+    /// Boxes CreateDateTime result into a Variant, unboxes, returns DateTime.
+    /// Exercises the BC lowering path that routes through ALDaTi2Variant.
+    procedure VariantMake(d: Date; t: Time): DateTime
+    var
+        v: Variant;
+        dt: DateTime;
+    begin
+        v := CreateDateTime(d, t);
+        dt := v;
+        exit(dt);
+    end;
+
+    /// Variant-path round-trip: true when the Variant boxed DateTime decomposes
+    /// back to the same date and time.
+    procedure VariantRoundTrip(d: Date; t: Time): Boolean
+    var
+        dt: DateTime;
+    begin
+        dt := VariantMake(d, t);
+        exit((DT2Date(dt) = d) and (DT2Time(dt) = t));
+    end;
 }

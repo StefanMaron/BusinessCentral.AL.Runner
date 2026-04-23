@@ -2929,11 +2929,16 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
             // ALSystemDate.ALVariant2Date(session, v) → AlCompat.Variant2Date(v)
             // ALSystemDate.ALVariant2Time(session, v) → AlCompat.Variant2Time(v)
             // ALSystemDate.ALDaTi2Variant(scope, d, t) → AlCompat.DaTi2Variant(d, t)
+            // ALSystemDate.ALCreateDateTime(session, d, t) → AlCompat.CreateDateTime(d, t)
             // Strip the first (session/scope) arg; these are pure date-arithmetic operations.
             // ALVariant2Date/Time require interception because v is MockVariant, not NavVariant.
             // ALDaTi2Variant requires interception because scope is AlScope, not NavMethodScope.
+            // ALCreateDateTime is intercepted so the runner can apply the local-wall-clock
+            // → UTC conversion BC's read path (ALDT2Time / ALDT2Date) expects. Without it,
+            // DT2Time(CreateDateTime(D, T)) != T on any non-UTC host (issue #1159).
             if (exprText == "ALSystemDate" && methodName is "ALDMY2Date" or "ALDWY2Date"
-                    or "ALVariant2Date" or "ALVariant2Time" or "ALDaTi2Variant")
+                    or "ALVariant2Date" or "ALVariant2Time" or "ALDaTi2Variant"
+                    or "ALCreateDateTime")
             {
                 var args = visited.ArgumentList.Arguments;
                 var compatName = methodName switch
@@ -2943,6 +2948,7 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
                     "ALVariant2Date" => "Variant2Date",
                     "ALVariant2Time" => "Variant2Time",
                     "ALDaTi2Variant" => "DaTi2Variant",
+                    "ALCreateDateTime" => "CreateDateTime",
                     _ => methodName
                 };
                 // Strip first arg (session/scope), keep the rest

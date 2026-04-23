@@ -100,4 +100,41 @@ codeunit 60501 "CDT Create DateTime Tests"
             Helper.ExtractTime(Helper.MakeDateTime(d, 090000T)),
             'DT2Time must distinguish different times');
     end;
+
+    // -----------------------------------------------------------------------
+    // Variant round-trip — exercises the ALDaTi2Variant lowering path
+    // -----------------------------------------------------------------------
+
+    [Test]
+    procedure CreateDateTime_Variant_RoundTrip_Positive()
+    var
+        d: Date;
+        t: Time;
+    begin
+        // Positive: CreateDateTime result boxed through a Variant preserves both
+        // components when unboxed and decomposed. Exercises ALDaTi2Variant.
+        d := DMY2Date(15, 6, 2024);
+        t := 153045T;
+        Assert.IsTrue(
+            Helper.VariantRoundTrip(d, t),
+            'CreateDateTime via Variant must round-trip');
+    end;
+
+    [Test]
+    procedure CreateDateTime_Variant_DifferentTimes_Distinct()
+    var
+        d: Date;
+        dt1: DateTime;
+        dt2: DateTime;
+    begin
+        // Negative: different times produce distinguishable round-tripped times
+        // even when boxed through a Variant.
+        d := DMY2Date(1, 1, 2023);
+        dt1 := Helper.VariantMake(d, 080000T);
+        dt2 := Helper.VariantMake(d, 090000T);
+        Assert.AreNotEqual(
+            Helper.ExtractTime(dt1),
+            Helper.ExtractTime(dt2),
+            'Variant round-trip must distinguish different times');
+    end;
 }
