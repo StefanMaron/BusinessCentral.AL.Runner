@@ -6965,6 +6965,19 @@ Table.FindSet:
     ALFindSet(DataError, bool, bool) that delegates to the 2-arg form; ForUpdate/ForceNewQuery
     ignored in standalone mode
 
+Table.Format:
+  layer: runtime-api
+  category: Table
+  status: covered
+  notes: >
+    Format(Record) returns the position string (primary-key field values, e.g. "Id=CONST(42)").
+    MockRecordHandle.ToString() is overridden to return ALGetPosition(); AlCompat.Format(record)
+    falls through to value.ToString() which now produces the correct position string.
+    ConvertArgInternal also handles MockRecordHandle→string/numeric/bool conversions explicitly
+    to avoid ArgumentException when method dispatch passes a Record where a primitive is expected.
+  tests:
+    - tests/bucket-1/300-record-format
+
 Table.Get:
   layer: runtime-api
   category: Table

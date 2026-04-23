@@ -608,6 +608,15 @@ public class MockRecordHandle
     private string TableName() => $"Record Table {_tableId}";
 
     /// <summary>
+    /// Returns the AL position string for this record (primary-key field values).
+    /// AL's <c>Format(SomeRecord)</c> lowers to <c>AlCompat.Format(handle)</c> which
+    /// falls through to <c>value.ToString()</c>; this override ensures the result is
+    /// the human-readable position string (e.g. <c>Id=CONST(42)</c>) rather than the
+    /// CLR type name.
+    /// </summary>
+    public override string ToString() => ALGetPosition();
+
+    /// <summary>
     /// Fire an implicit DB trigger event (OnBefore/AfterInsertEvent, etc.)
     /// by dispatching through AlCompat.FireEvent with ObjectType.Table.
     /// Subscribers registered via <c>[EventSubscriber(ObjectType::Table, ...)]</c>

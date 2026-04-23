@@ -1063,6 +1063,24 @@ public class MockCodeunitHandle
             }
         }
 
+        // MockRecordHandle → primitive conversions.
+        // Convert.ChangeType requires IConvertible which MockRecordHandle doesn't implement.
+        // Handle explicitly before the fallback so the correct type is returned and
+        // MethodInfo.Invoke doesn't fail with ArgumentException on the wrong type.
+        if (arg is MockRecordHandle mrh)
+        {
+            if (targetType == typeof(string))
+                return mrh.ToString();
+            if (targetType == typeof(int) || targetType == typeof(long) ||
+                targetType == typeof(double) || targetType == typeof(float) ||
+                targetType == typeof(decimal) || targetType == typeof(short) ||
+                targetType == typeof(byte) || targetType == typeof(uint) ||
+                targetType == typeof(ulong))
+                return Convert.ChangeType(0, targetType);
+            if (targetType == typeof(bool))
+                return false;
+        }
+
         // Try general conversion
         try { return Convert.ChangeType(arg, targetType); }
         catch { return arg; }
