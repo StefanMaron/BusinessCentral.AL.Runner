@@ -51,6 +51,9 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("  --iteration-tracking  Track per-iteration data for loops (requires --output-json)");
     Console.Error.WriteLine("  --run <procedure>     Run only the specified procedure by name");
     Console.Error.WriteLine("  --server              Start in server mode (JSON-RPC over stdin/stdout)");
+    Console.Error.WriteLine("  --dap [port]          Start DAP debugger server (default port 4711)");
+    Console.Error.WriteLine("                        Connect VS Code or any DAP client to set breakpoints");
+    Console.Error.WriteLine("                        and inspect variables during AL test execution.");
     Console.Error.WriteLine("  --generate-stubs <packages-dir> <output-dir> [<src-dir> ...]");
     Console.Error.WriteLine("                        Scaffold empty AL stub files from .app symbol packages.");
     Console.Error.WriteLine("                        <packages-dir>  required  directory of .app files to read");
@@ -153,6 +156,30 @@ while (argIdx < args.Length)
         {
             var server = new AlRunner.AlRunnerServer();
             await server.RunAsync(Console.In, Console.Out);
+            return 0;
+        }
+        case "--dap":
+        {
+            argIdx++;
+            int dapPort = 4711;
+            if (argIdx < args.Length && int.TryParse(args[argIdx], out var parsedPort))
+            {
+                dapPort = parsedPort;
+                argIdx++;
+            }
+            // Collect remaining source paths into pipeline options
+            var dapPipelineOptions = new PipelineOptions();
+            while (argIdx < args.Length)
+            {
+                dapPipelineOptions.InputPaths.Add(Path.GetFullPath(args[argIdx]));
+                argIdx++;
+            }
+            Console.Error.WriteLine($"al-runner DAP server listening on 127.0.0.1:{dapPort}");
+            Console.Error.WriteLine("Connect your DAP client (e.g. VS Code with vscode-al) to debug.");
+            var dapServer = new AlRunner.DapServer(dapPort);
+            dapServer.PipelineOptions = dapPipelineOptions;
+            // Wire BreakpointHit → stopped event is handled inside DapServer
+            await dapServer.RunAsync();
             return 0;
         }
         case "--coverage":
@@ -2045,6 +2072,73 @@ public static class SourceLineMapper
         if (_sourceSpans.TryGetValue((scopeName, stmtId), out var alPos))
             return alPos;
         return null;
+    }
+
+    /// <summary>
+    /// Reverse lookup: find all (scopeName, stmtId) pairs that map to the
+    /// given AL source file and line. Used by the DAP server to translate
+    /// an IDE breakpoint (file, line) into runtime breakpoint registrations.
+    ///
+    /// <paramref name="alSourceFile"/> is matched against the AL object name
+    /// (as registered by <see cref="SourceFileMapper"/>) and also against
+    /// plain file path suffixes.
+    /// </summary>
+    public static List<(string ScopeName, int StmtId)> FindStatementsForAlLine(
+        string alSourceFile, int alLine)
+    {
+        var results = new List<(string ScopeName, int StmtId)>();
+        foreach (var kv in _sourceSpans)
+        {
+            if (kv.Value.Line != alLine)
+                continue;
+
+            // The scope name encodes the AL object (e.g. "Codeunit1_MyProc_Scope_abc").
+            // Resolve the associated source file via SourceFileMapper and compare.
+            var objectName = SourceFileMapper.GetObjectForClass(kv.Key.Scope);
+            var mappedFile = SourceFileMapper.GetFile(objectName);
+            if (mappedFile == null)
+            {
+                // If no exact file mapping, fall back to scope-based lookup.
+                mappedFile = SourceFileMapper.GetFileForScope(kv.Key.Scope, BuildScopeToObjectMap());
+            }
+
+            if (mappedFile != null && FilePathMatches(mappedFile, alSourceFile))
+                results.Add((kv.Key.Scope, kv.Key.StmtId));
+        }
+        return results;
+    }
+
+    /// <summary>
+    /// Build a scope-name → object-name dictionary from SourceFileMapper's internal
+    /// state. Used by FindStatementsForAlLine as a fallback when direct class lookup
+    /// doesn't resolve.
+    /// </summary>
+    private static Dictionary<string, string> BuildScopeToObjectMap()
+    {
+        // We don't have direct access to SourceFileMapper's internal maps, so we
+        // build a reverse lookup from the _sourceSpans keys — each scope name
+        // can be resolved via GetObjectForClass.
+        var result = new Dictionary<string, string>();
+        foreach (var scope in _sourceSpans.Keys.Select(k => k.Scope).Distinct())
+        {
+            var obj = SourceFileMapper.GetObjectForClass(scope);
+            result[scope] = obj;
+        }
+        return result;
+    }
+
+    private static bool FilePathMatches(string mappedFile, string requested)
+    {
+        // Normalize separators
+        mappedFile = mappedFile.Replace('\\', '/');
+        requested = requested.Replace('\\', '/');
+
+        // Exact match or suffix match (e.g. "src/Foo.al" matches "Foo.al")
+        return string.Equals(mappedFile, requested, StringComparison.OrdinalIgnoreCase)
+            || mappedFile.EndsWith("/" + requested, StringComparison.OrdinalIgnoreCase)
+            || requested.EndsWith("/" + mappedFile, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Path.GetFileName(mappedFile), Path.GetFileName(requested),
+                StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

@@ -70,16 +70,20 @@ public class AlScope : IDisposable, ITreeObject
 
     protected void StmtHit(int n)
     {
-        _hitStatements.Add((GetType().Name, n));
-        _lastStatementHit = (GetType().Name, n);
+        var typeName = GetType().Name;
+        _hitStatements.Add((typeName, n));
+        _lastStatementHit = (typeName, n);
         IterationTracker.RecordHit(n);
+        BreakpointManager.CheckHit(typeName, n);
     }
 
     protected bool CStmtHit(int n)
     {
-        _hitStatements.Add((GetType().Name, n));
-        _lastStatementHit = (GetType().Name, n);
+        var typeName = GetType().Name;
+        _hitStatements.Add((typeName, n));
+        _lastStatementHit = (typeName, n);
         IterationTracker.RecordHit(n);
+        BreakpointManager.CheckHit(typeName, n);
         return true;
     }
 
