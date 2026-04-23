@@ -895,6 +895,13 @@ public static class Timer
 public static class AlTranspiler
 {
     /// <summary>
+    /// The last Compilation object from TranspileMulti. Allows querying the BC
+    /// compiler's symbol table for method signatures on dependency objects
+    /// (codeunits, tables, etc.) that are referenced but not compiled from source.
+    /// </summary>
+    public static Compilation? LastCompilation { get; private set; }
+
+    /// <summary>
     /// Transpile a single AL source string (backward compat).
     /// </summary>
     public static string? Transpile(string alSource)
@@ -1300,6 +1307,9 @@ public static class AlTranspiler
             if (otherErrors.Count > 10)
                 Log.Info($"  ... and {otherErrors.Count - 10} more");
         }
+
+        // Store compilation for symbol table queries by auto-stub generation
+        LastCompilation = compilation;
 
         var outputter = new CSharpCaptureOutputter();
         EmitResult? emitResult = null;
