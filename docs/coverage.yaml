@@ -4668,6 +4668,17 @@ Notification.SetData:
   status: covered
   notes: overloads=1
 
+Notification.Default:
+  layer: runtime-api
+  category: Notification
+  status: covered
+  tests: tests/bucket-2/229-notification-default
+  notes: >
+    Static property that returns a new blank MockNotification.
+    BC generates MockNotification.Default (property access, no args) for global
+    Notification field initializers (codeunit-level var N: Notification).
+    Issue #1189.
+
 # ── NumberSequence ──────────────────────────────────────────────
 
 NumberSequence.Current:
@@ -4884,6 +4895,28 @@ Page.Update:
   status: covered
   tests: tests/bucket-1/89-page-static
   notes: overloads=1
+
+PagePart.SetTableView:
+  layer: runtime-api
+  category: PagePart
+  status: covered
+  tests: tests/bucket-2/231-pagepart-settableview
+  notes: >
+    No-op stub on MockPartFormHandle. BC generates
+    CurrPage.SubPart.Page.SetTableView(rec) as
+    CurrPage.GetPart(hash).CreateNavFormHandle(scope).SetTableView(rec.Target).
+    Issue #1186.
+
+PagePart.Update:
+  layer: runtime-api
+  category: PagePart
+  status: covered
+  tests: tests/bucket-2/231-pagepart-settableview
+  notes: >
+    No-op stub on MockPartFormHandle. BC generates
+    CurrPage.SubPart.Page.Update() or Update(bool) as
+    CurrPage.GetPart(hash).CreateNavFormHandle(scope).Update(...).
+    overloads=2 (0-arg via default bool param). Issue #1186.
 
 # ── ProductName ─────────────────────────────────────────────────
 
@@ -5765,8 +5798,13 @@ ReportInstance.ObjectId:
   layer: runtime-api
   category: ReportInstance
   status: covered
-  tests: tests/bucket-1/279-report-instance
-  notes: overloads=1; MockReportHandle.ObjectID() returns ReportId as text.
+  tests:
+    - tests/bucket-1/279-report-instance
+    - tests/bucket-2/230-report-objectid
+  notes: >
+    overloads=1; MockReportHandle.ObjectID() returns ReportId as text (on Report variable).
+    Also injected as ObjectID(bool withCaption = false) into generated report classes so
+    CurrReport.ObjectId(false) inside report triggers compiles. Issue #1191.
 
 ReportInstance.PageNo:
   layer: runtime-api

@@ -47,6 +47,16 @@ public class MockOutStream
         OnFlush = other.OnFlush;
     }
 
+    /// <summary>
+    /// AL's Clear(OutStream) — rewriter emits outStream.Clear().
+    /// Resets the stream to its initial empty state.
+    /// </summary>
+    public void Clear()
+    {
+        _buffer.Clear();
+        OnFlush = null;
+    }
+
     /// <summary>Return the current buffered bytes (used by ALCopyStream).</summary>
     internal byte[] GetBytes() => _buffer.ToArray();
 }

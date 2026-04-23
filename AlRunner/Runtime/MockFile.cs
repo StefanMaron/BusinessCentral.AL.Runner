@@ -267,6 +267,19 @@ public class MockFile
         return false;
     }
 
+    /// <summary>
+    /// AL's Clear(File) — rewriter emits file.Clear().
+    /// Resets the file to its default (closed) state: empty buffer, position 0, default flags.
+    /// </summary>
+    public void Clear()
+    {
+        _data = Array.Empty<byte>();
+        _pos = 0;
+        _name = string.Empty;
+        _textMode = true;
+        _writeMode = false;
+    }
+
     /// <summary>ALAssign — copies the backing data and state from another MockFile.</summary>
     public void ALAssign(MockFile other)
     {

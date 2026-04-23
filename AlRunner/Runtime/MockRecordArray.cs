@@ -6,7 +6,11 @@ using System.Collections;
 /// Replacement for NavArray&lt;MockRecordHandle&gt; (and NavArray&lt;INavRecordHandle&gt;).
 /// AL arrays of Record variables are transpiled to NavArray&lt;NavRecordHandle&gt; with a Factory2.
 /// Since IFactory&lt;T&gt; is internal to Nav.Ncl.dll, we replace the entire NavArray usage
-/// with this simple wrapper that provides 1-based indexing like AL arrays.
+/// with this simple wrapper.
+///
+/// Indexing convention: BC emits 0-based index accesses for record arrays
+/// (i.e. <c>recArr[alIdx - 1]</c> where alIdx is the 1-based AL index).
+/// This indexer therefore uses 0-based semantics to match the emitted code.
 /// </summary>
 public class MockRecordArray : IEnumerable<MockRecordHandle>
 {
@@ -22,13 +26,13 @@ public class MockRecordArray : IEnumerable<MockRecordHandle>
     }
 
     /// <summary>
-    /// 1-based indexer matching AL array semantics.
-    /// AL arrays are 1-based: x[1], x[2], etc.
+    /// 0-based indexer — BC emits <c>recArr[alIdx - 1]</c> (subtracting the AL 1-base),
+    /// so this indexer receives a 0-based integer.
     /// </summary>
     public MockRecordHandle this[int index]
     {
-        get => _items[index - 1];
-        set => _items[index - 1] = value;
+        get => _items[index];
+        set => _items[index] = value;
     }
 
     public int Length => _items.Length;
@@ -41,6 +45,17 @@ public class MockRecordArray : IEnumerable<MockRecordHandle>
     {
         for (int i = 0; i < _items.Length; i++)
             _items[i] = new MockRecordHandle(_tableId);
+    }
+
+    /// <summary>
+    /// AL's Clear(RecordArray[i]) — BC emits <c>navArray.Clear(alIdx - 1)</c> where
+    /// <paramref name="index"/> is the 0-based element index.
+    /// Resets the single element to its default (empty) state.
+    /// </summary>
+    public void Clear(int index)
+    {
+        if (index >= 0 && index < _items.Length)
+            _items[index].Clear();
     }
 
     public IEnumerator<MockRecordHandle> GetEnumerator()
