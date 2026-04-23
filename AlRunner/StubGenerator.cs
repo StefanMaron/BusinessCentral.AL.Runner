@@ -20,6 +20,7 @@ public static class StubGenerator
         130002,  // Library Assert real BC ID (routed to MockAssert)
         130440,  // Library - Random (LibraryRandom.al)
         130500,  // Any (LibraryAny.al)
+        131003,  // Library - Utility (LibraryUtility.al)
         131004,  // Library - Variable Storage (LibraryVariableStorage.al)
         131100,  // AL Runner Config
         132250,  // Library - Test Initialize (LibraryTestInitialize.al)

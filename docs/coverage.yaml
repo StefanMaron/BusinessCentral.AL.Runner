@@ -1627,6 +1627,23 @@ CompanyProperty.UrlName:
   tests:
     - tests/bucket-1/271-companyproperty
 
+# ── Library - Utility (codeunit 131003) ─────────────────────────
+
+MockCodeunitHandle.LibraryUtility:
+  layer: runtime-api
+  category: test-toolkit
+  status: covered
+  tests:
+    - tests/bucket-1/301-library-utility
+  notes: >
+    AL stub for codeunit 131003 "Library - Utility" (Test-TestLibraries).
+    Provides common test utility methods for AL tests via BC built-ins (CreateGuid,
+    DelChr, Format, Random). Auto-loaded from AlRunner/stubs/LibraryUtility.al
+    alongside other built-in stubs.
+    Methods covered: GenerateGUID (36-char GUID string), GenerateRandomCode (Code[10]),
+    GenerateRandomCode20 (Code[20]), GenerateRandomText, GenerateRandomXMLText,
+    GenerateRandomAlphabeticText.
+
 # ── Library - Random (codeunit 130440) ───────────────────────────
 
 MockCodeunitHandle.LibraryRandom:

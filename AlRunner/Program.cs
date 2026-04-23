@@ -534,6 +534,7 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
    - `Library - Variable Storage` (131004) — Enqueue/Dequeue for handler communication
    - `Any` (130500) — random test data generation (IntegerInRange, AlphanumericText, etc.)
    - `Library - Random` (130440) — pseudo-random numbers/dates/text (RandInt, RandDec, etc.)
+   - `Library - Utility` (131003) — GenerateGUID, GenerateRandomCode/Code20/Text
    - `Library - Test Initialize` (132250) — integration event publishers for test setup hooks
 5. Mark each test procedure with `[Test]`
 5. Tests must be self-contained: insert test data, call logic, assert results
@@ -614,7 +615,7 @@ the codeunit uses an unsupported BC feature (Page, HTTP, etc.). Either:
 - Default `exit(...)` bodies (false for Boolean, 0 for Integer/Decimal, '' for Text/Code)
 - Codeunits already natively mocked by al-runner (Library Assert 130/130002,
   Library - Variable Storage 131004, Any 130500, Library - Random 130440,
-  Library - Test Initialize 132250) are skipped automatically
+  Library - Utility 131003, Library - Test Initialize 132250) are skipped automatically
 - Existing files in the output dir are never overwritten (re-run is safe)
 
 **Maintaining stubs over time:**
