@@ -3,6 +3,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using Microsoft.Dynamics.Nav.CodeAnalysis;
+using Microsoft.Dynamics.Nav.CodeAnalysis.Symbols;
 
 namespace AlRunner;
 
@@ -25,6 +27,9 @@ public class PipelineOptions
     public string? OutputJunitPath { get; set; }
     /// <summary>When true, promote exit code 2 (runner limitations) to exit code 1 (failure).</summary>
     public bool Strict { get; set; }
+    /// <summary>Per-test timeout in seconds. Tests exceeding this are reported as errors
+    /// and the runner moves to the next test. Default: 5 seconds. Set to 0 to disable.</summary>
+    public int TestTimeoutSeconds { get; set; } = 5;
 
     /// <summary>
     /// When true, fire standard BC lifecycle integration events (OnCompanyInitialize from
@@ -156,6 +161,13 @@ public class AlRunnerPipeline
     private List<string>? _compilationErrors;
     public RewriteCache? RewriteCache { get; set; }
     public SyntaxTreeCache? SyntaxTreeCache { get; set; }
+
+    /// <summary>
+    /// Codeunit IDs that were auto-stubbed (return defaults, no real implementation).
+    /// Used by the test output to annotate failures involving stub calls.
+    /// Maps codeunit ID → name.
+    /// </summary>
+    public static Dictionary<int, string> AutoStubbedCodeunits { get; } = new();
 
     /// <summary>
     /// Run the full AL Runner pipeline: transpile → rewrite → compile → execute.
@@ -529,6 +541,10 @@ public class AlRunnerPipeline
             return 3;
         }
 
+        // Save the main compilation for symbol table queries (auto-stub generation).
+        // Subsequent TranspileMulti calls (for dep stubs, assert stubs) overwrite LastCompilation.
+        var mainCompilation = AlTranspiler.LastCompilation;
+
         // Compile dependency stubs separately
         var separateStubSources = GetSeparateStubSources(stubSources, alSources);
         if (separateStubSources.Count > 0)
@@ -687,24 +703,16 @@ public class AlRunnerPipeline
         }
         Timer.EndStage("Roslyn rewriting");
 
-        // Inject minimal C# stub classes for test-toolkit codeunits (130000–139999) that
-        // are referenced in the generated C# but were NOT compiled from source.
-        // This allows MockCodeunitHandle.FindCodeunitType to find them at runtime and
-        // execute as no-ops (no OnRun method → InvokeOnRun silently returns) instead of
-        // throwing InvalidOperationException.
-        // Auto-stub test-toolkit codeunits (130000-139999) as empty classes so
-        // they compile. Methods on these stubs will be no-ops (return defaults).
-        // For proper method implementations, users should run:
-        //   al-runner --generate-stubs .alpackages ./stubs ./src ./test
-        var testToolkitStubs = GenerateTestToolkitStubs(generatedCSharpList, options.PackagePaths, inputPaths);
-        if (testToolkitStubs.Count > 0)
-        {
-            rewrittenTreeList.AddRange(testToolkitStubs);
-            stderr.WriteLine($"Auto-stubbed {testToolkitStubs.Count} dependency codeunit(s) — methods return defaults");
-            stderr.WriteLine($"  Tip: for proper stubs run: al-runner --generate-stubs .alpackages ./stubs ./src ./test");
-            Log.Info($"  IDs: {string.Join(", ", testToolkitStubs.Select(s => s.Name))}");
-
-        }
+        // Auto-stub: scan the generated C# for ALL referenced object IDs that were
+        // NOT compiled from source, generate minimal empty AL stubs for them, and
+        // compile those stubs in a SECOND BC pass using the same packages. This
+        // produces proper C# classes with correct scope classes, member IDs, and
+        // default return values — covering codeunits, tables, pages, and all other
+        // object types from system, base app, and test library packages.
+        var autoStubTrees = GenerateAndCompileAutoStubs(
+            generatedCSharpList, options.PackagePaths, inputPaths, stderr, mainCompilation);
+        if (autoStubTrees.Count > 0)
+            rewrittenTreeList.AddRange(autoStubTrees);
 
         // Step 3: Compile
         Timer.StartStage("Roslyn compilation");
@@ -793,7 +801,7 @@ public class AlRunnerPipeline
             }
 
             var runSw = System.Diagnostics.Stopwatch.StartNew();
-            var results = Executor.RunTests(assembly, captureValues: options.CaptureValues, runProcedure: options.RunProcedure, initEvents: options.InitEvents, testIsolation: options.TestIsolation);
+            var results = Executor.RunTests(assembly, captureValues: options.CaptureValues, runProcedure: options.RunProcedure, initEvents: options.InitEvents, testIsolation: options.TestIsolation, testTimeoutSeconds: options.TestTimeoutSeconds);
             runSw.Stop();
             testResults.AddRange(results);
             if (results.Count == 0 && options.RunProcedure != null)
@@ -1324,174 +1332,461 @@ public class AlRunnerPipeline
     }
 
     /// <summary>
-    /// Scans the generated C# for test-toolkit codeunit IDs (130000–139999) referenced
-    /// via <c>NavCodeunit.RunCodeunit</c> or <c>new NavCodeunitHandle(..., id)</c> patterns,
-    /// then returns a minimal rewritten C# syntax tree for each ID that does NOT already
-    /// have a compiled class in <paramref name="generatedCSharpList"/>. The generated stub
-    /// classes are empty (no methods) so that <see cref="AlRunner.Runtime.MockCodeunitHandle.FindCodeunitType"/>
-    /// finds them at runtime and treats any call as a silent no-op instead of throwing.
-    /// Codeunits with runner-native mock implementations (130/131/130000, 131004, 131100) are
-    /// excluded — they are never looked up by <c>FindCodeunitType</c>.
+    /// Scans generated C# for ALL referenced object IDs (codeunits, tables, pages, etc.)
+    /// that don't have a compiled class. Generates minimal empty AL stubs for each missing
+    /// object and compiles them in a second BC pass using the same packages. The BC compiler
+    /// produces proper C# with correct scope classes, member IDs, and default return values.
     /// </summary>
-    internal static List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)> GenerateTestToolkitStubs(
+    private static List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)> GenerateAndCompileAutoStubs(
         List<(string Name, string Code)> generatedCSharpList,
-        List<string>? packagePaths = null, List<string>? inputPaths = null)
+        List<string> packagePaths, List<string> inputPaths,
+        TextWriter stderr, Compilation? mainCompilation)
     {
-        // IDs already compiled from source — no stub needed.
-        var alreadyPresent = new HashSet<int>();
-        var classPattern = new Regex(@"class\s+Codeunit(\d+)", RegexOptions.Compiled);
+        var result = new List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)>();
+
+        // 1. Collect object IDs already compiled from user source
+        var alreadyPresent = new HashSet<(string Type, int Id)>();
+        var classPattern = new Regex(@"class\s+(Codeunit|Record|Page|Report|XmlPort|Query)(\d+)\b", RegexOptions.Compiled);
         foreach (var (_, code) in generatedCSharpList)
         {
             foreach (Match m in classPattern.Matches(code))
             {
-                if (int.TryParse(m.Groups[1].Value, out int id))
-                    alreadyPresent.Add(id);
+                if (int.TryParse(m.Groups[2].Value, out int id))
+                    alreadyPresent.Add((m.Groups[1].Value, id));
             }
         }
 
-        // Codeunits that have dedicated runner-native mock implementations
+        // 2. Scan generated C# for ALL referenced object IDs
+        //    Pattern: new NavCodeunitHandle(this, ID) — codeunits
+        //    Pattern: new NavRecordHandle(this, ID, ...) — tables/records
+        var cuPattern = new Regex(@"NavCodeunitHandle\(\s*\w+\s*,\s*(\d+)\s*\)", RegexOptions.Compiled);
+        var recPattern = new Regex(@"NavRecordHandle\(\s*\w+\s*,\s*(\d+)\s*,", RegexOptions.Compiled);
+
+        var missingCodeunits = new HashSet<int>();
+        var missingTables = new HashSet<int>();
+
+        // Codeunits with runner-native mock implementations — never stub
         var nativeMockIds = new HashSet<int> { 130, 131, 130000, 130002, 130440, 130500, 131004, 131100, 132250 };
 
-        // Scan all generated C# for test-toolkit ID literals (130000-139999)
-        var idPattern = new Regex(@"(?:,\s*|[\(\s])1(3[0-9]{4})\b", RegexOptions.Compiled);
-        var referencedIds = new HashSet<int>();
         foreach (var (_, code) in generatedCSharpList)
         {
-            foreach (Match m in idPattern.Matches(code))
+            foreach (Match m in cuPattern.Matches(code))
             {
-                if (int.TryParse("1" + m.Groups[1].Value, out int id)
-                    && id is >= 130000 and <= 139999
-                    && !nativeMockIds.Contains(id))
-                {
-                    referencedIds.Add(id);
-                }
+                if (int.TryParse(m.Groups[1].Value, out int id)
+                    && !nativeMockIds.Contains(id)
+                    && !alreadyPresent.Contains(("Codeunit", id)))
+                    missingCodeunits.Add(id);
+            }
+            foreach (Match m in recPattern.Matches(code))
+            {
+                if (int.TryParse(m.Groups[1].Value, out int id)
+                    && !alreadyPresent.Contains(("Record", id)))
+                    missingTables.Add(id);
             }
         }
 
-        // Build a map of codeunit ID → method signatures from .app packages
-        var symbolMap = new Dictionary<int, StubGenerator.CodeunitSymbol>();
-        var allPackageDirs = new List<string>(packagePaths ?? new());
-        // Also scan .alpackages near input paths
-        if (inputPaths != null)
+        if (missingCodeunits.Count == 0 && missingTables.Count == 0)
+            return result;
+
+
+        // 3. Generate AL stubs with full method signatures from the BC compiler's
+        //    symbol table. The main compilation already resolved all symbols — we
+        //    query it to get method names, parameters, and return types.
+        var alStubs = new List<string>();
+        var compilation = mainCompilation;
+
+        foreach (var id in missingCodeunits.OrderBy(x => x))
         {
-            foreach (var p in inputPaths)
-            {
-                var dir = Directory.Exists(p) ? p : Path.GetDirectoryName(p);
-                if (dir == null) continue;
-                var alPkg = Path.Combine(dir, ".alpackages");
-                if (Directory.Exists(alPkg) && !allPackageDirs.Contains(alPkg))
-                    allPackageDirs.Add(alPkg);
-            }
+            var stubAl = compilation != null
+                ? RenderCodeunitStubFromSymbols(compilation, id)
+                : null;
+            alStubs.Add(stubAl ?? $"codeunit {id} \"AutoStub{id}\" {{ }}");
         }
-        foreach (var pkgDir in allPackageDirs)
+        foreach (var id in missingTables.OrderBy(x => x))
         {
-            if (!Directory.Exists(pkgDir)) continue;
-            foreach (var appFile in Directory.GetFiles(pkgDir, "*.app"))
+            var stubAl = compilation != null
+                ? RenderTableStubFromSymbols(compilation, id)
+                : null;
+            alStubs.Add(stubAl ?? $"table {id} \"AutoStub{id}\" {{ fields {{ field(1; PK; Integer) {{ }} }} keys {{ key(PK; PK) {{ Clustered = true; }} }} }}");
+        }
+
+        // 4. Compile stubs in a second BC pass (same packages → proper scope classes)
+        var savedErr = Console.Error;
+        Console.SetError(TextWriter.Null);
+        List<(string Name, string Code)>? stubCSharp;
+        try
+        {
+            // Compile stubs WITHOUT package references to avoid AL0197 conflicts
+            // (stubs define the same codeunit IDs as the packages). Stubs only use
+            // built-in AL types (Integer, Text, Variant, etc.) so no packages needed.
+            stubCSharp = AlTranspiler.TranspileMulti(alStubs);
+        }
+        finally { Console.SetError(savedErr); }
+
+        // 5. Rewrite and collect compiled stubs
+        int rewriteOk = 0, rewriteFail = 0;
+        if (stubCSharp != null)
+        {
+            foreach (var (name, code) in stubCSharp)
             {
                 try
                 {
-                    var (codeunits, _, _) = StubGenerator.ReadCodeunitsFromApp(appFile);
-                    foreach (var cu in codeunits)
-                        symbolMap.TryAdd(cu.Id, cu);
+                    var tree = RoslynRewriter.RewriteToTree(code);
+                    if (tree != null)
+                    {
+                        result.Add((name, tree));
+                        rewriteOk++;
+                    }
                 }
-                catch { /* skip unreadable packages */ }
-            }
-        }
-
-        var stubs = new List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)>();
-        foreach (var id in referencedIds.Where(id => !alreadyPresent.Contains(id)).OrderBy(id => id))
-        {
-            string stubCode;
-            if (symbolMap.TryGetValue(id, out var cuSymbol) && cuSymbol.Methods.Count > 0)
-            {
-                // Rich stub: generate C# class with method stubs from SymbolReference.json
-                stubCode = GenerateRichCSharpStub(id, cuSymbol);
-            }
-            else
-            {
-                // Minimal stub: empty class (no methods available from packages)
-                stubCode = $"namespace Microsoft.Dynamics.Nav.BusinessApplication {{ public class Codeunit{id} {{ }} }}";
-            }
-            var tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(
-                stubCode, path: $"TestToolkitStub{id}.cs");
-            stubs.Add(($"TestToolkitStub{id}", tree));
-        }
-        return stubs;
-    }
-
-    /// <summary>
-    /// Generate a C# class with method stubs from SymbolReference.json metadata.
-    /// Methods return defaults (0 for int, false for bool, null for objects, "" for strings).
-    /// The arg-count fallback in MockCodeunitHandle.Invoke dispatches to these methods.
-    /// </summary>
-    private static string GenerateRichCSharpStub(int id, StubGenerator.CodeunitSymbol cu)
-    {
-        var sb = new System.Text.StringBuilder();
-        sb.AppendLine("namespace Microsoft.Dynamics.Nav.BusinessApplication {");
-        sb.AppendLine($"public class Codeunit{id} {{");
-
-        foreach (var method in cu.Methods)
-        {
-            // All params and return types use 'object' — avoids compile errors from
-            // missing BC types and lets the arg-count fallback match any overload.
-            // Return null for all methods; the caller's generated cast will handle conversion.
-            var csParams = string.Join(", ",
-                method.Parameters.Select((p, i) => $"object p{i}"));
-
-            if (method.ReturnType == null)
-            {
-                sb.AppendLine($"    public void {method.Name}({csParams}) {{ }}");
-            }
-            else
-            {
-                var csRet = MapAlTypeToCSharp(method.ReturnType, isParameter: false);
-                string retVal = csRet switch
+                catch
                 {
-                    "string" => "\"\"",
-                    "bool" => "false",
-                    "int" or "long" or "decimal" or "char" or "byte" => "default",
-                    "System.Guid" => "System.Guid.Empty",
-                    "object" => "null",
-                    _ => "default",
-                };
-                sb.AppendLine($"    public {csRet} {method.Name}({csParams}) {{ return {retVal}; }}");
+                    rewriteFail++;
+                    // Generate minimal fallback class so other code can reference it
+                    var classMatch = classPattern.Match(code);
+                    if (classMatch.Success)
+                    {
+                        var className = $"{classMatch.Groups[1].Value}{classMatch.Groups[2].Value}";
+                        var fallback = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(
+                            $"namespace Microsoft.Dynamics.Nav.BusinessApplication {{ public class {className} {{ }} }}");
+                        result.Add(($"AutoStub_{className}", fallback));
+                    }
+                }
             }
         }
 
-        sb.AppendLine("}}");
-        return sb.ToString();
+        // 6. For any IDs that failed BC compilation (missing transitive deps),
+        //    generate minimal C# classes as fallback
+        var compiledIds = new HashSet<int>();
+        var compiledClassPattern = new Regex(@"class\s+(?:Codeunit|Record)(\d+)", RegexOptions.Compiled);
+        if (stubCSharp != null)
+        {
+            foreach (var (_, code) in stubCSharp)
+                foreach (Match m in compiledClassPattern.Matches(code))
+                    if (int.TryParse(m.Groups[1].Value, out int id))
+                        compiledIds.Add(id);
+        }
+        foreach (var id in missingCodeunits.Where(id => !compiledIds.Contains(id)))
+        {
+            var fallback = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(
+                $"namespace Microsoft.Dynamics.Nav.BusinessApplication {{ public class Codeunit{id} {{ }} }}",
+                path: $"AutoStub_Codeunit{id}.cs");
+            result.Add(($"AutoStub_Codeunit{id}", fallback));
+        }
+        foreach (var id in missingTables.Where(id => !compiledIds.Contains(id)))
+        {
+            var fallback = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(
+                $"namespace Microsoft.Dynamics.Nav.BusinessApplication {{ public class Record{id} {{ }} }}",
+                path: $"AutoStub_Record{id}.cs");
+            result.Add(($"AutoStub_Record{id}", fallback));
+        }
+
+        // Track for test output annotation
+        foreach (var id in missingCodeunits)
+            AutoStubbedCodeunits.TryAdd(id, $"Codeunit {id}");
+        foreach (var id in missingTables)
+            AutoStubbedCodeunits.TryAdd(id, $"Table {id}");
+
+        // 7. Report
+        int total = missingCodeunits.Count + missingTables.Count;
+        int compiled = stubCSharp?.Count ?? 0;
+        stderr.WriteLine($"\nAuto-stubbed {total} dependency object(s) — methods return defaults:");
+        if (missingCodeunits.Count > 0)
+            stderr.WriteLine($"  Codeunits: {missingCodeunits.Count} ({compiled} compiled via BC, {missingCodeunits.Count - compiledIds.Intersect(missingCodeunits).Count()} fallback)");
+        if (missingTables.Count > 0)
+            stderr.WriteLine($"  Tables:    {missingTables.Count}");
+        stderr.WriteLine($"Stubbed methods return default values. Provide real implementations via:");
+        stderr.WriteLine($"  --stubs ./stubs     (AL stub files)");
+        stderr.WriteLine($"  --dep-dlls .deps    (compiled dependency DLLs)");
+        stderr.WriteLine();
+
+        return result;
     }
 
     /// <summary>
-    /// Map AL types to C# for auto-stub methods. Uses 'object' for complex types
-    /// so stubs compile without requiring BC DLL types. The arg-count fallback in
-    /// MockCodeunitHandle.Invoke handles runtime type conversion.
+    /// Query the BC compiler's symbol table for a codeunit by ID. If found, render
+    /// an AL stub with all its method signatures. Uses reflection since the BC
+    /// CodeAnalysis API types are internal and vary across versions.
+    /// Returns null if the codeunit is not found.
     /// </summary>
-    /// <summary>
-    /// Map AL types to C# for auto-stub methods. Uses simple types that the
-    /// MockCodeunitHandle.Invoke arg-count fallback can handle at runtime.
-    /// All parameter types use 'object' so any argument matches.
-    /// Return types use specific types where possible to avoid cast errors.
-    /// </summary>
-    internal static string MapAlTypeToCSharp(StubGenerator.TypeSymbol? t, bool isParameter = false)
+    private static string? RenderCodeunitStubFromSymbols(Compilation compilation, int codeunitId)
     {
-        if (t == null) return "void";
-        // Parameters always use object — simplifies overload matching
-        if (isParameter) return "object";
-        return t.Name switch
+        try
         {
-            "Integer" or "Option" or "Enum" => "int",
-            "BigInteger" => "long",
-            "Decimal" => "decimal",
-            "Boolean" => "bool",
-            "Char" => "char",
-            "Byte" => "byte",
-            "Guid" => "System.Guid",
-            "Text" or "Code" or "Label" or "TextConst" => "string",
-            _ => "object",
+            // Look up the codeunit by ID using the BC compiler's symbol table.
+            // GetApplicationObjectTypeSymbolsByIdAcrossModules is not in the public API
+            // for all BC versions, so we call it via reflection.
+            var lookupMethod = compilation.GetType().GetMethod(
+                "GetApplicationObjectTypeSymbolsByIdAcrossModules",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
+                null, new[] { typeof(SymbolKind), typeof(int) }, null);
+            if (lookupMethod == null)
+                return null;
+
+            var symbolsObj = lookupMethod.Invoke(compilation, new object[] { SymbolKind.Codeunit, codeunitId });
+            if (symbolsObj == null) return null;
+
+            // The result is ImmutableArray<IApplicationObjectTypeSymbol> — access via indexer
+            var lengthProp = symbolsObj.GetType().GetProperty("Length");
+            if (lengthProp == null || (int)lengthProp.GetValue(symbolsObj)! == 0) return null;
+
+            var indexer = symbolsObj.GetType().GetProperty("Item");
+            if (indexer == null) return null;
+            var found = indexer.GetValue(symbolsObj, new object[] { 0 })!;
+            var foundName = found.GetType().GetProperty("Name")?.GetValue(found)?.ToString() ?? $"AutoStub{codeunitId}";
+
+            var sb = new System.Text.StringBuilder();
+            var cuName = foundName.Replace("\"", "\"\"");
+            sb.AppendLine($"codeunit {codeunitId} \"{cuName}\"");
+            sb.AppendLine("{");
+
+            var getMembersMethod = found.GetType().GetMethod("GetMembers", Type.EmptyTypes);
+            if (getMembersMethod == null) { sb.AppendLine("}"); return sb.ToString(); }
+
+            var members = getMembersMethod.Invoke(found, null) as System.Collections.IEnumerable;
+            if (members == null) { sb.AppendLine("}"); return sb.ToString(); }
+
+            var emittedSigs = new HashSet<string>();
+
+            foreach (var member in members)
+            {
+                var memberKind = member.GetType().GetProperty("Kind")?.GetValue(member);
+                if (memberKind?.ToString() != "Method") continue;
+
+                var methodName = member.GetType().GetProperty("Name")?.GetValue(member)?.ToString();
+                if (methodName == null) continue;
+
+                // Get parameters
+                var paramsProp = member.GetType().GetProperty("Parameters");
+                var paramParts = new List<string>();
+                if (paramsProp != null)
+                {
+                    var parms = paramsProp.GetValue(member) as System.Collections.IEnumerable;
+                    if (parms != null)
+                    {
+                        foreach (var p in parms)
+                        {
+                            var pName = p.GetType().GetProperty("Name")?.GetValue(p)?.ToString() ?? "p";
+                            // Escape AL keywords used as parameter names
+                            if (IsAlKeyword(pName)) pName = $"\"{pName}\"";
+                            else if (pName.Contains(" ") || pName.Contains(".")) pName = $"\"{pName}\"";
+                            var pIsVar = p.GetType().GetProperty("IsVar")?.GetValue(p) is true;
+                            var pType = p.GetType().GetProperty("ParameterType")?.GetValue(p)
+                                     ?? p.GetType().GetProperty("Type")?.GetValue(p);
+                            var typeName = pType != null ? RenderSymbolTypeViaReflection(pType) : "Variant";
+                            var prefix = pIsVar ? "var " : "";
+                            paramParts.Add($"{prefix}{pName}: {typeName}");
+                        }
+                    }
+                }
+
+                var paramStr = string.Join("; ", paramParts);
+
+                // Get return type
+                var returnPart = "";
+                var retType = member.GetType().GetProperty("ReturnValueType")?.GetValue(member)
+                           ?? member.GetType().GetProperty("ReturnType")?.GetValue(member);
+                if (retType != null)
+                {
+                    var navTypeKind = retType.GetType().GetProperty("NavTypeKind")?.GetValue(retType);
+                    if (navTypeKind != null && navTypeKind.ToString() != "None" && navTypeKind.ToString() != "Void")
+                    {
+                        var retTypeName = RenderSymbolTypeViaReflection(retType);
+                        returnPart = $": {retTypeName}";
+                    }
+                }
+
+                // Dedup by (name, paramCount): overloaded methods with different
+                // interface/complex types all collapse to Variant in the stub, producing
+                // identical C# signatures and Roslyn CS0121 ambiguity errors.
+                var sig = $"{methodName}/{paramParts.Count}";
+                if (!emittedSigs.Add(sig)) continue;
+
+                sb.AppendLine($"    procedure {methodName}({paramStr}){returnPart}");
+                sb.AppendLine("    begin");
+                sb.AppendLine("    end;");
+                sb.AppendLine();
+            }
+
+            sb.AppendLine("}");
+
+            // Track the name for reporting
+            AutoStubbedCodeunits[codeunitId] = foundName;
+
+            return sb.ToString();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+
+    private static readonly HashSet<string> _alKeywords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "key", "field", "var", "begin", "end", "if", "then", "else", "repeat", "until",
+        "while", "do", "for", "to", "downto", "case", "of", "with", "exit", "trigger",
+        "procedure", "local", "internal", "protected", "true", "false", "not", "and", "or",
+        "xor", "div", "mod", "in", "array", "record", "codeunit", "page", "report", "query",
+        "xmlport", "table", "enum", "interface", "temporary", "database"
+    };
+    private static bool IsAlKeyword(string name) => _alKeywords.Contains(name);
+
+    /// <summary>
+    /// Generate an AL table stub with fields and methods from the BC compiler's symbol table.
+    /// Tables need fields + keys to compile. Methods (procedures defined on the table) are
+    /// included so that calls like Record.SomeMethod() dispatch correctly.
+    /// </summary>
+    private static string? RenderTableStubFromSymbols(Compilation compilation, int tableId)
+    {
+        try
+        {
+            var lookupMethod = compilation.GetType().GetMethod(
+                "GetApplicationObjectTypeSymbolsByIdAcrossModules",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
+                null, new[] { typeof(SymbolKind), typeof(int) }, null);
+            if (lookupMethod == null) return null;
+
+            var symbolsObj = lookupMethod.Invoke(compilation, new object[] { SymbolKind.Table, tableId });
+            if (symbolsObj == null) return null;
+            var lengthProp = symbolsObj.GetType().GetProperty("Length");
+            if (lengthProp == null || (int)lengthProp.GetValue(symbolsObj)! == 0) return null;
+            var indexer = symbolsObj.GetType().GetProperty("Item");
+            if (indexer == null) return null;
+            var found = indexer.GetValue(symbolsObj, new object[] { 0 })!;
+            var foundName = found.GetType().GetProperty("Name")?.GetValue(found)?.ToString() ?? $"AutoStub{tableId}";
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"table {tableId} \"{foundName.Replace("\"", "\"\"")}\"");
+            sb.AppendLine("{");
+
+            // Fields section
+            sb.AppendLine("    fields");
+            sb.AppendLine("    {");
+            sb.AppendLine("        field(1; PK; Integer) { }");
+            sb.AppendLine("    }");
+            sb.AppendLine("    keys");
+            sb.AppendLine("    {");
+            sb.AppendLine("        key(PK; PK) { Clustered = true; }");
+            sb.AppendLine("    }");
+
+            // Methods — same approach as codeunit stubs
+            var getMembersMethod = found.GetType().GetMethod("GetMembers", Type.EmptyTypes);
+            if (getMembersMethod != null)
+            {
+                var members = getMembersMethod.Invoke(found, null) as System.Collections.IEnumerable;
+                if (members != null)
+                {
+                    var emittedSigs = new HashSet<string>();
+                    foreach (var member in members)
+                    {
+                        var memberKind = member.GetType().GetProperty("Kind")?.GetValue(member);
+                        if (memberKind?.ToString() != "Method") continue;
+
+                        var methodName = member.GetType().GetProperty("Name")?.GetValue(member)?.ToString();
+                        if (methodName == null) continue;
+
+                        var paramsProp = member.GetType().GetProperty("Parameters");
+                        var paramParts = new List<string>();
+                        if (paramsProp != null)
+                        {
+                            var parms = paramsProp.GetValue(member) as System.Collections.IEnumerable;
+                            if (parms != null)
+                            {
+                                foreach (var p in parms)
+                                {
+                                    var pName = p.GetType().GetProperty("Name")?.GetValue(p)?.ToString() ?? "p";
+                                    if (IsAlKeyword(pName)) pName = $"\"{pName}\"";
+                                    else if (pName.Contains(" ") || pName.Contains(".")) pName = $"\"{pName}\"";
+                                    var pIsVar = p.GetType().GetProperty("IsVar")?.GetValue(p) is true;
+                                    var pType = p.GetType().GetProperty("ParameterType")?.GetValue(p)
+                                             ?? p.GetType().GetProperty("Type")?.GetValue(p);
+                                    var typeName = pType != null ? RenderSymbolTypeViaReflection(pType) : "Variant";
+                                    var prefix = pIsVar ? "var " : "";
+                                    paramParts.Add($"{prefix}{pName}: {typeName}");
+                                }
+                            }
+                        }
+                        var paramStr = string.Join("; ", paramParts);
+
+                        var returnPart = "";
+                        var retType = member.GetType().GetProperty("ReturnValueType")?.GetValue(member)
+                                   ?? member.GetType().GetProperty("ReturnType")?.GetValue(member);
+                        if (retType != null)
+                        {
+                            var navTypeKind = retType.GetType().GetProperty("NavTypeKind")?.GetValue(retType);
+                            if (navTypeKind != null && navTypeKind.ToString() != "None" && navTypeKind.ToString() != "Void")
+                                returnPart = $": {RenderSymbolTypeViaReflection(retType)}";
+                        }
+
+                        var sig = $"{methodName}/{paramParts.Count}";
+                        if (!emittedSigs.Add(sig)) continue;
+
+                        sb.AppendLine($"    procedure {methodName}({paramStr}){returnPart}");
+                        sb.AppendLine("    begin");
+                        sb.AppendLine("    end;");
+                        sb.AppendLine();
+                    }
+                }
+            }
+
+            sb.AppendLine("}");
+            return sb.ToString();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Render an AL type from a BC symbol type object using reflection.</summary>
+    private static string RenderSymbolTypeViaReflection(object typeSymbol)
+    {
+        var navTypeKind = typeSymbol.GetType().GetProperty("NavTypeKind")?.GetValue(typeSymbol)?.ToString();
+        if (navTypeKind == null) return "Variant";
+
+        // For complex types (Record, Codeunit, Enum, etc.) the symbol's ToString()
+        // includes the full qualified name. Use Variant to avoid syntax issues.
+        return navTypeKind switch
+        {
+            "Integer" => "Integer",
+            "BigInteger" => "BigInteger",
+            "Decimal" => "Decimal",
+            "Boolean" => "Boolean",
+            "Date" => "Date",
+            "Time" => "Time",
+            "DateTime" => "DateTime",
+            "Duration" => "Duration",
+            "Guid" => "Guid",
+            "Char" => "Char",
+            "Byte" => "Byte",
+            "Option" => "Integer",
+            "Variant" => "Variant",
+            "RecordId" => "RecordId",
+            "DateFormula" => "DateFormula",
+            "JsonObject" => "JsonObject",
+            "JsonArray" => "JsonArray",
+            "JsonToken" => "JsonToken",
+            "JsonValue" => "JsonValue",
+            "HttpClient" => "HttpClient",
+            "HttpHeaders" => "HttpHeaders",
+            "HttpContent" => "HttpContent",
+            "HttpRequestMessage" => "HttpRequestMessage",
+            "HttpResponseMessage" => "HttpResponseMessage",
+            "SecretText" => "SecretText",
+            "Text" => "Text",
+            "Code" => "Code[20]",
+            "Label" => "Text",
+            "TextConst" => "Text",
+            "InStream" => "InStream",
+            "OutStream" => "OutStream",
+            "BigText" => "BigText",
+            "Blob" => "BigText",
+            "XmlDocument" => "XmlDocument",
+            _ => "Variant", // Use Variant for complex/unknown types to avoid syntax errors
         };
     }
 
+    /// <summary>Default AL value for a NavTypeKind string (unused — kept for reference).</summary>
     private static List<string> GetSeparateStubSources(List<string> stubSources, List<string> alSources)
     {
         var result = new List<string>();

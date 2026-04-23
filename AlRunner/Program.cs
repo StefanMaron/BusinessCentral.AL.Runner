@@ -40,6 +40,7 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("  --test-isolation <mode>  codeunit (default) — reset tables between test codeunits,");
     Console.Error.WriteLine("                           sharing state within a codeunit (BC default behaviour);");
     Console.Error.WriteLine("                           method — reset tables before every test method (legacy).");
+    Console.Error.WriteLine("  --test-timeout <sec>  Per-test timeout in seconds (default: 5, 0 = disable)");
     Console.Error.WriteLine("  --dump-csharp         Print generated C# (before rewriting) and exit");
     Console.Error.WriteLine("  --dump-rewritten      Print rewritten C# (after rewriting) and exit");
     Console.Error.WriteLine("  -e '<al code>'        Run inline AL code");
@@ -50,6 +51,9 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("  --iteration-tracking  Track per-iteration data for loops (requires --output-json)");
     Console.Error.WriteLine("  --run <procedure>     Run only the specified procedure by name");
     Console.Error.WriteLine("  --server              Start in server mode (JSON-RPC over stdin/stdout)");
+    Console.Error.WriteLine("  --dap [port]          Start DAP debugger server (default port 4711)");
+    Console.Error.WriteLine("                        Connect VS Code or any DAP client to set breakpoints");
+    Console.Error.WriteLine("                        and inspect variables during AL test execution.");
     Console.Error.WriteLine("  --generate-stubs <packages-dir> <output-dir> [<src-dir> ...]");
     Console.Error.WriteLine("                        Scaffold empty AL stub files from .app symbol packages.");
     Console.Error.WriteLine("                        <packages-dir>  required  directory of .app files to read");
@@ -154,6 +158,30 @@ while (argIdx < args.Length)
             await server.RunAsync(Console.In, Console.Out);
             return 0;
         }
+        case "--dap":
+        {
+            argIdx++;
+            int dapPort = 4711;
+            if (argIdx < args.Length && int.TryParse(args[argIdx], out var parsedPort))
+            {
+                dapPort = parsedPort;
+                argIdx++;
+            }
+            // Collect remaining source paths into pipeline options
+            var dapPipelineOptions = new PipelineOptions();
+            while (argIdx < args.Length)
+            {
+                dapPipelineOptions.InputPaths.Add(Path.GetFullPath(args[argIdx]));
+                argIdx++;
+            }
+            Console.Error.WriteLine($"al-runner DAP server listening on 127.0.0.1:{dapPort}");
+            Console.Error.WriteLine("Connect your DAP client (e.g. VS Code with vscode-al) to debug.");
+            var dapServer = new AlRunner.DapServer(dapPort);
+            dapServer.PipelineOptions = dapPipelineOptions;
+            // Wire BreakpointHit → stopped event is handled inside DapServer
+            await dapServer.RunAsync();
+            return 0;
+        }
         case "--coverage":
             options.ShowCoverage = true;
             argIdx++;
@@ -193,6 +221,13 @@ while (argIdx < args.Length)
             break;
         case "--strict":
             options.Strict = true;
+            argIdx++;
+            break;
+        case "--test-timeout":
+            argIdx++;
+            if (argIdx >= args.Length || !int.TryParse(args[argIdx], out var timeoutSec))
+            { Console.Error.WriteLine("Error: --test-timeout requires a number (seconds)"); return 1; }
+            options.TestTimeoutSeconds = timeoutSec;
             argIdx++;
             break;
         case "--company-name":
@@ -606,6 +641,49 @@ codeunit 70100 "ISV Integration Mgt."
 }
 ```
 
+### Automatic auto-stubs (symbol-table generation)
+
+Even without `--stubs` or `--generate-stubs`, al-runner automatically generates stubs
+for any referenced codeunit or table that has no compiled class. After the main AL
+compilation, the runner:
+
+1. Scans the generated C# for all referenced object IDs (codeunits, tables)
+2. Queries the BC compiler's symbol table for each missing object
+3. Generates AL stubs with **full method signatures** — correct parameter names, types,
+   `var` modifiers, and return types — extracted from the symbol table metadata
+4. Compiles them in a second BC pass to produce proper scope classes with correct
+   member IDs and default return values
+
+This means calling methods on dependency objects (e.g., LibraryERM, Rest Client,
+No. Series) returns proper typed defaults (0 for Integer, '' for Text, false for
+Boolean) instead of null. The second pass only runs when stubs are needed — zero
+overhead for self-contained tests.
+
+The console output reports exactly which objects were auto-stubbed:
+```
+Auto-stubbed 5 dependency object(s) — methods return defaults:
+  Codeunits: 5 (4 compiled via BC, 1 fallback)
+```
+
+When a test fails and the stack trace involves an auto-stubbed codeunit, the output
+annotates it with guidance:
+```
+  ⚠ Called auto-stubbed codeunit 131300 "Library - ERM" (methods return defaults)
+  Compile real implementations: al-runner --compile-dep <app>.app .deps --packages .alpackages/
+```
+
+**Escalation path** — when auto-stubs are not enough (e.g., your tests depend on real
+logic from a dependency codeunit):
+
+1. Use `--compile-dep` to compile the dependency .app to a rewritten DLL:
+   ```
+   al-runner --compile-dep Base.app .deps --packages .alpackages
+   ```
+2. Load the compiled DLL at runtime:
+   ```
+   al-runner --dep-dlls .deps ./src ./test
+   ```
+
 ### Example test structure
 
 ```al
@@ -675,6 +753,8 @@ al-runner --server                                         # long-running JSON-R
 al-runner --generate-stubs .alpackages ./stubs             # scaffold stubs from .app packages (all codeunits)
 al-runner --generate-stubs .alpackages ./stubs ./src ./test  # only stubs referenced in source
 al-runner --init-events ./src ./test                          # fire OnCompanyInitialize before each test
+al-runner --compile-dep MyDep.app .deps --packages .alpackages  # compile dependency .app to DLL
+al-runner --dep-dlls .deps ./src ./test                         # run with pre-compiled dependency DLLs
 ```
 
 ### --init-events: lifecycle event pre-seeding
@@ -894,6 +974,13 @@ public static class Timer
 // ===========================================================================
 public static class AlTranspiler
 {
+    /// <summary>
+    /// The last Compilation object from TranspileMulti. Allows querying the BC
+    /// compiler's symbol table for method signatures on dependency objects
+    /// (codeunits, tables, etc.) that are referenced but not compiled from source.
+    /// </summary>
+    public static Compilation? LastCompilation { get; private set; }
+
     /// <summary>
     /// Transpile a single AL source string (backward compat).
     /// </summary>
@@ -1300,6 +1387,9 @@ public static class AlTranspiler
             if (otherErrors.Count > 10)
                 Log.Info($"  ... and {otherErrors.Count - 10} more");
         }
+
+        // Store compilation for symbol table queries by auto-stub generation
+        LastCompilation = compilation;
 
         var outputter = new CSharpCaptureOutputter();
         EmitResult? emitResult = null;
@@ -1985,6 +2075,73 @@ public static class SourceLineMapper
     }
 
     /// <summary>
+    /// Reverse lookup: find all (scopeName, stmtId) pairs that map to the
+    /// given AL source file and line. Used by the DAP server to translate
+    /// an IDE breakpoint (file, line) into runtime breakpoint registrations.
+    ///
+    /// <paramref name="alSourceFile"/> is matched against the AL object name
+    /// (as registered by <see cref="SourceFileMapper"/>) and also against
+    /// plain file path suffixes.
+    /// </summary>
+    public static List<(string ScopeName, int StmtId)> FindStatementsForAlLine(
+        string alSourceFile, int alLine)
+    {
+        var results = new List<(string ScopeName, int StmtId)>();
+        foreach (var kv in _sourceSpans)
+        {
+            if (kv.Value.Line != alLine)
+                continue;
+
+            // The scope name encodes the AL object (e.g. "Codeunit1_MyProc_Scope_abc").
+            // Resolve the associated source file via SourceFileMapper and compare.
+            var objectName = SourceFileMapper.GetObjectForClass(kv.Key.Scope);
+            var mappedFile = SourceFileMapper.GetFile(objectName);
+            if (mappedFile == null)
+            {
+                // If no exact file mapping, fall back to scope-based lookup.
+                mappedFile = SourceFileMapper.GetFileForScope(kv.Key.Scope, BuildScopeToObjectMap());
+            }
+
+            if (mappedFile != null && FilePathMatches(mappedFile, alSourceFile))
+                results.Add((kv.Key.Scope, kv.Key.StmtId));
+        }
+        return results;
+    }
+
+    /// <summary>
+    /// Build a scope-name → object-name dictionary from SourceFileMapper's internal
+    /// state. Used by FindStatementsForAlLine as a fallback when direct class lookup
+    /// doesn't resolve.
+    /// </summary>
+    private static Dictionary<string, string> BuildScopeToObjectMap()
+    {
+        // We don't have direct access to SourceFileMapper's internal maps, so we
+        // build a reverse lookup from the _sourceSpans keys — each scope name
+        // can be resolved via GetObjectForClass.
+        var result = new Dictionary<string, string>();
+        foreach (var scope in _sourceSpans.Keys.Select(k => k.Scope).Distinct())
+        {
+            var obj = SourceFileMapper.GetObjectForClass(scope);
+            result[scope] = obj;
+        }
+        return result;
+    }
+
+    private static bool FilePathMatches(string mappedFile, string requested)
+    {
+        // Normalize separators
+        mappedFile = mappedFile.Replace('\\', '/');
+        requested = requested.Replace('\\', '/');
+
+        // Exact match or suffix match (e.g. "src/Foo.al" matches "Foo.al")
+        return string.Equals(mappedFile, requested, StringComparison.OrdinalIgnoreCase)
+            || mappedFile.EndsWith("/" + requested, StringComparison.OrdinalIgnoreCase)
+            || requested.EndsWith("/" + mappedFile, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Path.GetFileName(mappedFile), Path.GetFileName(requested),
+                StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// Format a Roslyn diagnostic with AL source line context.
     /// Returns the original diagnostic string with AL line info appended.
     /// </summary>
@@ -2384,7 +2541,7 @@ public static class Executor
         }
     }
 
-    public static List<AlRunner.TestResult> RunTests(Assembly assembly, bool captureValues = false, string? runProcedure = null, bool initEvents = false, AlRunner.TestIsolation testIsolation = AlRunner.TestIsolation.Codeunit)
+    public static List<AlRunner.TestResult> RunTests(Assembly assembly, bool captureValues = false, string? runProcedure = null, bool initEvents = false, AlRunner.TestIsolation testIsolation = AlRunner.TestIsolation.Codeunit, int testTimeoutSeconds = 0)
     {
         // Find test methods using [NavTest] attribute on the parent method,
         // then find the corresponding _Scope_ nested class.
@@ -2449,6 +2606,7 @@ public static class Executor
         // Null means no reset has happened yet (first test).
         Type? currentCodeunitType = null;
         bool firstReset = true;
+
 
         foreach (var (testName, scopeType, parentType) in testScopes)
         {
@@ -2595,10 +2753,89 @@ public static class Executor
                 }
 
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                if (collectingTest)
-                    AlRunner.Runtime.AlScope.RunWithCollecting(() => onRunMethod.Invoke(scope, null));
+                var timeoutMs = testTimeoutSeconds > 0 ? testTimeoutSeconds * 1000 : 0;
+
+                if (timeoutMs > 0)
+                {
+                    // Run with per-test timeout: use a background thread so we can
+                    // abandon it on timeout without blocking the test runner.
+                    // Track which auto-stubbed codeunits are accessed during this test
+                    AlRunner.Runtime.MockCodeunitHandle.ResetAutoStubTracking();
+                    Exception? threadEx = null;
+                    (string, int)? threadLastStmt = null;
+                    var thread = new Thread(() =>
+                    {
+                        try
+                        {
+                            if (collectingTest)
+                                AlRunner.Runtime.AlScope.RunWithCollecting(() => onRunMethod.Invoke(scope, null));
+                            else
+                                onRunMethod.Invoke(scope, null);
+                        }
+                        catch (Exception ex) { threadEx = ex; }
+                        finally
+                        {
+                            // Capture ThreadStatic state before thread exits
+                            threadLastStmt = AlRunner.Runtime.AlScope.LastStatementHit;
+                        }
+                    });
+                    thread.IsBackground = true;
+                    thread.Start();
+                    if (!thread.Join(timeoutMs))
+                    {
+                        sw.Stop();
+
+                        // Capture where the code was stuck
+                        var lastHit = AlRunner.Runtime.AlScope.LastStatementHit;
+                        var locationInfo = "";
+                        if (lastHit != null)
+                        {
+                            var (scopeName, stmtId) = lastHit.Value;
+                            var alLine = SourceLineMapper.GetAlLineFromStatement(scopeName, stmtId);
+                            var objectName = FormatSingleFrame($"at {scopeName}");
+                            locationInfo = alLine != null
+                                ? $"\n  Last AL statement: {objectName} (line {alLine})"
+                                : $"\n  Last AL scope: {objectName}";
+                        }
+
+                        // List auto-stubbed codeunits accessed during this test
+                        var accessed = AlRunner.Runtime.MockCodeunitHandle.AccessedAutoStubs;
+                        var stubDetails = "";
+                        if (accessed != null && !accessed.IsEmpty)
+                        {
+                            var stubNames = accessed.Distinct()
+                                .Where(id => AlRunnerPipeline.AutoStubbedCodeunits.ContainsKey(id))
+                                .Select(id => $"{id} \"{AlRunnerPipeline.AutoStubbedCodeunits[id]}\"")
+                                .OrderBy(s => s)
+                                .ToList();
+                            if (stubNames.Count > 0)
+                                stubDetails = $"\n  Auto-stubbed codeunits called during this test:\n    " +
+                                    string.Join("\n    ", stubNames) +
+                                    "\n  Provide implementations for these via --stubs or --dep-dlls.";
+                        }
+
+                        var hint = string.IsNullOrEmpty(stubDetails) && string.IsNullOrEmpty(locationInfo)
+                            ? " Use --test-timeout 0 to disable timeout, or increase with --test-timeout <seconds>."
+                            : "";
+
+                        throw new TimeoutException(
+                            $"Test exceeded {testTimeoutSeconds}s timeout." +
+                            locationInfo + stubDetails + hint);
+                    }
+                    // Propagate ThreadStatic state from test thread to main thread
+                    if (threadLastStmt != null)
+                        AlRunner.Runtime.AlScope.SetLastStatement(threadLastStmt.Value.Item1, threadLastStmt.Value.Item2);
+                    if (threadEx != null)
+                        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(threadEx).Throw();
+                }
                 else
-                    onRunMethod.Invoke(scope, null);
+                {
+                    // No timeout: run synchronously (default)
+                    if (collectingTest)
+                        AlRunner.Runtime.AlScope.RunWithCollecting(() => onRunMethod.Invoke(scope, null));
+                    else
+                        onRunMethod.Invoke(scope, null);
+                }
                 sw.Stop();
 
                 // Capture variable values from scope fields if enabled
@@ -2732,6 +2969,7 @@ public static class Executor
                     if (LooksLikeFrameworkVersionMismatch(r.Message))
                         Console.WriteLine($"      ℹ This BC version requires a newer .NET runtime. Install .NET 10: https://dotnet.microsoft.com/download/dotnet/10.0");
                     if (r.StackTrace != null) PrintFilteredStackTrace(r.StackTrace);
+                    PrintAutoStubWarningIfRelevant(r.StackTrace);
                     break;
                 case AlRunner.TestStatus.Error:
                     if (!verbose && r.Message != null && dedupMessages.Contains(r.Message))
@@ -2958,18 +3196,37 @@ public static class Executor
                 continue;
             if (line.Contains("System.RuntimeMethodHandle."))
                 continue;
-            if (printed < 5)
-            {
-                Console.WriteLine($"      {FormatSingleFrame(line)}");
-                printed++;
-            }
+            Console.WriteLine($"      {FormatSingleFrame(line)}");
+            printed++;
         }
         if (printed == 0 && lines.Length > 0)
         {
             // Fallback: print first few raw lines if nothing matched
-            foreach (var line in lines.Take(3))
+            foreach (var line in lines.Take(10))
                 Console.WriteLine($"      {line.Trim()}");
         }
+    }
+
+    /// <summary>
+    /// If the stack trace references any auto-stubbed codeunit, print a warning
+    /// explaining that the test likely failed because stubbed methods return defaults.
+    /// </summary>
+    private static void PrintAutoStubWarningIfRelevant(string? stackTrace)
+    {
+        if (stackTrace == null || AlRunnerPipeline.AutoStubbedCodeunits.Count == 0) return;
+
+        var involvedStubs = new List<(int Id, string Name)>();
+        foreach (var (id, name) in AlRunnerPipeline.AutoStubbedCodeunits)
+        {
+            if (stackTrace.Contains($"Codeunit{id}"))
+                involvedStubs.Add((id, name));
+        }
+
+        if (involvedStubs.Count == 0) return;
+
+        foreach (var (id, name) in involvedStubs)
+            Console.WriteLine($"      ⚠ Called auto-stubbed codeunit {id} \"{name}\" (methods return defaults — no records created).");
+        Console.WriteLine($"      Compile real implementations: al-runner --compile-dep <app>.app .deps --packages .alpackages/");
     }
 
     /// Used to print actionable guidance; does NOT change error classification.
@@ -3008,10 +3265,9 @@ public static class Executor
         // Prefer AL-generated frames (BusinessApplication namespace) over runtime internals
         var alFrames = allFrames
             .Where(f => f.Contains("BusinessApplication.") || f.Contains("MockAssert"))
-            .Take(3)
             .ToList();
 
-        var frames = alFrames.Count > 0 ? alFrames : allFrames.Take(3).ToList();
+        var frames = alFrames.Count > 0 ? alFrames : allFrames.Take(10).ToList();
         return string.Join("\n", frames.Select(f => $"      {FormatSingleFrame(f)}")) + "\n";
     }
 

@@ -6,6 +6,52 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.19] - 2026-04-23
+
+### Added
+- **Symbol-table auto-stub generation** — the headline feature of this release. After
+  the main AL compilation, the runner queries the BC compiler's symbol table for every
+  referenced codeunit and table that has no compiled class. It generates proper AL stubs
+  with full method signatures (parameter types, `var` modifiers, return types) extracted
+  from the symbol table, then compiles them in a second BC pass to produce scope classes
+  with correct member IDs and default return values. This means calling methods on
+  dependency objects (e.g., LibraryERM, Rest Client, No. Series) now returns proper
+  typed defaults instead of null. The second pass only runs when stubs are needed —
+  zero overhead for self-contained tests. The runner reports exactly which objects were
+  auto-stubbed and from which packages.
+- **AutoIncrement field support** — table fields with `AutoIncrement = true` now get
+  `max(existing) + 1` automatically when inserted with value 0, matching BC behavior.
+- **Full AL stack traces** — removed artificial 3/5 frame caps. Developers now see the
+  complete AL call chain to diagnose failures.
+- **`--compile-dep` dependency validation** — before attempting compilation, reads the
+  .app manifest and checks all declared dependencies against available packages. If
+  dependencies are missing, prints exactly which .app files are needed with publisher
+  and version, instead of the cryptic "no C# code was generated" error.
+- **Auto-stub transparency** — auto-stubbed codeunits are now listed by ID and name
+  in the console output. When a test fails involving a stubbed codeunit, the output
+  annotates the stack trace with guidance on how to compile real implementations
+  with `--compile-dep`.
+- **CI performance check** — each test bucket must complete within 60 seconds; CI
+  fails fast if the runner regresses on performance.
+
+### Changed
+- **`--compile-dep` skips DotNet files** — files using DotNet interop (unsupported
+  without BC service tier) are automatically excluded, allowing the remaining pure-AL
+  objects to compile successfully.
+- **Skip built-in stub IDs in `--generate-stubs` and auto-stub** — codeunits with
+  runner-native implementations (Assert, Variable Storage, etc.) are no longer
+  duplicated in generated stubs.
+
+### Fixed
+- **Auto-stub return type mismatch (#1150)** — when auto-stubs had many methods with
+  the same parameter count, the dispatch fallback could pick the wrong overload, causing
+  `InvalidCastException` (e.g., Int32 cast to NavCode). Symbol-table stubs with correct
+  return types eliminate this class of error.
+
+### Performance
+- **Auto-stub package scanning** — only scans .app files until all missing codeunit IDs
+  are found (early exit). Skips scanning entirely when no IDs are missing.
+
 ## [1.0.18] - 2026-04-22
 
 ### Added

@@ -5233,7 +5233,7 @@ RecordRef.GetPosition:
   layer: runtime-api
   category: RecordRef
   status: covered
-  notes: overloads=1
+  notes: overloads=2; GetPosition(Boolean) stub ignores the useNames flag
 
 RecordRef.GetTable:
   layer: runtime-api
@@ -6341,8 +6341,10 @@ System.CopyArray:
   layer: runtime-api
   category: System
   status: covered
-  tests: tests/bucket-2/199-system-array-random
-  notes: overloads=1. ALSystemArray.ALCopyArray redirected to AlCompat.ALCopyArray; copies count elements from 1-based fromIndex in src to dest[0..].
+  tests:
+    - tests/bucket-2/199-system-array-random
+    - tests/bucket-1/99-copyarray-3arg
+  notes: overloads=2. ALSystemArray.ALCopyArray redirected to AlCompat.ALCopyArray; 4-arg overload copies count elements from 1-based fromIndex; 3-arg overload (no count) copies all remaining elements from fromIndex to end.
 
 System.CopyStream:
   layer: runtime-api
@@ -6989,7 +6991,8 @@ Table.GetPosition:
   status: covered
   tests:
     - tests/bucket-1/63-record-getposition-setposition
-  notes: overloads=1
+    - tests/bucket-1/297-record-getposition-bool
+  notes: overloads=2; GetPosition() and GetPosition(UseNames: Boolean) both supported
 
 Table.GetRangeMax:
   layer: runtime-api
@@ -7048,6 +7051,14 @@ Table.Insert:
     - tests/bucket-1/188-table-crud
     - tests/bucket-1/02-record-operations
     - tests/bucket-1/283-overload-gaps
+
+Table.Insert (AutoIncrement):
+  layer: runtime-api
+  category: Table
+  status: covered
+  notes: "Fields with AutoIncrement=true get max(existing)+1 when value is 0 on Insert"
+  tests:
+    - tests/bucket-1/111-auto-increment
 
 Table.IsEmpty:
   layer: runtime-api
@@ -8774,6 +8785,13 @@ Time.ToText:
   notes: overloads=1; via Format(T) handled by AlCompat.FormatNavTime
 
 # ── Variant ─────────────────────────────────────────────────────
+
+Variant.Clear:
+  layer: runtime-api
+  category: Variant
+  status: complete
+  tests: tests/bucket-1/97-variant-clear
+  notes: overloads=1; MockVariant.Clear() resets _value to null; proven by Clear_ResetsVariantToDefault, Clear_ViaHelper_ResetsVariantToDefault, Clear_AllowsReassignmentAfterClear
 
 Variant.IsAction:
   layer: runtime-api

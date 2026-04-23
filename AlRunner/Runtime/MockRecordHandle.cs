@@ -84,6 +84,7 @@ public class MockRecordHandle
     // User table field numbers (BC standard)
     private const int UserSecurityIdFieldNo = 1;
     private const int UserNameFieldNo       = 2;
+    private const int UserLicenseTypeFieldNo = 10; // "License Type"
 
     /// <summary>
     /// Pre-seed system tables required by common AL patterns.
@@ -120,8 +121,9 @@ public class MockRecordHandle
 
         userTable.Add(new Dictionary<int, NavValue>
         {
-            [UserSecurityIdFieldNo] = new NavGuid(secId),
-            [UserNameFieldNo]       = new NavCode(50, userName.ToUpperInvariant()),
+            [UserSecurityIdFieldNo]  = new NavGuid(secId),
+            [UserNameFieldNo]        = new NavCode(50, userName.ToUpperInvariant()),
+            [UserLicenseTypeFieldNo] = NavInteger.Create(0), // "Full User"
         });
     }
 
@@ -341,6 +343,16 @@ public class MockRecordHandle
             _fields[fieldNo] = blob;
             return blob;
         }
+        // For Text/Code fields, use the declared field length from metadata
+        // so that MaxStrLen() returns the correct value (not Int32.MaxValue).
+        if (expectedType is NavType.Text or NavType.Code)
+        {
+            var meta = TableFieldRegistry.GetFieldMeta(_tableId, fieldNo);
+            if (meta?.Length is int len and > 0)
+                return expectedType == NavType.Code
+                    ? new NavCode(len, "")
+                    : new NavText(len, "");
+        }
         return DefaultForType(expectedType);
     }
 
@@ -422,6 +434,28 @@ public class MockRecordHandle
     {
         var table = GetRows();
 
+        // Auto-increment: when an AutoIncrement field has value 0 (or is unset),
+        // assign max(existing values in that column) + 1. This must happen before
+        // trigger firing so the trigger sees the assigned value.
+        var autoIncFields = TableFieldRegistry.GetAutoIncrementFields(_tableId);
+        foreach (var fieldId in autoIncFields)
+        {
+            bool isZero = !_fields.TryGetValue(fieldId, out var val) || val.ToInt32() == 0;
+            if (isZero)
+            {
+                int maxVal = 0;
+                foreach (var existingRow in table)
+                {
+                    if (existingRow.TryGetValue(fieldId, out var rv))
+                    {
+                        var v = rv.ToInt32();
+                        if (v > maxVal) maxVal = v;
+                    }
+                }
+                _fields[fieldId] = NavInteger.Create(maxVal + 1);
+            }
+        }
+
         // Fire OnBeforeInsertEvent(var Rec, RunTrigger: Boolean)
         // — always fires, regardless of runTrigger
         FireImplicitDbEvent("OnBeforeInsertEvent", this, runTrigger);
@@ -489,14 +523,16 @@ public class MockRecordHandle
         var assembly = MockCodeunitHandle.CurrentAssembly;
         if (assembly != null)
         {
-            foreach (var t in assembly.GetTypes())
-                if (t.Name == typeName) return t;
+            var found = MockCodeunitHandle.LookupTypeByName(assembly, typeName);
+            if (found != null) return found;
         }
         if (MockCodeunitHandle.DependencyAssemblies != null)
         {
             foreach (var depAsm in MockCodeunitHandle.DependencyAssemblies)
-                foreach (var t in depAsm.GetTypes())
-                    if (t.Name == typeName) return t;
+            {
+                var found = MockCodeunitHandle.LookupTypeByName(depAsm, typeName);
+                if (found != null) return found;
+            }
         }
         return null;
     }
@@ -2910,15 +2946,23 @@ public class MockRecordHandle
     /// Format: <c>FieldName=CONST(Value)</c> for each PK field, comma-separated.
     /// Example: <c>"No.=CONST(A001)"</c> for a Customer record positioned on No.=A001.
     /// </summary>
-    public string ALGetPosition()
+    public string ALGetPosition() => ALGetPosition(true);
+
+    /// <summary>
+    /// AL's GETPOSITION(UseNames) overload.
+    /// When <paramref name="useNames"/> is <c>true</c>, each segment uses the field name
+    /// (e.g. <c>No.=CONST(A001)</c>); when <c>false</c>, the field number is used instead
+    /// (e.g. <c>1=CONST(A001)</c>).
+    /// </summary>
+    public string ALGetPosition(bool useNames)
     {
         var pkFields = GetPrimaryKeyFields();
         var parts = new List<string>(pkFields.Length);
         foreach (var fieldNo in pkFields)
         {
-            var name = GetFieldNameByNo(fieldNo);
+            var label = useNames ? GetFieldNameByNo(fieldNo) : fieldNo.ToString();
             var value = _fields.TryGetValue(fieldNo, out var v) ? NavValueToString(v) : "";
-            parts.Add($"{name}=CONST({value})");
+            parts.Add($"{label}=CONST({value})");
         }
         return string.Join(",", parts);
     }

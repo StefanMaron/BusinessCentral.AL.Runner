@@ -16,8 +16,9 @@ public static class EnumRegistry
     // enum <objectId> <quoted-or-bare-name> [implements <iface-list>]? {
     // Non-greedy `[^{]*?` swallows any `implements "Iface"` / extensible modifier
     // or attributes between the enum name and the opening brace.
+    // Matches both `enum N "Name" { ... }` and `enumextension N "Name" extends "Base" { ... }`
     private static readonly Regex EnumHeader = new(
-        @"\benum\s+(\d+)\s+(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))[^{]*?\{",
+        @"\benum(?:extension)?\s+(\d+)\s+(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))[^{]*?\{",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     // value(<ordinal>; [quotedName | barename])

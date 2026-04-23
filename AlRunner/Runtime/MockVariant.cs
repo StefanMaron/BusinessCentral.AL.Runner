@@ -161,6 +161,15 @@ public class MockVariant
     public bool ALIsTransactionType => false;
     public bool ALIsWideChar => false;
 
+    /// <summary>
+    /// Clear(VariantVar) — resets the variant to its default (empty) state.
+    /// AL's Clear() built-in on a Variant sets it back to no value.
+    /// </summary>
+    public void Clear()
+    {
+        _value = null;
+    }
+
     /// <summary>Get the underlying value.</summary>
     public object? Value => _value;
 

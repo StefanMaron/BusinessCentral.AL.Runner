@@ -85,6 +85,28 @@ jobs:
             dotnet run --no-build --project AlRunner --framework net10.0 -- --strict --test-isolation method $args
           done
 
+      - name: Performance check — each bucket must complete within 60s
+        run: |
+          for bucket in tests/bucket-*/; do
+            args=""
+            for suite in "$bucket"*/; do
+              [ -d "${suite}src"  ] && args="$args ${suite}src"
+              for appdir in "${suite}"app*/; do
+                [ -d "$appdir" ] && args="$args $appdir"
+              done
+              [ -d "${suite}test" ] && args="$args ${suite}test"
+            done
+            echo "=== Timing: $bucket ==="
+            start=$SECONDS
+            dotnet run --no-build --project AlRunner --framework net10.0 -- --test-isolation method $args || true
+            elapsed=$(( SECONDS - start ))
+            echo "  Completed in ${elapsed}s"
+            if [ "$elapsed" -gt 60 ]; then
+              echo "::error::Performance regression: $bucket took ${elapsed}s (limit: 60s)"
+              exit 1
+            fi
+          done
+
       - name: Run stubs test
         run: |
           dotnet run --no-build --project AlRunner --framework net10.0 -- --stubs tests/stubs/39-stubs/stubs tests/stubs/39-stubs/src tests/stubs/39-stubs/test

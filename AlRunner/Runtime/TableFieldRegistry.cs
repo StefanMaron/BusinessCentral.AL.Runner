@@ -5,7 +5,7 @@ namespace AlRunner.Runtime;
 /// <summary>
 /// Metadata for a single AL table field (name, caption, type, length).
 /// </summary>
-public record FieldMeta(int FieldId, string Name, string? Caption, string TypeName, int? Length);
+public record FieldMeta(int FieldId, string Name, string? Caption, string TypeName, int? Length, bool AutoIncrement = false);
 
 /// <summary>
 /// Transpile-time registry of AL table field declarations so runtime code
@@ -54,6 +54,10 @@ public static class TableFieldRegistry
     // AL escapes embedded apostrophes by doubling them, e.g. 'Vendor''s Name'.
     private static readonly Regex CaptionProp = new(
         @"\bCaption\s*=\s*'((?:''|[^'])*)'\s*;",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex AutoIncrementProp = new(
+        @"\bAutoIncrement\s*=\s*true\b",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     // field(id; name; type) — extended regex capturing Enum fields specifically
@@ -160,8 +164,9 @@ public static class TableFieldRegistry
                     }
                 }
 
-                // Parse field-level Caption from the field body block
+                // Parse field-level properties from the field body block
                 string? fieldCaption = null;
+                bool autoIncrement = false;
                 int fieldBodyStart = fm.Index + fm.Length;
                 // Look for `{ ... }` block following the field declaration
                 int searchPos = fieldBodyStart;
@@ -184,10 +189,11 @@ public static class TableFieldRegistry
                         var capMatch = CaptionProp.Match(fieldBody);
                         if (capMatch.Success)
                             fieldCaption = DecodeAlSingleQuotedString(capMatch.Groups[1].Value);
+                        autoIncrement = AutoIncrementProp.IsMatch(fieldBody);
                     }
                 }
 
-                meta[fieldId] = new FieldMeta(fieldId, name, fieldCaption, typeName, length);
+                meta[fieldId] = new FieldMeta(fieldId, name, fieldCaption, typeName, length, autoIncrement);
             }
 
             // Extract enum field type info: field(id; name; Enum "EnumName")
@@ -431,6 +437,15 @@ public static class TableFieldRegistry
         return null;
     }
 
+    /// <summary>Returns the full FieldMeta for a specific field, or null.</summary>
+    public static FieldMeta? GetFieldMeta(int tableId, int fieldId)
+    {
+        if (_fieldMeta.TryGetValue(tableId, out var meta) &&
+            meta.TryGetValue(fieldId, out var fm))
+            return fm;
+        return null;
+    }
+
     /// <summary>Returns the field length (for Text[N]/Code[N]) or null.</summary>
     public static int? GetFieldLength(int tableId, int fieldId)
     {
@@ -473,6 +488,16 @@ public static class TableFieldRegistry
     public static string? GetOptionMembers(int tableId, int fieldNo)
     {
         return _optionMembersFields.TryGetValue((tableId, fieldNo), out var members) ? members : null;
+    }
+
+    /// <summary>
+    /// Returns the field IDs that have AutoIncrement = true for the given table.
+    /// </summary>
+    public static IReadOnlyList<int> GetAutoIncrementFields(int tableId)
+    {
+        if (_fieldMeta.TryGetValue(tableId, out var meta))
+            return meta.Values.Where(f => f.AutoIncrement).Select(f => f.FieldId).ToList();
+        return Array.Empty<int>();
     }
 
     private static string DecodeAlSingleQuotedString(string value)
