@@ -300,6 +300,19 @@ public class MockReportHandle
     }
 
     /// <summary>
+    /// Static Report.Run(reportId, requestPage, systemPrinter, record) — 4-argument overload.
+    /// <paramref name="requestPage"/> and <paramref name="systemPrinter"/> are ignored in standalone mode.
+    /// <paramref name="record"/> is applied as a table-view filter when it is a <see cref="MockRecordHandle"/>.
+    /// </summary>
+    public static void StaticRun(int reportId, bool requestPage, bool systemPrinter, object record)
+    {
+        var handle = new MockReportHandle(reportId) { UseRequestForm = requestPage };
+        if (record is MockRecordHandle rec)
+            handle.SetTableView(rec);
+        handle.Run();
+    }
+
+    /// <summary>
     /// Static Report.RunModal(reportId) — redirected from NavReport.RunModal() by the rewriter.
     /// If a ReportHandler is registered, invoke it; otherwise create an instance and RunModal().
     /// </summary>
