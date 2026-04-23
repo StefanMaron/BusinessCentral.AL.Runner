@@ -54,7 +54,16 @@ public sealed class DapServer : IDisposable
     public DapServer(int port = 4711)
     {
         _listener = new TcpListener(IPAddress.Loopback, port);
+        // Start immediately so the OS assigns the port (even when port = 0).
+        // This makes the bound port available via Port before RunAsync is called.
+        _listener.Start();
     }
+
+    /// <summary>
+    /// The actual port the server is listening on.
+    /// Useful when the server was created with port 0 (OS-assigned).
+    /// </summary>
+    public int Port => ((System.Net.IPEndPoint)_listener.LocalEndpoint).Port;
 
     /// <summary>
     /// Start listening and handle one client connection asynchronously.
@@ -62,7 +71,7 @@ public sealed class DapServer : IDisposable
     /// </summary>
     public async Task RunAsync(CancellationToken ct = default)
     {
-        _listener.Start();
+        // Listener is already started in the constructor.
         _client = await _listener.AcceptTcpClientAsync(ct);
         _stream = _client.GetStream();
 

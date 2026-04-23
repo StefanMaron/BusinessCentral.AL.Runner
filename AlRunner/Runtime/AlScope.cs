@@ -61,18 +61,55 @@ public class AlScope : IDisposable, ITreeObject
     /// <summary>Last statement hit (scope type name, statement ID) — used for error line mapping.</summary>
     [ThreadStatic] private static (string TypeName, int Id)? _lastStatementHit;
 
+    /// <summary>
+    /// Per-scope-type last statement hit — maps scope class name to the last statement ID
+    /// executed in that scope on the current thread. Used by FormatStackFrames to resolve
+    /// AL line numbers for each frame in the call stack.
+    /// </summary>
+    [ThreadStatic] private static Dictionary<string, int>? _scopeLastStmtId;
+
+    private static Dictionary<string, int> ScopeLastStmtId =>
+        _scopeLastStmtId ??= new Dictionary<string, int>();
+
     public static (string TypeName, int Id)? LastStatementHit => _lastStatementHit;
 
-    public static void ResetLastStatement() => _lastStatementHit = null;
+    public static void ResetLastStatement()
+    {
+        _lastStatementHit = null;
+        _scopeLastStmtId = null;
+    }
 
     /// <summary>Set the last statement from another thread (propagate ThreadStatic state).</summary>
     public static void SetLastStatement(string typeName, int id) => _lastStatementHit = (typeName, id);
+
+    /// <summary>Get the last statement ID recorded for a given scope class name.</summary>
+    public static int? GetLastStmtForScope(string typeName)
+    {
+        if (_scopeLastStmtId != null && _scopeLastStmtId.TryGetValue(typeName, out var id))
+            return id;
+        return null;
+    }
+
+    /// <summary>
+    /// Capture per-scope tracking state for cross-thread propagation.
+    /// Returns a snapshot of the current thread's scope tracking dictionary.
+    /// </summary>
+    public static Dictionary<string, int>? GetScopeTracking() =>
+        _scopeLastStmtId != null ? new Dictionary<string, int>(_scopeLastStmtId) : null;
+
+    /// <summary>
+    /// Restore per-scope tracking state propagated from another thread.
+    /// Called on the receiving thread after a background test thread exits.
+    /// </summary>
+    public static void SetScopeTracking(Dictionary<string, int>? tracking) =>
+        _scopeLastStmtId = tracking;
 
     protected void StmtHit(int n)
     {
         var typeName = GetType().Name;
         _hitStatements.Add((typeName, n));
         _lastStatementHit = (typeName, n);
+        ScopeLastStmtId[typeName] = n;
         IterationTracker.RecordHit(n);
         BreakpointManager.CheckHit(typeName, n);
     }
@@ -82,6 +119,7 @@ public class AlScope : IDisposable, ITreeObject
         var typeName = GetType().Name;
         _hitStatements.Add((typeName, n));
         _lastStatementHit = (typeName, n);
+        ScopeLastStmtId[typeName] = n;
         IterationTracker.RecordHit(n);
         BreakpointManager.CheckHit(typeName, n);
         return true;

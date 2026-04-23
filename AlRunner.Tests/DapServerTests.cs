@@ -28,18 +28,18 @@ public class DapServerTests : IAsyncDisposable
     private Task? _serverTask;
     private readonly CancellationTokenSource _cts = new();
 
-    private static int _nextPort = 15000;
-    private static int AllocatePort() => System.Threading.Interlocked.Increment(ref _nextPort);
-
     private async Task<int> StartServerAsync()
     {
         BreakpointManager.Reset();
-        var port = AllocatePort();
-        _server = new DapServer(port);
+        // Use port 0 so the OS assigns a free port, preventing collisions when
+        // net8/net9/net10 test processes run in parallel (all would otherwise
+        // start at _nextPort=15000 and collide on the same ports).
+        _server = new DapServer(0);
         _server.PipelineOptions = new PipelineOptions(); // empty — no AL to run
+        var port = _server.Port; // actual bound port (listener already started in ctor)
         _serverTask = Task.Run(() => _server.RunAsync(_cts.Token));
 
-        // Give the listener a moment to bind
+        // Give the server task a moment to reach AcceptTcpClientAsync
         await Task.Delay(50);
 
         _client = new TcpClient();

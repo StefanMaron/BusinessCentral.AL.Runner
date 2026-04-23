@@ -2803,6 +2803,7 @@ public static class Executor
                     AlRunner.Runtime.MockCodeunitHandle.ResetAutoStubTracking();
                     Exception? threadEx = null;
                     (string, int)? threadLastStmt = null;
+                    Dictionary<string, int>? threadScopeTracking = null;
                     var thread = new Thread(() =>
                     {
                         try
@@ -2817,6 +2818,7 @@ public static class Executor
                         {
                             // Capture ThreadStatic state before thread exits
                             threadLastStmt = AlRunner.Runtime.AlScope.LastStatementHit;
+                            threadScopeTracking = AlRunner.Runtime.AlScope.GetScopeTracking();
                         }
                     });
                     thread.IsBackground = true;
@@ -2865,6 +2867,8 @@ public static class Executor
                     // Propagate ThreadStatic state from test thread to main thread
                     if (threadLastStmt != null)
                         AlRunner.Runtime.AlScope.SetLastStatement(threadLastStmt.Value.Item1, threadLastStmt.Value.Item2);
+                    if (threadScopeTracking != null)
+                        AlRunner.Runtime.AlScope.SetScopeTracking(threadScopeTracking);
                     if (threadEx != null)
                         System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(threadEx).Throw();
                 }
@@ -3312,7 +3316,25 @@ public static class Executor
     }
 
     /// <summary>
-    /// Format a single stack frame for AL-level readability:
+    /// Regex matching a BC-generated scope class name embedded in a .NET stack frame.
+    /// Captures: (1) full scope class name, (2) codeunit ID digits, (3) procedure name (optional).
+    /// Examples:
+    ///   Codeunit50020_CreateTestJournalLine_Scope_abc  → id=50020, proc=CreateTestJournalLine
+    ///   Codeunit50020_Scope                            → id=50020, proc=(none, OnRun)
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex _scopeClassPattern =
+        new(@"(Codeunit(\d+)(?:_(.+?))?_Scope(?:_\w+)?)",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Format a single stack frame for AL-level readability.
+    ///
+    /// When the frame contains a recognized BC scope class (CodeunitNNNNN[_Proc]_Scope[_hash]),
+    /// produces: at Codeunit "Name".Procedure() line N in File.al
+    /// using per-scope last-statement tracking (populated by StmtHit/CStmtHit) and
+    /// SourceLineMapper / SourceFileMapper for resolution.
+    ///
+    /// For all other frames:
     /// - Strip C# namespace prefix
     /// - Replace CodeunitNNNNN with Codeunit "Name" (via CodeunitNameRegistry)
     /// - Replace RecordNNNNN with Record "Name" (via TableFieldRegistry)
@@ -3322,6 +3344,52 @@ public static class Executor
     {
         var clean = frame.Replace("at Microsoft.Dynamics.Nav.BusinessApplication.", "at ");
 
+        // Try to produce a full AL-level frame: at Codeunit "Name".Proc() line N in File.al
+        var scopeMatch = _scopeClassPattern.Match(clean);
+        if (scopeMatch.Success)
+        {
+            var scopeClassName = scopeMatch.Groups[1].Value;            // e.g. "Codeunit50020_CreateTestJournalLine_Scope_abc"
+            var codeunitIdStr = scopeMatch.Groups[2].Value;             // e.g. "50020"
+            var procName = scopeMatch.Groups[3].Success ? scopeMatch.Groups[3].Value : null; // e.g. "CreateTestJournalLine"
+
+            // Resolve codeunit name
+            string codeunitLabel;
+            if (int.TryParse(codeunitIdStr, out var codeunitId))
+            {
+                var name = AlRunner.Runtime.CodeunitNameRegistry.GetNameById(codeunitId);
+                codeunitLabel = name != null ? $"Codeunit \"{name}\"" : $"Codeunit{codeunitIdStr}";
+            }
+            else
+            {
+                codeunitLabel = $"Codeunit{codeunitIdStr}";
+            }
+
+            var procPart = procName != null ? $".{procName}()" : "";
+
+            // Resolve AL line and file from per-scope last-statement tracking
+            var lineInfo = "";
+            var fileInfo = "";
+            var lastStmtId = AlRunner.Runtime.AlScope.GetLastStmtForScope(scopeClassName);
+            if (lastStmtId.HasValue)
+            {
+                var alPos = SourceLineMapper.GetAlPositionFromStatement(scopeClassName, lastStmtId.Value);
+                if (alPos.HasValue)
+                {
+                    lineInfo = $" line {alPos.Value.Line}";
+
+                    // Resolve file: look up codeunit class name → AL object name → file
+                    var codeunitClassName = $"Codeunit{codeunitIdStr}";
+                    var objectName = SourceFileMapper.GetObjectForClass(codeunitClassName);
+                    var file = SourceFileMapper.GetFile(objectName);
+                    if (file != null)
+                        fileInfo = $" in {Path.GetFileName(file)}";
+                }
+            }
+
+            return $"at {codeunitLabel}{procPart}{lineInfo}{fileInfo}";
+        }
+
+        // Fallback: resolve object names but keep the raw frame shape
         // Resolve Codeunit IDs to names: Codeunit72336722 → Codeunit "EventSubsCABQR"
         clean = System.Text.RegularExpressions.Regex.Replace(clean, @"Codeunit(\d+)", m =>
         {
