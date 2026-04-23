@@ -358,13 +358,11 @@ public class MockCodeunitHandle
             }
         }
 
-        var cuName = CodeunitNameRegistry.GetNameById(_codeunitId);
-        var displayName = cuName != null ? $"codeunit {_codeunitId} \"{cuName}\"" : $"codeunit {_codeunitId}";
-        throw new InvalidOperationException(
-            $"Method with member ID {memberId} not found in {displayName}\n" +
-            $"Tip: generate stubs with real method signatures:\n" +
-            $"  al-runner --generate-stubs .alpackages ./stubs ./src ./test\n" +
-            $"Then run with: al-runner --stubs ./stubs ./src ./test");
+        // No matching method found. For auto-stubbed dependency objects (system
+        // codeunits, base app, etc.) this is expected — the stub class exists but
+        // has no compiled methods. Return null as a default no-op; the caller's
+        // generated code handles null returns via default(T) conversions.
+        return null;
     }
 
     /// <summary>

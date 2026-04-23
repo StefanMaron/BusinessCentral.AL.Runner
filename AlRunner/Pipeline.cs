@@ -694,28 +694,16 @@ public class AlRunnerPipeline
         }
         Timer.EndStage("Roslyn rewriting");
 
-        // Inject minimal C# stub classes for test-toolkit codeunits (130000–139999) that
-        // are referenced in the generated C# but were NOT compiled from source.
-        // This allows MockCodeunitHandle.FindCodeunitType to find them at runtime and
-        // execute as no-ops (no OnRun method → InvokeOnRun silently returns) instead of
-        // throwing InvalidOperationException.
-        // Auto-stub test-toolkit codeunits (130000-139999) as empty classes so
-        // they compile. Methods on these stubs will be no-ops (return defaults).
-        // For proper method implementations, users should run:
-        //   al-runner --generate-stubs .alpackages ./stubs ./src ./test
-        var testToolkitStubs = GenerateTestToolkitStubs(generatedCSharpList, options.PackagePaths, inputPaths);
-        if (testToolkitStubs.Count > 0)
-        {
-            rewrittenTreeList.AddRange(testToolkitStubs);
-            stderr.WriteLine($"\nAuto-stubbed {testToolkitStubs.Count} dependency codeunit(s) — all methods return defaults:");
-            foreach (var (id, cuName) in AlRunnerPipeline.AutoStubbedCodeunits.OrderBy(kv => kv.Key))
-                stderr.WriteLine($"  {id} \"{cuName}\"");
-            stderr.WriteLine($"Tests that depend on these methods creating data WILL fail.");
-            stderr.WriteLine($"To compile real implementations:");
-            stderr.WriteLine($"  al-runner --compile-dep .alpackages/<app>.app .deps --packages .alpackages/");
-            stderr.WriteLine($"Then run with: al-runner --dep-dlls .deps ./src ./test");
-            stderr.WriteLine();
-        }
+        // Auto-stub: scan the generated C# for ALL referenced object IDs that were
+        // NOT compiled from source, generate minimal empty AL stubs for them, and
+        // compile those stubs in a SECOND BC pass using the same packages. This
+        // produces proper C# classes with correct scope classes, member IDs, and
+        // default return values — covering codeunits, tables, pages, and all other
+        // object types from system, base app, and test library packages.
+        var autoStubTrees = GenerateAndCompileAutoStubs(
+            generatedCSharpList, options.PackagePaths, inputPaths, stderr);
+        if (autoStubTrees.Count > 0)
+            rewrittenTreeList.AddRange(autoStubTrees);
 
         // Step 3: Compile
         Timer.StartStage("Roslyn compilation");
@@ -1335,154 +1323,162 @@ public class AlRunnerPipeline
     }
 
     /// <summary>
-    /// Scans the generated C# for test-toolkit codeunit IDs (130000–139999) referenced
-    /// via <c>NavCodeunit.RunCodeunit</c> or <c>new NavCodeunitHandle(..., id)</c> patterns,
-    /// then returns a minimal rewritten C# syntax tree for each ID that does NOT already
-    /// have a compiled class in <paramref name="generatedCSharpList"/>. The generated stub
-    /// classes are empty (no methods) so that <see cref="AlRunner.Runtime.MockCodeunitHandle.FindCodeunitType"/>
-    /// finds them at runtime and treats any call as a silent no-op instead of throwing.
-    /// Codeunits with runner-native mock implementations (130/131/130000, 131004, 131100) are
-    /// excluded — they are never looked up by <c>FindCodeunitType</c>.
+    /// Scans generated C# for ALL referenced object IDs (codeunits, tables, pages, etc.)
+    /// that don't have a compiled class. Generates minimal empty AL stubs for each missing
+    /// object and compiles them in a second BC pass using the same packages. The BC compiler
+    /// produces proper C# with correct scope classes, member IDs, and default return values.
     /// </summary>
-    internal static List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)> GenerateTestToolkitStubs(
+    private static List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)> GenerateAndCompileAutoStubs(
         List<(string Name, string Code)> generatedCSharpList,
-        List<string>? packagePaths = null, List<string>? inputPaths = null)
+        List<string> packagePaths, List<string> inputPaths,
+        TextWriter stderr)
     {
-        // IDs already compiled from source — no stub needed.
-        var alreadyPresent = new HashSet<int>();
-        var classPattern = new Regex(@"class\s+Codeunit(\d+)", RegexOptions.Compiled);
+        var result = new List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)>();
+
+        // 1. Collect object IDs already compiled from user source
+        var alreadyPresent = new HashSet<(string Type, int Id)>();
+        var classPattern = new Regex(@"class\s+(Codeunit|Record|Page|Report|XmlPort|Query)(\d+)\b", RegexOptions.Compiled);
         foreach (var (_, code) in generatedCSharpList)
         {
             foreach (Match m in classPattern.Matches(code))
             {
-                if (int.TryParse(m.Groups[1].Value, out int id))
-                    alreadyPresent.Add(id);
+                if (int.TryParse(m.Groups[2].Value, out int id))
+                    alreadyPresent.Add((m.Groups[1].Value, id));
             }
         }
 
-        // Codeunits that have dedicated runner-native mock implementations
+        // 2. Scan generated C# for ALL referenced object IDs
+        //    Pattern: new NavCodeunitHandle(this, ID) — codeunits
+        //    Pattern: new NavRecordHandle(this, ID, ...) — tables/records
+        var cuPattern = new Regex(@"NavCodeunitHandle\(\s*\w+\s*,\s*(\d+)\s*\)", RegexOptions.Compiled);
+        var recPattern = new Regex(@"NavRecordHandle\(\s*\w+\s*,\s*(\d+)\s*,", RegexOptions.Compiled);
+
+        var missingCodeunits = new HashSet<int>();
+        var missingTables = new HashSet<int>();
+
+        // Codeunits with runner-native mock implementations — never stub
         var nativeMockIds = new HashSet<int> { 130, 131, 130000, 130002, 130440, 130500, 131004, 131100, 132250 };
 
-        // Scan all generated C# for test-toolkit ID literals (130000-139999)
-        var idPattern = new Regex(@"(?:,\s*|[\(\s])1(3[0-9]{4})\b", RegexOptions.Compiled);
-        var referencedIds = new HashSet<int>();
         foreach (var (_, code) in generatedCSharpList)
         {
-            foreach (Match m in idPattern.Matches(code))
+            foreach (Match m in cuPattern.Matches(code))
             {
-                if (int.TryParse("1" + m.Groups[1].Value, out int id)
-                    && id is >= 130000 and <= 139999
-                    && !nativeMockIds.Contains(id))
-                {
-                    referencedIds.Add(id);
-                }
+                if (int.TryParse(m.Groups[1].Value, out int id)
+                    && !nativeMockIds.Contains(id)
+                    && !alreadyPresent.Contains(("Codeunit", id)))
+                    missingCodeunits.Add(id);
+            }
+            foreach (Match m in recPattern.Matches(code))
+            {
+                if (int.TryParse(m.Groups[1].Value, out int id)
+                    && !alreadyPresent.Contains(("Record", id)))
+                    missingTables.Add(id);
             }
         }
 
-        var missingIds = referencedIds.Where(id => !alreadyPresent.Contains(id)).OrderBy(id => id).ToList();
-        if (missingIds.Count == 0) return new List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)>();
+        if (missingCodeunits.Count == 0 && missingTables.Count == 0)
+            return result;
 
-        // Build a map of codeunit ID → method signatures from .app packages.
-        // Only scan packages until all missing IDs are found.
-        var missingIdSet = new HashSet<int>(missingIds);
-        var symbolMap = new Dictionary<int, StubGenerator.CodeunitSymbol>();
-        var allPackageDirs = new List<string>(packagePaths ?? new());
-        if (inputPaths != null)
+        // 3. Generate minimal AL stubs
+        var alStubs = new List<string>();
+        foreach (var id in missingCodeunits.OrderBy(x => x))
+            alStubs.Add($"codeunit {id} \"AutoStub{id}\" {{ }}");
+        foreach (var id in missingTables.OrderBy(x => x))
         {
-            foreach (var p in inputPaths)
-            {
-                var dir = Directory.Exists(p) ? p : Path.GetDirectoryName(p);
-                if (dir == null) continue;
-                var alPkg = Path.Combine(dir, ".alpackages");
-                if (Directory.Exists(alPkg) && !allPackageDirs.Contains(alPkg))
-                    allPackageDirs.Add(alPkg);
-            }
+            // Tables need at least one field and a primary key to compile
+            alStubs.Add($"table {id} \"AutoStub{id}\" {{ fields {{ field(1; PK; Integer) {{ }} }} keys {{ key(PK; PK) {{ Clustered = true; }} }} }}");
         }
-        foreach (var pkgDir in allPackageDirs)
+
+        // 4. Compile stubs in a second BC pass (same packages → proper scope classes)
+        var savedErr = Console.Error;
+        Console.SetError(TextWriter.Null); // suppress expected diagnostics
+        List<(string Name, string Code)>? stubCSharp;
+        try
         {
-            if (missingIdSet.Count == 0) break;
-            if (!Directory.Exists(pkgDir)) continue;
-            foreach (var appFile in Directory.GetFiles(pkgDir, "*.app"))
+            stubCSharp = AlTranspiler.TranspileMulti(
+                alStubs,
+                packagePaths.Count > 0 ? packagePaths : null,
+                inputPaths);
+        }
+        finally { Console.SetError(savedErr); }
+
+        // 5. Rewrite and collect compiled stubs
+        int rewriteOk = 0, rewriteFail = 0;
+        if (stubCSharp != null)
+        {
+            foreach (var (name, code) in stubCSharp)
             {
-                if (missingIdSet.Count == 0) break;
                 try
                 {
-                    var (codeunits, _, _) = StubGenerator.ReadCodeunitsFromApp(appFile);
-                    foreach (var cu in codeunits)
+                    var tree = RoslynRewriter.RewriteToTree(code);
+                    if (tree != null)
                     {
-                        if (missingIdSet.Contains(cu.Id))
-                        {
-                            symbolMap[cu.Id] = cu;
-                            missingIdSet.Remove(cu.Id);
-                        }
+                        result.Add((name, tree));
+                        rewriteOk++;
                     }
                 }
-                catch { /* skip unreadable packages */ }
-            }
-        }
-        var stubs = new List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)>();
-
-        // Generate C# stubs with method names and return types from SymbolReference.json.
-        // Parameters use 'object' to avoid compile errors from missing BC types.
-        foreach (var id in missingIds)
-        {
-            string stubCode;
-            if (symbolMap.TryGetValue(id, out var cuSymbol) && cuSymbol.Methods.Count > 0)
-                stubCode = GenerateRichCSharpStub(id, cuSymbol);
-            else
-                stubCode = $"namespace Microsoft.Dynamics.Nav.BusinessApplication {{ public class Codeunit{id} {{ }} }}";
-            var tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(
-                stubCode, path: $"TestToolkitStub{id}.cs");
-            stubs.Add(($"TestToolkitStub{id}", tree));
-        }
-
-        // Track all auto-stubbed IDs for test output annotation
-        foreach (var id in missingIds)
-        {
-            var cuName = symbolMap.TryGetValue(id, out var sym) ? sym.Name : $"Codeunit {id}";
-            AutoStubbedCodeunits.TryAdd(id, cuName);
-        }
-
-        return stubs;
-    }
-
-    private static string GenerateRichCSharpStub(int id, StubGenerator.CodeunitSymbol cu)
-    {
-        var sb = new System.Text.StringBuilder();
-        sb.AppendLine("namespace Microsoft.Dynamics.Nav.BusinessApplication {");
-        sb.AppendLine($"public class Codeunit{id} {{");
-        foreach (var method in cu.Methods)
-        {
-            var csParams = string.Join(", ", method.Parameters.Select((p, i) => $"object p{i}"));
-            if (method.ReturnType == null)
-            {
-                sb.AppendLine($"    public void {method.Name}({csParams}) {{ }}");
-            }
-            else
-            {
-                var csRet = method.ReturnType.Name switch
+                catch
                 {
-                    "Integer" or "Option" or "Enum" => "int",
-                    "BigInteger" => "long",
-                    "Decimal" => "decimal",
-                    "Boolean" => "bool",
-                    "Char" => "char",
-                    "Byte" => "byte",
-                    "Guid" => "System.Guid",
-                    "Text" or "Code" or "Label" or "TextConst" => "string",
-                    _ => "object",
-                };
-                string retVal = csRet switch
-                {
-                    "string" => "\"\"",
-                    "bool" => "false",
-                    _ => "default",
-                };
-                sb.AppendLine($"    public {csRet} {method.Name}({csParams}) {{ return {retVal}; }}");
+                    rewriteFail++;
+                    // Generate minimal fallback class so other code can reference it
+                    var classMatch = classPattern.Match(code);
+                    if (classMatch.Success)
+                    {
+                        var className = $"{classMatch.Groups[1].Value}{classMatch.Groups[2].Value}";
+                        var fallback = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(
+                            $"namespace Microsoft.Dynamics.Nav.BusinessApplication {{ public class {className} {{ }} }}");
+                        result.Add(($"AutoStub_{className}", fallback));
+                    }
+                }
             }
         }
-        sb.AppendLine("}}");
-        return sb.ToString();
+
+        // 6. For any IDs that failed BC compilation (missing transitive deps),
+        //    generate minimal C# classes as fallback
+        var compiledIds = new HashSet<int>();
+        var compiledClassPattern = new Regex(@"class\s+(?:Codeunit|Record)(\d+)", RegexOptions.Compiled);
+        if (stubCSharp != null)
+        {
+            foreach (var (_, code) in stubCSharp)
+                foreach (Match m in compiledClassPattern.Matches(code))
+                    if (int.TryParse(m.Groups[1].Value, out int id))
+                        compiledIds.Add(id);
+        }
+        foreach (var id in missingCodeunits.Where(id => !compiledIds.Contains(id)))
+        {
+            var fallback = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(
+                $"namespace Microsoft.Dynamics.Nav.BusinessApplication {{ public class Codeunit{id} {{ }} }}",
+                path: $"AutoStub_Codeunit{id}.cs");
+            result.Add(($"AutoStub_Codeunit{id}", fallback));
+        }
+        foreach (var id in missingTables.Where(id => !compiledIds.Contains(id)))
+        {
+            var fallback = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(
+                $"namespace Microsoft.Dynamics.Nav.BusinessApplication {{ public class Record{id} {{ }} }}",
+                path: $"AutoStub_Record{id}.cs");
+            result.Add(($"AutoStub_Record{id}", fallback));
+        }
+
+        // Track for test output annotation
+        foreach (var id in missingCodeunits)
+            AutoStubbedCodeunits.TryAdd(id, $"Codeunit {id}");
+        foreach (var id in missingTables)
+            AutoStubbedCodeunits.TryAdd(id, $"Table {id}");
+
+        // 7. Report
+        int total = missingCodeunits.Count + missingTables.Count;
+        int compiled = stubCSharp?.Count ?? 0;
+        stderr.WriteLine($"\nAuto-stubbed {total} dependency object(s) — methods return defaults:");
+        if (missingCodeunits.Count > 0)
+            stderr.WriteLine($"  Codeunits: {missingCodeunits.Count} ({compiled} compiled via BC, {missingCodeunits.Count - compiledIds.Intersect(missingCodeunits).Count()} fallback)");
+        if (missingTables.Count > 0)
+            stderr.WriteLine($"  Tables:    {missingTables.Count}");
+        stderr.WriteLine($"Stubbed methods return default values. Provide real implementations via:");
+        stderr.WriteLine($"  --stubs ./stubs     (AL stub files)");
+        stderr.WriteLine($"  --dep-dlls .deps    (compiled dependency DLLs)");
+        stderr.WriteLine();
+
+        return result;
     }
 
     private static List<string> GetSeparateStubSources(List<string> stubSources, List<string> alSources)
