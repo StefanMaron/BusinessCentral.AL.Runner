@@ -2668,6 +2668,7 @@ public static class Executor
                     // Track which auto-stubbed codeunits are accessed during this test
                     AlRunner.Runtime.MockCodeunitHandle.ResetAutoStubTracking();
                     Exception? threadEx = null;
+                    (string, int)? threadLastStmt = null;
                     var thread = new Thread(() =>
                     {
                         try
@@ -2678,6 +2679,11 @@ public static class Executor
                                 onRunMethod.Invoke(scope, null);
                         }
                         catch (Exception ex) { threadEx = ex; }
+                        finally
+                        {
+                            // Capture ThreadStatic state before thread exits
+                            threadLastStmt = AlRunner.Runtime.AlScope.LastStatementHit;
+                        }
                     });
                     thread.IsBackground = true;
                     thread.Start();
@@ -2722,6 +2728,9 @@ public static class Executor
                             $"Test exceeded {testTimeoutSeconds}s timeout." +
                             locationInfo + stubDetails + hint);
                     }
+                    // Propagate ThreadStatic state from test thread to main thread
+                    if (threadLastStmt != null)
+                        AlRunner.Runtime.AlScope.SetLastStatement(threadLastStmt.Value.Item1, threadLastStmt.Value.Item2);
                     if (threadEx != null)
                         System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(threadEx).Throw();
                 }

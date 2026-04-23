@@ -65,6 +65,9 @@ public class AlScope : IDisposable, ITreeObject
 
     public static void ResetLastStatement() => _lastStatementHit = null;
 
+    /// <summary>Set the last statement from another thread (propagate ThreadStatic state).</summary>
+    public static void SetLastStatement(string typeName, int id) => _lastStatementHit = (typeName, id);
+
     protected void StmtHit(int n)
     {
         _hitStatements.Add((GetType().Name, n));
