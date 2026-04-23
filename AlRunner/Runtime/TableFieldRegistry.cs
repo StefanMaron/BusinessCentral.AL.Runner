@@ -437,6 +437,15 @@ public static class TableFieldRegistry
         return null;
     }
 
+    /// <summary>Returns the full FieldMeta for a specific field, or null.</summary>
+    public static FieldMeta? GetFieldMeta(int tableId, int fieldId)
+    {
+        if (_fieldMeta.TryGetValue(tableId, out var meta) &&
+            meta.TryGetValue(fieldId, out var fm))
+            return fm;
+        return null;
+    }
+
     /// <summary>Returns the field length (for Text[N]/Code[N]) or null.</summary>
     public static int? GetFieldLength(int tableId, int fieldId)
     {

@@ -1404,8 +1404,10 @@ public class AlRunnerPipeline
         }
         foreach (var id in missingTables.OrderBy(x => x))
         {
-            // Tables need at least one field and a primary key to compile
-            alStubs.Add($"table {id} \"AutoStub{id}\" {{ fields {{ field(1; PK; Integer) {{ }} }} keys {{ key(PK; PK) {{ Clustered = true; }} }} }}");
+            var stubAl = compilation != null
+                ? RenderTableStubFromSymbols(compilation, id)
+                : null;
+            alStubs.Add(stubAl ?? $"table {id} \"AutoStub{id}\" {{ fields {{ field(1; PK; Integer) {{ }} }} keys {{ key(PK; PK) {{ Clustered = true; }} }} }}");
         }
 
         // 4. Compile stubs in a second BC pass (same packages → proper scope classes)
@@ -1628,6 +1630,113 @@ public class AlRunnerPipeline
         "xmlport", "table", "enum", "interface", "temporary", "database"
     };
     private static bool IsAlKeyword(string name) => _alKeywords.Contains(name);
+
+    /// <summary>
+    /// Generate an AL table stub with fields and methods from the BC compiler's symbol table.
+    /// Tables need fields + keys to compile. Methods (procedures defined on the table) are
+    /// included so that calls like Record.SomeMethod() dispatch correctly.
+    /// </summary>
+    private static string? RenderTableStubFromSymbols(Compilation compilation, int tableId)
+    {
+        try
+        {
+            var lookupMethod = compilation.GetType().GetMethod(
+                "GetApplicationObjectTypeSymbolsByIdAcrossModules",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
+                null, new[] { typeof(SymbolKind), typeof(int) }, null);
+            if (lookupMethod == null) return null;
+
+            var symbolsObj = lookupMethod.Invoke(compilation, new object[] { SymbolKind.Table, tableId });
+            if (symbolsObj == null) return null;
+            var lengthProp = symbolsObj.GetType().GetProperty("Length");
+            if (lengthProp == null || (int)lengthProp.GetValue(symbolsObj)! == 0) return null;
+            var indexer = symbolsObj.GetType().GetProperty("Item");
+            if (indexer == null) return null;
+            var found = indexer.GetValue(symbolsObj, new object[] { 0 })!;
+            var foundName = found.GetType().GetProperty("Name")?.GetValue(found)?.ToString() ?? $"AutoStub{tableId}";
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"table {tableId} \"{foundName.Replace("\"", "\"\"")}\"");
+            sb.AppendLine("{");
+
+            // Fields section
+            sb.AppendLine("    fields");
+            sb.AppendLine("    {");
+            sb.AppendLine("        field(1; PK; Integer) { }");
+            sb.AppendLine("    }");
+            sb.AppendLine("    keys");
+            sb.AppendLine("    {");
+            sb.AppendLine("        key(PK; PK) { Clustered = true; }");
+            sb.AppendLine("    }");
+
+            // Methods — same approach as codeunit stubs
+            var getMembersMethod = found.GetType().GetMethod("GetMembers", Type.EmptyTypes);
+            if (getMembersMethod != null)
+            {
+                var members = getMembersMethod.Invoke(found, null) as System.Collections.IEnumerable;
+                if (members != null)
+                {
+                    var emittedSigs = new HashSet<string>();
+                    foreach (var member in members)
+                    {
+                        var memberKind = member.GetType().GetProperty("Kind")?.GetValue(member);
+                        if (memberKind?.ToString() != "Method") continue;
+
+                        var methodName = member.GetType().GetProperty("Name")?.GetValue(member)?.ToString();
+                        if (methodName == null) continue;
+
+                        var paramsProp = member.GetType().GetProperty("Parameters");
+                        var paramParts = new List<string>();
+                        if (paramsProp != null)
+                        {
+                            var parms = paramsProp.GetValue(member) as System.Collections.IEnumerable;
+                            if (parms != null)
+                            {
+                                foreach (var p in parms)
+                                {
+                                    var pName = p.GetType().GetProperty("Name")?.GetValue(p)?.ToString() ?? "p";
+                                    if (IsAlKeyword(pName)) pName = $"\"{pName}\"";
+                                    else if (pName.Contains(" ") || pName.Contains(".")) pName = $"\"{pName}\"";
+                                    var pIsVar = p.GetType().GetProperty("IsVar")?.GetValue(p) is true;
+                                    var pType = p.GetType().GetProperty("ParameterType")?.GetValue(p)
+                                             ?? p.GetType().GetProperty("Type")?.GetValue(p);
+                                    var typeName = pType != null ? RenderSymbolTypeViaReflection(pType) : "Variant";
+                                    var prefix = pIsVar ? "var " : "";
+                                    paramParts.Add($"{prefix}{pName}: {typeName}");
+                                }
+                            }
+                        }
+                        var paramStr = string.Join("; ", paramParts);
+
+                        var returnPart = "";
+                        var retType = member.GetType().GetProperty("ReturnValueType")?.GetValue(member)
+                                   ?? member.GetType().GetProperty("ReturnType")?.GetValue(member);
+                        if (retType != null)
+                        {
+                            var navTypeKind = retType.GetType().GetProperty("NavTypeKind")?.GetValue(retType);
+                            if (navTypeKind != null && navTypeKind.ToString() != "None" && navTypeKind.ToString() != "Void")
+                                returnPart = $": {RenderSymbolTypeViaReflection(retType)}";
+                        }
+
+                        var sig = $"{methodName}/{paramParts.Count}";
+                        if (!emittedSigs.Add(sig)) continue;
+
+                        sb.AppendLine($"    procedure {methodName}({paramStr}){returnPart}");
+                        sb.AppendLine("    begin");
+                        sb.AppendLine("    end;");
+                        sb.AppendLine();
+                    }
+                }
+            }
+
+            sb.AppendLine("}");
+            return sb.ToString();
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     /// <summary>Render an AL type from a BC symbol type object using reflection.</summary>
     private static string RenderSymbolTypeViaReflection(object typeSymbol)

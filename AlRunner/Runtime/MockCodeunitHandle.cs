@@ -28,6 +28,7 @@ public class MockCodeunitHandle
     /// <summary>Reset the per-test auto-stub tracking.</summary>
     public static void ResetAutoStubTracking() => AccessedAutoStubs = new();
 
+
     /// <summary>
     /// Additional assemblies containing compiled dependency codeunits/tables/pages.
     /// Loaded from --dep-dlls directories. Searched by FindCodeunitType, event dispatch,
@@ -223,6 +224,8 @@ public class MockCodeunitHandle
 
         // Track codeunit access for timeout diagnostics
         try { AccessedAutoStubs?.Add(_codeunitId); } catch { }
+
+
 
         var assembly = CurrentAssembly ?? Assembly.GetExecutingAssembly();
         var codeunitType = FindCodeunitType(assembly);

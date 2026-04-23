@@ -343,6 +343,16 @@ public class MockRecordHandle
             _fields[fieldNo] = blob;
             return blob;
         }
+        // For Text/Code fields, use the declared field length from metadata
+        // so that MaxStrLen() returns the correct value (not Int32.MaxValue).
+        if (expectedType is NavType.Text or NavType.Code)
+        {
+            var meta = TableFieldRegistry.GetFieldMeta(_tableId, fieldNo);
+            if (meta?.Length is int len and > 0)
+                return expectedType == NavType.Code
+                    ? new NavCode(len, "")
+                    : new NavText(len, "");
+        }
         return DefaultForType(expectedType);
     }
 
