@@ -2015,6 +2015,18 @@ public static class AlCompat
             dest[i] = src[srcStart + i];
     }
 
+    /// <summary>
+    /// 3-arg overload of <see cref="ALCopyArray{T}"/>: copies all remaining elements
+    /// from <paramref name="src"/> starting at 1-based <paramref name="fromIndex"/>
+    /// into the beginning of <paramref name="dest"/>.
+    /// Equivalent to <c>CopyArray(Dest, Src, FromIndex)</c> in AL (no Count argument).
+    /// </summary>
+    public static void ALCopyArray<T>(MockArray<T> dest, MockArray<T> src, int fromIndex)
+    {
+        int count = src.Length - fromIndex + 1;  // all elements from fromIndex to end
+        ALCopyArray(dest, src, fromIndex, count);
+    }
+
     // -----------------------------------------------------------------------
     // GUID creation helpers
     // -----------------------------------------------------------------------
