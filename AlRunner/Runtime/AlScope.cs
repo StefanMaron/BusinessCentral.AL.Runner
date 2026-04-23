@@ -552,6 +552,12 @@ public static class AlDialog
 
     public static void Error(string format, params object?[] args)
     {
+        // In BC, Error('') performs a silent transaction rollback without
+        // showing an error message. It's used as a cancel pattern (e.g. when
+        // a Confirm dialog returns false). In standalone mode we can't roll
+        // back, but we should not propagate it as a test failure.
+        if (string.IsNullOrEmpty(format)) return;
+
         var netFormat = ConvertAlFormat(format);
         var stringArgs = args.Select(a => AlCompat.Format(a)).ToArray();
         if (stringArgs.Length > 0)

@@ -187,6 +187,7 @@ public class PipelineRewriteCacheTests
 
         var options = new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("01-pure-function", "src"), TestPath("01-pure-function", "test") },
             Verbose = true
         };

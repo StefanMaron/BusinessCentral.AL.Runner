@@ -116,6 +116,7 @@ public class JsonOutputTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("84-json-compilation-error", "src"), TestPath("84-json-compilation-error", "test") },
             OutputJson = true
         });
@@ -138,6 +139,7 @@ public class JsonOutputTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("84-json-compilation-error", "src"), TestPath("84-json-compilation-error", "test") },
             OutputJson = true
         });

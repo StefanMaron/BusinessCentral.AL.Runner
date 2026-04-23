@@ -22,6 +22,7 @@ public class MissingDepHintTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             StubPaths = { TestPath("46-missing-dep-hint", "stubs") },
             InputPaths = { TestPath("46-missing-dep-hint", "src") }
         });
@@ -42,6 +43,7 @@ public class MissingDepHintTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("46-missing-dep-hint", "src") }
         });
 

@@ -2730,7 +2730,7 @@ public static class Executor
                     if (r.Message != null) Console.WriteLine($"      {r.Message}");
                     if (LooksLikeFrameworkVersionMismatch(r.Message))
                         Console.WriteLine($"      ℹ This BC version requires a newer .NET runtime. Install .NET 10: https://dotnet.microsoft.com/download/dotnet/10.0");
-                    if (r.StackTrace != null) Console.Write(r.StackTrace);
+                    if (r.StackTrace != null) PrintFilteredStackTrace(r.StackTrace);
                     break;
                 case AlRunner.TestStatus.Error:
                     if (!verbose && r.Message != null && dedupMessages.Contains(r.Message))
@@ -2747,7 +2747,7 @@ public static class Executor
                             Console.WriteLine($"      ⚑ Runner limitation — update al-runner or file an issue at https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues");
                         else
                             Console.WriteLine($"      Inject this dependency via an AL interface.");
-                        if (r.StackTrace != null) Console.Write(r.StackTrace);
+                        if (r.StackTrace != null) PrintFilteredStackTrace(r.StackTrace);
                     }
                     break;
             }
@@ -2937,6 +2937,40 @@ public static class Executor
     /// <summary>
     /// Returns true when a test result message looks like a .NET framework assembly
     /// version mismatch — e.g. BC 28 DLLs requesting System.Text.Json 10.0 on .NET 8.
+    /// <summary>
+    /// Print a filtered stack trace that shows AL-relevant frames instead of
+    /// the full C# stack. Strips internal AlRunner frames and highlights the
+    /// AL object (Codeunit/Record/Page) that caused the error.
+    /// </summary>
+    private static void PrintFilteredStackTrace(string stackTrace)
+    {
+        var lines = stackTrace.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var printed = 0;
+        foreach (var raw in lines)
+        {
+            var line = raw.Trim();
+            if (string.IsNullOrEmpty(line)) continue;
+            // Skip internal runtime frames — keep only AL-generated code and Assert frames
+            if (line.Contains("AlRunner.Runtime.") && !line.Contains("MockAssert"))
+                continue;
+            if (line.Contains("System.Reflection."))
+                continue;
+            if (line.Contains("System.RuntimeMethodHandle."))
+                continue;
+            if (printed < 5)
+            {
+                Console.WriteLine($"      {FormatSingleFrame(line)}");
+                printed++;
+            }
+        }
+        if (printed == 0 && lines.Length > 0)
+        {
+            // Fallback: print first few raw lines if nothing matched
+            foreach (var line in lines.Take(3))
+                Console.WriteLine($"      {line.Trim()}");
+        }
+    }
+
     /// Used to print actionable guidance; does NOT change error classification.
     /// </summary>
     public static bool LooksLikeFrameworkVersionMismatch(string? message)
@@ -2964,13 +2998,65 @@ public static class Executor
 
     private static string? FormatStackFrames(Exception ex)
     {
-        var frames = ex.StackTrace?.Split('\n')
+        var allFrames = ex.StackTrace?.Split('\n')
             .Select(f => f.Trim())
             .Where(f => !string.IsNullOrEmpty(f))
+            .ToList();
+        if (allFrames == null || allFrames.Count == 0) return null;
+
+        // Prefer AL-generated frames (BusinessApplication namespace) over runtime internals
+        var alFrames = allFrames
+            .Where(f => f.Contains("BusinessApplication.") || f.Contains("MockAssert"))
             .Take(3)
             .ToList();
-        if (frames == null || frames.Count == 0) return null;
-        return string.Join("\n", frames.Select(f => $"      {f}")) + "\n";
+
+        var frames = alFrames.Count > 0 ? alFrames : allFrames.Take(3).ToList();
+        return string.Join("\n", frames.Select(f => $"      {FormatSingleFrame(f)}")) + "\n";
+    }
+
+    /// <summary>
+    /// Format a single stack frame for AL-level readability:
+    /// - Strip C# namespace prefix
+    /// - Replace CodeunitNNNNN with Codeunit "Name" (via CodeunitNameRegistry)
+    /// - Replace RecordNNNNN with Record "Name" (via TableFieldRegistry)
+    /// - Strip _Scope_ suffixes
+    /// </summary>
+    private static string FormatSingleFrame(string frame)
+    {
+        var clean = frame.Replace("at Microsoft.Dynamics.Nav.BusinessApplication.", "at ");
+
+        // Resolve Codeunit IDs to names: Codeunit72336722 → Codeunit "EventSubsCABQR"
+        clean = System.Text.RegularExpressions.Regex.Replace(clean, @"Codeunit(\d+)", m =>
+        {
+            if (int.TryParse(m.Groups[1].Value, out var id))
+            {
+                var name = AlRunner.Runtime.CodeunitNameRegistry.GetNameById(id);
+                if (name != null) return $"Codeunit \"{name}\"";
+            }
+            return m.Value;
+        });
+
+        // Resolve Record IDs to names: Record72336618 → Record "Payment Request"
+        clean = System.Text.RegularExpressions.Regex.Replace(clean, @"Record(\d+)", m =>
+        {
+            if (int.TryParse(m.Groups[1].Value, out var id))
+            {
+                var name = AlRunner.Runtime.TableFieldRegistry.GetTableName(id);
+                if (name != null) return $"Record \"{name}\"";
+            }
+            return m.Value;
+        });
+
+        // Strip _Scope_ suffixes for readability
+        var scopeIdx = clean.IndexOf("_Scope_");
+        if (scopeIdx > 0 && clean.StartsWith("at "))
+        {
+            var dotIdx = clean.LastIndexOf('.', scopeIdx);
+            if (dotIdx > 3)
+                clean = "at " + clean.Substring(3, dotIdx - 3);
+        }
+
+        return clean;
     }
 
     public static int RunOnRun(Assembly assembly, bool captureValues = false)

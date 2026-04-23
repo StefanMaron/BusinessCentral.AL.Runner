@@ -19,6 +19,7 @@ public class SingleProcedureTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("01-pure-function", "src"), TestPath("01-pure-function", "test") },
             RunProcedure = "TestCalculateVAT"
         });
@@ -35,6 +36,7 @@ public class SingleProcedureTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("01-pure-function", "src"), TestPath("01-pure-function", "test") },
             RunProcedure = "NonexistentProcedure"
         });
@@ -49,6 +51,7 @@ public class SingleProcedureTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("06-intentional-failure", "src"), TestPath("06-intentional-failure", "test") },
             RunProcedure = "TestGreet_WrongExpectedValue"
         });

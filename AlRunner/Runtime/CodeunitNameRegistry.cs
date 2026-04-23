@@ -15,8 +15,9 @@ public static class CodeunitNameRegistry
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly Dictionary<string, int> _nameToId = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<int, string> _idToName = new();
 
-    public static void Clear() => _nameToId.Clear();
+    public static void Clear() { _nameToId.Clear(); _idToName.Clear(); }
 
     public static void ParseAndRegister(string alSource)
     {
@@ -25,11 +26,17 @@ public static class CodeunitNameRegistry
             if (!int.TryParse(m.Groups[1].Value, out var id)) continue;
             var name = m.Groups[2].Success ? m.Groups[2].Value : m.Groups[3].Value;
             _nameToId[name] = id;
+            _idToName[id] = name;
         }
     }
 
     public static int? GetIdByName(string codeunitName)
     {
         return _nameToId.TryGetValue(codeunitName, out var id) ? id : null;
+    }
+
+    public static string? GetNameById(int codeunitId)
+    {
+        return _idToName.TryGetValue(codeunitId, out var name) ? name : null;
     }
 }

@@ -19,6 +19,7 @@ public class CaptureValuesTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("01-pure-function", "src"), TestPath("01-pure-function", "test") },
             CaptureValues = true
         });
@@ -34,6 +35,7 @@ public class CaptureValuesTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("01-pure-function", "src"), TestPath("01-pure-function", "test") },
             CaptureValues = true
         });
@@ -51,6 +53,7 @@ public class CaptureValuesTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("01-pure-function", "src"), TestPath("01-pure-function", "test") },
             CaptureValues = false
         });
@@ -65,6 +68,7 @@ public class CaptureValuesTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("01-pure-function", "src"), TestPath("01-pure-function", "test") },
             CaptureValues = true,
             OutputJson = true

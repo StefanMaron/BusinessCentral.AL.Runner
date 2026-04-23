@@ -43,7 +43,7 @@ public class PipelineOptions
     /// methods share table state (BC's default TestIsolation::Codeunit behaviour).
     /// Method — reset before every individual test method (the previous runner default).
     /// </summary>
-    public TestIsolation TestIsolation { get; set; } = TestIsolation.Method;
+    public TestIsolation TestIsolation { get; set; } = TestIsolation.Codeunit;
 
     /// <summary>Directories containing pre-compiled dependency DLLs (rewritten C# with mock types).</summary>
     public List<string> DepDllPaths { get; set; } = new();

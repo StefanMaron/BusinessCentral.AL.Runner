@@ -19,6 +19,7 @@ public class PipelineTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("01-pure-function", "src"), TestPath("01-pure-function", "test") }
         });
 
@@ -31,6 +32,7 @@ public class PipelineTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("06-intentional-failure", "src"), TestPath("06-intentional-failure", "test") }
         });
 
@@ -53,6 +55,7 @@ public class PipelineTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { "/nonexistent/path" }
         });
 
@@ -66,6 +69,7 @@ public class PipelineTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InlineCode = "Message('hello');"
         });
 
@@ -78,6 +82,7 @@ public class PipelineTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("02-record-operations", "src"), TestPath("02-record-operations", "test") }
         });
 
@@ -90,6 +95,7 @@ public class PipelineTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("03-interface-injection", "src"), TestPath("03-interface-injection", "test") }
         });
 
@@ -102,6 +108,7 @@ public class PipelineTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("01-pure-function", "src") },
             DumpCSharp = true
         });
@@ -115,6 +122,7 @@ public class PipelineTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("01-pure-function", "src") },
             DumpRewritten = true
         });
@@ -130,6 +138,7 @@ public class PipelineTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("01-pure-function", "src"), TestPath("01-pure-function", "test") }
         });
 
@@ -151,6 +160,7 @@ public class PipelineTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("06-intentional-failure", "src"), TestPath("06-intentional-failure", "test") }
         });
 
@@ -168,6 +178,7 @@ public class PipelineTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("01-pure-function", "src"), TestPath("01-pure-function", "test") },
             OutputJson = true
         });
@@ -206,6 +217,7 @@ public class PipelineTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("06-intentional-failure", "src"), TestPath("06-intentional-failure", "test") },
             OutputJson = true
         });
@@ -278,6 +290,7 @@ namespace AlRunnerGenerated {
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("67-iteration-tracking", "src"), TestPath("67-iteration-tracking", "test") },
             OutputJson = true,
             IterationTracking = true,
@@ -306,6 +319,7 @@ namespace AlRunnerGenerated {
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("01-pure-function", "src"), TestPath("01-pure-function", "test") }
         });
 
@@ -322,6 +336,7 @@ namespace AlRunnerGenerated {
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("06-intentional-failure", "src"), TestPath("06-intentional-failure", "test") }
         });
 
@@ -396,6 +411,7 @@ namespace AlRunnerGenerated {
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("112-report-dataset-columns", "src"),
                            TestPath("112-report-dataset-columns", "test") }
         });
@@ -412,6 +428,7 @@ namespace AlRunnerGenerated {
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("112-report-dataset-columns", "src"),
                            TestPath("112-report-dataset-columns", "test") }
         });
@@ -431,6 +448,7 @@ namespace AlRunnerGenerated {
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths =
             {
                 Path.Combine(testCase, "appA"),
@@ -454,6 +472,7 @@ namespace AlRunnerGenerated {
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths =
             {
                 Path.Combine(testCase, "appA"),
@@ -479,6 +498,7 @@ namespace AlRunnerGenerated {
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths =
             {
                 Path.Combine(testCase, "src"),
@@ -499,6 +519,7 @@ namespace AlRunnerGenerated {
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("45-userid", "test") }
         });
         Assert.Equal(0, result.ExitCode);
@@ -512,6 +533,7 @@ namespace AlRunnerGenerated {
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             UserId = "TESTUSER123",
             InlineCode = "if UserId() <> 'TESTUSER123' then error('UserId() returned wrong value: ' + UserId());"
         });
@@ -527,6 +549,7 @@ namespace AlRunnerGenerated {
         var dumpPipeline = new AlRunnerPipeline();
         var dumpResult = dumpPipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             DumpCSharp = true,
             InlineCode = "if SessionId() <= 0 then error('fail');"
         });
@@ -534,6 +557,7 @@ namespace AlRunnerGenerated {
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InlineCode = "if SessionId() <= 0 then error('SessionId() must return a positive integer');"
         });
         Assert.True(result.ExitCode == 0,
@@ -546,6 +570,7 @@ namespace AlRunnerGenerated {
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("47-initvalue", "src"), TestPath("47-initvalue", "test") }
         });
         Assert.Equal(0, result.ExitCode);
@@ -559,6 +584,7 @@ namespace AlRunnerGenerated {
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("48-record-get", "src"), TestPath("48-record-get", "test") }
         });
         Assert.Equal(0, result.ExitCode);
@@ -572,6 +598,7 @@ namespace AlRunnerGenerated {
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("49-var-attributes", "src"), TestPath("49-var-attributes", "test") }
         });
         Assert.Equal(0, result.ExitCode);
@@ -703,6 +730,7 @@ namespace AlRunnerGenerated {
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             // Supply two objects: a source codeunit (first) + a test codeunit (second).
             InputPaths = { TestPath("01-pure-function", "src"), TestPath("01-pure-function", "test") },
             // Throw only for the src codeunit (Calculator). The test codeunit must

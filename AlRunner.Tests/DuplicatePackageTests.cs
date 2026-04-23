@@ -255,6 +255,7 @@ codeunit 73002 ""Overlap Tests""
             var pipeline = new AlRunnerPipeline();
             var result = pipeline.Run(new PipelineOptions
             {
+            TestIsolation = AlRunner.TestIsolation.Method,
                 InputPaths = { mainSrcDir, testSrcDir },
                 PackagePaths = { pkgDir },
                 Verbose = true

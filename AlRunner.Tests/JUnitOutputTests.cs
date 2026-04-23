@@ -222,6 +222,7 @@ public class JUnitOutputTests
             var pipeline = new AlRunnerPipeline();
             var result = pipeline.Run(new PipelineOptions
             {
+            TestIsolation = AlRunner.TestIsolation.Method,
                 InputPaths = { TestPath("01-pure-function", "src"), TestPath("01-pure-function", "test") },
                 OutputJunitPath = junitPath
             });
@@ -259,6 +260,7 @@ public class JUnitOutputTests
             var pipeline = new AlRunnerPipeline();
             pipeline.Run(new PipelineOptions
             {
+            TestIsolation = AlRunner.TestIsolation.Method,
                 OutputJunitPath = junitPath
                 // no InputPaths — triggers "no AL source" early exit
             });

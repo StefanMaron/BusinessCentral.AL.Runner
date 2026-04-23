@@ -107,6 +107,7 @@ public class RunnerErrorClassificationTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("06-intentional-failure", "src"), TestPath("06-intentional-failure", "test") }
         });
 
@@ -126,6 +127,7 @@ public class RunnerErrorClassificationTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("01-pure-function", "src"), TestPath("01-pure-function", "test") }
         });
 
@@ -342,6 +344,7 @@ public class RunnerErrorClassificationTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("06-intentional-failure", "src"), TestPath("06-intentional-failure", "test") }
         });
 
@@ -758,6 +761,7 @@ public class RunnerErrorClassificationTests
         // Inject a rewriter that throws unconditionally — simulates a rewriter gap
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InlineCode = "Message('hello');",
             RewriterFactory = _ => throw new InvalidOperationException("simulated rewriter gap")
         });
@@ -788,6 +792,7 @@ public class RunnerErrorClassificationTests
         // broken C# — simulates a rewriter gap that slips through to the Roslyn step.
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InlineCode = "Message('hello');",
             RewriterFactory = _ =>
                 Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(
@@ -817,6 +822,7 @@ public class RunnerErrorClassificationTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths =
             {
                 TestPath("06-intentional-failure", "src"),
@@ -906,6 +912,7 @@ public class RunnerErrorClassificationTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InlineCode = "Message('hello');",
             Strict = true,
             RewriterFactory = _ => throw new InvalidOperationException("simulated rewriter gap")
@@ -921,6 +928,7 @@ public class RunnerErrorClassificationTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InlineCode = "Message('hello');",
             Strict = true,
             RewriterFactory = _ =>
@@ -938,6 +946,7 @@ public class RunnerErrorClassificationTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InlineCode = "Message('hello');",
             Strict = false,
             RewriterFactory = _ => throw new InvalidOperationException("simulated rewriter gap")

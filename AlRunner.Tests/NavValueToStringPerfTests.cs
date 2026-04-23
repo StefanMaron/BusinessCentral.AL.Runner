@@ -28,6 +28,7 @@ public class NavValueToStringPerfTests
         var warm = new AlRunnerPipeline();
         warm.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths =
             {
                 TestPath("52-setfilter-and", "src"),
@@ -44,6 +45,7 @@ public class NavValueToStringPerfTests
         var sw = Stopwatch.StartNew();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths =
             {
                 TestPath("52-setfilter-and", "src"),
@@ -84,6 +86,7 @@ public class NavValueToStringPerfTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths =
             {
                 TestPath("52-setfilter-and", "src"),

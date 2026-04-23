@@ -22,6 +22,7 @@ public class InlineCaptureTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("47-capture-inline", "src"), TestPath("47-capture-inline", "test") },
             CaptureValues = true
         });
@@ -55,6 +56,7 @@ public class InlineCaptureTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("47-capture-inline", "src"), TestPath("47-capture-inline", "test") },
             CaptureValues = true,
             OutputJson = true
@@ -77,6 +79,7 @@ public class InlineCaptureTests
         var pipeline = new AlRunnerPipeline();
         var result = pipeline.Run(new PipelineOptions
         {
+            TestIsolation = AlRunner.TestIsolation.Method,
             InputPaths = { TestPath("47-capture-inline", "src"), TestPath("47-capture-inline", "test") },
             CaptureValues = true,
             OutputJson = true
