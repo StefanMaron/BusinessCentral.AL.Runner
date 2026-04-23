@@ -8783,6 +8783,13 @@ Time.ToText:
 
 # ── Variant ─────────────────────────────────────────────────────
 
+Variant.Clear:
+  layer: runtime-api
+  category: Variant
+  status: complete
+  tests: tests/bucket-1/97-variant-clear
+  notes: overloads=1; MockVariant.Clear() resets _value to null; proven by Clear_ResetsVariantToDefault, Clear_ViaHelper_ResetsVariantToDefault, Clear_AllowsReassignmentAfterClear
+
 Variant.IsAction:
   layer: runtime-api
   category: Variant
