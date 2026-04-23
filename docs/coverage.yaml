@@ -11215,6 +11215,19 @@ MockCodeunitHandle.SingleInstance:
     and event subscriber dispatch. Reset between test codeunits.
   tests: []
 
+Pipeline.RichAutoStubs:
+  layer: runtime-api
+  category: auto-stub
+  status: covered
+  notes: >
+    Auto-stubs now read method signatures from SymbolReference.json in .app packages
+    and generate C# classes with proper method stubs (returning defaults) instead of
+    empty classes. This eliminates "Method with member ID not found" errors for
+    dependency codeunits. The arg-count fallback in MockCodeunitHandle.Invoke
+    dispatches to these methods at runtime.
+  tests:
+    - tests/bucket-2/109-rich-auto-stub
+
 MockCodeunitHandle.LibraryTestInitialize:
   layer: runtime-api
   category: test-toolkit

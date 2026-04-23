@@ -696,7 +696,7 @@ public class AlRunnerPipeline
         // they compile. Methods on these stubs will be no-ops (return defaults).
         // For proper method implementations, users should run:
         //   al-runner --generate-stubs .alpackages ./stubs ./src ./test
-        var testToolkitStubs = GenerateTestToolkitStubs(generatedCSharpList);
+        var testToolkitStubs = GenerateTestToolkitStubs(generatedCSharpList, options.PackagePaths, inputPaths);
         if (testToolkitStubs.Count > 0)
         {
             rewrittenTreeList.AddRange(testToolkitStubs);
@@ -1334,7 +1334,8 @@ public class AlRunnerPipeline
     /// excluded — they are never looked up by <c>FindCodeunitType</c>.
     /// </summary>
     internal static List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)> GenerateTestToolkitStubs(
-        List<(string Name, string Code)> generatedCSharpList)
+        List<(string Name, string Code)> generatedCSharpList,
+        List<string>? packagePaths = null, List<string>? inputPaths = null)
     {
         // IDs already compiled from source — no stub needed.
         var alreadyPresent = new HashSet<int>();
@@ -1348,14 +1349,10 @@ public class AlRunnerPipeline
             }
         }
 
-        // Codeunits that have dedicated runner-native mock implementations and are
-        // dispatched via InvokeAssert / InvokeVariableStorage / InvokeRunnerConfig
-        // before FindCodeunitType is ever consulted — never need a stub class.
+        // Codeunits that have dedicated runner-native mock implementations
         var nativeMockIds = new HashSet<int> { 130, 131, 130000, 130002, 130440, 130500, 131004, 131100, 132250 };
 
-        // Scan all generated C# for test-toolkit ID literals that appear as the
-        // codeunit ID argument in a RunCodeunit / NavCodeunitHandle call.
-        // Pattern: a comma or opening-paren followed by a 6-digit ID in 130000-139999.
+        // Scan all generated C# for test-toolkit ID literals (130000-139999)
         var idPattern = new Regex(@"(?:,\s*|[\(\s])1(3[0-9]{4})\b", RegexOptions.Compiled);
         var referencedIds = new HashSet<int>();
         foreach (var (_, code) in generatedCSharpList)
@@ -1371,16 +1368,128 @@ public class AlRunnerPipeline
             }
         }
 
+        // Build a map of codeunit ID → method signatures from .app packages
+        var symbolMap = new Dictionary<int, StubGenerator.CodeunitSymbol>();
+        var allPackageDirs = new List<string>(packagePaths ?? new());
+        // Also scan .alpackages near input paths
+        if (inputPaths != null)
+        {
+            foreach (var p in inputPaths)
+            {
+                var dir = Directory.Exists(p) ? p : Path.GetDirectoryName(p);
+                if (dir == null) continue;
+                var alPkg = Path.Combine(dir, ".alpackages");
+                if (Directory.Exists(alPkg) && !allPackageDirs.Contains(alPkg))
+                    allPackageDirs.Add(alPkg);
+            }
+        }
+        foreach (var pkgDir in allPackageDirs)
+        {
+            if (!Directory.Exists(pkgDir)) continue;
+            foreach (var appFile in Directory.GetFiles(pkgDir, "*.app"))
+            {
+                try
+                {
+                    var (codeunits, _, _) = StubGenerator.ReadCodeunitsFromApp(appFile);
+                    foreach (var cu in codeunits)
+                        symbolMap.TryAdd(cu.Id, cu);
+                }
+                catch { /* skip unreadable packages */ }
+            }
+        }
+
         var stubs = new List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)>();
         foreach (var id in referencedIds.Where(id => !alreadyPresent.Contains(id)).OrderBy(id => id))
         {
-            // Minimal class — no OnRun method so MockCodeunitHandle.InvokeOnRun silently returns.
-            var stubCode = $"namespace Microsoft.Dynamics.Nav.BusinessApplication {{ public class Codeunit{id} {{ }} }}";
+            string stubCode;
+            if (symbolMap.TryGetValue(id, out var cuSymbol) && cuSymbol.Methods.Count > 0)
+            {
+                // Rich stub: generate C# class with method stubs from SymbolReference.json
+                stubCode = GenerateRichCSharpStub(id, cuSymbol);
+            }
+            else
+            {
+                // Minimal stub: empty class (no methods available from packages)
+                stubCode = $"namespace Microsoft.Dynamics.Nav.BusinessApplication {{ public class Codeunit{id} {{ }} }}";
+            }
             var tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(
                 stubCode, path: $"TestToolkitStub{id}.cs");
             stubs.Add(($"TestToolkitStub{id}", tree));
         }
         return stubs;
+    }
+
+    /// <summary>
+    /// Generate a C# class with method stubs from SymbolReference.json metadata.
+    /// Methods return defaults (0 for int, false for bool, null for objects, "" for strings).
+    /// The arg-count fallback in MockCodeunitHandle.Invoke dispatches to these methods.
+    /// </summary>
+    private static string GenerateRichCSharpStub(int id, StubGenerator.CodeunitSymbol cu)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("namespace Microsoft.Dynamics.Nav.BusinessApplication {");
+        sb.AppendLine($"public class Codeunit{id} {{");
+
+        foreach (var method in cu.Methods)
+        {
+            // All params and return types use 'object' — avoids compile errors from
+            // missing BC types and lets the arg-count fallback match any overload.
+            // Return null for all methods; the caller's generated cast will handle conversion.
+            var csParams = string.Join(", ",
+                method.Parameters.Select((p, i) => $"object p{i}"));
+
+            if (method.ReturnType == null)
+            {
+                sb.AppendLine($"    public void {method.Name}({csParams}) {{ }}");
+            }
+            else
+            {
+                var csRet = MapAlTypeToCSharp(method.ReturnType, isParameter: false);
+                string retVal = csRet switch
+                {
+                    "string" => "\"\"",
+                    "bool" => "false",
+                    "int" or "long" or "decimal" or "char" or "byte" => "default",
+                    "System.Guid" => "System.Guid.Empty",
+                    "object" => "null",
+                    _ => "default",
+                };
+                sb.AppendLine($"    public {csRet} {method.Name}({csParams}) {{ return {retVal}; }}");
+            }
+        }
+
+        sb.AppendLine("}}");
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Map AL types to C# for auto-stub methods. Uses 'object' for complex types
+    /// so stubs compile without requiring BC DLL types. The arg-count fallback in
+    /// MockCodeunitHandle.Invoke handles runtime type conversion.
+    /// </summary>
+    /// <summary>
+    /// Map AL types to C# for auto-stub methods. Uses simple types that the
+    /// MockCodeunitHandle.Invoke arg-count fallback can handle at runtime.
+    /// All parameter types use 'object' so any argument matches.
+    /// Return types use specific types where possible to avoid cast errors.
+    /// </summary>
+    internal static string MapAlTypeToCSharp(StubGenerator.TypeSymbol? t, bool isParameter = false)
+    {
+        if (t == null) return "void";
+        // Parameters always use object — simplifies overload matching
+        if (isParameter) return "object";
+        return t.Name switch
+        {
+            "Integer" or "Option" or "Enum" => "int",
+            "BigInteger" => "long",
+            "Decimal" => "decimal",
+            "Boolean" => "bool",
+            "Char" => "char",
+            "Byte" => "byte",
+            "Guid" => "System.Guid",
+            "Text" or "Code" or "Label" or "TextConst" => "string",
+            _ => "object",
+        };
     }
 
     private static List<string> GetSeparateStubSources(List<string> stubSources, List<string> alSources)

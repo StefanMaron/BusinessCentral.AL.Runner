@@ -296,29 +296,66 @@ public class MockCodeunitHandle
             }
         }
 
-        // Fallback: no exact member ID match. Try matching by argument count across all
-        // public methods. This handles the case where test code was compiled against
-        // Variant-based signatures (like Assert.AreEqual(Variant,Variant,Text)) but the
-        // stub has type-specific overloads with different member IDs.
+        // Fallback: no exact member ID match. Try matching by method name (extracted
+        // from the calling scope class) + argument count. This handles auto-stubbed
+        // codeunits where member IDs don't match but method names do.
+        string? callerMethodName = null;
+        var stackFrames = new System.Diagnostics.StackTrace().GetFrames();
+        if (stackFrames != null)
+        {
+            foreach (var frame in stackFrames)
+            {
+                var callerType = frame.GetMethod()?.DeclaringType;
+                if (callerType == null) continue;
+                var scopeIdx = callerType.Name.IndexOf("_Scope_");
+                if (scopeIdx > 0)
+                {
+                    callerMethodName = callerType.Name.Substring(0, scopeIdx);
+                    break;
+                }
+            }
+        }
+
         var candidateMethods = codeunitType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .Where(m => m.GetParameters().Length == args.Length && !m.IsSpecialName)
             .ToList();
 
+        // If we know the method name from the caller's scope, prefer exact name match
+        if (callerMethodName != null && candidateMethods.Count > 1)
+        {
+            var nameMatches = candidateMethods
+                .Where(m => m.Name == callerMethodName)
+                .ToList();
+            if (nameMatches.Count > 0)
+                candidateMethods = nameMatches;
+        }
+
         if (candidateMethods.Count > 0)
         {
-            // Prefer the method whose parameters best match the actual argument types
-            var bestMethod = candidateMethods
+            // Sort by match quality. Try each candidate — if the caller gets a cast
+            // error from the return type, fall through to the next candidate.
+            var sorted = candidateMethods
                 .OrderByDescending(m => ScoreMethodMatch(m, args))
-                .First();
-
-            var parameters = bestMethod.GetParameters();
-            var convertedArgs = new object?[parameters.Length];
-            for (int i = 0; i < parameters.Length; i++)
+                .ToList();
+            for (int ci = 0; ci < sorted.Count; ci++)
             {
-                if (i < args.Length)
-                    convertedArgs[i] = ConvertArgInternal(args[i], parameters[i].ParameterType);
+                var candidate = sorted[ci];
+                var parameters = candidate.GetParameters();
+                var convertedArgs = new object?[parameters.Length];
+                for (int i = 0; i < parameters.Length; i++)
+                {
+                    if (i < args.Length)
+                        convertedArgs[i] = ConvertArgInternal(args[i], parameters[i].ParameterType);
+                }
+                try
+                {
+                    return candidate.Invoke(_codeunitInstance, convertedArgs);
+                }
+                catch (System.Reflection.TargetInvocationException) when (ci < sorted.Count - 1)
+                {
+                    continue; // try next candidate
+                }
             }
-            return bestMethod.Invoke(_codeunitInstance, convertedArgs);
         }
 
         var cuName = CodeunitNameRegistry.GetNameById(_codeunitId);
