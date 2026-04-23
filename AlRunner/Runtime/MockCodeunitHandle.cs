@@ -399,14 +399,12 @@ public class MockCodeunitHandle
             var codeunitType = FindCodeunitType(assembly);
             if (codeunitType == null)
             {
-                // System codeunits are treated as no-ops — fire OnRun event for subscribers
-                // but don't throw (the publisher body is a platform implementation).
-                if (IsSystemCodeunitId(_codeunitId))
-                {
-                    AlCompat.FireEvent(EventSubscriberRegistry.ObjectTypeCodeunit, _codeunitId, "OnRun");
-                    return true;
-                }
-                throw new InvalidOperationException(BuildCodeunitNotFoundMessage(_codeunitId, assembly));
+                // Missing codeunits are treated as no-ops — fire OnRun event for
+                // any subscribers but don't throw. This handles system codeunits
+                // (1-9999), test toolkit (130000+), and any other dependency
+                // codeunit that wasn't compiled or auto-stubbed.
+                AlCompat.FireEvent(EventSubscriberRegistry.ObjectTypeCodeunit, _codeunitId, "OnRun");
+                return true;
             }
 
             EnsureInstance(codeunitType);
@@ -482,10 +480,11 @@ public class MockCodeunitHandle
         var codeunitType = handle.FindCodeunitType(assembly);
         if (codeunitType == null)
         {
-            // System codeunits (IDs 1-9999) are platform implementations that cannot be
-            // provided as user stubs. Treat them as no-ops: fire the OnRun event so any
-            // compiled event subscribers still execute, but don't throw.
-            if (IsSystemCodeunitId(codeunitId))
+            // System and test toolkit codeunits are no-ops: fire OnRun event so
+            // any compiled subscribers execute, but don't throw.
+            // User codeunits (10000-129999) still throw — a missing user codeunit
+            // indicates a real gap the developer needs to address.
+            if (IsSystemCodeunitId(codeunitId) || codeunitId >= 130000)
             {
                 AlCompat.FireEvent(EventSubscriberRegistry.ObjectTypeCodeunit, codeunitId, "OnRun");
                 return;
