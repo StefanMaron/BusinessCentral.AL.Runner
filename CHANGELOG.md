@@ -6,6 +6,69 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.20] - 2026-04-23
+
+### Added
+- **In-memory Query support** — single-dataitem Query objects now work without the BC
+  service tier. `Query.Open()` reads from the in-memory table store, `Query.Read()`
+  iterates rows with column access, `SetFilter`/`SetRange`/`TopNumberOfRows` filter
+  and limit results. Multi-dataitem JOINs and aggregation are not yet supported.
+  (#1162, #1175)
+- **DAP debugger (experimental)** — `--dap [port]` starts a Debug Adapter Protocol
+  server for VS Code breakpoint debugging. Set breakpoints in AL source files and
+  inspect variable values during test execution. (#528, #1011)
+- **Library - Utility stub** (codeunit 131003) — `GenerateGUID`, `GenerateRandomCode`,
+  `GenerateRandomCode20`, `GenerateRandomText` auto-loaded like Library Assert. (#1139, #1176)
+- **`--generate-stubs` symbol table pass** — now queries the BC compiler's symbol table
+  in addition to SymbolReference.json, discovering platform/system codeunits (Rest Client,
+  No. Series, etc.) that have no SymbolReference.json entry. (#1163, #1193)
+- **MockNotification.Default** — global `Notification` variables now initialize correctly. (#1189)
+- **CurrReport.ObjectId(bool)** — available inside report triggers. (#1191)
+- **MockPartFormHandle.SetTableView/Update** — page part operations compile and run. (#1186)
+- **Media ImportStream/ExportStream** — stream-based overloads for Media fields. (#1190)
+- **Tenant Media table support** — NavMediaSystemRecord base class handled by rewriter. (#1188)
+- **MockRecordHandle.IConvertible** — prevents cast errors when auto-stubbed methods
+  return default Record values used in primitive contexts. (#1161, #1201)
+
+### Fixed
+- **CreateDateTime/DT2Time timezone round-trip** — `CreateDateTime(D, T)` followed by
+  `DT2Time()` now round-trips correctly on non-UTC hosts (Windows). Deterministic DST
+  policy for ambiguous/invalid local times. (#1159, #1170)
+- **ByRef\<MockVariant\> for Record arguments** — passing a Record to a `var Variant`
+  parameter no longer throws. (#1160, #1173)
+- **NavOption to NavText conversion** — Option field values can now be assigned to Text
+  variables or passed to Text parameters. (#1199, #1205)
+- **Dialog.Update NavCode ambiguity** — `Dialog.Update(fieldNo, codeValue)` no longer
+  produces CS0121 ambiguity error. (#1179, #1198)
+- **Variant-to-codeunit extraction** — `NavIndirectValueToNavCodeunitHandle` rewriter
+  rule added for Variant holding a codeunit. (#1184, #1198)
+- **Executor parameter count mismatch** — test methods with extra scope constructor
+  parameters (from AL procedure params) no longer crash. (#1200, #1202)
+- **MockVariant.Clear()** — `Clear(Variant)` now resets to default. (#1152, #1167)
+- **CopyArray 3-arg overload** — `CopyArray(Dest, Source, FromIndex)` without count
+  copies all remaining elements. (#1155, #1166)
+- **GetPosition(Boolean)** — `Record.GetPosition(false)` uses field numbers,
+  `GetPosition(true)` uses field names. (#1154, #1168)
+- **Report.Run 4-arg overload** — `Report.Run(Id, RequestPage, SystemPrinter, Record)`
+  compiles and runs. (#1156, #1169)
+- **MockNotification.Recall returns bool** — was void, now returns true. ALAssign and
+  Clear also added. (#1153, #1171)
+- **Format(Record) returns position string** — was returning CLR type name. (#1161, #1172)
+- **Clear on OutStream, File, record array element** — all three now have Clear()
+  methods. (#1178, #1181, #1182, #1195)
+- **Report.Execute(Text)**, **File.Create bool return**, **RecordRef.AddLink**,
+  **RecordRef.GetView(bool)** — missing method overloads added. (#1180, #1183, #1187, #1192, #1194)
+
+### Changed
+- **README comprehensive rewrite** — clarifies that .app package code is not executed,
+  adds Working with Dependencies section, DAP debugger docs, updated feature list. (#1204)
+
+### Performance
+- **Reflection caching** — `MockCodeunitHandle.Invoke` and `TryFireRecordTriggerCore`
+  cache MethodInfo/FieldInfo lookups. Estimated 40-50% reduction in reflection overhead. (#1164, #1174)
+- **Stubs in main BC pass** — `--stubs` sources now compile in the main TranspileMulti
+  call instead of a separate compilation, saving ~2.3s per run. (#1165, #1177)
+
 ## [1.0.19] - 2026-04-23
 
 ### Added
