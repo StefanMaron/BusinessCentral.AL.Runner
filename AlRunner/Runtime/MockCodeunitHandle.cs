@@ -19,6 +19,16 @@ public class MockCodeunitHandle
     public static Assembly? CurrentAssembly { get; set; }
 
     /// <summary>
+    /// Set of auto-stubbed codeunit IDs that were accessed during the current test.
+    /// Shared across threads (concurrent). Reset before each test.
+    /// Used to produce actionable timeout messages.
+    /// </summary>
+    public static System.Collections.Concurrent.ConcurrentBag<int>? AccessedAutoStubs;
+
+    /// <summary>Reset the per-test auto-stub tracking.</summary>
+    public static void ResetAutoStubTracking() => AccessedAutoStubs = new();
+
+    /// <summary>
     /// Additional assemblies containing compiled dependency codeunits/tables/pages.
     /// Loaded from --dep-dlls directories. Searched by FindCodeunitType, event dispatch,
     /// and record trigger resolution when a type is not found in CurrentAssembly.
@@ -210,6 +220,9 @@ public class MockCodeunitHandle
         // Route codeunit 131100 (AL Runner Config) — exposes CompanyName configuration to AL
         if (_codeunitId is 131100)
             return InvokeRunnerConfig(memberId, args);
+
+        // Track codeunit access for timeout diagnostics
+        try { AccessedAutoStubs?.Add(_codeunitId); } catch { }
 
         var assembly = CurrentAssembly ?? Assembly.GetExecutingAssembly();
         var codeunitType = FindCodeunitType(assembly);

@@ -2665,6 +2665,8 @@ public static class Executor
                 {
                     // Run with per-test timeout: use a background thread so we can
                     // abandon it on timeout without blocking the test runner.
+                    // Track which auto-stubbed codeunits are accessed during this test
+                    AlRunner.Runtime.MockCodeunitHandle.ResetAutoStubTracking();
                     Exception? threadEx = null;
                     var thread = new Thread(() =>
                     {
@@ -2682,10 +2684,24 @@ public static class Executor
                     if (!thread.Join(timeoutMs))
                     {
                         sw.Stop();
+                        // Build actionable message listing which auto-stubbed codeunits were called
+                        var accessed = AlRunner.Runtime.MockCodeunitHandle.AccessedAutoStubs;
+                        var stubDetails = "";
+                        if (accessed != null && !accessed.IsEmpty)
+                        {
+                            var stubNames = accessed.Distinct()
+                                .Where(id => AlRunnerPipeline.AutoStubbedCodeunits.ContainsKey(id))
+                                .Select(id => $"{id} \"{AlRunnerPipeline.AutoStubbedCodeunits[id]}\"")
+                                .OrderBy(s => s)
+                                .ToList();
+                            if (stubNames.Count > 0)
+                                stubDetails = $"\n  Auto-stubbed codeunits called during this test:\n    " +
+                                    string.Join("\n    ", stubNames) +
+                                    "\n  Provide implementations for these via --stubs or --dep-dlls.";
+                        }
                         throw new TimeoutException(
                             $"Test exceeded {testTimeoutSeconds}s timeout — likely an infinite loop caused by " +
-                            $"an auto-stubbed dependency returning default values. " +
-                            $"Provide a real implementation via --stubs or --dep-dlls.");
+                            $"an auto-stubbed dependency returning default values." + stubDetails);
                     }
                     if (threadEx != null)
                         System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(threadEx).Throw();
