@@ -1,4 +1,4 @@
-codeunit 297001 "Test GetPosition Boolean"
+codeunit 297003 "Test GetPosition Boolean"
 {
     Subtype = Test;
 
