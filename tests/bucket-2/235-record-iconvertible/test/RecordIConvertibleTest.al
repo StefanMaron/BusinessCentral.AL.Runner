@@ -8,7 +8,7 @@
 /// these become AlCompat.NavIndirectValueToInt32 / NavIndirectValueToBoolean, which
 /// call Convert.ToInt32 / Convert.ToBoolean internally — both require IConvertible.
 /// </summary>
-codeunit 235002 "RIC Tests"
+codeunit 235012 "RIC Tests"
 {
     Subtype = Test;
     var Assert: Codeunit Assert;

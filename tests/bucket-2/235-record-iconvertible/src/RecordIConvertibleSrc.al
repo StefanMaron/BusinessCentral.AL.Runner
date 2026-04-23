@@ -6,7 +6,7 @@
 /// "Unable to cast MockRecordHandle to IConvertible".
 /// </summary>
 
-table 235000 "RIC Table"
+table 235010 "RIC Table"
 {
     DataClassification = CustomerContent;
     fields
@@ -17,7 +17,7 @@ table 235000 "RIC Table"
     keys { key(PK; Id) { Clustered = true; } }
 }
 
-codeunit 235001 "RIC Helper"
+codeunit 235011 "RIC Helper"
 {
     /// <summary>
     /// Extract an Integer and a Boolean from a Variant that holds a Record.
