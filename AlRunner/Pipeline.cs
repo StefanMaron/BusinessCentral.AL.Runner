@@ -384,6 +384,7 @@ public class AlRunnerPipeline
         Runtime.CodeunitNameRegistry.Clear();
         Runtime.CalcFormulaRegistry.Clear();
         Runtime.TableFieldRegistry.Clear();
+        Runtime.QueryFieldRegistry.Clear();
         Runtime.MockNumberSequence.Reset();
         SourceFileMapper.Clear();
 
@@ -408,6 +409,7 @@ public class AlRunnerPipeline
                 Runtime.CodeunitNameRegistry.ParseAndRegister(text);
                 Runtime.CalcFormulaRegistry.ParseAndRegister(text);
                 Runtime.TableFieldRegistry.ParseAndRegister(text);
+                Runtime.QueryFieldRegistry.ParseAndRegister(text);
             }
         }
 
@@ -513,6 +515,9 @@ public class AlRunnerPipeline
             Runtime.CalcFormulaRegistry.ParseAndRegister(options.InlineCode);
             Runtime.TableFieldRegistry.ParseAndRegister(options.InlineCode);
         }
+
+        foreach (var src in alSources) Runtime.QueryFieldRegistry.ParseAndRegister(src);
+        if (options.InlineCode != null) Runtime.QueryFieldRegistry.ParseAndRegister(options.InlineCode);
 
         // Auto-discover dependency .app files from --packages directories.
         // Note: dependency/stub sources are intentionally NOT registered with SourceFileMapper —

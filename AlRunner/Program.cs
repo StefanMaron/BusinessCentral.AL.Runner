@@ -482,9 +482,11 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   - RequestPageHandler intercepts Report.RunRequestPage() calls
   - SendNotificationHandler intercepts Notification.Send() calls, receives notification
     (Message, GetData, HasData, Id accessible in handler)
-- Query variables — declaring Query variables compiles; Close/SetFilter/SetRange/
-  TopNumberOfRows are no-ops; Open/Read/SaveAs throw NotSupportedException.
-  Inject query dependencies via an AL interface for unit-testable code.
+- Query — single-dataitem queries work in-memory: Open reads from the mock table
+  store, Read iterates the result set, Close releases it. SetFilter/SetRange
+  filter rows; TopNumberOfRows limits the count. Column values are returned
+  via GetColumnValueSafe. Multi-dataitem (JOIN) and aggregation are not supported.
+  SaveAsCsv/SaveAsXml/SaveAsJson/SaveAsExcel still throw NotSupportedException.
 - XmlPort variables — declaring XmlPort variables compiles; Source/Destination
   properties and Invoke() work without error. Import/Export (instance and static)
   throw NotSupportedException with actionable guidance.
@@ -508,8 +510,8 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - XmlPort I/O (Import/Export) — XmlPort variables compile and properties work,
   but Import/Export require the BC service tier. Use AL interface injection to
   abstract XmlPort dependencies for testing.
-- Query data access (Open/Read) — queries require the BC service tier (SQL views);
-  use Record operations instead, or inject the query behind an AL interface
+- Query JOIN/aggregation — multi-dataitem queries (JOINs) and aggregation
+  (Sum, Count, Average, Min, Max) are not supported. Single-dataitem queries work.
 - HTTP / REST calls — HttpClient.Send/Get/Post etc. throw NotSupportedException;
   inject actual HTTP dependencies via AL interface. HttpContent text round-trip,
   HttpHeaders, HttpResponseMessage properties, and HttpRequestMessage construction

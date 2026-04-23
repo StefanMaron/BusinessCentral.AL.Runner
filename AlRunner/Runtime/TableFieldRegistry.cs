@@ -404,6 +404,7 @@ public static class TableFieldRegistry
     }
 
     /// <summary>Returns the table caption or null if not registered.</summary>
+    public static int? GetTableIdByName(string tableName) { foreach (var kv in _tableNames) if (string.Equals(kv.Value, tableName, StringComparison.OrdinalIgnoreCase)) return kv.Key; return null; }
     public static string? GetTableCaption(int tableId)
         => _tableCaptions.TryGetValue(tableId, out var caption) ? caption : null;
 

@@ -40,7 +40,7 @@ codeunit 59000 "Query Logic"
         exit('query-ready');
     end;
 
-    /// Calls Q.Open() — must throw NotSupportedException in standalone mode.
+    /// Calls Q.Open() — now works in-memory for single-dataitem queries.
     procedure TryOpen()
     var
         Q: Query "Item Ledger Query";
@@ -48,7 +48,7 @@ codeunit 59000 "Query Logic"
         Q.Open();
     end;
 
-    /// Calls Q.Read() — must throw NotSupportedException in standalone mode.
+    /// Calls Q.Read() without Open — throws NotSupportedException.
     procedure TryRead()
     var
         Q: Query "Item Ledger Query";
@@ -56,7 +56,7 @@ codeunit 59000 "Query Logic"
         Q.Read();
     end;
 
-    /// Sets a filter on a query column and calls Open — must throw NotSupportedException.
+    /// Sets a filter on a query column and calls Open — now works in-memory.
     procedure TrySetFilterAndOpen()
     var
         Q: Query "Item Ledger Query";

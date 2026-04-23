@@ -66,48 +66,45 @@ codeunit 59001 "Query Tests"
     end;
 
     // ------------------------------------------------------------------
-    // Negative: calling Open/Read must throw a NotSupportedException
-    // with 'Query' in the message so the developer gets a clear hint.
+    // Positive: Open/Read now work in-memory for single-dataitem queries.
+    // Read without Open still throws.
     // ------------------------------------------------------------------
 
     [Test]
-    procedure QueryOpenThrowsNotSupported()
+    procedure QueryOpenSucceedsOnEmptyTable()
     begin
-        // [GIVEN] A declared Query variable
+        // [GIVEN] A declared Query variable (table is empty)
         // [WHEN]  We call Q.Open()
-        // [THEN]  A clear 'Query' error is raised
-        asserterror Logic.TryOpen();
-        Assert.ExpectedError('Query');
+        // [THEN]  No error — Open now works in-memory
+        Logic.TryOpen();
     end;
 
     [Test]
-    procedure QueryReadThrowsNotSupported()
+    procedure QueryReadWithoutOpenThrowsNotSupported()
     begin
-        // [GIVEN] A declared Query variable
+        // [GIVEN] A declared Query variable that has NOT been opened
         // [WHEN]  We call Q.Read()
-        // [THEN]  A clear 'Query' error is raised
+        // [THEN]  A clear 'Query' error is raised (no result set)
         asserterror Logic.TryRead();
         Assert.ExpectedError('Query');
     end;
 
     [Test]
-    procedure QuerySetFilterAndOpenThrowsNotSupported()
+    procedure QuerySetFilterAndOpenSucceeds()
     begin
         // [GIVEN] A declared Query variable with a filter set
         // [WHEN]  We call SetFilter then Open
-        // [THEN]  The SetFilter succeeds (no-op) but Open throws
-        asserterror Logic.TrySetFilterAndOpen();
-        Assert.ExpectedError('Query');
+        // [THEN]  No error — both work in-memory
+        Logic.TrySetFilterAndOpen();
     end;
 
     [Test]
-    procedure QueryTopAndOpenThrowsNotSupported()
+    procedure QueryTopAndOpenSucceeds()
     begin
         // [GIVEN] A declared Query variable with TopNumberOfRows set
         // [WHEN]  We call TopNumberOfRows then Open
-        // [THEN]  The TopNumberOfRows succeeds (no-op) but Open throws
-        asserterror Logic.TrySetTop();
-        Assert.ExpectedError('Query');
+        // [THEN]  No error — both work in-memory
+        Logic.TrySetTop();
     end;
 
     [Test]

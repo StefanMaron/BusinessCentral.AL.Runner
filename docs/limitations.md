@@ -94,6 +94,17 @@ dispatch, and report/request-page variables support a limited standalone surface
   `OnAfterGetRecord` (once per row in the in-memory table), `OnPostDataItem`, and
   `OnPostReport`. Report layout/rendering is still not available.
 
+### Query — single-dataitem only
+
+Query objects with a single dataitem work in-memory: `Open` reads from the
+mock table store, `Read` iterates rows, `Close` releases the result set.
+`SetFilter`, `SetRange`, and `TopNumberOfRows` filter and limit the results.
+Column values are returned from the current row via `GetColumnValueSafe`.
+
+**Not supported:** multi-dataitem queries (JOINs), aggregation methods
+(Sum, Count, Average, Min, Max), and `SaveAsCsv`/`SaveAsXml`/`SaveAsJson`/
+`SaveAsExcel`. These throw `NotSupportedException`.
+
 ### HTTP — partial support
 
 HTTP types (`HttpClient`, `HttpRequestMessage`, `HttpResponseMessage`, `HttpContent`,

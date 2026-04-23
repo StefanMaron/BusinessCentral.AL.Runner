@@ -96,6 +96,7 @@ public static class DepCompiler
             Runtime.CodeunitNameRegistry.ParseAndRegister(src);
             Runtime.CalcFormulaRegistry.ParseAndRegister(src);
             Runtime.TableFieldRegistry.ParseAndRegister(src);
+            Runtime.QueryFieldRegistry.ParseAndRegister(src);
         }
 
         // 5. Resolve package paths — include the .app's own .alpackages and any explicit paths
@@ -327,6 +328,7 @@ public static class DepCompiler
             Runtime.CodeunitNameRegistry.ParseAndRegister(src);
             Runtime.CalcFormulaRegistry.ParseAndRegister(src);
             Runtime.TableFieldRegistry.ParseAndRegister(src);
+            Runtime.QueryFieldRegistry.ParseAndRegister(src);
         }
 
         var allPackagePaths = new List<string>(packagePaths);

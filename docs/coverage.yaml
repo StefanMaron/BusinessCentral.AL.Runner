@@ -1153,6 +1153,35 @@ query_filter:
   tests:
     - tests/bucket-2/90-query-object
 
+QueryInstance.Open:
+  layer: runtime-api
+  category: query
+  status: covered
+  notes: In-memory single-dataitem Open/Read/Close with column access
+  tests:
+    - tests/bucket-2/96-query-basic
+
+QueryInstance.SetFilter:
+  layer: runtime-api
+  category: query
+  status: covered
+  tests:
+    - tests/bucket-2/96-query-basic
+
+QueryInstance.SetRange:
+  layer: runtime-api
+  category: query
+  status: covered
+  tests:
+    - tests/bucket-2/96-query-basic
+
+QueryInstance.TopNumberOfRows:
+  layer: runtime-api
+  category: query
+  status: covered
+  tests:
+    - tests/bucket-2/96-query-basic
+
 # ── xmlport ─────────────────────────────────────────────────────
 
 elements_section:
@@ -4981,7 +5010,7 @@ QueryInstance.Open:
   layer: runtime-api
   category: QueryInstance
   status: covered
-  notes: overloads=1; MockQueryHandle.ALOpen throws NotSupportedException (requires BC service tier).
+  notes: overloads=1; MockQueryHandle.ALOpen reads from in-memory table store via QueryFieldRegistry metadata; falls back to NotSupportedException for unregistered queries.
   tests:
     - tests/bucket-2/90-query-object
 
@@ -4989,7 +5018,7 @@ QueryInstance.Read:
   layer: runtime-api
   category: QueryInstance
   status: covered
-  notes: overloads=1; MockQueryHandle.ALRead throws NotSupportedException (requires BC service tier).
+  notes: overloads=1; MockQueryHandle.ALRead iterates in-memory result set built by ALOpen; returns column values via hash mapping.
   tests:
     - tests/bucket-2/90-query-object
 
@@ -5029,7 +5058,7 @@ QueryInstance.SetFilter:
   layer: runtime-api
   category: QueryInstance
   status: covered
-  notes: overloads=1; MockQueryHandle.ALSetFilter is a no-op stub.
+  notes: overloads=1; MockQueryHandle.ALSetFilter tracks column filters applied during ALOpen.
   tests:
     - tests/bucket-2/90-query-object
 
@@ -5037,7 +5066,7 @@ QueryInstance.SetRange:
   layer: runtime-api
   category: QueryInstance
   status: covered
-  notes: overloads=1; MockQueryHandle.ALSetRangeSafe is a no-op stub (3 overloads: clear/single/range).
+  notes: overloads=3; MockQueryHandle.ALSetRangeSafe tracks range filters applied during ALOpen (clear/single/range).
   tests:
     - tests/bucket-2/90-query-object
 
