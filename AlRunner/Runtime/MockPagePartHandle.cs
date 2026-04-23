@@ -53,6 +53,22 @@ public class MockPartFormHandle
     }
 
     /// <summary>
+    /// SetTableView — no-op in standalone mode.
+    /// BC generates <c>CurrPage.SubPart.Page.SetTableView(rec)</c> as
+    /// <c>CurrPage.GetPart(hash).CreateNavFormHandle(scope).SetTableView(rec.Target)</c>.
+    /// Issue #1186.
+    /// </summary>
+    public void SetTableView(MockRecordHandle rec) { }
+
+    /// <summary>
+    /// Update — no-op in standalone mode.
+    /// BC generates <c>CurrPage.SubPart.Page.Update()</c> or <c>Update(bool)</c> as
+    /// <c>CurrPage.GetPart(hash).CreateNavFormHandle(scope).Update(...)</c>.
+    /// Issue #1186.
+    /// </summary>
+    public void Update(bool saveRecord = true) { }
+
+    /// <summary>
     /// Invokes a procedure on the subpage identified by its method hash.
     /// Searches all <c>Page{N}</c> types in the compiled assembly for a
     /// nested scope class whose name contains <paramref name="memberId"/>,
