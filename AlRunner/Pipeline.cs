@@ -542,21 +542,8 @@ public class AlRunnerPipeline
         }
 
         // Save the main compilation for symbol table queries (auto-stub generation).
-        // Subsequent TranspileMulti calls (for dep stubs, assert stubs) overwrite LastCompilation.
+        // Subsequent TranspileMulti calls (for assert stubs) overwrite LastCompilation.
         var mainCompilation = AlTranspiler.LastCompilation;
-
-        // Compile dependency stubs separately
-        var separateStubSources = GetSeparateStubSources(stubSources, alSources);
-        if (separateStubSources.Count > 0)
-        {
-            var depStubCSharp = AlTranspiler.TranspileMulti(separateStubSources, options.PackagePaths, inputPaths);
-            if (depStubCSharp != null && depStubCSharp.Count > 0)
-            {
-                generatedCSharpList.AddRange(depStubCSharp);
-                Log.Info($"Added {depStubCSharp.Count} dependency stub(s) for runtime dispatch");
-            }
-        }
-
         // Assert stubs compiled separately when Assert.app found in packages
         if (assertStubSources.Count > 0)
         {
@@ -1213,26 +1200,25 @@ public class AlRunnerPipeline
         SyntaxTreeCache? syntaxTreeCache = null,
         List<string?>? sourceFilePaths = null)
     {
-        // Handle stub replacement before transpilation
-        var separateStubSources = new List<string>();
+        // Handle stub replacement before transpilation.
+        // All stubs are included in the main BC compilation pass:
+        // - Source-replacing stubs: remove the matching source object and add the stub.
+        // - Dependency stubs: add the stub directly; the AL0275 reactive conflict
+        //   resolver in TranspileMulti drops the conflicting package so the stub wins.
         if (stubSources.Count > 0)
         {
-            var stubObjectIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var stub in stubSources)
             {
                 var match = Regex.Match(stub,
                     @"(?:codeunit|table|page|report|xmlport|query|enum|interface)\s+(\d+)",
                     RegexOptions.IgnoreCase);
-                if (match.Success)
-                    stubObjectIds.Add(match.Value.ToLowerInvariant());
-            }
-
-            foreach (var stub in stubSources)
-            {
-                var match = Regex.Match(stub,
-                    @"(?:codeunit|table|page|report|xmlport|query|enum|interface)\s+(\d+)",
-                    RegexOptions.IgnoreCase);
-                if (!match.Success) { separateStubSources.Add(stub); continue; }
+                if (!match.Success)
+                {
+                    // No object ID — add as-is; the BC compiler will report any errors.
+                    alSources.Add(stub);
+                    sourceFilePaths?.Add(null);
+                    continue;
+                }
 
                 var stubId = match.Value.ToLowerInvariant();
                 bool foundInSource = alSources.Any(src =>
@@ -1264,8 +1250,11 @@ public class AlRunnerPipeline
                 }
                 else
                 {
-                    separateStubSources.Add(stub);
-                    Log.Info($"Stub for dependency object: {stubId} (compiled separately)");
+                    // Dependency stub: include in the main compilation pass.
+                    // The AL0275 reactive conflict resolver drops any conflicting package.
+                    alSources.Add(stub);
+                    sourceFilePaths?.Add(null);
+                    Log.Info($"Stub for dependency object: {stubId} (included in main pass)");
                 }
             }
         }
@@ -1786,29 +1775,4 @@ public class AlRunnerPipeline
         };
     }
 
-    /// <summary>Default AL value for a NavTypeKind string (unused — kept for reference).</summary>
-    private static List<string> GetSeparateStubSources(List<string> stubSources, List<string> alSources)
-    {
-        var result = new List<string>();
-        foreach (var stub in stubSources)
-        {
-            var match = Regex.Match(stub,
-                @"(?:codeunit|table|page|report|xmlport|query|enum|interface)\s+(\d+)",
-                RegexOptions.IgnoreCase);
-            if (!match.Success) { result.Add(stub); continue; }
-
-            var stubId = match.Value.ToLowerInvariant();
-            bool foundInSource = alSources.Any(src =>
-            {
-                var srcMatch = Regex.Match(src,
-                    @"(?:codeunit|table|page|report|xmlport|query|enum|interface)\s+(\d+)",
-                    RegexOptions.IgnoreCase);
-                return srcMatch.Success && srcMatch.Value.ToLowerInvariant() == stubId;
-            });
-
-            if (!foundInSource)
-                result.Add(stub);
-        }
-        return result;
-    }
 }

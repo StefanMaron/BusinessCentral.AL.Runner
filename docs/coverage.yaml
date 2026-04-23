@@ -11347,3 +11347,17 @@ MockRecordHandle.TriggerCache:
     (recordType, triggerName) combination. Early-out when TriggerMethod==null
     avoids creating an uninitialized object for record types with no trigger body.
   tests: []
+
+Pipeline.StubsMainPass:
+  layer: runtime-api
+  category: performance
+  status: covered
+  notes: >
+    Dependency stub AL files (--stubs <dir>) are now compiled in the same
+    TranspileMulti call as the user's source, instead of a separate compilation
+    that reloaded all .app packages from disk. Saves ~2.3s per run when stubs
+    are present. The existing AL0275 reactive conflict resolver in TranspileMulti
+    already handles stub-vs-package conflicts: it drops the conflicting package
+    so the stub wins. GetSeparateStubSources() helper removed — no longer needed.
+  tests:
+    - tests/stubs/39-stubs
