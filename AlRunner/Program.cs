@@ -2730,8 +2730,20 @@ public static class Executor
                 object scope;
                 if (ctors.Length > 0 && ctors[0].GetParameters().Length > 0)
                 {
-                    // Constructor takes the parent codeunit
-                    scope = ctors[0].Invoke(new[] { parent });
+                    // Constructor takes the parent codeunit as first parameter, and may have
+                    // additional parameters for AL procedure parameters captured by the scope
+                    // (e.g. a helper procedure named "TestXxx" with parameters).
+                    // Supply the parent for the first param and default values for the rest
+                    // to avoid "Parameter count mismatch" when extra params are present.
+                    var ctorParams = ctors[0].GetParameters();
+                    var args = new object?[ctorParams.Length];
+                    args[0] = parent;
+                    for (int i = 1; i < ctorParams.Length; i++)
+                    {
+                        var pt = ctorParams[i].ParameterType;
+                        args[i] = pt.IsValueType ? Activator.CreateInstance(pt) : null;
+                    }
+                    scope = ctors[0].Invoke(args);
                 }
                 else if (ctors.Length > 0)
                 {
