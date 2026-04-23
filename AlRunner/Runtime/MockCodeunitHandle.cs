@@ -321,8 +321,13 @@ public class MockCodeunitHandle
             return bestMethod.Invoke(_codeunitInstance, convertedArgs);
         }
 
+        var cuName = CodeunitNameRegistry.GetNameById(_codeunitId);
+        var displayName = cuName != null ? $"codeunit {_codeunitId} \"{cuName}\"" : $"codeunit {_codeunitId}";
         throw new InvalidOperationException(
-            $"Method with member ID {memberId} not found in codeunit {_codeunitId}");
+            $"Method with member ID {memberId} not found in {displayName}\n" +
+            $"Tip: generate stubs with real method signatures:\n" +
+            $"  al-runner --generate-stubs .alpackages ./stubs ./src ./test\n" +
+            $"Then run with: al-runner --stubs ./stubs ./src ./test");
     }
 
     /// <summary>
@@ -856,8 +861,9 @@ public class MockCodeunitHandle
         else if (available.Count > 20)
             msg += $" {available.Count} codeunits available in assembly (use --dump-rewritten to inspect).";
 
-        msg += " Hint: include the codeunit's AL source in your source paths,"
-             + " use --stubs to provide a stub, or use --generate-stubs to auto-scaffold stubs from .app packages.";
+        msg += "\nTo fix: generate stubs from your .app packages:\n"
+             + "  al-runner --generate-stubs .alpackages ./stubs ./src ./test\n"
+             + "Then run with: al-runner --stubs ./stubs ./src ./test";
 
         return msg;
     }
