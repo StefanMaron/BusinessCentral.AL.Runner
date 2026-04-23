@@ -84,6 +84,7 @@ public class MockRecordHandle
     // User table field numbers (BC standard)
     private const int UserSecurityIdFieldNo = 1;
     private const int UserNameFieldNo       = 2;
+    private const int UserLicenseTypeFieldNo = 10; // "License Type" — 0 = Full User
 
     /// <summary>
     /// Pre-seed system tables required by common AL patterns.
@@ -120,8 +121,9 @@ public class MockRecordHandle
 
         userTable.Add(new Dictionary<int, NavValue>
         {
-            [UserSecurityIdFieldNo] = new NavGuid(secId),
-            [UserNameFieldNo]       = new NavCode(50, userName.ToUpperInvariant()),
+            [UserSecurityIdFieldNo]  = new NavGuid(secId),
+            [UserNameFieldNo]        = new NavCode(50, userName.ToUpperInvariant()),
+            [UserLicenseTypeFieldNo] = NavInteger.Create(0), // "Full User"
         });
     }
 
