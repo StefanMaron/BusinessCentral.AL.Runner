@@ -523,14 +523,16 @@ public class MockRecordHandle
         var assembly = MockCodeunitHandle.CurrentAssembly;
         if (assembly != null)
         {
-            foreach (var t in assembly.GetTypes())
-                if (t.Name == typeName) return t;
+            var found = MockCodeunitHandle.LookupTypeByName(assembly, typeName);
+            if (found != null) return found;
         }
         if (MockCodeunitHandle.DependencyAssemblies != null)
         {
             foreach (var depAsm in MockCodeunitHandle.DependencyAssemblies)
-                foreach (var t in depAsm.GetTypes())
-                    if (t.Name == typeName) return t;
+            {
+                var found = MockCodeunitHandle.LookupTypeByName(depAsm, typeName);
+                if (found != null) return found;
+            }
         }
         return null;
     }
