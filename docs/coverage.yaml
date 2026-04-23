@@ -7049,6 +7049,14 @@ Table.Insert:
     - tests/bucket-1/02-record-operations
     - tests/bucket-1/283-overload-gaps
 
+Table.Insert (AutoIncrement):
+  layer: runtime-api
+  category: Table
+  status: covered
+  notes: "Fields with AutoIncrement=true get max(existing)+1 when value is 0 on Insert"
+  tests:
+    - tests/bucket-1/111-auto-increment
+
 Table.IsEmpty:
   layer: runtime-api
   category: Table

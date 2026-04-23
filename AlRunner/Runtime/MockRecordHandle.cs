@@ -422,6 +422,28 @@ public class MockRecordHandle
     {
         var table = GetRows();
 
+        // Auto-increment: when an AutoIncrement field has value 0 (or is unset),
+        // assign max(existing values in that column) + 1. This must happen before
+        // trigger firing so the trigger sees the assigned value.
+        var autoIncFields = TableFieldRegistry.GetAutoIncrementFields(_tableId);
+        foreach (var fieldId in autoIncFields)
+        {
+            bool isZero = !_fields.TryGetValue(fieldId, out var val) || val.ToInt32() == 0;
+            if (isZero)
+            {
+                int maxVal = 0;
+                foreach (var existingRow in table)
+                {
+                    if (existingRow.TryGetValue(fieldId, out var rv))
+                    {
+                        var v = rv.ToInt32();
+                        if (v > maxVal) maxVal = v;
+                    }
+                }
+                _fields[fieldId] = NavInteger.Create(maxVal + 1);
+            }
+        }
+
         // Fire OnBeforeInsertEvent(var Rec, RunTrigger: Boolean)
         // — always fires, regardless of runTrigger
         FireImplicitDbEvent("OnBeforeInsertEvent", this, runTrigger);
