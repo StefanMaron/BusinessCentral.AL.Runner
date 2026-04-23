@@ -1065,8 +1065,6 @@ public class MockCodeunitHandle
 
         // MockRecordHandle → primitive conversions.
         // Convert.ChangeType requires IConvertible which MockRecordHandle doesn't implement.
-        // Handle explicitly before the fallback so the correct type is returned and
-        // MethodInfo.Invoke doesn't fail with ArgumentException on the wrong type.
         if (arg is MockRecordHandle mrh)
         {
             if (targetType == typeof(string))
@@ -1079,6 +1077,24 @@ public class MockCodeunitHandle
                 return Convert.ChangeType(0, targetType);
             if (targetType == typeof(bool))
                 return false;
+        }
+
+        // any value -> ByRef<T>: when target is ByRef<T>, convert arg to T first then wrap.
+        if (targetType.IsGenericType
+            && targetType.GetGenericTypeDefinition() == typeof(ByRef<>))
+        {
+            var innerType = targetType.GetGenericArguments()[0];
+            var innerValue = ConvertArgInternal(arg, innerType);
+            var store = new object?[] { innerValue };
+            try
+            {
+                var makeByRef = typeof(AlCompat)
+                    .GetMethod(nameof(AlCompat.MakeByRef), BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Public)
+                    ?.MakeGenericMethod(innerType);
+                if (makeByRef != null)
+                    return makeByRef.Invoke(null, new object[] { store });
+            }
+            catch { /* fall through to general conversion */ }
         }
 
         // Try general conversion

@@ -863,7 +863,7 @@ public static class AlCompat
     /// Called reflectively from <see cref="CoerceArgForParameter"/> to avoid
     /// generating per-type IL at runtime.
     /// </summary>
-    private static ByRef<T> MakeByRef<T>(object?[] store)
+    internal static ByRef<T> MakeByRef<T>(object?[] store)
     {
         return new ByRef<T>(
             () => store[0] is T v ? v : default!,

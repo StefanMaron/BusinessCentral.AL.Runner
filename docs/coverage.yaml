@@ -11099,6 +11099,22 @@ Table.ImplicitDbEventByRefParams:
   tests:
     - tests/bucket-2/225-db-event-byref-params
 
+ConvertArgInternal.ByRefVariantRecord:
+  layer: runtime-api
+  category: codeunit
+  status: covered
+  notes: >
+    ConvertArgInternal now handles ByRef<T> target types. When the call site passes a
+    raw MockRecordHandle (or any non-ByRef value) where ByRef<MockVariant> is expected —
+    as happens when AL passes a Record to a "var Variant" parameter — the method converts
+    the arg to T (e.g. MockRecordHandle → MockVariant) and wraps it in ByRef<T> using
+    AlCompat.MakeByRef<T>. Without the fix, method.Invoke threw ArgumentException:
+    "Object of type 'AlRunner.Runtime.MockRecordHandle' cannot be converted to type
+    'Microsoft.Dynamics.Nav.Runtime.ByRef`1[AlRunner.Runtime.MockVariant]'".
+    AlCompat.MakeByRef was also changed from private to internal to enable cross-class use.
+  tests:
+    - tests/bucket-1/100-byref-variant-record
+
 AlCompat.ObjectToExactNavValue:
   layer: runtime-api
   category: Boolean
