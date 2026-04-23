@@ -11363,7 +11363,7 @@ Pipeline.StubsMainPass:
     - tests/stubs/39-stubs
 
 StubGenerator.SymbolTablePass:
-  layer: cli
+  layer: runtime-api
   category: generate-stubs
   status: covered
   notes: >
