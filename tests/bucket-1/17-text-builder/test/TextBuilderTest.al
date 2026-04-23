@@ -39,4 +39,29 @@ codeunit 50917 "Text Builder Tests"
             Result,
             'List text should match expected output');
     end;
+
+    [Test]
+    procedure TestAppendLineEmitsLfOnly_NotCrlf()
+    var
+        TB: TextBuilder;
+        Result: Text;
+        LF: Char;
+        CR: Char;
+    begin
+        // [SCENARIO] BC's TextBuilder.AppendLine must emit bare LF on every OS,
+        //            regardless of host line-ending conventions.
+        LF := 10;
+        CR := 13;
+
+        // [WHEN] AppendLine is called
+        TB.AppendLine('line1');
+        TB.Append('line2');
+        Result := TB.ToText();
+
+        // [THEN] Output contains LF (positive)
+        Assert.IsTrue(StrPos(Result, Format(LF)) > 0, 'Output must contain LF (Char(10))');
+
+        // [THEN] Output contains NO CR (negative — guards against CRLF leaking from host OS)
+        Assert.AreEqual(0, StrPos(Result, Format(CR)), 'Output must not contain CR (Char(13))');
+    end;
 }
