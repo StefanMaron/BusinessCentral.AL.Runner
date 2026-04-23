@@ -4331,9 +4331,10 @@ Media.ExportStream:
   layer: runtime-api
   category: Media
   status: covered
-  notes: overloads=2
+  notes: "overloads=2; BC emits ALExport(DataError, OutStream) for ExportStream — stream overload added to MockMedia; no-op in standalone mode"
   tests:
     - tests/bucket-1/272-media
+    - tests/bucket-2/101-media-streams
 
 Media.FindOrphans:
   layer: runtime-api
@@ -4363,9 +4364,10 @@ Media.ImportStream:
   layer: runtime-api
   category: Media
   status: covered
-  notes: overloads=2
+  notes: "overloads=2; BC emits ALImport(DataError, InStream, description) for ImportStream — stream overload added to MockMedia; sets HasValue=true"
   tests:
     - tests/bucket-1/272-media
+    - tests/bucket-2/101-media-streams
 
 Media.MediaId:
   layer: runtime-api

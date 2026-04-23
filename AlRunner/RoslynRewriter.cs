@@ -427,6 +427,12 @@ public class RoslynRewriter : CSharpSyntaxRewriter
             preservedMembers.Add(
                 SyntaxFactory.ParseMemberDeclaration(
                     "public bool PreviewCanPrint => false;")!);
+            // ObjectID — CurrReport.ObjectId(bool) returns the report object ID as text.
+            // BC generates this call on the report class itself (via CurrReport alias).
+            // Returns an empty NavText in standalone mode — no real object registry. Issue #1191.
+            preservedMembers.Add(
+                SyntaxFactory.ParseMemberDeclaration(
+                    "public Microsoft.Dynamics.Nav.Runtime.NavText ObjectID(bool withCaption = false) => Microsoft.Dynamics.Nav.Runtime.NavText.Empty;")!);
 
             // For report extensions: inject a CurrReport stub.
             // BC generates a CurrReport property that casts this.ParentObject to the
@@ -463,7 +469,8 @@ public class RoslynRewriter : CSharpSyntaxRewriter
                 if (typeText == "NavCodeunit" || typeText == "NavTestCodeunit"
                     || typeText == "NavUpgradeCodeunit" || typeText == "NavTestRunnerCodeUnit")
                     isCodeunitClass = true;
-                if (typeText == "NavRecord" || typeText == "NavRecordExtension")
+                if (typeText == "NavRecord" || typeText == "NavRecordExtension"
+                    || typeText == "NavMediaSystemRecord")
                     isRecordClass = true;
                 if (typeText == "NavFormExtension")
                     isPageExtensionClass = true;
@@ -504,7 +511,8 @@ public class RoslynRewriter : CSharpSyntaxRewriter
                 if (typeText == "NavCodeunit" || typeText == "NavTestCodeunit" || typeText == "NavTestRunnerCodeUnit" || typeText == "NavRecord"
                     || typeText == "NavFormExtension" || typeText == "NavRecordExtension"
                     || typeText == "NavEventScope" || typeText == "NavUpgradeCodeunit"
-                    || typeText == "NavForm")
+                    || typeText == "NavForm"
+                    || typeText == "NavMediaSystemRecord")
                 {
                     // Remove these base classes entirely
                     continue;

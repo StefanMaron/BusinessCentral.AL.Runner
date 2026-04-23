@@ -78,6 +78,15 @@ public class MockNotification
     }
 
     /// <summary>
+    /// Default — returns a new blank MockNotification.
+    /// BC generates <c>MockNotification.Default</c> (property access, no args) for global
+    /// Notification field initializers, e.g. in codeunit-level <c>var N: Notification</c>.
+    /// Each access returns an independent new instance so mutations do not propagate between
+    /// different variable declarations. Issue #1189.
+    /// </summary>
+    public static MockNotification Default => new MockNotification();
+
+    /// <summary>
     /// ALAssign — copy all state from <paramref name="other"/> into this instance.
     /// BC emits <c>n.ALAssign(otherN)</c> for AL assignment <c>n := otherN</c>.
     /// </summary>
