@@ -4609,17 +4609,35 @@ Notification.Message:
   status: covered
   notes: overloads=1
 
+Notification.Clear:
+  layer: runtime-api
+  category: Notification
+  status: covered
+  notes: >
+    MockNotification.Clear() resets Message, Id, Scope, data, and actions to defaults.
+    BC emits n.Clear() for Clear(n) calls. Issue #1153.
+  tests:
+    - tests/bucket-2/228-notification-gaps
+
 Notification.Recall:
   layer: runtime-api
   category: Notification
   status: covered
-  notes: overloads=1
+  notes: >
+    overloads=2 (with/without DataError). Returns bool (true) — BC semantics.
+    Fixed in issue #1153: was void, caused CS0029 when return value captured.
+  tests:
+    - tests/bucket-2/228-notification-gaps
 
 Notification.Scope:
   layer: runtime-api
   category: Notification
   status: covered
-  notes: overloads=1
+  notes: >
+    overloads=1. NotificationScope enum (LocalScope, GlobalScope) — ALScope property.
+    Round-trip verified (set and read back) in issue #1153.
+  tests:
+    - tests/bucket-2/228-notification-gaps
 
 Notification.Send:
   layer: runtime-api
