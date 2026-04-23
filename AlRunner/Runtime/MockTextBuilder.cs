@@ -23,19 +23,21 @@ public class MockTextBuilder
         _sb.Append((string)text);
     }
 
+    // BC's TextBuilder.AppendLine always appends a bare LF (Char(10)) on every OS —
+    // do NOT use StringBuilder.AppendLine, which emits Environment.NewLine (CRLF on Windows).
     public void ALAppendLine(DataError errorLevel, NavText text)
     {
-        _sb.AppendLine((string)text);
+        _sb.Append((string)text).Append('\n');
     }
 
     public void ALAppendLine(DataError errorLevel)
     {
-        _sb.AppendLine();
+        _sb.Append('\n');
     }
 
     public void ALAppendLine()
     {
-        _sb.AppendLine();
+        _sb.Append('\n');
     }
 
     /// <summary>
