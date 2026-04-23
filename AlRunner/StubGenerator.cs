@@ -361,7 +361,7 @@ public static class StubGenerator
 
     // --- Rendering ---
 
-    private static string RenderCodeunit(CodeunitSymbol cu, string appName)
+    internal static string RenderCodeunit(CodeunitSymbol cu, string appName)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"// Auto-generated stub from {appName} — fill in implementations as needed.");

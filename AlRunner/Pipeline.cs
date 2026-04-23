@@ -1398,98 +1398,80 @@ public class AlRunnerPipeline
             }
         }
 
+        var missingIds = referencedIds.Where(id => !alreadyPresent.Contains(id)).OrderBy(id => id).ToList();
         var stubs = new List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)>();
-        foreach (var id in referencedIds.Where(id => !alreadyPresent.Contains(id)).OrderBy(id => id))
+
+        // --- Phase 1: Compile rich stubs as AL through the BC compiler ---
+        // This produces proper scope classes with deterministic member IDs that match
+        // the caller's generated code, fixing dispatch for codeunits with many methods
+        // that share the same parameter count (issue #1150).
+        var compiledIds = new HashSet<int>();
+        var alStubSources = new List<string>();
+        var alStubIdOrder = new List<int>();
+
+        foreach (var id in missingIds)
         {
-            string stubCode;
             if (symbolMap.TryGetValue(id, out var cuSymbol) && cuSymbol.Methods.Count > 0)
             {
-                // Rich stub: generate C# class with method stubs from SymbolReference.json
-                stubCode = GenerateRichCSharpStub(id, cuSymbol);
+                alStubSources.Add(StubGenerator.RenderCodeunit(cuSymbol, "auto-stub"));
+                alStubIdOrder.Add(id);
             }
-            else
+        }
+
+        if (alStubSources.Count > 0)
+        {
+            // Suppress stderr from the auto-stub compilation — errors are expected
+            // when methods reference types not available in the packages.
+            var savedErr = Console.Error;
+            Console.SetError(System.IO.TextWriter.Null);
+            try
             {
-                // Minimal stub: empty class (no methods available from packages)
-                stubCode = $"namespace Microsoft.Dynamics.Nav.BusinessApplication {{ public class Codeunit{id} {{ }} }}";
+                var csharpList = AlTranspiler.TranspileMulti(
+                    alStubSources,
+                    packagePaths != null && packagePaths.Count > 0 ? packagePaths : null,
+                    inputPaths);
+                if (csharpList != null)
+                {
+                    foreach (var (name, code) in csharpList)
+                    {
+                        try
+                        {
+                            var tree = RoslynRewriter.RewriteToTree(code);
+                            if (tree != null)
+                            {
+                                stubs.Add((name, tree));
+                                // Track which IDs were successfully compiled
+                                foreach (Match m in classPattern.Matches(code))
+                                {
+                                    if (int.TryParse(m.Groups[1].Value, out int compiledId))
+                                        compiledIds.Add(compiledId);
+                                }
+                            }
+                        }
+                        catch
+                        {
+                            // Rewriter failed — fall through to minimal C# stub below
+                        }
+                    }
+                }
             }
+            finally
+            {
+                Console.SetError(savedErr);
+            }
+        }
+
+        // --- Phase 2: Minimal C# stubs for anything not compiled from AL ---
+        foreach (var id in missingIds)
+        {
+            if (compiledIds.Contains(id)) continue;
+            var stubCode = $"namespace Microsoft.Dynamics.Nav.BusinessApplication {{ public class Codeunit{id} {{ }} }}";
             var tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(
                 stubCode, path: $"TestToolkitStub{id}.cs");
             stubs.Add(($"TestToolkitStub{id}", tree));
         }
+
         return stubs;
-    }
-
-    /// <summary>
-    /// Generate a C# class with method stubs from SymbolReference.json metadata.
-    /// Methods return defaults (0 for int, false for bool, null for objects, "" for strings).
-    /// The arg-count fallback in MockCodeunitHandle.Invoke dispatches to these methods.
-    /// </summary>
-    private static string GenerateRichCSharpStub(int id, StubGenerator.CodeunitSymbol cu)
-    {
-        var sb = new System.Text.StringBuilder();
-        sb.AppendLine("namespace Microsoft.Dynamics.Nav.BusinessApplication {");
-        sb.AppendLine($"public class Codeunit{id} {{");
-
-        foreach (var method in cu.Methods)
-        {
-            // All params and return types use 'object' — avoids compile errors from
-            // missing BC types and lets the arg-count fallback match any overload.
-            // Return null for all methods; the caller's generated cast will handle conversion.
-            var csParams = string.Join(", ",
-                method.Parameters.Select((p, i) => $"object p{i}"));
-
-            if (method.ReturnType == null)
-            {
-                sb.AppendLine($"    public void {method.Name}({csParams}) {{ }}");
-            }
-            else
-            {
-                var csRet = MapAlTypeToCSharp(method.ReturnType, isParameter: false);
-                string retVal = csRet switch
-                {
-                    "string" => "\"\"",
-                    "bool" => "false",
-                    "int" or "long" or "decimal" or "char" or "byte" => "default",
-                    "System.Guid" => "System.Guid.Empty",
-                    "object" => "null",
-                    _ => "default",
-                };
-                sb.AppendLine($"    public {csRet} {method.Name}({csParams}) {{ return {retVal}; }}");
-            }
-        }
-
-        sb.AppendLine("}}");
-        return sb.ToString();
-    }
-
-    /// <summary>
-    /// Map AL types to C# for auto-stub methods. Uses 'object' for complex types
-    /// so stubs compile without requiring BC DLL types. The arg-count fallback in
-    /// MockCodeunitHandle.Invoke handles runtime type conversion.
-    /// </summary>
-    /// <summary>
-    /// Map AL types to C# for auto-stub methods. Uses simple types that the
-    /// MockCodeunitHandle.Invoke arg-count fallback can handle at runtime.
-    /// All parameter types use 'object' so any argument matches.
-    /// Return types use specific types where possible to avoid cast errors.
-    /// </summary>
-    internal static string MapAlTypeToCSharp(StubGenerator.TypeSymbol? t, bool isParameter = false)
-    {
-        if (t == null) return "void";
-        // Parameters always use object — simplifies overload matching
-        if (isParameter) return "object";
-        return t.Name switch
-        {
-            "Integer" or "Option" or "Enum" => "int",
-            "BigInteger" => "long",
-            "Decimal" => "decimal",
-            "Boolean" => "bool",
-            "Char" => "char",
-            "Byte" => "byte",
-            "Guid" => "System.Guid",
-            "Text" or "Code" or "Label" or "TextConst" => "string",
-            _ => "object",
-        };
     }
 
     private static List<string> GetSeparateStubSources(List<string> stubSources, List<string> alSources)

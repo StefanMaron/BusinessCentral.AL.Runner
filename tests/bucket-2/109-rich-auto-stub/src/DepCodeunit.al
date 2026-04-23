@@ -2,7 +2,7 @@
 /// This codeunit is compiled from source in this test, but the test verifies
 /// that auto-stubbing produces a class with callable methods (not just empty).
 /// In real usage, this codeunit would come from an .app package and be
-/// auto-stubbed at the C# level.
+/// auto-stubbed via AL compilation from SymbolReference.json metadata.
 codeunit 130999 "Rich Stub Helper"
 {
     procedure ComputeValue(Input: Integer): Integer
