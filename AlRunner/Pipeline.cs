@@ -1382,8 +1382,9 @@ public class AlRunnerPipeline
         var missingIds = referencedIds.Where(id => !alreadyPresent.Contains(id)).OrderBy(id => id).ToList();
         if (missingIds.Count == 0) return new List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)>();
 
-        // Build a map of codeunit ID → method signatures from .app packages
-        // (only when there are missing IDs — avoids scanning 50+ .app files for nothing)
+        // Build a map of codeunit ID → method signatures from .app packages.
+        // Only scan packages until all missing IDs are found.
+        var missingIdSet = new HashSet<int>(missingIds);
         var symbolMap = new Dictionary<int, StubGenerator.CodeunitSymbol>();
         var allPackageDirs = new List<string>(packagePaths ?? new());
         if (inputPaths != null)
@@ -1399,85 +1400,37 @@ public class AlRunnerPipeline
         }
         foreach (var pkgDir in allPackageDirs)
         {
+            if (missingIdSet.Count == 0) break;
             if (!Directory.Exists(pkgDir)) continue;
             foreach (var appFile in Directory.GetFiles(pkgDir, "*.app"))
             {
+                if (missingIdSet.Count == 0) break;
                 try
                 {
                     var (codeunits, _, _) = StubGenerator.ReadCodeunitsFromApp(appFile);
                     foreach (var cu in codeunits)
-                        symbolMap.TryAdd(cu.Id, cu);
+                    {
+                        if (missingIdSet.Contains(cu.Id))
+                        {
+                            symbolMap[cu.Id] = cu;
+                            missingIdSet.Remove(cu.Id);
+                        }
+                    }
                 }
                 catch { /* skip unreadable packages */ }
             }
         }
         var stubs = new List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)>();
 
-        // --- Phase 1: Compile rich stubs as AL through the BC compiler ---
-        // This produces proper scope classes with deterministic member IDs that match
-        // the caller's generated code, fixing dispatch for codeunits with many methods
-        // that share the same parameter count (issue #1150).
-        var compiledIds = new HashSet<int>();
-        var alStubSources = new List<string>();
-        var alStubIdOrder = new List<int>();
-
+        // Generate C# stubs with method names and return types from SymbolReference.json.
+        // Parameters use 'object' to avoid compile errors from missing BC types.
         foreach (var id in missingIds)
         {
+            string stubCode;
             if (symbolMap.TryGetValue(id, out var cuSymbol) && cuSymbol.Methods.Count > 0)
-            {
-                alStubSources.Add(StubGenerator.RenderCodeunit(cuSymbol, "auto-stub"));
-                alStubIdOrder.Add(id);
-            }
-        }
-
-        if (alStubSources.Count > 0)
-        {
-            // Suppress stderr from the auto-stub compilation — errors are expected
-            // when methods reference types not available in the packages.
-            var savedErr = Console.Error;
-            Console.SetError(System.IO.TextWriter.Null);
-            try
-            {
-                var csharpList = AlTranspiler.TranspileMulti(
-                    alStubSources,
-                    packagePaths != null && packagePaths.Count > 0 ? packagePaths : null,
-                    inputPaths);
-                if (csharpList != null)
-                {
-                    foreach (var (name, code) in csharpList)
-                    {
-                        try
-                        {
-                            var tree = RoslynRewriter.RewriteToTree(code);
-                            if (tree != null)
-                            {
-                                stubs.Add((name, tree));
-                                // Track which IDs were successfully compiled
-                                foreach (Match m in classPattern.Matches(code))
-                                {
-                                    if (int.TryParse(m.Groups[1].Value, out int compiledId))
-                                        compiledIds.Add(compiledId);
-                                }
-                            }
-                        }
-                        catch
-                        {
-                            // Rewriter failed — fall through to minimal C# stub below
-                        }
-                    }
-                }
-            }
-            finally
-            {
-                Console.SetError(savedErr);
-            }
-        }
-
-        // --- Phase 2: Minimal C# stubs for anything not compiled from AL ---
-        foreach (var id in missingIds)
-        {
-            if (compiledIds.Contains(id)) continue;
-            var stubCode = $"namespace Microsoft.Dynamics.Nav.BusinessApplication {{ public class Codeunit{id} {{ }} }}";
+                stubCode = GenerateRichCSharpStub(id, cuSymbol);
+            else
+                stubCode = $"namespace Microsoft.Dynamics.Nav.BusinessApplication {{ public class Codeunit{id} {{ }} }}";
             var tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(
                 stubCode, path: $"TestToolkitStub{id}.cs");
             stubs.Add(($"TestToolkitStub{id}", tree));
@@ -1491,6 +1444,45 @@ public class AlRunnerPipeline
         }
 
         return stubs;
+    }
+
+    private static string GenerateRichCSharpStub(int id, StubGenerator.CodeunitSymbol cu)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("namespace Microsoft.Dynamics.Nav.BusinessApplication {");
+        sb.AppendLine($"public class Codeunit{id} {{");
+        foreach (var method in cu.Methods)
+        {
+            var csParams = string.Join(", ", method.Parameters.Select((p, i) => $"object p{i}"));
+            if (method.ReturnType == null)
+            {
+                sb.AppendLine($"    public void {method.Name}({csParams}) {{ }}");
+            }
+            else
+            {
+                var csRet = method.ReturnType.Name switch
+                {
+                    "Integer" or "Option" or "Enum" => "int",
+                    "BigInteger" => "long",
+                    "Decimal" => "decimal",
+                    "Boolean" => "bool",
+                    "Char" => "char",
+                    "Byte" => "byte",
+                    "Guid" => "System.Guid",
+                    "Text" or "Code" or "Label" or "TextConst" => "string",
+                    _ => "object",
+                };
+                string retVal = csRet switch
+                {
+                    "string" => "\"\"",
+                    "bool" => "false",
+                    _ => "default",
+                };
+                sb.AppendLine($"    public {csRet} {method.Name}({csParams}) {{ return {retVal}; }}");
+            }
+        }
+        sb.AppendLine("}}");
+        return sb.ToString();
     }
 
     private static List<string> GetSeparateStubSources(List<string> stubSources, List<string> alSources)
