@@ -35,16 +35,16 @@ public class MockNotification
         HandlerRegistry.InvokeSendNotificationHandler(this);
     }
 
-    /// <summary>Recall — no-op in standalone mode.</summary>
-    public void ALRecall(DataError errorLevel)
+    /// <summary>Recall — no-op in standalone mode. Returns true (BC semantics: true if recalled).</summary>
+    public bool ALRecall(DataError errorLevel)
     {
-        // No-op
+        return true;
     }
 
-    /// <summary>Recall without DataError parameter.</summary>
-    public void ALRecall()
+    /// <summary>Recall without DataError parameter. Returns true.</summary>
+    public bool ALRecall()
     {
-        // No-op
+        return true;
     }
 
     /// <summary>Store a key-value pair on the notification.</summary>
@@ -75,5 +75,36 @@ public class MockNotification
     public void ALAddAction(string actionCaption, int codeunitId, string functionName, string description)
     {
         _actions.Add((actionCaption, codeunitId, functionName));
+    }
+
+    /// <summary>
+    /// ALAssign — copy all state from <paramref name="other"/> into this instance.
+    /// BC emits <c>n.ALAssign(otherN)</c> for AL assignment <c>n := otherN</c>.
+    /// </summary>
+    public void ALAssign(MockNotification other)
+    {
+        if (other == null) return;
+        ALId = other.ALId;
+        ALMessage = other.ALMessage;
+        ALScope = other.ALScope;
+        _data.Clear();
+        foreach (var kv in other._data)
+            _data[kv.Key] = kv.Value;
+        _actions.Clear();
+        foreach (var a in other._actions)
+            _actions.Add(a);
+    }
+
+    /// <summary>
+    /// Clear — reset all state to defaults.
+    /// BC emits <c>n.Clear()</c> / <c>Clear(n)</c> which the rewriter rewrites to <c>n.Clear()</c>.
+    /// </summary>
+    public void Clear()
+    {
+        ALId = Guid.NewGuid();
+        ALMessage = string.Empty;
+        ALScope = NotificationScope.LocalScope;
+        _data.Clear();
+        _actions.Clear();
     }
 }

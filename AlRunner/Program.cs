@@ -489,8 +489,10 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   properties and Invoke() work without error. Import/Export (instance and static)
   throw NotSupportedException with actionable guidance.
   Use AL interface injection to abstract XmlPort I/O for testing.
-- Notification — Message, Send, Recall, SetData/GetData/HasData, AddAction, Id, Scope.
+- Notification — Message, Send, Recall (returns bool), SetData/GetData/HasData, AddAction, Id, Scope, Clear.
   Send dispatches to [SendNotificationHandler] if registered; otherwise no-op.
+  Recall() returns true (standalone mode; no real recall possible).
+  Clear(N) resets Message, Id, Scope, data, and actions to defaults.
   Data store is in-memory; Id auto-generates a Guid.
 - BigText — MockBigText replaces NavBigText. AddText, GetSubText, TextPos, Length
   all work via in-memory StringBuilder. Note: TextPos is 1-based in AL.
