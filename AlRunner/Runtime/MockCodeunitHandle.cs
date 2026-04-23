@@ -1030,6 +1030,21 @@ public class MockCodeunitHandle
                 return ctorWithLen.Invoke(new object[] { 250, strVal });
         }
 
+        // NavOption -> NavText conversion (issue #1199).
+        // When an Enum/Option value is passed to a method expecting Text via reflection
+        // dispatch, convert the ordinal integer to a string and wrap in NavText —
+        // consistent with AlCompat.Format() for NavOption values.
+        if (targetType.Name == "NavText" && arg is NavOption navOptForText)
+        {
+            var textStr = navOptForText.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var ctor = targetType.GetConstructor(new[] { typeof(string) });
+            if (ctor != null)
+                return ctor.Invoke(new object[] { textStr });
+            var ctorWithLen = targetType.GetConstructor(new[] { typeof(int), typeof(string) });
+            if (ctorWithLen != null)
+                return ctorWithLen.Invoke(new object[] { 250, textStr });
+        }
+
         // NavText -> string conversion (when target is string)
         if (targetType == typeof(string) && arg is NavValue navVal)
         {

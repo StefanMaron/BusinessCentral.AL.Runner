@@ -323,6 +323,13 @@ public class MockRecordHandle
         // representation: true → "Yes", false → "No".
         if (expectedType == NavType.Text && value is NavBoolean nb)
             return new NavText((bool)nb ? "Yes" : "No");
+        // When an Option/Enum value (NavOption) ends up in a Text field slot — e.g. via
+        // FieldRef.Value := EnumFieldRef.Value — the BC runtime casts the stored value
+        // to NavText with (NavText)GetFieldValueSafe(fieldNo, NavType.Text), which throws
+        // "Unable to cast NavOption to NavText" (issue #1199).
+        // Convert using the ordinal integer as a string, consistent with AlCompat.Format().
+        if (expectedType == NavType.Text && value is NavOption nopt)
+            return new NavText(nopt.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
         return value;
     }
 

@@ -11480,3 +11480,21 @@ RoslynRewriter.NavMediaSystemRecord:
     by ITreeObject parent parameters) handles the ctor. Closes #1188.
   tests:
     - tests/bucket-2/100-tenant-media
+
+MockRecordHandle.CoerceToExpectedType.NavOptionToNavText:
+  layer: runtime-api
+  category: record-field
+  status: covered
+  notes: >
+    When an Enum/Option field value (NavOption) is assigned to a Text field slot
+    via FieldRef.Value := EnumFieldRef.Value, MockRecordRef.SetFieldValue calls
+    SetFieldValueSafe(textFieldNo, NavType.Text, navOptionValue). Previously,
+    CoerceToExpectedType stored NavOption as-is; a subsequent direct field read
+    emitting (NavText)GetFieldValueSafe(textFieldNo, NavType.Text) threw
+    "Unable to cast NavOption to NavText" (issue #1199). Fix converts NavOption
+    to NavText using the ordinal integer as a string, consistent with
+    AlCompat.Format() for NavOption. Also fixed ConvertArgInternal in
+    MockCodeunitHandle for the same NavOption → NavText coercion when NavOption
+    is passed to a reflected method expecting NavText.
+  tests:
+    - tests/bucket-2/235-navoption-to-navtext
