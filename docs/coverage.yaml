@@ -11331,7 +11331,7 @@ MockRecordHandle.TriggerCache:
     avoids creating an uninitialized object for record types with no trigger body.
   tests: []
 
-StubsMainPass:
+Pipeline.StubsMainPass:
   layer: runtime-api
   category: performance
   status: covered
