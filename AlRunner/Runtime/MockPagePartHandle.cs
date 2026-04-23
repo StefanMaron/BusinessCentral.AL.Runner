@@ -65,14 +65,11 @@ public class MockPartFormHandle
     /// </summary>
     public object? Invoke(int memberId, object[] args)
     {
-        var assembly = MockCodeunitHandle.CurrentAssembly;
-        if (assembly == null) return null;
-
         var absMemberId = Math.Abs(memberId).ToString();
         var memberIdStr = memberId.ToString();
 
         // Search all Page* classes for the method whose scope class name encodes memberId.
-        foreach (var t in assembly.GetTypes())
+        foreach (var t in MockRecordHandle.GetAllAssemblies().SelectMany(a => a.GetTypes()))
         {
             if (!t.Name.StartsWith("Page", StringComparison.Ordinal)) continue;
 

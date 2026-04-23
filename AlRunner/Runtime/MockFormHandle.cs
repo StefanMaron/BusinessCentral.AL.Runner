@@ -76,14 +76,7 @@ public class MockFormHandle
     /// <summary>Dispatch a plain helper procedure on the page's generated class.</summary>
     public object? Invoke(int memberId, object[] args)
     {
-        var assembly = MockCodeunitHandle.CurrentAssembly;
-        if (assembly == null) return null;
-
-        Type? pageType = null;
-        foreach (var t in assembly.GetTypes())
-        {
-            if (t.Name == $"Page{PageId}") { pageType = t; break; }
-        }
+        Type? pageType = MockRecordHandle.FindTypeAcrossAssemblies($"Page{PageId}");
         if (pageType == null) return null;
 
         if (_pageInstance == null)

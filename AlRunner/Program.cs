@@ -31,6 +31,9 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("  --coverage            Show statement-level coverage report and write cobertura.xml");
     Console.Error.WriteLine("  --packages <dir>      Add symbol references from .app files in directory");
     Console.Error.WriteLine("                        (auto-detected: .alpackages in/near source dirs when omitted)");
+    Console.Error.WriteLine("  --dep-dlls <dir>      Load pre-compiled dependency DLLs for runtime execution");
+    Console.Error.WriteLine("  --compile-dep <app> <out-dir> [--packages <dir>]");
+    Console.Error.WriteLine("                        Compile a .app dependency to a rewritten DLL on disk");
     Console.Error.WriteLine("  --stubs <dir>         Override dependency objects with stub AL files");
     Console.Error.WriteLine("  --init-events         Fire BC lifecycle integration events before each codeunit");
     Console.Error.WriteLine("                        (OnCompanyInitialize from CU 2/27, OnInstallAppPerCompany from CU 2)");
@@ -219,6 +222,37 @@ while (argIdx < args.Length)
             };
             argIdx++;
             break;
+        case "--dep-dlls":
+            argIdx++;
+            if (argIdx >= args.Length) { Console.Error.WriteLine("Error: --dep-dlls requires a directory argument"); return 1; }
+            options.DepDllPaths.Add(Path.GetFullPath(args[argIdx]));
+            argIdx++;
+            break;
+        case "--compile-dep":
+        {
+            argIdx++;
+            if (argIdx >= args.Length) { Console.Error.WriteLine("Error: --compile-dep requires <app-path> <output-dir>"); return 1; }
+            var cdAppPath = Path.GetFullPath(args[argIdx]);
+            argIdx++;
+            if (argIdx >= args.Length) { Console.Error.WriteLine("Error: --compile-dep requires <app-path> <output-dir>"); return 1; }
+            var cdOutDir = Path.GetFullPath(args[argIdx]);
+            argIdx++;
+            var cdPkgPaths = new List<string>();
+            while (argIdx < args.Length)
+            {
+                if (args[argIdx] == "--packages" && argIdx + 1 < args.Length)
+                {
+                    argIdx++;
+                    cdPkgPaths.Add(Path.GetFullPath(args[argIdx]));
+                    argIdx++;
+                }
+                else
+                {
+                    argIdx++;
+                }
+            }
+            return AlRunner.DepCompiler.CompileDep(cdAppPath, cdOutDir, cdPkgPaths);
+        }
         case "--stubs":
             argIdx++;
             if (argIdx >= args.Length) { Console.Error.WriteLine("Error: --stubs requires a directory argument"); return 1; }

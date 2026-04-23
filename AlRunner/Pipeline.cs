@@ -45,6 +45,9 @@ public class PipelineOptions
     /// </summary>
     public TestIsolation TestIsolation { get; set; } = TestIsolation.Method;
 
+    /// <summary>Directories containing pre-compiled dependency DLLs (rewritten C# with mock types).</summary>
+    public List<string> DepDllPaths { get; set; } = new();
+
     /// <summary>
     /// Optional override for the C# rewriter step, intended for unit-testing the pipeline's
     /// rewriter-error-handling path. When set, replaces <see cref="RoslynRewriter.RewriteToTree"/>
@@ -701,6 +704,24 @@ public class AlRunnerPipeline
         var mapperTask = Task.Run(() =>
             SourceLineMapper.Build(generatedCSharpList, GetRewrittenStrings()));
         var preloadedRefs = refsTask.Result;
+
+        // Load dependency DLLs as MetadataReferences for Roslyn compilation
+        var depDllAssemblyPaths = new List<string>();
+        foreach (var depDir in options.DepDllPaths)
+        {
+            if (!Directory.Exists(depDir)) continue;
+            foreach (var dll in Directory.GetFiles(depDir, "*.dll"))
+            {
+                try
+                {
+                    preloadedRefs.Add(Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(dll));
+                    depDllAssemblyPaths.Add(Path.GetFullPath(dll));
+                    Log.Info($"Added dep DLL reference: {Path.GetFileName(dll)}");
+                }
+                catch (Exception ex) { Log.Info($"Skipping dep DLL {dll}: {ex.Message}"); }
+            }
+        }
+
         var compilationErrorSink = new List<string>();
         var compileResult = RoslynCompiler.Compile(rewrittenTreeList, preloadedRefs, compilationErrorSink);
         mapperTask.Wait();
@@ -727,6 +748,21 @@ public class AlRunnerPipeline
         Timer.StartStage("Test execution");
         var assembly = compileResult.Assembly;
         Runtime.MockCodeunitHandle.CurrentAssembly = assembly;
+
+        // Load dependency DLLs into the same ALC for runtime type resolution
+        var depAssemblies = new List<Assembly>();
+        foreach (var dllPath in depDllAssemblyPaths)
+        {
+            try
+            {
+                var depAsm = compileResult.LoadContext.LoadFromAssemblyPath(dllPath);
+                depAssemblies.Add(depAsm);
+                Log.Info($"Loaded dep assembly: {depAsm.GetName().Name}");
+            }
+            catch (Exception ex) { Log.Info($"Failed to load dep assembly {dllPath}: {ex.Message}"); }
+        }
+        Runtime.MockCodeunitHandle.DependencyAssemblies = depAssemblies.Count > 0 ? depAssemblies : null;
+
         Executor.RegisterStatements(GetRewrittenStrings());
 
         bool hasTests = alSources.Any(s => s.Contains("Subtype = Test"));

@@ -11167,6 +11167,31 @@ RoslynRewriter.CompareToEquality:
   tests:
     - tests/bucket-2/105-validate-case
 
+DepCompiler.CompileDep:
+  layer: runtime-api
+  category: dependency-execution
+  status: covered
+  notes: >
+    --compile-dep compiles a dependency .app package (or AL source directory)
+    through the full AL→C#→rewrite→Roslyn pipeline and produces a .dll on disk.
+    The DLL uses the same mock types as the main test assembly. Supports caching
+    by app identity (skips if DLL already exists). Output DLLs can be loaded via
+    --dep-dlls for runtime execution of dependency codeunits.
+  tests:
+    - tests/dep-dlls
+
+MockCodeunitHandle.DependencyAssemblies:
+  layer: runtime-api
+  category: dependency-execution
+  status: covered
+  notes: >
+    --dep-dlls loads pre-compiled dependency DLLs into the AssemblyLoadContext.
+    FindCodeunitType, FireEvent, TryFireRecordTrigger, and type lookups in
+    MockFormHandle/MockReportHandle/MockPagePartHandle all search dependency
+    assemblies when a type is not found in the main assembly.
+  tests:
+    - tests/dep-dlls
+
 MockCodeunitHandle.LibraryTestInitialize:
   layer: runtime-api
   category: test-toolkit

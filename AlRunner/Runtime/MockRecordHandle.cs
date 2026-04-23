@@ -468,17 +468,43 @@ public class MockRecordHandle
     /// the trigger's <c>Rec.SetFieldValueSafe(…)</c> calls mutate this
     /// instance's field bag in place.
     /// </summary>
-    private void TryFireRecordTrigger(string triggerName)
+    /// <summary>
+    /// Enumerate CurrentAssembly and all DependencyAssemblies.
+    /// </summary>
+    internal static IEnumerable<System.Reflection.Assembly> GetAllAssemblies()
+    {
+        var main = MockCodeunitHandle.CurrentAssembly;
+        if (main != null) yield return main;
+        if (MockCodeunitHandle.DependencyAssemblies != null)
+            foreach (var dep in MockCodeunitHandle.DependencyAssemblies)
+                yield return dep;
+    }
+
+    /// <summary>
+    /// Search CurrentAssembly and DependencyAssemblies for a type by name.
+    /// Used by MockRecordHandle, MockFormHandle, MockReportHandle, MockPagePartHandle.
+    /// </summary>
+    internal static Type? FindTypeAcrossAssemblies(string typeName)
     {
         var assembly = MockCodeunitHandle.CurrentAssembly;
-        if (assembly == null) return;
-
-        var recordTypeName = $"Record{_tableId}";
-        Type? recordType = null;
-        foreach (var t in assembly.GetTypes())
+        if (assembly != null)
         {
-            if (t.Name == recordTypeName) { recordType = t; break; }
+            foreach (var t in assembly.GetTypes())
+                if (t.Name == typeName) return t;
         }
+        if (MockCodeunitHandle.DependencyAssemblies != null)
+        {
+            foreach (var depAsm in MockCodeunitHandle.DependencyAssemblies)
+                foreach (var t in depAsm.GetTypes())
+                    if (t.Name == typeName) return t;
+        }
+        return null;
+    }
+
+    private void TryFireRecordTrigger(string triggerName)
+    {
+        var recordTypeName = $"Record{_tableId}";
+        Type? recordType = FindTypeAcrossAssemblies(recordTypeName);
         if (recordType == null) return;
 
         // Generated Record classes are plain classes (post-rewrite) with
@@ -1144,14 +1170,14 @@ public class MockRecordHandle
     /// </summary>
     private void FireOnValidate(int fieldNo)
     {
-        var assembly = MockCodeunitHandle.CurrentAssembly;
-        if (assembly == null) return;
-
-        // Search both the Record class and any TableExtension classes for the trigger
+        // Search both the Record class and any TableExtension classes for the trigger,
+        // across main assembly and dependency assemblies
         var recordTypeName = $"Record{_tableId}";
-        var candidateTypes = assembly.GetTypes()
-            .Where(t => t.Name == recordTypeName || t.Name.StartsWith("TableExtension"))
-            .ToList();
+        var candidateTypes = new List<Type>();
+        foreach (var asm in GetAllAssemblies())
+            candidateTypes.AddRange(asm.GetTypes()
+                .Where(t => t.Name == recordTypeName || t.Name.StartsWith("TableExtension")));
+        if (candidateTypes.Count == 0) return;
 
         foreach (var candidateType in candidateTypes)
         {
@@ -3225,9 +3251,8 @@ public class MockRecordHandle
     public object? Invoke(int memberId, object[] args)
     {
         // Delegate to MockCodeunitHandle-style dispatch on the record type
-        var assembly = MockCodeunitHandle.CurrentAssembly ?? System.Reflection.Assembly.GetExecutingAssembly();
         var recordTypeName = $"Record{_tableId}";
-        var recordType = assembly.GetTypes().FirstOrDefault(t => t.Name == recordTypeName);
+        var recordType = FindTypeAcrossAssemblies(recordTypeName);
         if (recordType == null)
         {
             throw new InvalidOperationException($"Record type {recordTypeName} not found in assembly for Invoke");

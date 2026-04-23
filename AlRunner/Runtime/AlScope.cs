@@ -700,6 +700,19 @@ public static class AlCompat
     {
         var asm = MockCodeunitHandle.CurrentAssembly;
         if (asm == null) return;
+
+        FireEventInAssembly(asm, objectType, publisherId, eventName, eventArgs);
+
+        // Also fire events from dependency assemblies
+        if (MockCodeunitHandle.DependencyAssemblies != null)
+        {
+            foreach (var depAsm in MockCodeunitHandle.DependencyAssemblies)
+                FireEventInAssembly(depAsm, objectType, publisherId, eventName, eventArgs);
+        }
+    }
+
+    private static void FireEventInAssembly(System.Reflection.Assembly asm, int objectType, int publisherId, string eventName, object?[] eventArgs)
+    {
         var subs = EventSubscriberRegistry.GetSubscribers(asm, objectType, publisherId, eventName);
         foreach (var sub in subs)
         {

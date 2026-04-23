@@ -266,11 +266,7 @@ public class MockReportHandle
         if (_reportInstance != null)
             return _reportInstance;
 
-        var assembly = MockCodeunitHandle.CurrentAssembly;
-        if (assembly == null)
-            return null;
-
-        var reportType = assembly.GetTypes().FirstOrDefault(t => t.Name == $"Report{ReportId}");
+        var reportType = MockRecordHandle.FindTypeAcrossAssemblies($"Report{ReportId}");
         if (reportType == null)
             return null;
 

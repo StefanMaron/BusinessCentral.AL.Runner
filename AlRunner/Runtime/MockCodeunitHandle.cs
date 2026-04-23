@@ -18,6 +18,13 @@ public class MockCodeunitHandle
     /// </summary>
     public static Assembly? CurrentAssembly { get; set; }
 
+    /// <summary>
+    /// Additional assemblies containing compiled dependency codeunits/tables/pages.
+    /// Loaded from --dep-dlls directories. Searched by FindCodeunitType, event dispatch,
+    /// and record trigger resolution when a type is not found in CurrentAssembly.
+    /// </summary>
+    public static List<Assembly>? DependencyAssemblies { get; set; }
+
     public MockCodeunitHandle(int codeunitId)
     {
         _codeunitId = codeunitId;
@@ -749,7 +756,19 @@ public class MockCodeunitHandle
     private Type? FindCodeunitType(Assembly assembly)
     {
         var expectedName = $"Codeunit{_codeunitId}";
-        return assembly.GetTypes().FirstOrDefault(t => t.Name == expectedName);
+        var type = assembly.GetTypes().FirstOrDefault(t => t.Name == expectedName);
+        if (type != null) return type;
+
+        // Search dependency assemblies
+        if (DependencyAssemblies != null)
+        {
+            foreach (var depAsm in DependencyAssemblies)
+            {
+                type = depAsm.GetTypes().FirstOrDefault(t => t.Name == expectedName);
+                if (type != null) return type;
+            }
+        }
+        return null;
     }
 
     /// <summary>
