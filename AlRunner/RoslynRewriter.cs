@@ -463,7 +463,8 @@ public class RoslynRewriter : CSharpSyntaxRewriter
                 if (typeText == "NavCodeunit" || typeText == "NavTestCodeunit"
                     || typeText == "NavUpgradeCodeunit" || typeText == "NavTestRunnerCodeUnit")
                     isCodeunitClass = true;
-                if (typeText == "NavRecord" || typeText == "NavRecordExtension")
+                if (typeText == "NavRecord" || typeText == "NavRecordExtension"
+                    || typeText == "NavMediaSystemRecord")
                     isRecordClass = true;
                 if (typeText == "NavFormExtension")
                     isPageExtensionClass = true;
@@ -504,7 +505,8 @@ public class RoslynRewriter : CSharpSyntaxRewriter
                 if (typeText == "NavCodeunit" || typeText == "NavTestCodeunit" || typeText == "NavTestRunnerCodeUnit" || typeText == "NavRecord"
                     || typeText == "NavFormExtension" || typeText == "NavRecordExtension"
                     || typeText == "NavEventScope" || typeText == "NavUpgradeCodeunit"
-                    || typeText == "NavForm")
+                    || typeText == "NavForm"
+                    || typeText == "NavMediaSystemRecord")
                 {
                     // Remove these base classes entirely
                     continue;

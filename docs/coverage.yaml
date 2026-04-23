@@ -4331,9 +4331,10 @@ Media.ExportStream:
   layer: runtime-api
   category: Media
   status: covered
-  notes: overloads=2
+  notes: "overloads=2; BC emits ALExport(DataError, OutStream) for ExportStream — stream overload added to MockMedia; no-op in standalone mode"
   tests:
     - tests/bucket-1/272-media
+    - tests/bucket-2/101-media-streams
 
 Media.FindOrphans:
   layer: runtime-api
@@ -4363,9 +4364,10 @@ Media.ImportStream:
   layer: runtime-api
   category: Media
   status: covered
-  notes: overloads=2
+  notes: "overloads=2; BC emits ALImport(DataError, InStream, description) for ImportStream — stream overload added to MockMedia; sets HasValue=true"
   tests:
     - tests/bucket-1/272-media
+    - tests/bucket-2/101-media-streams
 
 Media.MediaId:
   layer: runtime-api
@@ -11462,3 +11464,19 @@ StubGenerator.SymbolTablePass:
     to disk and counted in the new GeneratedFromSymbolTable field of GenerateResult.
     Falls back gracefully to zero extra stubs when compilation is unavailable.
   tests: []
+
+RoslynRewriter.NavMediaSystemRecord:
+  layer: runtime-api
+  category: rewriter
+  status: covered
+  notes: >
+    BC emits NavMediaSystemRecord as the base class for system media tables
+    (e.g. "Tenant Media", table 2000000184). NavMediaSystemRecord has a
+    7-arg constructor requiring ITreeObject, NCLMetaTable, NavRecord, string,
+    SecurityFiltering — all unavailable in standalone mode. The rewriter now
+    treats NavMediaSystemRecord identically to NavRecord: marks the containing
+    class as a record class (for Rec/xRec table-ID tracking) and strips it
+    from the base class list. The existing constructor-removal rule (triggered
+    by ITreeObject parent parameters) handles the ctor. Closes #1188.
+  tests:
+    - tests/bucket-2/100-tenant-media

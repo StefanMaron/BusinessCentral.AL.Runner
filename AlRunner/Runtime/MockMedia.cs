@@ -74,15 +74,43 @@ public class MockMedia : NavValue
         return _id;
     }
 
-    // ── ALExport (BC-emitted name for Media.ExportFile) ───────────────────────
+    // BC emits ALImport(errorLevel, inStream, description) for Media.ImportStream(InStream, Text)
+    public Guid ALImport(DataError errorLevel, MockInStream stream, NavText description)
+    {
+        _hasValue = true;
+        return _id;
+    }
+
+    public Guid ALImport(DataError errorLevel, MockInStream stream, string description)
+    {
+        _hasValue = true;
+        return _id;
+    }
+
+    public Guid ALImport(DataError errorLevel, MockInStream stream, NavText description, NavText mimeType)
+    {
+        _hasValue = true;
+        return _id;
+    }
+
+    public Guid ALImport(DataError errorLevel, MockInStream stream, string description, string mimeType)
+    {
+        _hasValue = true;
+        return _id;
+    }
+
+    // ── ALExport (BC-emitted for Media.ExportFile and Media.ExportStream) ────────
 
     /// <summary>
-    /// BC emits <c>m.ALExport(errorLevel, fileName)</c>
-    /// for <c>Media.ExportFile(FileName)</c>.
+    /// BC emits <c>m.ALExport(errorLevel, fileName)</c> for <c>Media.ExportFile(FileName)</c>.
     /// Returns false — no blob data in standalone mode.
     /// </summary>
     public bool ALExport(DataError errorLevel, NavText fileName) => false;
     public bool ALExport(DataError errorLevel, string fileName) => false;
+
+    // BC emits ALExport(errorLevel, outStream) for Media.ExportStream(OutStream)
+    public bool ALExport(DataError errorLevel, MockOutStream stream) => false;
+    public bool ALExport(MockOutStream stream) => false;
 
     // ── ImportFile ───────────────────────────────────────────────────────────────
 
