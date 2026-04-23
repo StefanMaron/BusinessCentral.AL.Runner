@@ -1153,6 +1153,34 @@ query_filter:
   tests:
     - tests/bucket-2/90-query-object
 
+query_open_read_close:
+  layer: runtime
+  category: query
+  status: covered
+  tests:
+    - tests/bucket-2/96-query-basic
+
+query_setfilter:
+  layer: runtime
+  category: query
+  status: covered
+  tests:
+    - tests/bucket-2/96-query-basic
+
+query_setrange:
+  layer: runtime
+  category: query
+  status: covered
+  tests:
+    - tests/bucket-2/96-query-basic
+
+query_topnumberofrows:
+  layer: runtime
+  category: query
+  status: covered
+  tests:
+    - tests/bucket-2/96-query-basic
+
 # ── xmlport ─────────────────────────────────────────────────────
 
 elements_section:
