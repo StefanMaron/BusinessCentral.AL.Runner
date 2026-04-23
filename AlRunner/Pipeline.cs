@@ -1379,10 +1379,13 @@ public class AlRunnerPipeline
             }
         }
 
+        var missingIds = referencedIds.Where(id => !alreadyPresent.Contains(id)).OrderBy(id => id).ToList();
+        if (missingIds.Count == 0) return new List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)>();
+
         // Build a map of codeunit ID → method signatures from .app packages
+        // (only when there are missing IDs — avoids scanning 50+ .app files for nothing)
         var symbolMap = new Dictionary<int, StubGenerator.CodeunitSymbol>();
         var allPackageDirs = new List<string>(packagePaths ?? new());
-        // Also scan .alpackages near input paths
         if (inputPaths != null)
         {
             foreach (var p in inputPaths)
@@ -1408,8 +1411,6 @@ public class AlRunnerPipeline
                 catch { /* skip unreadable packages */ }
             }
         }
-
-        var missingIds = referencedIds.Where(id => !alreadyPresent.Contains(id)).OrderBy(id => id).ToList();
         var stubs = new List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)>();
 
         // --- Phase 1: Compile rich stubs as AL through the BC compiler ---
