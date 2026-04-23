@@ -11,7 +11,7 @@ using Microsoft.Dynamics.Nav.Types;     // NavType, DataError
 /// A static dictionary acts as the "database" for all tables.
 /// Supports SetRange/SetFilter filtering with AND-combination across fields.
 /// </summary>
-public class MockRecordHandle
+public class MockRecordHandle : IConvertible
 {
     private const int SystemIdFieldNo = 2000000000;
     private const int SystemModifiedAtFieldNo = 2000000003;
@@ -648,6 +648,37 @@ public class MockRecordHandle
     /// CLR type name.
     /// </summary>
     public override string ToString() => ALGetPosition();
+
+    // ── IConvertible ──────────────────────────────────────────────────────────
+    // The BC transpiler (and .NET runtime helpers like Convert.ToInt32/ToBoolean)
+    // call Convert.ChangeType on argument values, which requires IConvertible.
+    // Without this, passing a Record variable to a method that extracts it from
+    // a Variant throws "Unable to cast MockRecordHandle to IConvertible".
+    // Numeric/bool conversions return safe defaults (0 / false); string returns
+    // the AL position string (the same value as Format(record) in AL).
+    public TypeCode GetTypeCode() => TypeCode.Object;
+    public string ToString(IFormatProvider? provider) => ALGetPosition();
+    public bool ToBoolean(IFormatProvider? provider) => false;
+    public byte ToByte(IFormatProvider? provider) => 0;
+    public char ToChar(IFormatProvider? provider) => '\0';
+    public DateTime ToDateTime(IFormatProvider? provider) => DateTime.MinValue;
+    public decimal ToDecimal(IFormatProvider? provider) => 0m;
+    public double ToDouble(IFormatProvider? provider) => 0.0;
+    public short ToInt16(IFormatProvider? provider) => 0;
+    public int ToInt32(IFormatProvider? provider) => 0;
+    public long ToInt64(IFormatProvider? provider) => 0;
+    public sbyte ToSByte(IFormatProvider? provider) => 0;
+    public float ToSingle(IFormatProvider? provider) => 0f;
+    public ushort ToUInt16(IFormatProvider? provider) => 0;
+    public uint ToUInt32(IFormatProvider? provider) => 0;
+    public ulong ToUInt64(IFormatProvider? provider) => 0;
+    public object ToType(Type conversionType, IFormatProvider? provider)
+    {
+        if (conversionType == typeof(string)) return ToString();
+        // For all other numeric/value types delegate to a zero-valued conversion
+        try { return Convert.ChangeType(0, conversionType); }
+        catch { return Activator.CreateInstance(conversionType) ?? 0; }
+    }
 
     /// <summary>
     /// Fire an implicit DB trigger event (OnBefore/AfterInsertEvent, etc.)

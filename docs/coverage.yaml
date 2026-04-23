@@ -7081,6 +7081,20 @@ Table.Format:
   tests:
     - tests/bucket-1/300-record-format
 
+MockRecordHandle.IConvertible:
+  layer: runtime-api
+  category: Table
+  status: covered
+  notes: >
+    MockRecordHandle now implements IConvertible so that Convert.ToInt32/ToBoolean/ChangeType(record, T)
+    do not throw "Unable to cast MockRecordHandle to IConvertible".
+    This is triggered when the BC transpiler emits NavIndirectValueToInt32 / NavIndirectValueToBoolean
+    (rewritten to AlCompat.*) for a Variant holding a Record assigned to Integer/Boolean locals.
+    All numeric conversions return 0, bool returns false, string returns the position string.
+    Also fixes AlCompat.ObjectToDecimal and NavIndirectValueToBoolean fallback paths.
+  tests:
+    - tests/bucket-2/235-record-iconvertible
+
 Table.Get:
   layer: runtime-api
   category: Table
