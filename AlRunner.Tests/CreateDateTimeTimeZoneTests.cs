@@ -1,5 +1,7 @@
 using System;
+using System.Reflection;
 using AlRunner.Runtime;
+using Microsoft.Dynamics.Nav.Runtime;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -20,6 +22,7 @@ namespace AlRunner.Tests;
 ///
 /// Issue: #1159
 /// </summary>
+[Collection("Pipeline")]
 public class CreateDateTimeTimeZoneTests
 {
     private static readonly TimeZoneInfo Tokyo = TimeZoneInfo.FindSystemTimeZoneById("Tokyo Standard Time");       // UTC+9, no DST
@@ -63,6 +66,29 @@ public class CreateDateTimeTimeZoneTests
     }
 
     [Fact]
+    public void PickStandardOffset_StandardFirst_ReturnsFirst()
+    {
+        // TimeZoneInfo.GetAmbiguousTimeOffsets ordering is undefined per MS docs;
+        // both orderings must land on the standard-time offset.
+        var std = TimeSpan.FromHours(1);
+        var dst = TimeSpan.FromHours(2);
+
+        Assert.Equal(std, AlCompat.PickStandardOffset(new[] { std, dst }, std));
+    }
+
+    [Fact]
+    public void PickStandardOffset_StandardLast_ReturnsLast()
+    {
+        // This is the case a regression to `offsets[0]` would miss — it happens to
+        // work on Windows (where standard is first) but would silently break on a
+        // platform where GetAmbiguousTimeOffsets returns [dst, standard].
+        var std = TimeSpan.FromHours(1);
+        var dst = TimeSpan.FromHours(2);
+
+        Assert.Equal(std, AlCompat.PickStandardOffset(new[] { dst, std }, std));
+    }
+
+    [Fact]
     public void SafeLocalToUtc_InvalidLocalTime_ShiftsForwardToFirstValidInstant()
     {
         // CE spring-forward: 2024-03-31 02:30 local does not exist. Shift to the first
@@ -73,6 +99,76 @@ public class CreateDateTimeTimeZoneTests
         var utc = AlCompat.SafeLocalToUtc(invalid, CentralEurope);
 
         Assert.Equal(new DateTime(2024, 3, 31, 1, 0, 0, DateTimeKind.Utc).Ticks, utc.Ticks);
+    }
+
+    [Fact]
+    public void DaTi2Variant_AppliesLocalToUtcConversion()
+    {
+        // Contract for the Variant-context path: the Variant produced by BC's
+        // ALDaTi2Variant lowering must store the same UTC-converted ticks as
+        // ALCreateDateTime would. The AL compiler typically lowers
+        // `v := CreateDateTime(d, t)` through ALCreateDateTime + Variant boxing,
+        // but this test pins the symmetric behavior in case a BC version or
+        // emission pattern reaches AlCompat.DaTi2Variant directly.
+        using var scope = new LocalTimeZoneScope("Tokyo Standard Time"); // UTC+9
+
+        var navDate = ConstructNavValue<NavDate>(
+            new DateTime(2024, 1, 15, 0, 0, 0, DateTimeKind.Unspecified));
+        var navTime = ConstructNavValue<NavTime>(
+            new DateTime(1754, 1, 1, 15, 30, 45, DateTimeKind.Unspecified));
+
+        var variant = AlCompat.DaTi2Variant(navDate, navTime);
+        var navDt = Assert.IsType<NavDateTime>(variant.Value);
+        var stored = AlCompat.GetNavDateTimeValue(navDt);
+
+        // Tokyo wall-clock 2024-01-15 15:30:45 → UTC 06:30:45
+        Assert.Equal(
+            new DateTime(2024, 1, 15, 6, 30, 45, DateTimeKind.Utc).Ticks,
+            stored.Ticks);
+        Assert.Equal(DateTimeKind.Utc, stored.Kind);
+    }
+
+    private static T ConstructNavValue<T>(DateTime value)
+    {
+        var inst = Activator.CreateInstance(typeof(T), nonPublic: true)
+            ?? throw new InvalidOperationException($"Activator failed on {typeof(T)}");
+        var f = typeof(T).BaseType?.GetField("value",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException($"{typeof(T).Name}.value field not found");
+        f.SetValue(inst, value);
+        return (T)inst;
+    }
+
+    /// <summary>
+    /// Overrides TimeZoneInfo.Local by writing to the private CachedData._localTimeZone
+    /// field; restores on Dispose. Used to make datetime-conversion tests host-independent
+    /// without touching the OS registry.
+    /// </summary>
+    internal sealed class LocalTimeZoneScope : IDisposable
+    {
+        private readonly TimeZoneInfo _original;
+        private readonly FieldInfo _localField;
+        private readonly object _cached;
+
+        public LocalTimeZoneScope(string tzId)
+        {
+            var tziType = typeof(TimeZoneInfo);
+            var cachedField = tziType.GetField("s_cachedData",
+                BindingFlags.Static | BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("TimeZoneInfo.s_cachedData not found");
+            _cached = cachedField.GetValue(null)
+                ?? throw new InvalidOperationException("s_cachedData instance is null");
+            var nested = tziType.GetNestedType("CachedData", BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("TimeZoneInfo.CachedData not found");
+            _localField = nested.GetField("_localTimeZone",
+                BindingFlags.Instance | BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("CachedData._localTimeZone not found");
+            _original = (TimeZoneInfo)(_localField.GetValue(_cached)
+                ?? throw new InvalidOperationException("_localTimeZone was null"));
+            _localField.SetValue(_cached, TimeZoneInfo.FindSystemTimeZoneById(tzId));
+        }
+
+        public void Dispose() => _localField.SetValue(_cached, _original);
     }
 
     [Fact]

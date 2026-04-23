@@ -2328,24 +2328,23 @@ public static class AlCompat
     /// conversion BC's read-side ConvertTimeFromUtc expects.
     /// </summary>
     public static NavDateTime CreateDateTime(NavDate d, NavTime t)
-        => CreateNavDateTime(SafeLocalToUtc(CombineDateTime(d, t), TimeZoneInfo.Local));
+        => BuildNavDateTimeUtc(d, t);
 
     /// <summary>
     /// DaTi2Variant(date, time) — pack a NavDate + NavTime into a NavDateTime MockVariant.
     /// BC emits ALSystemDate.ALDaTi2Variant(scope, d, t); the rewriter strips the scope
-    /// and redirects here. The stored value is UTC-converted (see CreateDateTime) so that
-    /// BC's read-side ConvertTimeFromUtc inverts the write correctly on any host.
+    /// and redirects here. Symmetric with CreateDateTime so BC's read path inverts the
+    /// write correctly on any host.
     /// </summary>
     public static MockVariant DaTi2Variant(NavDate d, NavTime t)
-        => new(CreateNavDateTime(SafeLocalToUtc(CombineDateTime(d, t), TimeZoneInfo.Local)));
+        => new(BuildNavDateTimeUtc(d, t));
 
-    /// <summary>
-    /// Combine the date components of <paramref name="d"/> and the time-of-day
-    /// components of <paramref name="t"/> into a single wall-clock DateTime with
-    /// DateTimeKind.Unspecified. Extracts values via reflection on the backing
-    /// field because NavDate/NavTime do not implement IConvertible outside a
-    /// NavSession (Convert.ChangeType throws "Object must implement IConvertible").
-    /// </summary>
+    private static NavDateTime BuildNavDateTimeUtc(NavDate d, NavTime t)
+        => CreateNavDateTime(SafeLocalToUtc(CombineDateTime(d, t), TimeZoneInfo.Local));
+
+    /// Combine date and time components into a wall-clock DateTime with
+    /// DateTimeKind.Unspecified. Uses reflection on the backing value field because
+    /// NavDate / NavTime do not implement IConvertible outside a NavSession.
     private static DateTime CombineDateTime(NavDate d, NavTime t)
     {
         var date = NavDateValueField is null ? DateTime.MinValue
@@ -2358,13 +2357,15 @@ public static class AlCompat
             DateTimeKind.Unspecified);
     }
 
-    private static readonly System.Reflection.FieldInfo? NavDateValueField =
-        typeof(NavDate).BaseType?.GetField("value",
+    private static System.Reflection.FieldInfo? GetNavBackingValueField(Type navValueType)
+        => navValueType.BaseType?.GetField("value",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
 
+    private static readonly System.Reflection.FieldInfo? NavDateValueField =
+        GetNavBackingValueField(typeof(NavDate));
+
     private static readonly System.Reflection.FieldInfo? NavTimeValueField =
-        typeof(NavTime).BaseType?.GetField("value",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        GetNavBackingValueField(typeof(NavTime));
 
     /// <summary>
     /// NormalDate(date) — wraps ALSystemDate.ALNormalDate with 0D handling.
@@ -2456,6 +2457,10 @@ public static class AlCompat
     /// </summary>
     internal static DateTime SafeLocalToUtc(DateTime wallClockLocal, TimeZoneInfo localTz)
     {
+        // CI runs Linux/UTC — skip the DST probes entirely on the common path.
+        if (ReferenceEquals(localTz, TimeZoneInfo.Utc))
+            return DateTime.SpecifyKind(wallClockLocal, DateTimeKind.Utc);
+
         var unspec = DateTime.SpecifyKind(wallClockLocal, DateTimeKind.Unspecified);
         if (localTz.IsInvalidTime(unspec))
         {
@@ -2467,9 +2472,24 @@ public static class AlCompat
         if (localTz.IsAmbiguousTime(unspec))
         {
             var offsets = localTz.GetAmbiguousTimeOffsets(unspec);
-            return DateTime.SpecifyKind(unspec - offsets[0], DateTimeKind.Utc);
+            var standardOffset = PickStandardOffset(offsets, localTz.BaseUtcOffset);
+            return DateTime.SpecifyKind(unspec - standardOffset, DateTimeKind.Utc);
         }
         return TimeZoneInfo.ConvertTimeToUtc(unspec, localTz);
+    }
+
+    /// <summary>
+    /// Select the standard-time offset from the array returned by
+    /// TimeZoneInfo.GetAmbiguousTimeOffsets. Per MS docs the array order is undefined,
+    /// so the match must be done against BaseUtcOffset rather than a fixed index.
+    /// Returns offsets[0] as a last-resort fallback if neither element matches
+    /// (should not happen for a valid ambiguous-time input).
+    /// </summary>
+    internal static TimeSpan PickStandardOffset(TimeSpan[] offsets, TimeSpan baseUtcOffset)
+    {
+        for (int i = 0; i < offsets.Length; i++)
+            if (offsets[i] == baseUtcOffset) return offsets[i];
+        return offsets[0];
     }
 
     // Cache the backing field for NavDateTime construction via reflection.
@@ -2477,8 +2497,7 @@ public static class AlCompat
     // Telemetry.Abstractions in BC 28+, which is unavailable outside the service tier.
     // Constructing via Activator + field set bypasses all such dependencies.
     private static readonly System.Reflection.FieldInfo? NavDateTimeValueField =
-        typeof(NavDateTime).BaseType?.GetField("value",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        GetNavBackingValueField(typeof(NavDateTime));
 
     internal static NavDateTime CreateNavDateTime(DateTime dateTime)
     {
