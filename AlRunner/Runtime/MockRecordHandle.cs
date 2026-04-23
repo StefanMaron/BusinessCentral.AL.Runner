@@ -1,5 +1,6 @@
 namespace AlRunner.Runtime;
 
+using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using Microsoft.Dynamics.Nav.Runtime;  // NavValue, NavCode, NavText, NavDecimal, NavInteger, NavBoolean, Decimal18
 using Microsoft.Dynamics.Nav.Types;     // NavType, DataError
@@ -44,6 +45,14 @@ public class MockRecordHandle
     // Primary key field numbers per table (registered via RegisterPrimaryKey)
     private static readonly Dictionary<int, int[]> _primaryKeys = new();
 
+    // Cache: (recordType, triggerName) → (recBackingField, xRecBackingField, triggerMethod)
+    // Avoids repeated GetField/GetMethod calls in TryFireRecordTriggerCore (1,093 calls/run).
+    private record TriggerReflectionInfo(
+        System.Reflection.FieldInfo? RecField,
+        System.Reflection.FieldInfo? XRecField,
+        System.Reflection.MethodInfo? TriggerMethod);
+    private static readonly ConcurrentDictionary<(Type, string), TriggerReflectionInfo> _triggerCache = new();
+
     // Field name -> field number mapping per table (registered via RegisterFieldName)
     private static readonly Dictionary<int, Dictionary<string, int>> _fieldNames = new();
 
@@ -76,6 +85,26 @@ public class MockRecordHandle
     {
         _tables.Clear();
         // Keep PK and field name registrations — they are structural, not data
+    }
+
+    /// <summary>
+    /// Returns a snapshot of all rows in the given table for read-only access
+    /// by MockQueryHandle. Returns an empty list if the table has no data.
+    /// </summary>
+    internal static List<Dictionary<int, NavValue>> GetTableRows(int tableId)
+    {
+        if (_tables.TryGetValue(tableId, out var rows))
+            return new List<Dictionary<int, NavValue>>(rows);
+        return new List<Dictionary<int, NavValue>>();
+    }
+
+    /// <summary>
+    /// Returns the primary key field numbers for the given table, or an empty
+    /// array if no PK is registered. Used by MockQueryHandle for default sort order.
+    /// </summary>
+    internal static int[] GetPrimaryKeyFieldsForTable(int tableId)
+    {
+        return _primaryKeys.TryGetValue(tableId, out var pk) ? pk : Array.Empty<int>();
     }
 
     // ── System table IDs ────────────────────────────────────────────────────
@@ -558,6 +587,22 @@ public class MockRecordHandle
         Type? recordType = FindTypeAcrossAssemblies(recordTypeName);
         if (recordType == null) return;
 
+        // Resolve reflection members from cache to avoid GetField/GetMethod on every call.
+        // With 1,093 trigger invocations per run, caching saves significant time.
+        var info = _triggerCache.GetOrAdd((recordType, triggerName), key =>
+        {
+            var (rt, tn) = key;
+            var nonPublicInstance = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            var recField = rt.GetField("<Rec>k__BackingField", nonPublicInstance);
+            var xRecField = rt.GetField("<xRec>k__BackingField", nonPublicInstance);
+            var trigMethod = rt.GetMethod(tn,
+                nonPublicInstance | System.Reflection.BindingFlags.Public);
+            return new TriggerReflectionInfo(recField, xRecField, trigMethod);
+        });
+
+        // No trigger defined for this record type — nothing to fire.
+        if (info.TriggerMethod == null) return;
+
         // Generated Record classes are plain classes (post-rewrite) with
         // a `public MockRecordHandle Rec { get; } = new MockRecordHandle(N)`
         // auto-property. The trigger body does `this.Rec.SetFieldValueSafe`
@@ -573,30 +618,18 @@ public class MockRecordHandle
         // and the explicit Rec/xRec assignments below can override them with this handle.
         AlCompat.InitializeUninitializedObject(instance);
 
-        var recBackingField = recordType.GetField("<Rec>k__BackingField",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        if (recBackingField != null && recBackingField.FieldType.IsInstanceOfType(this))
-        {
-            recBackingField.SetValue(instance, this);
-        }
+        if (info.RecField != null && info.RecField.FieldType.IsInstanceOfType(this))
+            info.RecField.SetValue(instance, this);
+
         // Also wire xRec to this handle so `xRec.<something>` reads still
         // round-trip — in real BC xRec is the previous row, but for
         // trigger purposes most code only uses Rec.
-        var xRecBackingField = recordType.GetField("<xRec>k__BackingField",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        if (xRecBackingField != null && xRecBackingField.FieldType.IsInstanceOfType(this))
-        {
-            xRecBackingField.SetValue(instance, this);
-        }
-
-        var method = recordType.GetMethod(triggerName,
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public |
-            System.Reflection.BindingFlags.Instance);
-        if (method == null) return;
+        if (info.XRecField != null && info.XRecField.FieldType.IsInstanceOfType(this))
+            info.XRecField.SetValue(instance, this);
 
         try
         {
-            method.Invoke(instance, null);
+            info.TriggerMethod.Invoke(instance, null);
         }
         catch (System.Reflection.TargetInvocationException tie)
         {

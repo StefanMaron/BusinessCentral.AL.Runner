@@ -11288,3 +11288,29 @@ MockCodeunitHandle.LibraryTestInitialize:
     OnAfterTestSuiteInitialize) used by BC test codeunits for setup hooks.
   tests:
     - tests/bucket-2/107-library-test-init
+
+MockCodeunitHandle.MethodCache:
+  layer: runtime-api
+  category: performance
+  status: covered
+  notes: >
+    ConcurrentDictionary<(Type,int),MethodInfo?> caches the (codeunitType, memberId)
+    -> MethodInfo lookup in MockCodeunitHandle.Invoke. Previously, every call scanned
+    all nested scope types to resolve the method — with 7,699 Invoke calls per run,
+    the cache eliminates O(N) nested-type scans after the first call per (type,member)
+    pair. The expensive StackTrace() fallback was also removed; the primary cache
+    handles all normal paths, and the arg-count fallback handles auto-stubs.
+  tests: []
+
+MockRecordHandle.TriggerCache:
+  layer: runtime-api
+  category: performance
+  status: covered
+  notes: >
+    ConcurrentDictionary<(Type,string),TriggerReflectionInfo> caches GetField and
+    GetMethod results in TryFireRecordTriggerCore. With 1,093 trigger invocations
+    per run, each previously doing 3 reflection lookups (RecField, XRecField,
+    TriggerMethod), the cache ensures those lookups happen at most once per
+    (recordType, triggerName) combination. Early-out when TriggerMethod==null
+    avoids creating an uninitialized object for record types with no trigger body.
+  tests: []

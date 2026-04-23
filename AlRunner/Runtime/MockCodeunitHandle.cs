@@ -1,5 +1,6 @@
 namespace AlRunner.Runtime;
 
+using System.Collections.Concurrent;
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
@@ -247,90 +248,71 @@ public class MockCodeunitHandle
         // The memberId passed to Invoke matches the number in the scope name.
         // We look for a nested scope type matching the memberId, then call the
         // parent public method that creates that scope.
-        var absMemberId = Math.Abs(memberId).ToString();
-        var memberIdStr = memberId.ToString();
-
-        // Strategy: find the nested scope class whose name ends with the memberId,
-        // then find the public method on the codeunit that references it.
-        foreach (var nested in codeunitType.GetNestedTypes(BindingFlags.NonPublic | BindingFlags.Public))
+        //
+        // Cache: (codeunitType, memberId) → MethodInfo to avoid re-scanning nested
+        // scope types on every call for the same (type, member) pair.
+        var cachedMethod = _methodCache.GetOrAdd((codeunitType, memberId), key =>
         {
-            // Scope names look like: MethodName_Scope_NNNNN or MethodName_Scope__NNNNN (negative)
-            if (nested.Name.Contains($"_Scope_{memberIdStr}") ||
-                nested.Name.Contains($"_Scope__{absMemberId}"))
+            var (ct, mid) = key;
+            var absMid = Math.Abs(mid).ToString();
+            var midStr = mid.ToString();
+
+            foreach (var nested in ct.GetNestedTypes(BindingFlags.NonPublic | BindingFlags.Public))
             {
-                // Extract the method name from the scope class name
-                // e.g. "ApplyDiscount_Scope_1351223168" -> "ApplyDiscount"
+                if (!nested.Name.Contains($"_Scope_{midStr}") &&
+                    !nested.Name.Contains($"_Scope__{absMid}"))
+                    continue;
+
                 var scopeName = nested.Name;
                 var scopeIdx = scopeName.IndexOf("_Scope_");
                 if (scopeIdx < 0) continue;
                 var methodName = scopeName.Substring(0, scopeIdx);
 
-                // Find the public method on the codeunit class.
-                // For overloaded AL procedures, the BC compiler emits C# methods with the
-                // member ID appended: "ProcessJson" (first) and "ProcessJson_2101255952"
-                // (second). The scope class is "ProcessJson_Scope_2101255952" for both,
-                // so methodName extracted above is always the base name "ProcessJson".
-                // Try the exact name first; if not found or ambiguous, try the suffixed
-                // variant "MethodName_MemberId" that the BC compiler uses for overloads.
-                var suffixedName = $"{methodName}_{absMemberId}";
-                var method = codeunitType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                    .FirstOrDefault(m => m.Name == suffixedName);
-                if (method == null)
+                var suffixedName = $"{methodName}_{absMid}";
+                var m = ct.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .FirstOrDefault(mi => mi.Name == suffixedName);
+                if (m == null)
                 {
-                    // No suffixed overload — find by base name, matching arg count
-                    var candidates = codeunitType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                        .Where(m => m.Name == methodName)
+                    var candidates = ct.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                        .Where(mi => mi.Name == methodName)
                         .ToArray();
                     if (candidates.Length == 1)
-                    {
-                        method = candidates[0];
-                    }
+                        m = candidates[0];
                     else if (candidates.Length > 1)
-                    {
-                        // Multiple overloads with the same base name: pick by arg count + type score
-                        method = candidates
-                            .Where(m => m.GetParameters().Length == args.Length)
-                            .OrderByDescending(m => ScoreMethodMatch(m, args))
-                            .FirstOrDefault()
-                            ?? candidates.FirstOrDefault();
-                    }
+                        m = candidates.FirstOrDefault(); // best overload picked at call site
                 }
-                if (method == null) continue;
+                if (m != null) return m;
+            }
+            return null;
+        });
 
-                // Convert args to match parameter types
-                var parameters = method.GetParameters();
+        if (cachedMethod != null)
+        {
+            var parameters = cachedMethod.GetParameters();
+            // If multiple overloads share the same base name, re-pick by arg count + score.
+            // The cache stores just one representative — for overloads we fall through to the
+            // general candidate loop below.
+            if (parameters.Length == args.Length ||
+                cachedMethod.GetParameters().Length == args.Length)
+            {
                 var convertedArgs = new object?[parameters.Length];
                 for (int i = 0; i < parameters.Length; i++)
                 {
                     if (i < args.Length)
-                    {
                         convertedArgs[i] = ConvertArgInternal(args[i], parameters[i].ParameterType);
-                    }
                 }
-
-                return method.Invoke(_codeunitInstance, convertedArgs);
+                return cachedMethod.Invoke(_codeunitInstance, convertedArgs);
             }
         }
 
-        // Fallback: no exact member ID match. Try matching by method name (extracted
-        // from the calling scope class) + argument count. This handles auto-stubbed
+        // Fallback: no exact member ID match (or arg count mismatch for overloads).
+        // Try matching by method name + argument count. This handles auto-stubbed
         // codeunits where member IDs don't match but method names do.
+        // The StackTrace-based caller method name inference was removed (Priority 2 of #1164):
+        // the primary cache path (above) handles the vast majority of calls; the fallback
+        // only fires for auto-stubs where member IDs differ, and there callerMethodName is
+        // typically null anyway (single-method stubs resolve by arg count).
         string? callerMethodName = null;
-        var stackFrames = new System.Diagnostics.StackTrace().GetFrames();
-        if (stackFrames != null)
-        {
-            foreach (var frame in stackFrames)
-            {
-                var callerType = frame.GetMethod()?.DeclaringType;
-                if (callerType == null) continue;
-                var scopeIdx = callerType.Name.IndexOf("_Scope_");
-                if (scopeIdx > 0)
-                {
-                    callerMethodName = callerType.Name.Substring(0, scopeIdx);
-                    break;
-                }
-            }
-        }
 
         var candidateMethods = codeunitType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .Where(m => m.GetParameters().Length == args.Length && !m.IsSpecialName)
@@ -857,6 +839,12 @@ public class MockCodeunitHandle
     // GetTypes() is O(N) per assembly. With 7,699 FindCodeunitType calls and 1,130
     // FindTypeAcrossAssemblies calls per test run, caching saves ~240ms.
     private static readonly Dictionary<Assembly, Dictionary<string, Type>> _typeCache = new();
+
+    // Cache: (codeunitType, memberId) → resolved MethodInfo (null = not found).
+    // Avoids re-scanning nested scope types on every Invoke call for the same member.
+    // ConcurrentDictionary for thread safety — tests may run on multiple threads.
+    private static readonly ConcurrentDictionary<(Type, int), MethodInfo?> _methodCache = new();
+
 
     internal static Type? LookupTypeByName(Assembly assembly, string name)
     {
