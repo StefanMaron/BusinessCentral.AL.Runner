@@ -46,3 +46,6 @@ lcov.info
 BenchmarkDotNet.Artifacts/
 publish-*/
 **/__pycache__/
+
+# Symbol probe tool (dev-only)
+SymbolProbe/

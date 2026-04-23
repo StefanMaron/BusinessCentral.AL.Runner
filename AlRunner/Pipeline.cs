@@ -27,6 +27,9 @@ public class PipelineOptions
     public string? OutputJunitPath { get; set; }
     /// <summary>When true, promote exit code 2 (runner limitations) to exit code 1 (failure).</summary>
     public bool Strict { get; set; }
+    /// <summary>Per-test timeout in seconds. Tests exceeding this are reported as errors
+    /// and the runner moves to the next test. Default: 5 seconds. Set to 0 to disable.</summary>
+    public int TestTimeoutSeconds { get; set; } = 5;
 
     /// <summary>
     /// When true, fire standard BC lifecycle integration events (OnCompanyInitialize from
@@ -798,7 +801,7 @@ public class AlRunnerPipeline
             }
 
             var runSw = System.Diagnostics.Stopwatch.StartNew();
-            var results = Executor.RunTests(assembly, captureValues: options.CaptureValues, runProcedure: options.RunProcedure, initEvents: options.InitEvents, testIsolation: options.TestIsolation);
+            var results = Executor.RunTests(assembly, captureValues: options.CaptureValues, runProcedure: options.RunProcedure, initEvents: options.InitEvents, testIsolation: options.TestIsolation, testTimeoutSeconds: options.TestTimeoutSeconds);
             runSw.Stop();
             testResults.AddRange(results);
             if (results.Count == 0 && options.RunProcedure != null)
@@ -1392,42 +1395,13 @@ public class AlRunnerPipeline
         var alStubs = new List<string>();
         var compilation = mainCompilation;
 
-        // Quick test: can we find Rest Client (2350) by name?
-        if (compilation != null)
-        {
-            try
-            {
-                var test = compilation.GetObjectTypeSymbolsByNameAcrossModulesAndNamespaces(
-                    SymbolKind.Codeunit, "Rest Client");
-                System.IO.File.WriteAllText("/tmp/alr_sym.txt", $"ByName 'Rest Client': {test.Length} symbols. ById 2350: ");
-                var byIdMethod = compilation.GetType().GetMethod("GetApplicationObjectTypeSymbolsByIdAcrossModules",
-                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
-                    null, new[] { typeof(SymbolKind), typeof(int) }, null);
-                if (byIdMethod != null)
-                {
-                    var byIdResult = byIdMethod.Invoke(compilation, new object[] { SymbolKind.Codeunit, 2350 });
-                    var len = byIdResult?.GetType().GetProperty("Length")?.GetValue(byIdResult);
-                    System.IO.File.AppendAllText("/tmp/alr_sym.txt", $"{len}\n");
-                }
-                else
-                    System.IO.File.AppendAllText("/tmp/alr_sym.txt", "method not found\n");
-            }
-            catch (Exception ex) { System.IO.File.WriteAllText("/tmp/alr_sym.txt", $"ERROR: {ex}\n"); }
-        }
-
-        int richCount = 0;
         foreach (var id in missingCodeunits.OrderBy(x => x))
         {
             var stubAl = compilation != null
                 ? RenderCodeunitStubFromSymbols(compilation, id)
                 : null;
-            if (stubAl != null) richCount++;
             alStubs.Add(stubAl ?? $"codeunit {id} \"AutoStub{id}\" {{ }}");
         }
-        System.IO.File.AppendAllText("/tmp/alr_sym.txt", $"Rich stubs: {richCount}/{missingCodeunits.Count}\n");
-        // Dump first rich stub
-        if (richCount > 0)
-            System.IO.File.AppendAllText("/tmp/alr_sym.txt", $"First stub preview:\n{alStubs[0].Substring(0, Math.Min(500, alStubs[0].Length))}\n---\n");
         foreach (var id in missingTables.OrderBy(x => x))
         {
             // Tables need at least one field and a primary key to compile
@@ -1435,9 +1409,8 @@ public class AlRunnerPipeline
         }
 
         // 4. Compile stubs in a second BC pass (same packages → proper scope classes)
-        var diagWriter = new StringWriter();
         var savedErr = Console.Error;
-        Console.SetError(diagWriter);
+        Console.SetError(TextWriter.Null);
         List<(string Name, string Code)>? stubCSharp;
         try
         {
@@ -1447,9 +1420,6 @@ public class AlRunnerPipeline
             stubCSharp = AlTranspiler.TranspileMulti(alStubs);
         }
         finally { Console.SetError(savedErr); }
-        var diagOutput = diagWriter.ToString();
-        if (diagOutput.Length > 0)
-            System.IO.File.AppendAllText("/tmp/alr_sym.txt", $"Second BC pass diagnostics:\n{diagOutput.Substring(0, Math.Min(2000, diagOutput.Length))}\n");
 
         // 5. Rewrite and collect compiled stubs
         int rewriteOk = 0, rewriteFail = 0;
@@ -1548,10 +1518,7 @@ public class AlRunnerPipeline
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
                 null, new[] { typeof(SymbolKind), typeof(int) }, null);
             if (lookupMethod == null)
-            {
-                System.IO.File.AppendAllText("/tmp/alr_sym.txt", $"CU {codeunitId}: lookup method NOT FOUND\n");
                 return null;
-            }
 
             var symbolsObj = lookupMethod.Invoke(compilation, new object[] { SymbolKind.Codeunit, codeunitId });
             if (symbolsObj == null) return null;
@@ -1626,7 +1593,10 @@ public class AlRunnerPipeline
                     }
                 }
 
-                var sig = $"{methodName}({paramStr}){returnPart}";
+                // Dedup by (name, paramCount): overloaded methods with different
+                // interface/complex types all collapse to Variant in the stub, producing
+                // identical C# signatures and Roslyn CS0121 ambiguity errors.
+                var sig = $"{methodName}/{paramParts.Count}";
                 if (!emittedSigs.Add(sig)) continue;
 
                 sb.AppendLine($"    procedure {methodName}({paramStr}){returnPart}");
@@ -1642,9 +1612,8 @@ public class AlRunnerPipeline
 
             return sb.ToString();
         }
-        catch (Exception ex)
+        catch
         {
-            System.IO.File.AppendAllText("/tmp/alr_sym.txt", $"RENDER CU {codeunitId}: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}\n");
             return null;
         }
     }
@@ -1709,21 +1678,6 @@ public class AlRunnerPipeline
     }
 
     /// <summary>Default AL value for a NavTypeKind string (unused — kept for reference).</summary>
-    private static string DefaultForNavTypeKind(string navTypeKind)
-    {
-        return navTypeKind switch
-        {
-            "Boolean" => "false",
-            "Integer" or "BigInteger" or "Decimal" or "Duration" or "Option" => "0",
-            "Text" or "Code" => "''",
-            "Date" => "0D",
-            "Time" => "0T",
-            "DateTime" => "0DT",
-            "Guid" => "'{00000000-0000-0000-0000-000000000000}'",
-            _ => "''",
-        };
-    }
-
     private static List<string> GetSeparateStubSources(List<string> stubSources, List<string> alSources)
     {
         var result = new List<string>();

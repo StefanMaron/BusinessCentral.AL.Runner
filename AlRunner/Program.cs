@@ -40,6 +40,7 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("  --test-isolation <mode>  codeunit (default) — reset tables between test codeunits,");
     Console.Error.WriteLine("                           sharing state within a codeunit (BC default behaviour);");
     Console.Error.WriteLine("                           method — reset tables before every test method (legacy).");
+    Console.Error.WriteLine("  --test-timeout <sec>  Per-test timeout in seconds (default: 5, 0 = disable)");
     Console.Error.WriteLine("  --dump-csharp         Print generated C# (before rewriting) and exit");
     Console.Error.WriteLine("  --dump-rewritten      Print rewritten C# (after rewriting) and exit");
     Console.Error.WriteLine("  -e '<al code>'        Run inline AL code");
@@ -193,6 +194,13 @@ while (argIdx < args.Length)
             break;
         case "--strict":
             options.Strict = true;
+            argIdx++;
+            break;
+        case "--test-timeout":
+            argIdx++;
+            if (argIdx >= args.Length || !int.TryParse(args[argIdx], out var timeoutSec))
+            { Console.Error.WriteLine("Error: --test-timeout requires a number (seconds)"); return 1; }
+            options.TestTimeoutSeconds = timeoutSec;
             argIdx++;
             break;
         case "--company-name":
@@ -606,6 +614,49 @@ codeunit 70100 "ISV Integration Mgt."
 }
 ```
 
+### Automatic auto-stubs (symbol-table generation)
+
+Even without `--stubs` or `--generate-stubs`, al-runner automatically generates stubs
+for any referenced codeunit or table that has no compiled class. After the main AL
+compilation, the runner:
+
+1. Scans the generated C# for all referenced object IDs (codeunits, tables)
+2. Queries the BC compiler's symbol table for each missing object
+3. Generates AL stubs with **full method signatures** — correct parameter names, types,
+   `var` modifiers, and return types — extracted from the symbol table metadata
+4. Compiles them in a second BC pass to produce proper scope classes with correct
+   member IDs and default return values
+
+This means calling methods on dependency objects (e.g., LibraryERM, Rest Client,
+No. Series) returns proper typed defaults (0 for Integer, '' for Text, false for
+Boolean) instead of null. The second pass only runs when stubs are needed — zero
+overhead for self-contained tests.
+
+The console output reports exactly which objects were auto-stubbed:
+```
+Auto-stubbed 5 dependency object(s) — methods return defaults:
+  Codeunits: 5 (4 compiled via BC, 1 fallback)
+```
+
+When a test fails and the stack trace involves an auto-stubbed codeunit, the output
+annotates it with guidance:
+```
+  ⚠ Called auto-stubbed codeunit 131300 "Library - ERM" (methods return defaults)
+  Compile real implementations: al-runner --compile-dep <app>.app .deps --packages .alpackages/
+```
+
+**Escalation path** — when auto-stubs are not enough (e.g., your tests depend on real
+logic from a dependency codeunit):
+
+1. Use `--compile-dep` to compile the dependency .app to a rewritten DLL:
+   ```
+   al-runner --compile-dep Base.app .deps --packages .alpackages
+   ```
+2. Load the compiled DLL at runtime:
+   ```
+   al-runner --dep-dlls .deps ./src ./test
+   ```
+
 ### Example test structure
 
 ```al
@@ -675,6 +726,8 @@ al-runner --server                                         # long-running JSON-R
 al-runner --generate-stubs .alpackages ./stubs             # scaffold stubs from .app packages (all codeunits)
 al-runner --generate-stubs .alpackages ./stubs ./src ./test  # only stubs referenced in source
 al-runner --init-events ./src ./test                          # fire OnCompanyInitialize before each test
+al-runner --compile-dep MyDep.app .deps --packages .alpackages  # compile dependency .app to DLL
+al-runner --dep-dlls .deps ./src ./test                         # run with pre-compiled dependency DLLs
 ```
 
 ### --init-events: lifecycle event pre-seeding
@@ -2394,7 +2447,7 @@ public static class Executor
         }
     }
 
-    public static List<AlRunner.TestResult> RunTests(Assembly assembly, bool captureValues = false, string? runProcedure = null, bool initEvents = false, AlRunner.TestIsolation testIsolation = AlRunner.TestIsolation.Codeunit)
+    public static List<AlRunner.TestResult> RunTests(Assembly assembly, bool captureValues = false, string? runProcedure = null, bool initEvents = false, AlRunner.TestIsolation testIsolation = AlRunner.TestIsolation.Codeunit, int testTimeoutSeconds = 0)
     {
         // Find test methods using [NavTest] attribute on the parent method,
         // then find the corresponding _Scope_ nested class.
@@ -2606,10 +2659,45 @@ public static class Executor
                 }
 
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                if (collectingTest)
-                    AlRunner.Runtime.AlScope.RunWithCollecting(() => onRunMethod.Invoke(scope, null));
+                var timeoutMs = testTimeoutSeconds > 0 ? testTimeoutSeconds * 1000 : 0;
+
+                if (timeoutMs > 0)
+                {
+                    // Run with per-test timeout: use a background thread so we can
+                    // abandon it on timeout without blocking the test runner.
+                    Exception? threadEx = null;
+                    var thread = new Thread(() =>
+                    {
+                        try
+                        {
+                            if (collectingTest)
+                                AlRunner.Runtime.AlScope.RunWithCollecting(() => onRunMethod.Invoke(scope, null));
+                            else
+                                onRunMethod.Invoke(scope, null);
+                        }
+                        catch (Exception ex) { threadEx = ex; }
+                    });
+                    thread.IsBackground = true;
+                    thread.Start();
+                    if (!thread.Join(timeoutMs))
+                    {
+                        sw.Stop();
+                        throw new TimeoutException(
+                            $"Test exceeded {testTimeoutSeconds}s timeout — likely an infinite loop caused by " +
+                            $"an auto-stubbed dependency returning default values. " +
+                            $"Provide a real implementation via --stubs or --dep-dlls.");
+                    }
+                    if (threadEx != null)
+                        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(threadEx).Throw();
+                }
                 else
-                    onRunMethod.Invoke(scope, null);
+                {
+                    // No timeout: run synchronously (default)
+                    if (collectingTest)
+                        AlRunner.Runtime.AlScope.RunWithCollecting(() => onRunMethod.Invoke(scope, null));
+                    else
+                        onRunMethod.Invoke(scope, null);
+                }
                 sw.Stop();
 
                 // Capture variable values from scope fields if enabled
