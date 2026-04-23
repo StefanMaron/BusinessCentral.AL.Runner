@@ -11294,6 +11294,25 @@ Executor.InitEventsIdempotent:
   tests:
     - tests/init-events/41-init-events-idempotent
 
+Executor.ScopeCtorExtraParams:
+  layer: runtime-api
+  category: executor
+  status: covered
+  notes: >
+    RunTests() now handles scope constructors with more than one parameter.
+    The BC compiler generates a _Scope_ class for every procedure, including
+    helpers in test codeunits whose names start with "Test" (so the executor
+    picks them up via the "Test*" fallback heuristic). If such a helper has AL
+    parameters, the generated constructor is
+      (ParentType parent, ParamType1 p1, ParamType2 p2, …)
+    rather than the usual single-arg form. Previously, RunTests() always called
+    ctors[0].Invoke(new[] { parent }) which threw "Parameter count mismatch".
+    The fix supplies the parent as the first arg and provides default values
+    (Activator.CreateInstance for value types, null for reference types) for
+    any additional parameters, mirroring the logic already present in RunOnRun().
+  tests:
+    - tests/bucket-3/01-executor-ctor-params
+
 AlCompat.InitializeUninitializedObject:
   layer: runtime-api
   category: event-subscriber
