@@ -1,241 +1,41 @@
+using System.Text.RegularExpressions;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
-
 namespace AlRunner.Runtime;
-
-/// <summary>
-/// Stub for <c>NavQueryHandle</c> / AL's <c>Query "X"</c> variable, and also
-/// serves as the base class for generated Query object classes (QueryNNNN : NavQuery).
-///
-/// <b>Query handle (variable):</b>
-/// BC emits <c>new NavQueryHandle(this, queryId, SecurityFiltering)</c> in
-/// scope-class field initialisers.  The rewriter rewrites the type to
-/// <c>MockQueryHandle</c> and strips the ITreeObject <c>this</c> arg, leaving
-/// <c>new MockQueryHandle(queryId, SecurityFiltering.Filtered)</c>.
-///
-/// After the existing <c>.Target</c>-stripping rewrite, the generated code
-/// calls members directly on the handle, e.g.:
-/// <code>
-///   q.ALOpen(DataError.ThrowError);
-///   q.ALRead(DataError.ThrowError);
-///   q.ALClose();
-///   q.ALSetFilter(columnHash, "ITEM001");
-///   q.ALTopNumberOfRowsToReturn = 10;
-/// </code>
-///
-/// <b>Query object class:</b>
-/// Generated Query classes (QueryNNNN : NavQuery) are replaced by the rewriter
-/// with minimal stubs that extend <c>MockQueryHandle</c>, similar to how XmlPort
-/// classes extend <c>MockXmlPortHandle</c>.
-///
-/// Query data access (Open/Read) requires the BC service tier (SQL views).
-/// <c>ALOpen</c> and <c>ALRead</c> throw <see cref="NotSupportedException"/>
-/// so tests fail clearly.  <c>ALClose</c> is a no-op.  Filter/range methods
-/// are no-ops to allow pre-Open setup code to compile and run.
-/// Inject query dependencies via an AL interface to make query-dependent code
-/// unit-testable.
-/// </summary>
 public class MockQueryHandle
 {
     public int QueryId { get; }
-
-    public MockQueryHandle() { }
-
-    public MockQueryHandle(int queryId)
-    {
-        QueryId = queryId;
-    }
-
-    public MockQueryHandle(int queryId, SecurityFiltering securityFiltering)
-    {
-        QueryId = queryId;
-        ALSecurityFiltering = securityFiltering;
-    }
-
-    // ------------------------------------------------------------------
-    // Lifecycle
-    // ------------------------------------------------------------------
-
-    /// <summary>
-    /// <c>Q.Open()</c> — opens the query for reading.
-    /// Throws <see cref="NotSupportedException"/> because query data access
-    /// requires the BC service tier (SQL views).
-    /// </summary>
-    public bool ALOpen(DataError errorLevel = default)
-        => throw new NotSupportedException(
-            $"Query {QueryId} Open requires the BC service tier and is not supported by al-runner. " +
-            "Use Record operations instead, or inject the query behind an AL interface.");
-
-    /// <summary>
-    /// <c>Q.Read()</c> — reads the next row from the query result set.
-    /// Throws <see cref="NotSupportedException"/>.
-    /// </summary>
-    public bool ALRead(DataError errorLevel = default)
-        => throw new NotSupportedException(
-            $"Query {QueryId} Read requires the BC service tier and is not supported by al-runner. " +
-            "Use Record operations instead, or inject the query behind an AL interface.");
-
-    /// <summary>
-    /// <c>Q.Close()</c> — closes the query. No-op in standalone mode.
-    /// </summary>
-    public void ALClose() { }
-
-    // ------------------------------------------------------------------
-    // Filter / range operations (no-ops — allow pre-Open setup code to run)
-    // ------------------------------------------------------------------
-
-    /// <summary><c>Q.SetFilter(columnNo, expression, args...)</c> — no-op.</summary>
-    public void ALSetFilter(int columnNo, string expression, params NavValue[] values) { }
-
-    /// <summary><c>Q.SetRange(columnNo)</c> — clear range, no-op.</summary>
-    public void ALSetRangeSafe(int columnNo, NavType expectedType) { }
-
-    /// <summary><c>Q.SetRange(columnNo, value)</c> — single-value range, no-op.</summary>
-    public void ALSetRangeSafe(int columnNo, NavType expectedType, NavValue value) { }
-
-    /// <summary><c>Q.SetRange(columnNo, from, to)</c> — range, no-op.</summary>
-    public void ALSetRangeSafe(int columnNo, NavType expectedType, NavValue fromValue, NavValue toValue) { }
-
-    // ------------------------------------------------------------------
-    // Column access (stubs — return defaults)
-    // ------------------------------------------------------------------
-
-    /// <summary><c>Q.ColumnValue(columnId)</c> — returns default NavValue.</summary>
-    public NavValue GetColumnValueSafe(int columnId, NavType expectedType)
-    {
-        return expectedType switch
-        {
-            NavType.Integer => NavInteger.Default,
-            NavType.Decimal => NavDecimal.Default,
-            NavType.Text => NavText.Default(0),
-            NavType.Code => new NavCode(20, ""),
-            NavType.Boolean => NavBoolean.Default,
-            NavType.Date => NavDate.Default,
-            NavType.Time => NavTime.Default,
-            NavType.DateTime => NavDateTime.Default,
-            NavType.BigInteger => NavBigInteger.Default,
-            NavType.GUID => new NavGuid(Guid.Empty),
-            NavType.Option => NavInteger.Default,
-            _ => NavText.Default(0)
-        };
-    }
-
-    /// <summary><c>Q.ColumnValue(columnId)</c> for Option columns — returns default.</summary>
-    public NavValue GetColumnOptionSafe(int columnId, NavType expectedType)
-        => GetColumnValueSafe(columnId, expectedType);
-
-    // ------------------------------------------------------------------
-    // Column metadata (stubs)
-    // ------------------------------------------------------------------
-
-    /// <summary><c>Q.ColumnCaption(columnNo)</c> — returns stub caption.</summary>
-    public string ALColumnCaption(int columnNo) => $"Column{columnNo}";
-
-    /// <summary><c>Q.ColumnName(columnNo)</c> — returns stub name.</summary>
-    public string ALColumnName(int columnNo) => $"Column{columnNo}";
-
-    /// <summary><c>Q.ColumnNo(columnNo)</c> — returns the column number as-is.</summary>
-    public int ALColumnNo(int columnNo) => columnNo;
-
-    /// <summary><c>Q.GetFilter(columnNo)</c> — returns empty string (filters not tracked).</summary>
-    public string ALGetFilter(int columnNo) => "";
-
-    // ------------------------------------------------------------------
-    // Properties
-    // ------------------------------------------------------------------
-
-    /// <summary><c>Q.TopNumberOfRows</c> — get/set the top N rows to return.</summary>
-    public int ALTopNumberOfRowsToReturn { get; set; }
-
-    /// <summary><c>Q.SkipNumberOfRows</c> — get/set the number of rows to skip.</summary>
-    public int ALSkipNumberOfRows { get; set; }
-
-    /// <summary><c>Q.SecurityFiltering</c> — get/set security filtering mode.</summary>
+    private List<Dictionary<int, NavValue>>? _resultSet; private int _cursor = -1;
+    private readonly Dictionary<int, ColumnFilter> _columnFilters = new(); private Dictionary<int, NavValue>? _currentRowValues;
+    public MockQueryHandle() { } public MockQueryHandle(int queryId) { QueryId = queryId; } public MockQueryHandle(int queryId, SecurityFiltering securityFiltering) { QueryId = queryId; ALSecurityFiltering = securityFiltering; }
+    public bool ALOpen(DataError errorLevel = default) { var dataItems = QueryFieldRegistry.GetQueryDataItems(QueryId); if (dataItems == null || dataItems.Count == 0) throw new NotSupportedException("Query " + QueryId + " Open requires the BC service tier and is not supported by al-runner. Use Record operations instead, or inject the query behind an AL interface."); var pi = dataItems[0]; var allRows = MockRecordHandle.GetTableRows(pi.TableId); var pkf = MockRecordHandle.GetPrimaryKeyFieldsForTable(pi.TableId); var fr = new List<Dictionary<int, NavValue>>(); foreach (var row in allRows) if (RMACF(row, pi)) fr.Add(row); if (pkf.Length > 0) fr.Sort((a, b) => { foreach (var fn in pkf) { var av = a.TryGetValue(fn, out var x) ? NVS(x) : ""; var bv = b.TryGetValue(fn, out var y) ? NVS(y) : ""; var c = string.Compare(av, bv, StringComparison.OrdinalIgnoreCase); if (c != 0) return c; } return 0; }); if (ALTopNumberOfRowsToReturn > 0 && fr.Count > ALTopNumberOfRowsToReturn) fr = fr.Take(ALTopNumberOfRowsToReturn).ToList(); _resultSet = fr; _cursor = -1; _currentRowValues = null; return true; }
+    public bool ALRead(DataError errorLevel = default) { if (_resultSet == null) throw new NotSupportedException("Query " + QueryId + " Read requires the BC service tier and is not supported by al-runner. Use Record operations instead, or inject the query behind an AL interface."); _cursor++; if (_cursor < _resultSet.Count) { var di = QueryFieldRegistry.GetQueryDataItems(QueryId); if (di != null && di.Count > 0) { _currentRowValues = new Dictionary<int, NavValue>(); var row = _resultSet[_cursor]; foreach (var col in di[0].Columns) if (row.TryGetValue(col.TableFieldNo, out var val)) _currentRowValues[col.ColumnHash] = val; } return true; } _currentRowValues = null; return false; }
+    public void ALClose() { _resultSet = null; _cursor = -1; _currentRowValues = null; }
+    public void ALSetFilter(int ch, string expr, params NavValue[] vals) { var r = expr; for (int i = 0; i < vals.Length; i++) r = r.Replace("%" + (i+1), NVS(vals[i])); _columnFilters[ch] = new ColumnFilter { ColumnHash = ch, FilterExpression = r, IsRangeFilter = false }; }
+    public void ALSetRangeSafe(int ch, NavType t) { _columnFilters.Remove(ch); }
+    public void ALSetRangeSafe(int ch, NavType t, NavValue v) { _columnFilters[ch] = new ColumnFilter { ColumnHash = ch, FromValue = v, ToValue = v, IsRangeFilter = true }; }
+    public void ALSetRangeSafe(int ch, NavType t, NavValue f, NavValue to) { _columnFilters[ch] = new ColumnFilter { ColumnHash = ch, FromValue = f, ToValue = to, IsRangeFilter = true }; }
+    public NavValue GetColumnValueSafe(int cid, NavType et) => (_currentRowValues != null && _currentRowValues.TryGetValue(cid, out var v)) ? v : DFT(et);
+    public NavValue GetColumnOptionSafe(int cid, NavType et) => GetColumnValueSafe(cid, et);
+    public string ALColumnCaption(int n) => "Column" + n; public string ALColumnName(int n) => "Column" + n; public int ALColumnNo(int n) => n; public string ALGetFilter(int n) => "";
+    public int ALTopNumberOfRowsToReturn { get; set; } public int ALSkipNumberOfRows { get; set; }
     public SecurityFiltering ALSecurityFiltering { get; set; } = SecurityFiltering.Filtered;
-
-    /// <summary><c>Q.GetFilters</c> — returns empty string (filters not tracked).</summary>
-    public string ALGetFilters => "";
-
-    /// <summary><c>Q.Caption</c> — returns stub caption.</summary>
-    public string Caption => $"Query{QueryId}";
-
-    // ------------------------------------------------------------------
-    // Handle operations
-    // ------------------------------------------------------------------
-
-    /// <summary><c>ALAssign</c> — assign from another query handle.</summary>
-    public void ALAssign(MockQueryHandle other)
-    {
-        // In standalone mode, assignment is a no-op — the mock doesn't track state.
-    }
-
-    /// <summary><c>ALByValue</c> — return a copy of this handle.</summary>
-    public MockQueryHandle ALByValue(object? parentOfResult = null)
-        => new MockQueryHandle(QueryId);
-
-    /// <summary><c>Clear()</c> — reset the handle.</summary>
-    public void Clear() { }
-
-    /// <summary>
-    /// Dispatch a helper procedure on the query (e.g. custom triggers).
-    /// Returns null — query procedural dispatch requires the service tier.
-    /// </summary>
-    public object? Invoke(int memberId, object[] args) => null;
-
-    // ------------------------------------------------------------------
-    // Static methods (SaveAsCsv, SaveAsXml, etc.)
-    // These are called as Query.SaveAsCsv(queryId, ...) in AL and transpiled
-    // as NavQuery.ALSaveAsCsv(DataError, queryId, ...).
-    // All throw NotSupportedException.
-    // ------------------------------------------------------------------
-
-    /// <summary>Static <c>Query.SaveAsCsv(queryId, filename)</c> — throws.</summary>
-    public static bool ALSaveAsCsv(DataError errorLevel, int queryId, string fileName)
-        => throw new NotSupportedException(
-            $"Query.SaveAsCsv (Query {queryId}) is not supported in al-runner standalone mode.");
-
-    /// <summary>Static <c>Query.SaveAsXml(queryId, filename)</c> — throws.</summary>
-    public static bool ALSaveAsXml(DataError errorLevel, int queryId, string fileName)
-        => throw new NotSupportedException(
-            $"Query.SaveAsXml (Query {queryId}) is not supported in al-runner standalone mode.");
-
-    /// <summary>Static <c>Query.SaveAsXml(queryId, outStream)</c> — throws.</summary>
-    public static bool ALSaveAsXml(DataError errorLevel, int queryId, MockOutStream outStream)
-        => throw new NotSupportedException(
-            $"Query.SaveAsXml (Query {queryId}) is not supported in al-runner standalone mode.");
-
-    /// <summary>Instance <c>Q.SaveAsCsv(filename)</c> — throws.</summary>
-    public bool ALSaveAsCsv(DataError errorLevel, string fileName)
-        => throw new NotSupportedException(
-            $"Query.SaveAsCsv (Query {QueryId}) is not supported in al-runner standalone mode.");
-
-    /// <summary>Instance <c>Q.SaveAsXml(filename)</c> — throws.</summary>
-    public bool ALSaveAsXml(DataError errorLevel, string fileName)
-        => throw new NotSupportedException(
-            $"Query.SaveAsXml (Query {QueryId}) is not supported in al-runner standalone mode.");
-
-    /// <summary>Instance <c>Q.SaveAsXml(outStream)</c> — throws.</summary>
-    public bool ALSaveAsXml(DataError errorLevel, MockOutStream outStream)
-        => throw new NotSupportedException(
-            $"Query.SaveAsXml (Query {QueryId}) is not supported in al-runner standalone mode.");
-
-    /// <summary>Static <c>Query.SaveAsJson(queryId, outStream)</c> — throws.</summary>
-    public static bool ALSaveAsJson(DataError errorLevel, int queryId, MockOutStream outStream)
-        => throw new NotSupportedException(
-            $"Query.SaveAsJson (Query {queryId}) is not supported in al-runner standalone mode.");
-
-    /// <summary>Instance <c>Q.SaveAsJson(outStream)</c> — throws.</summary>
-    public bool ALSaveAsJson(DataError errorLevel, MockOutStream outStream)
-        => throw new NotSupportedException(
-            $"Query.SaveAsJson (Query {QueryId}) is not supported in al-runner standalone mode.");
-
-    /// <summary>Static <c>Query.SaveAsExcel(queryId, filename)</c> — throws.</summary>
-    public static bool ALSaveAsExcel(DataError errorLevel, int queryId, string fileName)
-        => throw new NotSupportedException(
-            $"Query.SaveAsExcel (Query {queryId}) is not supported in al-runner standalone mode.");
-
-    /// <summary>Instance <c>Q.SaveAsExcel(filename)</c> — throws.</summary>
-    public bool ALSaveAsExcel(DataError errorLevel, string fileName)
-        => throw new NotSupportedException(
-            $"Query.SaveAsExcel (Query {QueryId}) is not supported in al-runner standalone mode.");
+    public string ALGetFilters => ""; public string Caption => "Query" + QueryId;
+    public void ALAssign(MockQueryHandle o) { } public MockQueryHandle ALByValue(object? p = null) => new MockQueryHandle(QueryId);
+    public void Clear() { ALClose(); _columnFilters.Clear(); } public object? Invoke(int mid, object[] args) => null;
+    public static bool ALSaveAsCsv(DataError e, int q, string f) => throw new NotSupportedException("Query.SaveAsCsv (Query " + q + ") is not supported in al-runner standalone mode.");
+    public static bool ALSaveAsXml(DataError e, int q, string f) => throw new NotSupportedException("Query.SaveAsXml (Query " + q + ") is not supported in al-runner standalone mode.");
+    public static bool ALSaveAsXml(DataError e, int q, MockOutStream s) => throw new NotSupportedException("Query.SaveAsXml (Query " + q + ") is not supported in al-runner standalone mode.");
+    public bool ALSaveAsCsv(DataError e, string f) => throw new NotSupportedException("Query.SaveAsCsv (Query " + QueryId + ") is not supported in al-runner standalone mode.");
+    public bool ALSaveAsXml(DataError e, string f) => throw new NotSupportedException("Query.SaveAsXml (Query " + QueryId + ") is not supported in al-runner standalone mode.");
+    public bool ALSaveAsXml(DataError e, MockOutStream s) => throw new NotSupportedException("Query.SaveAsXml (Query " + QueryId + ") is not supported in al-runner standalone mode.");
+    public static bool ALSaveAsJson(DataError e, int q, MockOutStream s) => throw new NotSupportedException("Query.SaveAsJson (Query " + q + ") is not supported in al-runner standalone mode.");
+    public bool ALSaveAsJson(DataError e, MockOutStream s) => throw new NotSupportedException("Query.SaveAsJson (Query " + QueryId + ") is not supported in al-runner standalone mode.");
+    public static bool ALSaveAsExcel(DataError e, int q, string f) => throw new NotSupportedException("Query.SaveAsExcel (Query " + q + ") is not supported in al-runner standalone mode.");
+    public bool ALSaveAsExcel(DataError e, string f) => throw new NotSupportedException("Query.SaveAsExcel (Query " + QueryId + ") is not supported in al-runner standalone mode.");
+    private class ColumnFilter { public int ColumnHash; public NavValue? FromValue; public NavValue? ToValue; public string? FilterExpression; public bool IsRangeFilter; }
+    private bool RMACF(Dictionary<int, NavValue> row, QueryDataItemMeta di) { foreach (var fl in _columnFilters.Values) { var col = di.Columns.Find(c => c.ColumnHash == fl.ColumnHash); if (col == null) continue; var fv = row.TryGetValue(col.TableFieldNo, out var v) ? v : null; var fs = fv != null ? NVS(fv) : ""; if (fl.IsRangeFilter) { if (fl.FromValue == null || fl.ToValue == null) continue; if (string.Compare(fs, NVS(fl.FromValue), StringComparison.OrdinalIgnoreCase) < 0 || string.Compare(fs, NVS(fl.ToValue), StringComparison.OrdinalIgnoreCase) > 0) return false; } else if (fl.FilterExpression != null) { if (!MFE(fs, fl.FilterExpression)) return false; } } return true; }
+    private static bool MFE(string fs, string expr) { foreach (var p in expr.Split('|')) { var t = p.Trim(); if (t.Contains("..")) { var rp = t.Split(new[]{".."}, 2, StringSplitOptions.None); if (rp.Length == 2 && (string.IsNullOrEmpty(rp[0].Trim()) || string.Compare(fs, rp[0].Trim(), StringComparison.OrdinalIgnoreCase) >= 0) && (string.IsNullOrEmpty(rp[1].Trim()) || string.Compare(fs, rp[1].Trim(), StringComparison.OrdinalIgnoreCase) <= 0)) return true; } else if (t.Contains('*') || t.Contains('?')) { if (Regex.IsMatch(fs, "^" + Regex.Escape(t).Replace("\\*", ".*").Replace("\\?", ".") + "$", RegexOptions.IgnoreCase)) return true; } else if (string.Equals(fs, t, StringComparison.OrdinalIgnoreCase)) return true; } return false; }
+    private static string NVS(NavValue v) { if (v is NavText t) return t.ToString(); if (v is NavCode c) return c.ToString(); if (v is NavInteger ni) return ni.Value.ToString(); if (v is NavDecimal nd) return nd.Value.ToString(System.Globalization.CultureInfo.InvariantCulture); if (v is NavBoolean nb) return nb.Value ? "true" : "false"; if (v is NavBigInteger nbi) return nbi.Value.ToString(); return v?.ToString() ?? ""; }
+    private static NavValue DFT(NavType t) => t switch { NavType.Integer => NavInteger.Default, NavType.Decimal => NavDecimal.Default, NavType.Text => NavText.Default(0), NavType.Code => new NavCode(20, ""), NavType.Boolean => NavBoolean.Default, NavType.Date => NavDate.Default, NavType.Time => NavTime.Default, NavType.DateTime => NavDateTime.Default, NavType.BigInteger => NavBigInteger.Default, NavType.GUID => new NavGuid(Guid.Empty), NavType.Option => NavInteger.Default, _ => NavText.Default(0) };
 }
