@@ -123,9 +123,7 @@ public class MockRecordHandle
         {
             [UserSecurityIdFieldNo]  = new NavGuid(secId),
             [UserNameFieldNo]        = new NavCode(50, userName.ToUpperInvariant()),
-            // License Type intentionally NOT seeded — seeding "Full User" causes
-            // apps with User.SetRange("License Type", "Full User").FindSet() loops
-            // to execute cascading setup code that may hang in standalone mode.
+            [UserLicenseTypeFieldNo] = NavInteger.Create(0), // "Full User"
         });
     }
 

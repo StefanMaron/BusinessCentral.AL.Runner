@@ -2450,6 +2450,7 @@ public static class Executor
         Type? currentCodeunitType = null;
         bool firstReset = true;
 
+
         foreach (var (testName, scopeType, parentType) in testScopes)
         {
             // Resolve the AL codeunit name for grouping in JUnit output
