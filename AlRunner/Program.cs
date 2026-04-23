@@ -30,7 +30,16 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("Options:");
     Console.Error.WriteLine("  --coverage            Show statement-level coverage report and write cobertura.xml");
     Console.Error.WriteLine("  --packages <dir>      Add symbol references from .app files in directory");
+    Console.Error.WriteLine("                        (auto-detected: .alpackages in/near source dirs when omitted)");
+    Console.Error.WriteLine("  --dep-dlls <dir>      Load pre-compiled dependency DLLs for runtime execution");
+    Console.Error.WriteLine("  --compile-dep <app> <out-dir> [--packages <dir>]");
+    Console.Error.WriteLine("                        Compile a .app dependency to a rewritten DLL on disk");
     Console.Error.WriteLine("  --stubs <dir>         Override dependency objects with stub AL files");
+    Console.Error.WriteLine("  --init-events         Fire BC lifecycle integration events before each codeunit");
+    Console.Error.WriteLine("                        (OnCompanyInitialize from CU 2/27, OnInstallAppPerCompany from CU 2)");
+    Console.Error.WriteLine("  --test-isolation <mode>  codeunit (default) — reset tables between test codeunits,");
+    Console.Error.WriteLine("                           sharing state within a codeunit (BC default behaviour);");
+    Console.Error.WriteLine("                           method — reset tables before every test method (legacy).");
     Console.Error.WriteLine("  --dump-csharp         Print generated C# (before rewriting) and exit");
     Console.Error.WriteLine("  --dump-rewritten      Print rewritten C# (after rewriting) and exit");
     Console.Error.WriteLine("  -e '<al code>'        Run inline AL code");
@@ -225,6 +234,52 @@ while (argIdx < args.Length)
             options.UserId = args[argIdx];
             argIdx++;
             break;
+        case "--init-events":
+            options.InitEvents = true;
+            argIdx++;
+            break;
+        case "--test-isolation":
+            argIdx++;
+            if (argIdx >= args.Length) { Console.Error.WriteLine("Error: --test-isolation requires a value (codeunit|method)"); return 1; }
+            options.TestIsolation = args[argIdx].ToLowerInvariant() switch
+            {
+                "codeunit" => AlRunner.TestIsolation.Codeunit,
+                "method" => AlRunner.TestIsolation.Method,
+                _ => throw new ArgumentException($"Unknown --test-isolation value '{args[argIdx]}'. Use 'codeunit' or 'method'.")
+            };
+            argIdx++;
+            break;
+        case "--dep-dlls":
+            argIdx++;
+            if (argIdx >= args.Length) { Console.Error.WriteLine("Error: --dep-dlls requires a directory argument"); return 1; }
+            options.DepDllPaths.Add(Path.GetFullPath(args[argIdx]));
+            argIdx++;
+            break;
+        case "--compile-dep":
+        {
+            argIdx++;
+            if (argIdx >= args.Length) { Console.Error.WriteLine("Error: --compile-dep requires <app-path> <output-dir>"); return 1; }
+            var cdAppPath = Path.GetFullPath(args[argIdx]);
+            argIdx++;
+            if (argIdx >= args.Length) { Console.Error.WriteLine("Error: --compile-dep requires <app-path> <output-dir>"); return 1; }
+            var cdOutDir = Path.GetFullPath(args[argIdx]);
+            argIdx++;
+            var cdPkgPaths = new List<string>();
+            while (argIdx < args.Length)
+            {
+                if (args[argIdx] == "--packages" && argIdx + 1 < args.Length)
+                {
+                    argIdx++;
+                    cdPkgPaths.Add(Path.GetFullPath(args[argIdx]));
+                    argIdx++;
+                }
+                else
+                {
+                    argIdx++;
+                }
+            }
+            return AlRunner.DepCompiler.CompileDep(cdAppPath, cdOutDir, cdPkgPaths);
+        }
         case "--stubs":
             argIdx++;
             if (argIdx >= args.Length) { Console.Error.WriteLine("Error: --stubs requires a directory argument"); return 1; }
@@ -295,6 +350,9 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 - TransferFields, CountApprox, Consistent (no-op), FieldActive (true), AddLink/HasLinks/DeleteLinks
 - FieldError(Field) / FieldError(Field, Text) — raise a field-level error message
   formatted as "<FieldCaption> <Message> in <TableCaption>: <PK>", catchable via asserterror
+- TestField(Field) / TestField(Field, Value) — assert field is non-empty or equals a value.
+  Also supports ErrorInfo overloads: TestField(Field, ErrorInfo) and TestField(Field, Value, ErrorInfo).
+  The ErrorInfo is accepted as error context but the assertion logic is identical to the non-ErrorInfo variants.
 - WritePermission/ReadPermission (true), SetPermissionFilter (no-op), LockTable (no-op)
 - Composite primary keys, sort ordering (SetCurrentKey / SetAscending), CurrentKey, Ascending
 - SETRANGE / SETFILTER filtering (=, <>, <, <=, >, >=, wildcards, OR via |)
@@ -352,7 +410,7 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   round-trips text. HttpResponseMessage default status is 200. HttpHeaders supports
   Add/Contains/Remove. HttpClient.Send/Get/Post/Put/Delete/Patch throw
   NotSupportedException (use AL interface injection for HTTP-dependent code).
-- File dialog stubs: UploadIntoStream (5-arg and 6-arg), DownloadFromStream (4 overloads) —
+- File dialog stubs: UploadIntoStream (4-arg, 5-arg, 6-arg), DownloadFromStream (4 overloads) —
   all return false in standalone mode (no client UI). Compile and run without error.
 - Library - Variable Storage (codeunit 131004) — Enqueue, DequeueText, DequeueInteger,
   DequeueDecimal, DequeueBoolean, DequeueDate, DequeueVariant, AssertEmpty, Clear, IsEmpty
@@ -457,10 +515,17 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 ### Writing a compatible test codeunit
 
 1. Use `Subtype = Test` on the codeunit
-2. Reference `Assert` as `Codeunit "Library Assert"` or `Codeunit Assert` (both are supported)
-3. Reference `Library - Variable Storage` as `Codeunit ""Library - Variable Storage""` for
+2. Reference `Assert` as `Codeunit "Library Assert"` or `Codeunit Assert` (both are supported).
+   Both the runner's built-in stub (ID 130) and BC's real ID (130002) are routed to MockAssert.
+3. Reference `Library - Variable Storage` as `Codeunit "Library - Variable Storage"` for
    passing values between test setup and handler functions (Enqueue/DequeueText/etc.)
-4. Mark each test procedure with `[Test]`
+4. The following BC test toolkit codeunits are built-in (auto-loaded, no stubs needed):
+   - `Library Assert` (130 / 130002) — AreEqual, IsTrue, IsFalse, ExpectedError, etc.
+   - `Library - Variable Storage` (131004) — Enqueue/Dequeue for handler communication
+   - `Any` (130500) — random test data generation (IntegerInRange, AlphanumericText, etc.)
+   - `Library - Random` (130440) — pseudo-random numbers/dates/text (RandInt, RandDec, etc.)
+   - `Library - Test Initialize` (132250) — integration event publishers for test setup hooks
+5. Mark each test procedure with `[Test]`
 5. Tests must be self-contained: insert test data, call logic, assert results
 6. Use `asserterror` + `Assert.ExpectedError` for error path testing
 7. For external dependencies (mail, HTTP, pages, XmlPort I/O), define an AL interface and
@@ -490,8 +555,12 @@ AL interface and provide a mock implementation in the test.
 
 Step 1 — Run normally and note the gaps:
 ```
-al-runner --packages .alpackages ./src ./test
+al-runner ./src ./test
 ```
+If a `.alpackages` directory exists in or near your source paths, al-runner
+auto-detects it — no `--packages` flag required. Pass `--packages <dir>`
+explicitly only when the packages are in a non-standard location.
+
 If you see `Tip: use --stubs to provide stub AL files for unsupported dependencies`,
 one or more objects were excluded from compilation. Stubs can restore them.
 
@@ -533,8 +602,9 @@ the codeunit uses an unsupported BC feature (Page, HTTP, etc.). Either:
 - Correct procedure signatures: all parameters, `var` modifiers, `Record "X"`,
   `Enum "X"`, and return types
 - Default `exit(...)` bodies (false for Boolean, 0 for Integer/Decimal, '' for Text/Code)
-- Codeunits already natively mocked by al-runner (e.g. codeunit 130 "Library Assert")
-  are skipped automatically
+- Codeunits already natively mocked by al-runner (Library Assert 130/130002,
+  Library - Variable Storage 131004, Any 130500, Library - Random 130440,
+  Library - Test Initialize 132250) are skipped automatically
 - Existing files in the output dir are never overwritten (re-run is safe)
 
 **Maintaining stubs over time:**
@@ -631,6 +701,35 @@ al-runner --iteration-tracking ./src ./test                   # track loop itera
 al-runner --server                                         # long-running JSON-RPC daemon (stdin/stdout)
 al-runner --generate-stubs .alpackages ./stubs             # scaffold stubs from .app packages (all codeunits)
 al-runner --generate-stubs .alpackages ./stubs ./src ./test  # only stubs referenced in source
+al-runner --init-events ./src ./test                          # fire OnCompanyInitialize before each test
+```
+
+### --init-events: lifecycle event pre-seeding
+
+Pass `--init-events` when your extension has `[EventSubscriber]` methods that listen
+to BC system lifecycle events and need to run their setup logic before each test.
+
+Events fired before every test (after the per-test table reset):
+- `OnCompanyInitialize` from Codeunit 27 "Company-Initialize"
+- `OnInstallAppPerCompany` from Codeunit 2 "Install"
+
+The publisher codeunits (27, 2) do not need to be present in the assembly — al-runner
+will look up subscribers by reflection and dispatch to them directly. Missing publisher
+codeunits are silently skipped (graceful fallback, not a crash).
+
+Use case: extensions like Cash365 that use `[EventSubscriber(ObjectType::Codeunit, 27, 'OnCompanyInitialize', '', false, false)]`
+to create required setup records (number series, posting groups, etc.) before any
+business logic runs. With `--init-events`, those subscribers fire automatically before
+each test, eliminating the need to manually call setup procedures in every test.
+
+```al
+// This subscriber fires automatically with --init-events:
+[EventSubscriber(ObjectType::Codeunit, 27, 'OnCompanyInitialize', '', false, false)]
+local procedure OnCompanyInitialize()
+begin
+    // Create required setup records for your extension
+    InsertDefaultSetup();
+end;
 ```
 
 ### Machine-readable output (--output-json)
@@ -743,6 +842,9 @@ is used, the publishing codeunit instance is passed as the first subscriber para
 `OnBeforeModifyEvent`, `OnAfterModifyEvent`, `OnBeforeDeleteEvent`,
 `OnAfterDeleteEvent`, `OnBeforeValidateEvent`, `OnAfterValidateEvent` fire from
 record operations. The `Rec` and `xRec` references are passed to subscribers.
+Subscribers may declare `var RunTrigger: Boolean` (BC compiles this as `ByRef<bool>`);
+al-runner automatically coerces the plain `bool` into `ByRef<bool>` so the
+subscriber is invoked correctly.
 
 **Manual binding** — Codeunits with `EventSubscriberInstance = Manual` only fire
 after `BindSubscription(Sub)`. Call `UnbindSubscription(Sub)` to stop. Bindings
@@ -894,74 +996,89 @@ public static class AlTranspiler
         );
 
         // --- Symbol reference support ---
-        // Only enable symbol references when --packages is explicitly provided.
-        // This avoids conflicts when compiling self-contained multi-project spikes from source.
+        // Always call ResolvePackagePaths so that .alpackages directories adjacent to
+        // the input paths are auto-discovered even when --packages is not specified.
         bool hasExplicitPackages = packagePaths != null && packagePaths.Count > 0;
-        var allPackagePaths = hasExplicitPackages ? ResolvePackagePaths(packagePaths, inputPaths) : new List<string>();
+        var allPackagePaths = ResolvePackagePaths(packagePaths, inputPaths);
+        bool hasAnyPackages = allPackagePaths.Count > 0;
+
+        if (!hasExplicitPackages && hasAnyPackages)
+            Log.Info($"Auto-detected package directories: {string.Join(", ", allPackagePaths)}");
+
         // Populated during the "load all packages" path for use in the reactive conflict resolver.
         var loadedPackageSpecs = new List<PackageSpec>();
         Microsoft.Dynamics.Nav.CodeAnalysis.ISymbolReferenceLoader? refLoader = null;
 
-        if (hasExplicitPackages)
+        if (hasAnyPackages)
         {
-            var depSpecs = DiscoverDependencies(inputPaths, forceResolve: true);
+            var depSpecs = DiscoverDependencies(inputPaths, forceResolve: hasExplicitPackages);
 
-            if (allPackagePaths.Count > 0)
+            // Filter out any dependency that is already present as AL source.
+            // This is the common case when .alpackages contains the compiled .app of the
+            // extension being compiled from source: without filtering, the BC compiler sees
+            // the same objects twice (once from source, once from the .app symbol reference)
+            // and emits AL0275 "ambiguous reference" errors.
+            var sourceAppIds = ExtractAllSourceAppIds(inputPaths);
+            if (sourceAppIds.Count > 0 && depSpecs.Count > 0)
             {
-                Log.Info($"Symbol references: scanning {allPackagePaths.Count} package directories");
-                foreach (var p in allPackagePaths)
-                    Log.Info($"  {p}");
+                var before = depSpecs.Count;
+                depSpecs = depSpecs
+                    .Where(s => !sourceAppIds.Contains(s.AppId))
+                    .ToList();
+                var skipped = before - depSpecs.Count;
+                if (skipped > 0)
+                    Log.Info($"  Skipped {skipped} package reference(s) already provided as AL source.");
+            }
 
-                refLoader = ReferenceLoaderFactory.CreateReferenceLoader(allPackagePaths);
+            Log.Info($"Symbol references: scanning {allPackagePaths.Count} package directories");
+            foreach (var p in allPackagePaths)
+                Log.Info($"  {p}");
 
-                if (depSpecs.Count > 0)
-                {
-                    Log.Info($"Adding {depSpecs.Count} symbol reference specifications:");
-                    foreach (var spec in depSpecs)
-                        Log.Info($"  {FormatSpec(spec)}");
+            refLoader = ReferenceLoaderFactory.CreateReferenceLoader(allPackagePaths);
 
-                    compilation = compilation
-                        .WithReferenceLoader(refLoader)
-                        .AddReferences(depSpecs.ToArray());
-                }
-                else
-                {
-                    // No explicit dependencies in app.json — load all .app files from
-                    // the packages directory as symbol references. This handles the BC
-                    // convention where Application/System dependencies are implicit.
-                    // PackageScanner deduplicates: first by GUID (keeping highest version),
-                    // then by (publisher+name+version) to eliminate self-duplicates that
-                    // would otherwise produce AL0275 "ambiguous reference" errors.
-                    Log.Info("No explicit dependencies found. Loading all .app packages as symbols...");
+            if (depSpecs.Count > 0)
+            {
+                Log.Info($"Adding {depSpecs.Count} symbol reference specifications:");
+                foreach (var spec in depSpecs)
+                    Log.Info($"  {FormatSpec(spec)}");
 
-                    var scannedSpecs = PackageScanner.ScanForSpecs(
-                        allPackagePaths,
-                        excludeGuid: appIdentity.AppId,
-                        excludeName: appIdentity.Name);
-
-                    loadedPackageSpecs.AddRange(scannedSpecs);
-
-                    if (loadedPackageSpecs.Count > 0)
-                    {
-                        var allAppSpecs = loadedPackageSpecs
-                            .Select(s => new SymbolReferenceSpecification(
-                                s.Publisher, s.Name, s.Version,
-                                false, s.AppId, false, ImmutableArray<Guid>.Empty))
-                            .ToArray();
-                        Log.Info($"  Loaded {allAppSpecs.Length} symbol packages (deduplicated by identity)");
-                        compilation = compilation
-                            .WithReferenceLoader(refLoader)
-                            .AddReferences(allAppSpecs);
-                    }
-                    else
-                    {
-                        compilation = compilation.WithReferenceLoader(refLoader);
-                    }
-                }
+                compilation = compilation
+                    .WithReferenceLoader(refLoader)
+                    .AddReferences(depSpecs.ToArray());
             }
             else
             {
-                Console.Error.WriteLine("Warning: --packages specified but no package directories with .app files found.");
+                // No explicit dependencies in app.json — load all .app files from
+                // the packages directory as symbol references. This handles the BC
+                // convention where Application/System dependencies are implicit.
+                // PackageScanner deduplicates: first by GUID (keeping highest version),
+                // then by (publisher+name+version) to eliminate self-duplicates that
+                // would otherwise produce AL0275 "ambiguous reference" errors.
+                Log.Info("No explicit dependencies found. Loading all .app packages as symbols...");
+
+                var scannedSpecs = PackageScanner.ScanForSpecs(
+                    allPackagePaths,
+                    excludeGuid: appIdentity.AppId,
+                    excludeName: appIdentity.Name);
+
+                loadedPackageSpecs.AddRange(scannedSpecs);
+
+                if (loadedPackageSpecs.Count > 0)
+                {
+                    var allAppSpecs = loadedPackageSpecs
+                        .Select(s => new SymbolReferenceSpecification(
+                            s.Publisher, s.Name, s.Version,
+                            false, s.AppId, false, ImmutableArray<Guid>.Empty))
+                        .ToArray();
+                    Log.Info($"  Loaded {allAppSpecs.Length} symbol packages (deduplicated by identity)");
+                    compilation = compilation
+                        .WithReferenceLoader(refLoader)
+                        .AddReferences(allAppSpecs);
+                }
+                else
+                {
+                    compilation = compilation.WithReferenceLoader(refLoader);
+                }
             }
         }
 
@@ -1377,7 +1494,76 @@ public static class AlTranspiler
         return defaults;
     }
 
-    private static List<string> ResolvePackagePaths(List<string>? explicitPaths, List<string>? inputPaths)
+    /// <summary>
+    /// Collect all app GUIDs from manifests (app.json or NavxManifest.xml) found in or near
+    /// each input path.  Unlike <see cref="ExtractAppIdentity"/> (which returns the first match),
+    /// this method walks every input path so that multi-project runs (e.g. main-app source +
+    /// test-app source compiled together) produce a complete set of "source" app IDs.
+    ///
+    /// These IDs are used to filter symbol-reference specifications so that a .app package
+    /// whose GUID matches an app already present in the source tree is never loaded a second
+    /// time as a symbol reference (which would cause AL0275 duplicate-object errors).
+    /// </summary>
+    public static HashSet<Guid> ExtractAllSourceAppIds(List<string>? inputPaths)
+    {
+        var result = new HashSet<Guid>();
+        if (inputPaths == null || inputPaths.Count == 0) return result;
+
+        var seenDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var inputPath in inputPaths)
+        {
+            // Walk up the directory tree looking for app.json
+            var dir = Directory.Exists(inputPath)
+                ? Path.GetFullPath(inputPath)
+                : Path.GetDirectoryName(Path.GetFullPath(inputPath));
+
+            while (dir != null)
+            {
+                if (!seenDirs.Add(dir)) break; // already processed this dir
+
+                var appJsonPath = Path.Combine(dir, "app.json");
+                if (File.Exists(appJsonPath))
+                {
+                    try
+                    {
+                        var json = JsonDocument.Parse(File.ReadAllText(appJsonPath));
+                        var root = json.RootElement;
+                        if (root.TryGetProperty("id", out var idProp) && Guid.TryParse(idProp.GetString(), out var guid))
+                            result.Add(guid);
+                    }
+                    catch { /* corrupt or unreadable — skip */ }
+                    break; // found the manifest for this input — stop walking up
+                }
+
+                var parent = Path.GetDirectoryName(dir);
+                if (parent == dir) break; // filesystem root
+                dir = parent;
+            }
+
+            // Try NavxManifest.xml (for .app file inputs)
+            if (inputPath.EndsWith(".app", StringComparison.OrdinalIgnoreCase) && File.Exists(inputPath))
+            {
+                try
+                {
+                    var doc = LoadNavxManifest(inputPath);
+                    if (doc != null)
+                    {
+                        XNamespace ns = "http://schemas.microsoft.com/navx/2015/manifest";
+                        var appElement = doc.Root?.Element(ns + "App");
+                        var idStr = appElement?.Attribute("Id")?.Value;
+                        if (idStr != null && Guid.TryParse(idStr, out var guid))
+                            result.Add(guid);
+                    }
+                }
+                catch { /* fall through */ }
+            }
+        }
+
+        return result;
+    }
+
+    public static List<string> ResolvePackagePaths(List<string>? explicitPaths, List<string>? inputPaths)
     {
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -2267,7 +2453,32 @@ public static class Executor
         }
     }
 
-    public static List<AlRunner.TestResult> RunTests(Assembly assembly, bool captureValues = false, string? runProcedure = null)
+    /// <summary>
+    /// Fire an init-lifecycle event, silently swallowing "record already exists"
+    /// errors from subscribers.
+    ///
+    /// Why: the runner fires both codeunit-2 and codeunit-27 OnCompanyInitialize
+    /// events in a single init cycle. Real-world extension subscribers sometimes
+    /// unconditionally call Record.Insert() without a prior Get/FindFirst guard.
+    /// When the same subscriber (or two subscribers inserting the same PK) fires
+    /// more than once per init cycle, the second Insert() raises "already exists".
+    /// Aborting the entire test run for that would be too harsh — BC itself ignores
+    /// double-init scenarios. We swallow duplicate-PK errors during init firing only.
+    /// </summary>
+    private static void FireInitEvent(int publisherId, string eventName)
+    {
+        try
+        {
+            AlRunner.Runtime.AlCompat.FireEvent(publisherId, eventName);
+        }
+        catch (Exception ex) when (ex.Message.Contains("already exists"))
+        {
+            // Duplicate-PK from an always-insert subscriber — harmless during init.
+            // The first insert succeeded; swallow the rest.
+        }
+    }
+
+    public static List<AlRunner.TestResult> RunTests(Assembly assembly, bool captureValues = false, string? runProcedure = null, bool initEvents = false, AlRunner.TestIsolation testIsolation = AlRunner.TestIsolation.Codeunit)
     {
         // Find test methods using [NavTest] attribute on the parent method,
         // then find the corresponding _Scope_ nested class.
@@ -2328,15 +2539,59 @@ public static class Executor
 
         var results = new List<AlRunner.TestResult>();
 
+        // Track codeunit-level isolation state.
+        // Null means no reset has happened yet (first test).
+        Type? currentCodeunitType = null;
+        bool firstReset = true;
+
         foreach (var (testName, scopeType, parentType) in testScopes)
         {
             // Resolve the AL codeunit name for grouping in JUnit output
             var codeunitName = AlRunner.SourceFileMapper.GetObjectForClass(parentType.Name);
 
-            // Reset in-memory state before each test
-            AlRunner.Runtime.MockRecordHandle.ResetAll();
-            AlRunner.Runtime.MockIsolatedStorage.ResetAll();
-            AlRunner.Runtime.MockVariableStorage.Reset();
+            // ---------------------------------------------------------------
+            // Isolation logic
+            // Codeunit isolation (BC default):  reset tables between codeunits.
+            //   Within a codeunit all test methods share the same table state.
+            // Method isolation (legacy):         reset tables before every test.
+            // ---------------------------------------------------------------
+            bool doTableReset = testIsolation == AlRunner.TestIsolation.Method
+                || firstReset
+                || parentType != currentCodeunitType;
+
+            if (doTableReset)
+            {
+                // Reset persistent state (tables, isolated storage, variable storage)
+                AlRunner.Runtime.MockRecordHandle.ResetAll();
+                AlRunner.Runtime.MockIsolatedStorage.ResetAll();
+                AlRunner.Runtime.MockVariableStorage.Reset();
+
+                // Pre-seed system tables (e.g. User table 2000000120) so that common
+                // AL patterns like User.Get(UserSecurityId()) work out of the box.
+                AlRunner.Runtime.MockRecordHandle.SeedSystemTables();
+
+                // Fire lifecycle integration events ONCE per codeunit reset when --init-events is set.
+                // This seeds company-initialization data so subscribers' setup data is present
+                // for all tests in the codeunit, matching BC's behaviour where company data
+                // persists across tests within the same codeunit.
+                //
+                // Publisher IDs from [NavEventSubscriber] attributes in BC-generated C#:
+                //   OnInstallAppPerDatabase → publisher 2000000010 (BC internal install dispatcher)
+                //   OnInstallAppPerCompany  → publisher 2000000010 (BC internal install dispatcher)
+                //   OnCompanyInitialize     → publisher 2 or 27 (differs across BC versions)
+                if (initEvents)
+                {
+                    FireInitEvent(2000000010, "OnInstallAppPerDatabase");
+                    FireInitEvent(2000000010, "OnInstallAppPerCompany");
+                    FireInitEvent(2, "OnCompanyInitialize");
+                    FireInitEvent(27, "OnCompanyInitialize");
+                }
+
+                currentCodeunitType = parentType;
+                firstReset = false;
+            }
+
+            // Always reset per-test non-persistent state (error state, handlers, session, etc.)
             AlRunner.Runtime.AlScope.ResetLastStatement();
             AlRunner.Runtime.AlScope.LastErrorText = "";
             AlRunner.Runtime.AlScope.LastErrorCode = "";

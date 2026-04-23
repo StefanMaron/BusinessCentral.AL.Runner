@@ -26,8 +26,27 @@ public class PipelineOptions
     /// <summary>When true, promote exit code 2 (runner limitations) to exit code 1 (failure).</summary>
     public bool Strict { get; set; }
 
+    /// <summary>
+    /// When true, fire standard BC lifecycle integration events (OnCompanyInitialize from
+    /// Codeunit 27, OnInstallAppPerCompany from Codeunit 2) before test execution.
+    /// This allows extensions with [EventSubscriber] on system events to perform
+    /// setup work without the actual system codeunits being present.
+    /// </summary>
+    public bool InitEvents { get; set; }
+
     /// <summary>Configures the value returned by UserId() — defaults to "TESTUSER".</summary>
     public string? UserId { get; set; }
+
+    /// <summary>
+    /// Controls when in-memory tables are reset between tests.
+    /// Codeunit (default) — reset between test codeunits; within a codeunit all test
+    /// methods share table state (BC's default TestIsolation::Codeunit behaviour).
+    /// Method — reset before every individual test method (the previous runner default).
+    /// </summary>
+    public TestIsolation TestIsolation { get; set; } = TestIsolation.Method;
+
+    /// <summary>Directories containing pre-compiled dependency DLLs (rewritten C# with mock types).</summary>
+    public List<string> DepDllPaths { get; set; } = new();
 
     /// <summary>
     /// Optional override for the C# rewriter step, intended for unit-testing the pipeline's
@@ -39,6 +58,25 @@ public class PipelineOptions
 }
 
 public enum TestStatus { Pass, Fail, Error }
+
+/// <summary>
+/// Controls when in-memory tables are reset between tests.
+/// Matches BC's TestIsolation property on test codeunits.
+/// </summary>
+public enum TestIsolation
+{
+    /// <summary>
+    /// Reset tables between test codeunits. Within the same codeunit all test
+    /// methods share table state. This is BC's default TestIsolation::Codeunit.
+    /// </summary>
+    Codeunit,
+
+    /// <summary>
+    /// Reset tables before every individual test method. The previous runner
+    /// default; useful when tests are not designed for shared state.
+    /// </summary>
+    Method,
+}
 
 public class TestResult
 {
@@ -543,9 +581,14 @@ public class AlRunnerPipeline
         Timer.StartStage("Roslyn rewriting");
         var refsTask = Task.Run(() => RoslynCompiler.LoadReferences());
 
-        var rewrittenTrees = new (string Name, Microsoft.CodeAnalysis.SyntaxTree? Tree)[generatedCSharpList.Count];
+        var rewrittenTrees = new (string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)[generatedCSharpList.Count];
         int rewriteHits = 0;
         var rewriteFailures = new System.Collections.Concurrent.ConcurrentBag<(string Name, string Error)>();
+        // Regex to extract the first class name from generated C# — used to build
+        // minimal fallback classes that preserve the type name for dependent objects.
+        var classNamePattern = new System.Text.RegularExpressions.Regex(
+            @"^\s*public\s+(?:\w+\s+)*class\s+(\w+)",
+            System.Text.RegularExpressions.RegexOptions.Multiline);
         Parallel.For(0, generatedCSharpList.Count, i =>
         {
             var (name, code) = generatedCSharpList[i];
@@ -580,7 +623,15 @@ public class AlRunnerPipeline
             }
             catch (Exception ex)
             {
-                rewrittenTrees[i] = (name, null);
+                // Generate a minimal fallback class that preserves the type name so
+                // that dependent objects can still reference it during Roslyn compilation.
+                // This avoids silently dropping the object and causing a cascade of
+                // "type not found" errors in unrelated objects.
+                var classMatch = classNamePattern.Match(code);
+                var className = classMatch.Success ? classMatch.Groups[1].Value : $"FallbackClass_{i}";
+                var fallback = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(
+                    $"// Rewriter failed: {ex.Message}\npublic class {className} {{ }}");
+                rewrittenTrees[i] = (name, fallback);
                 var msg = $"{ex.GetType().Name}: {ex.Message}";
                 rewriteFailures.Add((name, msg));
                 if (Log.Verbose)
@@ -588,6 +639,9 @@ public class AlRunnerPipeline
             }
         });
 
+        // Track rewriter exit code but do NOT bail out early — continue with fallback
+        // trees so that dependent objects can still compile and their tests can run.
+        int rewriterExitCode = 0;
         if (rewriteFailures.Count > 0)
         {
             var failures = rewriteFailures.OrderBy(f => f.Name).ToList();
@@ -600,15 +654,14 @@ public class AlRunnerPipeline
             stderr.WriteLine("  To debug: run with --dump-csharp to see the generated C# before rewriting.");
             stderr.WriteLine("  You may be prompted to report this via telemetry in interactive mode (run with --no-telemetry to opt out).");
             _rewriterErrors = failures;
-            Timer.EndStage("Roslyn rewriting");
-            return options.Strict ? 1 : 2;
+            rewriterExitCode = options.Strict ? 1 : 2;
         }
 
         if (rewriteHits > 0)
             Log.Info($"Rewrite cache: {rewriteHits}/{generatedCSharpList.Count} hits");
+        // All objects now have trees (failures use a minimal fallback class), so no filtering needed.
         var rewrittenTreeList = rewrittenTrees
-            .Where(t => t.Tree != null)
-            .Select(t => (t.Name, Tree: t.Tree!))
+            .Select(t => (t.Name, t.Tree))
             .ToList();
 
         List<(string Name, string Code)>? _rewrittenStringList = null;
@@ -634,11 +687,41 @@ public class AlRunnerPipeline
         }
         Timer.EndStage("Roslyn rewriting");
 
+        // Inject minimal C# stub classes for test-toolkit codeunits (130000–139999) that
+        // are referenced in the generated C# but were NOT compiled from source.
+        // This allows MockCodeunitHandle.FindCodeunitType to find them at runtime and
+        // execute as no-ops (no OnRun method → InvokeOnRun silently returns) instead of
+        // throwing InvalidOperationException.
+        var testToolkitStubs = GenerateTestToolkitStubs(generatedCSharpList);
+        if (testToolkitStubs.Count > 0)
+        {
+            rewrittenTreeList.AddRange(testToolkitStubs);
+            Log.Info($"Injected {testToolkitStubs.Count} test-toolkit codeunit stub(s)");
+        }
+
         // Step 3: Compile
         Timer.StartStage("Roslyn compilation");
         var mapperTask = Task.Run(() =>
             SourceLineMapper.Build(generatedCSharpList, GetRewrittenStrings()));
         var preloadedRefs = refsTask.Result;
+
+        // Load dependency DLLs as MetadataReferences for Roslyn compilation
+        var depDllAssemblyPaths = new List<string>();
+        foreach (var depDir in options.DepDllPaths)
+        {
+            if (!Directory.Exists(depDir)) continue;
+            foreach (var dll in Directory.GetFiles(depDir, "*.dll"))
+            {
+                try
+                {
+                    preloadedRefs.Add(Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(dll));
+                    depDllAssemblyPaths.Add(Path.GetFullPath(dll));
+                    Log.Info($"Added dep DLL reference: {Path.GetFileName(dll)}");
+                }
+                catch (Exception ex) { Log.Info($"Skipping dep DLL {dll}: {ex.Message}"); }
+            }
+        }
+
         var compilationErrorSink = new List<string>();
         var compileResult = RoslynCompiler.Compile(rewrittenTreeList, preloadedRefs, compilationErrorSink);
         mapperTask.Wait();
@@ -665,6 +748,21 @@ public class AlRunnerPipeline
         Timer.StartStage("Test execution");
         var assembly = compileResult.Assembly;
         Runtime.MockCodeunitHandle.CurrentAssembly = assembly;
+
+        // Load dependency DLLs into the same ALC for runtime type resolution
+        var depAssemblies = new List<Assembly>();
+        foreach (var dllPath in depDllAssemblyPaths)
+        {
+            try
+            {
+                var depAsm = compileResult.LoadContext.LoadFromAssemblyPath(dllPath);
+                depAssemblies.Add(depAsm);
+                Log.Info($"Loaded dep assembly: {depAsm.GetName().Name}");
+            }
+            catch (Exception ex) { Log.Info($"Failed to load dep assembly {dllPath}: {ex.Message}"); }
+        }
+        Runtime.MockCodeunitHandle.DependencyAssemblies = depAssemblies.Count > 0 ? depAssemblies : null;
+
         Executor.RegisterStatements(GetRewrittenStrings());
 
         bool hasTests = alSources.Any(s => s.Contains("Subtype = Test"));
@@ -688,7 +786,7 @@ public class AlRunnerPipeline
             }
 
             var runSw = System.Diagnostics.Stopwatch.StartNew();
-            var results = Executor.RunTests(assembly, captureValues: options.CaptureValues, runProcedure: options.RunProcedure);
+            var results = Executor.RunTests(assembly, captureValues: options.CaptureValues, runProcedure: options.RunProcedure, initEvents: options.InitEvents, testIsolation: options.TestIsolation);
             runSw.Stop();
             testResults.AddRange(results);
             if (results.Count == 0 && options.RunProcedure != null)
@@ -750,6 +848,21 @@ public class AlRunnerPipeline
         }
         Timer.EndStage("Test execution");
         Timer.Print();
+
+        // If rewriting failed for some objects, ensure the exit code reflects the
+        // limitation.  We distinguish two cases:
+        //   • No test/run results (testResults.Count == 0): the "exit 1" from the
+        //     executor just means "nothing ran", which is itself a consequence of the
+        //     rewriter failure — so the rewriterExitCode (2 or 1 strict) governs.
+        //   • Real test results exist and they failed (exitCode == 1): a genuine test
+        //     assertion failure is more specific, so exit code 1 is kept as-is.
+        if (rewriterExitCode != 0)
+        {
+            if (exitCode == 0 || testResults.Count == 0)
+                exitCode = rewriterExitCode;
+            // If exitCode is already 1 and testResults.Count > 0, keep exit code 1
+            // (real test failures take precedence over the soft limitation flag).
+        }
 
         return exitCode;
     }
@@ -1201,6 +1314,66 @@ public class AlRunnerPipeline
         }
 
         return generatedCSharpList;
+    }
+
+    /// <summary>
+    /// Scans the generated C# for test-toolkit codeunit IDs (130000–139999) referenced
+    /// via <c>NavCodeunit.RunCodeunit</c> or <c>new NavCodeunitHandle(..., id)</c> patterns,
+    /// then returns a minimal rewritten C# syntax tree for each ID that does NOT already
+    /// have a compiled class in <paramref name="generatedCSharpList"/>. The generated stub
+    /// classes are empty (no methods) so that <see cref="AlRunner.Runtime.MockCodeunitHandle.FindCodeunitType"/>
+    /// finds them at runtime and treats any call as a silent no-op instead of throwing.
+    /// Codeunits with runner-native mock implementations (130/131/130000, 131004, 131100) are
+    /// excluded — they are never looked up by <c>FindCodeunitType</c>.
+    /// </summary>
+    internal static List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)> GenerateTestToolkitStubs(
+        List<(string Name, string Code)> generatedCSharpList)
+    {
+        // IDs already compiled from source — no stub needed.
+        var alreadyPresent = new HashSet<int>();
+        var classPattern = new Regex(@"class\s+Codeunit(\d+)", RegexOptions.Compiled);
+        foreach (var (_, code) in generatedCSharpList)
+        {
+            foreach (Match m in classPattern.Matches(code))
+            {
+                if (int.TryParse(m.Groups[1].Value, out int id))
+                    alreadyPresent.Add(id);
+            }
+        }
+
+        // Codeunits that have dedicated runner-native mock implementations and are
+        // dispatched via InvokeAssert / InvokeVariableStorage / InvokeRunnerConfig
+        // before FindCodeunitType is ever consulted — never need a stub class.
+        var nativeMockIds = new HashSet<int> { 130, 131, 130000, 131004, 131100 };
+
+        // Scan all generated C# for test-toolkit ID literals that appear as the
+        // codeunit ID argument in a RunCodeunit / NavCodeunitHandle call.
+        // Pattern: a comma or opening-paren followed by a 6-digit ID in 130000-139999.
+        var idPattern = new Regex(@"(?:,\s*|[\(\s])1(3[0-9]{4})\b", RegexOptions.Compiled);
+        var referencedIds = new HashSet<int>();
+        foreach (var (_, code) in generatedCSharpList)
+        {
+            foreach (Match m in idPattern.Matches(code))
+            {
+                if (int.TryParse("1" + m.Groups[1].Value, out int id)
+                    && id is >= 130000 and <= 139999
+                    && !nativeMockIds.Contains(id))
+                {
+                    referencedIds.Add(id);
+                }
+            }
+        }
+
+        var stubs = new List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)>();
+        foreach (var id in referencedIds.Where(id => !alreadyPresent.Contains(id)).OrderBy(id => id))
+        {
+            // Minimal class — no OnRun method so MockCodeunitHandle.InvokeOnRun silently returns.
+            var stubCode = $"namespace Microsoft.Dynamics.Nav.BusinessApplication {{ public class Codeunit{id} {{ }} }}";
+            var tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(
+                stubCode, path: $"TestToolkitStub{id}.cs");
+            stubs.Add(($"TestToolkitStub{id}", tree));
+        }
+        return stubs;
     }
 
     private static List<string> GetSeparateStubSources(List<string> stubSources, List<string> alSources)

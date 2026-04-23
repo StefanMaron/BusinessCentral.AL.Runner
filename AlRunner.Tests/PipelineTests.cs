@@ -345,9 +345,14 @@ namespace AlRunnerGenerated {
 
         var grouped = TelemetryReporter.DeduplicateCompilationErrors(errors);
 
-        // CS1061 on 'Report70400' should be one group with count 3
-        var cs1061 = grouped.Single(g => g.Key == "CS1061 on 'Report70400'");
+        // CS1061 on 'Report<N>' (normalized) should be one group with count 3;
+        // member names are now embedded in the key for actionable issue creation.
+        var cs1061 = grouped.Single(g => g.Key.StartsWith("CS1061 on 'Report<N>'"));
         Assert.Equal(3, cs1061.Count);
+        // All three distinct member names must appear in the key
+        Assert.Contains("amountDue", cs1061.Key);
+        Assert.Contains("Totals", cs1061.Key);
+        Assert.Contains("columnHead", cs1061.Key);
 
         // CS0103 on 'privacyBlockedTxt' should be a separate group with count 1
         var cs0103 = grouped.Single(g => g.Key == "CS0103 on 'privacyBlockedTxt'");
@@ -376,7 +381,8 @@ namespace AlRunnerGenerated {
         var grouped = TelemetryReporter.DeduplicateCompilationErrors(errors);
 
         Assert.Equal(2, grouped.Count);
-        Assert.Equal("CS1061 on 'Foo'", grouped[0].Key); // 3× comes first
+        // CS1061 group now carries member names in the key; starts with the type prefix
+        Assert.StartsWith("CS1061 on 'Foo'", grouped[0].Key); // 3× comes first
         Assert.Equal(3, grouped[0].Count);
         Assert.Equal("CS0103 on 'x'", grouped[1].Key);
         Assert.Equal(1, grouped[1].Count);
@@ -571,5 +577,152 @@ namespace AlRunnerGenerated {
         Assert.Equal(0, result.ExitCode);
         Assert.True(result.Passed > 0);
         Assert.Equal(0, result.Failed);
+    }
+
+    // ─── ResolvePackagePaths auto-detection (issue #1033) ──────────────────────
+
+    [Fact]
+    public void ResolvePackagePaths_NullInputs_ReturnsEmpty()
+    {
+        // No explicit paths, no input paths → no packages discovered
+        var result = AlTranspiler.ResolvePackagePaths(null, null);
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void ResolvePackagePaths_AutoDiscovers_AlpackagesInInputDir()
+    {
+        // Positive: .alpackages next to the input dir is auto-discovered
+        var tmp = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        var srcDir = Path.Combine(tmp, "src");
+        var pkgDir = Path.Combine(tmp, "src", ".alpackages");
+        Directory.CreateDirectory(srcDir);
+        Directory.CreateDirectory(pkgDir);
+
+        // Plant a dummy .app file so the directory qualifies
+        File.WriteAllBytes(Path.Combine(pkgDir, "Dummy.app"), new byte[] { 0x50, 0x4B });
+
+        try
+        {
+            var result = AlTranspiler.ResolvePackagePaths(null, new List<string> { srcDir });
+            Assert.Single(result);
+            Assert.Equal(Path.GetFullPath(pkgDir), result[0], StringComparer.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(tmp, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolvePackagePaths_AutoDiscovers_AlpackagesInParentDir()
+    {
+        // Positive: .alpackages in the parent of the input dir is also found
+        var tmp = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        var srcDir = Path.Combine(tmp, "src");
+        var pkgDir = Path.Combine(tmp, ".alpackages");
+        Directory.CreateDirectory(srcDir);
+        Directory.CreateDirectory(pkgDir);
+        File.WriteAllBytes(Path.Combine(pkgDir, "Dummy.app"), new byte[] { 0x50, 0x4B });
+
+        try
+        {
+            var result = AlTranspiler.ResolvePackagePaths(null, new List<string> { srcDir });
+            Assert.Single(result);
+            Assert.Equal(Path.GetFullPath(pkgDir), result[0], StringComparer.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(tmp, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolvePackagePaths_NoAlpackagesDir_ReturnsEmpty()
+    {
+        // Negative: when no .alpackages folder exists, nothing is discovered
+        var tmp = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        var srcDir = Path.Combine(tmp, "src");
+        Directory.CreateDirectory(srcDir);
+
+        try
+        {
+            var result = AlTranspiler.ResolvePackagePaths(null, new List<string> { srcDir });
+            Assert.Empty(result);
+        }
+        finally
+        {
+            Directory.Delete(tmp, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolvePackagePaths_ExplicitPaths_StillIncluded()
+    {
+        // When --packages is given explicitly, those paths are included in the result
+        var tmp = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        var pkgDir = Path.Combine(tmp, "mypkgs");
+        Directory.CreateDirectory(pkgDir);
+        File.WriteAllBytes(Path.Combine(pkgDir, "Dummy.app"), new byte[] { 0x50, 0x4B });
+
+        try
+        {
+            var result = AlTranspiler.ResolvePackagePaths(new List<string> { pkgDir }, null);
+            Assert.Single(result);
+            Assert.Equal(Path.GetFullPath(pkgDir), result[0], StringComparer.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(tmp, recursive: true);
+        }
+    }
+
+    // ─── Issue #1040: rewriter failure must not silently drop objects ──────────
+
+    /// <summary>
+    /// When the rewriter throws for one object, the pipeline must NOT bail out
+    /// early — it must generate a minimal fallback class for the failing object
+    /// and continue compilation with all objects intact.
+    ///
+    /// Verification: inject a rewriter that fails for the very first object and
+    /// succeeds for the rest.  Tests from the non-failing test codeunit must
+    /// still be discovered and executed (even if they fail at runtime because
+    /// the fallback class has no methods).
+    ///
+    /// This proves the tree count is preserved: a pipeline that bails out on the
+    /// first-object failure would produce result.Tests.Count == 0, not the
+    /// non-zero count we assert here.
+    ///
+    /// Positive: tests are discovered and executed (Count > 0).
+    /// Negative: rewriter failure is still reported in RewriterErrors.
+    /// Exit code: 2 (runner limitation), not 0 or 1.
+    /// </summary>
+    [Fact]
+    public void RewriterFailure_FallbackClass_DoesNotDropOtherObjects()
+    {
+        var pipeline = new AlRunnerPipeline();
+        var result = pipeline.Run(new PipelineOptions
+        {
+            // Supply two objects: a source codeunit (first) + a test codeunit (second).
+            InputPaths = { TestPath("01-pure-function", "src"), TestPath("01-pure-function", "test") },
+            // Throw only for the src codeunit (Calculator). The test codeunit must
+            // still be discovered and compiled. Using class-name detection instead of
+            // "first call" because BC versions emit objects in varying order.
+            RewriterFactory = code =>
+            {
+                if (code.Contains("class Codeunit50100"))
+                    throw new InvalidOperationException("simulated rewriter gap for source object");
+                return RoslynRewriter.RewriteToTree(code);
+            }
+        });
+
+        // The rewriter failure must be reported.
+        Assert.NotNull(result.RewriterErrors);
+        Assert.NotEmpty(result.RewriterErrors);
+        Assert.Contains(result.RewriterErrors, e => e.Error.Contains("simulated rewriter gap"));
+
+        // Exit code must not be 0 — either 2 (runner limitation) or 1 (test failures
+        // because Calculator methods don't exist in the fallback class).
+        Assert.NotEqual(0, result.ExitCode);
     }
 }

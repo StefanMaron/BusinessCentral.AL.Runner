@@ -30,6 +30,8 @@ For each PR:
 4. coverage.yaml NOT in diff (PR adds tests/coverage) → check existing comments; if not yet posted:
      "Please update docs/coverage.yaml to mark the implemented gap as covered. Required before merging."
    Do NOT merge until coverage.yaml is updated.
+   Coverage must be tracked at **overload level** — if the PR adds a new method overload,
+   it needs its own entry (e.g. `JsonObject.GetText (2-arg with bool)` separate from the base `GetText`).
 5. CI green + no CHANGELOG + coverage.yaml updated:
    - CI in progress:  gh pr merge <N> --auto --squash --repo StefanMaron/BusinessCentral.AL.Runner
    - CI complete:     gh pr merge <N> --squash --repo StefanMaron/BusinessCentral.AL.Runner

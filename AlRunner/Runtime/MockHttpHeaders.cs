@@ -27,7 +27,7 @@ public class MockHttpHeaders
 
     /// <summary>
     /// BC emits: <c>headers.ALAdd(DataError, key, value)</c>
-    /// for <c>HttpHeaders.Add(key, value)</c>.
+    /// for <c>HttpHeaders.Add(key, value)</c> (Text overload).
     /// </summary>
     public void ALAdd(DataError errorLevel, string key, string value)
     {
@@ -38,6 +38,15 @@ public class MockHttpHeaders
         }
         list.Add(value);
     }
+
+    /// <summary>
+    /// BC emits: <c>headers.ALAdd(DataError, key, secretValue)</c>
+    /// for <c>HttpHeaders.Add(key, SecretText)</c>.
+    /// In standalone mode secrets are treated as plain text — the value
+    /// is extracted via <see cref="AlCompat.Unwrap"/> and stored normally.
+    /// </summary>
+    public void ALAdd(DataError errorLevel, string key, NavSecretText secretValue)
+        => ALAdd(errorLevel, key, (string)AlCompat.Unwrap(secretValue));
 
     /// <summary>
     /// BC emits: <c>headers.ALContains(key)</c>
@@ -98,7 +107,7 @@ public class MockHttpHeaders
 
     /// <summary>
     /// BC emits: <c>headers.ALTryAddWithoutValidation(DataError, name, value)</c>
-    /// for <c>HttpHeaders.TryAddWithoutValidation(name, value)</c>.
+    /// for <c>HttpHeaders.TryAddWithoutValidation(name, value)</c> (Text overload).
     /// Adds the header without format validation; always succeeds.
     /// </summary>
     public bool ALTryAddWithoutValidation(DataError errorLevel, NavText name, NavText value)
@@ -108,11 +117,47 @@ public class MockHttpHeaders
     }
 
     /// <summary>
+    /// Overload for <c>HttpHeaders.TryAddWithoutValidation(name, SecretText)</c>.
+    /// BC emits <c>ALTryAddWithoutValidation(DataError, string-literal, NavSecretText)</c>
+    /// when the header name is a text literal and the value is a SecretText — resolving
+    /// both the <c>string → NavText</c> (#1091) and <c>NavSecretText → NavText</c> (#1086)
+    /// type mismatches. In standalone mode secrets are treated as plain text.
+    /// </summary>
+    public bool ALTryAddWithoutValidation(DataError errorLevel, string name, NavSecretText secretValue)
+    {
+        ALAdd(errorLevel, name, (string)AlCompat.Unwrap(secretValue));
+        return true;
+    }
+
+    /// <summary>
     /// BC emits: <c>headers.ALIsHeaderValueSecret(name)</c>
     /// for <c>HttpHeaders.ContainsSecret(name)</c>.
     /// Plain in-memory headers are never secret — always returns false.
     /// </summary>
     public bool ALIsHeaderValueSecret(NavText name) => false;
+
+    /// <summary>
+    /// String-key overload for <c>HttpHeaders.ContainsSecret(name)</c>.
+    /// BC emits <c>headers.ALIsHeaderValueSecret("Content-Type")</c> (raw string literal)
+    /// when the header name is a text constant — issue #1xxx.
+    /// Plain in-memory headers are never secret — always returns false.
+    /// </summary>
+    public bool ALIsHeaderValueSecret(string name) => false;
+
+    /// <summary>
+    /// Overload for <c>HttpHeaders.GetValues(name, values)</c> when the caller declares
+    /// <c>values: List of [Text]</c>.
+    /// BC emits <c>ALGetValues(DataError, key, NavList&lt;NavText&gt;)</c> for this form —
+    /// the existing <c>MockArray&lt;NavText&gt;</c> overload only covers <c>array[N] of Text</c>.
+    /// Populates the list with all stored header values for the given key.
+    /// </summary>
+    public bool ALGetValues(DataError errorLevel, string key, NavList<NavText> values)
+    {
+        if (!_headers.TryGetValue(key, out var list) || list.Count == 0) return false;
+        foreach (var v in list)
+            values.ALAdd(new NavText(0, v));
+        return true;
+    }
 
     /// <summary>
     /// Overload for <c>HttpHeaders.GetSecretValues(name, secrets)</c>:

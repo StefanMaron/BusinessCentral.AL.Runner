@@ -50,8 +50,8 @@ codeunit 50911 "Variant Type Tests"
         // [GIVEN/WHEN] A boolean is negated and stored in a Variant
         VariantHelper.NegateBoolean(true, V);
 
-        // [THEN] Format should show False
-        Assert.AreEqual('False', Format(V), 'Variant should hold negated boolean (False)');
+        // [THEN] Format should show No (AL's Boolean→Text representation is Yes/No)
+        Assert.AreEqual('No', Format(V), 'Variant should hold negated boolean (No in AL)');
     end;
 
     [Test]

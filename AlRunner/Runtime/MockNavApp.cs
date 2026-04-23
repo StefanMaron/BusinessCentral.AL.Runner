@@ -118,8 +118,25 @@ public static class MockNavApp
     public static void ALNavAppGetArchiveRecordRef(int tableId, MockRecordRef recordRef) { }
 
     /// NavApp.GetResource(ResourceName; var InStream) — no-op in standalone mode.
-    /// BC emits: ALNavApp.ALGetResource(null!, NavText, MockInStream)
+    /// BC emits: ALNavApp.ALGetResource(null!, NavText, ByRef&lt;MockInStream&gt;)
     public static void ALGetResource(object? errorLevel, NavText resourceName, MockInStream inStream) { }
+
+    /// NavApp.GetResource(ResourceName; var InStream; TextEncoding) — no-op in standalone mode.
+    /// BC emits: ALNavApp.ALGetResource(null!, NavText, ByRef&lt;MockInStream&gt;, TextEncoding)
+    public static void ALGetResource(object? errorLevel, NavText resourceName, MockInStream inStream, object? encoding) { }
+
+    /// <summary>
+    /// String overloads of ALGetResource* — BC may emit resource name arguments as C# string
+    /// literals (CS1503: string → NavText) when the AL Text value is a constant expression.
+    /// These overloads accept <c>string</c> directly to avoid the implicit-conversion error
+    /// — issue #1107.
+    /// </summary>
+    public static void ALGetResource(object? errorLevel, string resourceName, MockInStream inStream) { }
+    public static void ALGetResource(object? errorLevel, string resourceName, MockInStream inStream, object? encoding) { }
+    public static NavText ALGetResourceAsText(object? errorLevel, string resourceName) => NavText.Empty;
+    public static NavText ALGetResourceAsText(object? errorLevel, string resourceName, object? encoding) => NavText.Empty;
+    public static NavJsonObject ALGetResourceAsJson(object? errorLevel, string resourceName) => default;
+    public static NavJsonObject ALGetResourceAsJson(object? errorLevel, string resourceName, object? encoding) => default;
 
     public static void ALNavAppLoadPackageData(object? errorLevel, int tableNo) { }
     public static void ALNavAppLoadPackageData(int tableNo) { }

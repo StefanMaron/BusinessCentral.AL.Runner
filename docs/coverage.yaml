@@ -37,6 +37,59 @@ codeunit_declaration:
     - tests/bucket-1/112-codeunit-onrun-record
     - tests/bucket-2/216-inherent-permissions
 
+alscope_parent_instance:
+  layer: syntax
+  category: object
+  status: covered
+  notes: >
+    AlScope.Parent instance property stub — issues #1092, #1105, #1111.
+    Some BC compiler versions emit this.Parent (instance access) in scope class bodies;
+    others emit AlScope.Parent (static class access). A static stub fixed CS0117 (#1092)
+    but introduced CS0176 for instance access (#1105). The fix changes Parent to a virtual
+    instance property so both this.Parent and base.Parent compile and resolve correctly.
+    Changed return type to dynamic so that base.Parent.Bind()/Unbind() compiles via
+    dynamic dispatch. Returns `this` (not null) so that base.Parent.Bind() falls back to
+    AlScope.Bind() (no-op) rather than throwing "Cannot perform runtime binding on a null
+    reference" — issue #1111. Concrete scope subclasses shadow the base stub with their
+    injected typed Parent property.
+  tests:
+    - tests/bucket-1/290-alscope-parent
+    - tests/bucket-2/100-alscope-parent-instance
+
+navscope_using_block:
+  layer: syntax
+  category: object
+  status: covered
+  notes: >
+    NavScope using-block — BC emits "using (var δretValParent = new NavScope(this))"
+    around FindSet/Find iteration. Previously NavScope was rewritten to object, causing
+    CS1729 (object has no 1-arg ctor) and CS1674 (object not IDisposable). The fix
+    uses context-sensitive rewriting: in ObjectCreationExpression context NavScope →
+    MockNavScope (IDisposable, 1-arg ctor); in parameter/declaration context → object
+    (still accepts any AlScope-derived instance). Issues #1085 and #1090.
+  tests:
+    - tests/bucket-1/167-navscope-using
+
+alscope_bind_unbind:
+  layer: syntax
+  category: object
+  status: covered
+  notes: >
+    AlScope.Bind()/Unbind() stubs — BC emits ALSession.ALBindSubscription(DataError, target)
+    which the rewriter converts to target.Bind(). When target is base.Parent (rewritten to
+    _parent, the enclosing codeunit instance), the codeunit class must expose Bind()/Unbind().
+    The rewriter injects Bind()/Unbind() into every codeunit class (delegating to
+    EventSubscriberRegistry). AlScope also gets virtual no-op stubs as a fallback.
+    Issue #1106 / Gap 2.
+    Additional fix (issue #1111): when BC emits ALSession.ALBindSubscription(DataError, base.Parent)
+    with base.Parent as a bare argument (not base.Parent.field), the VisitMemberAccessExpression
+    base.Parent→_parent rule never fired on the newly created node. The rewriter now resolves
+    base.Parent → _parent directly in the ALBindSubscription handler before creating target.Bind().
+  tests:
+    - tests/bucket-1/168-scope-bind-unbind
+    - tests/bucket-2/100-bind-subscription
+    - tests/bucket-2/101-base-parent-bind
+
 codeunit_permissions_property:
   layer: syntax
   category: object
@@ -229,8 +282,14 @@ reportextension_declaration:
   layer: syntax
   category: extension
   status: covered
+  notes: >
+    Covers modify(DataItem) triggers — the scope class Parent property is injected
+    so CS1061 does not occur. Also covers _parent assignment in scope constructors
+    for nested types (e.g. RequestPageExtension) whose name does not match standard
+    BC object-type prefixes. Issue #1013.
   tests:
     - tests/bucket-2/129-reportext-parent
+    - tests/bucket-1/130-reportext-header-scope
 
 tableextension_declaration:
   layer: syntax
@@ -596,6 +655,7 @@ event_declaration:
   status: covered
   tests:
     - tests/bucket-2/100-bind-subscription
+    - tests/bucket-2/225-db-event-byref-params
     - tests/bucket-2/37-event-scope
     - tests/bucket-2/66-event-subscribers
     - tests/bucket-2/97-event-params
@@ -639,6 +699,7 @@ trigger_declaration:
   status: covered
   tests:
     - tests/bucket-1/18-validate-trigger
+    - tests/bucket-2/225-db-event-byref-params
     - tests/bucket-2/63-oninsert-trigger
     - tests/bucket-2/98-db-trigger-events
     - tests/bucket-2/99-validate-events
@@ -860,6 +921,18 @@ customaction_declaration:
   layer: syntax
   category: page
   status: covered
+  tests:
+    - tests/bucket-1/75-customaction
+
+customaction_flowtemplategallery:
+  layer: syntax
+  category: page
+  status: covered
+  notes: >
+    customaction with CustomActionType = FlowTemplateGallery — Power Automate
+    template gallery integration is out of scope at runtime (no network I/O),
+    but the page element must not prevent compilation or page instantiation.
+    The BC compiler emits no C# for this element; it is pure metadata.
   tests:
     - tests/bucket-1/75-customaction
 
@@ -1112,6 +1185,20 @@ xmlport_element:
     - tests/bucket-2/84-xmlport
 
 # ── enum ────────────────────────────────────────────────────────
+
+Enum.CloneTaggedOption:
+  layer: runtime-api
+  category: enum
+  status: covered
+  notes: >
+    AlCompat.CloneTaggedOption(null, ordinal) — null guard for uninitialized
+    NavOption fields/variables.  Before the fix, ConditionalWeakTable.TryGetValue
+    threw ArgumentNullException("key") when the enum field had never been assigned.
+    Fix returns NavOption.Create(ordinal) for null existing.
+  tests:
+    - tests/bucket-1/292-null-option-default
+  unit_tests:
+    - AlRunner.Tests/CloneTaggedOptionTests.cs
 
 enum_value_declaration:
   layer: syntax
@@ -1425,17 +1512,19 @@ Blob.CreateInStream:
   layer: runtime-api
   category: Blob
   status: covered
-  notes: overloads=1
+  notes: overloads=1; chained-call pattern (CreateInStream().ReadText()) supported via ALCompiler.ObjectToNavInStream→AlCompat.ObjectToMockInStream rewrite (issue #1026)
   tests:
     - tests/bucket-2/151-blob-stream
+    - tests/bucket-1/96-blob-stream-chained
 
 Blob.CreateOutStream:
   layer: runtime-api
   category: Blob
   status: covered
-  notes: overloads=1
+  notes: overloads=1; chained-call pattern (CreateOutStream().WriteText()) supported via ALCompiler.ObjectToNavOutStream→AlCompat.ObjectToMockOutStream rewrite (issue #1026)
   tests:
     - tests/bucket-2/151-blob-stream
+    - tests/bucket-1/96-blob-stream-chained
 
 Blob.Export:
   layer: runtime-api
@@ -1494,7 +1583,13 @@ Codeunit.Run:
   tests:
     - tests/bucket-1/64-codeunit-run-record
     - tests/bucket-1/112-codeunit-onrun-record
-  notes: overloads=2 (no-record and with-record variants); returns true on success, false on trapped error
+    - tests/bucket-1/128-codeunit-not-found
+  notes: >
+    overloads=2 (no-record and with-record variants); returns true on success, false on trapped error.
+    Missing system codeunits (IDs 1-9999) are treated as no-ops (fire OnRun event for subscribers, no throw);
+    missing test-toolkit codeunits (130000-139999) are auto-stubbed at compile time — FindCodeunitType finds an
+    empty class, InvokeOnRun silently returns (no OnRun method), so calls are no-ops without throwing;
+    missing user-range codeunits (e.g. 50xxx) still throw with a descriptive error.
 
 # ── CodeunitInstance ────────────────────────────────────────────
 
@@ -1531,6 +1626,40 @@ CompanyProperty.UrlName:
   notes: "overloads=1; configurable via AL Runner Config.SetCompanyUrlName(); default: \"My%20Company\""
   tests:
     - tests/bucket-1/271-companyproperty
+
+# ── Library - Random (codeunit 130440) ───────────────────────────
+
+MockCodeunitHandle.LibraryRandom:
+  layer: runtime-api
+  category: LibraryRandom
+  status: covered
+  tests:
+    - tests/bucket-2/106-library-random
+  notes: >
+    AL stub for codeunit 130440 "Library - Random" (Test-TestLibraries).
+    Provides pseudo-random value generation for AL tests via BC built-ins (Random,
+    Randomize, Power, CreateGuid, CalcDate, WorkDate). SingleInstance = true.
+    Auto-loaded from AlRunner/stubs/LibraryRandom.al alongside other built-in stubs.
+    Methods covered: RandInt, RandIntInRange, RandDec, RandDecInRange,
+    RandDecInDecimalRange, RandDate, RandDateFrom, RandDateFromInRange,
+    RandPrecision, RandText, Init, SetSeed.
+
+# ── Any (codeunit 130500) ────────────────────────────────────────
+
+MockCodeunitHandle.LibraryAny:
+  layer: runtime-api
+  category: Any
+  status: covered
+  tests:
+    - tests/bucket-2/102-library-any
+  notes: >
+    overloads=many; AL stub for codeunit 130500 "Any" (System.TestLibraries.Utilities).
+    Provides pseudo-random test-data generation via BC built-ins (Random, CreateGuid,
+    CalcDate). Auto-loaded from AlRunner/stubs/LibraryAny.al alongside other built-in stubs.
+    Methods covered: Boolean, IntegerInRange (1-arg + 2-arg), DecimalInRange (2-arg, 3-arg
+    Integer, 3-arg Decimal), DateInRange (1-arg, 2-arg, 3-arg), AlphabeticText,
+    AlphanumericText, UnicodeText, Email (0-arg + 2-arg), GuidValue, SetSeed, GetSeed,
+    SetDefaultSeed.
 
 # ── Cookie ──────────────────────────────────────────────────────
 
@@ -1848,6 +1977,30 @@ Database.UserSecurityId:
   notes: overloads=1; rewriter routes to AlCompat.UserSecurityId which returns a fixed non-null Guid stable across reads.
   tests:
     - tests/bucket-2/147-usersecurityid
+
+Database.UserName:
+  layer: runtime-api
+  category: Database
+  status: not-possible
+  notes: overloads=1; ALDatabase.UserName(userId) returns display name for a security-id; requires a live BC user directory which the runner cannot provide.
+
+Database.KeyGroupDisable:
+  layer: runtime-api
+  category: Database
+  status: covered
+  notes: overloads=1; ALDatabase.ALKeyGroupDisable(keyGroupName: String) stripped to no-op by RoslynRewriter (StripEntireCallMethods). No live BC database context required in runner.
+
+Database.KeyGroupEnable:
+  layer: runtime-api
+  category: Database
+  status: covered
+  notes: overloads=1; ALDatabase.ALKeyGroupEnable(keyGroupName: String) stripped to no-op by RoslynRewriter (StripEntireCallMethods). No live BC database context required in runner.
+
+Database.KeyGroupEnabled:
+  layer: runtime-api
+  category: Database
+  status: covered
+  notes: overloads=1; ALDatabase.ALKeyGroupEnabled(keyGroupName: String) rewritten to literal true by RoslynRewriter — all key groups treated as enabled in standalone mode.
 
 # ── Date ────────────────────────────────────────────────────────
 
@@ -2497,7 +2650,21 @@ FieldRef.Value:
   layer: runtime-api
   category: FieldRef
   status: covered
-  notes: overloads=1
+  notes: >
+    overloads=1; get/set via MockFieldRef.ALValue.
+    Fix (issue #1111): FieldRef.Value setter stores NavText via MockRecordRef.SetFieldValue
+    (always NavType.Text). A subsequent direct Code[N] field read emits
+    (NavCode)GetFieldValueSafe(fieldNo, NavType.Code) which threw InvalidCastException when
+    the stored value was NavText. GetFieldValueSafe now coerces NavText → NavCode (uppercased,
+    length from TableFieldRegistry or 250 fallback) when expectedType is Code.
+    SetFieldValueSafe applies the same coercion so the field bag stays consistent.
+    Fix (bool-cast-fix): Copying a Boolean FieldRef.Value into a Text FieldRef.Value stores
+    NavBoolean in the Text field slot. A subsequent (NavText)GetFieldValueSafe(fieldNo,
+    NavType.Text) cast then threw "Unable to cast NavBoolean to NavText". CoerceToExpectedType
+    now converts NavBoolean → NavText ("Yes"/"No") when expectedType is Text.
+  tests:
+    - tests/bucket-2/101-navtext-to-navcode
+    - tests/bucket-1/100-bool-to-text
 
 # ── File ────────────────────────────────────────────────────────
 
@@ -2665,7 +2832,8 @@ File.UploadIntoStream:
   layer: runtime-api
   category: File
   status: covered
-  notes: overloads=2
+  notes: overloads=3; 5-arg and 6-arg (with/without Guid) for BC≤25 5-param AL form; 4-arg (no DataError/Folder/Guid) for newer BC 4-param AL form — all no-op stubs returning false
+  test: AlRunner.Tests/MockFile4ArgTests.cs
 
 File.View:
   layer: runtime-api
@@ -2759,8 +2927,14 @@ FilterPageBuilder.GetView:
   layer: runtime-api
   category: FilterPageBuilder
   status: covered
-  notes: overloads=1; MockFilterPageBuilder; round-trips with SetView
-  tests: tests/bucket-2/179-filter-page-builder
+  notes: >
+    overloads=3; MockFilterPageBuilder; round-trips with SetView.
+    Added two-argument overloads (NavText/string caption, bool useNames) — BC emits
+    ALGetView(NavText, bool) for the FilterPageBuilder.GetView(caption, useNames) form,
+    causing CS1503 without the overloads.
+  tests:
+    - tests/bucket-2/179-filter-page-builder
+    - tests/bucket-2/224-filterpagebuilder-getview-bool
 
 FilterPageBuilder.Name:
   layer: runtime-api
@@ -2943,8 +3117,8 @@ HttpContent.WriteFrom:
   layer: runtime-api
   category: HttpContent
   status: covered
-  tests: tests/bucket-1/173-httpcontent-response-methods
-  notes: overloads=3; text overload via ALLoadFrom(NavText); stream/secret overloads via AlCompat redirect
+  tests: tests/bucket-1/173-httpcontent-response-methods, tests/bucket-1/290-secrettext-http
+  notes: overloads=3; text overload via ALLoadFrom(NavText); stream overload via AlCompat.HttpContentLoadFrom(MockInStream); SecretText overload via AlCompat.HttpContentLoadFrom(NavSecretText) — unwraps secret and stores as plain text (#1086)
 
 # ── HttpHeaders ─────────────────────────────────────────────────
 
@@ -2952,7 +3126,8 @@ HttpHeaders.Add:
   layer: runtime-api
   category: HttpHeaders
   status: covered
-  notes: overloads=2
+  tests: tests/bucket-1/290-secrettext-http
+  notes: overloads=3; Text overload (string key, string value); SecretText overload (string key, NavSecretText) — unwraps secret (#1086)
 
 HttpHeaders.Clear:
   layer: runtime-api
@@ -2970,7 +3145,12 @@ HttpHeaders.ContainsSecret:
   layer: runtime-api
   category: HttpHeaders
   status: covered
-  notes: overloads=1
+  notes: >
+    overloads=2; MockHttpHeaders.ALIsHeaderValueSecret — NavText and string overloads.
+    BC emits ALIsHeaderValueSecret with a raw string literal when the header name is a
+    text constant (e.g. 'Content-Type'). The string overload was added to fix CS1503.
+  tests:
+    - tests/bucket-2/223-httpheaders-isheadervaluesecret-string
 
 HttpHeaders.GetSecretValues:
   layer: runtime-api
@@ -2982,7 +3162,10 @@ HttpHeaders.GetValues:
   layer: runtime-api
   category: HttpHeaders
   status: covered
-  notes: overloads=2
+  notes: overloads=3; array-form (MockArray<NavText>) and list-form (NavList<NavText>) both covered; fixes issue #1080
+  tests:
+    - tests/bucket-1/170-httpheaders-methods
+    - tests/bucket-2/221-httpheaders-getvalues-list
 
 HttpHeaders.Keys:
   layer: runtime-api
@@ -3000,7 +3183,8 @@ HttpHeaders.TryAddWithoutValidation:
   layer: runtime-api
   category: HttpHeaders
   status: covered
-  notes: overloads=2
+  tests: tests/bucket-1/290-secrettext-http
+  notes: overloads=3; NavText/NavText overload; string/NavSecretText overload for literal-name + SecretText-value pattern — resolves string→NavText (#1091) and NavSecretText→NavText gaps
 
 # ── HttpRequestMessage ──────────────────────────────────────────
 
@@ -3166,7 +3350,9 @@ InStream.ReadText:
   layer: runtime-api
   category: InStream
   status: covered
-  notes: overloads=1
+  notes: overloads=1; chained-call pattern supported (e.g. blob.CreateInStream().ReadText(...)) — see issue #1026
+  tests:
+    - tests/bucket-1/96-blob-stream-chained
 
 InStream.ResetPosition:
   layer: runtime-api
@@ -3335,8 +3521,10 @@ JsonArray.GetObject:
   layer: runtime-api
   category: JsonArray
   status: covered
-  tests: tests/bucket-2/187-jsonarray-typed-getters
-  notes: overloads=1. Indirectly covered via JsonArray.Get + JsonToken.AsObject(). The BC 21+ typed GetObject(idx) overload is not present in the AL 16.2 compiler bundled with the runner.
+  tests:
+    - tests/bucket-2/187-jsonarray-typed-getters
+    - tests/bucket-1/100-json-overloads
+  notes: overloads=2. Integer-indexed overload GetObject(idx) now covered via MockJsonHelper.GetObject(token, int) — issue #1025.
 
 JsonArray.GetOption:
   layer: runtime-api
@@ -3561,9 +3749,10 @@ JsonObject.GetText:
   layer: runtime-api
   category: JsonObject
   status: covered
-  notes: overloads=1; rewriter redirects ALGetText to MockJsonHelper.GetText
+  notes: overloads=2; rewriter redirects ALGetText to MockJsonHelper.GetText; 2-arg bool overload GetText(key, requireValueExists) now covered — issue #1025
   tests:
     - tests/bucket-1/268-jsonobject-methods
+    - tests/bucket-1/100-json-overloads
 
 JsonObject.GetTime:
   layer: runtime-api
@@ -4317,21 +4506,33 @@ NavApp.GetResource:
   layer: runtime-api
   category: NavApp
   status: covered
-  tests: tests/bucket-1/99-misc-stubs
-  notes: overloads=1; no-op standalone — no .app bundle to read resource from. Stub on MockNavApp.
+  tests:
+    - tests/bucket-1/99-misc-stubs
+    - tests/bucket-2/221-navapp-getresource-encoding
+    - tests/bucket-1/169-navapp-string-resource
+  notes: >
+    overloads=2 (with/without TextEncoding); no-op standalone — no .app bundle to read
+    resource from. Stub on MockNavApp. Fixes #1087. Additional string overloads added for
+    ALGetResource, ALGetResourceAsText, ALGetResourceAsJson to handle BC emitting the
+    resource name as a C# string literal (CS1503: string → NavText) — issue #1107.
 
 NavApp.GetResourceAsJson:
   layer: runtime-api
   category: NavApp
   status: covered
-  notes: overloads=2 (with/without TextEncoding); MockNavApp.ALGetResourceAsJson() returns default NavJsonObject — no .app in standalone mode
-  test: tests/bucket-1/267-navapp-resources/test/NavAppResourceTest.al
+  notes: overloads=4 (NavText/string × with/without TextEncoding); MockNavApp.ALGetResourceAsJson() returns default NavJsonObject — no .app in standalone mode; string overloads fix CS1503 (issue #1107)
+  tests:
+    - tests/bucket-1/267-navapp-resources
+    - tests/bucket-1/169-navapp-string-resource
 
 NavApp.GetResourceAsText:
   layer: runtime-api
   category: NavApp
   status: covered
-  notes: overloads=2 (with/without TextEncoding); MockNavApp.ALGetResourceAsText() returns NavText.Empty — no .app in standalone mode
+  notes: overloads=4 (NavText/string × with/without TextEncoding); MockNavApp.ALGetResourceAsText() returns NavText.Empty — no .app in standalone mode; string overloads fix CS1503 (issue #1107)
+  tests:
+    - tests/bucket-1/267-navapp-resources
+    - tests/bucket-1/169-navapp-string-resource
   test: tests/bucket-1/267-navapp-resources/test/NavAppResourceTest.al
 
 NavApp.IsEntitled:
@@ -4484,13 +4685,17 @@ OutStream.Write:
   layer: runtime-api
   category: OutStream
   status: covered
-  notes: overloads=23
+  notes: overloads=23; chained-call pattern supported (e.g. blob.CreateOutStream().Write(...)) — see issue #1026
+  tests:
+    - tests/bucket-1/96-blob-stream-chained
 
 OutStream.WriteText:
   layer: runtime-api
   category: OutStream
   status: covered
-  notes: overloads=1
+  notes: overloads=1; chained-call pattern supported (e.g. blob.CreateOutStream().WriteText(...)) — see issue #1026
+  tests:
+    - tests/bucket-1/96-blob-stream-chained
 
 # ── Page ────────────────────────────────────────────────────────
 
@@ -4546,6 +4751,13 @@ Page.GetRecord:
   status: covered
   notes: overloads=1
 
+Page.GetPart:
+  layer: runtime-api
+  category: Page
+  status: covered
+  tests: tests/bucket-1/289-page-getpart
+  notes: overloads=1; GetPart(partHash) on generated page class returns MockPagePartHandle; CreateNavFormHandle().Invoke() dispatches to subpage method by searching all Page* types for matching scope-class hash; also available on MockCurrPage for page extension code
+
 Page.LookupMode:
   layer: runtime-api
   category: Page
@@ -4553,7 +4765,8 @@ Page.LookupMode:
   tests:
     - tests/bucket-1/89-page-static
     - tests/bucket-2/218-page-runmodal-lookup
-  notes: overloads=1. Also proven on instance Page<N> — setter + getter round-trip.
+    - tests/bucket-2/221-page-class-members
+  notes: overloads=1. Also proven on instance Page<N> — setter + getter round-trip. Injected on Page<N> class so CurrPage.LookupMode inside a page trigger compiles (issue #1079).
 
 Page.ObjectId:
   layer: runtime-api
@@ -4567,13 +4780,22 @@ Page.PromptMode:
   category: Page
   status: covered
   tests: tests/bucket-1/100-page-promptmode
-  notes: overloads=1; MockCurrPage.PromptMode and MockFormHandle.PromptMode NavOption stubs
+  notes: overloads=1; MockCurrPage.PromptMode and MockFormHandle.PromptMode NavOption stubs; also injected on Page<N> class for CurrPage.PromptMode access inside page triggers (issue #1079)
+
+Page.NavFormImplicitConversion:
+  layer: runtime-api
+  category: Page
+  status: covered
+  tests: tests/bucket-1/291-page-run-with-var
+  notes: Each generated Page<N> class gets `public static implicit operator NavForm(PageN p) => default!` injected so that Page<N> instances can be passed where NavForm is expected in BC-generated code (issue #1106).
 
 Page.Run:
   layer: runtime-api
   category: Page
   status: covered
-  tests: tests/bucket-1/89-page-static
+  tests:
+    - tests/bucket-1/89-page-static
+    - tests/bucket-1/291-page-run-with-var
   notes: overloads=3
 
 Page.RunModal:
@@ -4583,7 +4805,8 @@ Page.RunModal:
   tests:
     - tests/bucket-1/89-page-static
     - tests/bucket-2/218-page-runmodal-lookup
-  notes: overloads=4. Instance form Page<N>.RunModal() dispatches to ModalPageHandler.
+    - tests/bucket-2/221-page-class-members
+  notes: overloads=4. Instance form Page<N>.RunModal() dispatches to ModalPageHandler. Injected on Page<N> class so CurrPage.RunModal() inside a page trigger compiles (issue #1079).
 
 Page.SaveRecord:
   layer: runtime-api
@@ -5339,9 +5562,10 @@ Report.RunModal:
   layer: runtime-api
   category: Report
   status: covered
-  notes: overloads=1; NavReport.RunModal → MockReportHandle.StaticRunModal (no-op/handler dispatch).
+  notes: "overloads=4 (1-arg, 2-arg, 3-arg, 4-arg); NavReport.RunModal → MockReportHandle.StaticRunModal. 2-arg adds requestWindow; 3-arg adds systemPrinter; 4-arg adds record Variant (stored via SetTableView if MockRecordHandle). All are no-op/handler dispatch in standalone mode."
   tests:
     - tests/bucket-1/90-report-static
+    - tests/bucket-1/287-report-runmodal-4arg
 
 Report.RunRequestPage:
   layer: runtime-api
@@ -5355,9 +5579,10 @@ Report.SaveAs:
   layer: runtime-api
   category: Report
   status: covered
-  notes: overloads=1; NavReport.SaveAs → MockReportHandle.StaticSaveAs (no-op).
+  notes: overloads=3 (path-only, OutStream, OutStream+RecordRef); NavReport.SaveAs → MockReportHandle.StaticSaveAs (no-op). Fixes #1088.
   tests:
     - tests/bucket-1/90-report-static
+    - tests/bucket-2/222-report-saveas-recordref
 
 Report.SaveAsExcel:
   layer: runtime-api
@@ -5524,8 +5749,8 @@ ReportInstance.PaperSource:
 ReportInstance.Preview:
   layer: runtime-api
   category: ReportInstance
-  status: gap
-  notes: overloads=1
+  status: covered
+  notes: overloads=1; BC emits CurrReport.Preview (bool property) and CurrReport.PreviewCanPrint (bool property) on the report class — both return false in standalone mode (no print-preview UI); injected as CurrReport stubs in RoslynRewriter.cs
 
 ReportInstance.Print:
   layer: runtime-api
@@ -6679,10 +6904,15 @@ Table.Find:
   layer: runtime-api
   category: Table
   status: covered
-  notes: overloads=1; ALFind(DataError, string searchMethod="-") positions cursor on first/last/next matching record.
+  notes: >
+    overloads=3; ALFind(DataError, string searchMethod="-") positions cursor on first/last/next matching record.
+    ALFind(NavText, bool forceNewQuery) and ALFind(string, bool forceNewQuery) overloads added for BC versions
+    that emit Find(SearchExpr, ForceNew) as a 2-arg call without the DataError prefix — resolves CS1503
+    (NavText → DataError, bool → string) — issues #1108, #1109.
   tests:
     - tests/bucket-1/188-table-crud
     - tests/bucket-1/08-sort-ordering
+    - tests/bucket-1/291-testfield-find-navtext-bool
 
 Table.FindFirst:
   layer: runtime-api
@@ -6707,7 +6937,12 @@ Table.FindSet:
   tests:
     - tests/bucket-1/53-findset
     - tests/bucket-1/283-overload-gaps
-  notes: overloads=3; 0-arg, 1-arg (ForUpdate), 2-arg (ForUpdate, ForceNewQuery); BC 26+ emits 3-arg C# form; ForUpdate/ForceNewQuery ignored in standalone mode
+    - tests/bucket-1/167-navscope-using
+  notes: >
+    overloads=4; 0-arg, 1-arg (ForUpdate), 2-arg (ForUpdate, ForceNewQuery); BC 26+ emits
+    3-arg C# form (DataError, ForUpdate, ForceNewQuery) — also added proxy overload
+    ALFindSet(DataError, bool, bool) that delegates to the 2-arg form; ForUpdate/ForceNewQuery
+    ignored in standalone mode
 
 Table.Get:
   layer: runtime-api
@@ -7067,8 +7302,25 @@ Table.TestField:
   tests:
     - tests/bucket-1/27-testfield-error
     - tests/bucket-1/54-testfield-enum
+    - tests/bucket-1/288-testfield-navvalue-overload
+    - tests/bucket-1/290-testfield-errorinfo
+    - tests/bucket-1/291-testfield-find-navtext-bool
     - tests/bucket-2/100-testfield-value
-  notes: overloads=26; non-empty check, enum value comparison, and scalar value comparison (Text/Code/Integer/Decimal) covered
+  notes: >
+    overloads=32; non-empty check, enum value comparison, and scalar value comparison
+    (Text/Code/Integer/Decimal/Boolean) covered. CS0121 ambiguity between NavValue and
+    primitive overloads (bool/string/int/Decimal18) resolved via a single object catch-all
+    in ALTestFieldSafe — same pattern as MockFieldRef.ALSetRange(object) (issue #1018).
+    CLR primitives are wrapped to the matching NavValue type before comparison so that
+    NavValueToString produces locale-consistent output on both sides.
+    ErrorInfo overloads (TestField(Field, ErrorInfo) and TestField(Field, Value, ErrorInfo))
+    added in issues #1083, #1084, #1089: ALTestFieldSafe(fieldNo, NavType, NavALErrorInfo)
+    for non-empty check with error context, and ALTestFieldSafe(fieldNo, NavType, value,
+    NavALErrorInfo) for value equality check with error context. ErrorInfo is used as context
+    only — the assertion logic is identical to the non-ErrorInfo variants.
+    ALTestFieldSafe(fieldNo, NavType, object, bool) overload added for BC versions that emit
+    TestField(Field, Value) as a 4-arg call with a bool suppressError flag instead of
+    NavALErrorInfo — resolves CS1503 (bool → string) — issues #1108, #1109.
 
 Table.TransferFields:
   layer: runtime-api
@@ -7714,6 +7966,48 @@ TestPage.GetRecord:
     TestPage.GetRecord(var Rec) was removed in BC 26+. MockTestPageHandle.ALGetRecord()
     exists internally (returns _currentRecord after GoToKey/GoToRecord) but the AL method
     can no longer be called from test code compiled against BC 26+ DLLs.
+
+TestPage.Preview:
+  layer: runtime-api
+  category: TestPage
+  status: covered
+  notes: overloads=1; BC emits tP.Target.ALPreview().ALInvoke() — MockTestPageHandle.ALPreview() returns MockTestPageAction which no-ops on ALInvoke().
+
+TestPage.Print:
+  layer: runtime-api
+  category: TestPage
+  status: covered
+  notes: overloads=1; BC emits tP.Target.ALPrint().ALInvoke() — MockTestPageHandle.ALPrint() returns MockTestPageAction which no-ops on ALInvoke().
+
+TestPage.SaveAsPdf:
+  layer: runtime-api
+  category: TestPage
+  status: covered
+  notes: overloads=1; no-op stub — MockTestPageHandle.ALSaveAsPdf(fileName) accepts the file name and does nothing (no real report engine).
+
+TestPage.SaveAsExcel:
+  layer: runtime-api
+  category: TestPage
+  status: covered
+  notes: overloads=1; no-op stub — MockTestPageHandle.ALSaveAsExcel(fileName) accepts the file name and does nothing.
+
+TestPage.SaveAsWord:
+  layer: runtime-api
+  category: TestPage
+  status: covered
+  notes: overloads=1; no-op stub — MockTestPageHandle.ALSaveAsWord(fileName) accepts the file name and does nothing.
+
+TestPage.SaveAsXml:
+  layer: runtime-api
+  category: TestPage
+  status: covered
+  notes: overloads=1; no-op stub — MockTestPageHandle.ALSaveAsXml(reportFileName, dataFileName) accepts two file names and does nothing.
+
+TestPage.Schedule:
+  layer: runtime-api
+  category: TestPage
+  status: covered
+  notes: overloads=1; BC emits tP.Target.ALSchedule().ALInvoke() — MockTestPageHandle.ALSchedule() returns MockTestPageAction which no-ops on ALInvoke().
 
 # ── TestPart ────────────────────────────────────────────────────
 
@@ -9596,9 +9890,10 @@ XmlDocument.ReadFrom:
   layer: runtime-api
   category: XmlDocument
   status: covered
-  notes: overloads=4; BC native NavXmlDocument.ALReadFrom works standalone; rewriter fixed to not intercept NavXml* with JSON rule.
+  notes: overloads=6; Text and InStream forms (with and without XmlReadOptions); rewriter redirects NavXmlDocument.ALReadFrom to AlCompat.XmlDocumentReadFrom which handles both NavText/string and MockInStream; fixes issue #1081
   tests:
     - tests/bucket-1/195-xmldocument
+    - tests/bucket-2/222-instream-string-compat
 
 XmlDocument.Remove:
   layer: runtime-api
@@ -10720,3 +11015,202 @@ XmlportInstance.TextEncoding:
   notes: overloads=1; property on MockXmlPortHandle
   tests:
     - tests/bucket-1/90-xmlport-instance
+
+Codeunit.GracefulFallback:
+  layer: runtime-api
+  category: codeunit
+  status: covered
+  notes: Missing codeunits (not in the compiled assembly) are now a soft warning instead of a fatal throw. RunCodeunit, Run(), and Invoke() log a warning to stderr and return a default value (null/true), allowing the calling test to continue. Tests prove execution continues after Codeunit.Run(99999) and Codeunit.Run(27).
+  tests:
+    - tests/bucket-1/128-codeunit-not-found
+
+Codeunit.InitEvents:
+  layer: runtime-api
+  category: codeunit
+  status: covered
+  notes: >
+    --init-events CLI flag fires BC lifecycle integration events (OnCompanyInitialize from Codeunit 27, OnInstallAppPerCompany from Codeunit 2) before each test (after per-test table reset). Allows [EventSubscriber] handlers on system events to perform setup work without the system codeunits being present. Subscriber code is discovered by reflection on compiled classes.
+  tests:
+    - tests/init-events/40-init-events
+
+Table.ImplicitDbEventByRefParams:
+  layer: runtime-api
+  category: table
+  status: covered
+  notes: >
+    InvokeSubscriber now coerces plain-T event args to ByRef<T> when the subscriber
+    method parameter is ByRef<T>. This fixes crashes for subscribers that declare
+    "var RunTrigger: Boolean" (BC emits ByRef<bool>) for implicit DB trigger events
+    (OnBefore/AfterInsertEvent, OnBefore/AfterModifyEvent, OnBefore/AfterDeleteEvent).
+    Without the fix, method.Invoke threw ArgumentException:
+    "Object of type 'System.Boolean' cannot be converted to type
+    'Microsoft.Dynamics.Nav.Runtime.ByRef`1[System.Boolean]'".
+    Also handles value-type parameters with null args (fills in default(T)).
+  tests:
+    - tests/bucket-2/225-db-event-byref-params
+
+AlCompat.ObjectToExactNavValue:
+  layer: runtime-api
+  category: Boolean
+  status: covered
+  notes: >
+    ALCompiler.ObjectToExactNavValue<NavText>(boolVar) was emitting (NavText)(object)boolVar
+    which throws InvalidCastException at runtime (bool → NavText). The rewriter now
+    redirects these calls to AlCompat.ObjectToExactNavValue<T>() which handles bool→NavText
+    via "Yes"/"No" conversion. Also adds a 2-arg NavIndirectValueToNavValue<T>(value, metadata)
+    overload (the 1-arg overload already existed). Fixes ~37 tests that crashed with
+    "Unable to cast object of type 'System.Boolean' to type
+    'Microsoft.Dynamics.Nav.Runtime.NavText'".
+  tests:
+    - tests/bucket-1/293-variant-to-navtext
+
+Executor.TestIsolation:
+  layer: runtime-api
+  category: executor
+  status: covered
+  notes: >
+    --test-isolation codeunit|method CLI flag controls table reset granularity.
+    codeunit (BC default): tables reset between test codeunits, shared within codeunit.
+    method: tables reset before every test method (old al-runner behavior).
+    CI runs buckets with --test-isolation method to preserve existing test expectations.
+    The flag is documented in --guide output.
+  tests:
+    - tests/bucket-2/226-codeunit-isolation
+
+Codeunit.InitEventsPublisherIDs:
+  layer: runtime-api
+  category: codeunit
+  status: covered
+  notes: >
+    --init-events now fires OnCompanyInitialize on BOTH publisher codeunit 2 AND 27.
+    BC has used both IDs across versions; firing only one missed subscribers registered
+    under the other ID. Also fires OnInstallAppPerDatabase and OnInstallAppPerCompany
+    from Codeunit 2000000010. Init events fire once per isolation boundary (per codeunit
+    in codeunit mode, per method in method mode).
+  tests:
+    - tests/init-events/40-init-events
+
+Executor.UserTableSeed:
+  layer: runtime-api
+  category: executor
+  status: covered
+  notes: >
+    The runner pre-seeds the User system table (2000000120) after every table reset.
+    One row is inserted with "User Security ID" = the stable AlCompat.UserSecurityId()
+    GUID (22222222-2222-2222-2222-222222222222) and "User Name" = AlScope.UserId
+    (default "TESTUSER", configurable via --user-id). This allows AL code that calls
+    User.Get(UserSecurityId()) to succeed without a "record not found" error.
+    The seeding is idempotent — multiple calls without an intervening ResetAll() are
+    safe. Tests that need a custom User record can Insert() additional rows or modify
+    the seeded row.
+  tests:
+    - tests/bucket-2/227-user-table-seed
+
+Executor.InitEventsIdempotent:
+  layer: runtime-api
+  category: executor
+  status: covered
+  notes: >
+    The runner's init-event firing (--init-events) now silently swallows
+    "record already exists" errors thrown by subscribers. Real-world extension
+    subscribers sometimes unconditionally call Record.Insert() without a prior
+    Get/FindFirst guard. Because the runner fires both codeunit-2 and codeunit-27
+    OnCompanyInitialize events in a single init cycle, a subscriber registered for
+    both (or two subscribers inserting the same primary key) would throw on the
+    second Insert(). The fix wraps each FireEvent call during init-event firing in
+    a try/catch that discards duplicate-PK errors; all other exceptions still
+    propagate normally.
+  tests:
+    - tests/init-events/41-init-events-idempotent
+
+AlCompat.InitializeUninitializedObject:
+  layer: runtime-api
+  category: event-subscriber
+  status: covered
+  notes: >
+    GetUninitializedObject skips constructors, leaving backing fields for AL global
+    variables null. Both FireEvent (event subscriber dispatch) and TryFireRecordTrigger
+    (record trigger firing) call GetUninitializedObject to create fresh instances.
+    The shared helper InitializeUninitializedObject: (1) calls InitializeComponent and
+    InitializeGlobalVariables via reflection so field initializers run, then (2) walks
+    all instance fields and default-initializes any remaining null reference-type field
+    (MockRecordHandle -> new MockRecordHandle(0); other types via parameterless ctor).
+    This prevents NullReferenceException when trigger/subscriber bodies access table
+    global variables (var section on a table object) or codeunit global variables that
+    are not covered by InitializeComponent. FireEvent already called InitializeComponent;
+    TryFireRecordTrigger previously did not — the fix adds the call there too.
+  tests:
+    - tests/bucket-2/100-uninit-field-fix
+    - tests/bucket-2/101-validate-uninit
+
+MockCodeunitHandle.InvokeAssert130002:
+  layer: runtime-api
+  category: test-toolkit
+  status: covered
+  notes: >
+    Route codeunit 130002 (the real BC "Library Assert" ID) to MockAssert,
+    matching the existing routing for IDs 130, 131, and 130000. External
+    projects compiled against BC's real test toolkit reference 130002 rather
+    than the runner's built-in stub ID 130.
+  tests:
+    - tests/bucket-2/103-assert-130002
+
+RoslynRewriter.CompareToEquality:
+  layer: syntax
+  category: rewriter
+  status: covered
+  notes: >
+    BC emits case-statement Text/Code comparisons as x.CompareTo(y) == 0.
+    NavStringValue.CompareTo throws NullReferenceException in standalone mode
+    (BC runtime DLL limitation). The rewriter transforms x.CompareTo(y) == 0
+    to x == y (and != 0 to x != y). The == operator works correctly standalone.
+  tests:
+    - tests/bucket-2/105-validate-case
+
+DepCompiler.CompileDep:
+  layer: runtime-api
+  category: dependency-execution
+  status: covered
+  notes: >
+    --compile-dep compiles a dependency .app package (or AL source directory)
+    through the full AL→C#→rewrite→Roslyn pipeline and produces a .dll on disk.
+    The DLL uses the same mock types as the main test assembly. Supports caching
+    by app identity (skips if DLL already exists). Output DLLs can be loaded via
+    --dep-dlls for runtime execution of dependency codeunits.
+  tests:
+    - tests/dep-dlls
+
+MockCodeunitHandle.DependencyAssemblies:
+  layer: runtime-api
+  category: dependency-execution
+  status: covered
+  notes: >
+    --dep-dlls loads pre-compiled dependency DLLs into the AssemblyLoadContext.
+    FindCodeunitType, FireEvent, TryFireRecordTrigger, and type lookups in
+    MockFormHandle/MockReportHandle/MockPagePartHandle all search dependency
+    assemblies when a type is not found in the main assembly.
+  tests:
+    - tests/dep-dlls
+
+MockRecordHandle.TriggerRecursionGuard:
+  layer: runtime-api
+  category: record-trigger
+  status: covered
+  notes: >
+    Prevents StackOverflowException when an OnModify/OnInsert/OnDelete trigger
+    calls Modify/Insert/Delete on the same table, which would re-fire the trigger
+    recursively. In real BC, triggers do not re-fire recursively. The guard uses a
+    ThreadStatic HashSet of (tableId, triggerName) to detect re-entry.
+  tests:
+    - tests/bucket-2/108-trigger-recursion
+
+MockCodeunitHandle.LibraryTestInitialize:
+  layer: runtime-api
+  category: test-toolkit
+  status: covered
+  notes: >
+    AL stub for codeunit 132250 (Library - Test Initialize). Provides three
+    integration event publishers (OnTestInitialize, OnBeforeTestSuiteInitialize,
+    OnAfterTestSuiteInitialize) used by BC test codeunits for setup hooks.
+  tests:
+    - tests/bucket-2/107-library-test-init

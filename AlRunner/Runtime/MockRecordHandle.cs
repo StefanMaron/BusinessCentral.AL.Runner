@@ -78,6 +78,53 @@ public class MockRecordHandle
         // Keep PK and field name registrations — they are structural, not data
     }
 
+    // ── System table IDs ────────────────────────────────────────────────────
+    private const int UserTableId = 2000000120;
+
+    // User table field numbers (BC standard)
+    private const int UserSecurityIdFieldNo = 1;
+    private const int UserNameFieldNo       = 2;
+
+    /// <summary>
+    /// Pre-seed system tables required by common AL patterns.
+    /// Called after every table reset so the standard runner user is always present.
+    ///
+    /// Currently seeded:
+    ///   Table 2000000120 "User" — one row for the configured user so that
+    ///   <c>User.Get(UserSecurityId())</c> succeeds without a "record not found" error.
+    /// </summary>
+    public static void SeedSystemTables()
+    {
+        // Ensure the User table PK is registered on field 1 (User Security ID).
+        if (!_primaryKeys.ContainsKey(UserTableId))
+            _primaryKeys[UserTableId] = new[] { UserSecurityIdFieldNo };
+
+        // Ensure the table bucket exists.
+        if (!_tables.ContainsKey(UserTableId))
+            _tables[UserTableId] = new List<Dictionary<int, NavValue>>();
+
+        var userTable = _tables[UserTableId];
+
+        // Seed exactly one row — idempotent so multiple calls are harmless.
+        var secId = AlCompat.UserSecurityId();            // stable GUID 22222222-…
+        var userName = AlScope.UserId;                    // default "TESTUSER"
+
+        // Skip if already seeded (e.g. when called more than once without ResetAll).
+        foreach (var row in userTable)
+        {
+            if (row.TryGetValue(UserSecurityIdFieldNo, out var existing) &&
+                existing is NavGuid existingGuid &&
+                existingGuid.ToGuid() == secId)
+                return;
+        }
+
+        userTable.Add(new Dictionary<int, NavValue>
+        {
+            [UserSecurityIdFieldNo] = new NavGuid(secId),
+            [UserNameFieldNo]       = new NavCode(50, userName.ToUpperInvariant()),
+        });
+    }
+
     /// <summary>
     /// Register the primary key field numbers for a table.
     /// Call this before inserting/getting records for tables with composite PKs.
@@ -210,7 +257,7 @@ public class MockRecordHandle
 
     public void SetFieldValueSafe(int fieldNo, NavType expectedType, NavValue value)
     {
-        _fields[fieldNo] = value;
+        _fields[fieldNo] = CoerceToExpectedType(fieldNo, expectedType, value);
     }
 
     /// <summary>
@@ -220,7 +267,32 @@ public class MockRecordHandle
     /// </summary>
     public void SetFieldValueSafe(int fieldNo, NavType expectedType, NavValue value, bool validate)
     {
-        _fields[fieldNo] = value;
+        _fields[fieldNo] = CoerceToExpectedType(fieldNo, expectedType, value);
+    }
+
+    /// <summary>
+    /// Coerce <paramref name="value"/> to match <paramref name="expectedType"/> when the
+    /// incoming type differs.  The primary case is NavText stored in a Code[N] field slot:
+    /// FieldRef.Value setter always calls SetFieldValue with NavType.Text, so a Code field
+    /// receives a NavText.  A subsequent direct field read emits
+    /// <c>(NavCode)GetFieldValueSafe(fieldNo, NavType.Code)</c> which throws
+    /// InvalidCastException unless we store a NavCode here.
+    /// </summary>
+    private NavValue CoerceToExpectedType(int fieldNo, NavType expectedType, NavValue value)
+    {
+        if (expectedType == NavType.Code && value is NavText nt)
+        {
+            int length = TableFieldRegistry.GetFieldLength(_tableId, fieldNo) ?? 250;
+            return new NavCode(length, ((string)nt).ToUpperInvariant());
+        }
+        // When a Boolean value (NavBoolean) ends up in a Text/Code field slot — e.g. via
+        // FieldRef.Value := BooleanFieldRef.Value — the BC runtime casts the stored value
+        // to NavText with (NavText)GetFieldValueSafe(fieldNo, NavType.Text), which throws
+        // "Unable to cast NavBoolean to NavText". Convert using AL's standard Boolean→Text
+        // representation: true → "Yes", false → "No".
+        if (expectedType == NavType.Text && value is NavBoolean nb)
+            return new NavText((bool)nb ? "Yes" : "No");
+        return value;
     }
 
     /// <summary>
@@ -245,7 +317,7 @@ public class MockRecordHandle
     public NavValue GetFieldValueSafe(int fieldNo, NavType expectedType)
     {
         if (_fields.TryGetValue(fieldNo, out var val))
-            return val;
+            return CoerceToExpectedType(fieldNo, expectedType, val);
         // For Media/MediaSet types, auto-generate and persist a unique value
         // so that repeated reads return the same value, and different records
         // (or re-inserted records) get different MediaIds.
@@ -396,17 +468,58 @@ public class MockRecordHandle
     /// the trigger's <c>Rec.SetFieldValueSafe(…)</c> calls mutate this
     /// instance's field bag in place.
     /// </summary>
-    private void TryFireRecordTrigger(string triggerName)
+    /// <summary>
+    /// Enumerate CurrentAssembly and all DependencyAssemblies.
+    /// </summary>
+    internal static IEnumerable<System.Reflection.Assembly> GetAllAssemblies()
+    {
+        var main = MockCodeunitHandle.CurrentAssembly;
+        if (main != null) yield return main;
+        if (MockCodeunitHandle.DependencyAssemblies != null)
+            foreach (var dep in MockCodeunitHandle.DependencyAssemblies)
+                yield return dep;
+    }
+
+    /// <summary>
+    /// Search CurrentAssembly and DependencyAssemblies for a type by name.
+    /// Used by MockRecordHandle, MockFormHandle, MockReportHandle, MockPagePartHandle.
+    /// </summary>
+    internal static Type? FindTypeAcrossAssemblies(string typeName)
     {
         var assembly = MockCodeunitHandle.CurrentAssembly;
-        if (assembly == null) return;
-
-        var recordTypeName = $"Record{_tableId}";
-        Type? recordType = null;
-        foreach (var t in assembly.GetTypes())
+        if (assembly != null)
         {
-            if (t.Name == recordTypeName) { recordType = t; break; }
+            foreach (var t in assembly.GetTypes())
+                if (t.Name == typeName) return t;
         }
+        if (MockCodeunitHandle.DependencyAssemblies != null)
+        {
+            foreach (var depAsm in MockCodeunitHandle.DependencyAssemblies)
+                foreach (var t in depAsm.GetTypes())
+                    if (t.Name == typeName) return t;
+        }
+        return null;
+    }
+
+    // Recursion guard: prevents infinite loops when an OnModify trigger calls
+    // Modify() on the same table, which would fire OnModify again.
+    // In real BC, triggers do NOT re-fire recursively on the same record.
+    [ThreadStatic] private static HashSet<(int tableId, string trigger)>? _activeTriggers;
+
+    private void TryFireRecordTrigger(string triggerName)
+    {
+        // Recursion guard
+        _activeTriggers ??= new HashSet<(int, string)>();
+        var key = (_tableId, triggerName);
+        if (!_activeTriggers.Add(key)) return;
+        try { TryFireRecordTriggerCore(triggerName); }
+        finally { _activeTriggers.Remove(key); }
+    }
+
+    private void TryFireRecordTriggerCore(string triggerName)
+    {
+        var recordTypeName = $"Record{_tableId}";
+        Type? recordType = FindTypeAcrossAssemblies(recordTypeName);
         if (recordType == null) return;
 
         // Generated Record classes are plain classes (post-rewrite) with
@@ -418,6 +531,11 @@ public class MockRecordHandle
         object instance;
         try { instance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(recordType); }
         catch { return; }
+
+        // Initialize null fields (global table variables, etc.) before wiring Rec/xRec,
+        // so that any MockRecordHandle fields created by InitializeComponent are in place
+        // and the explicit Rec/xRec assignments below can override them with this handle.
+        AlCompat.InitializeUninitializedObject(instance);
 
         var recBackingField = recordType.GetField("<Rec>k__BackingField",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
@@ -645,6 +763,24 @@ public class MockRecordHandle
         ApplyAutoCalcIfNeeded();
         return true;
     }
+
+    /// <summary>
+    /// ALFind(NavText, bool) — 2-arg form emitted by some BC versions for
+    /// <c>Find(SearchExpression, ForceNewQuery)</c> where the DataError prefix is
+    /// omitted and ForceNewQuery is a Boolean flag.  Resolves CS1503
+    /// (NavText → DataError, bool → string) errors — issues #1108, #1109.
+    /// ForceNewQuery is a runtime hint and is ignored in standalone mode.
+    /// </summary>
+    public bool ALFind(NavText searchMethod, bool forceNewQuery = false)
+        => ALFind(DataError.ThrowError, searchMethod.ToString());
+
+    /// <summary>
+    /// ALFind(string, bool) — same as ALFind(NavText, bool) but for string literals.
+    /// Defensive overload so that C# overload resolution always finds an exact match
+    /// rather than falling back to the (DataError, string) candidate.
+    /// </summary>
+    public bool ALFind(string searchMethod, bool forceNewQuery)
+        => ALFind(DataError.ThrowError, searchMethod);
 
     public bool ALFindSet(DataError errorLevel = DataError.ThrowError, bool forUpdate = false)
     {
@@ -1049,14 +1185,14 @@ public class MockRecordHandle
     /// </summary>
     private void FireOnValidate(int fieldNo)
     {
-        var assembly = MockCodeunitHandle.CurrentAssembly;
-        if (assembly == null) return;
-
-        // Search both the Record class and any TableExtension classes for the trigger
+        // Search both the Record class and any TableExtension classes for the trigger,
+        // across main assembly and dependency assemblies
         var recordTypeName = $"Record{_tableId}";
-        var candidateTypes = assembly.GetTypes()
-            .Where(t => t.Name == recordTypeName || t.Name.StartsWith("TableExtension"))
-            .ToList();
+        var candidateTypes = new List<Type>();
+        foreach (var asm in GetAllAssemblies())
+            candidateTypes.AddRange(asm.GetTypes()
+                .Where(t => t.Name == recordTypeName || t.Name.StartsWith("TableExtension")));
+        if (candidateTypes.Count == 0) return;
 
         foreach (var candidateType in candidateTypes)
         {
@@ -1088,8 +1224,9 @@ public class MockRecordHandle
             // FieldTriggerType.OnValidate == 0
             if (triggerType?.ToString() == "OnValidate" && triggerFieldNo is int fno && fno == fieldNo)
             {
-                // Create instance and wire Rec to this MockRecordHandle
+                // Create instance, initialize null fields, and wire Rec to this MockRecordHandle
                 var instance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(type);
+                AlCompat.InitializeUninitializedObject(instance);
                 var backingField = type.GetField("<Rec>k__BackingField",
                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
                 backingField?.SetValue(instance, this);
@@ -1137,43 +1274,74 @@ public class MockRecordHandle
             throw new Exception($"TestField failed: field {fieldNo} in table {_tableId} expected '{expectedStr}' but was '{actualStr}'");
     }
 
-    /// <summary>Overload: TestField with bool value (transpiler pattern for Boolean fields).</summary>
-    public void ALTestFieldSafe(int fieldNo, NavType expectedType, bool expectedValue)
+    /// <summary>
+    /// ALTestFieldSafe(NavALErrorInfo) — non-empty check where the transpiler passes an
+    /// ErrorInfo as the "expected value" slot.  BC emits this for TestField(Field, ErrorInfo)
+    /// — the ErrorInfo provides error context but the semantic is identical to the 2-arg
+    /// non-empty check.  Must be declared before the object catch-all so it takes precedence.
+    /// Resolves the CS1503 (NavText/bool → DataError) errors tracked in issues #1084/#1089.
+    /// </summary>
+    public void ALTestFieldSafe(int fieldNo, NavType expectedType, NavALErrorInfo errorInfo)
     {
+        ALTestFieldSafe(fieldNo, expectedType);
+    }
+
+    /// <summary>
+    /// ALTestFieldSafe(object) — catch-all overload that resolves the CS0121 ambiguity.
+    /// When the transpiler emits ALTestFieldSafe(fieldNo, NavType, NavValue-subtype), C#
+    /// cannot choose between the NavValue overload and the primitive overloads (bool/string/
+    /// int/Decimal18) because NavValue subtypes have implicit conversions. This single
+    /// object overload captures all remaining cases and unwraps to NavValue before
+    /// delegating — the same pattern used for MockFieldRef.ALSetRange(object).
+    /// CLR primitives (bool, int, Decimal18, string) are wrapped into the corresponding
+    /// NavValue so that NavValueToString produces locale-consistent output on both sides.
+    /// </summary>
+    public void ALTestFieldSafe(int fieldNo, NavType expectedType, object expectedValue)
+    {
+        NavValue? wrapped = expectedValue switch
+        {
+            NavValue nv      => nv,
+            MockVariant mv   => (NavValue?)mv,   // uses MockVariant's improved implicit operator
+            bool   b         => NavBoolean.Create(b),
+            int    i         => NavInteger.Create(i),
+            Decimal18 d18    => NavDecimal.Create(d18),
+            string s         => new NavText(s),
+            _                => null
+        };
+        if (wrapped != null)
+        {
+            ALTestFieldSafe(fieldNo, expectedType, wrapped);
+            return;
+        }
+        // Ultimate fallback: compare via raw ToString() (covers any edge types)
         var actual = GetFieldValueSafe(fieldNo, expectedType);
         var actualStr = NavValueToString(actual);
-        var expectedStr = expectedValue.ToString();
+        var expectedStr = expectedValue?.ToString() ?? "";
         if (actualStr != expectedStr)
             throw new Exception($"TestField failed: field {fieldNo} in table {_tableId} expected '{expectedStr}' but was '{actualStr}'");
     }
 
-    /// <summary>Overload: TestField with string value (Text/Code fields).</summary>
-    public void ALTestFieldSafe(int fieldNo, NavType expectedType, string expectedValue)
+    /// <summary>
+    /// ALTestFieldSafe(object, NavALErrorInfo) — 4-arg form emitted by the BC transpiler for
+    /// TestField(Field, Value, ErrorInfo).  The ErrorInfo provides error context but does not
+    /// change the assertion logic — the check delegates to the existing 3-arg object overload.
+    /// Fixes CS1501 (no overload for ALTestFieldSafe with 4 arguments) — issue #1083.
+    /// </summary>
+    public void ALTestFieldSafe(int fieldNo, NavType expectedType, object expectedValue, NavALErrorInfo errorInfo)
     {
-        var actual = GetFieldValueSafe(fieldNo, expectedType);
-        var actualStr = NavValueToString(actual);
-        if (actualStr != expectedValue)
-            throw new Exception($"TestField failed: field {fieldNo} in table {_tableId} expected '{expectedValue}' but was '{actualStr}'");
+        ALTestFieldSafe(fieldNo, expectedType, expectedValue);
     }
 
-    /// <summary>Overload: TestField with int value (Integer fields).</summary>
-    public void ALTestFieldSafe(int fieldNo, NavType expectedType, int expectedValue)
+    /// <summary>
+    /// ALTestFieldSafe(object, bool) — 4-arg form emitted by some BC versions for
+    /// TestField(Field, Value, SuppressError) where the 4th arg is a Boolean flag
+    /// controlling error behaviour rather than an ErrorInfo.  The bool is treated as
+    /// a no-op in standalone mode (the assertion always runs).  Resolves CS1503
+    /// (NavText → DataError, bool → string) errors — issues #1108, #1109.
+    /// </summary>
+    public void ALTestFieldSafe(int fieldNo, NavType expectedType, object expectedValue, bool suppressError)
     {
-        var actual = GetFieldValueSafe(fieldNo, expectedType);
-        var actualStr = NavValueToString(actual);
-        var expectedStr = expectedValue.ToString();
-        if (actualStr != expectedStr)
-            throw new Exception($"TestField failed: field {fieldNo} in table {_tableId} expected '{expectedStr}' but was '{actualStr}'");
-    }
-
-    /// <summary>Overload: TestField with Decimal18 value (Decimal fields).</summary>
-    public void ALTestFieldSafe(int fieldNo, NavType expectedType, Decimal18 expectedValue)
-    {
-        var actual = GetFieldValueSafe(fieldNo, expectedType);
-        var actualStr = NavValueToString(actual);
-        var expectedStr = NavValueToString(NavDecimal.Create(expectedValue));
-        if (actualStr != expectedStr)
-            throw new Exception($"TestField failed: field {fieldNo} in table {_tableId} expected '{expectedStr}' but was '{actualStr}'");
+        ALTestFieldSafe(fieldNo, expectedType, expectedValue);
     }
 
     /// <summary>AL's TestField for NavValue comparisons (used in some transpiler patterns).</summary>
@@ -1188,22 +1356,22 @@ public class MockRecordHandle
         ALTestFieldSafe(fieldNo, expectedType, expectedValue);
     }
 
-    /// <summary>Overload: TestField with DataError level and string value.</summary>
-    public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType, string expectedValue)
+    /// <summary>
+    /// ALTestField(DataError, int, NavType, object) — catch-all DataError overload, same ambiguity
+    /// fix as ALTestFieldSafe(object). Delegates via the object overload.
+    /// </summary>
+    public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType, object expectedValue)
     {
         ALTestFieldSafe(fieldNo, expectedType, expectedValue);
     }
 
-    /// <summary>Overload: TestField with DataError level and int value.</summary>
-    public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType, int expectedValue)
+    /// <summary>
+    /// ALTestField(DataError, int, NavType, object, NavALErrorInfo) — 5-arg DataError + ErrorInfo form.
+    /// Mirrors the 4-arg ALTestFieldSafe(object, NavALErrorInfo) but with the DataError prefix.
+    /// </summary>
+    public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType, object expectedValue, NavALErrorInfo errorInfo)
     {
         ALTestFieldSafe(fieldNo, expectedType, expectedValue);
-    }
-
-    /// <summary>Overload: TestField with DataError level and Decimal18 value.</summary>
-    public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType, Decimal18 expectedValue)
-    {
-        ALTestFieldSafe(fieldNo, expectedType, expectedValue);  // delegates to Decimal18 overload
     }
 
     /// <summary>
@@ -1216,6 +1384,15 @@ public class MockRecordHandle
         var defaultStr = NavValueToString(DefaultForType(expectedType));
         if (actualStr == defaultStr)
             throw new Exception($"TestField failed: field {fieldNo} in table {_tableId} must have a value");
+    }
+
+    /// <summary>
+    /// ALTestField(DataError, int, NavType, NavALErrorInfo) — non-empty check with DataError + ErrorInfo.
+    /// Mirrors ALTestFieldSafe(int, NavType, NavALErrorInfo) but with the DataError prefix.
+    /// </summary>
+    public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType, NavALErrorInfo errorInfo)
+    {
+        ALTestField(errorLevel, fieldNo, expectedType);
     }
 
     // -----------------------------------------------------------------------
@@ -3089,9 +3266,8 @@ public class MockRecordHandle
     public object? Invoke(int memberId, object[] args)
     {
         // Delegate to MockCodeunitHandle-style dispatch on the record type
-        var assembly = MockCodeunitHandle.CurrentAssembly ?? System.Reflection.Assembly.GetExecutingAssembly();
         var recordTypeName = $"Record{_tableId}";
-        var recordType = assembly.GetTypes().FirstOrDefault(t => t.Name == recordTypeName);
+        var recordType = FindTypeAcrossAssemblies(recordTypeName);
         if (recordType == null)
         {
             throw new InvalidOperationException($"Record type {recordTypeName} not found in assembly for Invoke");
@@ -3113,6 +3289,7 @@ public class MockRecordHandle
                 if (method == null) continue;
 
                 var instance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(recordType);
+                AlCompat.InitializeUninitializedObject(instance);
                 // Wire the Rec property to point to this MockRecordHandle instance.
                 // The generated Record class has: public MockRecordHandle Rec { get; } = new MockRecordHandle(tableId);
                 // Since GetUninitializedObject doesn't run initializers, Rec is null.

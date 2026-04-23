@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace AlRunner;
 
@@ -29,9 +30,21 @@ public static class StubGenerator
     /// referenced in the AL source are generated.
     /// </summary>
     public static GenerateResult Generate(string packagesDir, string outputDir, IReadOnlyList<string>? sourceDirs = null)
+        => Generate(new[] { packagesDir }, outputDir, sourceDirs);
+
+    /// <summary>
+    /// Scan all .app files in each of <paramref name="packagesDirs"/>, extract codeunit symbols,
+    /// and write one .al stub file per codeunit into <paramref name="outputDir"/>.
+    /// When <paramref name="sourceDirs"/> is provided and non-empty, only codeunits
+    /// referenced in the AL source are generated.
+    /// </summary>
+    public static GenerateResult Generate(IReadOnlyList<string> packagesDirs, string outputDir, IReadOnlyList<string>? sourceDirs = null)
     {
-        if (!Directory.Exists(packagesDir))
-            throw new DirectoryNotFoundException($"Packages directory not found: {packagesDir}");
+        foreach (var packagesDir in packagesDirs)
+        {
+            if (!Directory.Exists(packagesDir))
+                throw new DirectoryNotFoundException($"Packages directory not found: {packagesDir}");
+        }
 
         Directory.CreateDirectory(outputDir);
 
@@ -39,7 +52,6 @@ public static class StubGenerator
         var (sourceTexts, sourceFileCount) = CollectSourceTexts(sourceDirs);
         bool filtering = sourceTexts != null;
 
-        var appFiles = Directory.GetFiles(packagesDir, "*.app", SearchOption.TopDirectoryOnly);
         int generated = 0;
         int skippedNonCodeunit = 0;
         int skippedNativeMock = 0;
@@ -47,41 +59,46 @@ public static class StubGenerator
         int totalAvailable = 0;
         var skippedExisting = new List<string>();
 
-        foreach (var appFile in appFiles)
+        foreach (var packagesDir in packagesDirs)
         {
-            var (codeunits, nonCodeunitCount, appName) = ReadCodeunitsFromApp(appFile);
-            skippedNonCodeunit += nonCodeunitCount;
-            totalAvailable += codeunits.Count;
+            var appFiles = Directory.GetFiles(packagesDir, "*.app", SearchOption.TopDirectoryOnly);
 
-            foreach (var cu in codeunits)
+            foreach (var appFile in appFiles)
             {
-                if (SkipIds.Contains(cu.Id))
+                var (codeunits, nonCodeunitCount, appName) = ReadCodeunitsFromApp(appFile);
+                skippedNonCodeunit += nonCodeunitCount;
+                totalAvailable += codeunits.Count;
+
+                foreach (var cu in codeunits)
                 {
-                    skippedNativeMock++;
-                    continue;
+                    if (SkipIds.Contains(cu.Id))
+                    {
+                        skippedNativeMock++;
+                        continue;
+                    }
+
+                    if (filtering && !IsCodeunitReferenced(cu, sourceTexts!))
+                    {
+                        skippedNotReferenced++;
+                        continue;
+                    }
+
+                    // Filter procedures when source dirs are provided
+                    var filteredCu = filtering ? FilterProcedures(cu, sourceTexts!) : cu;
+
+                    var fileName = $"Cod{cu.Id}.{SanitizeFileName(cu.Name)}.al";
+                    var filePath = Path.Combine(outputDir, fileName);
+
+                    if (File.Exists(filePath))
+                    {
+                        skippedExisting.Add(fileName);
+                        continue;
+                    }
+
+                    var content = RenderCodeunit(filteredCu, appName);
+                    File.WriteAllText(filePath, content, new UTF8Encoding(false));
+                    generated++;
                 }
-
-                if (filtering && !IsCodeunitReferenced(cu, sourceTexts!))
-                {
-                    skippedNotReferenced++;
-                    continue;
-                }
-
-                // Filter procedures when source dirs are provided
-                var filteredCu = filtering ? FilterProcedures(cu, sourceTexts!) : cu;
-
-                var fileName = $"Cod{cu.Id}.{SanitizeFileName(cu.Name)}.al";
-                var filePath = Path.Combine(outputDir, fileName);
-
-                if (File.Exists(filePath))
-                {
-                    skippedExisting.Add(fileName);
-                    continue;
-                }
-
-                var content = RenderCodeunit(filteredCu, appName);
-                File.WriteAllText(filePath, content, new UTF8Encoding(false));
-                generated++;
             }
         }
 
@@ -115,9 +132,19 @@ public static class StubGenerator
         return (sb.ToString(), fileCount);
     }
 
+    // Matches Codeunit::"Some Name" or Codeunit::SingleWord in AL source.
+    // Group 1 captures the quoted name; Group 2 captures an unquoted identifier (letters, digits, underscores, hyphens only).
+    // Used to detect EventSubscriber attributes and other Codeunit:: references.
+    private static readonly Regex CodeunitDoubleColonPattern =
+        new(@"Codeunit::(?:""([^""]*)""|(\w[\w\-]*))", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     /// <summary>
     /// Check if a codeunit is referenced in the source text.
-    /// Matches by name (case-insensitive) or by ID appearing in the source.
+    /// Matches by:
+    /// - Codeunit ID numeric literal anywhere in source
+    /// - Codeunit name (case-insensitive) anywhere in source
+    /// - <c>Codeunit::"Name"</c> pattern (EventSubscriber, Codeunit.Run, etc.)
+    /// - <c>Codeunit::Name</c> pattern (single-word names without quotes)
     /// </summary>
     public static bool IsCodeunitReferenced(CodeunitSymbol cu, string sourceText)
     {
@@ -125,9 +152,19 @@ public static class StubGenerator
         if (sourceText.Contains(cu.Id.ToString(), StringComparison.Ordinal))
             return true;
 
-        // Check by name (case-insensitive)
+        // Check by name (case-insensitive) — covers variable declarations, string literals, etc.
         if (sourceText.Contains(cu.Name, StringComparison.OrdinalIgnoreCase))
             return true;
+
+        // Check Codeunit::"Name" and Codeunit::Name patterns (EventSubscriber attributes,
+        // Codeunit.Run calls, etc.) — catches references not via variable declarations.
+        foreach (Match m in CodeunitDoubleColonPattern.Matches(sourceText))
+        {
+            // Group 1: quoted name; Group 2: unquoted single-word name
+            var refName = m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value.Trim();
+            if (string.Equals(refName, cu.Name, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
 
         return false;
     }

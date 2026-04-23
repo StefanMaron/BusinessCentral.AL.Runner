@@ -266,11 +266,7 @@ public class MockReportHandle
         if (_reportInstance != null)
             return _reportInstance;
 
-        var assembly = MockCodeunitHandle.CurrentAssembly;
-        if (assembly == null)
-            return null;
-
-        var reportType = assembly.GetTypes().FirstOrDefault(t => t.Name == $"Report{ReportId}");
+        var reportType = MockRecordHandle.FindTypeAcrossAssemblies($"Report{ReportId}");
         if (reportType == null)
             return null;
 
@@ -314,6 +310,39 @@ public class MockReportHandle
     }
 
     /// <summary>
+    /// Static Report.RunModal(reportId, requestWindow) — 2-argument overload.
+    /// <paramref name="requestWindow"/> is ignored in standalone mode (no UI).
+    /// </summary>
+    public static void StaticRunModal(int reportId, bool requestWindow)
+    {
+        var handle = new MockReportHandle(reportId) { UseRequestForm = requestWindow };
+        handle.RunModal();
+    }
+
+    /// <summary>
+    /// Static Report.RunModal(reportId, requestWindow, systemPrinter) — 3-argument overload.
+    /// <paramref name="requestWindow"/> and <paramref name="systemPrinter"/> are ignored in standalone mode.
+    /// </summary>
+    public static void StaticRunModal(int reportId, bool requestWindow, bool systemPrinter)
+    {
+        var handle = new MockReportHandle(reportId) { UseRequestForm = requestWindow };
+        handle.RunModal();
+    }
+
+    /// <summary>
+    /// Static Report.RunModal(reportId, requestWindow, systemPrinter, record) — 4-argument overload.
+    /// <paramref name="requestWindow"/>, <paramref name="systemPrinter"/>, and <paramref name="record"/>
+    /// are ignored in standalone mode (no rendering, no service-tier table filtering).
+    /// </summary>
+    public static void StaticRunModal(int reportId, bool requestWindow, bool systemPrinter, object record)
+    {
+        var handle = new MockReportHandle(reportId) { UseRequestForm = requestWindow };
+        if (record is MockRecordHandle rec)
+            handle.SetTableView(rec);
+        handle.RunModal();
+    }
+
+    /// <summary>
     /// AL's <c>Clear(rep)</c> — the rewriter emits <c>rep.Clear()</c>. Resets the
     /// report handle to its default (un-run) state. No-op in standalone mode.
     /// </summary>
@@ -335,6 +364,18 @@ public class MockReportHandle
     // Report.SaveAs* — no-ops (no real file I/O in standalone mode)
     // BC emits NavReport.SaveAs*(DataError, int, string) — first arg is a DataError status object
     public static void StaticSaveAs(int reportId, string format, string path) { }
+
+    /// <summary>
+    /// BC emits <c>MockReportHandle.StaticSaveAs(DataError, reportId, requestData, format, ByRef&lt;OutStream&gt;)</c>
+    /// for <c>Report.SaveAs(ReportId, RequestData, Format, OutStream)</c>. No-op in standalone mode.
+    /// </summary>
+    public static void StaticSaveAs(object err, int reportId, string requestData, object format, MockOutStream outStream) { }
+
+    /// <summary>
+    /// BC emits <c>MockReportHandle.StaticSaveAs(DataError, reportId, requestData, format, ByRef&lt;OutStream&gt;, RecordRef)</c>
+    /// for <c>Report.SaveAs(ReportId, RequestData, Format, OutStream, RecordRef)</c>. No-op in standalone mode.
+    /// </summary>
+    public static void StaticSaveAs(object err, int reportId, string requestData, object format, MockOutStream outStream, MockRecordRef recordRef) { }
     public static void StaticSaveAsPdf(int reportId, string path) { }
     public static void StaticSaveAsPdf(object err, int reportId, string path) { }
     public static void StaticSaveAsWord(int reportId, string path) { }

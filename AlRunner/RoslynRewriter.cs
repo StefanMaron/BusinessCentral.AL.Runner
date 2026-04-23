@@ -78,6 +78,8 @@ public class RoslynRewriter : CSharpSyntaxRewriter
         "ALCodeCoverageInclude",        // ALCodeCoverage.ALCodeCoverageInclude(record) — no code coverage engine standalone; no-op
         "ALImportObjects",              // ALDatabase.ALImportObjects(stream) — object import requires BC runtime; no-op standalone
         "ALExportObjects",              // ALDatabase.ALExportObjects(stream, ...) — object export requires BC runtime; no-op standalone
+        "ALKeyGroupDisable",            // ALDatabase.ALKeyGroupDisable(keyGroupName) — key groups require live BC DB context; no-op standalone
+        "ALKeyGroupEnable",             // ALDatabase.ALKeyGroupEnable(keyGroupName) — key groups require live BC DB context; no-op standalone
     };
 
     private static readonly HashSet<string> StripITreeObjectArgMethods = new(StringComparer.Ordinal)
@@ -416,6 +418,15 @@ public class RoslynRewriter : CSharpSyntaxRewriter
             preservedMembers.Add(
                 SyntaxFactory.ParseMemberDeclaration(
                     "public int PageNo() => 0;")!);
+            // Preview — CurrReport.Preview() returns false in standalone mode (no print-preview UI).
+            // BC emits: shown = (CurrReport.PreviewCanPrint == false ? true : CurrReport.Preview)
+            // Both are bool properties that default to false in standalone mode.
+            preservedMembers.Add(
+                SyntaxFactory.ParseMemberDeclaration(
+                    "public bool Preview => false;")!);
+            preservedMembers.Add(
+                SyntaxFactory.ParseMemberDeclaration(
+                    "public bool PreviewCanPrint => false;")!);
 
             // For report extensions: inject a CurrReport stub.
             // BC generates a CurrReport property that casts this.ParentObject to the
@@ -573,7 +584,10 @@ public bool ALModify(DataError errorLevel) => Rec.ALModify(errorLevel);
 public bool ALModify(DataError errorLevel, bool runTrigger) => Rec.ALModify(errorLevel, runTrigger);
 public bool ALGet(DataError errorLevel, params NavValue[] keyValues) => Rec.ALGet(errorLevel, keyValues);
 public bool ALFind(DataError errorLevel, string searchMethod = ""-"") => Rec.ALFind(errorLevel, searchMethod);
+public bool ALFind(NavText searchMethod, bool forceNewQuery = false) => Rec.ALFind(searchMethod, forceNewQuery);
+public bool ALFind(string searchMethod, bool forceNewQuery) => Rec.ALFind(searchMethod, forceNewQuery);
 public bool ALFindSet(DataError errorLevel = DataError.ThrowError, bool forUpdate = false) => Rec.ALFindSet(errorLevel, forUpdate);
+public bool ALFindSet(DataError errorLevel, bool forUpdate, bool forceNewQuery) => Rec.ALFindSet(errorLevel, forUpdate, forceNewQuery);
 public bool ALFindFirst(DataError errorLevel = DataError.ThrowError) => Rec.ALFindFirst(errorLevel);
 public bool ALFindLast(DataError errorLevel = DataError.ThrowError) => Rec.ALFindLast(errorLevel);
 public int ALNext() => Rec.ALNext();
@@ -597,8 +611,15 @@ public void ALValidateSafe(int fieldNo, NavType expectedType, NavValue value) =>
 public void ALValidate(DataError errorLevel, int fieldNo, NavType expectedType, NavValue value) => Rec.ALValidate(errorLevel, fieldNo, expectedType, value);
 public void ALTestFieldSafe(int fieldNo, NavType expectedType) => Rec.ALTestFieldSafe(fieldNo, expectedType);
 public void ALTestFieldSafe(int fieldNo, NavType expectedType, NavValue expectedValue) => Rec.ALTestFieldSafe(fieldNo, expectedType, expectedValue);
+public void ALTestFieldSafe(int fieldNo, NavType expectedType, NavALErrorInfo errorInfo) => Rec.ALTestFieldSafe(fieldNo, expectedType, errorInfo);
+public void ALTestFieldSafe(int fieldNo, NavType expectedType, object expectedValue) => Rec.ALTestFieldSafe(fieldNo, expectedType, expectedValue);
+public void ALTestFieldSafe(int fieldNo, NavType expectedType, object expectedValue, NavALErrorInfo errorInfo) => Rec.ALTestFieldSafe(fieldNo, expectedType, expectedValue, errorInfo);
+public void ALTestFieldSafe(int fieldNo, NavType expectedType, object expectedValue, bool suppressError) => Rec.ALTestFieldSafe(fieldNo, expectedType, expectedValue, suppressError);
 public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType) => Rec.ALTestField(errorLevel, fieldNo, expectedType);
 public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType, NavValue expectedValue) => Rec.ALTestField(errorLevel, fieldNo, expectedType, expectedValue);
+public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType, object expectedValue) => Rec.ALTestField(errorLevel, fieldNo, expectedType, expectedValue);
+public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType, NavALErrorInfo errorInfo) => Rec.ALTestField(errorLevel, fieldNo, expectedType, errorInfo);
+public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType, object expectedValue, NavALErrorInfo errorInfo) => Rec.ALTestField(errorLevel, fieldNo, expectedType, expectedValue, errorInfo);
 public void ALCalcFields(DataError errorLevel, params int[] fieldNos) => Rec.ALCalcFields(errorLevel, fieldNos);
 public bool ALCalcSums(DataError errorLevel, params int[] fieldNos) => Rec.ALCalcSums(errorLevel, fieldNos);
 public void ALSetCurrentKey(DataError errorLevel, params int[] fieldNos) => Rec.ALSetCurrentKey(errorLevel, fieldNos);
@@ -699,6 +720,14 @@ public MockCurrPage CurrPage { get; } = new MockCurrPage();
                 // Page has no SourceTable — no Rec field, so just apply the record filter.
                 : "public void SetSelectionFilter(MockRecordHandle rec) { rec.ALSetRecFilter(); }";
 
+            // Extract the page ID from the class name "Page<N>" so that RunModal()
+            // can dispatch to the correct ModalPageHandler (issue #1079).
+            var className = visited.Identifier.Text;
+            var pageIdStr = "0";
+            if (className.StartsWith("Page", StringComparison.Ordinal) &&
+                int.TryParse(className.AsSpan(4), out var extractedId))
+                pageIdStr = extractedId.ToString();
+
             var pageMemberCode = $@"
 public void Update(bool saveRecord = true) {{ }}
 public void Close() {{ }}
@@ -715,6 +744,27 @@ public void CancelBackgroundTask(DataError errorLevel, int taskId) {{ }}
 protected bool CallGetDecimalPlacesExtensionMethod(int fieldNo, ref string result) {{ return false; }}
 protected bool CallGetTableRelationExtensionMethod(int fieldNo, MockRecordHandle rec, ref bool result) {{ return false; }}
 protected bool CallGetFormatExtensionMethod(int fieldNo, ref string result) {{ return false; }}
+// BC emits CurrPage.SubPart.Page.SomeProcedure() as
+// CurrPage.GetPart(partHash).CreateNavFormHandle(scope).Invoke(methodHash, args).
+// Returns a MockPagePartHandle that dispatches the call to the subpage class.
+public MockPagePartHandle GetPart(int partHash) {{ return new MockPagePartHandle(partHash); }}
+// RunModal() — dispatches to ModalPageHandler if registered, otherwise no-op.
+// BC generates CurrPage.RunModal() as a call on the Page<N> class directly (issue #1079).
+public FormResult RunModal() {{ return HandlerRegistry.InvokeModalPageHandler({pageIdStr}); }}
+// LookupMode — bool property on the page class.
+// BC generates CurrPage.LookupMode as a property access on the Page<N> class (issue #1079).
+public bool LookupMode {{ get; set; }}
+// Editable, PageCaption, PromptMode, ObjectID — other CurrPage properties/methods that
+// BC generates as calls on the Page<N> class directly (same pattern as LookupMode/#1079).
+public bool Editable {{ get; set; }} = true;
+public string PageCaption {{ get; set; }} = string.Empty;
+public NavOption? PromptMode {{ get; set; }}
+public NavText ObjectID(bool withCaption = false) {{ return NavText.Empty; }}
+// Implicit conversion to NavForm — allows Page<N> instances to be passed wherever
+// NavForm is expected (e.g. NavForm.SetSubPageView, helper methods in generated page scope).
+// Without this, stripping NavForm from the base class list causes CS1503 at Roslyn
+// compilation time (issue #1106).
+public static implicit operator Microsoft.Dynamics.Nav.Runtime.NavForm({className} p) => default!;
 ";
             var pageMembers = CSharpSyntaxTree.ParseText(
                 $"class _Temp_ {{ {pageMemberCode} }}").GetRoot()
@@ -738,6 +788,11 @@ public void ClearApplicationMemberVariables()
         System.Reflection.BindingFlags.Public);
     m?.Invoke(this, null);
 }
+// BC emits ALSession.ALBindSubscription(DataError, target) which the rewriter converts
+// to target.Bind(). When target is base.Parent (→ _parent, the codeunit instance), the
+// codeunit class itself must expose Bind()/Unbind() — issues #1105 / Gap 2.
+public void Bind() { AlRunner.Runtime.EventSubscriberRegistry.Bind(this); }
+public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
 ";
             var codeunitMembers = CSharpSyntaxTree.ParseText(
                 $"class _Temp_ {{ {codeunitMemberCode} }}").GetRoot()
@@ -1003,6 +1058,7 @@ public void ClearApplicationMemberVariables()
         // For scope constructors (internal constructors in nested classes that inherit from AlScope),
         // the base class has been replaced with AlScope which has a parameterless constructor.
         // Remove ALL base(...) initializers from these constructors.
+        bool strippedScopeBaseInit = false;
         if (visited.Initializer != null && visited.Initializer.Kind() == SyntaxKind.BaseConstructorInitializer)
         {
             // Check if this is a scope constructor by looking for parent or βparent references,
@@ -1015,11 +1071,20 @@ public void ClearApplicationMemberVariables()
             if (hasParentArg || isInternal)
             {
                 visited = visited.WithInitializer(null);
+                strippedScopeBaseInit = true;
             }
         }
 
         // Handle βparent parameter: KEEP it but add _parent assignment to constructor body.
         // Instead of removing the parameter, we keep it and add: this._parent = βparent;
+        // This fires when:
+        //  (a) the first parameter contains "parent" AND the type starts with a known BC object
+        //      prefix (Codeunit, Record, Page, Query, Report, XmlPort, TableExtension, PageExtension), OR
+        //  (b) the base initializer was stripped — meaning this is a scope constructor whose
+        //      base(βparent) call was removed above. In that case the _parent field (injected
+        //      by VisitClassDeclaration for scope classes) would remain null at runtime without
+        //      this assignment. This covers nested BC types like RequestPageExtension whose name
+        //      does not start with any of the standard AL object-type prefixes.
         if (visited.ParameterList.Parameters.Count > 0)
         {
             var firstParam = visited.ParameterList.Parameters[0];
@@ -1027,9 +1092,12 @@ public void ClearApplicationMemberVariables()
             if (paramName.Contains("parent") || firstParam.Identifier.Text.Contains("parent"))
             {
                 var typeText = firstParam.Type?.ToString() ?? "";
-                if (typeText.StartsWith("Codeunit") || typeText.StartsWith("Record") || typeText.StartsWith("Page")
-                    || typeText.StartsWith("Query") || typeText.StartsWith("Report") || typeText.StartsWith("XmlPort")
-                    || typeText.StartsWith("TableExtension") || typeText.StartsWith("PageExtension"))
+                bool isKnownBcType = typeText.StartsWith("Codeunit") || typeText.StartsWith("Record")
+                    || typeText.StartsWith("Page") || typeText.StartsWith("Query")
+                    || typeText.StartsWith("Report") || typeText.StartsWith("XmlPort")
+                    || typeText.StartsWith("TableExtension") || typeText.StartsWith("PageExtension");
+
+                if (isKnownBcType || strippedScopeBaseInit)
                 {
                     // Keep the parameter, but add _parent assignment at the start of the body
                     var paramIdentifier = firstParam.Identifier.Text;
@@ -1247,15 +1315,32 @@ public void ClearApplicationMemberVariables()
             return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.ObjectKeyword))
                 .WithTriviaFrom(node);
 
-        // NavScope -> object
-        // The BC compiler adds a hidden NavScope γReturnValueParent parameter
-        // to methods that return a Record or Interface. The parameter is used
-        // for ownership tracking. After rewriting, scope classes extend AlScope
-        // (not NavScope), so direct same-codeunit calls fail with CS1503. We
-        // replace NavScope with object so any scope or null can be passed.
+        // NavScope — context-sensitive rewrite:
+        //
+        //   Role 1 (ObjectCreationExpression): "new NavScope(this)"
+        //     → "new MockNavScope(this)"
+        //     The BC compiler emits using-blocks for FindSet/Find iteration:
+        //       "using (var δretValParent = new NavScope(this)) { ... }"
+        //     MockNavScope has a 1-arg ctor and implements IDisposable (no-op).
+        //     Fixes CS1729 ('object' ctor 1 arg) and CS1674 (not IDisposable)
+        //     — issues #1085 and #1090.
+        //
+        //   Role 2 (parameter type, variable declaration, etc.): "NavScope γparent"
+        //     → "object"
+        //     The BC compiler also uses NavScope as the type of a hidden parameter
+        //     γReturnValueParent on record/interface-returning methods. After rewriting,
+        //     scope classes extend AlScope (not NavScope), so direct same-codeunit calls
+        //     pass an AlScope-derived instance where NavScope was expected. Using object
+        //     accepts any reference and avoids CS1503.
         if (text == "NavScope")
+        {
+            // If the identifier is the type in a "new NavScope(...)" expression, use MockNavScope.
+            if (node.Parent is ObjectCreationExpressionSyntax oce && oce.Type == node)
+                return node.WithIdentifier(SyntaxFactory.Identifier("MockNavScope"));
+            // All other uses (parameter type, variable type annotation, etc.) → object.
             return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.ObjectKeyword))
                 .WithTriviaFrom(node);
+        }
 
         // NavVariant -> MockVariant (Variant in AL needs Default/ALAssign methods)
         if (text == "NavVariant")
@@ -2965,22 +3050,18 @@ public void ClearApplicationMemberVariables()
                         SyntaxFactory.IdentifierName("ToNavValue")));
             }
 
-            // ALCompiler.ObjectToExactNavValue<T>(x) -> (T)(object)x
+            // ALCompiler.ObjectToExactNavValue<T>(x) -> AlCompat.ObjectToExactNavValue<T>(x)
+            // Previously emitted (T)(object)x which fails at runtime when x is a C# primitive
+            // (e.g. System.Boolean when a bool local is passed to a Text parameter via dynamic
+            // dispatch in OnInvoke). AlCompat.ObjectToExactNavValue<T> handles the coercions.
             if (exprText == "ALCompiler" && methodName == "ObjectToExactNavValue")
             {
-                var arg = visited.ArgumentList.Arguments[0].Expression;
-                // Extract T from the generic method name
-                if (memberAccess.Name is GenericNameSyntax genericName &&
-                    genericName.TypeArgumentList.Arguments.Count == 1)
-                {
-                    var targetType = genericName.TypeArgumentList.Arguments[0];
-                    return SyntaxFactory.CastExpression(
-                        targetType,
-                        SyntaxFactory.ParenthesizedExpression(
-                            SyntaxFactory.CastExpression(
-                                SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.ObjectKeyword)),
-                                SyntaxFactory.ParenthesizedExpression(arg))));
-                }
+                // Replace ALCompiler with AlCompat, keep the generic type arg and argument list
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        memberAccess.Name)); // keep GenericNameSyntax with type args
             }
 
             // ALCompiler.ObjectToDecimal -> AlCompat.ObjectToDecimal
@@ -3280,6 +3361,16 @@ public void ClearApplicationMemberVariables()
             if (exprText == "ALDatabase" && methodName == "ALIsInWriteTransaction")
             {
                 return SyntaxFactory.LiteralExpression(SyntaxKind.FalseLiteralExpression)
+                    .WithTriviaFrom(visited);
+            }
+
+            // ALDatabase.ALKeyGroupEnabled(keyGroupName) -> true
+            // Key groups are a BC database feature requiring a live NavSession. The runner
+            // has no real DB, so we stub this as always-enabled (true) — the conservative
+            // default that keeps AL logic that gates on KeyGroupEnabled running correctly.
+            if (exprText == "ALDatabase" && methodName == "ALKeyGroupEnabled")
+            {
+                return SyntaxFactory.LiteralExpression(SyntaxKind.TrueLiteralExpression)
                     .WithTriviaFrom(visited);
             }
 
@@ -3675,6 +3766,31 @@ public void ClearApplicationMemberVariables()
                         newName));
             }
 
+            // ALCompiler.ObjectToNavOutStream(parent, expr) -> AlCompat.ObjectToMockOutStream(parent, expr)
+            // BC emits this wrapper when an expression returning OutStream is used directly (chained),
+            // e.g. TempBlob.CreateOutStream().WriteText(...). After the NavOutStream→MockOutStream rename
+            // the inner expression already returns MockOutStream but the wrapper still returns NavOutStream,
+            // causing CS1503. AlCompat.ObjectToMockOutStream performs the same extraction with MockOutStream.
+            if (exprText == "ALCompiler" && methodName == "ObjectToNavOutStream")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("ObjectToMockOutStream")));
+            }
+
+            // ALCompiler.ObjectToNavInStream(parent, expr) -> AlCompat.ObjectToMockInStream(parent, expr)
+            // Symmetric to ObjectToNavOutStream — see comment above.
+            if (exprText == "ALCompiler" && methodName == "ObjectToNavInStream")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("ObjectToMockInStream")));
+            }
+
             // ALSystemErrorHandling.ALClearLastError() -> AlScope.LastErrorText = ""
             // ALSystemErrorHandling.ALGetLastErrorTextFunc(...) -> AlScope.LastErrorText
             // ALSystemErrorHandling.ALGetLastErrorObject(...) -> AlScope.GetLastErrorObject()
@@ -3764,6 +3880,26 @@ public void ClearApplicationMemberVariables()
                             args[2]
                         })));
             }
+
+            // NavXmlDocument.ALReadFrom(DataError, MockInStream, ByRef<NavXmlDocument>) — CS1503.
+            // BC emits NavXmlDocument.ALReadFrom(DataError, NavInStream, ...) for
+            // XmlDocument.ReadFrom(InStream, var Document [, Options]).
+            // After NavInStream→MockInStream rename the InStream form is incompatible with
+            // NavXmlDocument's string overload. Redirect ALL ALReadFrom calls on NavXmlDocument
+            // to AlCompat.XmlDocumentReadFrom which has overloads for both NavText and MockInStream.
+            // This covers:
+            //   3-arg: ALReadFrom(DataError, text/stream, ByRef<NavXmlDocument>)
+            //   4-arg: ALReadFrom(DataError, text/stream, NavXmlReadOptions, ByRef<NavXmlDocument>)
+            if (exprText == "NavXmlDocument" && methodName == "ALReadFrom")
+            {
+                var args = visited.ArgumentList.Arguments;
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("XmlDocumentReadFrom")),
+                    visited.ArgumentList);
+            }
         }
 
         return visited;
@@ -3799,6 +3935,26 @@ public void ClearApplicationMemberVariables()
         if (!isEq && !isNe)
             return visited;
 
+        // Rewrite: expr.CompareTo(other) == 0  →  expr == other
+        //          expr.CompareTo(other) != 0  →  expr != other
+        // NavStringValue.CompareTo throws NullReferenceException in standalone mode
+        // (BC runtime DLL bug). The == operator works correctly.
+        // BC emits this pattern for 'case' statements on Text/Code values.
+        {
+            var (compareToExpr, zeroLiteral) = IsCompareToZeroPattern(visited.Left, visited.Right);
+            if (compareToExpr == null)
+                (compareToExpr, zeroLiteral) = IsCompareToZeroPattern(visited.Right, visited.Left);
+            if (compareToExpr != null)
+            {
+                var memberAccess = (MemberAccessExpressionSyntax)((InvocationExpressionSyntax)compareToExpr).Expression;
+                var lhs = memberAccess.Expression;
+                var rhs = ((InvocationExpressionSyntax)compareToExpr).ArgumentList.Arguments[0].Expression;
+                var kind = isEq ? SyntaxKind.EqualsExpression : SyntaxKind.NotEqualsExpression;
+                return SyntaxFactory.BinaryExpression(kind, lhs, rhs)
+                    .WithTriviaFrom(visited);
+            }
+        }
+
         // Only intercept when at least one side is AlCompat.CreateNavCode(...) — that
         // identifies a Code[N] literal comparison generated by BC for case statements.
         if (!IsCreateNavCodeCall(visited.Left) && !IsCreateNavCodeCall(visited.Right))
@@ -3821,6 +3977,33 @@ public void ClearApplicationMemberVariables()
                 SyntaxFactory.ParenthesizedExpression(equalsCall));
 
         return equalsCall;
+    }
+
+    /// <summary>
+    /// Check if <paramref name="candidate"/> is <c>expr.CompareTo(arg)</c> and
+    /// <paramref name="other"/> is the literal <c>0</c>.
+    /// Returns the invocation expression and the zero literal, or (null, null).
+    /// </summary>
+    private static (ExpressionSyntax? compareToCall, ExpressionSyntax? zeroLiteral) IsCompareToZeroPattern(
+        ExpressionSyntax candidate, ExpressionSyntax other)
+    {
+        // other must be literal 0
+        if (other is not LiteralExpressionSyntax lit || !lit.IsKind(SyntaxKind.NumericLiteralExpression))
+            return (null, null);
+        if (lit.Token.ValueText != "0")
+            return (null, null);
+
+        // candidate must be expr.CompareTo(arg)
+        if (candidate is not InvocationExpressionSyntax invocation)
+            return (null, null);
+        if (invocation.Expression is not MemberAccessExpressionSyntax memberAccess)
+            return (null, null);
+        if (memberAccess.Name.Identifier.ValueText != "CompareTo")
+            return (null, null);
+        if (invocation.ArgumentList.Arguments.Count != 1)
+            return (null, null);
+
+        return (candidate, other);
     }
 
     // -----------------------------------------------------------------------
@@ -4286,6 +4469,15 @@ public void ClearApplicationMemberVariables()
                 if (targetExpr is MemberAccessExpressionSyntax targetMa &&
                     targetMa.Name.Identifier.Text == "Target")
                     targetExpr = targetMa.Expression;
+                // base.Parent (inside a scope class) → _parent.
+                // The VisitMemberAccessExpression rule (base.Parent.xxx → _parent.xxx) only
+                // fires when base.Parent appears as the inner half of a 3-part chain.  Here
+                // base.Parent is a bare argument, so the rule never fires.  Resolve it now
+                // before creating the new call node (which won't be re-visited).
+                if (targetExpr is MemberAccessExpressionSyntax baseParentMa &&
+                    baseParentMa.Name.Identifier.Text == "Parent" &&
+                    baseParentMa.Expression is BaseExpressionSyntax)
+                    targetExpr = SyntaxFactory.IdentifierName("_parent");
                 var call = SyntaxFactory.InvocationExpression(
                     SyntaxFactory.MemberAccessExpression(
                         SyntaxKind.SimpleMemberAccessExpression,

@@ -218,6 +218,22 @@ public class MockRecordRef
     public bool ALFind(DataError errorLevel, string which) => _handle != null && MarkedOnlyFind(() => _handle.ALFind(errorLevel, which));
 
     /// <summary>
+    /// ALFind(NavText, bool) — 2-arg form emitted by some BC versions for
+    /// <c>RecordRef.Find(SearchExpression, ForceNewQuery)</c>.  Resolves CS1503
+    /// (NavText → DataError, bool → string) — issues #1108, #1109.
+    /// ForceNewQuery is a runtime hint and is ignored in standalone mode.
+    /// </summary>
+    public bool ALFind(NavText searchMethod, bool forceNewQuery = false)
+        => TryFind(() => MarkedOnlyFind(() => _handle?.ALFind(DataError.ThrowError, searchMethod.ToString()) ?? false));
+
+    /// <summary>
+    /// ALFind(string, bool) — same as ALFind(NavText, bool) but for string literals.
+    /// Defensive overload so C# overload resolution has an exact 2-arg (string, bool) match.
+    /// </summary>
+    public bool ALFind(string searchMethod, bool forceNewQuery)
+        => Find(searchMethod);
+
+    /// <summary>
     /// Try a find operation, catching exceptions for no-DataError callers.
     /// MockRecordHandle.ALFindFirst etc. throw when DataError.ThrowError is passed
     /// and no records exist, but RecordRef.FindFirst() (AL) returns false instead.

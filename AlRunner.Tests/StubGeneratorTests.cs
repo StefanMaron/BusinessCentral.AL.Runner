@@ -444,4 +444,151 @@ codeunit 50100 ""My Test""
             StubGenerator.RenderType(new StubGenerator.TypeSymbol("List", null, false,
                 new List<StubGenerator.TypeSymbol> { new("Text", null, false, null) })));
     }
+
+    // --- Problem 1: EventSubscriber reference detection ---
+
+    [Fact]
+    public void IsCodeunitReferenced_DetectsEventSubscriberQuotedName()
+    {
+        // EventSubscriber attribute: Codeunit::"Company-Initialize"
+        var cu = new StubGenerator.CodeunitSymbol(2, "Company-Initialize", new List<StubGenerator.MethodSymbol>());
+        var sourceText = "[EventSubscriber(ObjectType::Codeunit, Codeunit::\"Company-Initialize\", 'OnCompanyInitialize', '', false, false)]";
+        Assert.True(StubGenerator.IsCodeunitReferenced(cu, sourceText),
+            "Codeunit::\"Name\" in EventSubscriber attribute should be detected as a reference");
+    }
+
+    [Fact]
+    public void IsCodeunitReferenced_DetectsEventSubscriberUnquotedName()
+    {
+        // EventSubscriber attribute: Codeunit::SomeName (single-word, no quotes)
+        var cu = new StubGenerator.CodeunitSymbol(42, "MyHelper", new List<StubGenerator.MethodSymbol>());
+        var sourceText = "[EventSubscriber(ObjectType::Codeunit, Codeunit::MyHelper, 'OnDoSomething', '', false, false)]";
+        Assert.True(StubGenerator.IsCodeunitReferenced(cu, sourceText),
+            "Codeunit::Name (no quotes) in EventSubscriber attribute should be detected as a reference");
+    }
+
+    [Fact]
+    public void IsCodeunitReferenced_DetectsCodeunitDoubleColonQuoted()
+    {
+        // General Codeunit::"Name" usage, e.g. in run statements
+        var cu = new StubGenerator.CodeunitSymbol(1000, "My Library", new List<StubGenerator.MethodSymbol>());
+        var sourceText = "Codeunit.Run(Codeunit::\"My Library\");";
+        Assert.True(StubGenerator.IsCodeunitReferenced(cu, sourceText),
+            "Codeunit::\"Name\" pattern should be detected as a reference");
+    }
+
+    [Fact]
+    public void IsCodeunitReferenced_CountIncreasesWithEventSubscriberPatterns()
+    {
+        // Demonstrate that EventSubscriber references cause more codeunits to be detected
+        // as referenced compared to variable-declaration-only detection.
+
+        // A codeunit that is ONLY referenced via EventSubscriber (no var decl, no ID literal)
+        var cu = new StubGenerator.CodeunitSymbol(99999, "Unique-Init-Handler", new List<StubGenerator.MethodSymbol>());
+
+        // Source that does NOT contain a variable declaration or the numeric ID
+        var sourceWithoutEventSubscriber = "// some other code";
+        Assert.False(StubGenerator.IsCodeunitReferenced(cu, sourceWithoutEventSubscriber),
+            "Should not be detected when only other code is present");
+
+        // Source that DOES contain an EventSubscriber reference
+        var sourceWithEventSubscriber =
+            "[EventSubscriber(ObjectType::Codeunit, Codeunit::\"Unique-Init-Handler\", 'OnRun', '', false, false)]";
+        Assert.True(StubGenerator.IsCodeunitReferenced(cu, sourceWithEventSubscriber),
+            "Should be detected via EventSubscriber Codeunit::\"Name\" pattern");
+    }
+
+    // --- Problem 2: Multiple package directories ---
+
+    [Fact]
+    public void Generate_MultiplePackageDirs_ScansAllDirs()
+    {
+        // Arrange: two separate package directories, each with one .app
+        // Use temp files that are empty/minimal — we just verify both dirs are scanned.
+        // We test this using the static Generate overload that accepts multiple dirs.
+        // Since we cannot create real .app files easily, we test the ThrowsForMissing case
+        // for the multi-dir overload to confirm it exists, then test with real dirs if available.
+
+        if (!HasTestApps) return;
+
+        var pkgDir1 = Path.Combine(Path.GetTempPath(), "al-stub-pkg1-" + Guid.NewGuid().ToString("N")[..8]);
+        var pkgDir2 = Path.Combine(Path.GetTempPath(), "al-stub-pkg2-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir = Path.Combine(Path.GetTempPath(), "al-stub-out-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(pkgDir1);
+            Directory.CreateDirectory(pkgDir2);
+
+            // Split: put TestLibraries in dir1, nothing in dir2 (empty is valid)
+            File.Copy(TestLibrariesApp, Path.Combine(pkgDir1, Path.GetFileName(TestLibrariesApp)));
+
+            var result = StubGenerator.Generate(new[] { pkgDir1, pkgDir2 }, outDir);
+
+            // Should generate the same as scanning pkgDir1 alone
+            Assert.True(result.Generated > 0, "Should generate stubs from pkgDir1");
+            Assert.True(result.TotalAvailable > 0, "Should find codeunits in pkgDir1");
+        }
+        finally
+        {
+            if (Directory.Exists(pkgDir1)) Directory.Delete(pkgDir1, true);
+            if (Directory.Exists(pkgDir2)) Directory.Delete(pkgDir2, true);
+            if (Directory.Exists(outDir)) Directory.Delete(outDir, true);
+        }
+    }
+
+    [Fact]
+    public void Generate_MultiplePackageDirs_CombinesCodeunitsFromBothDirs()
+    {
+        // Verify that codeunits from BOTH package dirs appear in the output.
+        if (!HasTestApps) return;
+
+        // We need two app files. If we only have one, copy it to both dirs under different names
+        // to simulate two packages — both will have the same codeunits, so we just verify
+        // that TotalAvailable reflects scanning both.
+        var pkgDir1 = Path.Combine(Path.GetTempPath(), "al-stub-pkgA-" + Guid.NewGuid().ToString("N")[..8]);
+        var pkgDir2 = Path.Combine(Path.GetTempPath(), "al-stub-pkgB-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir1 = Path.Combine(Path.GetTempPath(), "al-stub-outA-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir2 = Path.Combine(Path.GetTempPath(), "al-stub-outB-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDirBoth = Path.Combine(Path.GetTempPath(), "al-stub-outBoth-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(pkgDir1);
+            Directory.CreateDirectory(pkgDir2);
+
+            File.Copy(TestLibrariesApp, Path.Combine(pkgDir1, Path.GetFileName(TestLibrariesApp)));
+            // Use LibraryAssert in pkgDir2 if available, otherwise skip
+            if (!File.Exists(LibraryAssertApp)) return;
+            File.Copy(LibraryAssertApp, Path.Combine(pkgDir2, Path.GetFileName(LibraryAssertApp)));
+
+            // Single-dir scans for reference counts
+            var resultDir1 = StubGenerator.Generate(pkgDir1, outDir1);
+            var resultDir2 = StubGenerator.Generate(pkgDir2, outDir2);
+            var resultBoth = StubGenerator.Generate(new[] { pkgDir1, pkgDir2 }, outDirBoth);
+
+            // TotalAvailable when scanning both dirs should equal sum of both individual scans
+            // (or at least be >= max of the two)
+            Assert.True(resultBoth.TotalAvailable >= Math.Max(resultDir1.TotalAvailable, resultDir2.TotalAvailable),
+                $"Multi-dir scan ({resultBoth.TotalAvailable}) should find at least as many codeunits as the larger single-dir scan");
+
+            // The combined scan should have generated at least as many files
+            Assert.True(resultBoth.Generated >= Math.Max(resultDir1.Generated, resultDir2.Generated),
+                "Multi-dir scan should generate at least as many stubs as single-dir scan");
+        }
+        finally
+        {
+            if (Directory.Exists(pkgDir1)) Directory.Delete(pkgDir1, true);
+            if (Directory.Exists(pkgDir2)) Directory.Delete(pkgDir2, true);
+            if (Directory.Exists(outDir1)) Directory.Delete(outDir1, true);
+            if (Directory.Exists(outDir2)) Directory.Delete(outDir2, true);
+            if (Directory.Exists(outDirBoth)) Directory.Delete(outDirBoth, true);
+        }
+    }
+
+    [Fact]
+    public void Generate_MultiplePackageDirs_ThrowsForMissingDirectory()
+    {
+        // The multi-dir overload should throw when any dir is missing
+        Assert.Throws<DirectoryNotFoundException>(() =>
+            StubGenerator.Generate(new[] { "/nonexistent/path1", "/nonexistent/path2" }, "/tmp/output"));
+    }
 }

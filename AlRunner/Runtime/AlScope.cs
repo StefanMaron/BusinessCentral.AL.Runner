@@ -212,6 +212,38 @@ public class AlScope : IDisposable, ITreeObject
     public static int MaxStackDepth { get; set; } = 1000;
     public static string LastErrorCallStack { get; set; } = "";
 
+    /// <summary>
+    /// Instance <c>this</c>-returning stub for <c>Parent</c> — issues #1092, #1105, #1111.
+    ///
+    /// Some BC compiler versions emit <c>this.Parent</c> (instance access) in
+    /// generated scope class code when a scope class body references a parent
+    /// codeunit field. Without this instance property, the generated C# fails with:
+    ///   CS0176: 'AlScope.Parent' cannot be accessed with an instance reference.
+    ///
+    /// Earlier versions (issue #1092) emitted a static class-qualified access that
+    /// was fixed with a static property, but that caused CS0176 for the instance
+    /// pattern. The correct fix is an instance (virtual) property so that both
+    /// <c>this.Parent</c> and <c>base.Parent</c> compile and resolve correctly.
+    ///
+    /// The real parent reference is always accessed through the injected instance
+    /// property on the concrete scope subclass (e.g. <c>public Codeunit123 Parent => _parent;</c>)
+    /// which shadows this base stub.
+    ///
+    /// Returning <c>this</c> (rather than null) prevents a runtime null-dereference when
+    /// BC emits <c>ALSession.ALBindSubscription(DataError, base.Parent)</c> inside a scope
+    /// class and the rewriter rewrites this to <c>base.Parent.Bind()</c> but does NOT
+    /// further rewrite <c>base.Parent</c> to <c>_parent</c> (because the new node is not
+    /// re-visited — issue #1111).  With <c>Parent => this</c>, <c>base.Parent.Bind()</c>
+    /// calls <c>AlScope.Bind()</c> (the no-op stub) instead of throwing
+    /// "Cannot perform runtime binding on a null reference".
+    ///
+    /// Returning <c>dynamic</c> instead of <c>object</c> allows calls such as
+    /// <c>base.Parent.Bind()</c> to compile via dynamic dispatch.  Concrete scope
+    /// classes shadow this with a strongly-typed property so the dynamic dispatch
+    /// penalty only affects the rare unresolved case.
+    /// </summary>
+    public virtual dynamic Parent => this;
+
     // ── Collectible errors ──────────────────────────────────────────────
     // Thread-static to avoid cross-test contamination in parallel scenarios.
 
@@ -280,6 +312,22 @@ public class AlScope : IDisposable, ITreeObject
         // diagnostics. Return a placeholder in standalone mode.
         return $"Method_{memberId}";
     }
+
+    /// <summary>
+    /// Bind — no-op stub on AlScope base.
+    ///
+    /// BC emits <c>ALSession.ALBindSubscription(DataError, base.Parent)</c> in scope
+    /// classes. The rewriter converts this to <c>base.Parent.Bind()</c> → <c>_parent.Bind()</c>.
+    /// The concrete codeunit class gets its own <c>Bind()</c> injected by the rewriter
+    /// (see <c>isCodeunitClass</c> block); this base virtual stub covers edge-cases
+    /// where the enclosing type is not a codeunit — issue #1106 / Gap 2.
+    /// </summary>
+    public virtual void Bind() { }
+
+    /// <summary>
+    /// Unbind — no-op stub on AlScope base (symmetric to <see cref="Bind"/>).
+    /// </summary>
+    public virtual void Unbind() { }
 
     /// <summary>
     /// AL's [TryFunction] attribute. BC emits
@@ -381,6 +429,14 @@ public class MockCurrPage
     /// </summary>
     public void CancelBackgroundTask(int taskId) { }
     public void CancelBackgroundTask(DataError errorLevel, int taskId) { }
+
+    /// <summary>
+    /// CurrPage.GetPart(partHash) — used by page extension code when accessing subpages
+    /// via <c>CurrPage.SubPart.Page.SomeProcedure()</c>.
+    /// BC lowers this to <c>CurrPage.GetPart(hash).CreateNavFormHandle(scope).Invoke(methodHash, args)</c>.
+    /// Returns a <see cref="MockPagePartHandle"/> that searches all Page* types for the method.
+    /// </summary>
+    public MockPagePartHandle GetPart(int partHash) => new MockPagePartHandle(partHash);
 }
 
 /// <summary>
@@ -648,6 +704,19 @@ public static class AlCompat
     {
         var asm = MockCodeunitHandle.CurrentAssembly;
         if (asm == null) return;
+
+        FireEventInAssembly(asm, objectType, publisherId, eventName, eventArgs);
+
+        // Also fire events from dependency assemblies
+        if (MockCodeunitHandle.DependencyAssemblies != null)
+        {
+            foreach (var depAsm in MockCodeunitHandle.DependencyAssemblies)
+                FireEventInAssembly(depAsm, objectType, publisherId, eventName, eventArgs);
+        }
+    }
+
+    private static void FireEventInAssembly(System.Reflection.Assembly asm, int objectType, int publisherId, string eventName, object?[] eventArgs)
+    {
         var subs = EventSubscriberRegistry.GetSubscribers(asm, objectType, publisherId, eventName);
         foreach (var sub in subs)
         {
@@ -667,9 +736,7 @@ public static class AlCompat
             try
             {
                 instance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(ownerType);
-                var initMethod = ownerType.GetMethod("InitializeComponent",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-                initMethod?.Invoke(instance, null);
+                AlCompat.InitializeUninitializedObject(instance);
             }
             catch { continue; }
 
@@ -677,18 +744,116 @@ public static class AlCompat
         }
     }
 
+    // Open generic type for ByRef<T> from the BC runtime.
+    // Used in InvokeSubscriber to detect when a subscriber parameter is ByRef<T>
+    // and the event arg is a plain T — e.g. "var RunTrigger: Boolean" compiles
+    // to ByRef<bool> but FireImplicitDbEvent passes a raw bool.
+    private static readonly System.Type? _byRefOpenGeneric = typeof(ByRef<bool>).GetGenericTypeDefinition();
+
+    /// <summary>
+    /// Invoke an event subscriber method, coercing each argument to the
+    /// declared parameter type.  The most common mismatch is a plain value
+    /// being passed for a <c>ByRef&lt;T&gt;</c> parameter (e.g. a subscriber
+    /// that declares <c>var RunTrigger: Boolean</c> where BC emits
+    /// <c>ByRef&lt;bool&gt;</c> but <see cref="MockRecordHandle.FireImplicitDbEvent"/>
+    /// passes a plain <c>bool</c>).
+    ///
+    /// When the arg count is less than the parameter count (subscriber declares
+    /// extra optional-style params) the remaining args stay null; reference-type
+    /// params accept null, and value-type params are left as default(T).
+    /// </summary>
     private static void InvokeSubscriber(object? instance, System.Reflection.MethodInfo method, object?[] eventArgs)
     {
         var parameters = method.GetParameters();
         var args = new object?[parameters.Length];
-        for (int i = 0; i < args.Length && i < eventArgs.Length; i++)
-            args[i] = eventArgs[i];
+        for (int i = 0; i < args.Length; i++)
+        {
+            var raw = i < eventArgs.Length ? eventArgs[i] : null;
+            args[i] = CoerceArgForParameter(parameters[i], raw);
+        }
         try { method.Invoke(instance, args); }
         catch (System.Reflection.TargetInvocationException tie)
         {
             if (tie.InnerException != null) throw tie.InnerException;
             throw;
         }
+    }
+
+    /// <summary>
+    /// Coerce <paramref name="arg"/> so it is assignable to the declared
+    /// <paramref name="param"/> type.
+    ///
+    /// <list type="bullet">
+    ///   <item><c>ByRef&lt;T&gt;</c> param + plain <c>T</c> arg — wraps the value
+    ///   in a <c>ByRef&lt;T&gt;</c> using a getter/setter backed by a local
+    ///   variable so mutation inside the subscriber is captured (though the
+    ///   writeback currently only matters to the subscriber itself, not to the
+    ///   caller, since implicit DB event firers do not use the returned value).</item>
+    ///   <item>Value-type param + null arg — returns <c>Activator.CreateInstance(T)</c>
+    ///   (the default value) so reflection does not throw on the unboxing.</item>
+    ///   <item>All other cases — returns <paramref name="arg"/> unchanged.</item>
+    /// </list>
+    /// </summary>
+    private static object? CoerceArgForParameter(System.Reflection.ParameterInfo param, object? arg)
+    {
+        var paramType = param.ParameterType;
+
+        // ByRef<T> wrapping: subscriber declared "var X: SomeType" for a
+        // value or non-record type, so BC emits ByRef<T>.  The event fires
+        // with a plain T — we wrap it.
+        if (_byRefOpenGeneric != null
+            && paramType.IsGenericType
+            && paramType.GetGenericTypeDefinition() == _byRefOpenGeneric)
+        {
+            // If arg is already ByRef<T>, pass it through.
+            if (arg != null && paramType.IsInstanceOfType(arg))
+                return arg;
+
+            var innerType = paramType.GetGenericArguments()[0];
+            // Build a ByRef<T> using its (Func<T>, Action<T>) constructor.
+            // We use a single-element object array as the backing store so that
+            // mutations inside the subscriber are captured even though we don't
+            // propagate them back to the original eventArgs.
+            var store = new object?[] { arg };
+            try
+            {
+                // Build Func<T>: () => (T)store[0]
+                var funcType = typeof(System.Func<>).MakeGenericType(innerType);
+                var actionType = typeof(System.Action<>).MakeGenericType(innerType);
+
+                // Use a generic helper to avoid per-type Activator overheads.
+                var helperMethod = typeof(AlCompat).GetMethod(
+                    nameof(MakeByRef),
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                    ?.MakeGenericMethod(innerType);
+
+                if (helperMethod != null)
+                    return helperMethod.Invoke(null, new[] { store });
+            }
+            catch { /* fall through — return arg as-is and let Invoke give a clearer error */ }
+
+            return arg;
+        }
+
+        // Value-type param with null arg: supply the type default so Invoke
+        // does not throw "Object of type 'null' cannot be converted to type T".
+        if (arg == null && paramType.IsValueType)
+            return System.Activator.CreateInstance(paramType);
+
+        return arg;
+    }
+
+    /// <summary>
+    /// Generic helper that creates a <c>ByRef&lt;T&gt;</c> backed by
+    /// <paramref name="store"/>[0] via getter/setter lambdas.
+    /// Called reflectively from <see cref="CoerceArgForParameter"/> to avoid
+    /// generating per-type IL at runtime.
+    /// </summary>
+    private static ByRef<T> MakeByRef<T>(object?[] store)
+    {
+        return new ByRef<T>(
+            () => store[0] is T v ? v : default!,
+            v => store[0] = v);
     }
 
     /// <summary>
@@ -738,6 +903,17 @@ public static class AlCompat
     /// </summary>
     public static NavOption CloneTaggedOption(NavOption existing, int ordinal)
     {
+        // Guard: when an AL enum/option field or variable has never been assigned,
+        // the underlying NavOption reference at the C# level is null.  The BC
+        // compiler emits NavOption.Create(existing.NavOptionMetadata, V) which
+        // the rewriter transforms to CloneTaggedOption(existing, V).  With a null
+        // existing, ConditionalWeakTable.TryGetValue throws
+        // "Value cannot be null (Parameter 'key')".  Treat null as an
+        // uninitialized option and just create a fresh NavOption — BC behaviour
+        // is that uninitialized option fields default to ordinal 0.
+        if (existing == null)
+            return AlRunner.Runtime.MockRecordHandle.CreateOptionValue(ordinal);
+
         var opt = AlRunner.Runtime.MockRecordHandle.CreateOptionValue(ordinal);
         if (_optionEnumId.TryGetValue(existing, out var id))
             _optionEnumId.AddOrUpdate(opt, id);
@@ -867,6 +1043,37 @@ public static class AlCompat
     }
 
     /// <summary>
+    /// Replacement for ALCompiler.ObjectToNavOutStream on the chained-call path.
+    /// BC emits ALCompiler.ObjectToNavOutStream(parent, expr) when an expression
+    /// that returns OutStream is used directly (chained), e.g.:
+    ///   TempBlob.CreateOutStream().WriteText(...)
+    /// After the rewriter renames NavOutStream → MockOutStream in type identifiers,
+    /// the method invocation is still wired to ALCompiler.ObjectToNavOutStream which
+    /// returns NavOutStream. This replacement returns MockOutStream instead.
+    /// </summary>
+    public static MockOutStream ObjectToMockOutStream(object? parent, object? value)
+    {
+        if (value is MockOutStream mockOutStream)
+            return mockOutStream;
+
+        // Fallback: return an empty stream rather than throw, so callers that
+        // just chain a write-and-discard don't crash.
+        return MockOutStream.Default();
+    }
+
+    /// <summary>
+    /// Replacement for ALCompiler.ObjectToNavInStream on the chained-call path.
+    /// See ObjectToMockOutStream for the symmetric explanation.
+    /// </summary>
+    public static MockInStream ObjectToMockInStream(object? parent, object? value)
+    {
+        if (value is MockInStream mockInStream)
+            return mockInStream;
+
+        return MockInStream.Default();
+    }
+
+    /// <summary>
     /// Replacement for ALCompiler.NavIndirectValueToBoolean.
     /// Extracts a boolean from a variant/indirect value holder.
     /// </summary>
@@ -897,12 +1104,61 @@ public static class AlCompat
     public static T NavIndirectValueToNavValue<T>(object? value) where T : NavValue
     {
         if (value is T directValue) return directValue;
-        if (value is MockVariant mv && mv.Value is T mvValue) return mvValue;
+        if (value is MockVariant mv)
+        {
+            if (mv.Value is T mvValue) return mvValue;
+            // Unwrap variant and retry
+            return NavIndirectValueToNavValue<T>(mv.Value);
+        }
         if (value is NavValue nv && nv is T typedValue) return typedValue;
-        // Try conversion from string
+        // Coerce bool/NavBoolean → NavText using AL's "Yes"/"No" representation
         if (typeof(T) == typeof(NavText))
-            return (T)(NavValue)new NavText(value?.ToString() ?? "");
+        {
+            if (value is bool boolVal)
+                return (T)(NavValue)new NavText(boolVal ? "Yes" : "No");
+            if (value is NavBoolean nb)
+                return (T)(NavValue)new NavText((bool)nb ? "Yes" : "No");
+            return (T)(NavValue)new NavText(Format(value));
+        }
         throw new InvalidCastException($"Cannot convert {value?.GetType().Name ?? "null"} to {typeof(T).Name}");
+    }
+
+    /// <summary>
+    /// 2-argument overload of NavIndirectValueToNavValue for the BC compiler's
+    /// <c>ALCompiler.NavIndirectValueToNavValue&lt;T&gt;(value, metadata)</c> pattern.
+    /// The metadata argument (NavValueDefinedLengthMetadata) is ignored — only the
+    /// value conversion matters in standalone mode.
+    /// </summary>
+    public static T NavIndirectValueToNavValue<T>(object? value, object? metadata) where T : NavValue
+        => NavIndirectValueToNavValue<T>(value);
+
+    /// <summary>
+    /// Safe replacement for ALCompiler.ObjectToExactNavValue&lt;T&gt;(x).
+    /// The rewriter converts <c>ALCompiler.ObjectToExactNavValue&lt;T&gt;(x)</c> to
+    /// <c>(T)(object)(x)</c>, which fails at runtime when x is a C# primitive (bool, int)
+    /// that cannot be directly cast to the BC NavValue type T.
+    /// This helper handles the common coercions, matching BC's implicit conversions.
+    /// Note: T is unconstrained so it also handles NavVariant → MockVariant cases.
+    /// </summary>
+    public static T ObjectToExactNavValue<T>(object? value)
+    {
+        if (value is T direct) return direct;
+        // Unwrap MockVariant for NavValue targets
+        if (value is MockVariant mv && typeof(T) != typeof(MockVariant))
+            return ObjectToExactNavValue<T>(mv.Value);
+        // bool/NavBoolean → NavText: AL uses "Yes"/"No" representation
+        if (typeof(T) == typeof(NavText))
+        {
+            if (value is bool boolVal)
+                return (T)(object)new NavText(boolVal ? "Yes" : "No");
+            if (value is NavBoolean nb)
+                return (T)(object)new NavText((bool)nb ? "Yes" : "No");
+            if (value is NavValue src)
+                return (T)(object)new NavText(Format(src));
+            return (T)(object)new NavText(Format(value));
+        }
+        // Fallback: try direct cast (may throw for truly incompatible types, matching BC behaviour)
+        return (T)(object)value!;
     }
 
     /// <summary>
@@ -921,6 +1177,8 @@ public static class AlCompat
         if (value is double dbl) return FormatDecimal((decimal)dbl);
         if (value is float f) return FormatDecimal((decimal)f);
         if (value is int or long or short or byte) return value.ToString()!;
+        // System.Boolean — BC scopes declare Boolean locals as C# bool. AL Format(true)="Yes", Format(false)="No".
+        if (value is bool boolV) return boolV ? "Yes" : "No";
         // System.Guid — BC 26.x compiles AL Guid variables as System.Guid (not NavGuid).
         // Default AL format is "B" = {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX} (38 chars, uppercase).
         if (value is Guid sysGuid) return sysGuid.ToString("B").ToUpperInvariant();
@@ -1871,6 +2129,16 @@ public static class AlCompat
         => content.ALLoadFrom(text);
 
     /// <summary>
+    /// Overload for <c>HttpContent.WriteFrom(SecretText)</c>.
+    /// BC emits <c>AlCompat.HttpContentLoadFrom(content, NavSecretText)</c> after
+    /// the ALLoadFrom redirect — resolving the <c>NavSecretText → MockInStream</c>
+    /// type mismatch (#1086). In standalone mode secrets are treated as plain text:
+    /// the value is unwrapped and stored as UTF-8 text content.
+    /// </summary>
+    public static void HttpContentLoadFrom(MockHttpContent content, NavSecretText secret)
+        => content.ALLoadFrom(Unwrap(secret));
+
+    /// <summary>
     /// Replacement for MockHttpContent.ALReadAs(ITreeObject, DataError, ByRef&lt;MockInStream&gt;).
     /// BC emits content.ALReadAs(this, DataError.ThrowError, stream) for
     /// HttpContent.ReadAs(var Stream: InStream). Returns a MockInStream whose data
@@ -1892,6 +2160,68 @@ public static class AlCompat
             stream.Value = ms;
         }
     }
+
+    // -----------------------------------------------------------------------
+    // XmlDocument.ReadFrom(InStream, ...) — CS1503 after NavInStream→MockInStream rename.
+    // BC emits NavXmlDocument.ALReadFrom(DataError, NavInStream, ByRef<NavXmlDocument>) for the
+    // InStream overload, and NavXmlDocument.ALReadFrom(DataError, NavText, ByRef<NavXmlDocument>)
+    // for the Text overload. After NavInStream→MockInStream rewrite the InStream form breaks
+    // because NavXmlDocument only has a string overload in BC's DLL.
+    // The rewriter redirects ALL NavXmlDocument.ALReadFrom calls here; both string and
+    // MockInStream variants are handled via overloads.
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Replacement for <c>NavXmlDocument.ALReadFrom(DataError, InStream, ByRef&lt;NavXmlDocument&gt;)</c>.
+    /// AL: <c>XmlDocument.ReadFrom(InStream, var Document)</c>.
+    /// Reads all text from the stream and delegates to the BC string overload.
+    /// </summary>
+    public static bool XmlDocumentReadFrom(DataError errorLevel, MockInStream stream, ByRef<NavXmlDocument> document)
+    {
+        string text = stream.ReadAll();
+        return NavXmlDocument.ALReadFrom(errorLevel, text, document);
+    }
+
+    /// <summary>
+    /// Passthrough for <c>NavXmlDocument.ALReadFrom(DataError, NavText, ByRef&lt;NavXmlDocument&gt;)</c>.
+    /// AL: <c>XmlDocument.ReadFrom(Text, var Document)</c>.
+    /// Text form routes here after the rewriter redirect so the same helper name covers both overloads.
+    /// </summary>
+    public static bool XmlDocumentReadFrom(DataError errorLevel, NavText text, ByRef<NavXmlDocument> document)
+        => NavXmlDocument.ALReadFrom(errorLevel, text, document);
+
+    /// <summary>
+    /// Passthrough for BC-emitted string literals: <c>NavXmlDocument.ALReadFrom(DataError, "...", ByRef&lt;NavXmlDocument&gt;)</c>.
+    /// BC emits string literals as C# <c>string</c>; this overload prevents ambiguity between
+    /// <c>NavText</c> and <c>MockInStream</c> overloads.
+    /// </summary>
+    public static bool XmlDocumentReadFrom(DataError errorLevel, string text, ByRef<NavXmlDocument> document)
+        => NavXmlDocument.ALReadFrom(errorLevel, text, document);
+
+    /// <summary>
+    /// Replacement for <c>NavXmlDocument.ALReadFrom(DataError, InStream, XmlReadOptions, ByRef&lt;NavXmlDocument&gt;)</c>.
+    /// AL: <c>XmlDocument.ReadFrom(InStream, Options, var Document)</c>.
+    /// Reads all text from the stream and delegates to the BC string+options overload.
+    /// </summary>
+    public static bool XmlDocumentReadFrom(DataError errorLevel, MockInStream stream, NavXmlReadOptions options, ByRef<NavXmlDocument> document)
+    {
+        string text = stream.ReadAll();
+        return NavXmlDocument.ALReadFrom(errorLevel, text, options, document);
+    }
+
+    /// <summary>
+    /// Passthrough for <c>NavXmlDocument.ALReadFrom(DataError, NavText, XmlReadOptions, ByRef&lt;NavXmlDocument&gt;)</c>.
+    /// AL: <c>XmlDocument.ReadFrom(Text, Options, var Document)</c>.
+    /// </summary>
+    public static bool XmlDocumentReadFrom(DataError errorLevel, NavText text, NavXmlReadOptions options, ByRef<NavXmlDocument> document)
+        => NavXmlDocument.ALReadFrom(errorLevel, text, options, document);
+
+    /// <summary>
+    /// Passthrough for BC-emitted string literals with options:
+    /// <c>NavXmlDocument.ALReadFrom(DataError, "...", XmlReadOptions, ByRef&lt;NavXmlDocument&gt;)</c>.
+    /// </summary>
+    public static bool XmlDocumentReadFrom(DataError errorLevel, string text, NavXmlReadOptions options, ByRef<NavXmlDocument> document)
+        => NavXmlDocument.ALReadFrom(errorLevel, text, options, document);
 
     /// <summary>
     /// Session.ApplicationArea() stub — returns empty string in standalone mode.
@@ -2407,6 +2737,67 @@ public static class AlCompat
     public static NavALErrorInfo CreateErrorInfo()
     {
         return new NavALErrorInfo();
+    }
+
+    /// <summary>
+    /// After <c>RuntimeHelpers.GetUninitializedObject</c>, call
+    /// <c>InitializeComponent</c> (and <c>InitializeGlobalVariables</c> if present)
+    /// on the instance to run field initializers that the constructor would have run.
+    /// Then, for any remaining reference-type backing fields that are still null,
+    /// initialize them to safe defaults:
+    /// <list type="bullet">
+    ///   <item><description><see cref="MockRecordHandle"/> — <c>new MockRecordHandle(0)</c></description></item>
+    ///   <item><description>Any other type with a public parameterless constructor — <c>Activator.CreateInstance</c></description></item>
+    /// </list>
+    /// This prevents <see cref="NullReferenceException"/> in event subscriber and
+    /// record trigger bodies when the generated class has global variable backing
+    /// fields that are not covered by the explicit Rec/xRec wiring in
+    /// <see cref="MockRecordHandle.TryFireRecordTrigger"/> or the
+    /// <c>InitializeComponent</c> call in <see cref="FireEvent"/>.
+    /// </summary>
+    /// <param name="instance">Object created via <c>GetUninitializedObject</c>.</param>
+    public static void InitializeUninitializedObject(object instance)
+    {
+        var type = instance.GetType();
+
+        // 1. Run InitializeComponent (sets fields with initializer expressions).
+        var initMethod = type.GetMethod("InitializeComponent",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.Instance);
+        try { initMethod?.Invoke(instance, null); } catch { /* swallow — better a default than a crash */ }
+
+        // 2. Run InitializeGlobalVariables if present (some generated classes use this wrapper).
+        var initGlobals = type.GetMethod("InitializeGlobalVariables",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.Instance);
+        if (initGlobals != null && initGlobals != initMethod)
+            try { initGlobals.Invoke(instance, null); } catch { /* swallow */ }
+
+        // 3. Walk all instance fields; default-initialize any reference-type field still null.
+        foreach (var field in type.GetFields(
+            System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.NonPublic))
+        {
+            if (field.FieldType.IsValueType) continue;
+            if (field.GetValue(instance) != null) continue;
+
+            // MockRecordHandle — safe default with table 0.
+            if (field.FieldType == typeof(MockRecordHandle))
+            {
+                field.SetValue(instance, new MockRecordHandle(0));
+                continue;
+            }
+
+            // Other reference types — try a parameterless constructor.
+            try
+            {
+                var ctor = field.FieldType.GetConstructor(System.Type.EmptyTypes);
+                if (ctor != null)
+                    field.SetValue(instance, ctor.Invoke(null));
+            }
+            catch { /* swallow — better null than crash-on-construction */ }
+        }
     }
 
 }

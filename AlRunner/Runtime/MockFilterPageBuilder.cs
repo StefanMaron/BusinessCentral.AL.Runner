@@ -92,6 +92,22 @@ public class MockFilterPageBuilder
         => ALGetView(caption);
 
     /// <summary>
+    /// Two-argument overload for <c>FilterPageBuilder.GetView(caption, useNames)</c>.
+    /// BC emits <c>ALGetView(NavText, bool)</c> for this form — issue #1xxx.
+    /// The <c>useNames</c> flag controls whether field names or captions are used in the
+    /// filter string; the mock stores and returns the filter as-is regardless.
+    /// </summary>
+    public string ALGetView(NavText caption, bool useNames)
+        => ALGetView((string)caption);
+
+    /// <summary>
+    /// String-key overload of the two-argument <c>GetView(caption, useNames)</c> form.
+    /// Handles the case where the caption is a raw C# string (text constant in AL).
+    /// </summary>
+    public string ALGetView(string caption, bool useNames)
+        => ALGetView(caption);
+
+    /// <summary>
     /// Store a filter string for the named table caption.
     /// Has no effect if the caption is not registered.
     /// </summary>

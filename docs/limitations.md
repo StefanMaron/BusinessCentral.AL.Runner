@@ -123,9 +123,19 @@ the exact value will see different results.
 | `IsSessionActive(id)` | True while session runs | Always `false` |
 | `GuiAllowed()` | False in background sessions | `false` |
 | `GetFilter(field)` | Serialised filter expression | Returns serialised filter expression (functional) |
-| Field `InitValue` | Applied on `Init()` | Not applied — type default only |
+| Field `InitValue` | Applied on `Init()` | Applied — parsed from AL source at pipeline start via `TableInitValueRegistry` |
 | `FieldRef.Caption` / `.Name` | Field metadata from schema | Real values for all AL-compiled tables including tableextension fields; `"FieldNN"` stub only for base-app tables not compiled in the current run |
 | `Commit()` | Commits current transaction | No-op |
+| `FilterGroup(n)` | Scoped filter groups | Not tracked — `FilterGroup()` is a no-op; all filters apply to group 0 |
+
+---
+
+## Known gaps — in scope but not yet implemented
+
+These are not architectural limits. They can be fixed; report them at
+https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
+
+- **FilterGroup** — `Rec.FilterGroup(n)` has no effect; filters always apply to group 0.
 
 ---
 

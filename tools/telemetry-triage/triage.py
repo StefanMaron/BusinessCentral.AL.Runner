@@ -184,13 +184,18 @@ def _classify_compilation_gap(outer_message: str) -> str:
 
     if cs_code == "CS1061":
         if _GENERATED_TYPE_RE.match(base_target):
-            return f"CS1061 on '{base_target}'"
+            normalized = re.sub(r'\d+$', '<N>', base_target)
+            return f"CS1061 on '{normalized}'"
         member_m = _MEMBER_RE.search(outer_message)
         if member_m:
             member = member_m.group(1)
             return f"CS1061:'{base_target}'.{member}"
         # Member name truncated or unparseable — group by target only
         return f"CS1061 on '{base_target}'"
+
+    if _GENERATED_TYPE_RE.match(base_target):
+        normalized = re.sub(r'\d+$', '<N>', base_target)
+        return f"{cs_code} on '{normalized}'"
 
     return f"{cs_code} on '{base_target}'"
 

@@ -82,7 +82,7 @@ jobs:
               [ -d "${suite}test" ] && args="$args ${suite}test"
             done
             echo "=== $bucket ==="
-            dotnet run --no-build --project AlRunner --framework net10.0 -- --strict $args
+            dotnet run --no-build --project AlRunner --framework net10.0 -- --strict --test-isolation method $args
           done
 
       - name: Run stubs test

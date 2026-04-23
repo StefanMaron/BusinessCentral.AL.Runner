@@ -48,6 +48,12 @@ Collisions → CS0101 build errors on all BC versions. IDs may repeat across buc
 
 Required doc updates:
 - docs/coverage.yaml — REQUIRED for every feature implemented (orchestrator blocks merge without it)
+  - Track at **overload level**: if a method has multiple overloads, each must have its own entry
+    (e.g. `File.UploadIntoStream (5-arg)` and `File.UploadIntoStream (6-arg)` are separate entries).
+    The auto-generated coverage scan only sees method names, not overloads — telemetry issues
+    often surface missing overloads that the scan missed. Always add the specific overload you implemented.
+  - When implementing a fix surfaced by telemetry (compilation gaps, runtime gaps), add a coverage
+    entry even if the parent method already appears as "covered" — the overload was the gap.
 - README.md, PrintGuide() in AlRunner/Program.cs, docs/limitations.md — only if behavior changes
 - Do NOT edit CHANGELOG.md
 
@@ -57,7 +63,25 @@ Required doc updates:
   <description>" --repo StefanMaron/BusinessCentral.AL.Runner
   gh pr edit <pr-N> --add-label "agent: <AGENT-ID>" --add-label "status: review-ready" --repo StefanMaron/BusinessCentral.AL.Runner
 
-## Step 5 — Monitor
+## Step 5 — Monitor until merged
+After creating the PR, you MUST actively monitor it until CI is green and it merges.
+Do NOT stop or assume "done" just because you pushed and created the PR.
+
+### Check for merge conflicts FIRST
+  gh pr view <pr-N> --json mergeStateStatus --repo StefanMaron/BusinessCentral.AL.Runner
+If mergeStateStatus is "DIRTY" or "CONFLICTING":
+  1. Rebase on main: git fetch origin main && git rebase origin/main
+  2. Resolve any conflicts
+  3. Force-push: git push --force-with-lease
+  4. Verify: gh pr view <pr-N> --json mergeStateStatus (must be "BLOCKED" or "CLEAN")
+CI will NOT run on a PR with conflicts — always check this before investigating CI issues.
+
+### Check CI status
+  gh pr checks <pr-N> --repo StefanMaron/BusinessCentral.AL.Runner
+- "no checks reported" → almost always means merge conflicts. Check mergeStateStatus above.
+- CI failing → read the job log, fix the issue, push a new commit.
+- CI green → done, wait for merge.
+
 Fix CI failures, address review comments. Once merged, return to Step 1.
 One issue at a time — do not claim another while a PR is open.
 
