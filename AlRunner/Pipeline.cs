@@ -158,6 +158,13 @@ public class AlRunnerPipeline
     public SyntaxTreeCache? SyntaxTreeCache { get; set; }
 
     /// <summary>
+    /// Codeunit IDs that were auto-stubbed (return defaults, no real implementation).
+    /// Used by the test output to annotate failures involving stub calls.
+    /// Maps codeunit ID → name.
+    /// </summary>
+    public static Dictionary<int, string> AutoStubbedCodeunits { get; } = new();
+
+    /// <summary>
     /// Run the full AL Runner pipeline: transpile → rewrite → compile → execute.
     /// Returns a structured result instead of writing to stdout/stderr directly.
     /// </summary>
@@ -700,10 +707,14 @@ public class AlRunnerPipeline
         if (testToolkitStubs.Count > 0)
         {
             rewrittenTreeList.AddRange(testToolkitStubs);
-            stderr.WriteLine($"Auto-stubbed {testToolkitStubs.Count} dependency codeunit(s) — methods return defaults");
-            stderr.WriteLine($"  Tip: for proper stubs run: al-runner --generate-stubs .alpackages ./stubs ./src ./test");
-            Log.Info($"  IDs: {string.Join(", ", testToolkitStubs.Select(s => s.Name))}");
-
+            stderr.WriteLine($"\nAuto-stubbed {testToolkitStubs.Count} dependency codeunit(s) — all methods return defaults:");
+            foreach (var (id, cuName) in AlRunnerPipeline.AutoStubbedCodeunits.OrderBy(kv => kv.Key))
+                stderr.WriteLine($"  {id} \"{cuName}\"");
+            stderr.WriteLine($"Tests that depend on these methods creating data WILL fail.");
+            stderr.WriteLine($"To compile real implementations:");
+            stderr.WriteLine($"  al-runner --compile-dep .alpackages/<app>.app .deps --packages .alpackages/");
+            stderr.WriteLine($"Then run with: al-runner --dep-dlls .deps ./src ./test");
+            stderr.WriteLine();
         }
 
         // Step 3: Compile
@@ -1469,6 +1480,13 @@ public class AlRunnerPipeline
             var tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(
                 stubCode, path: $"TestToolkitStub{id}.cs");
             stubs.Add(($"TestToolkitStub{id}", tree));
+        }
+
+        // Track all auto-stubbed IDs for test output annotation
+        foreach (var id in missingIds)
+        {
+            var cuName = symbolMap.TryGetValue(id, out var sym) ? sym.Name : $"Codeunit {id}";
+            AutoStubbedCodeunits.TryAdd(id, cuName);
         }
 
         return stubs;

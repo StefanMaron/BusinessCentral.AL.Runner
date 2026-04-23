@@ -2732,6 +2732,7 @@ public static class Executor
                     if (LooksLikeFrameworkVersionMismatch(r.Message))
                         Console.WriteLine($"      ℹ This BC version requires a newer .NET runtime. Install .NET 10: https://dotnet.microsoft.com/download/dotnet/10.0");
                     if (r.StackTrace != null) PrintFilteredStackTrace(r.StackTrace);
+                    PrintAutoStubWarningIfRelevant(r.StackTrace);
                     break;
                 case AlRunner.TestStatus.Error:
                     if (!verbose && r.Message != null && dedupMessages.Contains(r.Message))
@@ -2958,18 +2959,37 @@ public static class Executor
                 continue;
             if (line.Contains("System.RuntimeMethodHandle."))
                 continue;
-            if (printed < 5)
-            {
-                Console.WriteLine($"      {FormatSingleFrame(line)}");
-                printed++;
-            }
+            Console.WriteLine($"      {FormatSingleFrame(line)}");
+            printed++;
         }
         if (printed == 0 && lines.Length > 0)
         {
             // Fallback: print first few raw lines if nothing matched
-            foreach (var line in lines.Take(3))
+            foreach (var line in lines.Take(10))
                 Console.WriteLine($"      {line.Trim()}");
         }
+    }
+
+    /// <summary>
+    /// If the stack trace references any auto-stubbed codeunit, print a warning
+    /// explaining that the test likely failed because stubbed methods return defaults.
+    /// </summary>
+    private static void PrintAutoStubWarningIfRelevant(string? stackTrace)
+    {
+        if (stackTrace == null || AlRunnerPipeline.AutoStubbedCodeunits.Count == 0) return;
+
+        var involvedStubs = new List<(int Id, string Name)>();
+        foreach (var (id, name) in AlRunnerPipeline.AutoStubbedCodeunits)
+        {
+            if (stackTrace.Contains($"Codeunit{id}"))
+                involvedStubs.Add((id, name));
+        }
+
+        if (involvedStubs.Count == 0) return;
+
+        foreach (var (id, name) in involvedStubs)
+            Console.WriteLine($"      ⚠ Called auto-stubbed codeunit {id} \"{name}\" (methods return defaults — no records created).");
+        Console.WriteLine($"      Compile real implementations: al-runner --compile-dep <app>.app .deps --packages .alpackages/");
     }
 
     /// Used to print actionable guidance; does NOT change error classification.
@@ -3008,10 +3028,9 @@ public static class Executor
         // Prefer AL-generated frames (BusinessApplication namespace) over runtime internals
         var alFrames = allFrames
             .Where(f => f.Contains("BusinessApplication.") || f.Contains("MockAssert"))
-            .Take(3)
             .ToList();
 
-        var frames = alFrames.Count > 0 ? alFrames : allFrames.Take(3).ToList();
+        var frames = alFrames.Count > 0 ? alFrames : allFrames.Take(10).ToList();
         return string.Join("\n", frames.Select(f => $"      {FormatSingleFrame(f)}")) + "\n";
     }
 

@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Xml.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
@@ -44,7 +45,29 @@ public static class DepCompiler
 
         Console.Error.WriteLine($"Compiling dependency: {name} by {publisher} v{version}");
 
-        // 3. Extract AL sources from .app
+        // 3. Validate that all declared dependencies are available in packages
+        var missingDeps = ValidateDependencies(appPath, packagePaths);
+        if (missingDeps.Count > 0)
+        {
+            Console.Error.WriteLine($"  Cannot compile \"{name}\": {missingDeps.Count} required dependenc{(missingDeps.Count == 1 ? "y" : "ies")} not found in --packages:");
+            foreach (var dep in missingDeps)
+                Console.Error.WriteLine($"    ✗ \"{dep.Name}\" by {dep.Publisher} (>= {dep.MinVersion})");
+            if (packagePaths.Count > 0)
+            {
+                Console.Error.WriteLine($"  Package directories searched:");
+                foreach (var p in packagePaths)
+                    Console.Error.WriteLine($"    {p}");
+            }
+            else
+            {
+                Console.Error.WriteLine($"  No --packages directories specified.");
+            }
+            Console.Error.WriteLine($"  To fix: download the missing .app file(s) and add them to your packages directory,");
+            Console.Error.WriteLine($"  or add --packages pointing to where they live.");
+            return 1;
+        }
+
+        // 4. Extract AL sources from .app
         List<(string Name, string Source)> alEntries;
         try
         {
@@ -95,14 +118,95 @@ public static class DepCompiler
             }
         }
 
-        // 6. Transpile AL → C#
-        var csharpList = AlTranspiler.TranspileMulti(alSources, allPackagePaths.Count > 0 ? allPackagePaths : null, null);
+        // 6. Create a temp app.json so TranspileMulti can identify the app being
+        //    compiled and exclude it from package references (avoids self-duplicate
+        //    AL0275 errors and, crucially, prevents the .app's SymbolReference.json
+        //    from pulling in DotNet types that the source files may not need).
+        var appGuid = ReadAppGuid(appPath);
+        string? tempManifestDir = null;
+        List<string>? inputPaths = null;
+        if (appGuid != Guid.Empty)
+        {
+            tempManifestDir = Path.Combine(Path.GetTempPath(), $"alrunner-dep-{appGuid:N}");
+            Directory.CreateDirectory(tempManifestDir);
+            var manifest = $"{{\"id\":\"{appGuid}\",\"name\":\"{name}\",\"publisher\":\"{publisher}\",\"version\":\"{version}\"}}";
+            File.WriteAllText(Path.Combine(tempManifestDir, "app.json"), manifest);
+            inputPaths = new List<string> { tempManifestDir };
+        }
+
+        // 7. Transpile AL → C#
+        // The BC compiler refuses to emit ANY objects when unresolvable declaration
+        // errors exist (e.g. DotNet types, missing codeunits from other apps).
+        // DotNet types fundamentally don't work in the runner (no BC service tier),
+        // so excluding files that use them is correct, not a workaround.
+        //
+        // Strategy: try full compilation first. If zero output, iteratively remove
+        // files with unresolvable dependencies and retry until we get output.
+        var compilableSources = new List<string>(alSources);
+        var effectivePackages = allPackagePaths.Count > 0 ? allPackagePaths : null;
+        var csharpList = AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths);
+
+        if ((csharpList == null || csharpList.Count == 0) && compilableSources.Count > 0)
+        {
+            // Phase 1: Remove files with DotNet type references (unsupported in runner).
+            // DotNet interop requires the BC service tier and .NET assembly loading —
+            // these types fundamentally cannot work in standalone mode.
+            // AL syntax: `var x: DotNet StreamReader;` or `DotNet "System.IO.StreamReader"`
+            var dotnetPattern = new System.Text.RegularExpressions.Regex(
+                @":\s*DotNet\b|\bDotNet\s+[""A-Z]",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+            var dotnetCount = compilableSources.Count(s => dotnetPattern.IsMatch(s));
+            if (dotnetCount > 0)
+            {
+                compilableSources = compilableSources.Where(s => !dotnetPattern.IsMatch(s)).ToList();
+                Console.Error.WriteLine($"  Excluded {dotnetCount} file(s) using DotNet interop (unsupported in runner)");
+
+                // Retry without DotNet files
+                csharpList = AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths);
+            }
+        }
+
+        // Phase 2: If still failing after DotNet removal, report unresolved symbols clearly.
+        // All declared dependencies passed validation, so remaining failures indicate
+        // version mismatches or undeclared transitive dependencies.
+        if ((csharpList == null || csharpList.Count == 0) && compilableSources.Count > 0)
+        {
+            // Capture diagnostics to extract the specific unresolved symbols
+            var savedErr = Console.Error;
+            var diagCapture = new System.IO.StringWriter();
+            Console.SetError(diagCapture);
+            try { AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths); }
+            finally { Console.SetError(savedErr); }
+
+            var diagOutput = diagCapture.ToString();
+            var missingPattern = new System.Text.RegularExpressions.Regex(
+                @"((?:Codeunit|Table|Page|Enum|Interface|Report|PermissionSet|DotNet)\s+'[^']+'\s+is missing)");
+            var missingSymbols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (System.Text.RegularExpressions.Match m in missingPattern.Matches(diagOutput))
+                missingSymbols.Add(m.Groups[1].Value);
+
+            if (missingSymbols.Count > 0)
+            {
+                Console.Error.WriteLine($"  Compilation failed — {missingSymbols.Count} unresolved symbol(s):");
+                foreach (var sym in missingSymbols.OrderBy(s => s))
+                    Console.Error.WriteLine($"    ✗ {sym}");
+                Console.Error.WriteLine();
+                Console.Error.WriteLine("  These symbols come from .app packages not included in --packages.");
+                Console.Error.WriteLine("  To fix: find the .app file(s) that contain these objects and add them");
+                Console.Error.WriteLine("  to your packages directory, then retry.");
+            }
+        }
+
+        // Clean up temp manifest
+        if (tempManifestDir != null)
+            try { Directory.Delete(tempManifestDir, true); } catch { }
+
         if (csharpList == null || csharpList.Count == 0)
         {
             Console.Error.WriteLine($"  AL transpilation produced no output for {name}");
             return 1;
         }
-        Console.Error.WriteLine($"  Transpiled {csharpList.Count} C# objects");
+        Console.Error.WriteLine($"  Transpiled {csharpList.Count} C# objects (from {compilableSources.Count}/{alSources.Count} AL files)");
 
         // 7. Rewrite C# (BC types → mock types — same rewriter as main pipeline)
         var rewrittenTrees = new List<SyntaxTree>();
@@ -276,6 +380,24 @@ public static class DepCompiler
         return 0;
     }
 
+    private static Guid ReadAppGuid(string appPath)
+    {
+        try
+        {
+            var manifest = AlTranspiler.LoadNavxManifest(appPath);
+            if (manifest != null)
+            {
+                var ns = System.Xml.Linq.XNamespace.Get("http://schemas.microsoft.com/navx/2015/manifest");
+                var app = manifest.Root?.Element(ns + "App") ?? manifest.Root;
+                var idStr = app?.Attribute("Id")?.Value;
+                if (idStr != null && Guid.TryParse(idStr, out var id))
+                    return id;
+            }
+        }
+        catch { }
+        return Guid.Empty;
+    }
+
     private static (string Publisher, string Name, string Version) ReadAppIdentity(string appPath)
     {
         try
@@ -311,5 +433,57 @@ public static class DepCompiler
         // Clean to valid C# identifier
         var clean = new string(objectName.Where(c => char.IsLetterOrDigit(c) || c == '_').ToArray());
         return string.IsNullOrEmpty(clean) ? null : clean;
+    }
+
+    private record MissingDependency(string Publisher, string Name, string MinVersion, Guid AppId);
+
+    /// <summary>
+    /// Read the .app manifest's declared dependencies and check each against available packages.
+    /// Returns a list of dependencies that are NOT found in any package directory.
+    /// </summary>
+    private static List<MissingDependency> ValidateDependencies(string appPath, List<string> packagePaths)
+    {
+        var missing = new List<MissingDependency>();
+        try
+        {
+            var doc = AlTranspiler.LoadNavxManifest(appPath);
+            if (doc == null) return missing;
+
+            XNamespace ns = "http://schemas.microsoft.com/navx/2015/manifest";
+            var depsElement = doc.Root?.Element(ns + "Dependencies");
+            if (depsElement == null) return missing;
+
+            // Scan all package directories to find available .app files by GUID
+            var availableGuids = new HashSet<Guid>();
+            foreach (var pkgDir in packagePaths)
+            {
+                if (!Directory.Exists(pkgDir)) continue;
+                var specs = PackageScanner.ScanForSpecs(new[] { pkgDir });
+                foreach (var spec in specs)
+                    availableGuids.Add(spec.AppId);
+            }
+
+            // Check each declared dependency
+            foreach (var dep in depsElement.Elements(ns + "Dependency"))
+            {
+                var idStr = dep.Attribute("Id")?.Value;
+                if (idStr == null || !Guid.TryParse(idStr, out var depGuid)) continue;
+
+                // Platform and Application dependencies are resolved differently (by version, not GUID)
+                // — they're always available via the BC DLLs. Skip them.
+                var depPublisher = dep.Attribute("Publisher")?.Value ?? "Unknown";
+                var depName = dep.Attribute("Name")?.Value ?? "Unknown";
+                if (depPublisher == "Microsoft" && depName is "System" or "Application")
+                    continue;
+
+                if (!availableGuids.Contains(depGuid))
+                {
+                    var depVersion = dep.Attribute("MinVersion")?.Value ?? dep.Attribute("Version")?.Value ?? "0.0.0.0";
+                    missing.Add(new MissingDependency(depPublisher, depName, depVersion, depGuid));
+                }
+            }
+        }
+        catch { }
+        return missing;
     }
 }
