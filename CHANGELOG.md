@@ -24,8 +24,6 @@ All notable changes to this project are documented here. Format based on
 - **Rich auto-stubs from SymbolReference.json** — auto-stubbed codeunits now include
   methods with correct names and return types from .app package metadata, improving
   dispatch accuracy and error messages.
-- **User record seeded with License Type** — the mock User table record now includes
-  `License Type = Full User` so permission setup code that filters by license type works.
 
 ### Changed
 - **`--compile-dep` skips DotNet files** — files using DotNet interop (unsupported

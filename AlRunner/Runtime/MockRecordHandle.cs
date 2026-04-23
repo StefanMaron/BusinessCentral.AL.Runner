@@ -84,7 +84,7 @@ public class MockRecordHandle
     // User table field numbers (BC standard)
     private const int UserSecurityIdFieldNo = 1;
     private const int UserNameFieldNo       = 2;
-    private const int UserLicenseTypeFieldNo = 10; // "License Type" — 0 = Full User
+    private const int UserLicenseTypeFieldNo = 10; // "License Type"
 
     /// <summary>
     /// Pre-seed system tables required by common AL patterns.
@@ -123,7 +123,9 @@ public class MockRecordHandle
         {
             [UserSecurityIdFieldNo]  = new NavGuid(secId),
             [UserNameFieldNo]        = new NavCode(50, userName.ToUpperInvariant()),
-            [UserLicenseTypeFieldNo] = NavInteger.Create(0), // "Full User"
+            // License Type intentionally NOT seeded — seeding "Full User" causes
+            // apps with User.SetRange("License Type", "Full User").FindSet() loops
+            // to execute cascading setup code that may hang in standalone mode.
         });
     }
 
