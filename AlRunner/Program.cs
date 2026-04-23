@@ -2684,7 +2684,21 @@ public static class Executor
                     if (!thread.Join(timeoutMs))
                     {
                         sw.Stop();
-                        // Build actionable message listing which auto-stubbed codeunits were called
+
+                        // Capture where the code was stuck
+                        var lastHit = AlRunner.Runtime.AlScope.LastStatementHit;
+                        var locationInfo = "";
+                        if (lastHit != null)
+                        {
+                            var (scopeName, stmtId) = lastHit.Value;
+                            var alLine = SourceLineMapper.GetAlLineFromStatement(scopeName, stmtId);
+                            var objectName = FormatSingleFrame($"at {scopeName}");
+                            locationInfo = alLine != null
+                                ? $"\n  Last AL statement: {objectName} (line {alLine})"
+                                : $"\n  Last AL scope: {objectName}";
+                        }
+
+                        // List auto-stubbed codeunits accessed during this test
                         var accessed = AlRunner.Runtime.MockCodeunitHandle.AccessedAutoStubs;
                         var stubDetails = "";
                         if (accessed != null && !accessed.IsEmpty)
@@ -2699,9 +2713,14 @@ public static class Executor
                                     string.Join("\n    ", stubNames) +
                                     "\n  Provide implementations for these via --stubs or --dep-dlls.";
                         }
+
+                        var hint = string.IsNullOrEmpty(stubDetails) && string.IsNullOrEmpty(locationInfo)
+                            ? " Use --test-timeout 0 to disable timeout, or increase with --test-timeout <seconds>."
+                            : "";
+
                         throw new TimeoutException(
-                            $"Test exceeded {testTimeoutSeconds}s timeout — likely an infinite loop caused by " +
-                            $"an auto-stubbed dependency returning default values." + stubDetails);
+                            $"Test exceeded {testTimeoutSeconds}s timeout." +
+                            locationInfo + stubDetails + hint);
                     }
                     if (threadEx != null)
                         System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(threadEx).Throw();
