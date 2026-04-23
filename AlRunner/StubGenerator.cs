@@ -12,7 +12,18 @@ namespace AlRunner;
 public static class StubGenerator
 {
     /// <summary>Codeunit IDs that al-runner already mocks natively — skip these.</summary>
-    private static readonly HashSet<int> SkipIds = new() { 130, 131004 };
+    private static readonly HashSet<int> SkipIds = new()
+    {
+        130,     // Assert (LibraryAssert.al)
+        131,     // Library Assert alias (Assert.al)
+        130000,  // Assert BaseApp (routed to MockAssert)
+        130002,  // Library Assert real BC ID (routed to MockAssert)
+        130440,  // Library - Random (LibraryRandom.al)
+        130500,  // Any (LibraryAny.al)
+        131004,  // Library - Variable Storage (LibraryVariableStorage.al)
+        131100,  // AL Runner Config
+        132250,  // Library - Test Initialize (LibraryTestInitialize.al)
+    };
 
     public record GenerateResult(
         int Generated,

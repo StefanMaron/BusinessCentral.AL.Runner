@@ -1351,7 +1351,7 @@ public class AlRunnerPipeline
         // Codeunits that have dedicated runner-native mock implementations and are
         // dispatched via InvokeAssert / InvokeVariableStorage / InvokeRunnerConfig
         // before FindCodeunitType is ever consulted — never need a stub class.
-        var nativeMockIds = new HashSet<int> { 130, 131, 130000, 131004, 131100 };
+        var nativeMockIds = new HashSet<int> { 130, 131, 130000, 130002, 130440, 130500, 131004, 131100, 132250 };
 
         // Scan all generated C# for test-toolkit ID literals that appear as the
         // codeunit ID argument in a RunCodeunit / NavCodeunitHandle call.
