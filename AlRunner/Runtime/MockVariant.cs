@@ -202,6 +202,20 @@ public class MockVariant
     }
 
     /// <summary>
+    /// Explicit cast to MockCodeunitHandle.
+    /// Supports the AL pattern: MyCodeunit := MyVariant;
+    /// The BC compiler emits ALCompiler.NavIndirectValueToNavCodeunitHandle(scope, variant),
+    /// which the rewriter transforms to (MockCodeunitHandle)(variant).
+    /// </summary>
+    public static explicit operator MockCodeunitHandle(MockVariant v)
+    {
+        if (v._value is MockCodeunitHandle codeunit) return codeunit;
+        throw new InvalidCastException(
+            $"Cannot cast Variant (holding {v._value?.GetType().Name ?? "null"}) to Codeunit. " +
+            "The Variant must contain a Codeunit value.");
+    }
+
+    /// <summary>
     /// Stub ITreeObject for NavVariant.Factory constructor.
     /// NavVariant.Factory(ITreeObject) requires non-null parent.
     /// We implement ITreeObject minimally to satisfy the null check.

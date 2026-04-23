@@ -461,6 +461,13 @@ public class MockDialog
     public void ALUpdate(int fieldNo, string value) { }
     public void ALUpdate(int fieldNo, int value) { }
     public void ALUpdate(int fieldNo, NavText value) { }
+    /// <summary>
+    /// Explicit NavCode overload to resolve CS0121 ambiguity when a Code field value
+    /// is passed to Dialog.Update. NavCode extends NavValue AND has an implicit string
+    /// conversion, so both ALUpdate(int, NavValue) and ALUpdate(int, string) match —
+    /// causing CS0121. This overload provides an exact match, eliminating the ambiguity.
+    /// </summary>
+    public void ALUpdate(int fieldNo, NavCode value) { }
     public void ALClose() { }
     public void ALAssign(MockDialog other) { }
 
@@ -1824,7 +1831,7 @@ public static class AlCompat
     public static bool ALIsRecord(object? v) { v = UnwrapVariant(v); return v is MockRecordHandle || v?.GetType().Name.StartsWith("Record") == true; }
     public static bool ALIsRecordRef(object? v) { v = UnwrapVariant(v); return v is MockRecordRef || v?.GetType().Name == "NavRecordRef"; }
     public static bool ALIsFieldRef(object? v) { v = UnwrapVariant(v); return v is MockFieldRef || v?.GetType().Name == "NavFieldRef"; }
-    public static bool ALIsCodeunit(object? v) { v = UnwrapVariant(v); return v?.GetType().Name.StartsWith("Codeunit") == true; }
+    public static bool ALIsCodeunit(object? v) { v = UnwrapVariant(v); return v is MockCodeunitHandle || v?.GetType().Name.StartsWith("Codeunit") == true; }
     public static bool ALIsFile(object? v) { v = UnwrapVariant(v); return v?.GetType().Name == "NavFile"; }
     public static bool ALIsDotNet(object? v) => false;
     public static bool ALIsAutomation(object? v) => false;

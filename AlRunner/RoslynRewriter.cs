@@ -3186,6 +3186,23 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
                     SyntaxFactory.ParenthesizedExpression(arg));
             }
 
+            // ALCompiler.NavIndirectValueToNavCodeunitHandle(this, variant) -> (MockCodeunitHandle)(variant)
+            // BC emits this when extracting a codeunit from a Variant variable.
+            // The real method takes (ITreeObject, NavIndirectValue); MockVariant cannot be
+            // implicitly converted to NavIndirectValue. We extract the second arg (the variant)
+            // and cast it to MockCodeunitHandle — mirroring NavIndirectValueToINavRecordHandle.
+            if (exprText == "ALCompiler" && methodName == "NavIndirectValueToNavCodeunitHandle")
+            {
+                var args = visited.ArgumentList.Arguments;
+                // Takes (ITreeObject, NavIndirectValue) — skip scope arg at index 0, use index 1
+                var variantArg = args.Count >= 2
+                    ? args[1].Expression
+                    : args[0].Expression;
+                return SyntaxFactory.CastExpression(
+                    SyntaxFactory.ParseTypeName("MockCodeunitHandle"),
+                    SyntaxFactory.ParenthesizedExpression(variantArg));
+            }
+
             // ALCompiler.ToVariant(this, value) -> AlCompat.ToVariant(value)
             // ALCompiler.NavValueToVariant(this, value) -> AlCompat.ToVariant(value)
             if (exprText == "ALCompiler" && (methodName == "ToVariant" || methodName == "NavValueToVariant"))

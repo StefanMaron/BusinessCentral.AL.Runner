@@ -603,6 +603,14 @@ List.RemoveRange:
   status: covered
   notes: available from BC 26+; NavList<T> (real BC type) provides ALRemoveRange; tests/bucket-2/152-list-removerange
 
+List.CodeField:
+  layer: runtime-api
+  category: List
+  status: covered
+  tests:
+    - tests/bucket-2/234-navvalue-to-navcode-list
+  notes: NavValue→NavCode conversion for Code field values used in List of [Code[N]] — closes #1185
+
 object_reference_type:
   layer: syntax
   category: type
@@ -2279,7 +2287,9 @@ Dialog.Update:
   layer: runtime-api
   category: Dialog
   status: covered
-  notes: overloads=1
+  tests:
+    - tests/bucket-2/232-dialog-code-update
+  notes: overloads=1 (+ NavCode overload added to resolve CS0121 ambiguity when Code field values are passed — closes #1179)
 
 # ── Duration ────────────────────────────────────────────────────
 
@@ -8899,8 +8909,10 @@ Variant.IsCode:
 Variant.IsCodeunit:
   layer: runtime-api
   category: Variant
-  status: stub
-  notes: overloads=1; checks MockCodeunitHandle — no direct test yet
+  status: covered
+  tests:
+    - tests/bucket-2/233-variant-codeunit
+  notes: overloads=1; MockVariant.ALIsCodeunit checks _value is MockCodeunitHandle; AlCompat.ALIsCodeunit also recognises MockCodeunitHandle — closes #1184
 
 Variant.IsDataClassification:
   layer: runtime-api
