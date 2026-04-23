@@ -11192,6 +11192,18 @@ MockCodeunitHandle.DependencyAssemblies:
   tests:
     - tests/dep-dlls
 
+MockRecordHandle.TriggerRecursionGuard:
+  layer: runtime-api
+  category: record-trigger
+  status: covered
+  notes: >
+    Prevents StackOverflowException when an OnModify/OnInsert/OnDelete trigger
+    calls Modify/Insert/Delete on the same table, which would re-fire the trigger
+    recursively. In real BC, triggers do not re-fire recursively. The guard uses a
+    ThreadStatic HashSet of (tableId, triggerName) to detect re-entry.
+  tests:
+    - tests/bucket-2/108-trigger-recursion
+
 MockCodeunitHandle.LibraryTestInitialize:
   layer: runtime-api
   category: test-toolkit

@@ -501,7 +501,22 @@ public class MockRecordHandle
         return null;
     }
 
+    // Recursion guard: prevents infinite loops when an OnModify trigger calls
+    // Modify() on the same table, which would fire OnModify again.
+    // In real BC, triggers do NOT re-fire recursively on the same record.
+    [ThreadStatic] private static HashSet<(int tableId, string trigger)>? _activeTriggers;
+
     private void TryFireRecordTrigger(string triggerName)
+    {
+        // Recursion guard
+        _activeTriggers ??= new HashSet<(int, string)>();
+        var key = (_tableId, triggerName);
+        if (!_activeTriggers.Add(key)) return;
+        try { TryFireRecordTriggerCore(triggerName); }
+        finally { _activeTriggers.Remove(key); }
+    }
+
+    private void TryFireRecordTriggerCore(string triggerName)
     {
         var recordTypeName = $"Record{_tableId}";
         Type? recordType = FindTypeAcrossAssemblies(recordTypeName);
