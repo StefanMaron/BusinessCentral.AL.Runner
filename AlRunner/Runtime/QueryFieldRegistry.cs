@@ -8,14 +8,134 @@ public record QueryDataItemMeta(string DataItemName, string SourceTableName, int
 
 public static class QueryFieldRegistry
 {
-    private static readonly Regex QueryHeader = new(@"\bquery\s+(\d+)\s+(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))[^{]*?\{", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly Regex DataItemDecl = new(@"\bdataitem\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*;\s*(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))\s*\)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly Regex ColumnDecl = new(@"\bcolumn\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*;\s*(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))\s*\)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex QueryHeader = new(
+        @"\bquery\s+(\d+)\s+(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))[^{]*?\{",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex DataItemDecl = new(
+        @"\bdataitem\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*;\s*(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))\s*\)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex ColumnDecl = new(
+        @"\bcolumn\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*;\s*(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))\s*\)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     private static readonly Dictionary<int, List<QueryDataItemMeta>> _queries = new();
-    public static int GetMemberId(string memberName) { int hash = GetFNVHashCode(Encoding.Unicode.GetBytes(memberName)); return hash == int.MinValue ? int.MaxValue : Math.Abs(hash); }
-    private static int GetFNVHashCode(byte[] data) { unchecked { int h = (int)0x811c9dc5; for (int i = 0; i < data.Length; i++) h = (h ^ data[i]) * 16777619; return h; } }
-    public static void ParseAndRegister(string alSource) { foreach (Match qm in QueryHeader.Matches(alSource)) { if (!int.TryParse(qm.Groups[1].Value, out var queryId)) continue; int start = qm.Index + qm.Length; int depth = 1; int i = start; while (i < alSource.Length && depth > 0) { if (alSource[i] == '{') depth++; else if (alSource[i] == '}') depth--; i++; } if (depth != 0) continue; _queries[queryId] = ParseDataItems(alSource.Substring(start, i - start - 1)); } }
-    private static List<QueryDataItemMeta> ParseDataItems(string body) { var result = new List<QueryDataItemMeta>(); foreach (Match dim in DataItemDecl.Matches(body)) { var dn = dim.Groups[1].Value; var stn = dim.Groups[2].Success ? dim.Groups[2].Value : dim.Groups[3].Value; int tid = TableFieldRegistry.GetTableIdByName(stn) ?? 0; int ds = dim.Index + dim.Length; int d = 0; int dbs = -1; int j = ds; while (j < body.Length) { if (body[j] == '{') { if (d == 0) dbs = j + 1; d++; } else if (body[j] == '}') { d--; if (d == 0) break; } j++; } var cols = new List<QueryColumnMeta>(); if (dbs >= 0 && j > dbs) { var db = body.Substring(dbs, j - dbs); foreach (Match cm in ColumnDecl.Matches(db)) { var cn = cm.Groups[1].Value; var fn = cm.Groups[2].Success ? cm.Groups[2].Value : cm.Groups[3].Value; cols.Add(new QueryColumnMeta(cn, GetMemberId(cn), TableFieldRegistry.GetFieldId(tid, fn) ?? 0, fn)); } } result.Add(new QueryDataItemMeta(dn, stn, tid, cols)); } return result; }
-    public static List<QueryDataItemMeta>? GetQueryDataItems(int queryId) => _queries.TryGetValue(queryId, out var items) ? items : null;
+
+    /// <summary>
+    /// Returns the FNV-1a member ID hash used by the BC compiler for the given member name.
+    /// This matches how the transpiler generates column hash constants.
+    /// </summary>
+    public static int GetMemberId(string memberName)
+    {
+        int hash = GetFNVHashCode(Encoding.Unicode.GetBytes(memberName));
+        return hash == int.MinValue ? int.MaxValue : Math.Abs(hash);
+    }
+
+    private static int GetFNVHashCode(byte[] data)
+    {
+        unchecked
+        {
+            int hash = (int)0x811c9dc5;
+            for (int i = 0; i < data.Length; i++)
+                hash = (hash ^ data[i]) * 16777619;
+            return hash;
+        }
+    }
+
+    /// <summary>
+    /// Parses all query declarations in <paramref name="alSource"/> and registers
+    /// their data items and columns in the registry for use by <see cref="MockQueryHandle"/>.
+    /// </summary>
+    public static void ParseAndRegister(string alSource)
+    {
+        foreach (Match queryMatch in QueryHeader.Matches(alSource))
+        {
+            if (!int.TryParse(queryMatch.Groups[1].Value, out var queryId))
+                continue;
+
+            int start = queryMatch.Index + queryMatch.Length;
+            int depth = 1;
+            int i = start;
+            while (i < alSource.Length && depth > 0)
+            {
+                if (alSource[i] == '{') depth++;
+                else if (alSource[i] == '}') depth--;
+                i++;
+            }
+
+            if (depth != 0)
+                continue;
+
+            _queries[queryId] = ParseDataItems(alSource.Substring(start, i - start - 1));
+        }
+    }
+
+    private static List<QueryDataItemMeta> ParseDataItems(string body)
+    {
+        var result = new List<QueryDataItemMeta>();
+
+        foreach (Match dataItemMatch in DataItemDecl.Matches(body))
+        {
+            var dataItemName = dataItemMatch.Groups[1].Value;
+            var sourceTableName = dataItemMatch.Groups[2].Success
+                ? dataItemMatch.Groups[2].Value
+                : dataItemMatch.Groups[3].Value;
+
+            int tableId = TableFieldRegistry.GetTableIdByName(sourceTableName) ?? 0;
+
+            // Find the body of this dataitem block
+            int searchStart = dataItemMatch.Index + dataItemMatch.Length;
+            int braceDepth = 0;
+            int bodyStart = -1;
+            int j = searchStart;
+
+            while (j < body.Length)
+            {
+                if (body[j] == '{')
+                {
+                    if (braceDepth == 0)
+                        bodyStart = j + 1;
+                    braceDepth++;
+                }
+                else if (body[j] == '}')
+                {
+                    braceDepth--;
+                    if (braceDepth == 0)
+                        break;
+                }
+                j++;
+            }
+
+            var columns = new List<QueryColumnMeta>();
+            if (bodyStart >= 0 && j > bodyStart)
+            {
+                var dataItemBody = body.Substring(bodyStart, j - bodyStart);
+                foreach (Match columnMatch in ColumnDecl.Matches(dataItemBody))
+                {
+                    var columnName = columnMatch.Groups[1].Value;
+                    var fieldName = columnMatch.Groups[2].Success
+                        ? columnMatch.Groups[2].Value
+                        : columnMatch.Groups[3].Value;
+
+                    columns.Add(new QueryColumnMeta(
+                        columnName,
+                        GetMemberId(columnName),
+                        TableFieldRegistry.GetFieldId(tableId, fieldName) ?? 0,
+                        fieldName));
+                }
+            }
+
+            result.Add(new QueryDataItemMeta(dataItemName, sourceTableName, tableId, columns));
+        }
+
+        return result;
+    }
+
+    /// <summary>Returns the registered data items for <paramref name="queryId"/>, or null if not registered.</summary>
+    public static List<QueryDataItemMeta>? GetQueryDataItems(int queryId)
+        => _queries.TryGetValue(queryId, out var items) ? items : null;
+
+    /// <summary>Clears all registered query metadata. Called between pipeline runs.</summary>
     public static void Clear() => _queries.Clear();
 }
