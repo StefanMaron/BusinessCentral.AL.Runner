@@ -692,12 +692,18 @@ public class AlRunnerPipeline
         // This allows MockCodeunitHandle.FindCodeunitType to find them at runtime and
         // execute as no-ops (no OnRun method → InvokeOnRun silently returns) instead of
         // throwing InvalidOperationException.
+        // Auto-stub test-toolkit codeunits (130000-139999) as empty classes so
+        // they compile. Methods on these stubs will be no-ops (return defaults).
+        // For proper method implementations, users should run:
+        //   al-runner --generate-stubs .alpackages ./stubs ./src ./test
         var testToolkitStubs = GenerateTestToolkitStubs(generatedCSharpList);
         if (testToolkitStubs.Count > 0)
         {
             rewrittenTreeList.AddRange(testToolkitStubs);
-            stderr.WriteLine($"Auto-stubbed {testToolkitStubs.Count} dependency codeunit(s) as no-ops");
+            stderr.WriteLine($"Auto-stubbed {testToolkitStubs.Count} dependency codeunit(s) — methods return defaults");
+            stderr.WriteLine($"  Tip: for proper stubs run: al-runner --generate-stubs .alpackages ./stubs ./src ./test");
             Log.Info($"  IDs: {string.Join(", ", testToolkitStubs.Select(s => s.Name))}");
+
         }
 
         // Step 3: Compile
