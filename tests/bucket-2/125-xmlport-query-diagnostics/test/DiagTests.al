@@ -110,23 +110,23 @@ codeunit 56254 "XmlPort Query Diag Tests"
     end;
 
     // ==================================================================
-    // Query error messages — must mention "interface"
+    // Query: Open now works in-memory; Read without Open still fails.
+    // SaveAsCsv/SaveAsXml error messages checked for actionable hints.
     // ==================================================================
 
     [Test]
-    procedure QueryOpenErrorMentionsInterface()
+    procedure QueryOpenSucceeds()
     begin
-        // [GIVEN] A Query variable
+        // [GIVEN] A Query variable (single-dataitem, table is empty)
         // [WHEN]  Open() is called
-        // [THEN]  Error message contains "interface"
-        asserterror Logic.TryQueryOpen();
-        Assert.ExpectedMessage('interface', GetLastErrorText);
+        // [THEN]  No error — Open now works in-memory
+        Logic.TryQueryOpen();
     end;
 
     [Test]
-    procedure QueryReadErrorMentionsInterface()
+    procedure QueryReadWithoutOpenErrorMentionsInterface()
     begin
-        // [GIVEN] A Query variable
+        // [GIVEN] A Query variable that has NOT been opened
         // [WHEN]  Read() is called
         // [THEN]  Error message contains "interface"
         asserterror Logic.TryQueryRead();
@@ -134,22 +134,22 @@ codeunit 56254 "XmlPort Query Diag Tests"
     end;
 
     [Test]
-    procedure QueryOpenErrorMentionsServiceTier()
+    procedure QueryReadWithoutOpenErrorMentionsServiceTier()
     begin
-        // [GIVEN] A Query variable
-        // [WHEN]  Open() is called
+        // [GIVEN] A Query variable that has NOT been opened
+        // [WHEN]  Read() is called
         // [THEN]  Error message mentions "BC service tier"
-        asserterror Logic.TryQueryOpen();
+        asserterror Logic.TryQueryRead();
         Assert.ExpectedMessage('BC service tier', GetLastErrorText);
     end;
 
     [Test]
-    procedure QueryOpenErrorMentionsRecord()
+    procedure QueryReadWithoutOpenErrorMentionsRecord()
     begin
-        // [GIVEN] A Query variable
-        // [WHEN]  Open() is called
+        // [GIVEN] A Query variable that has NOT been opened
+        // [WHEN]  Read() is called
         // [THEN]  Error message suggests Record operations as alternative
-        asserterror Logic.TryQueryOpen();
+        asserterror Logic.TryQueryRead();
         Assert.ExpectedMessage('Record', GetLastErrorText);
     end;
 }
