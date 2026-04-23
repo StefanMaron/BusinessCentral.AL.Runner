@@ -366,6 +366,11 @@ public class MockReportHandle
     /// <summary>Instance <c>Rep.Print(requestPageXml)</c> — no-op in standalone mode.</summary>
     public void Print(string requestPageXml) { }
 
+    // ── Instance Execute method ──────────────────────────────────────────────
+    // BC emits rep.Execute(xmlText) for Report.Execute(XmlText) on an instance variable.
+    /// <summary>Instance <c>Rep.Execute(xmlText)</c> — no-op in standalone mode (no rendering engine).</summary>
+    public void Execute(string xmlText) { }
+
     // Report.Execute / Report.Print — no-ops in standalone mode
     public static void StaticExecute(int reportId) { }
 

@@ -112,11 +112,17 @@ public class MockRecordRef
     /// <summary>ALIsDirty — standalone has no write-pending tracking; always false.</summary>
     public bool ALIsDirty => false;
 
-    // -- CopyLinks — no-op in standalone (no BC link service) --
+    // -- CopyLinks / AddLink — no-op in standalone (no BC link service) --
 
     /// <summary>ALCopyLinks — copies record links. No-op in standalone mode.</summary>
     public void ALCopyLinks(MockRecordRef fromRef) { }
     public void ALCopyLinks(object fromRecord) { }
+
+    /// <summary>
+    /// ALAddLink — adds a link to the record. No-op in standalone mode (no BC link service).
+    /// Returns 0 as the link ID.
+    /// </summary>
+    public int ALAddLink(string url, string description = "") => 0;
 
     // -- ReadConsistency — no SQL transactions in standalone --
 
@@ -335,6 +341,13 @@ public class MockRecordRef
 
     /// <summary>ALGetView — delegates to the underlying record handle's view text.</summary>
     public string ALGetView() => _handle?.ALGetView() ?? string.Empty;
+
+    /// <summary>
+    /// ALGetView(useNames) — 1-argument overload for RecordRef.GetView(UseNames).
+    /// The <paramref name="useNames"/> flag controls whether field/table names or IDs
+    /// appear in the view string; standalone returns the same view text regardless.
+    /// </summary>
+    public string ALGetView(bool useNames) => ALGetView();
 
     /// <summary>ALSetView — applies a filter-view string (stub: no-op; view strings require full BC parser).</summary>
     public void ALSetView(string view) => _handle?.ALSetView(view);

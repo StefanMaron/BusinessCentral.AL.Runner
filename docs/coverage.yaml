@@ -2703,8 +2703,10 @@ File.Create:
   layer: runtime-api
   category: File
   status: covered
-  notes: overloads=1; MockFile.ALCreate() opens in-memory buffer
-  test: tests/bucket-1/87-file-io/test/FileTest.al
+  notes: overloads=2; MockFile.ALCreate() opens in-memory buffer, returns true (Boolean result per AL spec)
+  tests:
+    - tests/bucket-1/87-file-io
+    - tests/bucket-1/302-overload-gaps
 
 File.CreateInStream:
   layer: runtime-api
@@ -5070,7 +5072,9 @@ RecordRef.AddLink:
   layer: runtime-api
   category: RecordRef
   status: covered
-  notes: overloads=1
+  notes: overloads=2; MockRecordRef.ALAddLink no-op, returns 0 (no BC link service in standalone)
+  tests:
+    - tests/bucket-1/302-overload-gaps
 
 RecordRef.AddLoadFields:
   layer: runtime-api
@@ -5280,7 +5284,9 @@ RecordRef.GetView:
   layer: runtime-api
   category: RecordRef
   status: covered
-  notes: overloads=1
+  notes: overloads=2; ALGetView() and ALGetView(bool useNames) — useNames flag ignored in standalone
+  tests:
+    - tests/bucket-1/302-overload-gaps
 
 RecordRef.HasFilter:
   layer: runtime-api
@@ -5557,9 +5563,10 @@ Report.Execute:
   layer: runtime-api
   category: Report
   status: covered
-  notes: overloads=1; NavReport.Execute → MockReportHandle.StaticExecute (no-op).
+  notes: overloads=2; StaticExecute (static) + instance Execute(xmlText) — both no-op in standalone.
   tests:
     - tests/bucket-1/90-report-static
+    - tests/bucket-1/302-overload-gaps
 
 Report.GetSubstituteReportId:
   layer: runtime-api

@@ -67,16 +67,17 @@ public class MockFile
 
     // ── Instance methods ──────────────────────────────────────────────────────
 
-    /// <summary>ALCreate — opens an in-memory buffer for writing.</summary>
-    public void ALCreate(object? parent, DataError errorLevel, string name)
+    /// <summary>ALCreate — opens an in-memory buffer for writing. Returns true (success) — AL File.Create() returns Boolean.</summary>
+    public bool ALCreate(object? parent, DataError errorLevel, string name)
     {
         _name = name;
         _data = Array.Empty<byte>();
         _pos = 0;
         _writeMode = true;
+        return true;
     }
 
-    public void ALCreate(object? parent, string name) => ALCreate(parent, DataError.ThrowError, name);
+    public bool ALCreate(object? parent, string name) => ALCreate(parent, DataError.ThrowError, name);
 
     /// <summary>ALOpen — opens an in-memory buffer for reading.</summary>
     public void ALOpen(object? parent, DataError errorLevel, string name)
@@ -265,6 +266,19 @@ public class MockFile
     {
         fileName.Value = NavText.Empty;
         return false;
+    }
+
+    /// <summary>
+    /// AL's Clear(File) — rewriter emits file.Clear().
+    /// Resets the file to its default (closed) state: empty buffer, position 0, default flags.
+    /// </summary>
+    public void Clear()
+    {
+        _data = Array.Empty<byte>();
+        _pos = 0;
+        _name = string.Empty;
+        _textMode = true;
+        _writeMode = false;
     }
 
     /// <summary>ALAssign — copies the backing data and state from another MockFile.</summary>
