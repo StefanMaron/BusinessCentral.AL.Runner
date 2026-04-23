@@ -2,12 +2,15 @@ using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.Dynamics.Nav.CodeAnalysis;
 
 namespace AlRunner;
 
 /// <summary>
 /// Generates empty AL stub files from .app symbol packages.
 /// Reads SymbolReference.json from each .app file and emits one .al file per codeunit.
+/// When a <see cref="Compilation"/> is provided, also generates stubs for platform/system
+/// codeunits that are not listed in SymbolReference.json.
 /// </summary>
 public static class StubGenerator
 {
@@ -33,7 +36,8 @@ public static class StubGenerator
         int SkippedNativeMock,
         int SkippedNotReferenced,
         int TotalAvailable,
-        int SourceFileCount);
+        int SourceFileCount,
+        int GeneratedFromSymbolTable = 0);
 
     /// <summary>
     /// Scan all .app files in <paramref name="packagesDir"/>, extract codeunit symbols,
@@ -42,7 +46,7 @@ public static class StubGenerator
     /// referenced in the AL source are generated.
     /// </summary>
     public static GenerateResult Generate(string packagesDir, string outputDir, IReadOnlyList<string>? sourceDirs = null)
-        => Generate(new[] { packagesDir }, outputDir, sourceDirs);
+        => Generate(new[] { packagesDir }, outputDir, sourceDirs, compilation: null);
 
     /// <summary>
     /// Scan all .app files in each of <paramref name="packagesDirs"/>, extract codeunit symbols,
@@ -51,6 +55,19 @@ public static class StubGenerator
     /// referenced in the AL source are generated.
     /// </summary>
     public static GenerateResult Generate(IReadOnlyList<string> packagesDirs, string outputDir, IReadOnlyList<string>? sourceDirs = null)
+        => Generate(packagesDirs, outputDir, sourceDirs, compilation: null);
+
+    /// <summary>
+    /// Scan all .app files in each of <paramref name="packagesDirs"/>, extract codeunit symbols,
+    /// and write one .al stub file per codeunit into <paramref name="outputDir"/>.
+    /// When <paramref name="sourceDirs"/> is provided and non-empty, only codeunits
+    /// referenced in the AL source are generated.
+    /// When <paramref name="compilation"/> is provided, also generates stubs for platform/system
+    /// codeunits that have no SymbolReference.json in their .app package (e.g. Rest Client,
+    /// No. Series Batch, etc.) by querying the BC compiler's symbol table directly.
+    /// </summary>
+    public static GenerateResult Generate(IReadOnlyList<string> packagesDirs, string outputDir,
+        IReadOnlyList<string>? sourceDirs, Compilation? compilation)
     {
         foreach (var packagesDir in packagesDirs)
         {
@@ -69,8 +86,11 @@ public static class StubGenerator
         int skippedNativeMock = 0;
         int skippedNotReferenced = 0;
         int totalAvailable = 0;
+        int generatedFromSymbolTable = 0;
         var skippedExisting = new List<string>();
+        var writtenIds = new HashSet<int>();
 
+        // Pass 1: SymbolReference.json inside .app packages
         foreach (var packagesDir in packagesDirs)
         {
             var appFiles = Directory.GetFiles(packagesDir, "*.app", SearchOption.TopDirectoryOnly);
@@ -101,6 +121,8 @@ public static class StubGenerator
                     var fileName = $"Cod{cu.Id}.{SanitizeFileName(cu.Name)}.al";
                     var filePath = Path.Combine(outputDir, fileName);
 
+                    writtenIds.Add(cu.Id);
+
                     if (File.Exists(filePath))
                     {
                         skippedExisting.Add(fileName);
@@ -114,8 +136,44 @@ public static class StubGenerator
             }
         }
 
+        // Pass 2: Symbol-table pass for platform/system codeunits missing from SymbolReference.json
+        if (compilation != null)
+        {
+            var symbolTableCus = GetAllCodeunitsFromSymbolTable(compilation);
+            foreach (var (cuId, cuName, cuSymbol) in symbolTableCus)
+            {
+                if (writtenIds.Contains(cuId))
+                    continue;
+                if (SkipIds.Contains(cuId))
+                    continue;
+
+                // Apply source filtering if requested
+                if (filtering)
+                {
+                    var tempCu = new CodeunitSymbol(cuId, cuName, new List<MethodSymbol>());
+                    if (!IsCodeunitReferenced(tempCu, sourceTexts!))
+                        continue;
+                }
+
+                var fileName = $"Cod{cuId}.{SanitizeFileName(cuName)}.al";
+                var filePath = Path.Combine(outputDir, fileName);
+                writtenIds.Add(cuId);
+
+                if (File.Exists(filePath))
+                {
+                    skippedExisting.Add(fileName);
+                    continue;
+                }
+
+                var content = RenderCodeunitFromSymbol(cuId, cuName, cuSymbol, filtering ? sourceTexts : null);
+                File.WriteAllText(filePath, content, new UTF8Encoding(false));
+                generated++;
+                generatedFromSymbolTable++;
+            }
+        }
+
         return new GenerateResult(generated, skippedExisting, skippedNonCodeunit,
-            skippedNativeMock, skippedNotReferenced, totalAvailable, sourceFileCount);
+            skippedNativeMock, skippedNotReferenced, totalAvailable, sourceFileCount, generatedFromSymbolTable);
     }
 
     /// <summary>
@@ -483,6 +541,200 @@ public static class StubGenerator
                 or "InStream" or "OutStream" or "DateFormula" or "XmlDocument"
                 or "List" or "Dictionary" or "DotNet" => "''",
             _ => "''"
+        };
+    }
+
+    // --- Symbol-table helpers ---
+
+    private static readonly HashSet<string> _alKeywords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "key", "field", "var", "begin", "end", "if", "then", "else", "repeat", "until",
+        "while", "do", "for", "to", "downto", "case", "of", "with", "exit", "trigger",
+        "procedure", "local", "internal", "protected", "true", "false", "not", "and", "or",
+        "xor", "div", "mod", "in", "array", "record", "codeunit", "page", "report", "query",
+        "xmlport", "table", "enum", "interface", "temporary", "database"
+    };
+
+    private static bool IsAlKeyword(string name) => _alKeywords.Contains(name);
+
+    /// <summary>
+    /// Enumerate all codeunits from the BC compiler's symbol table across all loaded packages.
+    /// Returns tuples of (id, name, symbolObject) for each codeunit found.
+    /// Includes platform/system codeunits that have no SymbolReference.json in their .app package.
+    /// </summary>
+    private static List<(int Id, string Name, object Symbol)> GetAllCodeunitsFromSymbolTable(Compilation compilation)
+    {
+        var result = new List<(int, string, object)>();
+        try
+        {
+            var enumMethod = compilation.GetType().GetMethod(
+                "GetApplicationObjectTypeSymbolsAcrossModules",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
+                null, new[] { typeof(SymbolKind), typeof(bool) }, null);
+            if (enumMethod == null) return result;
+
+            var symbolsObj = enumMethod.Invoke(compilation, new object[] { SymbolKind.Codeunit, false });
+            if (symbolsObj == null) return result;
+
+            var enumerable = symbolsObj as System.Collections.IEnumerable;
+            if (enumerable == null) return result;
+
+            foreach (var sym in enumerable)
+            {
+                var name = sym.GetType().GetProperty("Name")?.GetValue(sym)?.ToString() ?? "";
+                var idProp = sym.GetType().GetProperty("Id");
+                if (idProp == null) continue;
+                var idObj = idProp.GetValue(sym);
+                int id;
+                if (idObj is int directId)
+                {
+                    id = directId;
+                }
+                else
+                {
+                    // NavObjectId struct — look for ObjectId or Id sub-property
+                    var objectIdProp = idObj?.GetType().GetProperty("ObjectId")
+                                    ?? idObj?.GetType().GetProperty("Id");
+                    if (objectIdProp == null) continue;
+                    if (!int.TryParse(objectIdProp.GetValue(idObj)?.ToString(), out id)) continue;
+                }
+                if (id <= 0) continue;
+                result.Add((id, name, sym));
+            }
+        }
+        catch { /* reflection failure — return what we have */ }
+        return result;
+    }
+
+    /// <summary>
+    /// Render an AL codeunit stub from a BC symbol table object (obtained via reflection).
+    /// When <paramref name="sourceTexts"/> is non-null, only methods referenced in source are emitted.
+    /// </summary>
+    private static string RenderCodeunitFromSymbol(int cuId, string cuName, object cuSymbol, string? sourceTexts)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("// Auto-generated stub from BC symbol table — fill in implementations as needed.");
+        sb.AppendLine($"codeunit {cuId} \"{EscapeAlString(cuName)}\"");
+        sb.AppendLine("{");
+
+        try
+        {
+            var getMembersMethod = cuSymbol.GetType().GetMethod("GetMembers", Type.EmptyTypes);
+            if (getMembersMethod != null)
+            {
+                var members = getMembersMethod.Invoke(cuSymbol, null) as System.Collections.IEnumerable;
+                if (members != null)
+                {
+                    var emittedSigs = new HashSet<string>();
+                    foreach (var member in members)
+                    {
+                        var memberKind = member.GetType().GetProperty("Kind")?.GetValue(member);
+                        if (memberKind?.ToString() != "Method") continue;
+
+                        var methodName = member.GetType().GetProperty("Name")?.GetValue(member)?.ToString();
+                        if (methodName == null) continue;
+
+                        // When source filtering is active, skip methods not referenced in source
+                        if (sourceTexts != null
+                            && !sourceTexts.Contains(methodName + "(", StringComparison.OrdinalIgnoreCase)
+                            && !sourceTexts.Contains(methodName + " (", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        var paramsProp = member.GetType().GetProperty("Parameters");
+                        var paramParts = new List<string>();
+                        if (paramsProp != null)
+                        {
+                            var parms = paramsProp.GetValue(member) as System.Collections.IEnumerable;
+                            if (parms != null)
+                            {
+                                foreach (var p in parms)
+                                {
+                                    var pName = p.GetType().GetProperty("Name")?.GetValue(p)?.ToString() ?? "p";
+                                    if (IsAlKeyword(pName)) pName = $"\"{pName}\"";
+                                    else if (pName.Contains(' ') || pName.Contains('.')) pName = $"\"{pName}\"";
+                                    var pIsVar = p.GetType().GetProperty("IsVar")?.GetValue(p) is true;
+                                    var pType = p.GetType().GetProperty("ParameterType")?.GetValue(p)
+                                             ?? p.GetType().GetProperty("Type")?.GetValue(p);
+                                    var typeName = pType != null ? RenderSymbolTypeViaReflection(pType) : "Variant";
+                                    var prefix = pIsVar ? "var " : "";
+                                    paramParts.Add($"{prefix}{pName}: {typeName}");
+                                }
+                            }
+                        }
+
+                        var paramStr = string.Join("; ", paramParts);
+
+                        var returnPart = "";
+                        var retType = member.GetType().GetProperty("ReturnValueType")?.GetValue(member)
+                                   ?? member.GetType().GetProperty("ReturnType")?.GetValue(member);
+                        if (retType != null)
+                        {
+                            var navTypeKind = retType.GetType().GetProperty("NavTypeKind")?.GetValue(retType);
+                            if (navTypeKind != null && navTypeKind.ToString() != "None" && navTypeKind.ToString() != "Void")
+                                returnPart = $": {RenderSymbolTypeViaReflection(retType)}";
+                        }
+
+                        // Dedup by (name, paramCount) to avoid overloaded identical C# signatures
+                        var sig = $"{methodName}/{paramParts.Count}";
+                        if (!emittedSigs.Add(sig)) continue;
+
+                        sb.AppendLine($"    procedure {methodName}({paramStr}){returnPart}");
+                        sb.AppendLine("    begin");
+                        sb.AppendLine("    end;");
+                        sb.AppendLine();
+                    }
+                }
+            }
+        }
+        catch { /* partial output is still useful */ }
+
+        sb.AppendLine("}");
+        return sb.ToString();
+    }
+
+    /// <summary>Render an AL type from a BC symbol type object using reflection.</summary>
+    private static string RenderSymbolTypeViaReflection(object typeSymbol)
+    {
+        var navTypeKind = typeSymbol.GetType().GetProperty("NavTypeKind")?.GetValue(typeSymbol)?.ToString();
+        if (navTypeKind == null) return "Variant";
+
+        return navTypeKind switch
+        {
+            "Integer" => "Integer",
+            "BigInteger" => "BigInteger",
+            "Decimal" => "Decimal",
+            "Boolean" => "Boolean",
+            "Date" => "Date",
+            "Time" => "Time",
+            "DateTime" => "DateTime",
+            "Duration" => "Duration",
+            "Guid" => "Guid",
+            "Char" => "Char",
+            "Byte" => "Byte",
+            "Option" => "Integer",
+            "Variant" => "Variant",
+            "RecordId" => "RecordId",
+            "DateFormula" => "DateFormula",
+            "JsonObject" => "JsonObject",
+            "JsonArray" => "JsonArray",
+            "JsonToken" => "JsonToken",
+            "JsonValue" => "JsonValue",
+            "HttpClient" => "HttpClient",
+            "HttpHeaders" => "HttpHeaders",
+            "HttpContent" => "HttpContent",
+            "HttpRequestMessage" => "HttpRequestMessage",
+            "HttpResponseMessage" => "HttpResponseMessage",
+            "SecretText" => "SecretText",
+            "Text" => "Text",
+            "Code" => "Code[20]",
+            "Label" => "Text",
+            "TextConst" => "Text",
+            "InStream" => "InStream",
+            "OutStream" => "OutStream",
+            "BigText" => "BigText",
+            "Blob" => "BigText",
+            "XmlDocument" => "XmlDocument",
+            _ => "Variant", // Use Variant for complex/unknown types to avoid syntax errors
         };
     }
 

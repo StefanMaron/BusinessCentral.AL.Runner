@@ -591,4 +591,60 @@ codeunit 50100 ""My Test""
         Assert.Throws<DirectoryNotFoundException>(() =>
             StubGenerator.Generate(new[] { "/nonexistent/path1", "/nonexistent/path2" }, "/tmp/output"));
     }
+    // --- Symbol-table overload tests ---
+
+    [Fact]
+    public void Generate_WithNullCompilation_BehavesLikeOldOverload()
+    {
+        // Verify backward compatibility: Generate(dirs, outDir, sourceDirs, null) produces
+        // the same result as Generate(dirs, outDir, sourceDirs) — no regressions.
+        if (!HasTestApps) return;
+
+        var pkgDir = Path.Combine(Path.GetTempPath(), "al-stub-sym-pkg-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDirOld = Path.Combine(Path.GetTempPath(), "al-stub-sym-old-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDirNew = Path.Combine(Path.GetTempPath(), "al-stub-sym-new-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(pkgDir);
+            File.Copy(TestLibrariesApp, Path.Combine(pkgDir, Path.GetFileName(TestLibrariesApp)));
+
+            // Old overload (no compilation)
+            var resultOld = StubGenerator.Generate(new[] { pkgDir }, outDirOld);
+            // New 4-arg overload with compilation: null
+            var resultNew = StubGenerator.Generate(new[] { pkgDir }, outDirNew, null, compilation: null);
+
+            Assert.Equal(resultOld.Generated, resultNew.Generated);
+            Assert.Equal(resultOld.SkippedNativeMock, resultNew.SkippedNativeMock);
+            Assert.Equal(resultOld.TotalAvailable, resultNew.TotalAvailable);
+            Assert.Equal(0, resultNew.GeneratedFromSymbolTable);
+        }
+        finally
+        {
+            if (Directory.Exists(pkgDir)) Directory.Delete(pkgDir, true);
+            if (Directory.Exists(outDirOld)) Directory.Delete(outDirOld, true);
+            if (Directory.Exists(outDirNew)) Directory.Delete(outDirNew, true);
+        }
+    }
+
+    [Fact]
+    public void GenerateResult_HasGeneratedFromSymbolTableField()
+    {
+        // Verify the new field exists and defaults to 0
+        var result = new StubGenerator.GenerateResult(
+            Generated: 5,
+            SkippedExisting: new List<string>(),
+            SkippedNonCodeunit: 0,
+            SkippedNativeMock: 1,
+            SkippedNotReferenced: 0,
+            TotalAvailable: 6,
+            SourceFileCount: 0);
+
+        // Default value of 0
+        Assert.Equal(0, result.GeneratedFromSymbolTable);
+
+        // Can be set explicitly
+        var resultWithSymbols = result with { GeneratedFromSymbolTable = 3 };
+        Assert.Equal(3, resultWithSymbols.GeneratedFromSymbolTable);
+        Assert.Equal(5, resultWithSymbols.Generated);
+    }
 }

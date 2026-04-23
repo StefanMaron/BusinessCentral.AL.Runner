@@ -131,11 +131,34 @@ while (argIdx < args.Length)
             }
             try
             {
-                var genResult = AlRunner.StubGenerator.Generate(pkgDir, outDir, srcDirs.Count > 0 ? srcDirs : null);
+                // Build a minimal BC compilation against the packages directory so that
+                // GetApplicationObjectTypeSymbolsAcrossModules can enumerate platform/system
+                // codeunits that have no SymbolReference.json in their .app file.
+                Compilation? genCompilation = null;
+                {
+                    var savedErr = Console.Error;
+                    Console.SetError(TextWriter.Null);
+                    try
+                    {
+                        AlTranspiler.TranspileMulti(
+                            new List<string> { "codeunit 99999999 \"AlRunnerStubProbe\" { }" },
+                            packagePaths: new List<string> { pkgDir });
+                        genCompilation = AlTranspiler.LastCompilation;
+                    }
+                    catch { /* symbol table may still be usable if TranspileMulti threw */ }
+                    finally { Console.SetError(savedErr); }
+                }
+
+                var genResult = AlRunner.StubGenerator.Generate(
+                    new[] { pkgDir }, outDir,
+                    srcDirs.Count > 0 ? srcDirs : null,
+                    genCompilation);
                 if (genResult.SourceFileCount > 0)
                     Console.Error.WriteLine($"Scanned {srcDirs.Count} source director{(srcDirs.Count == 1 ? "y" : "ies")} ({genResult.SourceFileCount} .al files)");
                 Console.Error.WriteLine($"Generated {genResult.Generated} stub files in {outDir}"
                     + (genResult.SourceFileCount > 0 ? $"  (filtered from {genResult.TotalAvailable} available codeunits)" : ""));
+                if (genResult.GeneratedFromSymbolTable > 0)
+                    Console.Error.WriteLine($"  {genResult.GeneratedFromSymbolTable} stubs from symbol table (platform/system codeunits without SymbolReference.json)");
                 if (genResult.SkippedExisting.Count > 0)
                     Console.Error.WriteLine($"  Skipped {genResult.SkippedExisting.Count} (already exist): {string.Join(", ", genResult.SkippedExisting)}");
                 if (genResult.SkippedNotReferenced > 0)

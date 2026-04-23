@@ -11361,3 +11361,18 @@ Pipeline.StubsMainPass:
     so the stub wins. GetSeparateStubSources() helper removed — no longer needed.
   tests:
     - tests/stubs/39-stubs
+
+StubGenerator.SymbolTablePass:
+  layer: cli
+  category: generate-stubs
+  status: covered
+  notes: >
+    --generate-stubs now builds a minimal BC Compilation against the packages
+    directory and passes it to StubGenerator.Generate(). A second pass after
+    the SymbolReference.json loop calls GetApplicationObjectTypeSymbolsAcrossModules
+    (via reflection) to enumerate all codeunits visible to the BC compiler,
+    including platform/system codeunits (Rest Client, No. Series Batch, etc.)
+    that have no SymbolReference.json in their .app file. These stubs are written
+    to disk and counted in the new GeneratedFromSymbolTable field of GenerateResult.
+    Falls back gracefully to zero extra stubs when compilation is unavailable.
+  tests: []
