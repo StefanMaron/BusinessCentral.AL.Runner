@@ -6,6 +6,44 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.19] - 2026-04-23
+
+### Added
+- **AutoIncrement field support** — table fields with `AutoIncrement = true` now get
+  `max(existing) + 1` automatically when inserted with value 0, matching BC behavior.
+- **`--compile-dep` dependency validation** — before attempting compilation, reads the
+  .app manifest and checks all declared dependencies against available packages. If
+  dependencies are missing, prints exactly which .app files are needed with publisher
+  and version, instead of the cryptic "no C# code was generated" error.
+- **Auto-stub transparency** — auto-stubbed codeunits are now listed by ID and name
+  in the console output, with a warning that tests depending on them will fail. When
+  a test fails involving a stubbed codeunit, the output includes guidance on how to
+  compile real implementations with `--compile-dep`.
+- **Full AL stack traces** — removed artificial 3/5 frame caps. Developers now see the
+  complete AL call chain to diagnose failures.
+- **Rich auto-stubs from SymbolReference.json** — auto-stubbed codeunits now include
+  methods with correct names and return types from .app package metadata, improving
+  dispatch accuracy and error messages.
+- **User record seeded with License Type** — the mock User table record now includes
+  `License Type = Full User` so permission setup code that filters by license type works.
+
+### Changed
+- **`--compile-dep` skips DotNet files** — files using DotNet interop (unsupported
+  without BC service tier) are automatically excluded, allowing the remaining pure-AL
+  objects to compile successfully.
+- **Skip built-in stub IDs in `--generate-stubs` and auto-stub** — codeunits with
+  runner-native implementations (Assert, Variable Storage, etc.) are no longer duplicated.
+
+### Fixed
+- **Auto-stub return type mismatch (#1150)** — when auto-stubs had many methods with
+  the same parameter count, the dispatch fallback could pick the wrong overload, causing
+  `InvalidCastException` (e.g., Int32 cast to NavCode). Rich C# stubs with correct
+  return types fix this.
+
+### Performance
+- **Auto-stub package scanning** — only scans .app files until all missing codeunit IDs
+  are found (early exit). Skips scanning entirely when no IDs are missing.
+
 ## [1.0.18] - 2026-04-22
 
 ### Added
