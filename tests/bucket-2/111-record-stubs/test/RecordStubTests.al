@@ -5,7 +5,7 @@ codeunit 50811 "Record Stub Tests"
     var
         Assert: Codeunit Assert;
 
-    local procedure InsertRecord(EntryNo: Integer; Name: Text[100]; Amount: Decimal)
+    local procedure CleanAndInsert(EntryNo: Integer; Name: Text[100]; Amount: Decimal)
     var
         Rec: Record "Stub Probe";
     begin
@@ -14,6 +14,13 @@ codeunit 50811 "Record Stub Tests"
         Rec."Name" := Name;
         Rec."Amount" := Amount;
         Rec.Insert(true);
+    end;
+
+    local procedure DeleteAllRecords()
+    var
+        Rec: Record "Stub Probe";
+    begin
+        Rec.DeleteAll();
     end;
 
     // -----------------------------------------------------------------------
@@ -26,9 +33,10 @@ codeunit 50811 "Record Stub Tests"
         Rec: Record "Stub Probe";
     begin
         // [GIVEN] 3 records
-        InsertRecord(1, 'A', 10);
-        InsertRecord(2, 'B', 20);
-        InsertRecord(3, 'C', 30);
+        DeleteAllRecords();
+        CleanAndInsert(1, 'A', 10);
+        CleanAndInsert(2, 'B', 20);
+        CleanAndInsert(3, 'C', 30);
 
         // [WHEN/THEN] CountApprox should equal Count
         Assert.AreEqual(Rec.Count(), Rec.CountApprox(), 'CountApprox should match Count');
@@ -44,7 +52,8 @@ codeunit 50811 "Record Stub Tests"
         Rec: Record "Stub Probe";
     begin
         // [GIVEN] A record
-        InsertRecord(1, 'A', 10);
+        DeleteAllRecords();
+        CleanAndInsert(1, 'A', 10);
 
         // [WHEN] Consistent is called (no-op in runner)
         Rec.Consistent(true);
@@ -64,7 +73,8 @@ codeunit 50811 "Record Stub Tests"
         Rec: Record "Stub Probe";
     begin
         // [GIVEN] A record
-        InsertRecord(1, 'A', 10);
+        DeleteAllRecords();
+        CleanAndInsert(1, 'A', 10);
 
         // [WHEN/THEN] FieldActive for a known field should return true
         Assert.IsTrue(Rec.FieldActive("Name"), 'FieldActive should return true for existing field');
@@ -80,7 +90,8 @@ codeunit 50811 "Record Stub Tests"
         Rec: Record "Stub Probe";
     begin
         // [GIVEN] A record with no links
-        InsertRecord(1, 'A', 10);
+        DeleteAllRecords();
+        CleanAndInsert(1, 'A', 10);
         Rec.FindFirst();
 
         // [WHEN/THEN] HasLinks should return false
@@ -93,7 +104,8 @@ codeunit 50811 "Record Stub Tests"
         Rec: Record "Stub Probe";
     begin
         // [GIVEN] A record
-        InsertRecord(1, 'A', 10);
+        DeleteAllRecords();
+        CleanAndInsert(1, 'A', 10);
         Rec.FindFirst();
 
         // [WHEN] A link is added
@@ -109,7 +121,8 @@ codeunit 50811 "Record Stub Tests"
         Rec: Record "Stub Probe";
     begin
         // [GIVEN] A record with a link
-        InsertRecord(1, 'A', 10);
+        DeleteAllRecords();
+        CleanAndInsert(1, 'A', 10);
         Rec.FindFirst();
         Rec.AddLink('https://example.com');
 
@@ -143,7 +156,8 @@ codeunit 50811 "Record Stub Tests"
         Rec: Record "Stub Probe";
     begin
         // [GIVEN] A record
-        InsertRecord(1, 'A', 10);
+        DeleteAllRecords();
+        CleanAndInsert(1, 'A', 10);
 
         // [WHEN] SetPermissionFilter is called (no-op)
         Rec.SetPermissionFilter();
