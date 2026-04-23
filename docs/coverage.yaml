@@ -5233,7 +5233,7 @@ RecordRef.GetPosition:
   layer: runtime-api
   category: RecordRef
   status: covered
-  notes: overloads=1
+  notes: overloads=2; GetPosition(Boolean) stub ignores the useNames flag
 
 RecordRef.GetTable:
   layer: runtime-api
@@ -6989,7 +6989,8 @@ Table.GetPosition:
   status: covered
   tests:
     - tests/bucket-1/63-record-getposition-setposition
-  notes: overloads=1
+    - tests/bucket-1/297-record-getposition-bool
+  notes: overloads=2; GetPosition() and GetPosition(UseNames: Boolean) both supported
 
 Table.GetRangeMax:
   layer: runtime-api

@@ -2946,15 +2946,23 @@ public class MockRecordHandle
     /// Format: <c>FieldName=CONST(Value)</c> for each PK field, comma-separated.
     /// Example: <c>"No.=CONST(A001)"</c> for a Customer record positioned on No.=A001.
     /// </summary>
-    public string ALGetPosition()
+    public string ALGetPosition() => ALGetPosition(true);
+
+    /// <summary>
+    /// AL's GETPOSITION(UseNames) overload.
+    /// When <paramref name="useNames"/> is <c>true</c>, each segment uses the field name
+    /// (e.g. <c>No.=CONST(A001)</c>); when <c>false</c>, the field number is used instead
+    /// (e.g. <c>1=CONST(A001)</c>).
+    /// </summary>
+    public string ALGetPosition(bool useNames)
     {
         var pkFields = GetPrimaryKeyFields();
         var parts = new List<string>(pkFields.Length);
         foreach (var fieldNo in pkFields)
         {
-            var name = GetFieldNameByNo(fieldNo);
+            var label = useNames ? GetFieldNameByNo(fieldNo) : fieldNo.ToString();
             var value = _fields.TryGetValue(fieldNo, out var v) ? NavValueToString(v) : "";
-            parts.Add($"{name}=CONST({value})");
+            parts.Add($"{label}=CONST({value})");
         }
         return string.Join(",", parts);
     }
