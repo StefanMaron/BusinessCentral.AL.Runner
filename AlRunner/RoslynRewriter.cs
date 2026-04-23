@@ -535,6 +535,15 @@ public class RoslynRewriter : CSharpSyntaxRewriter
         {
             if (ShouldRemoveMember(member, visited))
                 continue;
+            // Convert IsSingleInstance from override → static (base class stripped)
+            if (member is PropertyDeclarationSyntax sip && sip.Identifier.Text == "IsSingleInstance")
+            {
+                var mods = SyntaxFactory.TokenList(
+                    sip.Modifiers.Where(m => !m.IsKind(SyntaxKind.OverrideKeyword))
+                        .Append(SyntaxFactory.Token(SyntaxKind.StaticKeyword)));
+                membersToKeep = membersToKeep.Add(sip.WithModifiers(mods));
+                continue;
+            }
             membersToKeep = membersToKeep.Add(member);
         }
 
@@ -890,9 +899,11 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
             if (name == "IsCompiledForOnPremise")
                 return true;
 
-            // public override bool IsSingleInstance => false;
+            // public override bool IsSingleInstance => true/false;
+            // Keep — used by MockCodeunitHandle for SingleInstance caching.
+            // The override→static conversion happens in VisitClassDeclaration.
             if (name == "IsSingleInstance")
-                return true;
+                return false;
 
             // TestRunner metadata overrides are only meaningful on BC's
             // NavTestRunnerCodeUnit base, which we remove in standalone mode.

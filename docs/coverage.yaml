@@ -11204,6 +11204,17 @@ MockRecordHandle.TriggerRecursionGuard:
   tests:
     - tests/bucket-2/108-trigger-recursion
 
+MockCodeunitHandle.SingleInstance:
+  layer: runtime-api
+  category: codeunit-dispatch
+  status: covered
+  notes: >
+    SingleInstance=true codeunits share one instance per session (per test codeunit).
+    The rewriter preserves the IsSingleInstance static property (override→static).
+    MockCodeunitHandle caches instances in a static dictionary, reused by EnsureInstance
+    and event subscriber dispatch. Reset between test codeunits.
+  tests: []
+
 MockCodeunitHandle.LibraryTestInitialize:
   layer: runtime-api
   category: test-toolkit

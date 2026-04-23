@@ -696,7 +696,8 @@ public class AlRunnerPipeline
         if (testToolkitStubs.Count > 0)
         {
             rewrittenTreeList.AddRange(testToolkitStubs);
-            Log.Info($"Injected {testToolkitStubs.Count} test-toolkit codeunit stub(s)");
+            stderr.WriteLine($"Auto-stubbed {testToolkitStubs.Count} dependency codeunit(s) as no-ops");
+            Log.Info($"  IDs: {string.Join(", ", testToolkitStubs.Select(s => s.Name))}");
         }
 
         // Step 3: Compile

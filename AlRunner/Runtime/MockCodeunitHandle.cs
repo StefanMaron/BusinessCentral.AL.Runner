@@ -25,6 +25,41 @@ public class MockCodeunitHandle
     /// </summary>
     public static List<Assembly>? DependencyAssemblies { get; set; }
 
+    /// <summary>
+    /// Cache for SingleInstance codeunits — one instance per ID across the session.
+    /// In BC, SingleInstance=true means the same codeunit instance is shared.
+    /// Reset between test codeunits via <see cref="ResetSingleInstances"/>.
+    /// </summary>
+    private static readonly Dictionary<int, object> _singleInstances = new();
+    public static void ResetSingleInstances() => _singleInstances.Clear();
+
+    /// <summary>Get a cached SingleInstance, or null.</summary>
+    public static object? GetSingleInstance(Type codeunitType)
+    {
+        if (codeunitType.Name.StartsWith("Codeunit") &&
+            int.TryParse(codeunitType.Name.AsSpan(8), out var id) &&
+            _singleInstances.TryGetValue(id, out var inst))
+            return inst;
+        return null;
+    }
+
+    /// <summary>Cache a codeunit instance if its type has IsSingleInstance=true.</summary>
+    public static void CacheSingleInstanceIfNeeded(Type codeunitType, object instance)
+    {
+        if (!IsSingleInstanceType(codeunitType)) return;
+        if (codeunitType.Name.StartsWith("Codeunit") &&
+            int.TryParse(codeunitType.Name.AsSpan(8), out var id))
+            _singleInstances[id] = instance;
+    }
+
+    private static bool IsSingleInstanceType(Type t)
+    {
+        var prop = t.GetProperty("IsSingleInstance",
+            BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy);
+        if (prop != null) try { return (bool)prop.GetValue(null)!; } catch { }
+        return false;
+    }
+
     public MockCodeunitHandle(int codeunitId)
     {
         _codeunitId = codeunitId;
@@ -93,14 +128,24 @@ public class MockCodeunitHandle
 
     /// <summary>
     /// Lazily create the codeunit class instance and run InitializeComponent.
+    /// For SingleInstance codeunits, returns the shared instance from the cache.
     /// </summary>
     private void EnsureInstance(Type codeunitType)
     {
         if (_codeunitInstance != null) return;
+        // SingleInstance: reuse cached instance
+        if (_singleInstances.TryGetValue(_codeunitId, out var cached))
+        {
+            _codeunitInstance = cached;
+            return;
+        }
         _codeunitInstance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(codeunitType);
         var initMethod = codeunitType.GetMethod("InitializeComponent",
             BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
         initMethod?.Invoke(_codeunitInstance, null);
+        // Cache SingleInstance codeunits
+        if (IsSingleInstanceType(codeunitType))
+            _singleInstances[_codeunitId] = _codeunitInstance;
     }
 
     /// <summary>

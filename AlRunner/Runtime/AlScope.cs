@@ -733,12 +733,17 @@ public static class AlCompat
                 continue;
             }
 
-            // Automatic subscribers: create a fresh instance
+            // Automatic subscribers: reuse SingleInstance or create fresh
             object? instance;
             try
             {
-                instance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(ownerType);
-                AlCompat.InitializeUninitializedObject(instance);
+                instance = MockCodeunitHandle.GetSingleInstance(ownerType);
+                if (instance == null)
+                {
+                    instance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(ownerType);
+                    AlCompat.InitializeUninitializedObject(instance);
+                    MockCodeunitHandle.CacheSingleInstanceIfNeeded(ownerType, instance);
+                }
             }
             catch { continue; }
 

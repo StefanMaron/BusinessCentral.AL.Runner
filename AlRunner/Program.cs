@@ -2467,10 +2467,11 @@ public static class Executor
 
             if (doTableReset)
             {
-                // Reset persistent state (tables, isolated storage, variable storage)
+                // Reset persistent state (tables, isolated storage, variable storage, SingleInstance codeunits)
                 AlRunner.Runtime.MockRecordHandle.ResetAll();
                 AlRunner.Runtime.MockIsolatedStorage.ResetAll();
                 AlRunner.Runtime.MockVariableStorage.Reset();
+                AlRunner.Runtime.MockCodeunitHandle.ResetSingleInstances();
 
                 // Pre-seed system tables (e.g. User table 2000000120) so that common
                 // AL patterns like User.Get(UserSecurityId()) work out of the box.
