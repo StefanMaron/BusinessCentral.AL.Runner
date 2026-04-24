@@ -1,17 +1,16 @@
 name: Publish to NuGet
 
-# Single trigger: manual dispatch with explicit version.
-# The workflow creates the tag itself after updating CHANGELOG — so there is no
-# separate "push tag" step and no push-tag → re-trigger loop.
+# Triggered manually only — supply the version and the workflow does everything:
+# generates the CHANGELOG section, commits it to main, pushes the tag, runs
+# tests, packs, pushes to NuGet, and creates the GitHub Release.
 #
-# Prerequisite (one-time repo setting):
-#   Settings → Branches → branch protection rule for main →
-#   enable "Allow GitHub Actions to bypass required pull requests"
+# The checkout step uses RELEASE_DEPLOY_KEY (a write-access deploy key) so the
+# git push to main bypasses the branch ruleset ("Deploy keys" -> Always allow).
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Package version (e.g. 1.0.22)'
+        description: 'Package version (e.g. 1.0.23)'
         required: true
 
 env:
@@ -19,7 +18,51 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      notes: ${{ steps.changelog.outputs.notes }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Generate CHANGELOG and push release commit + tag
+        id: changelog
+        run: |
+          VERSION="${{ inputs.version }}"
+          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            COMMITS=$(git log "${PREV_TAG}..HEAD" --pretty=format:"%s")
+          else
+            COMMITS=$(git log --pretty=format:"%s")
+          fi
+
+          SECTION=$(VERSION="$VERSION" DATE="$(date +%Y-%m-%d)" COMMITS="$COMMITS" \
+            python3 .github/scripts/generate_changelog.py)
+
+          git add CHANGELOG.md
+          git commit -m "chore: release v${VERSION}"
+          git push origin main
+          git tag "v${VERSION}"
+          git push origin "v${VERSION}"
+
+          {
+            echo "notes<<EOF_NOTES"
+            echo "$SECTION"
+            echo "EOF_NOTES"
+          } >> "$GITHUB_OUTPUT"
+
   resolve-versions:
+    needs: prepare
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.resolve.outputs.matrix }}
@@ -50,6 +93,8 @@ jobs:
     name: Test BC ${{ matrix.bc-version }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: v${{ inputs.version }}
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: |
@@ -92,15 +137,14 @@ jobs:
           [ "${rc:-0}" -eq 1 ] || { echo "Expected exit 1, got ${rc:-0}"; exit 1; }
 
   publish:
-    needs: test
+    needs: [prepare, test]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0   # full history so git describe finds the previous tag
-          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}  # deploy key has "Always allow" bypass on the main ruleset
+          ref: v${{ inputs.version }}
 
       - uses: actions/setup-dotnet@v5
         with:
@@ -108,98 +152,6 @@ jobs:
             8.0.x
             9.0.x
             10.0.x
-
-      - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Generate CHANGELOG section and update CHANGELOG.md
-        id: changelog
-        run: |
-          export VERSION="${{ inputs.version }}"
-          export DATE=$(date +%Y-%m-%d)
-          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-          if [ -n "$PREV_TAG" ]; then
-            export COMMITS=$(git log "${PREV_TAG}..HEAD" --pretty=format:"%s")
-          else
-            export COMMITS=$(git log --pretty=format:"%s")
-          fi
-
-          # Categorise commits by conventional-commit prefix and build the section
-          export SECTION=$(python3 - <<'PYEOF'
-import os, re
-
-version     = os.environ["VERSION"]
-date        = os.environ["DATE"]
-commits_raw = os.environ.get("COMMITS", "")
-
-added, fixed, docs, changed = [], [], [], []
-for line in commits_raw.splitlines():
-    line = line.strip()
-    if not line:
-        continue
-    line = re.sub(r'\s+\(#\d+\)$', '', line)   # strip PR number suffix
-    lower = line.lower()
-    if re.match(r'chore:\s*(release|update changelog)', lower):
-        continue                                 # skip release-housekeeping
-    if lower.startswith('feat:'):
-        added.append('- ' + line[5:].strip())
-    elif lower.startswith('fix:'):
-        fixed.append('- ' + line[4:].strip())
-    elif lower.startswith('docs:'):
-        docs.append('- ' + line[5:].strip())
-    elif lower.startswith('chore:'):
-        pass                                     # skip internal chores
-    else:
-        changed.append('- ' + line)
-
-out = [f'## [{version}] - {date}', '']
-if added:
-    out += ['### Added'] + added + ['']
-if fixed:
-    out += ['### Fixed'] + fixed + ['']
-if docs:
-    out += ['### Documentation'] + docs + ['']
-if changed:
-    out += ['### Changed'] + changed + ['']
-print('\n'.join(out))
-PYEOF
-          )
-
-          # Inject the new section into CHANGELOG.md after the [Unreleased] heading
-          python3 - <<'PYEOF'
-import os, re
-
-section = os.environ["SECTION"]
-with open("CHANGELOG.md", "r") as f:
-    content = f.read()
-
-updated = re.sub(
-    r'(## \[Unreleased\]\n+)',
-    r'\1' + section.rstrip() + '\n\n',
-    content,
-    count=1
-)
-with open("CHANGELOG.md", "w") as f:
-    f.write(updated)
-PYEOF
-
-          # Store section as step output for the GitHub Release body
-          {
-            echo "notes<<EOF_NOTES"
-            echo "$SECTION"
-            echo "EOF_NOTES"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Commit CHANGELOG and push tag
-        run: |
-          VERSION="${{ inputs.version }}"
-          git add CHANGELOG.md
-          git commit -m "chore: release v${VERSION}"
-          git push origin main
-          git tag "v${VERSION}"
-          git push origin "v${VERSION}"
 
       - name: Build and pack
         run: |
@@ -214,7 +166,7 @@ PYEOF
         with:
           tag_name: v${{ inputs.version }}
           name: v${{ inputs.version }}
-          body: ${{ steps.changelog.outputs.notes }}
+          body: ${{ needs.prepare.outputs.notes }}
           files: ./nupkg/*.nupkg
           draft: false
           prerelease: false
