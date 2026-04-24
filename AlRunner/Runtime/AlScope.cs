@@ -2496,9 +2496,9 @@ public static class AlCompat
     /// platforms (Windows). We try the real BC call first, then fall back to .NET date
     /// arithmetic if it throws. String-formula overload.
     /// </summary>
-    public static NavDate CalcDate(string formula) => CalcDate(formula, ALSystemDate.ALToday(null!));
+    public static NavDate CalcDate(string formula) => CalcDate(formula, NavDate.Create(DateTime.Today));
 
-    public static NavDate CalcDate(NavDateFormula formula) => CalcDate(formula, ALSystemDate.ALToday(null!));
+    public static NavDate CalcDate(NavDateFormula formula) => CalcDate(formula, NavDate.Create(DateTime.Today));
 
     public static NavDate CalcDate(string formula, NavDate date)
     {
