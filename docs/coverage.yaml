@@ -8373,7 +8373,7 @@ TestField.ALInvoke:
   status: covered
   notes: overloads=1; BC may emit .ALInvoke() on string/object results of TestField.Value() when used as method arguments. ALInvokeExtensions.ALInvoke<T>(this T) extension method returns value unchanged; instance methods on MockTestPageField/MockTestPageAction take precedence.
   tests:
-    - tests/bucket-2/96-testpage-value-alinvoke
+    - tests/bucket-1/96-testpage-value-alinvoke
 
 # ── TestPart ────────────────────────────────────────────────────
 

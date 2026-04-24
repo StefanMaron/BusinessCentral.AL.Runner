@@ -1,4 +1,4 @@
-codeunit 305001 "Value Invoke Tests"
+codeunit 1298002 "Value Invoke Tests"
 {
     Subtype = Test;
 

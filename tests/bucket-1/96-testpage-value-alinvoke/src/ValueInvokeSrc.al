@@ -1,4 +1,4 @@
-table 305000 "Value Invoke Record"
+table 1298001 "Value Invoke Record"
 {
     fields
     {
@@ -9,7 +9,7 @@ table 305000 "Value Invoke Record"
     keys { key(PK; Id) { Clustered = true; } }
 }
 
-page 305000 "Value Invoke Card"
+page 1298001 "Value Invoke Card"
 {
     PageType = Card;
     SourceTable = "Value Invoke Record";
