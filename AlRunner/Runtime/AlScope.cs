@@ -601,6 +601,14 @@ public static class AlDialog
         MessageCapture.Capture(formatted);
     }
 
+    /// <summary>
+    /// Object overload for Message — handles NavComplexValue→object rewrite.
+    /// When the rewriter replaces NavComplexValue with object, the format string
+    /// becomes typed as object. This overload converts it to string via Format().
+    /// </summary>
+    public static void Message(object format, params object?[] args)
+        => Message(AlCompat.Format(format), args);
+
     public static void Error(string format, params object?[] args)
     {
         // In BC, Error('') performs a silent transaction rollback without
@@ -616,6 +624,14 @@ public static class AlDialog
         else
             throw new Exception(format);
     }
+
+    /// <summary>
+    /// Object overload for Error — handles NavComplexValue→object rewrite.
+    /// When the rewriter replaces NavComplexValue with object, the format string
+    /// becomes typed as object. This overload converts it to string via Format().
+    /// </summary>
+    public static void Error(object format, params object?[] args)
+        => Error(AlCompat.Format(format), args);
 
     /// <summary>
     /// Overload for AL's Error(ErrorInfo) pattern where NavALErrorInfo is passed directly.
@@ -1402,6 +1418,14 @@ public static class AlCompat
     }
 
     /// <summary>
+    /// Object overload for StrSubstNo — handles NavComplexValue→object rewrite.
+    /// When the rewriter replaces NavComplexValue with object, the format string
+    /// becomes typed as object. This overload converts it to string via Format().
+    /// </summary>
+    public static string StrSubstNo(object fmt, params Microsoft.Dynamics.Nav.Runtime.NavValue[] args)
+        => StrSubstNo(Format(fmt), args);
+
+    /// <summary>
     /// AL PadStr(String, Length, Filler): pad or truncate to fixed width.
     /// Positive Length = right-pad (append filler). Negative Length = left-pad (prepend filler).
     /// If |Length| &lt;= source length, result is source truncated to |Length| (no padding added).
@@ -1420,6 +1444,12 @@ public static class AlCompat
     }
 
     public static string PadStr(string? source, int length) => PadStr(source, length, " ");
+
+    /// <summary>
+    /// Object overloads for PadStr — handles NavComplexValue→object rewrite.
+    /// </summary>
+    public static string PadStr(object source, int length, string? filler) => PadStr(Format(source), length, filler);
+    public static string PadStr(object source, int length) => PadStr(Format(source), length, " ");
 
     /// <summary>
     /// Format with AL format string (e.g. '&lt;Year4&gt;-&lt;Month,2&gt;-&lt;Day,2&gt;').
@@ -2640,6 +2670,11 @@ public static class AlCompat
         return parts[n - 1];
     }
 
+    /// <summary>
+    /// Object overload for SelectStr — handles NavComplexValue→object rewrite.
+    /// </summary>
+    public static string SelectStr(int n, object s) => SelectStr(n, Format(s));
+
     // -----------------------------------------------------------------------
     // Replacement for ALSystemString.ALIncStr
     // AL IncStr(s) increments the last numeric sequence found in s.
@@ -2666,6 +2701,11 @@ public static class AlCompat
         return s.Substring(0, start) + incremented + s.Substring(end + 1);
     }
 
+    /// <summary>
+    /// Object overload for IncStr — handles NavComplexValue→object rewrite.
+    /// </summary>
+    public static string IncStr(object s) => IncStr(Format(s));
+
     // -----------------------------------------------------------------------
     // Replacement for ALSystemString.ALConvertStr
     // AL ConvertStr(String, FromChars, ToChars) replaces each character in
@@ -2690,6 +2730,12 @@ public static class AlCompat
         return sb.ToString();
     }
 
+    /// <summary>
+    /// Object overload for ConvertStr — handles NavComplexValue→object rewrite.
+    /// </summary>
+    public static string ConvertStr(object s, string fromChars, string toChars)
+        => ConvertStr(Format(s), fromChars, toChars);
+
     // -----------------------------------------------------------------------
     // Replacement for ALSystemString.ALCopyStr (2-param variant)
     // AL CopyStr(String, Position) returns the substring from Position to end.
@@ -2706,6 +2752,11 @@ public static class AlCompat
         if (position > s.Length) return "";
         return s.Substring(position - 1);
     }
+
+    /// <summary>
+    /// Object overload for CopyStr — handles NavComplexValue→object rewrite.
+    /// </summary>
+    public static string CopyStr(object s, int position) => CopyStr(Format(s), position);
 
     // -----------------------------------------------------------------------
     // SecretStrSubstNo() replacement

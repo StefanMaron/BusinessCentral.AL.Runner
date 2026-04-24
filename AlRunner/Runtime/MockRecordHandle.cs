@@ -1345,41 +1345,55 @@ public class MockRecordHandle : IConvertible
     public void ALSetFilter(DataError errorLevel, int fieldNo, NavType expectedType, string filterExpression, params NavValue[] args)
         => ALSetFilter(fieldNo, expectedType, filterExpression, args);
 
-    // ---- object catch-all overloads for ALSetFilter ----
-    // Non-params overloads for 1–3 filter substitution args.
+    // ---- object catch-all overloads for ALSetFilter (string filter expression) ----
+    // Non-params overloads for 1–2 filter substitution args.
     // Resolves CS1503: 'object' → 'NavValue' — issue #1260.
 
-    /// <summary>ALSetFilter with 1 object arg.</summary>
     public void ALSetFilter(int fieldNo, string filterExpression, object arg1)
         => ALSetFilter(fieldNo, filterExpression, AlCompat.ToNavValue(arg1));
-
-    /// <summary>ALSetFilter with 2 object args.</summary>
     public void ALSetFilter(int fieldNo, string filterExpression, object arg1, object arg2)
         => ALSetFilter(fieldNo, filterExpression, AlCompat.ToNavValue(arg1), AlCompat.ToNavValue(arg2));
-
-    /// <summary>ALSetFilter(NavType) with 1 object arg.</summary>
     public void ALSetFilter(int fieldNo, NavType expectedType, string filterExpression, object arg1)
         => ALSetFilter(fieldNo, expectedType, filterExpression, AlCompat.ToNavValue(arg1));
-
-    /// <summary>ALSetFilter(NavType) with 2 object args.</summary>
     public void ALSetFilter(int fieldNo, NavType expectedType, string filterExpression, object arg1, object arg2)
         => ALSetFilter(fieldNo, expectedType, filterExpression, AlCompat.ToNavValue(arg1), AlCompat.ToNavValue(arg2));
-
-    /// <summary>ALSetFilter(DataError) with 1 object arg.</summary>
     public void ALSetFilter(DataError errorLevel, int fieldNo, string filterExpression, object arg1)
         => ALSetFilter(fieldNo, filterExpression, AlCompat.ToNavValue(arg1));
-
-    /// <summary>ALSetFilter(DataError) with 2 object args.</summary>
     public void ALSetFilter(DataError errorLevel, int fieldNo, string filterExpression, object arg1, object arg2)
         => ALSetFilter(fieldNo, filterExpression, AlCompat.ToNavValue(arg1), AlCompat.ToNavValue(arg2));
-
-    /// <summary>ALSetFilter(DataError, NavType) with 1 object arg.</summary>
     public void ALSetFilter(DataError errorLevel, int fieldNo, NavType expectedType, string filterExpression, object arg1)
         => ALSetFilter(fieldNo, expectedType, filterExpression, AlCompat.ToNavValue(arg1));
-
-    /// <summary>ALSetFilter(DataError, NavType) with 2 object args.</summary>
     public void ALSetFilter(DataError errorLevel, int fieldNo, NavType expectedType, string filterExpression, object arg1, object arg2)
         => ALSetFilter(fieldNo, expectedType, filterExpression, AlCompat.ToNavValue(arg1), AlCompat.ToNavValue(arg2));
+
+    // ---- object catch-all overloads for ALSetFilter (object filter expression) ----
+    // Resolves CS1503: 'object' → 'string' — issue #1297.
+    // When NavComplexValue→object rewrite makes the filter expression typed as object.
+
+    public void ALSetFilter(int fieldNo, object filterExpression)
+        => ALSetFilter(fieldNo, AlCompat.Format(filterExpression));
+    public void ALSetFilter(int fieldNo, object filterExpression, object arg1)
+        => ALSetFilter(fieldNo, AlCompat.Format(filterExpression), AlCompat.ToNavValue(arg1));
+    public void ALSetFilter(int fieldNo, object filterExpression, object arg1, object arg2)
+        => ALSetFilter(fieldNo, AlCompat.Format(filterExpression), AlCompat.ToNavValue(arg1), AlCompat.ToNavValue(arg2));
+    public void ALSetFilter(int fieldNo, NavType expectedType, object filterExpression)
+        => ALSetFilter(fieldNo, expectedType, AlCompat.Format(filterExpression));
+    public void ALSetFilter(int fieldNo, NavType expectedType, object filterExpression, object arg1)
+        => ALSetFilter(fieldNo, expectedType, AlCompat.Format(filterExpression), AlCompat.ToNavValue(arg1));
+    public void ALSetFilter(int fieldNo, NavType expectedType, object filterExpression, object arg1, object arg2)
+        => ALSetFilter(fieldNo, expectedType, AlCompat.Format(filterExpression), AlCompat.ToNavValue(arg1), AlCompat.ToNavValue(arg2));
+    public void ALSetFilter(DataError errorLevel, int fieldNo, object filterExpression)
+        => ALSetFilter(fieldNo, AlCompat.Format(filterExpression));
+    public void ALSetFilter(DataError errorLevel, int fieldNo, object filterExpression, object arg1)
+        => ALSetFilter(fieldNo, AlCompat.Format(filterExpression), AlCompat.ToNavValue(arg1));
+    public void ALSetFilter(DataError errorLevel, int fieldNo, object filterExpression, object arg1, object arg2)
+        => ALSetFilter(fieldNo, AlCompat.Format(filterExpression), AlCompat.ToNavValue(arg1), AlCompat.ToNavValue(arg2));
+    public void ALSetFilter(DataError errorLevel, int fieldNo, NavType expectedType, object filterExpression)
+        => ALSetFilter(fieldNo, expectedType, AlCompat.Format(filterExpression));
+    public void ALSetFilter(DataError errorLevel, int fieldNo, NavType expectedType, object filterExpression, object arg1)
+        => ALSetFilter(fieldNo, expectedType, AlCompat.Format(filterExpression), AlCompat.ToNavValue(arg1));
+    public void ALSetFilter(DataError errorLevel, int fieldNo, NavType expectedType, object filterExpression, object arg1, object arg2)
+        => ALSetFilter(fieldNo, expectedType, AlCompat.Format(filterExpression), AlCompat.ToNavValue(arg1), AlCompat.ToNavValue(arg2));
 
     // -----------------------------------------------------------------------
     // SetCurrentKey — set sort key (with DataError first param)

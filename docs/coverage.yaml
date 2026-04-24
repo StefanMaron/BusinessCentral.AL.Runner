@@ -2325,6 +2325,19 @@ Dialog.Message:
   status: covered
   notes: overloads=1; AlDialog.Message implemented in Runtime/AlScope.cs, routes to MessageHandler or stdout.
 
+Dialog.Error (object overload):
+  layer: compilation
+  category: Dialog
+  status: covered
+  notes: >
+    When the rewriter replaces NavComplexValue with object, the format string
+    argument to Error/Message becomes typed as object instead of string, causing
+    CS1503. Object overloads on AlDialog.Error and AlDialog.Message convert via
+    AlCompat.Format(). Same pattern applied to AlCompat.StrSubstNo, CopyStr,
+    SelectStr, PadStr, IncStr, ConvertStr, and ALSetFilter (filter expression).
+  tests:
+    - tests/bucket-2/96-object-to-string-conv
+
 Dialog.Open:
   layer: runtime-api
   category: Dialog

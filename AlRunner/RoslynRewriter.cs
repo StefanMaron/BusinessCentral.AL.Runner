@@ -731,6 +731,18 @@ public void ALSetFilter(DataError errorLevel, int fieldNo, string filterExpressi
 public void ALSetFilter(DataError errorLevel, int fieldNo, NavType expectedType, string filterExpression, params NavValue[] args) => Rec.ALSetFilter(fieldNo, expectedType, filterExpression, args);
 public void ALSetFilter(DataError errorLevel, int fieldNo, NavType expectedType, string filterExpression, object arg1) => Rec.ALSetFilter(errorLevel, fieldNo, expectedType, filterExpression, arg1);
 public void ALSetFilter(DataError errorLevel, int fieldNo, NavType expectedType, string filterExpression, object arg1, object arg2) => Rec.ALSetFilter(errorLevel, fieldNo, expectedType, filterExpression, arg1, arg2);
+public void ALSetFilter(int fieldNo, object filterExpression) => Rec.ALSetFilter(fieldNo, filterExpression);
+public void ALSetFilter(int fieldNo, object filterExpression, object arg1) => Rec.ALSetFilter(fieldNo, filterExpression, arg1);
+public void ALSetFilter(int fieldNo, object filterExpression, object arg1, object arg2) => Rec.ALSetFilter(fieldNo, filterExpression, arg1, arg2);
+public void ALSetFilter(int fieldNo, NavType expectedType, object filterExpression) => Rec.ALSetFilter(fieldNo, expectedType, filterExpression);
+public void ALSetFilter(int fieldNo, NavType expectedType, object filterExpression, object arg1) => Rec.ALSetFilter(fieldNo, expectedType, filterExpression, arg1);
+public void ALSetFilter(int fieldNo, NavType expectedType, object filterExpression, object arg1, object arg2) => Rec.ALSetFilter(fieldNo, expectedType, filterExpression, arg1, arg2);
+public void ALSetFilter(DataError errorLevel, int fieldNo, object filterExpression) => Rec.ALSetFilter(errorLevel, fieldNo, filterExpression);
+public void ALSetFilter(DataError errorLevel, int fieldNo, object filterExpression, object arg1) => Rec.ALSetFilter(errorLevel, fieldNo, filterExpression, arg1);
+public void ALSetFilter(DataError errorLevel, int fieldNo, object filterExpression, object arg1, object arg2) => Rec.ALSetFilter(errorLevel, fieldNo, filterExpression, arg1, arg2);
+public void ALSetFilter(DataError errorLevel, int fieldNo, NavType expectedType, object filterExpression) => Rec.ALSetFilter(errorLevel, fieldNo, expectedType, filterExpression);
+public void ALSetFilter(DataError errorLevel, int fieldNo, NavType expectedType, object filterExpression, object arg1) => Rec.ALSetFilter(errorLevel, fieldNo, expectedType, filterExpression, arg1);
+public void ALSetFilter(DataError errorLevel, int fieldNo, NavType expectedType, object filterExpression, object arg1, object arg2) => Rec.ALSetFilter(errorLevel, fieldNo, expectedType, filterExpression, arg1, arg2);
 public void ALCopy(MockRecordHandle source, bool shareFilters = false) => Rec.ALCopy(source, shareFilters);
 public void ALCopyFilter(int fromFieldNo, MockRecordHandle target) => Rec.ALCopyFilter(fromFieldNo, target);
 public void ALCopyFilter(int fromFieldNo, MockRecordHandle target, int toFieldNo) => Rec.ALCopyFilter(fromFieldNo, target, toFieldNo);
