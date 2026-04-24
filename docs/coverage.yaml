@@ -2538,6 +2538,15 @@ ErrorInfo.Verbosity:
 
 # ── FieldRef ────────────────────────────────────────────────────
 
+FieldRef (implicit int conversion):
+  layer: runtime-api
+  category: FieldRef
+  status: covered
+  notes: >
+    implicit operator MockFieldRef(int) — BC compiler sometimes emits int (field number)
+    where MockFieldRef is expected (e.g. FilterPageBuilder.AddFieldNo). Issue #1277.
+  tests: tests/bucket-2/96-fpb-addfieldno
+
 FieldRef.Active:
   layer: runtime-api
   category: FieldRef
@@ -2979,8 +2988,13 @@ FilterPageBuilder.AddFieldNo:
   layer: runtime-api
   category: FilterPageBuilder
   status: covered
-  notes: overloads=1; MockFilterPageBuilder
-  tests: tests/bucket-2/179-filter-page-builder
+  notes: >
+    overloads=1; MockFilterPageBuilder. BC compiler emits ALAddField(DataError, NavText, int)
+    for the AL AddFieldNo call — the int (field number) is passed where MockFieldRef is expected.
+    Fixed via implicit operator MockFieldRef(int) on MockFieldRef (issue #1277).
+  tests:
+    - tests/bucket-2/179-filter-page-builder
+    - tests/bucket-2/96-fpb-addfieldno
 
 FilterPageBuilder.AddRecord:
   layer: runtime-api

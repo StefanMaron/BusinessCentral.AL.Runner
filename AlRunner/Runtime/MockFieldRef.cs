@@ -399,6 +399,20 @@ public class MockFieldRef
     /// <summary>Static Default factory — mirrors NavFieldRef.Default(ITreeObject).</summary>
     public static MockFieldRef Default() => new MockFieldRef();
 
+    /// <summary>
+    /// Implicit conversion from int (field number) to MockFieldRef.
+    /// The BC compiler sometimes emits an int (from ALFieldNo) where a MockFieldRef
+    /// parameter is expected — e.g. FilterPageBuilder.AddFieldNo in AL compiles to
+    /// ALAddField(DataError, NavText, int) but MockFilterPageBuilder.ALAddField
+    /// expects MockFieldRef. This operator lets the C# compiler auto-convert.
+    /// </summary>
+    public static implicit operator MockFieldRef(int fieldNo)
+    {
+        var fr = new MockFieldRef();
+        fr._fieldNo = fieldNo;
+        return fr;
+    }
+
     // -- Internal helpers --
 
     // Cached PropertyInfo for NavDecimal.Value — resolved once at type-init,
