@@ -2345,7 +2345,8 @@ Dialog.Update:
   status: covered
   tests:
     - tests/bucket-2/232-dialog-code-update
-  notes: overloads=1 (+ NavCode overload added to resolve CS0121 ambiguity when Code field values are passed — closes #1179)
+    - tests/bucket-1/1279-dialog-navvalue-int-ambiguity
+  notes: overloads=1 (NavCode overload for CS0121 #1179; removed int overload to fix NavValue/int CS0121 ambiguity #1279)
 
 # ── Duration ────────────────────────────────────────────────────
 
