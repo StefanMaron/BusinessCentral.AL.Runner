@@ -1,12 +1,17 @@
 name: Publish to NuGet
 
+# Single trigger: manual dispatch with explicit version.
+# The workflow creates the tag itself after updating CHANGELOG — so there is no
+# separate "push tag" step and no push-tag → re-trigger loop.
+#
+# Prerequisite (one-time repo setting):
+#   Settings → Branches → branch protection rule for main →
+#   enable "Allow GitHub Actions to bypass required pull requests"
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
     inputs:
       version:
-        description: 'Package version (e.g. 0.2.0)'
+        description: 'Package version (e.g. 1.0.22)'
         required: true
 
 env:
@@ -26,7 +31,6 @@ jobs:
       - name: Resolve BC versions
         id: resolve
         run: |
-          # Read version prefixes from the single-source-of-truth config file
           BC_PREFIXES=$(cat .github/bc-versions.txt | grep -v '^#' | tr '\n' ' ')
           VERSIONS="[]"
           for prefix in $BC_PREFIXES; do
@@ -91,9 +95,13 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # required by softprops/action-gh-release
+      contents: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # full history so git describe finds the previous tag
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: |
@@ -101,50 +109,112 @@ jobs:
             9.0.x
             10.0.x
 
-      - name: Determine version
-        id: version
+      - name: Configure git
         run: |
-          if [ -n "${{ inputs.version }}" ]; then
-            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Generate CHANGELOG section and update CHANGELOG.md
+        id: changelog
+        run: |
+          export VERSION="${{ inputs.version }}"
+          export DATE=$(date +%Y-%m-%d)
+          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            export COMMITS=$(git log "${PREV_TAG}..HEAD" --pretty=format:"%s")
           else
-            # Extract from tag: v0.2.0 -> 0.2.0
-            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            export COMMITS=$(git log --pretty=format:"%s")
           fi
 
-      - name: Extract release notes from CHANGELOG.md
-        id: notes
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          # Grab the section starting at `## [VERSION]` up to (but not including) the next `## ` heading.
-          NOTES=$(awk -v ver="$VERSION" '
-            $0 ~ "^## \\[" ver "\\]" { printing=1; next }
-            printing && $0 ~ "^## \\[" { exit }
-            printing { print }
-          ' CHANGELOG.md)
-          if [ -z "$NOTES" ]; then
-            NOTES="See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details."
-          fi
+          # Categorise commits by conventional-commit prefix and build the section
+          export SECTION=$(python3 - <<'PYEOF'
+import os, re
+
+version     = os.environ["VERSION"]
+date        = os.environ["DATE"]
+commits_raw = os.environ.get("COMMITS", "")
+
+added, fixed, docs, changed = [], [], [], []
+for line in commits_raw.splitlines():
+    line = line.strip()
+    if not line:
+        continue
+    line = re.sub(r'\s+\(#\d+\)$', '', line)   # strip PR number suffix
+    lower = line.lower()
+    if re.match(r'chore:\s*(release|update changelog)', lower):
+        continue                                 # skip release-housekeeping
+    if lower.startswith('feat:'):
+        added.append('- ' + line[5:].strip())
+    elif lower.startswith('fix:'):
+        fixed.append('- ' + line[4:].strip())
+    elif lower.startswith('docs:'):
+        docs.append('- ' + line[5:].strip())
+    elif lower.startswith('chore:'):
+        pass                                     # skip internal chores
+    else:
+        changed.append('- ' + line)
+
+out = [f'## [{version}] - {date}', '']
+if added:
+    out += ['### Added'] + added + ['']
+if fixed:
+    out += ['### Fixed'] + fixed + ['']
+if docs:
+    out += ['### Documentation'] + docs + ['']
+if changed:
+    out += ['### Changed'] + changed + ['']
+print('\n'.join(out))
+PYEOF
+          )
+
+          # Inject the new section into CHANGELOG.md after the [Unreleased] heading
+          python3 - <<'PYEOF'
+import os, re
+
+section = os.environ["SECTION"]
+with open("CHANGELOG.md", "r") as f:
+    content = f.read()
+
+updated = re.sub(
+    r'(## \[Unreleased\]\n+)',
+    r'\1' + section.rstrip() + '\n\n',
+    content,
+    count=1
+)
+with open("CHANGELOG.md", "w") as f:
+    f.write(updated)
+PYEOF
+
+          # Store section as step output for the GitHub Release body
           {
             echo "notes<<EOF_NOTES"
-            echo "$NOTES"
+            echo "$SECTION"
             echo "EOF_NOTES"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Commit CHANGELOG and push tag
+        run: |
+          VERSION="${{ inputs.version }}"
+          git add CHANGELOG.md
+          git commit -m "chore: release v${VERSION}"
+          git push origin main
+          git tag "v${VERSION}"
+          git push origin "v${VERSION}"
 
       - name: Build and pack
         run: |
           dotnet build AlRunner/
-          dotnet pack AlRunner/ -p:Version=${{ steps.version.outputs.version }} -o ./nupkg
+          dotnet pack AlRunner/ -p:Version=${{ inputs.version }} -o ./nupkg
 
       - name: Push to NuGet
         run: dotnet nuget push ./nupkg/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
 
       - name: Create GitHub Release
-        if: github.event_name == 'push'  # only on tag pushes, not workflow_dispatch
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          body: ${{ steps.notes.outputs.notes }}
+          tag_name: v${{ inputs.version }}
+          name: v${{ inputs.version }}
+          body: ${{ steps.changelog.outputs.notes }}
           files: ./nupkg/*.nupkg
           draft: false
           prerelease: false
@@ -153,6 +223,6 @@ jobs:
         run: |
           echo "## Published to NuGet" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "**Version:** ${{ steps.version.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "**Package:** [MSDyn365BC.AL.Runner](https://www.nuget.org/packages/MSDyn365BC.AL.Runner/${{ steps.version.outputs.version }})" >> "$GITHUB_STEP_SUMMARY"
-          echo "**Release:** [${{ github.ref_name }}](https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Version:** ${{ inputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Package:** [MSDyn365BC.AL.Runner](https://www.nuget.org/packages/MSDyn365BC.AL.Runner/${{ inputs.version }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Release:** [v${{ inputs.version }}](https://github.com/${{ github.repository }}/releases/tag/v${{ inputs.version }})" >> "$GITHUB_STEP_SUMMARY"
