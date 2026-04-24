@@ -3201,6 +3201,26 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
                     SyntaxFactory.ParenthesizedExpression(arg));
             }
 
+            // ALCompiler.ToRecordRef(scope, record) -> MockRecordRef.FromHandle(record)
+            // BC emits this when a Record variable is passed by value to a RecordRef parameter
+            // in the same codeunit (direct call, not Invoke). The second argument is a NavRecord
+            // (the underlying record handle). After .Target stripping it becomes MockRecordHandle.
+            // MockRecordRef.FromHandle wraps the handle so it can be used as a RecordRef.
+            // Issue: https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1242
+            if (exprText == "ALCompiler" && methodName == "ToRecordRef" &&
+                visited.ArgumentList.Arguments.Count >= 2)
+            {
+                var recordArg = visited.ArgumentList.Arguments[1].Expression;
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("MockRecordRef"),
+                        SyntaxFactory.IdentifierName("FromHandle")),
+                    SyntaxFactory.ArgumentList(
+                        SyntaxFactory.SingletonSeparatedList(
+                            SyntaxFactory.Argument(recordArg))));
+            }
+
             // ALCompiler.NavIndirectValueToDecimal(x) -> AlCompat.ObjectToDecimal(x)
             if (exprText == "ALCompiler" && methodName == "NavIndirectValueToDecimal")
             {

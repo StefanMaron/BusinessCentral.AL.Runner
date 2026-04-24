@@ -17,6 +17,20 @@ public class MockRecordRef
 
     public MockRecordRef() { }
 
+    /// <summary>
+    /// Creates a <see cref="MockRecordRef"/> that wraps an existing
+    /// <see cref="MockRecordHandle"/> — used by the rewriter when BC emits
+    /// <c>ALCompiler.ToRecordRef(scope, record)</c> to pass a Record variable
+    /// as a RecordRef by-value parameter in the same codeunit.
+    /// </summary>
+    public static MockRecordRef FromHandle(MockRecordHandle handle)
+    {
+        var rr = new MockRecordRef();
+        rr._handle = handle;
+        rr.Number = handle.TableId;
+        return rr;
+    }
+
     public void Clear()
     {
         Number = 0;

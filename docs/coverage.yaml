@@ -5155,6 +5155,18 @@ RecordId.TableNo:
 
 # ── RecordRef ───────────────────────────────────────────────────
 
+record_as_recordref_param:
+  layer: syntax
+  category: RecordRef
+  status: covered
+  notes: >
+    Passing a Record variable by value to a RecordRef parameter in the same codeunit.
+    BC emits ALCompiler.ToRecordRef(scope, record.Target) for this pattern; the rewriter
+    now converts it to MockRecordRef.FromHandle(handle) so MockRecordHandle is not
+    passed where NavRecord was expected. Fixed in issue #1242.
+  tests:
+    - tests/bucket-2/236-recordref-param
+
 RecordRef.AddLink:
   layer: runtime-api
   category: RecordRef
