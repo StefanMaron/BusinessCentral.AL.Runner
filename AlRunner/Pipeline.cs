@@ -23,6 +23,12 @@ public class PipelineOptions
     public bool IterationTracking { get; set; }
     /// <summary>Run only this specific procedure by name (e.g. "TestCalculateVAT").</summary>
     public string? RunProcedure { get; set; }
+    /// <summary>
+    /// When set, run the OnRun trigger of the named codeunit explicitly instead of
+    /// executing test codeunits. Codeunits with TableNo set are skipped (they require
+    /// a record to be passed in and cannot run standalone).
+    /// </summary>
+    public string? RunCodeunit { get; set; }
     /// <summary>If set, write a JUnit XML test report to this path after test execution.</summary>
     public string? OutputJunitPath { get; set; }
     /// <summary>When true, promote exit code 2 (runner limitations) to exit code 1 (failure).</summary>
@@ -773,9 +779,10 @@ public class AlRunnerPipeline
         Executor.RegisterStatements(GetRewrittenStrings());
 
         bool hasTests = alSources.Any(s => s.Contains("Subtype = Test"));
+        bool explicitRunCodeunit = options.RunCodeunit != null;
 
         int exitCode;
-        if (hasTests)
+        if (hasTests || explicitRunCodeunit)
         {
             Runtime.MessageCapture.Reset();
             Runtime.MessageCapture.Enable();
@@ -793,65 +800,54 @@ public class AlRunnerPipeline
             }
 
             var runSw = System.Diagnostics.Stopwatch.StartNew();
-            var results = Executor.RunTests(assembly, captureValues: options.CaptureValues, runProcedure: options.RunProcedure, initEvents: options.InitEvents, testIsolation: options.TestIsolation, testTimeoutSeconds: options.TestTimeoutSeconds);
-            runSw.Stop();
-            testResults.AddRange(results);
-            if (results.Count == 0 && options.RunProcedure != null)
-                stderr.WriteLine($"Error: Procedure '{options.RunProcedure}' not found in the generated code.");
-            if (!options.OutputJson)
-                Executor.PrintResults(results, runSw.ElapsedMilliseconds, options.Verbose, options.Strict);
-            exitCode = Executor.ExitCode(results, options.Strict);
-
-            if (options.CaptureValues)
-                Runtime.ValueCapture.Disable();
-            if (options.IterationTracking)
-                Runtime.IterationTracker.Disable();
-            Runtime.MessageCapture.Disable();
-
-            Dictionary<string, string>? scopeToObject = null;
-            if (options.IterationTracking || options.ShowCoverage)
+            if (explicitRunCodeunit)
             {
-                scopeToObject = CoverageReport.BuildScopeToObjectMap(generatedCSharpList!);
+                exitCode = Executor.RunOnRun(assembly, options.RunCodeunit!, captureValues: options.CaptureValues);
+                runSw.Stop();
+                if (options.CaptureValues) Runtime.ValueCapture.Disable();
+                if (options.IterationTracking) Runtime.IterationTracker.Disable();
+                Runtime.MessageCapture.Disable();
+                if (options.IterationTracking || options.ShowCoverage)
+                    _scopeToObject = CoverageReport.BuildScopeToObjectMap(generatedCSharpList!);
             }
-
-            _scopeToObject = scopeToObject;
-
-            if (options.ShowCoverage)
+            else
             {
-                Executor.PrintCoverageReport();
+                var results = Executor.RunTests(assembly, captureValues: options.CaptureValues, runProcedure: options.RunProcedure, initEvents: options.InitEvents, testIsolation: options.TestIsolation, testTimeoutSeconds: options.TestTimeoutSeconds);
+                runSw.Stop();
+                testResults.AddRange(results);
+                if (results.Count == 0 && options.RunProcedure != null)
+                    stderr.WriteLine($"Error: Procedure '{options.RunProcedure}' not found in the generated code.");
+                if (!options.OutputJson)
+                    Executor.PrintResults(results, runSw.ElapsedMilliseconds, options.Verbose, options.Strict);
+                exitCode = Executor.ExitCode(results, options.Strict);
 
-                var sourceSpans = CoverageReport.ParseSourceSpans(generatedCSharpList!);
-                var (hitStmts, totalStmts) = Runtime.AlScope.GetCoverageSets();
+                if (options.CaptureValues)
+                    Runtime.ValueCapture.Disable();
+                if (options.IterationTracking)
+                    Runtime.IterationTracker.Disable();
+                Runtime.MessageCapture.Disable();
 
-                CoverageReport.WriteCobertura("cobertura.xml", sourceSpans, hitStmts, totalStmts, scopeToObject!);
-                Log.Info("Coverage report: cobertura.xml");
+                Dictionary<string, string>? scopeToObject = null;
+                if (options.IterationTracking || options.ShowCoverage)
+                    scopeToObject = CoverageReport.BuildScopeToObjectMap(generatedCSharpList!);
+
+                _scopeToObject = scopeToObject;
+
+                if (options.ShowCoverage)
+                {
+                    Executor.PrintCoverageReport();
+                    var sourceSpans = CoverageReport.ParseSourceSpans(generatedCSharpList!);
+                    var (hitStmts, totalStmts) = Runtime.AlScope.GetCoverageSets();
+                    CoverageReport.WriteCobertura("cobertura.xml", sourceSpans, hitStmts, totalStmts, scopeToObject!);
+                    Log.Info("Coverage report: cobertura.xml");
+                }
             }
         }
         else
         {
-            Runtime.MessageCapture.Reset();
-            Runtime.MessageCapture.Enable();
-            if (options.CaptureValues)
-            {
-                Runtime.ValueCapture.Reset();
-                Runtime.ValueCapture.Enable();
-            }
-            if (options.IterationTracking)
-            {
-                Runtime.IterationTracker.Reset();
-                Runtime.IterationTracker.Enable();
-            }
-            exitCode = Executor.RunOnRun(assembly, captureValues: options.CaptureValues);
-            if (options.CaptureValues)
-                Runtime.ValueCapture.Disable();
-            if (options.IterationTracking)
-                Runtime.IterationTracker.Disable();
-            Runtime.MessageCapture.Disable();
-
-            if (options.IterationTracking || options.ShowCoverage)
-            {
-                _scopeToObject = CoverageReport.BuildScopeToObjectMap(generatedCSharpList!);
-            }
+            stderr.WriteLine("No test codeunits found (Subtype = Test). Source compiled successfully.");
+            stderr.WriteLine("To run a specific codeunit\u0027s OnRun trigger, use: --run-codeunit <CodunitName>");
+            exitCode = 1;
         }
         Timer.EndStage("Test execution");
         Timer.Print();

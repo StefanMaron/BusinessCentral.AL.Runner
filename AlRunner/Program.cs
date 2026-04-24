@@ -53,6 +53,8 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("  --capture-values      Capture variable values after each test for inline display");
     Console.Error.WriteLine("  --iteration-tracking  Track per-iteration data for loops (requires --output-json)");
     Console.Error.WriteLine("  --run <procedure>     Run only the specified procedure by name");
+    Console.Error.WriteLine("  --run-codeunit <name> Run the OnRun trigger of a named codeunit explicitly");
+    Console.Error.WriteLine("                        (codeunits with TableNo set are skipped)");
     Console.Error.WriteLine("  --server              Start in server mode (JSON-RPC over stdin/stdout)");
     Console.Error.WriteLine("  --dap [port]          Start DAP debugger server (default port 4711)");
     Console.Error.WriteLine("                        Connect VS Code or any DAP client to set breakpoints");
@@ -234,6 +236,12 @@ while (argIdx < args.Length)
             argIdx++;
             if (argIdx >= args.Length) { Console.Error.WriteLine("Error: --run requires a procedure name"); return 1; }
             options.RunProcedure = args[argIdx];
+            argIdx++;
+            break;
+        case "--run-codeunit":
+            argIdx++;
+            if (argIdx >= args.Length) { Console.Error.WriteLine("Error: --run-codeunit requires a codeunit name"); return 1; }
+            options.RunCodeunit = args[argIdx];
             argIdx++;
             break;
         case "--verbose":
@@ -3491,39 +3499,57 @@ public static class Executor
         return clean;
     }
 
-    public static int RunOnRun(Assembly assembly, bool captureValues = false)
+    public static int RunOnRun(Assembly assembly, string codeunitName, bool captureValues = false)
     {
-        Type? scopeType = null;
-
+        // Find the codeunit class whose name matches (case-insensitive)
+        Type? parentType = null;
         foreach (var type in assembly.GetTypes())
         {
-            foreach (var nested in type.GetNestedTypes(BindingFlags.NonPublic | BindingFlags.Public))
+            var displayName = type.Name;
+            var nameAttr = type.GetCustomAttributes()
+                .FirstOrDefault(a => a.GetType().Name is "NavObjectNameAttribute" or "NavDisplayNameAttribute");
+            if (nameAttr != null)
             {
-                if (nested.Name.Contains("OnRun_Scope"))
-                {
-                    scopeType = nested;
-                    break;
-                }
+                var nameProp = nameAttr.GetType().GetProperty("Name") ?? nameAttr.GetType().GetProperty("DisplayName");
+                displayName = nameProp?.GetValue(nameAttr) as string ?? displayName;
             }
-            if (scopeType != null) break;
+            if (string.Equals(displayName, codeunitName, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(type.Name, codeunitName, StringComparison.OrdinalIgnoreCase))
+            {
+                parentType = type;
+                break;
+            }
         }
 
-        if (scopeType == null)
+        if (parentType == null)
         {
-            Console.Error.WriteLine("Error: No OnRun trigger found in the generated code.");
-            Log.Info("Available types:");
-            foreach (var t in assembly.GetTypes())
-            {
-                Log.Info($"  {t.FullName}");
-                foreach (var n in t.GetNestedTypes(BindingFlags.NonPublic | BindingFlags.Public))
-                    Log.Info($"    {n.Name}");
-            }
+            Console.Error.WriteLine($"Error: Codeunit '{codeunitName}' not found in the generated code.");
+            Console.Error.WriteLine("Available codeunits:");
+            foreach (var t in assembly.GetTypes().Where(t => t.Name.StartsWith("Codeunit", StringComparison.OrdinalIgnoreCase)))
+                Console.Error.WriteLine($"  {t.Name}");
             return 1;
         }
 
-        // Create the parent codeunit and scope using the constructor
-        // (the scope constructor initializes local record variables etc.)
-        var parentType = scopeType.DeclaringType!;
+        // Codeunits with TableNo set require a record to be passed in — skip them.
+        var tableNoAttr = parentType.GetCustomAttributes()
+            .FirstOrDefault(a => a.GetType().Name == "NavObjectTableNoAttribute");
+        if (tableNoAttr != null)
+        {
+            var tableNoProp = tableNoAttr.GetType().GetProperty("TableNo") ?? tableNoAttr.GetType().GetProperty("Value");
+            var tableNo = tableNoProp?.GetValue(tableNoAttr);
+            Console.Error.WriteLine($"Skipping '{codeunitName}': TableNo = {tableNo} — this codeunit requires a record to be passed in and cannot run standalone.");
+            Console.Error.WriteLine("Call it from a test codeunit via Codeunit.Run() with a populated record instead.");
+            return 2;
+        }
+
+        var scopeType = parentType.GetNestedTypes(BindingFlags.NonPublic | BindingFlags.Public)
+            .FirstOrDefault(n => n.Name.Contains("OnRun_Scope"));
+
+        if (scopeType == null)
+        {
+            Console.Error.WriteLine($"Error: Codeunit '{codeunitName}' has no OnRun trigger.");
+            return 1;
+        }
         var parent = RuntimeHelpers.GetUninitializedObject(parentType);
 
         // Call InitializeComponent() if it exists
