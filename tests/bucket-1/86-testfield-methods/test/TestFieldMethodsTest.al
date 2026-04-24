@@ -258,4 +258,39 @@ codeunit 86101 "TFM Test"
         Assert.AreEqual(T, TP.TimeField.AsTime(), 'AsTime must return the time set via SetValue');
         TP.Close();
     end;
+
+    // ------------------------------------------------------------------
+    // AsDateTime (regression for issue #1216 — CS1501 ALAsDateTime not found)
+    // ------------------------------------------------------------------
+
+    [Test]
+    procedure AsDateTime_ReturnsSetDateTime()
+    var
+        TP: TestPage "TFM Card";
+        DT: DateTime;
+    begin
+        // [GIVEN] DateTimeField set to a specific datetime
+        TP.OpenNew();
+        DT := CreateDateTime(19840101D, 120000T);
+        TP.DateTimeField.SetValue(DT);
+        // [THEN] AsDateTime returns that datetime
+        Assert.AreEqual(DT, TP.DateTimeField.AsDateTime(), 'AsDateTime must return the datetime set via SetValue');
+        TP.Close();
+    end;
+
+    [Test]
+    procedure AsDateTime_NonDateTimeField_RaisesError()
+    var
+        TP: TestPage "TFM Card";
+        DT: DateTime;
+    begin
+        // [GIVEN] A text field holding a non-datetime string
+        TP.OpenNew();
+        TP.NameField.SetValue('not-a-datetime');
+        // [WHEN] AsDateTime is called on the text field
+        // [THEN] A conversion error is raised
+        asserterror DT := TP.NameField.AsDateTime();
+        Assert.ExpectedError('');
+        TP.Close();
+    end;
 }

@@ -731,13 +731,19 @@ public class MockTestPageField
 
     /// <summary>
     /// ALAsDateTime — returns the stored field value as a NavDateTime.
-    /// BC emits <c>tP.GetField(hash).ALAsDateTime()</c> for TestField.AsDateTime().
+    /// BC emits <c>tP.GetField(hash).ALAsDateTime()</c> (or the session-aware
+    /// overload) for TestField.AsDateTime(). Throws when the stored value
+    /// cannot be converted to a datetime — matching BC's NavNCLConversionException.
     /// </summary>
     public NavDateTime ALAsDateTime()
     {
         if (_value is NavDateTime dt) return dt;
         if (_value is MockVariant mv && mv.Value is NavDateTime mvdt) return mvdt;
-        return NavDateTime.Default;
+        if (_value is DateTime sysDt) return NavDateTime.CreateFromObject(sysDt);
+        if (_value is MockVariant mv2 && mv2.Value is DateTime mvsDt) return NavDateTime.CreateFromObject(mvsDt);
+        if (_value is null) return NavDateTime.Default;
+        throw new InvalidOperationException(
+            $"Cannot convert field value of type {_value.GetType().Name} to DateTime.");
     }
 
     /// <summary>

@@ -11,6 +11,7 @@ table 86100 "TFM Record"
         field(5; Amt; Decimal) { }
         field(6; PostDate; Date) { }
         field(7; PostTime; Time) { }
+        field(8; PostDateTime; DateTime) { }
     }
     keys { key(PK; Id) { Clustered = true; } }
 }
@@ -30,6 +31,7 @@ page 86100 "TFM Card"
             field(AmtField; Rec.Amt) { }
             field(DateField; Rec.PostDate) { }
             field(TimeField; Rec.PostTime) { }
+            field(DateTimeField; Rec.PostDateTime) { }
         }
     }
 }
