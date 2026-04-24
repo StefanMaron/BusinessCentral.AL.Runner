@@ -8367,16 +8367,11 @@ TestPage.Schedule:
   status: covered
   notes: overloads=1; BC emits tP.Target.ALSchedule().ALInvoke() — MockTestPageHandle.ALSchedule() returns MockTestPageAction which no-ops on ALInvoke().
 
-TestField.Value (ALInvoke on string):
-  layer: compilation
+TestField.ALInvoke:
+  layer: runtime-api
   category: TestPage
   status: covered
-  notes: >
-    BC may emit .ALInvoke() on the result of TestField.Value() when used as a
-    method argument (e.g. Assert.AreEqual(x, Card.Name.Value(), msg)). The
-    .ALValue property returns object?/string, which lacks ALInvoke — causing
-    CS1061. Fixed via ALInvokeExtensions.ALInvoke<T>(this T) extension method
-    that acts as identity no-op on any receiver type.
+  notes: overloads=1; BC may emit .ALInvoke() on string/object results of TestField.Value() when used as method arguments. ALInvokeExtensions.ALInvoke<T>(this T) extension method returns value unchanged; instance methods on MockTestPageField/MockTestPageAction take precedence.
   tests:
     - tests/bucket-2/96-testpage-value-alinvoke
 
