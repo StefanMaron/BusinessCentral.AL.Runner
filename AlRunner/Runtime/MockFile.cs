@@ -245,6 +245,26 @@ public class MockFile
     }
 
     /// <summary>
+    /// 2-arg AL form: UploadIntoStream(DialogTitle, var InStream).
+    /// BC emits this as: ALUploadIntoStream(DataError.TrapError, title, ByRef&lt;NavInStream&gt;, Guid).
+    /// After the NavInStream→MockInStream rewrite the 3rd arg is ByRef&lt;MockInStream&gt;,
+    /// so we need a matching overload (issue #1210).
+    /// Always returns false (no UI in standalone mode).
+    /// </summary>
+    public static bool ALUploadIntoStream(object? scope, string dialogTitle, ByRef<MockInStream> inStream, Guid extra)
+    {
+        return false;
+    }
+
+    /// <summary>
+    /// 2-arg AL form fallback without trailing Guid (older/newer BC emit variants).
+    /// </summary>
+    public static bool ALUploadIntoStream(object? scope, string dialogTitle, ByRef<MockInStream> inStream)
+    {
+        return false;
+    }
+
+    /// <summary>
     /// ALDownloadFromStream — BC standalone DownloadFromStream maps here as a static.
     /// BC emits (scope, MockInStream inStream, title, folder, filter, ByRef&lt;NavText&gt; fileName, NavText extra).
     /// No-op (no UI in standalone mode).
