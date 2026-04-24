@@ -66,4 +66,14 @@ public class MockDataTransfer
     {
         // No-op: requires real database
     }
+
+    /// <summary>Reset the DataTransfer to its initial state.</summary>
+    public void Clear()
+    {
+        _sourceTableId = 0;
+        _targetTableId = 0;
+        _fieldMappings.Clear();
+        _constantValues.Clear();
+        ALUpdateAuditFields = false;
+    }
 }
