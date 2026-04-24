@@ -45,6 +45,14 @@ public class MockRecordHandle : IConvertible
     // Primary key field numbers per table (registered via RegisterPrimaryKey)
     private static readonly Dictionary<int, int[]> _primaryKeys = new();
 
+    // All declared keys per table, in declaration order. Index 0 = primary key.
+    // Used by ALCurrentKeyIndex get/set to switch iteration sort order.
+    private static readonly Dictionary<int, List<int[]>> _tableKeys = new();
+
+    // 1-based index into _tableKeys[_tableId] for the currently active key.
+    // 1 means "primary key" (the default). The setter updates _currentKeyFields.
+    private int _currentKeyIndex = 1;
+
     // Cache: (recordType, triggerName) → (recBackingField, xRecBackingField, triggerMethod)
     // Avoids repeated GetField/GetMethod calls in TryFireRecordTriggerCore (1,093 calls/run).
     private record TriggerReflectionInfo(
@@ -163,6 +171,34 @@ public class MockRecordHandle : IConvertible
     public static void RegisterPrimaryKey(int tableId, params int[] fieldNos)
     {
         _primaryKeys[tableId] = fieldNos;
+        // Keep _tableKeys[0] in sync with primary key for ALCurrentKeyIndex resolution.
+        if (!_tableKeys.TryGetValue(tableId, out var list))
+            _tableKeys[tableId] = list = new List<int[]>();
+        if (list.Count == 0)
+            list.Add(fieldNos);
+        else
+            list[0] = fieldNos;
+    }
+
+    /// <summary>
+    /// Register all declared keys for a table, in declaration order.
+    /// The first entry is the clustered primary key. Subsequent entries are
+    /// secondary keys referenced by <c>RecRef.CurrentKeyIndex := N</c>.
+    /// </summary>
+    public static void RegisterKeys(int tableId, List<int[]> keys)
+    {
+        if (keys == null || keys.Count == 0) return;
+        _tableKeys[tableId] = new List<int[]>(keys);
+        _primaryKeys[tableId] = keys[0];
+    }
+
+    internal static List<int[]> GetKeysForTable(int tableId)
+    {
+        if (_tableKeys.TryGetValue(tableId, out var list) && list.Count > 0)
+            return list;
+        if (_primaryKeys.TryGetValue(tableId, out var pk))
+            return new List<int[]> { pk };
+        return new List<int[]> { new[] { 1 } };
     }
 
     /// <summary>
@@ -3203,6 +3239,35 @@ public class MockRecordHandle : IConvertible
             foreach (var fieldNo in keyFields)
                 names.Add(GetFieldNameByNo(fieldNo));
             return string.Join(",", names);
+        }
+    }
+
+    /// <summary>
+    /// AL RecordRef.KeyCount — number of declared keys for this table.
+    /// The primary key is always key 1. Secondary keys follow in declaration order.
+    /// </summary>
+    public int ALKeyCount => GetKeysForTable(_tableId).Count;
+
+    /// <summary>
+    /// AL RecordRef.CurrentKeyIndex — 1-based index of the active sort key.
+    /// Setting this re-sorts subsequent FindSet/Next iteration by the selected
+    /// key's fields. Throws when the index is out of range.
+    /// </summary>
+    public int ALCurrentKeyIndex
+    {
+        get => _currentKeyIndex;
+        set
+        {
+            var keys = GetKeysForTable(_tableId);
+            if (value < 1 || value > keys.Count)
+                throw new Exception(
+                    $"RecordRef.CurrentKeyIndex: index {value} out of range for table {ALTableName} " +
+                    $"(valid: 1..{keys.Count}).");
+            _currentKeyIndex = value;
+            _currentKeyFields = (int[])keys[value - 1].Clone();
+            // Invalidate any cached result set so the next FindSet re-sorts by the new key.
+            _currentResultSet = null;
+            _cursorPosition = -1;
         }
     }
 

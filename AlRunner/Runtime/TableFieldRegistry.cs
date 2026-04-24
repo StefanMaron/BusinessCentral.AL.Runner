@@ -213,26 +213,26 @@ public static class TableFieldRegistry
                 _optionMembersFields[(tableId, fieldId)] = om.Groups[2].Value.Trim();
             }
 
-            // Extract the first declared key (typically Clustered PK) and
-            // register its field numbers so MockRecordHandle.ALInsert can
-            // enforce uniqueness. BC's registration path only fires for
-            // tables whose generated code references ALFieldNo / a runtime
-            // PK helper; synthetic test fixtures often skip that path.
-            var firstKey = KeyDecl.Match(body);
-            if (firstKey.Success)
+            // Extract all declared keys (primary + secondary) and register them
+            // so RecRef.CurrentKeyIndex := N can switch the active sort key.
+            // The first matched key is the clustered primary key.
+            var keys = new List<int[]>();
+            foreach (Match km in KeyDecl.Matches(body))
             {
-                var keyList = firstKey.Groups[1].Value;
-                var pkFieldIds = new List<int>();
+                var keyList = km.Groups[1].Value;
+                var keyFieldIds = new List<int>();
                 foreach (var rawPart in keyList.Split(','))
                 {
                     var part = rawPart.Trim().Trim('"').Trim();
                     if (part.Length == 0) continue;
                     if (fields.TryGetValue(part, out var fid))
-                        pkFieldIds.Add(fid);
+                        keyFieldIds.Add(fid);
                 }
-                if (pkFieldIds.Count > 0)
-                    MockRecordHandle.RegisterPrimaryKey(tableId, pkFieldIds.ToArray());
+                if (keyFieldIds.Count > 0)
+                    keys.Add(keyFieldIds.ToArray());
             }
+            if (keys.Count > 0)
+                MockRecordHandle.RegisterKeys(tableId, keys);
         }
 
         // Parse tableextension and page declarations: both need a name→ID reverse map.
