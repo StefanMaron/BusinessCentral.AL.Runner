@@ -25,6 +25,10 @@ Full BC pipeline (BcContainerHelper / MsDyn365Bc.On.Linux, 45+ min) -- full fide
 
 ## Quick Start
 
+### Prerequisites
+
+.NET SDK 8, 9, or 10 — download from [https://aka.ms/dotnet/download](https://aka.ms/dotnet/download).
+
 ### Install
 
 ```bash
@@ -32,6 +36,12 @@ dotnet tool install --global MSDyn365BC.AL.Runner
 ```
 
 On first run, the AL compiler (~57 MB from NuGet) and BC Service Tier DLLs (~11 MB via HTTP range requests) are downloaded automatically and cached. No manual setup required. Works on Windows, Linux, and macOS.
+
+> **Windows / corporate environments:** If the install fails with "package not found in NuGet feeds", your machine may be missing the public NuGet.org feed. Add it once:
+> ```powershell
+> dotnet nuget add source https://api.nuget.org/v3/index.json --name nuget.org
+> ```
+> Then re-run the install command.
 
 ### Run
 
@@ -49,6 +59,16 @@ al-runner --run TestMyProcedure ./src ./test
 al-runner --output-json ./src ./test
 al-runner --output-junit results.xml ./src ./test
 ```
+
+### Multi-root workspaces
+
+Pass all source and test directories as separate arguments — AL Runner compiles them together as one project:
+
+```bash
+al-runner ./app1/src ./app1.test/src ./app2/src ./app2.test/src
+```
+
+AL object IDs must be unique across all directories passed in a single invocation.
 
 ### Build from source
 

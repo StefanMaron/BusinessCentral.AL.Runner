@@ -18,7 +18,14 @@ public static class ArtifactDownloader
     /// </summary>
     public static string? DownloadServiceTierDlls(string artifactUrl, string outputDir)
     {
-        Directory.CreateDirectory(outputDir);
+        try { Directory.CreateDirectory(outputDir); }
+        catch (UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"Error: Access denied creating cache directory: {outputDir}");
+            Console.Error.WriteLine("  This is usually caused by antivirus or corporate security policies blocking writes to user profile directories.");
+            Console.Error.WriteLine("  Try adding an exclusion for the al-runner cache path in your security software.");
+            return null;
+        }
 
         using var http = new HttpClient();
         http.Timeout = TimeSpan.FromMinutes(5);
@@ -171,7 +178,13 @@ public static class ArtifactDownloader
             else
                 continue;
 
-            File.WriteAllBytes(Path.Combine(outputDir, basename), fileData);
+            try { File.WriteAllBytes(Path.Combine(outputDir, basename), fileData); }
+            catch (UnauthorizedAccessException)
+            {
+                Console.Error.WriteLine($"Error: Access denied writing {basename} to {outputDir}");
+                Console.Error.WriteLine("  This is usually caused by antivirus or corporate security policies blocking DLL writes to user profile directories.");
+                return null;
+            }
             extracted++;
             totalBytes += fileData.Length;
         }
