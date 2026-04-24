@@ -6642,7 +6642,7 @@ System.GetLastErrorCallStack:
   layer: runtime-api
   category: System
   status: covered
-  notes: overloads=1; returns AlScope.LastErrorCallStack (always "" in runner). Rewriter redirects ALSystemErrorHandling.ALGetLastErrorCallStack to AlScope.LastErrorCallStack.
+  notes: overloads=1; returns AlScope.LastErrorCallStack (always "" at the AL API surface — no runtime stack capture in-runner). Rewriter redirects ALSystemErrorHandling.ALGetLastErrorCallStack to AlScope.LastErrorCallStack. Note that the test runner's failure output renders AL-level frames (object+procedure+line) via FormatStackFrames/FormatSingleFrame — see AlRunner/Program.cs and AlRunner.Tests/AlScopeTrackingTests.cs; this is a test-output enhancement, not an AL-surface change.
   tests:
     - tests/bucket-1/176-system-error-utils
     - tests/bucket-2/213-lasterrorcallstack
