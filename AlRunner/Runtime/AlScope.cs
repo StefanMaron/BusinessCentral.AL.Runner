@@ -2993,3 +2993,31 @@ public static class AlCompat
     }
 
 }
+
+/// <summary>
+/// Extension methods for BC-emitted <c>.ALInvoke()</c> calls on types that lack
+/// an instance <c>ALInvoke</c> method.
+///
+/// The BC compiler sometimes wraps expression results in <c>.ALInvoke()</c> to force
+/// evaluation — for example when a TestPage field's <c>.Value()</c> (which returns
+/// <c>string</c>) is used as a method argument:
+/// <code>Assert.AreEqual(VendorName, VendorCard.Name.Value(), '...')</code>
+/// BC lowers this to <c>...GetField(hash).ALValue.ALInvoke()</c>, where
+/// <c>.ALValue</c> returns <c>object?</c> (concretely a string at runtime).
+///
+/// Types that define their own <c>ALInvoke()</c> (e.g. <see cref="MockTestPageField"/>,
+/// <see cref="MockTestPageAction"/>) are unaffected — C# always prefers instance
+/// methods over extension methods.
+///
+/// Without this extension, the Roslyn compilation stage emits CS1061 because
+/// <c>string</c> (and other non-mock types) have no <c>ALInvoke</c> method.
+/// Closes #1298.
+/// </summary>
+public static class ALInvokeExtensions
+{
+    /// <summary>
+    /// Identity no-op: returns <paramref name="value"/> unchanged.
+    /// Satisfies BC-generated <c>.ALInvoke()</c> calls on arbitrary receiver types.
+    /// </summary>
+    public static T ALInvoke<T>(this T value) => value;
+}
