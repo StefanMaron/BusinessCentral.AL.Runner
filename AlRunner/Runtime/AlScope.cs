@@ -497,7 +497,6 @@ public class MockDialog
     public void ALOpen(Guid id, NavText text, string text2) { }
     public void ALUpdate(int fieldNo, NavValue value) { }
     public void ALUpdate(int fieldNo, string value) { }
-    public void ALUpdate(int fieldNo, int value) { }
     public void ALUpdate(int fieldNo, NavText value) { }
     /// <summary>
     /// Explicit NavCode overload to resolve CS0121 ambiguity when a Code field value
