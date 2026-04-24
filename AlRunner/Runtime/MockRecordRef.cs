@@ -31,6 +31,17 @@ public class MockRecordRef
         return rr;
     }
 
+    /// <summary>
+    /// Implicit conversion from <see cref="MockRecordHandle"/> to <see cref="MockRecordRef"/>.
+    /// In AL, a Record can always be used where a RecordRef is expected. BC sometimes
+    /// emits code paths (beyond <c>ALCompiler.ToRecordRef</c>) where the generated C#
+    /// passes a MockRecordHandle directly to a MockRecordRef parameter, causing CS1503.
+    /// This operator ensures all such code paths compile and behave correctly.
+    /// Issue: https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1275
+    /// </summary>
+    public static implicit operator MockRecordRef(MockRecordHandle handle)
+        => FromHandle(handle);
+
     public void Clear()
     {
         Number = 0;
