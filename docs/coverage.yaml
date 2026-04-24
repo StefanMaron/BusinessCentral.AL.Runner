@@ -7561,7 +7561,14 @@ Table.Validate:
   category: Table
   status: covered
   tests: tests/bucket-1/18-validate-trigger
-  notes: overloads=1
+  notes: overloads=2; Validate(Field, Value) and Validate(Field) (no value, re-validates current value)
+
+Table.Validate (2-arg, no value):
+  layer: runtime-api
+  category: Table
+  status: covered
+  tests: tests/bucket-1/96-validate-no-value
+  notes: overloads=1; ALValidateSafe(fieldNo, expectedType) — re-validates current field value without setting a new one. The 2-arg overload was missing from the injected Record class delegate methods.
 
 Table.WritePermission:
   layer: runtime-api

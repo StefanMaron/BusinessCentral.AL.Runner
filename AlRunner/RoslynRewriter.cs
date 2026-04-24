@@ -695,6 +695,7 @@ public void ALCopyFilter(int fromFieldNo, MockRecordHandle target) => Rec.ALCopy
 public void ALCopyFilter(int fromFieldNo, MockRecordHandle target, int toFieldNo) => Rec.ALCopyFilter(fromFieldNo, target, toFieldNo);
 public void ALCopyFilters(MockRecordHandle source) => Rec.ALCopyFilters(source);
 public void ALValidateSafe(int fieldNo, NavType expectedType, NavValue value) => Rec.ALValidateSafe(fieldNo, expectedType, value);
+public void ALValidateSafe(int fieldNo, NavType expectedType) => Rec.ALValidateSafe(fieldNo, expectedType);
 public void ALValidate(DataError errorLevel, int fieldNo, NavType expectedType, NavValue value) => Rec.ALValidate(errorLevel, fieldNo, expectedType, value);
 public void ALTestFieldSafe(int fieldNo, NavType expectedType) => Rec.ALTestFieldSafe(fieldNo, expectedType);
 public void ALTestFieldSafe(int fieldNo, NavType expectedType, NavValue expectedValue) => Rec.ALTestFieldSafe(fieldNo, expectedType, expectedValue);
