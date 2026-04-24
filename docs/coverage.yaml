@@ -6555,8 +6555,8 @@ System.CalcDate:
   layer: runtime-api
   category: System
   status: covered
-  tests: tests/bucket-2/181-calcdate
-  notes: overloads=2. Covered via BC's ALCalcDate — formula parsing (D/W/M/Y, compound, empty) and DateFormula-typed overload all pass through the SDK.
+  tests: tests/bucket-2/181-calcdate, tests/bucket-2/96-calcdate-navdateinvalid
+  notes: overloads=2. Routed through AlCompat.CalcDate which tries BC's ALCalcDate first and falls back to .NET date arithmetic when NavNCLDateInvalidException is thrown (issue #1258, Windows with null session).
 
 System.CanLoadType:
   layer: runtime-api

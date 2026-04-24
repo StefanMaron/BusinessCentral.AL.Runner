@@ -2491,6 +2491,181 @@ public static class AlCompat
     }
 
     /// <summary>
+    /// CalcDate(formula, date) — wraps ALSystemDate.ALCalcDate with null-session handling.
+    /// BC runtime throws NavNCLDateInvalidException when the session is null on some
+    /// platforms (Windows). We try the real BC call first, then fall back to .NET date
+    /// arithmetic if it throws. String-formula overload.
+    /// </summary>
+    public static NavDate CalcDate(string formula, NavDate date)
+    {
+        if (date == NavDate.Default)
+            throw new Exception("You cannot base a date calculation on an undefined date.\n\nDate: 0D\nFormula: " + (formula ?? "") + ".");
+        try
+        {
+            return ALSystemDate.ALCalcDate(null!, formula, date);
+        }
+        catch (Exception ex) when (ex.GetType().Name.Contains("NavNCL") || ex is NullReferenceException)
+        {
+            return CalcDateFallback(formula, date);
+        }
+    }
+
+    /// <summary>
+    /// CalcDate(formula, date) — DateFormula overload.
+    /// Extracts the formula string from NavDateFormula and delegates to the string overload.
+    /// </summary>
+    public static NavDate CalcDate(NavDateFormula formula, NavDate date)
+    {
+        if (date == NavDate.Default)
+            throw new Exception("You cannot base a date calculation on an undefined date.\n\nDate: 0D\nFormula: " + (formula?.ToString() ?? "") + ".");
+        try
+        {
+            return ALSystemDate.ALCalcDate(null!, formula, date);
+        }
+        catch (Exception ex) when (ex.GetType().Name.Contains("NavNCL") || ex is NullReferenceException)
+        {
+            // Extract the formula string from NavDateFormula via its ToString()
+            var formulaStr = formula.ToString() ?? "";
+            // NavDateFormula.ToString() may not include angle brackets; ensure they are present
+            if (!string.IsNullOrEmpty(formulaStr) && !formulaStr.StartsWith("<"))
+                formulaStr = "<" + formulaStr + ">";
+            return CalcDateFallback(formulaStr, date);
+        }
+    }
+
+    /// <summary>
+    /// Fallback CalcDate implementation using .NET date arithmetic.
+    /// Parses common BC date formula patterns: +/-NnD, +/-NnW, +/-NnM, +/-NnQ, +/-NnY,
+    /// CD, CW, CM, CQ, CY, and combinations thereof.
+    /// </summary>
+    private static NavDate CalcDateFallback(string formula, NavDate date)
+    {
+        if (date == NavDate.Default)
+            throw new Exception("You cannot base a date calculation on an undefined date.");
+
+        var dateVal = NavDateValueField is null ? DateTime.MinValue
+            : (NavDateValueField.GetValue(date) as DateTime?) ?? DateTime.MinValue;
+
+        if (dateVal == DateTime.MinValue)
+            throw new Exception("You cannot base a date calculation on an undefined date.");
+
+        // Strip angle brackets if present
+        var f = formula.Trim();
+        if (f.StartsWith("<") && f.EndsWith(">"))
+            f = f.Substring(1, f.Length - 2);
+
+        var result = ApplyDateFormula(f, dateVal);
+        return NavDate.Create((uint)((result.Year * 10000) + (result.Month * 100) + result.Day));
+    }
+
+    /// <summary>
+    /// Parse and apply a date formula string (without angle brackets) to a DateTime.
+    /// Supports: [+/-]N{D|W|M|Q|Y}, C{D|W|M|Q|Y}, and combinations.
+    /// </summary>
+    private static DateTime ApplyDateFormula(string formula, DateTime baseDate)
+    {
+        var result = baseDate;
+        int i = 0;
+        while (i < formula.Length)
+        {
+            if (formula[i] == ' ') { i++; continue; }
+
+            // Parse sign
+            int sign = 1;
+            if (i < formula.Length && (formula[i] == '+' || formula[i] == '-'))
+            {
+                if (formula[i] == '-') sign = -1;
+                i++;
+            }
+
+            // Check for 'C' prefix (Current period)
+            // In BC: CM/CW/CQ/CY = end of current period, -CM/-CW/-CQ/-CY = start of current period.
+            if (i < formula.Length && (formula[i] == 'C' || formula[i] == 'c'))
+            {
+                i++;
+                if (i < formula.Length)
+                {
+                    char unit = char.ToUpper(formula[i]);
+                    i++;
+                    // ISO day: Mon=0 … Sun=6
+                    int isoDay = ((int)result.DayOfWeek + 6) % 7;
+                    if (sign < 0)
+                    {
+                        // Beginning of period (ISO week starts on Monday)
+                        result = unit switch
+                        {
+                            'D' => result,
+                            'W' => result.AddDays(-isoDay),
+                            'M' => new DateTime(result.Year, result.Month, 1),
+                            'Q' => GetQuarterStart(result),
+                            'Y' => new DateTime(result.Year, 1, 1),
+                            _ => result
+                        };
+                    }
+                    else
+                    {
+                        // End of period (ISO week ends on Sunday)
+                        result = unit switch
+                        {
+                            'D' => result,
+                            'W' => result.AddDays(6 - isoDay),
+                            'M' => new DateTime(result.Year, result.Month,
+                                        DateTime.DaysInMonth(result.Year, result.Month)),
+                            'Q' => GetQuarterEnd(result),
+                            'Y' => new DateTime(result.Year, 12, 31),
+                            _ => result
+                        };
+                    }
+                }
+                continue;
+            }
+
+            // Parse number
+            int number = 0;
+            bool hasNumber = false;
+            while (i < formula.Length && char.IsDigit(formula[i]))
+            {
+                number = number * 10 + (formula[i] - '0');
+                hasNumber = true;
+                i++;
+            }
+
+            if (!hasNumber) number = 1;
+
+            // Parse unit
+            if (i < formula.Length)
+            {
+                char unit = char.ToUpper(formula[i]);
+                i++;
+                int n = sign * number;
+                result = unit switch
+                {
+                    'D' => result.AddDays(n),
+                    'W' => result.AddDays(n * 7),
+                    'M' => result.AddMonths(n),
+                    'Q' => result.AddMonths(n * 3),
+                    'Y' => result.AddYears(n),
+                    _ => result
+                };
+            }
+        }
+        return result;
+    }
+
+    private static DateTime GetQuarterEnd(DateTime date)
+    {
+        int quarterMonth = ((date.Month - 1) / 3 + 1) * 3;
+        return new DateTime(date.Year, quarterMonth,
+            DateTime.DaysInMonth(date.Year, quarterMonth));
+    }
+
+    private static DateTime GetQuarterStart(DateTime date)
+    {
+        int quarterMonth = ((date.Month - 1) / 3) * 3 + 1;
+        return new DateTime(date.Year, quarterMonth, 1);
+    }
+
+    /// <summary>
     /// RoundDateTime(dt) — rounds to nearest 1000ms (default precision).
     /// </summary>
     public static NavDateTime RoundDateTime(NavDateTime dt)
