@@ -79,6 +79,18 @@ public class MockInStream
         return toRead;
     }
 
+    /// <summary>
+    /// Implicit conversion to string — returns all bytes as UTF-8 text.
+    /// BC compiler sometimes emits NavInStream (rewritten to MockInStream) in
+    /// a context where a string is expected. Without this operator the Roslyn
+    /// compilation fails with CS1503.
+    /// </summary>
+    public static implicit operator string(MockInStream stream)
+    {
+        if (stream._data.Length == 0) return string.Empty;
+        return Encoding.UTF8.GetString(stream._data);
+    }
+
     /// <summary>ALLength — BC's InStream.Length property. Returns total byte length.</summary>
     public int ALLength => _data.Length;
 

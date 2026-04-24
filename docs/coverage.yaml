@@ -3455,6 +3455,14 @@ InStream.ResetPosition:
   status: covered
   notes: overloads=1
 
+InStream (implicit string conversion):
+  layer: runtime-api
+  category: InStream
+  status: covered
+  tests:
+    - tests/bucket-2/269-instream-to-string
+  notes: "overloads=1; implicit operator string on MockInStream — reads all bytes as UTF-8; fixes CS1503 when BC compiler emits NavInStream where string is expected (issue #1273)"
+
 # ── Integer ─────────────────────────────────────────────────────
 
 Integer.ToText:
