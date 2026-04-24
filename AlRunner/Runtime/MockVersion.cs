@@ -40,6 +40,23 @@ public struct MockVersion
         => ALCreate(null, major, minor, build, revision);
 
     /// <summary>
+    /// BC lowers <c>Version.Create(Text)</c> to <c>NavVersion.ALCreate(text)</c>.
+    /// Parses a dotted version string (e.g. <c>"25.1.30000.12345"</c>) into its
+    /// major/minor/build/revision components.
+    /// </summary>
+    public static MockVersion ALCreate(NavText versionText)
+    {
+        var text = versionText.ToString();
+        var parts = text.Split('.');
+        var result = new MockVersion();
+        if (parts.Length > 0 && int.TryParse(parts[0], out var maj)) result._major    = maj;
+        if (parts.Length > 1 && int.TryParse(parts[1], out var min)) result._minor    = min;
+        if (parts.Length > 2 && int.TryParse(parts[2], out var bld)) result._build    = bld;
+        if (parts.Length > 3 && int.TryParse(parts[3], out var rev)) result._revision = rev;
+        return result;
+    }
+
+    /// <summary>
     /// Default (zero) instance — BC emits <c>NavVersion.Default</c> for uninitialized
     /// <c>Version</c> variables (0.0.0.0).
     /// </summary>

@@ -9529,7 +9529,14 @@ Version.Create:
   category: Version
   status: covered
   tests: tests/bucket-1/96-version
-  notes: overloads=2
+  notes: overloads=2; ALCreate(major,minor,build,revision) and ALCreate(NavText versionText) for Version.Create(Text)
+
+Version.Create (1-arg text):
+  layer: runtime-api
+  category: Version
+  status: covered
+  tests: tests/bucket-1/96-version-create-text
+  notes: overloads=1; parses dotted version string e.g. '25.1.30000.12345' into major/minor/build/revision
 
 Version.Major:
   layer: runtime-api
