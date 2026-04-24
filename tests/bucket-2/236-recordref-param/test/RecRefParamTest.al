@@ -1,10 +1,10 @@
 // Issue 1242: CS1503 when Record variable is passed to a RecordRef by-value
 // parameter inside the same codeunit.
 // BC emits ALCompiler.ToRecordRef(scope, rec.Target) for this pattern; the
-// rewriter must convert it to new MockRecordRef(handle) so MockRecordHandle is
-// not passed where NavRecord was expected.
+// rewriter must convert it to MockRecordRef.FromHandle(handle) so MockRecordHandle
+// is not passed where NavRecord was expected.
 
-codeunit 56581 "RecRef Param Tests"
+codeunit 237001 "RecRef Param Tests"
 {
     Subtype = Test;
 
@@ -12,7 +12,7 @@ codeunit 56581 "RecRef Param Tests"
         Assert: Codeunit Assert;
 
     // ---------------------------------------------------------------
-    // Helper procedure: takes RecordRef by value (in same codeunit).
+    // Helper procedures: take RecordRef by value (same codeunit).
     // ---------------------------------------------------------------
 
     procedure FieldCountFromRecordRef(RecRef: RecordRef): Integer
@@ -35,7 +35,7 @@ codeunit 56581 "RecRef Param Tests"
     var
         Rec: Record "RecRef Param Table";
     begin
-        // [GIVEN] A Record variable for table 56580 (2 fields)
+        // [GIVEN] A Record variable for table 237000 (2 fields)
         // [WHEN]  Passed by value to FieldCountFromRecordRef in this codeunit
         // [THEN]  Returns 2 — proves the mock RecordRef wraps the Record correctly
         Assert.AreEqual(2, FieldCountFromRecordRef(Rec), 'FieldCount from Record→RecordRef must be 2');
