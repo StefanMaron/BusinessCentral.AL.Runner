@@ -3377,8 +3377,7 @@ public static class Executor
 
             // Skip OnRun scopes — these are the codeunit body, not a named procedure.
             // Showing ".OnRun()" would be confusing; fall through to the old format.
-            var procPart = (procName != "OnRun" && !string.IsNullOrEmpty(procName))
-                ? $".{procName}()" : "";
+            var procPart = procName != "OnRun" ? $".{procName}()" : "";
 
             // Resolve AL line and file from per-scope last-statement tracking.
             // scopeClassName (e.g. "CreateTestJournalLine_Scope_abc") matches the key stored
