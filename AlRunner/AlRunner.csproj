@@ -41,7 +41,7 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <_ALToolVersion>16.2.28.57946</_ALToolVersion>
+    <_ALToolVersion>17.0.34.45391</_ALToolVersion>
     <_BCVersion>27.5.46862.48827</_BCVersion>
     <!-- Cross-platform cache directory for auto-downloaded dependencies -->
     <_CacheBase Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(LOCALAPPDATA)/al-runner</_CacheBase>

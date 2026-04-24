@@ -72,7 +72,9 @@ static int DownloadAlCompiler(string version, string outputDir)
     foreach (var entry in zip.Entries)
     {
         var name = entry.FullName.Replace('\\', '/');
-        if (!name.StartsWith("tools/net8.0/any/", StringComparison.OrdinalIgnoreCase))
+        // v16 uses tools/net8.0/any/, v17+ uses lib/net8.0/
+        if (!name.StartsWith("tools/net8.0/any/", StringComparison.OrdinalIgnoreCase)
+            && !name.StartsWith("lib/net8.0/", StringComparison.OrdinalIgnoreCase))
             continue;
         if (!name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
             continue;
