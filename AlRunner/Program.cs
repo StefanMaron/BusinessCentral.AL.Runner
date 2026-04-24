@@ -3317,19 +3317,29 @@ public static class Executor
 
     /// <summary>
     /// Regex matching a BC-generated scope class name embedded in a .NET stack frame.
-    /// Captures: (1) full scope class name, (2) codeunit ID digits, (3) procedure name (optional).
-    /// Examples:
-    ///   Codeunit50020_CreateTestJournalLine_Scope_abc  → id=50020, proc=CreateTestJournalLine
-    ///   Codeunit50020_Scope                            → id=50020, proc=(none, OnRun)
+    ///
+    /// Scope classes are nested inside the outer codeunit class, so the .NET stack frame shows:
+    ///   at Namespace.Codeunit72336687.CreateTestJournalLine_Scope_abc.OnRun()
+    ///
+    /// After namespace stripping ("at Microsoft.Dynamics.Nav.BusinessApplication." → "at "):
+    ///   at Codeunit72336687.CreateTestJournalLine_Scope_abc.OnRun()
+    ///
+    /// Captures:
+    ///   Group 1 — codeunit ID digits             e.g. "72336687"
+    ///   Group 2 — full scope class name           e.g. "CreateTestJournalLine_Scope_abc"
+    ///   Group 3 — procedure name (lazy min match) e.g. "CreateTestJournalLine"
+    ///
+    /// The trailing dot after group 2 anchors the match so we don't run past the class name
+    /// into the method call portion of the frame.
     /// </summary>
     private static readonly System.Text.RegularExpressions.Regex _scopeClassPattern =
-        new(@"(Codeunit(\d+)(?:_(.+?))?_Scope(?:_\w+)?)",
+        new(@"Codeunit(\d+)\.((\w+?)_Scope(?:_\w+)?)\.",
             System.Text.RegularExpressions.RegexOptions.Compiled);
 
     /// <summary>
     /// Format a single stack frame for AL-level readability.
     ///
-    /// When the frame contains a recognized BC scope class (CodeunitNNNNN[_Proc]_Scope[_hash]),
+    /// When the frame contains a recognized BC scope class (CodeunitNNNNN.ProcName_Scope_hash.),
     /// produces: at Codeunit "Name".Procedure() line N in File.al
     /// using per-scope last-statement tracking (populated by StmtHit/CStmtHit) and
     /// SourceLineMapper / SourceFileMapper for resolution.
@@ -3345,12 +3355,13 @@ public static class Executor
         var clean = frame.Replace("at Microsoft.Dynamics.Nav.BusinessApplication.", "at ");
 
         // Try to produce a full AL-level frame: at Codeunit "Name".Proc() line N in File.al
+        // Scope class frames look like: at Codeunit72336687.CreateTestJournalLine_Scope_abc.OnRun()
         var scopeMatch = _scopeClassPattern.Match(clean);
         if (scopeMatch.Success)
         {
-            var scopeClassName = scopeMatch.Groups[1].Value;            // e.g. "Codeunit50020_CreateTestJournalLine_Scope_abc"
-            var codeunitIdStr = scopeMatch.Groups[2].Value;             // e.g. "50020"
-            var procName = scopeMatch.Groups[3].Success ? scopeMatch.Groups[3].Value : null; // e.g. "CreateTestJournalLine"
+            var codeunitIdStr  = scopeMatch.Groups[1].Value; // e.g. "72336687"
+            var scopeClassName = scopeMatch.Groups[2].Value; // e.g. "CreateTestJournalLine_Scope_abc"
+            var procName       = scopeMatch.Groups[3].Value; // e.g. "CreateTestJournalLine"
 
             // Resolve codeunit name
             string codeunitLabel;
@@ -3364,9 +3375,14 @@ public static class Executor
                 codeunitLabel = $"Codeunit{codeunitIdStr}";
             }
 
-            var procPart = procName != null ? $".{procName}()" : "";
+            // Skip OnRun scopes — these are the codeunit body, not a named procedure.
+            // Showing ".OnRun()" would be confusing; fall through to the old format.
+            var procPart = (procName != "OnRun" && !string.IsNullOrEmpty(procName))
+                ? $".{procName}()" : "";
 
-            // Resolve AL line and file from per-scope last-statement tracking
+            // Resolve AL line and file from per-scope last-statement tracking.
+            // scopeClassName (e.g. "CreateTestJournalLine_Scope_abc") matches the key stored
+            // by StmtHit via GetType().Name on the nested scope class.
             var lineInfo = "";
             var fileInfo = "";
             var lastStmtId = AlRunner.Runtime.AlScope.GetLastStmtForScope(scopeClassName);
