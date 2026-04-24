@@ -73,48 +73,42 @@ public class MockFormHandle
     /// BC emits the method as <c>ObjectID</c> (uppercase D).</summary>
     public NavText ObjectID(bool withCaption = false) => NavText.Empty;
 
+    /// <summary>
+    /// Extension-scoped Invoke — called when invoking a method defined in a page
+    /// extension. The BC compiler emits (extensionId, memberId, args).
+    /// We search the PageExtension{extensionId} class for the method.
+    /// </summary>
+    public object? Invoke(int extensionId, int memberId, object[] args)
+    {
+        // Ensure the base page instance exists (extension methods may reference it)
+        Type? pageType = MockRecordHandle.FindTypeAcrossAssemblies($"Page{PageId}");
+        if (pageType != null)
+            EnsurePageInstance(pageType);
+
+        // Try the extension type first
+        Type? extType = MockRecordHandle.FindTypeAcrossAssemblies($"PageExtension{extensionId}");
+        if (extType != null)
+        {
+            var result = DispatchByScope(extType, memberId, args);
+            if (result.Found)
+                return result.Value;
+        }
+
+        // Fall back to the base page type
+        return Invoke(memberId, args);
+    }
+
     /// <summary>Dispatch a plain helper procedure on the page's generated class.</summary>
     public object? Invoke(int memberId, object[] args)
     {
         Type? pageType = MockRecordHandle.FindTypeAcrossAssemblies($"Page{PageId}");
         if (pageType == null) return null;
 
-        if (_pageInstance == null)
-        {
-            _pageInstance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(pageType);
-            var initMethod = pageType.GetMethod("InitializeComponent",
-                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
-            initMethod?.Invoke(_pageInstance, null);
-        }
+        EnsurePageInstance(pageType);
 
-        // Match the same scope-name encoding MockCodeunitHandle uses.
-        var absMemberId = System.Math.Abs(memberId).ToString();
-        var memberIdStr = memberId.ToString();
-
-        foreach (var nested in pageType.GetNestedTypes(BindingFlags.NonPublic | BindingFlags.Public))
-        {
-            if (nested.Name.Contains($"_Scope_{memberIdStr}") ||
-                nested.Name.Contains($"_Scope__{absMemberId}"))
-            {
-                var scopeName = nested.Name;
-                var scopeIdx = scopeName.IndexOf("_Scope_");
-                if (scopeIdx < 0) continue;
-                var methodName = scopeName.Substring(0, scopeIdx);
-
-                var method = pageType.GetMethod(methodName,
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                if (method == null) continue;
-
-                var parameters = method.GetParameters();
-                var convertedArgs = new object?[parameters.Length];
-                for (int i = 0; i < parameters.Length; i++)
-                {
-                    if (i < args.Length)
-                        convertedArgs[i] = args[i];
-                }
-                return method.Invoke(_pageInstance, convertedArgs);
-            }
-        }
+        var result = DispatchByScope(pageType, memberId, args);
+        if (result.Found)
+            return result.Value;
 
         // Fallback: match by argument count across public methods.
         var candidateMethods = pageType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
@@ -130,5 +124,67 @@ public class MockFormHandle
             return method.Invoke(_pageInstance, convertedArgs);
         }
         return null;
+    }
+
+    private void EnsurePageInstance(Type pageType)
+    {
+        if (_pageInstance == null)
+        {
+            _pageInstance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(pageType);
+            var initMethod = pageType.GetMethod("InitializeComponent",
+                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
+            initMethod?.Invoke(_pageInstance, null);
+        }
+    }
+
+    /// <summary>
+    /// Dispatch a method call by searching for a nested scope type whose name contains
+    /// the member ID. Returns (true, result) if found, (false, null) otherwise.
+    /// </summary>
+    private (bool Found, object? Value) DispatchByScope(Type type, int memberId, object[] args)
+    {
+        var absMemberId = System.Math.Abs(memberId).ToString();
+        var memberIdStr = memberId.ToString();
+
+        // Create instance of the type if different from the page instance
+        object? instance = null;
+        if (type == _pageInstance?.GetType())
+            instance = _pageInstance;
+        else
+        {
+            instance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(type);
+            // Extension classes need a reference to the parent page instance
+            var parentField = type.GetField("_parent", BindingFlags.NonPublic | BindingFlags.Instance)
+                           ?? type.BaseType?.GetField("_parent", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (parentField != null && _pageInstance != null)
+                parentField.SetValue(instance, _pageInstance);
+        }
+
+        foreach (var nested in type.GetNestedTypes(BindingFlags.NonPublic | BindingFlags.Public))
+        {
+            if (!nested.Name.Contains($"_Scope_{memberIdStr}") &&
+                !nested.Name.Contains($"_Scope__{absMemberId}"))
+                continue;
+
+            var scopeName = nested.Name;
+            var scopeIdx = scopeName.IndexOf("_Scope_");
+            if (scopeIdx < 0) continue;
+            var methodName = scopeName.Substring(0, scopeIdx);
+
+            var method = type.GetMethod(methodName,
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (method == null) continue;
+
+            var parameters = method.GetParameters();
+            var convertedArgs = new object?[parameters.Length];
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                if (i < args.Length)
+                    convertedArgs[i] = args[i];
+            }
+            return (true, method.Invoke(instance, convertedArgs));
+        }
+
+        return (false, null);
     }
 }

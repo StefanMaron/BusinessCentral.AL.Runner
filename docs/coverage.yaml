@@ -5001,6 +5001,28 @@ Page.Update:
   tests: tests/bucket-1/89-page-static
   notes: overloads=1
 
+Page.Invoke (3-arg):
+  layer: runtime-api
+  category: Page
+  status: covered
+  tests: tests/bucket-1/1282-invoke-ext-overload
+  notes: >
+    Extension-scoped Invoke(int extensionId, int memberId, object[] args) on MockFormHandle.
+    BC emits this 3-arg overload when calling a method defined in a page extension
+    (e.g. P.ExtMethod(args) where ExtMethod is defined in a pageextension).
+    Dispatches to PageExtension{extensionId} class, falling back to the base page type.
+    Issue #1282.
+
+Report.Invoke (3-arg):
+  layer: runtime-api
+  category: Report
+  status: covered
+  tests: tests/bucket-1/1282-invoke-ext-overload
+  notes: >
+    Extension-scoped Invoke(int extensionId, int memberId, object[] args) on MockReportHandle.
+    BC emits this 3-arg overload when calling a method defined in a report extension.
+    Delegates to the standard 2-arg Invoke. Issue #1282.
+
 PagePart.SetTableView:
   layer: runtime-api
   category: PagePart
