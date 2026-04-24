@@ -16,6 +16,11 @@ public class RoslynRewriter : CSharpSyntaxRewriter
     // VisitPropertyDeclaration can extract the table ID for Rec/xRec properties.
     private string? _currentClassName;
 
+    // Track the current page class name so that VisitMemberAccessExpression can
+    // rewrite Page<N>.PromptMode (static self-reference) → this.PromptMode.
+    // BC emits CurrPage.PromptMode as a static reference on the page class (issue #1266).
+    private string? _currentPageClassName;
+
     private static readonly HashSet<string> BcAttributeNames = new(StringComparer.Ordinal)
     {
         "NavCodeunitOptions",
@@ -512,6 +517,11 @@ public class RoslynRewriter : CSharpSyntaxRewriter
         if (isRecordClass)
             _currentClassName = node.Identifier.Text;
 
+        // Track page class name for static self-reference rewriting (issue #1266).
+        var previousPageClassName = _currentPageClassName;
+        if (isPageClass)
+            _currentPageClassName = node.Identifier.Text;
+
         // First, visit children recursively
         var visited = (ClassDeclarationSyntax)base.VisitClassDeclaration(node)!;
 
@@ -905,6 +915,7 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
 
         // Restore previous class name context
         _currentClassName = previousClassName;
+        _currentPageClassName = previousPageClassName;
 
         return visited;
     }
@@ -4241,6 +4252,18 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
         // ParentObject is rewritten to return Rec, so we just replace base with this.
         if (visited.Name.Identifier.Text == "ParentObject" &&
             visited.Expression is BaseExpressionSyntax)
+        {
+            return visited.WithExpression(SyntaxFactory.ThisExpression());
+        }
+
+        // Pattern: Page<N>.PromptMode → this.PromptMode (issue #1266)
+        // BC emits CurrPage.PromptMode as a static reference on the enclosing page class:
+        //   Page71116155.PromptMode  (CS0120 because PromptMode is an instance property).
+        // Rewrite to this.PromptMode when inside the matching page class.
+        if (_currentPageClassName != null &&
+            visited.Expression is IdentifierNameSyntax pageId &&
+            pageId.Identifier.Text == _currentPageClassName &&
+            visited.Name.Identifier.Text == "PromptMode")
         {
             return visited.WithExpression(SyntaxFactory.ThisExpression());
         }

@@ -4931,7 +4931,7 @@ Page.PromptMode:
   category: Page
   status: covered
   tests: tests/bucket-1/100-page-promptmode
-  notes: overloads=1; MockCurrPage.PromptMode and MockFormHandle.PromptMode NavOption stubs; also injected on Page<N> class for CurrPage.PromptMode access inside page triggers (issue #1079)
+  notes: overloads=1; MockCurrPage.PromptMode and MockFormHandle.PromptMode NavOption stubs; injected on Page<N> class for CurrPage.PromptMode access inside page triggers (issue #1079); RoslynRewriter converts static self-reference Page<N>.PromptMode → this.PromptMode to fix CS0120 (issue #1266)
 
 Page.NavFormImplicitConversion:
   layer: runtime-api
