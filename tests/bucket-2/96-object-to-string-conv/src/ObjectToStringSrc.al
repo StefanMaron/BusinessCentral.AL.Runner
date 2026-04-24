@@ -1,4 +1,4 @@
-table 304010 "Obj To Str Table"
+table 305010 "Obj To Str Table"
 {
     DataClassification = CustomerContent;
 
@@ -23,7 +23,7 @@ table 304010 "Obj To Str Table"
     }
 }
 
-codeunit 304010 "Obj To Str Helper"
+codeunit 305010 "Obj To Str Helper"
 {
     procedure ErrorFromVariant(Msg: Variant)
     begin

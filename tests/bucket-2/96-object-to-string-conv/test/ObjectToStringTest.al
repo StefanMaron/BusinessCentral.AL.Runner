@@ -1,4 +1,4 @@
-codeunit 304011 "Obj To Str Test"
+codeunit 305011 "Obj To Str Test"
 {
     Subtype = Test;
 
