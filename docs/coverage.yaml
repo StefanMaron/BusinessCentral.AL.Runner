@@ -7989,14 +7989,18 @@ TestPage.GoToKey:
   category: TestPage
   status: covered
   notes: >
-    overloads=1; ALGoToKey(DataError, params NavValue[]) performs a real record lookup when the
+    overloads=2; ALGoToKey(DataError, params NavValue[]) performs a real record lookup when the
     page's SourceTable is registered in TableFieldRegistry (parsed from AL source). Returns true
     when the record is found and positions the page cursor; returns false when the key does not
     exist. Falls back to returning true for stub pages (e.g. TestRequestPage) that have no
     registered source table. Field values are populated from the located record so that field
-    reads after GoToKey reflect the correct row.
+    reads after GoToKey reflect the correct row. A sibling params object?[] overload (issue #1215)
+    unwraps MockTestPageField / MockVariant / raw CLR key arguments via AlCompat.ToNavValue and
+    delegates to the NavValue form, so GoToKey(OtherPage.SomeField) compiles and uses the
+    TestField's current value as the lookup key.
   tests:
     - tests/bucket-1/274-testpage-gotokey
+    - tests/bucket-1/1215-testpage-gotokey-testfield
 
 TestPage.GoToRecord:
   layer: runtime-api
