@@ -5617,6 +5617,23 @@ Report.Clear:
   tests: tests/bucket-1/193-report-xmlport-clear
   notes: overloads=1; AL Clear(rep) rewriter emits rep.Clear() — no-op stub added to MockReportHandle.
 
+ReportExtension.GetDataItem:
+  layer: runtime-api
+  category: ReportExtension
+  status: covered
+  notes: BC emits this.CurrReport.GetDataItem("<name>").Record inside ReportExtensionNNNNN when AL references base-report dataitems. Rewriter injects a stub that returns an empty MockReportDataItem — issue #1212.
+  tests:
+    - tests/bucket-2/300-reportext-getdataitem
+
+ReportExtension.ParentObject:
+  layer: runtime-api
+  category: ReportExtension
+  status: covered
+  notes: BC emits base.ParentObject in the stripped CurrReport => (NavReport)base.ParentObject property. Rewriter injects a self-referencing ParentObject stub so ReportExtension code paths compile — issue #1212.
+  tests:
+    - tests/bucket-2/300-reportext-getdataitem
+
+
 Report.DefaultLayout:
   layer: runtime-api
   category: Report
