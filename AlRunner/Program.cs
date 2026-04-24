@@ -1033,6 +1033,19 @@ public static class AlTranspiler
     public static Compilation? LastCompilation { get; private set; }
 
     /// <summary>
+    /// Format a BC AL diagnostic, prepending the source filename when a tree→path map is provided.
+    /// Falls back to d.ToString() if the tree cannot be matched.
+    /// </summary>
+    private static string FormatAlDiagnostic(Diagnostic d, Dictionary<SyntaxTree, string>? treeToPath)
+    {
+        var s = d.ToString();
+        if (treeToPath == null || treeToPath.Count == 0) return s;
+        if (d.Location.SourceTree is SyntaxTree tree && treeToPath.TryGetValue(tree, out var path))
+            return $"[{Path.GetFileName(path)}] {s}";
+        return s;
+    }
+
+    /// <summary>
     /// Transpile a single AL source string (backward compat).
     /// </summary>
     public static string? Transpile(string alSource)
@@ -1072,11 +1085,26 @@ public static class AlTranspiler
             parsedResults[i] = (tree, diags);
         });
 
-        foreach (var (tree, parseDiags) in parsedResults)
+        // Build a reverse map from tree object identity to source file path for diagnostic formatting.
+        var treeToPath = new Dictionary<SyntaxTree, string>(ReferenceEqualityComparer.Instance);
+        if (sourceFilePaths != null)
         {
+            for (int i = 0; i < parsedResults.Length && i < sourceFilePaths.Count; i++)
+            {
+                if (sourceFilePaths[i] != null)
+                    treeToPath[parsedResults[i].tree] = sourceFilePaths[i]!;
+            }
+        }
+
+        for (int idx = 0; idx < parsedResults.Length; idx++)
+        {
+            var (tree, parseDiags) = parsedResults[idx];
             if (parseDiags.Any(d => d.Severity == DiagnosticSeverity.Error))
             {
-                Console.Error.WriteLine("AL parse errors:");
+                var fileLabel = sourceFilePaths != null && idx < sourceFilePaths.Count && sourceFilePaths[idx] != null
+                    ? $" in {Path.GetFileName(sourceFilePaths[idx]!)}"
+                    : "";
+                Console.Error.WriteLine($"AL parse errors{fileLabel}:");
                 foreach (var d in parseDiags.Where(d => d.Severity == DiagnosticSeverity.Error))
                     Console.Error.WriteLine($"  {d}");
                 hasErrors = true;
@@ -1434,7 +1462,7 @@ public static class AlTranspiler
             if (otherErrors.Count > 0)
                 Log.Info($"AL declaration errors ({otherErrors.Count} non-missing):");
             foreach (var d in otherErrors.Take(10))
-                Log.Info($"  {d.Id}: {d.GetMessage()}");
+                Log.Info($"  {FormatAlDiagnostic(d, treeToPath)}");
             if (otherErrors.Count > 10)
                 Log.Info($"  ... and {otherErrors.Count - 10} more");
         }
@@ -1486,7 +1514,7 @@ public static class AlTranspiler
             {
                 Console.Error.WriteLine("Emit diagnostics:");
                 foreach (var d in emitResult.Diagnostics.Take(30))
-                    Console.Error.WriteLine($"  [{d.Severity}] {d.Id}: {d.GetMessage()}");
+                    Console.Error.WriteLine($"  {FormatAlDiagnostic(d, treeToPath)}");
             }
             return null;
         }
