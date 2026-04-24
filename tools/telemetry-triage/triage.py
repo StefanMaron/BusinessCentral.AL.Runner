@@ -19,6 +19,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone, timedelta
@@ -45,16 +46,27 @@ def http_get(url, headers):
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read().decode())
 
-def http_post(url, headers, body):
+def http_post(url, headers, body, timeout=120, retries=2):
     data = json.dumps(body).encode()
     headers = {**headers, "Content-Type": "application/json"}
-    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            return json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:
-        print(f"  HTTP {e.code}: {e.read().decode()}", file=sys.stderr)
-        raise
+    last_exc: Exception = RuntimeError("no attempts made")
+    for attempt in range(1, retries + 2):  # retries + 1 total attempts
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read().decode())
+        except urllib.error.HTTPError as e:
+            print(f"  HTTP {e.code}: {e.read().decode()}", file=sys.stderr)
+            raise
+        except (TimeoutError, OSError) as e:
+            last_exc = e
+            if attempt <= retries:
+                wait = attempt * 10
+                print(f"  Attempt {attempt} timed out ({e}), retrying in {wait}s…", file=sys.stderr)
+                time.sleep(wait)
+            else:
+                print(f"  All {retries + 1} attempts timed out.", file=sys.stderr)
+    raise last_exc
 
 def http_patch(url, headers, body):
     data = json.dumps(body).encode()
