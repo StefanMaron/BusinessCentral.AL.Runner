@@ -2,6 +2,7 @@
 
 [![Test Matrix](https://github.com/StefanMaron/BusinessCentral.AL.Runner/actions/workflows/test-matrix.yml/badge.svg)](https://github.com/StefanMaron/BusinessCentral.AL.Runner/actions/workflows/test-matrix.yml)
 [![NuGet](https://img.shields.io/nuget/v/MSDyn365BC.AL.Runner)](https://www.nuget.org/packages/MSDyn365BC.AL.Runner)
+[![AL Tests](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/StefanMaron/raw/test-badge.json)](https://github.com/StefanMaron/BusinessCentral.AL.Runner/actions/workflows/test-matrix.yml)
 
 Run Business Central AL unit tests in **milliseconds** -- no BC service tier, no Docker, no SQL Server required.
 

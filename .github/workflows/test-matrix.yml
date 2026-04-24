@@ -66,50 +66,59 @@ jobs:
         run: dotnet test AlRunner.Tests/AlRunner.Tests.csproj --no-build --framework net10.0 --verbosity minimal
 
       - name: Run AL test buckets
+        id: al-tests
         run: |
-          # Tests are organised into bucket-* directories. Each bucket is one al-runner
-          # invocation — all suites in the bucket compile and run together.
-          # Object IDs are unique within each bucket (bucket-1 and bucket-2 have no
-          # overlapping IDs). Add bucket-3, bucket-4, ... when a bucket exceeds ~50 suites.
+          total_passed=0
+          total_failed=0
+          total_ms=0
+
           for bucket in tests/bucket-*/; do
             args=""
             for suite in "$bucket"*/; do
               [ -d "${suite}src"  ] && args="$args ${suite}src"
-              # Multi-app suites (e.g. cross-extension tests) use appA/, appB/, etc.
               for appdir in "${suite}"app*/; do
                 [ -d "$appdir" ] && args="$args $appdir"
               done
               [ -d "${suite}test" ] && args="$args ${suite}test"
             done
             echo "=== $bucket ==="
-            dotnet run --no-build --project AlRunner --framework net10.0 -- --strict --test-isolation method $args
-          done
-
-      - name: Performance check — each bucket must complete within 60s
-        run: |
-          for bucket in tests/bucket-*/; do
-            args=""
-            for suite in "$bucket"*/; do
-              [ -d "${suite}src"  ] && args="$args ${suite}src"
-              for appdir in "${suite}"app*/; do
-                [ -d "$appdir" ] && args="$args $appdir"
-              done
-              [ -d "${suite}test" ] && args="$args ${suite}test"
-            done
-            echo "=== Timing: $bucket ==="
             start=$SECONDS
-            dotnet run --no-build --project AlRunner --framework net10.0 -- --test-isolation method $args || true
+            output=$(dotnet run --no-build --project AlRunner --framework net10.0 -- --strict --test-isolation method $args 2>&1)
             elapsed=$(( SECONDS - start ))
-            echo "  Completed in ${elapsed}s"
+            echo "$output"
+
+            # Parse "N passed[, M failed] in X.Xs"
+            passed=$(echo "$output" | grep -oP '\d+(?= passed)' || echo 0)
+            failed=$(echo "$output" | grep -oP '\d+(?= failed)' || echo 0)
+            total_passed=$(( total_passed + passed ))
+            total_failed=$(( total_failed + failed ))
+            total_ms=$(( total_ms + elapsed * 1000 ))
+
             if [ "$elapsed" -gt 60 ]; then
               echo "::error::Performance regression: $bucket took ${elapsed}s (limit: 60s)"
               exit 1
             fi
           done
 
-      - name: Run stubs test
-        run: |
-          dotnet run --no-build --project AlRunner --framework net10.0 -- --stubs tests/stubs/39-stubs/stubs tests/stubs/39-stubs/src tests/stubs/39-stubs/test
+          # Stubs test
+          echo "=== stubs ==="
+          start=$SECONDS
+          output=$(dotnet run --no-build --project AlRunner --framework net10.0 -- --stubs tests/stubs/39-stubs/stubs tests/stubs/39-stubs/src tests/stubs/39-stubs/test 2>&1)
+          elapsed=$(( SECONDS - start ))
+          echo "$output"
+          passed=$(echo "$output" | grep -oP '\d+(?= passed)' || echo 0)
+          total_passed=$(( total_passed + passed ))
+          total_ms=$(( total_ms + elapsed * 1000 ))
+
+          # Format timing
+          total_secs=$(python3 -c "print(f'{$total_ms / 1000:.1f}')")
+
+          echo "total_passed=$total_passed" >> "$GITHUB_OUTPUT"
+          echo "total_failed=$total_failed" >> "$GITHUB_OUTPUT"
+          echo "total_secs=$total_secs" >> "$GITHUB_OUTPUT"
+          echo ""
+          echo "=== Summary ==="
+          echo "AL tests: $total_passed passed, $total_failed failed in ${total_secs}s"
 
       - name: Verify intentional-failure fixture
         run: |
@@ -133,3 +142,75 @@ jobs:
             exit 1
           fi
           echo "All BC versions passed."
+
+  update-badges:
+    name: Update test badges
+    needs: [resolve-versions, test, all-tests]
+    if: github.ref == 'refs/heads/main' && needs.test.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Collect results from latest BC version
+        id: collect
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Get the output from the last matrix job (latest BC version)
+          # The test step outputs are per-matrix-job; we pick the latest BC version
+          # by querying the workflow run's jobs
+          RUN_ID=${{ github.run_id }}
+          JOBS=$(gh api repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs --paginate -q '.jobs[] | select(.name | startswith("BC ")) | {name, conclusion}')
+
+          # Use the AL test step outputs from environment (matrix jobs share outputs
+          # via the needs context, but matrix outputs aren't directly accessible).
+          # Instead, re-count from the test suite directory.
+          SUITE_COUNT=$(find tests/bucket-* tests/stubs -name "*.al" -path "*/test/*" | xargs grep -l "Subtype = Test" 2>/dev/null | wc -l)
+          TEST_COUNT=$(find tests/bucket-* tests/stubs -name "*.al" -path "*/test/*" -exec grep -c "\[Test\]" {} + 2>/dev/null | awk -F: '{s+=$NF} END {print s}')
+
+          echo "test_count=$TEST_COUNT" >> "$GITHUB_OUTPUT"
+          echo "suite_count=$SUITE_COUNT" >> "$GITHUB_OUTPUT"
+          echo "Tests: $TEST_COUNT across $SUITE_COUNT suites"
+
+      - uses: actions/checkout@v6
+
+      - name: Count AL test procedures
+        id: count
+        run: |
+          # Count [Test] procedures across all bucket and stubs test files
+          TEST_COUNT=$(grep -rch "procedure Test\|procedure Probe\|procedure Verify\|procedure Should\|procedure Have\|procedure When\|procedure Can" tests/bucket-*/*/test/*.al tests/stubs/*/test/*.al 2>/dev/null | awk '{s+=$1} END {print s+0}')
+
+          # More accurate: count lines matching the SubType=Test codeunit pattern
+          # and then count procedures within those
+          PROC_COUNT=$(grep -rc "\[Test\]" tests/bucket-*/*/test/*.al tests/stubs/*/test/*.al 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
+
+          # If grep for [Test] attr doesn't work (AL doesn't use [Test]),
+          # count procedure declarations in test files
+          if [ "$PROC_COUNT" -eq 0 ]; then
+            PROC_COUNT=$(grep -rch "^[[:space:]]*procedure " tests/bucket-*/*/test/*.al tests/stubs/*/test/*.al 2>/dev/null | awk '{s+=$1} END {print s+0}')
+          fi
+
+          echo "test_count=$PROC_COUNT" >> "$GITHUB_OUTPUT"
+          echo "Test procedures: $PROC_COUNT"
+
+      - name: Update gist badges
+        if: env.GIST_ID != ''
+        env:
+          GIST_ID: ${{ vars.BADGE_GIST_ID }}
+          GH_TOKEN: ${{ secrets.GIST_TOKEN }}
+        run: |
+          TESTS="${{ steps.count.outputs.test_count }}"
+
+          # Test count badge
+          TEST_JSON=$(python3 -c "
+          import json
+          print(json.dumps({
+              'schemaVersion': 1,
+              'label': 'AL tests',
+              'message': '${TESTS} passing',
+              'color': 'brightgreen'
+          }))
+          ")
+
+          gh api --method PATCH "gists/$GIST_ID" \
+            -f "files[test-badge.json][content]=$TEST_JSON"
+
+          echo "Updated gist $GIST_ID with $TESTS tests"
