@@ -5189,6 +5189,19 @@ record_as_recordref_param:
   tests:
     - tests/bucket-2/236-recordref-param
 
+record_to_recordref_implicit:
+  layer: runtime-api
+  category: RecordRef
+  status: covered
+  notes: >
+    Implicit conversion from MockRecordHandle to MockRecordRef. BC can emit code paths
+    beyond ALCompiler.ToRecordRef where a Record variable (MockRecordHandle) is passed
+    directly to a MockRecordRef parameter, causing CS1503. An implicit conversion operator
+    on MockRecordRef delegates to FromHandle, ensuring all such code paths compile and
+    produce a correctly-bound RecordRef. Fixed in issue #1275.
+  tests:
+    - tests/bucket-1/1275-record-to-recordref-implicit
+
 RecordRef.AddLink:
   layer: runtime-api
   category: RecordRef
