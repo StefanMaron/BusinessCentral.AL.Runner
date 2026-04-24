@@ -488,19 +488,14 @@ def create_issue(title: str, body: str):
     print(f"  Created issue #{result['number']}: {title}")
 
 def comment_on_issue(issue_number: int, title: str, body: str):
-    # Reopen if closed
+    # Check if closed — don't reopen. Fixes on main may not be released yet,
+    # so older versions will keep reporting the same exceptions. Commenting
+    # without reopening keeps the history without creating noise.
     try:
         issue = http_get(f"{GH_API_BASE}/repos/{GH_REPO}/issues/{issue_number}", gh_headers())
         if issue.get("state") == "closed":
-            if DRY_RUN:
-                print(f"  [DRY RUN] Would reopen #{issue_number}")
-            else:
-                http_patch(
-                    f"{GH_API_BASE}/repos/{GH_REPO}/issues/{issue_number}",
-                    gh_headers(),
-                    {"state": "open"},
-                )
-                print(f"  Reopened #{issue_number}")
+            print(f"  Skipping #{issue_number} (closed, fix pending release): {title}")
+            return
     except Exception as e:
         print(f"  Warning: could not check state of #{issue_number}: {e}", file=sys.stderr)
 
