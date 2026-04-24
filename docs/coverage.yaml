@@ -577,7 +577,7 @@ dictionary_type:
     - tests/bucket-2/138-dictionary
 
 dictionary_codeunit_value_type:
-  layer: rewriter
+  layer: syntax
   category: type
   status: covered
   tests:
