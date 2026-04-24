@@ -780,9 +780,10 @@ public class AlRunnerPipeline
 
         bool hasTests = alSources.Any(s => s.Contains("Subtype = Test"));
         bool explicitRunCodeunit = options.RunCodeunit != null;
+        bool isInlineMode = options.InlineCode != null;
 
         int exitCode;
-        if (hasTests || explicitRunCodeunit)
+        if (hasTests || explicitRunCodeunit || isInlineMode)
         {
             Runtime.MessageCapture.Reset();
             Runtime.MessageCapture.Enable();
@@ -800,9 +801,12 @@ public class AlRunnerPipeline
             }
 
             var runSw = System.Diagnostics.Stopwatch.StartNew();
-            if (explicitRunCodeunit)
+            if (explicitRunCodeunit || isInlineMode)
             {
-                exitCode = Executor.RunOnRun(assembly, options.RunCodeunit!, captureValues: options.CaptureValues);
+                if (explicitRunCodeunit)
+                    exitCode = Executor.RunOnRun(assembly, options.RunCodeunit!, captureValues: options.CaptureValues);
+                else
+                    exitCode = Executor.RunOnRun(assembly, captureValues: options.CaptureValues);
                 runSw.Stop();
                 if (options.CaptureValues) Runtime.ValueCapture.Disable();
                 if (options.IterationTracking) Runtime.IterationTracker.Disable();

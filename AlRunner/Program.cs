@@ -3499,6 +3499,31 @@ public static class Executor
         return clean;
     }
 
+    /// <summary>Run the first OnRun trigger found in the assembly (inline-code mode).</summary>
+    public static int RunOnRun(Assembly assembly, bool captureValues = false)
+    {
+        Type? scopeType = null;
+        foreach (var type in assembly.GetTypes())
+        {
+            foreach (var nested in type.GetNestedTypes(BindingFlags.NonPublic | BindingFlags.Public))
+            {
+                if (nested.Name.Contains("OnRun_Scope"))
+                {
+                    scopeType = nested;
+                    break;
+                }
+            }
+            if (scopeType != null) break;
+        }
+        if (scopeType == null)
+        {
+            Console.Error.WriteLine("Error: No OnRun trigger found in the generated code.");
+            return 1;
+        }
+        return RunOnRunScope(scopeType, captureValues);
+    }
+
+    /// <summary>Run a named codeunit's OnRun trigger explicitly (--run-codeunit mode).</summary>
     public static int RunOnRun(Assembly assembly, string codeunitName, bool captureValues = false)
     {
         // Find the codeunit class whose name matches (case-insensitive)
@@ -3550,6 +3575,12 @@ public static class Executor
             Console.Error.WriteLine($"Error: Codeunit '{codeunitName}' has no OnRun trigger.");
             return 1;
         }
+        return RunOnRunScope(scopeType, captureValues);
+    }
+
+    private static int RunOnRunScope(Type scopeType, bool captureValues)
+    {
+        var parentType = scopeType.DeclaringType!;
         var parent = RuntimeHelpers.GetUninitializedObject(parentType);
 
         // Call InitializeComponent() if it exists

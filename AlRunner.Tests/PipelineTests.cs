@@ -753,4 +753,20 @@ namespace AlRunnerGenerated {
         // because Calculator methods don't exist in the fallback class).
         Assert.NotEqual(0, result.ExitCode);
     }
+
+    [Fact]
+    public void NoTestCodeunits_Exit1_WithHelpfulMessage()
+    {
+        // Source dirs with no Subtype = Test codeunits should NOT implicitly run OnRun.
+        // Instead, exit 1 with a message pointing to --run-codeunit.
+        var pipeline = new AlRunnerPipeline();
+        var result = pipeline.Run(new PipelineOptions
+        {
+            InputPaths = { TestPath("1247-tableno-codeunit", "src") }
+        });
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("No test codeunits found", result.StdErr);
+        Assert.Contains("--run-codeunit", result.StdErr);
+    }
 }
