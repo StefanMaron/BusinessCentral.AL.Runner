@@ -70,6 +70,15 @@ public static class MockNavApp
     public static bool ALIsEntitled(DataError errorLevel, NavText id, Guid appId) => true;
 
     /// <summary>
+    /// String overloads of ALIsEntitled — BC may emit the entitlement-ID argument as a C#
+    /// string literal (CS1503: string → NavText) when the AL Text value is a constant
+    /// expression.  These overloads accept <c>string</c> directly to avoid the implicit-
+    /// conversion error — issue #1231.
+    /// </summary>
+    public static bool ALIsEntitled(DataError errorLevel, string id) => true;
+    public static bool ALIsEntitled(DataError errorLevel, string id, Guid appId) => true;
+
+    /// <summary>
     /// NavApp.GetResourceAsText(ResourceName [, TextEncoding]) : Text — returns the named
     /// embedded resource as a string. No .app bundle in standalone mode; returns empty string.
     /// BC emits: ALNavApp.ALGetResourceAsText(null, NavText [, object?]) → NavText

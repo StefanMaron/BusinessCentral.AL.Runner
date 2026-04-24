@@ -4612,7 +4612,7 @@ NavApp.IsEntitled:
   layer: runtime-api
   category: NavApp
   status: covered
-  notes: overloads=1; MockNavApp.ALIsEntitled() returns true (always entitled in standalone)
+  notes: overloads=4 (NavText 2-arg, NavText 3-arg with AppId, string 2-arg, string 3-arg); string overloads added in #1231 to fix CS1503 when BC emits string literal for Text argument; MockNavApp.ALIsEntitled() returns true (always entitled in standalone)
   test: tests/bucket-1/85-navapp-isinstalling/test/NavAppStatusTest.al
 
 NavApp.IsInstalling:

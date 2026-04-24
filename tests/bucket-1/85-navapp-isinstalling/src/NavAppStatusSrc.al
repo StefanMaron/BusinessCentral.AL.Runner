@@ -16,4 +16,13 @@ codeunit 85000 "NAS Src"
     begin
         exit(NavApp.IsEntitled(EntitlementId));
     end;
+
+    /// <summary>
+    /// Calls NavApp.IsEntitled with a hardcoded string literal — this triggered CS1503
+    /// (cannot convert from 'string' to 'NavText') before issue #1231 was fixed.
+    /// </summary>
+    procedure GetIsEntitledLiteral(): Boolean
+    begin
+        exit(NavApp.IsEntitled('standard_1'));
+    end;
 }

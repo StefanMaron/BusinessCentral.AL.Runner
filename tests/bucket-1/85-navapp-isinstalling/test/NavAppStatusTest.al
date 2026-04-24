@@ -58,6 +58,20 @@ codeunit 85001 "NAS Test"
     // contradicts unlicensed=true and installing=true simultaneously.
     // -----------------------------------------------------------------------
 
+    // -----------------------------------------------------------------------
+    // Positive: NavApp.IsEntitled() with a string literal argument — this
+    // previously failed with CS1503: cannot convert from 'string' to 'NavText'
+    // (issue #1231).  The fix adds string overloads so the literal compiles.
+    // -----------------------------------------------------------------------
+
+    [Test]
+    procedure IsEntitled_StringLiteral_ReturnsTrue()
+    begin
+        // Positive: direct string literal passed to IsEntitled must compile and return true.
+        Assert.IsTrue(Src.GetIsEntitledLiteral(),
+            'NavApp.IsEntitled with a string literal must return true in standalone mode');
+    end;
+
     [Test]
     procedure StatusFlags_AreConsistent()
     var
