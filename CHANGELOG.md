@@ -6,6 +6,38 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.21] - 2026-04-24
+
+### Added
+- **AL-level call stacks** — runtime errors now report procedure names and line numbers
+  from AL source, not C# internals. `GetLastErrorCallStack()` returns a rendered AL frame
+  list; `FormatStackFrames`/`FormatSingleFrame` drive the test-output rendering. DAP
+  server now starts its listener in the constructor so `Port` is available before
+  `RunAsync`, eliminating test port collisions. (#1206, #1208)
+
+### Fixed
+- **`--init-events` fires once, snapshot is the baseline** — `OnInstallAppPerDatabase/Company`
+  and `OnCompanyInitialize` subscribers now fire a single time per run. After they complete,
+  `MockRecordHandle._tables` and `MockIsolatedStorage` are snapshotted; test isolation
+  restores from that snapshot between tests instead of clearing to empty. Dramatically
+  reduces per-test cost when init-events are enabled. SingleInstance codeunit state
+  remains session-scoped by design (subscribers must seed tables/IsolatedStorage).
+  (#1220, #1227)
+- **NavValue→NavCode coercion for `in` operator** — `CodeField in ['A', 'B']` no longer
+  fails type resolution against a set of text literals. (#1211, #1224)
+- **TestPage.GoToKey accepts TestField reference** — `GoToKey(TestField)` now resolves
+  the field's current value and navigates. (#1215, #1226)
+- **RecordRef.CurrentKeyIndex is settable** — assigning a new key index re-sorts the
+  underlying row iteration. (#1218, #1225)
+- **UploadIntoStream DataError-typed 2-arg overload** — `UploadIntoStream(DataError, OutStream)`
+  compiles and runs. (#1213, #1214, #1223)
+- **ReportExtension.GetDataItem / ParentObject** — stubbed so extension-side code
+  compiles. (#1212, #1222)
+- **Session-aware TestField.ALAsDateTime overload** — added; matches BC signature with
+  explicit session parameter. (#1216, #1221)
+- **UploadIntoStream 2-arg overload** — base `UploadIntoStream(Text, OutStream)` added.
+  (#1210, #1219)
+
 ## [1.0.20] - 2026-04-23
 
 ### Added
