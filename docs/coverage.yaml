@@ -3049,6 +3049,13 @@ FilterPageBuilder.SetView:
   notes: overloads=1; MockFilterPageBuilder; stores view string per caption
   tests: tests/bucket-2/179-filter-page-builder
 
+FilterPageBuilder.ALAssign:
+  layer: runtime-api
+  category: FilterPageBuilder
+  status: covered
+  notes: overloads=1; deep-copies tables, views, and PageCaption from source MockFilterPageBuilder
+  tests: tests/bucket-1/305-filterpagebuilder-assign
+
 # ── Guid ────────────────────────────────────────────────────────
 
 Guid.CreateGuid:

@@ -156,4 +156,17 @@ public class MockFilterPageBuilder
 
     public bool ALRunModal(DataError errorLevel)
         => true;
+
+    // ── ALAssign ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// BC emits <c>fpb2.ALAssign(fpb1)</c> for <c>FPB2 := FPB1</c> in AL.
+    /// Deep-copies all registered tables, views, and the page caption.
+    /// </summary>
+    public void ALAssign(MockFilterPageBuilder other)
+    {
+        _tables.Clear();
+        _tables.AddRange(other._tables);
+        ALPageCaption = other.ALPageCaption;
+    }
 }
