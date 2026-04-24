@@ -1917,6 +1917,43 @@ public static class AlCompat
     public static int NavCodeCompare(NavCode a, NavCode b)
         => string.Compare((string)a, (string)b, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// NavValue → NavCode coercing overloads for <see cref="NavCodeCompare"/>.
+    /// BC emits <c>new InListNavValue((candidate) =&gt; NavCodeCompare(candidate, new NavCode(...)) == 0)</c>
+    /// for <c>Rec."CodeField" in ['A', 'B']</c>. The lambda parameter is typed
+    /// <c>NavValue</c> (the delegate's signature), but the arguments are NavCode literals,
+    /// so the call without overloads fails with CS1503. These overloads extract the
+    /// underlying string via the same path used elsewhere (NavCode is the expected
+    /// runtime type; any other NavValue is compared by its Format representation).
+    /// Issue #1211.
+    /// </summary>
+    public static int NavCodeCompare(NavValue a, NavCode b)
+        => string.Compare(NavValueToCodeString(a), (string)b, StringComparison.OrdinalIgnoreCase);
+
+    public static int NavCodeCompare(NavCode a, NavValue b)
+        => string.Compare((string)a, NavValueToCodeString(b), StringComparison.OrdinalIgnoreCase);
+
+    public static int NavCodeCompare(NavValue a, NavValue b)
+        => string.Compare(NavValueToCodeString(a), NavValueToCodeString(b), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>NavValue → NavCode coercing overloads for <see cref="NavCodeEquals"/>. See #1211.</summary>
+    public static bool NavCodeEquals(NavValue a, NavCode b)
+        => string.Equals(NavValueToCodeString(a), (string)b, StringComparison.OrdinalIgnoreCase);
+
+    public static bool NavCodeEquals(NavCode a, NavValue b)
+        => string.Equals((string)a, NavValueToCodeString(b), StringComparison.OrdinalIgnoreCase);
+
+    public static bool NavCodeEquals(NavValue a, NavValue b)
+        => string.Equals(NavValueToCodeString(a), NavValueToCodeString(b), StringComparison.OrdinalIgnoreCase);
+
+    private static string NavValueToCodeString(NavValue v)
+    {
+        if (v is null) return "";
+        if (v is NavCode nc) return (string)nc;
+        if (v is NavText nt) return (string)nt;
+        return Format(v)?.ToString() ?? "";
+    }
+
     // -----------------------------------------------------------------------
     // ALSystemNumeric replacements (ALRandomize/ALRandom require NavSession)
     // -----------------------------------------------------------------------

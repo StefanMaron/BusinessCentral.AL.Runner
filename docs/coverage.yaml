@@ -611,6 +611,19 @@ List.CodeField:
     - tests/bucket-2/234-navvalue-to-navcode-list
   notes: NavValue→NavCode conversion for Code field values used in List of [Code[N]] — closes #1185
 
+InOperator.NavCodeList:
+  layer: runtime-api
+  category: Operator
+  status: covered
+  tests:
+    - tests/bucket-1/304-navcode-in-list
+  notes: |
+    AL `in` operator with Code literals on a Code-typed record field
+    (e.g. `if Rec."No." in ['A', 'B']`). BC emits an InListNavValue
+    delegate whose lambda parameter is typed NavValue; the literal side
+    is NavCode, so NavCodeCompare(NavValue, NavCode) overloads in AlCompat
+    resolve CS1503 — closes #1211.
+
 object_reference_type:
   layer: syntax
   category: type
