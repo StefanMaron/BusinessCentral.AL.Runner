@@ -5023,6 +5023,27 @@ Report.Invoke (3-arg):
     BC emits this 3-arg overload when calling a method defined in a report extension.
     Delegates to the standard 2-arg Invoke. Issue #1282.
 
+Page.BookmarkType:
+  layer: runtime-api
+  category: Page
+  status: stub
+  tests: tests/bucket-1/1262-page-bookmarktype
+  notes: overloads=1; BookmarkType property (get/set) — BC compiler emits this.BookmarkType = BookmarkType.Temporary on pages with SourceTableTemporary; no-op stub on page classes
+
+Page.CheckType (page-class):
+  layer: runtime-api
+  category: Page
+  status: stub
+  tests: tests/bucket-1/1262-page-bookmarktype
+  notes: overloads=1; CheckType(NavType, NavType) — BC compiler-emitted type validation on page classes; no-op stub (same as Table.CheckType but for pages)
+
+Page.SetRecord (CurrPage):
+  layer: runtime-api
+  category: Page
+  status: covered
+  tests: tests/bucket-1/1262-page-bookmarktype
+  notes: overloads=1; SetRecord(MockRecordHandle) on page class — BC lowers CurrPage.SetRecord(rec) to this.SetRecord(rec.Target); separate from MockFormHandle.SetRecord
+
 PagePart.SetTableView:
   layer: runtime-api
   category: PagePart

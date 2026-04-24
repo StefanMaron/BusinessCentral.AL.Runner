@@ -863,6 +863,16 @@ public bool Editable {{ get; set; }} = true;
 public string PageCaption {{ get; set; }} = string.Empty;
 public NavOption? PromptMode {{ get; set; }}
 public NavText ObjectID(bool withCaption = false) {{ return NavText.Empty; }}
+// SetRecord — BC lowers CurrPage.SetRecord(rec) to this.SetRecord(rec.Target).
+// NavForm provided this; after stripping it we need a stub (issue #1262).
+public void SetRecord(MockRecordHandle rec) {{ }}
+// BookmarkType — BC emits this.BookmarkType = BookmarkType.Temporary on pages with
+// SourceTableTemporary = true. The BookmarkType enum lives in Microsoft.Dynamics.Nav.Types.
+// NavForm provided this property; after stripping it we need a stub (issue #1262).
+public Microsoft.Dynamics.Nav.Types.BookmarkType BookmarkType {{ get; set; }}
+// CheckType — BC emits CheckType(NavType, NavType) calls on Page classes for runtime
+// type validation (same pattern as Record classes). No-op standalone (issue #1262).
+public void CheckType(NavType expected, NavType actual) {{ /* no-op */ }}
 // Implicit conversion to NavForm — allows Page<N> instances to be passed wherever
 // NavForm is expected (e.g. NavForm.SetSubPageView, helper methods in generated page scope).
 // Without this, stripping NavForm from the base class list causes CS1503 at Roslyn
