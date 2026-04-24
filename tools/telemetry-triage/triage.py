@@ -173,7 +173,7 @@ def query_telemetry(from_time: str) -> list[dict]:
 _CS_CODE_RE = re.compile(r"(CS\d+) on '([^']+)'")
 _MEMBER_RE  = re.compile(r"does not contain a definition for '([^'…]+)")
 _LABEL_SUFFIX_RE = re.compile(r"(Lbl|Txt|Tok|Msg|Err|Caption)$", re.IGNORECASE)
-_GENERATED_TYPE_RE = re.compile(r"^(Report|Page|Query|XmlPort|Table)(Extension)?\d+")
+_GENERATED_TYPE_RE = re.compile(r"^(Report|Page|Query|XmlPort|Table|Record|Codeunit)(Extension)?\d+")
 
 
 def _classify_compilation_gap(outer_message: str) -> str:

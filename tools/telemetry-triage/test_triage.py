@@ -100,6 +100,17 @@ class TestClassifyCompilationGap(unittest.TestCase):
         msg = "CS1061 on 'TableExtension50200': 'TableExtension50200' does not contain a definition for 'X'"
         self.assertEqual(_classify_compilation_gap(msg), "CS1061 on 'TableExtension<N>'")
 
+    def test_cs1061_record_groups_by_normalized_target(self):
+        """CS1061 on Record71116001 and Record71116007 → same group key."""
+        msg1 = "CS1061 on 'Record71116001': 'Record71116001' does not contain a definition for 'ALFieldError'"
+        msg2 = "CS1061 on 'Record71116007': 'Record71116007' does not contain a definition for 'ALFieldError'"
+        self.assertEqual(_classify_compilation_gap(msg1), _classify_compilation_gap(msg2))
+        self.assertEqual(_classify_compilation_gap(msg1), "CS1061 on 'Record<N>'")
+
+    def test_cs1061_codeunit_groups_by_normalized_target(self):
+        msg = "CS1061 on 'Codeunit50100': 'Codeunit50100' does not contain a definition for 'SomeMethod'"
+        self.assertEqual(_classify_compilation_gap(msg), "CS1061 on 'Codeunit<N>'")
+
     # ── CS1061: mock types group by target + member ──
 
     def test_cs1061_mock_splits_by_member(self):
