@@ -3196,7 +3196,8 @@ HttpContent.ReadAs:
   layer: runtime-api
   category: HttpContent
   status: covered
-  notes: overloads=3
+  tests: tests/bucket-1/1250-httpcontent-readas-bool
+  notes: overloads=3; ALReadAs returns bool (not void) so 'if Content.ReadAs(T) then' compiles without CS0019 (#1250)
 
 HttpContent.WriteFrom:
   layer: runtime-api

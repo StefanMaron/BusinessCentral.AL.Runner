@@ -2253,8 +2253,11 @@ public static class AlCompat
     /// is the stored text content (round-trip from WriteFrom).
     /// Note: This is a text-only round-trip. Binary data written via InStream will be
     /// UTF-8 decoded on load and re-encoded on read, which may not preserve raw bytes.
+    ///
+    /// Returns <c>true</c> (matching the real BC API) so that BC-generated code that
+    /// uses <c>if Content.ReadAs(Stream) then</c> compiles without CS0019 (#1250).
     /// </summary>
-    public static void HttpContentReadAs(MockHttpContent content, object? scope, DataError errorLevel, ByRef<MockInStream> stream)
+    public static bool HttpContentReadAs(MockHttpContent content, object? scope, DataError errorLevel, ByRef<MockInStream> stream)
     {
         var text = content.GetText();
         if (string.IsNullOrEmpty(text))
@@ -2267,6 +2270,7 @@ public static class AlCompat
             ms.Init(System.Text.Encoding.UTF8.GetBytes(text));
             stream.Value = ms;
         }
+        return true;
     }
 
     // -----------------------------------------------------------------------
