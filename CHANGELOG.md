@@ -6,6 +6,27 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.22] - 2026-04-24
+
+### Fixed
+- **`NavApp.IsEntitled` accepts string literals** — `IsEntitled('standard_1')` no longer
+  fails with CS1503 (`string` → `NavText`). String overloads added to the mock following
+  the same pattern as `GetResource`. (#1231, #1236)
+- **`CopyArray` on page-level `array[N] of Text[M]` vars** — page classes with fixed-length
+  text array fields no longer produce CS0411 or NullReferenceException. The rewriter now
+  preserves a cleaned `InitializeComponent` (field inits kept, BC-only calls stripped) so
+  `MockArray` fields are properly initialised before use. (#1232, #1237)
+- **Actionable error on access-denied** — writing the BC DLL cache to `%LOCALAPPDATA%`
+  now prints a specific message pointing to antivirus / corporate security policies instead
+  of a bare exception. (#1234, #1235)
+
+### Documentation
+- **Windows install prerequisites** — README now documents the NuGet feed workaround
+  (`dotnet nuget add source`) for corporate environments where NuGet.org is not configured,
+  and the required .NET SDK version (8, 9, or 10). (#1235)
+- **Multi-root workspace usage** — README documents passing multiple source directories
+  as separate arguments. (#1233)
+
 ## [1.0.21] - 2026-04-24
 
 ### Added
