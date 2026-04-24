@@ -37,7 +37,7 @@ GH_API_BASE     = "https://api.github.com"
 GH_MODELS_URL   = "https://models.github.ai/inference/chat/completions"
 COPILOT_MODEL   = "openai/gpt-4o-mini"
 ISSUE_LABEL     = "telemetry"
-MAX_NEW_ISSUES  = 15
+MAX_NEW_ISSUES  = 30
 
 # ─── HTTP helpers ─────────────────────────────────────────────────────────────
 
