@@ -7081,6 +7081,13 @@ Table.FieldError:
   tests: tests/bucket-1/96-fielderror-autoformat
   notes: overloads=2; MockRecordHandle.ALFieldError(fieldNo) / ALFieldError(fieldNo, msg) — throws validation error; delegated on Record classes
 
+Table.CheckType:
+  layer: runtime-api
+  category: Table
+  status: stub
+  tests: tests/bucket-1/1280-checktype-tableext
+  notes: overloads=1; CheckType(NavType expected, NavType actual) — BC compiler-emitted type validation; no-op stub on Record classes
+
 Table.CallGetAutoFormatStringExtensionMethod:
   layer: runtime-api
   category: Table

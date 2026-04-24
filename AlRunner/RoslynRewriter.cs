@@ -760,6 +760,7 @@ public bool ALWritePermission => Rec.ALWritePermission;
 public void ALSetPermissionFilter() => Rec.ALSetPermissionFilter();
 public void ALFieldError(int fieldNo) => Rec.ALFieldError(fieldNo);
 public void ALFieldError(int fieldNo, string message) => Rec.ALFieldError(fieldNo, message);
+public void CheckType(NavType expected, NavType actual) { /* no-op: type validation is a BC runtime concern */ }
 protected bool CallGetDecimalPlacesExtensionMethod(int fieldNo, ref string result) { return false; }
 protected bool CallGetTableRelationExtensionMethod(int fieldNo, MockRecordHandle rec, ref bool result) { return false; }
 protected bool CallGetFormatExtensionMethod(int fieldNo, ref string result) { return false; }
