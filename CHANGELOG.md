@@ -6,6 +6,12 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.23] - 2026-04-24
+
+### Fixed
+- rewrite ALCompiler.ToRecordRef to MockRecordRef.FromHandle
+- NavObjectDictionary → MockObjectDictionary to lift ITreeObject constraint on codeunit-value dictionaries
+
 ## [1.0.22] - 2026-04-24
 
 ### Fixed
