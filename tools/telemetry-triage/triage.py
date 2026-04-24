@@ -129,7 +129,7 @@ KQL = """
 exceptions
 | where timestamp > datetime({from_time})
 | where cloud_RoleName == "al-runner"
-| extend ver = tostring(customDimensions["ai.application.ver"])
+| extend ver = application_Version
 | extend os  = tostring(customDimensions["os"])
 | summarize
     occurrences  = count(),
