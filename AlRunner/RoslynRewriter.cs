@@ -552,6 +552,61 @@ public class RoslynRewriter : CSharpSyntaxRewriter
                 visited = visited.WithBaseList(SyntaxFactory.BaseList(newTypes));
         }
 
+        // For page classes: rewrite InitializeComponent to strip BC-runtime-only calls while
+        // keeping field initialisation statements (e.g. this.myCaption = new MockArray<…>(…)).
+        // The BC constructor (ITreeObject parent) and the original InitializeComponent are both
+        // removed by ShouldRemoveMember, so class-level NavArray/MockArray fields would never be
+        // initialised — causing NullReferenceException at runtime (issue #1232).
+        //
+        // MockFormHandle.Invoke already calls InitializeComponent via reflection after creating
+        // the page instance; we just need to preserve a clean version of it.
+        // The approach:
+        //   1. Find InitializeComponent in the already-visited members (NavArray → MockArray
+        //      has already been rewritten by base.VisitClassDeclaration above).
+        //   2. Filter out the BC-only call-statements; keep field assignments.
+        //   3. Replace the original InitializeComponent with the cleaned version so it survives
+        //      ShouldRemoveMember (which only drops it when it still contains the BC markers).
+        if (isPageClass)
+        {
+            var bcOnlyNames = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "CallInitializeComponentExtensionMethod",
+                "InitializeForm",
+                "RegisterUIPart",
+            };
+
+            var newMembers = new List<MemberDeclarationSyntax>();
+            bool replaced = false;
+            foreach (var member in visited.Members)
+            {
+                if (!replaced
+                    && member is MethodDeclarationSyntax initMethod
+                    && initMethod.Identifier.Text == "InitializeComponent"
+                    && initMethod.Body != null)
+                {
+                    // Collect only the non-BC-specific statements
+                    var safeStmts = initMethod.Body.Statements
+                        .Where(s => !bcOnlyNames.Any(n => s.ToString().Contains(n)))
+                        .ToList();
+
+                    if (safeStmts.Count > 0)
+                    {
+                        // Rebuild method with only the safe statements
+                        var cleanBody = initMethod.Body.WithStatements(
+                            SyntaxFactory.List(safeStmts));
+                        var cleanMethod = initMethod.WithBody(cleanBody);
+                        newMembers.Add(cleanMethod);
+                    }
+                    // else: no safe statements → let ShouldRemoveMember drop it as before
+                    replaced = true;
+                    continue;
+                }
+                newMembers.Add(member);
+            }
+            if (replaced)
+                visited = visited.WithMembers(SyntaxFactory.List(newMembers));
+        }
+
         // Remove specific members
         var membersToKeep = new SyntaxList<MemberDeclarationSyntax>();
         foreach (var member in visited.Members)
