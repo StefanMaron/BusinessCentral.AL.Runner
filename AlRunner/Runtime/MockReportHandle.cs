@@ -213,6 +213,16 @@ public class MockReportHandle
         return "<RequestPage />";
     }
 
+    /// <summary>
+    /// Extension-scoped Invoke — called when invoking a method defined in a report
+    /// extension. The BC compiler emits (extensionId, memberId, args).
+    /// We ignore the extensionId and delegate to the standard Invoke.
+    /// </summary>
+    public object? Invoke(int extensionId, int memberId, object[] args)
+    {
+        return Invoke(memberId, args);
+    }
+
     public object? Invoke(int memberId, object[] args)
     {
         var report = EnsureReportInstance();
