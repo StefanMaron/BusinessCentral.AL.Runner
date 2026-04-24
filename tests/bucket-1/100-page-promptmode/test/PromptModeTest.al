@@ -1,6 +1,11 @@
 /// Tests for MockCurrPage.PromptMode and MockFormHandle.PromptMode stubs.
 /// If either mock is missing PromptMode, Roslyn compilation of the rewritten C#
 /// fails with CS1061 and ALL tests in this bucket become RED.
+///
+/// Issue #1266: BC emits Page<N>.PromptMode as a static self-reference inside
+/// PromptDialog pages. The RoslynRewriter converts this to this.PromptMode.
+/// (Cannot test with AL here — PromptDialog PageType not supported by local compiler.
+/// See AlRunner.Tests/PagePromptModeRewriterTests.cs for the C# rewriter tests.)
 codeunit 113003 "PM Test"
 {
     Subtype = Test;
