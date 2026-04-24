@@ -100,7 +100,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0   # full history so git describe finds the previous tag
-          token: ${{ secrets.GITHUB_TOKEN }}
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}  # deploy key has "Always allow" bypass on the main ruleset
 
       - uses: actions/setup-dotnet@v5
         with:
