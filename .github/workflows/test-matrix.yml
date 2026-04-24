@@ -149,58 +149,17 @@ jobs:
     if: github.ref == 'refs/heads/main' && needs.test.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - name: Collect results from latest BC version
-        id: collect
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # Get the output from the last matrix job (latest BC version)
-          # The test step outputs are per-matrix-job; we pick the latest BC version
-          # by querying the workflow run's jobs
-          RUN_ID=${{ github.run_id }}
-          JOBS=$(gh api repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs --paginate -q '.jobs[] | select(.name | startswith("BC ")) | {name, conclusion}')
-
-          # Use the AL test step outputs from environment (matrix jobs share outputs
-          # via the needs context, but matrix outputs aren't directly accessible).
-          # Instead, re-count from the test suite directory.
-          SUITE_COUNT=$(find tests/bucket-* tests/stubs -name "*.al" -path "*/test/*" | xargs grep -l "Subtype = Test" 2>/dev/null | wc -l)
-          TEST_COUNT=$(find tests/bucket-* tests/stubs -name "*.al" -path "*/test/*" -exec grep -c "\[Test\]" {} + 2>/dev/null | awk -F: '{s+=$NF} END {print s}')
-
-          echo "test_count=$TEST_COUNT" >> "$GITHUB_OUTPUT"
-          echo "suite_count=$SUITE_COUNT" >> "$GITHUB_OUTPUT"
-          echo "Tests: $TEST_COUNT across $SUITE_COUNT suites"
-
       - uses: actions/checkout@v6
 
-      - name: Count AL test procedures
-        id: count
-        run: |
-          # Count [Test] procedures across all bucket and stubs test files
-          TEST_COUNT=$(grep -rch "procedure Test\|procedure Probe\|procedure Verify\|procedure Should\|procedure Have\|procedure When\|procedure Can" tests/bucket-*/*/test/*.al tests/stubs/*/test/*.al 2>/dev/null | awk '{s+=$1} END {print s+0}')
-
-          # More accurate: count lines matching the SubType=Test codeunit pattern
-          # and then count procedures within those
-          PROC_COUNT=$(grep -rc "\[Test\]" tests/bucket-*/*/test/*.al tests/stubs/*/test/*.al 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
-
-          # If grep for [Test] attr doesn't work (AL doesn't use [Test]),
-          # count procedure declarations in test files
-          if [ "$PROC_COUNT" -eq 0 ]; then
-            PROC_COUNT=$(grep -rch "^[[:space:]]*procedure " tests/bucket-*/*/test/*.al tests/stubs/*/test/*.al 2>/dev/null | awk '{s+=$1} END {print s+0}')
-          fi
-
-          echo "test_count=$PROC_COUNT" >> "$GITHUB_OUTPUT"
-          echo "Test procedures: $PROC_COUNT"
-
-      - name: Update gist badges
-        if: env.GIST_ID != ''
+      - name: Count AL test procedures and update badge
         env:
-          GIST_ID: ${{ vars.BADGE_GIST_ID }}
           GH_TOKEN: ${{ secrets.GIST_TOKEN }}
         run: |
-          TESTS="${{ steps.count.outputs.test_count }}"
+          # Count test procedures in all bucket and stubs test files
+          TESTS=$(grep -rch "^[[:space:]]*procedure " tests/bucket-*/*/test/*.al tests/stubs/*/test/*.al 2>/dev/null | awk '{s+=$1} END {print s+0}')
+          echo "AL test procedures: $TESTS"
 
-          # Test count badge
-          TEST_JSON=$(python3 -c "
+          BADGE_JSON=$(python3 -c "
           import json
           print(json.dumps({
               'schemaVersion': 1,
@@ -210,7 +169,7 @@ jobs:
           }))
           ")
 
-          gh api --method PATCH "gists/$GIST_ID" \
-            -f "files[test-badge.json][content]=$TEST_JSON"
+          gh api --method PATCH gists/2ea799885a3e3b3e6c42d6efbfaf9e3f \
+            -f "files[test-badge.json][content]=$BADGE_JSON"
 
-          echo "Updated gist $GIST_ID with $TESTS tests"
+          echo "Updated badge: $TESTS tests"
