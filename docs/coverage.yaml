@@ -5235,7 +5235,7 @@ RecordRef.CurrentKeyIndex:
   layer: runtime-api
   category: RecordRef
   status: covered
-  notes: overloads=1
+  notes: overloads=1; getter + setter — setting re-sorts iteration by the Nth declared key (1-based). Invalid index throws. All keys parsed and registered via TableFieldRegistry. Issue #1218.
 
 RecordRef.Delete:
   layer: runtime-api
@@ -5409,13 +5409,13 @@ RecordRef.KeyCount:
   layer: runtime-api
   category: RecordRef
   status: covered
-  notes: overloads=1
+  notes: overloads=1; returns number of declared keys (PK + secondaries) from TableFieldRegistry. Issue #1218.
 
 RecordRef.KeyIndex:
   layer: runtime-api
   category: RecordRef
   status: covered
-  notes: overloads=1
+  notes: overloads=1; returns MockKeyRef for the Nth declared key (1-based). Out-of-range index throws. Issue #1218.
 
 RecordRef.LoadFields:
   layer: runtime-api

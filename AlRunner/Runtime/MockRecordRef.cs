@@ -598,18 +598,33 @@ public class MockRecordRef
 
     // -- CurrentKey / CurrentKeyIndex --
     public string ALCurrentKey => _handle?.ALCurrentKey ?? "";
-    public int ALCurrentKeyIndex => 1;
+
+    /// <summary>
+    /// AL RecRef.CurrentKeyIndex — 1-based index of the active sort key.
+    /// Setter switches subsequent iteration to the selected key's fields.
+    /// </summary>
+    public int ALCurrentKeyIndex
+    {
+        get => _handle?.ALCurrentKeyIndex ?? 1;
+        set
+        {
+            if (_handle == null)
+                throw new Exception("RecordRef.CurrentKeyIndex: RecordRef is not open.");
+            _handle.ALCurrentKeyIndex = value;
+        }
+    }
 
     // -- KeyCount / KeyIndex --
-    public int ALKeyCount => 1;
+    public int ALKeyCount => _handle?.ALKeyCount ?? 1;
     public MockKeyRef ALKeyIndex(int index)
     {
-        if (index == 1 && _handle != null)
-        {
-            var pkFields = _handle.GetPrimaryKeyFieldNos();
-            return new MockKeyRef(Number, pkFields, this);
-        }
-        throw new Exception($"RecordRef.KeyIndex: index {index} out of range (only 1 key available)");
+        if (_handle == null)
+            throw new Exception("RecordRef.KeyIndex: RecordRef is not open.");
+        var keys = MockRecordHandle.GetKeysForTable(Number);
+        if (index < 1 || index > keys.Count)
+            throw new Exception(
+                $"RecordRef.KeyIndex: index {index} out of range (valid: 1..{keys.Count}).");
+        return new MockKeyRef(Number, keys[index - 1], this);
     }
 
     // -- CurrentCompany --
