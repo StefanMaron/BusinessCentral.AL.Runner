@@ -328,7 +328,7 @@ Rules:
 5. Skip known-by-design limitations entirely — do not include them at all.
 6. Titles must be concise and technical (under 80 chars). No "telemetry:" prefix.
 7. Do NOT generate a body — the script builds the body from raw telemetry data.
-8. Set "source_group_keys" to the list of group_key strings this problem came from.
+8. Set "source_indices" to the list of input row indices (0-based integers) this problem came from.
 
 Return ONLY valid JSON matching this schema (no markdown, no explanation):
 {
@@ -336,7 +336,7 @@ Return ONLY valid JSON matching this schema (no markdown, no explanation):
     {
       "title": "string",
       "existing_issue_number": null or integer,
-      "source_group_keys": ["string"]
+      "source_indices": [0]
     }
   ]
 }"""
@@ -350,8 +350,9 @@ def analyze_with_copilot(rows: list[dict], existing_issues: list[dict]) -> list[
     )
 
     summary_rows = []
-    for r in rows:
+    for idx, r in enumerate(rows):
         entry: dict = {
+            "index":       idx,
             "group_key":   r.get("_group_key", r.get("type", "Unknown")),
             "type":        r.get("type"),
             "occurrences": r.get("occurrences"),
@@ -403,10 +404,13 @@ def build_body(problem: dict, rows: list[dict], from_time: str) -> str:
     carries ``_original_rows`` (from pre-aggregation), those originals are shown
     so the issue body contains full detail.
     """
+    source_indices = problem.get("source_indices", [])
     source_keys  = set(problem.get("source_group_keys", []))
     source_types = set(problem.get("source_exception_types", []))
 
-    if source_keys:
+    if source_indices:
+        matched = [rows[i] for i in source_indices if 0 <= i < len(rows)]
+    elif source_keys:
         matched = [r for r in rows if r.get("_group_key") in source_keys]
     elif source_types:
         matched = [r for r in rows if r.get("type") in source_types]
