@@ -76,6 +76,8 @@ def gh_headers():
 
 # ─── Step 1: Determine time window ────────────────────────────────────────────
 
+MAX_LOOKBACK_HOURS = 25  # cap in case all recent runs failed
+
 def get_from_time() -> str:
     if from_time_env := os.environ.get("FROM_TIME"):
         print(f"Using FROM_TIME from environment: {from_time_env}")
@@ -83,24 +85,31 @@ def get_from_time() -> str:
 
     current_run_id = str(os.environ.get("GITHUB_RUN_ID", ""))
     workflow_file = os.environ.get("GITHUB_WORKFLOW_REF", "").split("@")[0].split("/")[-1]
+    cap = (datetime.now(timezone.utc) - timedelta(hours=MAX_LOOKBACK_HOURS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     if workflow_file:
         try:
+            # Use status=completed (not conclusion=success) so a failed run still
+            # anchors the next run to its time — preventing wide re-scan gaps.
             url = (
                 f"{GH_API_BASE}/repos/{GH_REPO}/actions/workflows/{workflow_file}/runs"
-                f"?conclusion=success&per_page=5"
+                f"?status=completed&per_page=10"
             )
             data = http_get(url, gh_headers())
             runs = [r for r in data.get("workflow_runs", []) if str(r.get("id", "")) != current_run_id]
             if runs:
                 last_time = runs[0]["updated_at"]
-                print(f"Last successful run completed at: {last_time}")
-                return last_time
+                # Never look back further than MAX_LOOKBACK_HOURS regardless of run history
+                from_time = max(last_time, cap)
+                print(f"Last run completed at: {last_time} (run #{runs[0]['id']})")
+                if from_time != last_time:
+                    print(f"Capped to {MAX_LOOKBACK_HOURS}h lookback: {from_time}")
+                return from_time
         except Exception as e:
             print(f"Could not determine last run time: {e}", file=sys.stderr)
 
-    fallback = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    print(f"Defaulting to 24h lookback: {fallback}")
-    return fallback
+    print(f"No previous run found. Defaulting to {MAX_LOOKBACK_HOURS}h lookback: {cap}")
+    return cap
 
 # ─── Step 2: Query Application Insights ───────────────────────────────────────
 
