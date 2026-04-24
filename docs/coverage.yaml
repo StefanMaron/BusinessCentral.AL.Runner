@@ -7596,7 +7596,7 @@ TestField.AsDateTime:
   layer: runtime-api
   category: TestField
   status: covered
-  notes: overloads=1; returns stored NavDateTime or NavDateTime.Default
+  notes: overloads=2 (0-arg, session); BC emits session-aware form (issue #1216); throws on non-convertible values
   tests:
     - tests/bucket-1/86-testfield-methods
 
