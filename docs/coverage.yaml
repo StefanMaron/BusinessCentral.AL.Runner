@@ -7058,8 +7058,22 @@ Table.FieldError:
   layer: runtime-api
   category: Table
   status: covered
-  tests: tests/bucket-1/180-table-metadata-stubs
-  notes: overloads=2; MockRecordHandle.ALFieldError(fieldNo) / ALFieldError(fieldNo, msg) — throws validation error
+  tests: tests/bucket-1/96-fielderror-autoformat
+  notes: overloads=2; MockRecordHandle.ALFieldError(fieldNo) / ALFieldError(fieldNo, msg) — throws validation error; delegated on Record classes
+
+Table.CallGetAutoFormatStringExtensionMethod:
+  layer: compiler-infra
+  category: Table
+  status: stub
+  tests: tests/bucket-1/96-fielderror-autoformat
+  notes: BC internal formatting hook; no-op stub returning false on Record classes
+
+Table.EnsureGlobalVariablesInitialized:
+  layer: compiler-infra
+  category: Table
+  status: stub
+  tests: tests/bucket-1/96-fielderror-autoformat
+  notes: BC internal init hook; no-op stub on Record classes
 
 Table.FieldName:
   layer: runtime-api
