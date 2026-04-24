@@ -307,6 +307,31 @@ public static class MockJsonHelper
     }
 
     /// <summary>
+    /// Replacement for NavJsonToken.ALGetBoolean(key, requireValueExists).
+    /// Returns the boolean value of the named property, with optional existence check.
+    /// AL: JsonObject.GetBoolean('key', true)  →  MockJsonHelper.GetBoolean(token, key, requireValueExists)
+    /// </summary>
+    public static bool GetBoolean(NavJsonToken token, string key, bool requireValueExists)
+    {
+        var backingToken = GetBackingToken(token);
+        if (backingToken is not JObject obj)
+            throw new Exception("The JSON token is not an object.");
+
+        if (!obj.TryGetValue(key, out var val))
+        {
+            if (requireValueExists)
+                throw new Exception($"The JSON object does not contain a property with the name '{key}'.");
+            return false;
+        }
+
+        if (val.Type != JTokenType.Boolean)
+            throw new Exception(
+                $"The value of JSON property '{key}' cannot be converted to a Boolean value.");
+
+        return val.Value<bool>();
+    }
+
+    /// <summary>
     /// Replacement for NavJsonToken.ALPath(DataError).
     /// Returns the BC-style JSON path for the token (e.g. "$" for root, "$.foo" for a field).
     /// Newtonsoft.Json uses "" for root and "foo" for a field — this converts to BC format.
@@ -452,6 +477,25 @@ public static class MockJsonHelper
     }
 
     /// <summary>
+    /// Replacement for NavJsonObject.ALGetInteger(key, requireValueExists).
+    /// Returns the integer value of the named property, with optional existence check.
+    /// AL: JsonObject.GetInteger('key', true)  →  MockJsonHelper.GetInteger(token, key, requireValueExists)
+    /// </summary>
+    public static int GetInteger(NavJsonToken token, string key, bool requireValueExists)
+    {
+        var backingToken = GetBackingToken(token);
+        if (backingToken is not JObject obj)
+            throw new Exception("The JSON token is not an object.");
+        if (!obj.TryGetValue(key, out var val))
+        {
+            if (requireValueExists)
+                throw new Exception($"The JSON object does not contain a property with the name '{key}'.");
+            return 0;
+        }
+        return val.Value<int>();
+    }
+
+    /// <summary>
     /// Replacement for NavJsonObject.ALGetDecimal(key).
     /// Returns the decimal value of the named property.
     /// AL: JsonObject.GetDecimal('key')  →  MockJsonHelper.GetDecimal(token, key)
@@ -463,6 +507,25 @@ public static class MockJsonHelper
             throw new Exception("The JSON token is not an object.");
         if (!obj.TryGetValue(key, out var val))
             throw new Exception($"The JSON object does not contain a property with the name '{key}'.");
+        return NavDecimal.Create(new Decimal18(val.Value<decimal>()));
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonObject.ALGetDecimal(key, requireValueExists).
+    /// Returns the decimal value of the named property, with optional existence check.
+    /// AL: JsonObject.GetDecimal('key', true)  →  MockJsonHelper.GetDecimal(token, key, requireValueExists)
+    /// </summary>
+    public static NavDecimal GetDecimal(NavJsonToken token, string key, bool requireValueExists)
+    {
+        var backingToken = GetBackingToken(token);
+        if (backingToken is not JObject obj)
+            throw new Exception("The JSON token is not an object.");
+        if (!obj.TryGetValue(key, out var val))
+        {
+            if (requireValueExists)
+                throw new Exception($"The JSON object does not contain a property with the name '{key}'.");
+            return NavDecimal.Create(new Decimal18(0m));
+        }
         return NavDecimal.Create(new Decimal18(val.Value<decimal>()));
     }
 

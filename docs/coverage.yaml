@@ -3763,9 +3763,17 @@ JsonObject.GetBoolean:
   layer: runtime-api
   category: JsonObject
   status: covered
-  notes: overloads=1; rewriter redirects ALGetBoolean to MockJsonHelper.GetBoolean (JObject backing token lookup; throws on missing key or wrong type)
+  notes: overloads=2; rewriter redirects ALGetBoolean to MockJsonHelper.GetBoolean (JObject backing token lookup; throws on missing key or wrong type)
   tests:
     - tests/bucket-1/62-jsonobject-getboolean
+
+JsonObject.GetBoolean (2-arg):
+  layer: runtime-api
+  category: JsonObject
+  status: covered
+  notes: 2-arg overload (key, requireValueExists); returns false when key is missing and requireValueExists=false
+  tests:
+    - tests/bucket-1/96-json-get-3arg
 
 JsonObject.GetByte:
   layer: runtime-api
@@ -3803,9 +3811,17 @@ JsonObject.GetDecimal:
   layer: runtime-api
   category: JsonObject
   status: covered
-  notes: overloads=1; rewriter redirects ALGetDecimal to MockJsonHelper.GetDecimal
+  notes: overloads=2; rewriter redirects ALGetDecimal to MockJsonHelper.GetDecimal
   tests:
     - tests/bucket-1/268-jsonobject-methods
+
+JsonObject.GetDecimal (2-arg):
+  layer: runtime-api
+  category: JsonObject
+  status: covered
+  notes: 2-arg overload (key, requireValueExists); returns 0 when key is missing and requireValueExists=false
+  tests:
+    - tests/bucket-1/96-json-get-3arg
 
 JsonObject.GetDuration:
   layer: runtime-api
@@ -3819,9 +3835,17 @@ JsonObject.GetInteger:
   layer: runtime-api
   category: JsonObject
   status: covered
-  notes: overloads=1; rewriter redirects ALGetInteger to MockJsonHelper.GetInteger
+  notes: overloads=2; rewriter redirects ALGetInteger to MockJsonHelper.GetInteger
   tests:
     - tests/bucket-1/268-jsonobject-methods
+
+JsonObject.GetInteger (2-arg):
+  layer: runtime-api
+  category: JsonObject
+  status: covered
+  notes: 2-arg overload (key, requireValueExists); returns 0 when key is missing and requireValueExists=false
+  tests:
+    - tests/bucket-1/96-json-get-3arg
 
 JsonObject.GetObject:
   layer: runtime-api
