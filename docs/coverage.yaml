@@ -6743,12 +6743,38 @@ System.GetLastErrorText:
   status: covered
   notes: overloads=2; returns AlScope.LastErrorText set by asserterror; tested in 176-system-error-utils
 
-System.GetUrl:
+System.GetUrl (1-arg):
   layer: runtime-api
   category: System
   status: covered
-  tests: tests/bucket-1/196-system-misc-stubs
-  notes: overloads=4; MockSystemOperatingSystem.ALGetUrl stub with optional record param; returns /mock/{objectType}/{objectId} path; tested with 4-arg form
+  tests:
+    - tests/bucket-1/99-geturl-overloads
+  notes: GetUrl(ClientType) — 1-arg overload returns /mock
+
+System.GetUrl (2-arg):
+  layer: runtime-api
+  category: System
+  status: covered
+  tests:
+    - tests/bucket-1/99-geturl-overloads
+  notes: GetUrl(ClientType, Company) — 2-arg overload returns /mock?company={company}
+
+System.GetUrl (4-arg):
+  layer: runtime-api
+  category: System
+  status: covered
+  tests:
+    - tests/bucket-1/196-system-misc-stubs
+    - tests/bucket-1/99-geturl-overloads
+  notes: GetUrl(ClientType, Company, ObjectType, ObjectId) — 4-arg overload returns /mock/{objectType}/{objectId}
+
+System.GetUrl (6-arg):
+  layer: runtime-api
+  category: System
+  status: covered
+  tests:
+    - tests/bucket-1/196-system-misc-stubs
+  notes: GetUrl(ClientType, Company, ObjectType, ObjectId, Record, UseFilters) — full 6-arg overload with optional Record and UseFilters
 
 System.GlobalLanguage:
   layer: runtime-api

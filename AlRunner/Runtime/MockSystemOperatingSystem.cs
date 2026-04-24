@@ -42,6 +42,25 @@ public static class MockSystemOperatingSystem
     /// </summary>
     public static bool ALGuiAllowed => false;
 
+    /// <summary>
+    /// GetUrl(ClientType) — 1-arg overload.
+    /// </summary>
+    public static string ALGetUrl(object clientType)
+    {
+        return "/mock";
+    }
+
+    /// <summary>
+    /// GetUrl(ClientType, Company) — 2-arg overload.
+    /// </summary>
+    public static string ALGetUrl(object clientType, string company)
+    {
+        return $"/mock?company={company}";
+    }
+
+    /// <summary>
+    /// GetUrl(ClientType, Company, ObjectType, ObjectId [, Record [, UseFilters]]) — full overload.
+    /// </summary>
     public static string ALGetUrl(object clientType, string company, object objectType, int objectId, object? record = null, bool useFilters = false)
     {
         return $"/mock/{objectType}/{objectId}";
