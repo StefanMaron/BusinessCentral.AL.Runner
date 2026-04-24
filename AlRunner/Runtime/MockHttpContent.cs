@@ -37,10 +37,16 @@ public class MockHttpContent
     /// BC emits the 2-arg text variant:
     /// <c>content.ALReadAs(DataError, ByRef&lt;NavText&gt;)</c>
     /// for <c>HttpContent.ReadAs(var Text)</c>. Called directly on the mock.
+    ///
+    /// Returns <c>true</c> (matching the real BC API) so that BC-generated code that
+    /// uses <c>if Content.ReadAs(ResponseBodyText) then</c> compiles without CS0019.
+    /// BC emits <c>CStmtHit(N) &amp; (content.ALReadAs(...))</c>, which requires the
+    /// method to return <c>bool</c>; a <c>void</c> return caused CS0019 (#1250).
     /// </summary>
-    public void ALReadAs(DataError errorLevel, ByRef<NavText> text)
+    public bool ALReadAs(DataError errorLevel, ByRef<NavText> text)
     {
         text.Value = new NavText(_textContent);
+        return true;
     }
 
     /// <summary>
