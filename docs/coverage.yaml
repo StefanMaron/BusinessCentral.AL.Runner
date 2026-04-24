@@ -2325,7 +2325,7 @@ Dialog.Message:
   status: covered
   notes: overloads=1; AlDialog.Message implemented in Runtime/AlScope.cs, routes to MessageHandler or stdout.
 
-Dialog.Error (object overload):
+NavComplexValue object-to-string overloads:
   layer: compilation
   category: Dialog
   status: covered
