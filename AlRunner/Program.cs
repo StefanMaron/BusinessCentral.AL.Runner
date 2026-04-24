@@ -12,6 +12,7 @@ using Microsoft.Dynamics.Nav.CodeAnalysis.Emit;
 using Microsoft.Dynamics.Nav.CodeAnalysis.Packaging;
 using Microsoft.Dynamics.Nav.CodeAnalysis.SymbolReference;
 using Microsoft.Dynamics.Nav.CodeAnalysis.Syntax;
+using Microsoft.Dynamics.Nav.Runtime;
 using AlRunner;
 
 // ---------------------------------------------------------------------------
@@ -35,8 +36,10 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("  --compile-dep <app> <out-dir> [--packages <dir>]");
     Console.Error.WriteLine("                        Compile a .app dependency to a rewritten DLL on disk");
     Console.Error.WriteLine("  --stubs <dir>         Override dependency objects with stub AL files");
-    Console.Error.WriteLine("  --init-events         Fire BC lifecycle integration events before each codeunit");
+    Console.Error.WriteLine("  --init-events         Fire BC lifecycle integration events once at runner startup");
     Console.Error.WriteLine("                        (OnCompanyInitialize from CU 2/27, OnInstallAppPerCompany from CU 2)");
+    Console.Error.WriteLine("                        The resulting DB state is the baseline every test starts from;");
+    Console.Error.WriteLine("                        test isolation restores from the baseline on each reset.");
     Console.Error.WriteLine("  --test-isolation <mode>  codeunit (default) — reset tables between test codeunits,");
     Console.Error.WriteLine("                           sharing state within a codeunit (BC default behaviour);");
     Console.Error.WriteLine("                           method — reset tables before every test method (legacy).");
@@ -780,7 +783,7 @@ al-runner --iteration-tracking ./src ./test                   # track loop itera
 al-runner --server                                         # long-running JSON-RPC daemon (stdin/stdout)
 al-runner --generate-stubs .alpackages ./stubs             # scaffold stubs from .app packages (all codeunits)
 al-runner --generate-stubs .alpackages ./stubs ./src ./test  # only stubs referenced in source
-al-runner --init-events ./src ./test                          # fire OnCompanyInitialize before each test
+al-runner --init-events ./src ./test                          # fire OnCompanyInitialize once, snapshot as DB baseline
 al-runner --compile-dep MyDep.app .deps --packages .alpackages  # compile dependency .app to DLL
 al-runner --dep-dlls .deps ./src ./test                         # run with pre-compiled dependency DLLs
 ```
@@ -788,11 +791,23 @@ al-runner --dep-dlls .deps ./src ./test                         # run with pre-c
 ### --init-events: lifecycle event pre-seeding
 
 Pass `--init-events` when your extension has `[EventSubscriber]` methods that listen
-to BC system lifecycle events and need to run their setup logic before each test.
+to BC system lifecycle events and need to run their setup logic before tests run.
 
-Events fired before every test (after the per-test table reset):
+Events fired **once per runner invocation** (at startup, before the first test):
 - `OnCompanyInitialize` from Codeunit 27 "Company-Initialize"
-- `OnInstallAppPerCompany` from Codeunit 2 "Install"
+- `OnCompanyInitialize` from Codeunit 2 "Install"
+- `OnInstallAppPerDatabase` / `OnInstallAppPerCompany` from the BC install dispatcher (2000000010)
+
+After the subscribers finish, the runner captures a snapshot of the database state
+and uses that snapshot as the baseline for every test. Test isolation (codeunit or
+method) sits on top of the baseline: each isolation reset restores the snapshot
+rather than re-firing subscribers. This matches BC's model where company-initialize
+data persists across tests, and avoids the N× perf hit of re-running subscribers
+per codeunit.
+
+Scope note: SingleInstance codeunit state is **not** part of the baseline — init
+subscribers must seed tables / IsolatedStorage, not codeunit fields. SingleInstance
+codeunits are always reset between test codeunits, matching BC's session model.
 
 The publisher codeunits (27, 2) do not need to be present in the assembly — al-runner
 will look up subscribers by reflection and dispatch to them directly. Missing publisher
@@ -2545,6 +2560,13 @@ public static class Executor
     }
 
     /// <summary>
+    /// Number of times <see cref="FireInitEvent"/> was invoked during the most
+    /// recent <see cref="RunTests"/> call. Exposed so tests can prove that
+    /// init-events fire only once per run (not once per codeunit/test).
+    /// </summary>
+    public static int InitEventFireCount { get; private set; }
+
+    /// <summary>
     /// Fire an init-lifecycle event, silently swallowing "record already exists"
     /// errors from subscribers.
     ///
@@ -2558,6 +2580,7 @@ public static class Executor
     /// </summary>
     private static void FireInitEvent(int publisherId, string eventName)
     {
+        InitEventFireCount++;
         try
         {
             AlRunner.Runtime.AlCompat.FireEvent(publisherId, eventName);
@@ -2630,10 +2653,22 @@ public static class Executor
 
         var results = new List<AlRunner.TestResult>();
 
+        // Reset the init-event firing counter so each RunTests invocation reports
+        // a clean count (used by tests to assert "fires once, not once-per-codeunit").
+        InitEventFireCount = 0;
+
         // Track codeunit-level isolation state.
         // Null means no reset has happened yet (first test).
         Type? currentCodeunitType = null;
         bool firstReset = true;
+
+        // --init-events baseline: init subscribers fire exactly once at startup,
+        // the resulting DB state is captured, and every subsequent isolation reset
+        // restores that baseline instead of re-running the subscribers. This matches
+        // BC's model where company-initialisation data persists across tests, and
+        // removes the N× perf hit of re-firing subscribers per codeunit (#1220).
+        Dictionary<int, List<Dictionary<int, NavValue>>>? initTablesBaseline = null;
+        Dictionary<string, string>? initStorageBaseline = null;
 
 
         foreach (var (testName, scopeType, parentType) in testScopes)
@@ -2653,31 +2688,48 @@ public static class Executor
 
             if (doTableReset)
             {
-                // Reset persistent state (tables, isolated storage, variable storage, SingleInstance codeunits)
-                AlRunner.Runtime.MockRecordHandle.ResetAll();
-                AlRunner.Runtime.MockIsolatedStorage.ResetAll();
+                // Always reset session-scoped state (SingleInstance codeunits, variable
+                // storage). These are documented as not surviving init-events — init
+                // subscribers must seed table/isolated-storage data, not codeunit state.
                 AlRunner.Runtime.MockVariableStorage.Reset();
                 AlRunner.Runtime.MockCodeunitHandle.ResetSingleInstances();
 
-                // Pre-seed system tables (e.g. User table 2000000120) so that common
-                // AL patterns like User.Get(UserSecurityId()) work out of the box.
-                AlRunner.Runtime.MockRecordHandle.SeedSystemTables();
-
-                // Fire lifecycle integration events ONCE per codeunit reset when --init-events is set.
-                // This seeds company-initialization data so subscribers' setup data is present
-                // for all tests in the codeunit, matching BC's behaviour where company data
-                // persists across tests within the same codeunit.
-                //
-                // Publisher IDs from [NavEventSubscriber] attributes in BC-generated C#:
-                //   OnInstallAppPerDatabase → publisher 2000000010 (BC internal install dispatcher)
-                //   OnInstallAppPerCompany  → publisher 2000000010 (BC internal install dispatcher)
-                //   OnCompanyInitialize     → publisher 2 or 27 (differs across BC versions)
-                if (initEvents)
+                if (initEvents && initTablesBaseline != null)
                 {
-                    FireInitEvent(2000000010, "OnInstallAppPerDatabase");
-                    FireInitEvent(2000000010, "OnInstallAppPerCompany");
-                    FireInitEvent(2, "OnCompanyInitialize");
-                    FireInitEvent(27, "OnCompanyInitialize");
+                    // Fast path: restore from the init-events baseline captured on
+                    // the first reset. No re-firing of subscribers — the snapshotted
+                    // DB state is the contract. Test isolation sits on top of it.
+                    AlRunner.Runtime.MockRecordHandle.RestoreSnapshot(initTablesBaseline);
+                    AlRunner.Runtime.MockIsolatedStorage.RestoreSnapshot(initStorageBaseline!);
+                }
+                else
+                {
+                    // Reset persistent state (tables, isolated storage)
+                    AlRunner.Runtime.MockRecordHandle.ResetAll();
+                    AlRunner.Runtime.MockIsolatedStorage.ResetAll();
+
+                    // Pre-seed system tables (e.g. User table 2000000120) so that common
+                    // AL patterns like User.Get(UserSecurityId()) work out of the box.
+                    AlRunner.Runtime.MockRecordHandle.SeedSystemTables();
+
+                    // Fire lifecycle integration events ONCE per run when --init-events
+                    // is set, then capture the resulting DB state as the baseline that
+                    // subsequent resets restore from.
+                    //
+                    // Publisher IDs from [NavEventSubscriber] attributes in BC-generated C#:
+                    //   OnInstallAppPerDatabase → publisher 2000000010 (BC internal install dispatcher)
+                    //   OnInstallAppPerCompany  → publisher 2000000010 (BC internal install dispatcher)
+                    //   OnCompanyInitialize     → publisher 2 or 27 (differs across BC versions)
+                    if (initEvents)
+                    {
+                        FireInitEvent(2000000010, "OnInstallAppPerDatabase");
+                        FireInitEvent(2000000010, "OnInstallAppPerCompany");
+                        FireInitEvent(2, "OnCompanyInitialize");
+                        FireInitEvent(27, "OnCompanyInitialize");
+
+                        initTablesBaseline = AlRunner.Runtime.MockRecordHandle.Snapshot();
+                        initStorageBaseline = AlRunner.Runtime.MockIsolatedStorage.Snapshot();
+                    }
                 }
 
                 currentCodeunitType = parentType;

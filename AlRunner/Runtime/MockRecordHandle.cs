@@ -96,6 +96,48 @@ public class MockRecordHandle : IConvertible
     }
 
     /// <summary>
+    /// Deep-clones the current table state so it can be restored later via
+    /// <see cref="RestoreSnapshot"/>. Used by the --init-events baseline: init
+    /// subscribers fire once at startup, the resulting DB state is snapshotted,
+    /// and every subsequent codeunit/method-level reset restores from the snapshot
+    /// instead of re-firing the subscribers.
+    ///
+    /// Row dictionaries are shallow-cloned — NavValue instances are immutable
+    /// in the BC runtime so sharing references is safe. Structural metadata
+    /// (_primaryKeys, _tableKeys, _fieldNames) is not captured because it
+    /// never changes at runtime.
+    /// </summary>
+    public static Dictionary<int, List<Dictionary<int, NavValue>>> Snapshot()
+    {
+        var snap = new Dictionary<int, List<Dictionary<int, NavValue>>>(_tables.Count);
+        foreach (var kv in _tables)
+        {
+            var rows = new List<Dictionary<int, NavValue>>(kv.Value.Count);
+            foreach (var row in kv.Value)
+                rows.Add(new Dictionary<int, NavValue>(row));
+            snap[kv.Key] = rows;
+        }
+        return snap;
+    }
+
+    /// <summary>
+    /// Replaces the current table state with a deep-clone of <paramref name="snapshot"/>.
+    /// Callers must treat snapshots as immutable — we clone on restore so that later
+    /// mutations in <c>_tables</c> do not leak back into the captured baseline.
+    /// </summary>
+    public static void RestoreSnapshot(Dictionary<int, List<Dictionary<int, NavValue>>> snapshot)
+    {
+        _tables.Clear();
+        foreach (var kv in snapshot)
+        {
+            var rows = new List<Dictionary<int, NavValue>>(kv.Value.Count);
+            foreach (var row in kv.Value)
+                rows.Add(new Dictionary<int, NavValue>(row));
+            _tables[kv.Key] = rows;
+        }
+    }
+
+    /// <summary>
     /// Returns a snapshot of all rows in the given table for read-only access
     /// by MockQueryHandle. Returns an empty list if the table has no data.
     /// </summary>

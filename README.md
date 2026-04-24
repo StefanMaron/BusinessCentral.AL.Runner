@@ -139,7 +139,7 @@ AL Runner targets **broad AL language compatibility**. The goal is that any AL c
 
 **Record operations**: Insert, Modify, Delete, Get, Find, FindSet, FindFirst, FindLast, Next, SetRange, SetFilter, SetCurrentKey, CalcFields, CalcSums, Init, Validate, Copy, TransferFields, field triggers, composite primary keys, secondary keys with sorting.
 
-**Cross-codeunit dispatch**: Method calls between codeunits, interface dispatch, event subscribers (both manual and integration events with `--init-events`).
+**Cross-codeunit dispatch**: Method calls between codeunits, interface dispatch, event subscribers (both manual and integration events with `--init-events`). With `--init-events`, BC lifecycle events (OnCompanyInitialize, OnInstallAppPerCompany) fire **once** at startup and the resulting DB state is snapshotted as the baseline for every test.
 
 **Mock subsystems**: RecordRef/FieldRef, TestPage, Notification, BigText, JSON types, HttpClient (mock responses), BLOB/InStream/OutStream, Media (ImportStream/ExportStream), File, IsolatedStorage, TaskScheduler, DataTransfer.
 

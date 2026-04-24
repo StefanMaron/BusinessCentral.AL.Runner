@@ -15,6 +15,16 @@ public static class MockIsolatedStorage
 
     public static void ResetAll() => _store.Clear();
 
+    /// <summary>Deep-clones the store for the --init-events baseline.</summary>
+    public static Dictionary<string, string> Snapshot() => new(_store);
+
+    /// <summary>Replaces the store with a clone of the given snapshot.</summary>
+    public static void RestoreSnapshot(Dictionary<string, string> snapshot)
+    {
+        _store.Clear();
+        foreach (var kv in snapshot) _store[kv.Key] = kv.Value;
+    }
+
     // ALSet overloads (with DataScope parameter — original BC signature)
     public static void ALSet(DataError errorLevel, string key, string value, object dataScope)
     {

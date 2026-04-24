@@ -11219,9 +11219,16 @@ Codeunit.InitEvents:
   category: codeunit
   status: covered
   notes: >
-    --init-events CLI flag fires BC lifecycle integration events (OnCompanyInitialize from Codeunit 27, OnInstallAppPerCompany from Codeunit 2) before each test (after per-test table reset). Allows [EventSubscriber] handlers on system events to perform setup work without the system codeunits being present. Subscriber code is discovered by reflection on compiled classes.
+    --init-events CLI flag fires BC lifecycle integration events
+    (OnCompanyInitialize from Codeunit 27, OnInstallAppPerCompany from Codeunit 2,
+    OnInstallAppPerDatabase/OnInstallAppPerCompany from the BC install dispatcher 2000000010)
+    exactly once per runner invocation, at startup. The resulting DB state is snapshotted
+    and restored on every test-isolation reset — subscribers do not re-fire per codeunit
+    or per test. Test isolation sits on top of the baseline. Issue #1220 tracked the
+    pre-fix behaviour where events fired on every reset (N× perf hit).
   tests:
     - tests/init-events/40-init-events
+    - tests/init-events/42-init-events-fires-once
 
 Table.ImplicitDbEventByRefParams:
   layer: runtime-api
