@@ -444,6 +444,21 @@ public class RoslynRewriter : CSharpSyntaxRewriter
                 preservedMembers.Add(
                     SyntaxFactory.ParseMemberDeclaration(
                         $"public {node.Identifier.Text} CurrReport => this;")!);
+
+                // GetDataItem(name) — BC emits this.CurrReport.GetDataItem("<name>").Record
+                // for AL code that references base-report dataitem records from the
+                // reportextension. Returns an empty MockReportDataItem so the call
+                // chain compiles and returns default field values at runtime. Issue #1212.
+                preservedMembers.Add(
+                    SyntaxFactory.ParseMemberDeclaration(
+                        "public AlRunner.Runtime.MockReportDataItem GetDataItem(string name) => new AlRunner.Runtime.MockReportDataItem();")!);
+
+                // ParentObject — BC's stripped CurrReport property casts base.ParentObject
+                // to the parent report type. Some AL patterns reference ParentObject
+                // directly. Return self so calls like ParentObject.GetDataItem(...) resolve. Issue #1212.
+                preservedMembers.Add(
+                    SyntaxFactory.ParseMemberDeclaration(
+                        $"public {node.Identifier.Text} ParentObject => this;")!);
             }
 
             var stubClass = node
