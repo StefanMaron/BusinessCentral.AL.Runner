@@ -1552,6 +1552,21 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
                 visited.TypeArgumentList);
         }
 
+        // NavObjectDictionary<TKey, TValue> -> MockObjectDictionary<TKey, TValue>
+        // BC emits `Dictionary of [K, Codeunit X]` (and similar) as
+        // NavObjectDictionary<TKey, TValue>, which constrains
+        //   TValue : ITreeObject, IALAssignable<TValue>
+        // MockCodeunitHandle and MockInterfaceHandle don't implement ITreeObject,
+        // so using the real type causes CS0311 (issues #1239, #1240, #1241).
+        // MockObjectDictionary<TKey, TValue> exposes the same API without constraints.
+        if (visited.Identifier.Text == "NavObjectDictionary" &&
+            visited.TypeArgumentList.Arguments.Count == 2)
+        {
+            return SyntaxFactory.GenericName(
+                SyntaxFactory.Identifier("MockObjectDictionary"),
+                visited.TypeArgumentList);
+        }
+
         return visited;
     }
 
@@ -1738,6 +1753,15 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
         // After VisitGenericName, NavObjectList has already been renamed.
         // MockObjectList doesn't need the ITreeObject parent.
         if (typeText.StartsWith("MockObjectList<") && visited.ArgumentList != null &&
+            visited.ArgumentList.Arguments.Count == 1)
+        {
+            return visited.WithArgumentList(SyntaxFactory.ArgumentList());
+        }
+
+        // new MockObjectDictionary<TKey, TValue>(this) -> new MockObjectDictionary<TKey, TValue>()
+        // After VisitGenericName, NavObjectDictionary has been renamed to MockObjectDictionary.
+        // The real ctor takes ITreeObject parent — strip it as the mock is parameterless.
+        if (typeText.StartsWith("MockObjectDictionary<") && visited.ArgumentList != null &&
             visited.ArgumentList.Arguments.Count == 1)
         {
             return visited.WithArgumentList(SyntaxFactory.ArgumentList());

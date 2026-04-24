@@ -576,6 +576,20 @@ dictionary_type:
   tests:
     - tests/bucket-2/138-dictionary
 
+dictionary_codeunit_value_type:
+  layer: rewriter
+  category: type
+  status: covered
+  tests:
+    - tests/bucket-1/1239-dict-codeunit-value
+  notes: >
+    Dictionary of [K, Codeunit X] compiles to NavObjectDictionary<TKey,TValue>
+    which constrains TValue : ITreeObject, IALAssignable<TValue>.
+    MockCodeunitHandle/MockInterfaceHandle don't implement ITreeObject so the
+    rewriter replaces NavObjectDictionary with MockObjectDictionary (no
+    constraint). Fixes issues #1239 (CS0311 ITreeObject constraint),
+    #1240 (CS1503 ByRef out-param), #1241 (CS1503 Keys() call site).
+
 list_type:
   layer: syntax
   category: type
