@@ -5190,7 +5190,7 @@ record_as_recordref_param:
     - tests/bucket-2/236-recordref-param
 
 record_to_recordref_implicit:
-  layer: runtime-api
+  layer: syntax
   category: RecordRef
   status: covered
   notes: >
