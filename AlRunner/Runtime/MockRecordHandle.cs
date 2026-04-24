@@ -438,6 +438,35 @@ public class MockRecordHandle : IConvertible
     public void SetFieldValueSafe(DataError errorLevel, int fieldNo, NavType expectedType, NavValue value, bool validate)
         => SetFieldValueSafe(fieldNo, expectedType, value, validate);
 
+    // ---- object catch-all overloads for SetFieldValueSafe ----
+    // When NavComplexValue is rewritten to object, the compiler emits object arguments
+    // where NavValue is expected. These overloads convert via AlCompat.ToNavValue().
+    // Resolves CS1503: 'object' → 'NavValue' — issue #1260.
+
+    /// <summary>SetFieldValueSafe(object) — catch-all for NavComplexValue→object rewrite.</summary>
+    public void SetFieldValueSafe(int fieldNo, NavType expectedType, object value)
+        => SetFieldValueSafe(fieldNo, expectedType, AlCompat.ToNavValue(value));
+
+    /// <summary>SetFieldValueSafe(object, bool) — catch-all with validate flag.</summary>
+    public void SetFieldValueSafe(int fieldNo, NavType expectedType, object value, bool validate)
+        => SetFieldValueSafe(fieldNo, expectedType, AlCompat.ToNavValue(value), validate);
+
+    /// <summary>SetFieldValueSafe(DataError, object) — catch-all with DataError prefix.</summary>
+    public void SetFieldValueSafe(DataError errorLevel, int fieldNo, NavType expectedType, object value)
+        => SetFieldValueSafe(fieldNo, expectedType, AlCompat.ToNavValue(value));
+
+    /// <summary>SetFieldValueSafe(DataError, object, bool) — catch-all with DataError and validate.</summary>
+    public void SetFieldValueSafe(DataError errorLevel, int fieldNo, NavType expectedType, object value, bool validate)
+        => SetFieldValueSafe(fieldNo, expectedType, AlCompat.ToNavValue(value), validate);
+
+    /// <summary>Extension-scoped SetFieldValueSafe(object) — catch-all.</summary>
+    public void SetFieldValueSafe(int extensionId, int fieldNo, NavType expectedType, object value)
+        => SetFieldValueSafe(fieldNo, expectedType, AlCompat.ToNavValue(value));
+
+    /// <summary>Extension-scoped SetFieldValueSafe(object, bool) — catch-all with validate.</summary>
+    public void SetFieldValueSafe(int extensionId, int fieldNo, NavType expectedType, object value, bool validate)
+        => SetFieldValueSafe(fieldNo, expectedType, AlCompat.ToNavValue(value), validate);
+
     public NavValue GetFieldValueSafe(int fieldNo, NavType expectedType)
     {
         if (_fields.TryGetValue(fieldNo, out var val))
@@ -880,6 +909,25 @@ public class MockRecordHandle : IConvertible
     public void ALModifyAllSafe(DataError errorLevel, int fieldNo, NavType expectedType, NavValue value, bool runTrigger)
         => ALModifyAllSafe(fieldNo, expectedType, value, runTrigger);
 
+    // ---- object catch-all overloads for ALModifyAllSafe ----
+    // Resolves CS1503: 'object' → 'NavValue' — issue #1260.
+
+    /// <summary>ALModifyAllSafe(object) — catch-all for NavComplexValue→object rewrite.</summary>
+    public void ALModifyAllSafe(int fieldNo, NavType expectedType, object value)
+        => ALModifyAllSafe(fieldNo, expectedType, AlCompat.ToNavValue(value));
+
+    /// <summary>ALModifyAllSafe(object, bool) — catch-all with runTrigger flag.</summary>
+    public void ALModifyAllSafe(int fieldNo, NavType expectedType, object value, bool runTrigger)
+        => ALModifyAllSafe(fieldNo, expectedType, AlCompat.ToNavValue(value), runTrigger);
+
+    /// <summary>ALModifyAllSafe(DataError, object) — catch-all with DataError prefix.</summary>
+    public void ALModifyAllSafe(DataError errorLevel, int fieldNo, NavType expectedType, object value)
+        => ALModifyAllSafe(fieldNo, expectedType, AlCompat.ToNavValue(value));
+
+    /// <summary>ALModifyAllSafe(DataError, object, bool) — catch-all with DataError and runTrigger.</summary>
+    public void ALModifyAllSafe(DataError errorLevel, int fieldNo, NavType expectedType, object value, bool runTrigger)
+        => ALModifyAllSafe(fieldNo, expectedType, AlCompat.ToNavValue(value), runTrigger);
+
     public bool ALGet(DataError errorLevel, params NavValue[] keyValues)
     {
         var table = GetRows();
@@ -908,6 +956,27 @@ public class MockRecordHandle : IConvertible
         }
         return false;
     }
+
+    // ---- object catch-all overloads for ALGet ----
+    // Non-params overloads for 1–4 key fields. Cannot use params object[]
+    // because it causes CS0121 ambiguity with params NavValue[].
+    // Resolves CS1503: 'object' → 'NavValue' — issue #1260.
+
+    /// <summary>ALGet with 1 object key.</summary>
+    public bool ALGet(DataError errorLevel, object key1)
+        => ALGet(errorLevel, AlCompat.ToNavValue(key1));
+
+    /// <summary>ALGet with 2 object keys.</summary>
+    public bool ALGet(DataError errorLevel, object key1, object key2)
+        => ALGet(errorLevel, AlCompat.ToNavValue(key1), AlCompat.ToNavValue(key2));
+
+    /// <summary>ALGet with 3 object keys.</summary>
+    public bool ALGet(DataError errorLevel, object key1, object key2, object key3)
+        => ALGet(errorLevel, AlCompat.ToNavValue(key1), AlCompat.ToNavValue(key2), AlCompat.ToNavValue(key3));
+
+    /// <summary>ALGet with 4 object keys.</summary>
+    public bool ALGet(DataError errorLevel, object key1, object key2, object key3, object key4)
+        => ALGet(errorLevel, AlCompat.ToNavValue(key1), AlCompat.ToNavValue(key2), AlCompat.ToNavValue(key3), AlCompat.ToNavValue(key4));
 
     public bool ALGetBySystemId(DataError errorLevel, Guid systemId)
     {
@@ -1208,6 +1277,29 @@ public class MockRecordHandle : IConvertible
     public void ALSetRangeSafe(DataError errorLevel, int fieldNo, NavType expectedType, NavValue fromValue, NavValue toValue)
         => ALSetRangeSafe(fieldNo, expectedType, fromValue, toValue);
 
+    // ---- object catch-all overloads for ALSetRange / ALSetRangeSafe ----
+    // Resolves CS1503: 'object' → 'NavValue' — issue #1260.
+
+    /// <summary>ALSetRange(object, object) — catch-all for NavComplexValue→object rewrite.</summary>
+    public void ALSetRange(int fieldNo, NavType expectedType, object fromValue, object toValue)
+        => ALSetRange(fieldNo, expectedType, AlCompat.ToNavValue(fromValue), AlCompat.ToNavValue(toValue));
+
+    /// <summary>ALSetRangeSafe(object) — catch-all single value.</summary>
+    public void ALSetRangeSafe(int fieldNo, NavType expectedType, object value)
+        => ALSetRangeSafe(fieldNo, expectedType, AlCompat.ToNavValue(value));
+
+    /// <summary>ALSetRangeSafe(object, object) — catch-all from/to range.</summary>
+    public void ALSetRangeSafe(int fieldNo, NavType expectedType, object fromValue, object toValue)
+        => ALSetRangeSafe(fieldNo, expectedType, AlCompat.ToNavValue(fromValue), AlCompat.ToNavValue(toValue));
+
+    /// <summary>ALSetRangeSafe(DataError, object) — catch-all with DataError.</summary>
+    public void ALSetRangeSafe(DataError errorLevel, int fieldNo, NavType expectedType, object value)
+        => ALSetRangeSafe(fieldNo, expectedType, AlCompat.ToNavValue(value));
+
+    /// <summary>ALSetRangeSafe(DataError, object, object) — catch-all with DataError from/to.</summary>
+    public void ALSetRangeSafe(DataError errorLevel, int fieldNo, NavType expectedType, object fromValue, object toValue)
+        => ALSetRangeSafe(fieldNo, expectedType, AlCompat.ToNavValue(fromValue), AlCompat.ToNavValue(toValue));
+
     // -----------------------------------------------------------------------
     // SetFilter — expression-based filtering
     // -----------------------------------------------------------------------
@@ -1252,6 +1344,42 @@ public class MockRecordHandle : IConvertible
     /// <summary>DataError-prefixed overload with NavType.</summary>
     public void ALSetFilter(DataError errorLevel, int fieldNo, NavType expectedType, string filterExpression, params NavValue[] args)
         => ALSetFilter(fieldNo, expectedType, filterExpression, args);
+
+    // ---- object catch-all overloads for ALSetFilter ----
+    // Non-params overloads for 1–3 filter substitution args.
+    // Resolves CS1503: 'object' → 'NavValue' — issue #1260.
+
+    /// <summary>ALSetFilter with 1 object arg.</summary>
+    public void ALSetFilter(int fieldNo, string filterExpression, object arg1)
+        => ALSetFilter(fieldNo, filterExpression, AlCompat.ToNavValue(arg1));
+
+    /// <summary>ALSetFilter with 2 object args.</summary>
+    public void ALSetFilter(int fieldNo, string filterExpression, object arg1, object arg2)
+        => ALSetFilter(fieldNo, filterExpression, AlCompat.ToNavValue(arg1), AlCompat.ToNavValue(arg2));
+
+    /// <summary>ALSetFilter(NavType) with 1 object arg.</summary>
+    public void ALSetFilter(int fieldNo, NavType expectedType, string filterExpression, object arg1)
+        => ALSetFilter(fieldNo, expectedType, filterExpression, AlCompat.ToNavValue(arg1));
+
+    /// <summary>ALSetFilter(NavType) with 2 object args.</summary>
+    public void ALSetFilter(int fieldNo, NavType expectedType, string filterExpression, object arg1, object arg2)
+        => ALSetFilter(fieldNo, expectedType, filterExpression, AlCompat.ToNavValue(arg1), AlCompat.ToNavValue(arg2));
+
+    /// <summary>ALSetFilter(DataError) with 1 object arg.</summary>
+    public void ALSetFilter(DataError errorLevel, int fieldNo, string filterExpression, object arg1)
+        => ALSetFilter(fieldNo, filterExpression, AlCompat.ToNavValue(arg1));
+
+    /// <summary>ALSetFilter(DataError) with 2 object args.</summary>
+    public void ALSetFilter(DataError errorLevel, int fieldNo, string filterExpression, object arg1, object arg2)
+        => ALSetFilter(fieldNo, filterExpression, AlCompat.ToNavValue(arg1), AlCompat.ToNavValue(arg2));
+
+    /// <summary>ALSetFilter(DataError, NavType) with 1 object arg.</summary>
+    public void ALSetFilter(DataError errorLevel, int fieldNo, NavType expectedType, string filterExpression, object arg1)
+        => ALSetFilter(fieldNo, expectedType, filterExpression, AlCompat.ToNavValue(arg1));
+
+    /// <summary>ALSetFilter(DataError, NavType) with 2 object args.</summary>
+    public void ALSetFilter(DataError errorLevel, int fieldNo, NavType expectedType, string filterExpression, object arg1, object arg2)
+        => ALSetFilter(fieldNo, expectedType, filterExpression, AlCompat.ToNavValue(arg1), AlCompat.ToNavValue(arg2));
 
     // -----------------------------------------------------------------------
     // SetCurrentKey — set sort key (with DataError first param)
@@ -1418,6 +1546,17 @@ public class MockRecordHandle : IConvertible
         FireOnValidate(fieldNo);
         FireImplicitDbEvent("OnAfterValidateEvent", this, xRec, fieldNo);
     }
+
+    // ---- object catch-all overloads for ALValidateSafe / ALValidate ----
+    // Resolves CS1503: 'object' → 'NavValue' — issue #1260.
+
+    /// <summary>ALValidateSafe(object) — catch-all for NavComplexValue→object rewrite.</summary>
+    public void ALValidateSafe(int fieldNo, NavType expectedType, object value)
+        => ALValidateSafe(fieldNo, expectedType, AlCompat.ToNavValue(value));
+
+    /// <summary>ALValidate(DataError, object) — catch-all with DataError prefix.</summary>
+    public void ALValidate(DataError errorLevel, int fieldNo, NavType expectedType, object value)
+        => ALValidate(errorLevel, fieldNo, expectedType, AlCompat.ToNavValue(value));
 
     /// <summary>
     /// Fire the OnValidate trigger for a field. Looks up the generated Record type via reflection,
@@ -2444,6 +2583,26 @@ public class MockRecordHandle : IConvertible
 
         return true;
     }
+
+    // ---- object catch-all overloads for ALRename ----
+    // Non-params overloads for 1–4 key fields.
+    // Resolves CS1503: 'object' → 'NavValue' — issue #1260.
+
+    /// <summary>ALRename with 1 object key.</summary>
+    public bool ALRename(DataError errorLevel, object key1)
+        => ALRename(errorLevel, AlCompat.ToNavValue(key1));
+
+    /// <summary>ALRename with 2 object keys.</summary>
+    public bool ALRename(DataError errorLevel, object key1, object key2)
+        => ALRename(errorLevel, AlCompat.ToNavValue(key1), AlCompat.ToNavValue(key2));
+
+    /// <summary>ALRename with 3 object keys.</summary>
+    public bool ALRename(DataError errorLevel, object key1, object key2, object key3)
+        => ALRename(errorLevel, AlCompat.ToNavValue(key1), AlCompat.ToNavValue(key2), AlCompat.ToNavValue(key3));
+
+    /// <summary>ALRename with 4 object keys.</summary>
+    public bool ALRename(DataError errorLevel, object key1, object key2, object key3, object key4)
+        => ALRename(errorLevel, AlCompat.ToNavValue(key1), AlCompat.ToNavValue(key2), AlCompat.ToNavValue(key3), AlCompat.ToNavValue(key4));
 
     // =======================================================================
     // Filter infrastructure
