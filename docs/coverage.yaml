@@ -4409,9 +4409,10 @@ Media.MediaId:
   layer: runtime-api
   category: Media
   status: covered
-  notes: overloads=1
+  notes: "MockMedia.ALMediaId property (not method); fixes CS1503 method-group-to-object when used as argument"
   tests:
     - tests/bucket-1/272-media
+    - tests/bucket-1/1259-media-mediaid-as-arg
 
 # ── MediaSet ────────────────────────────────────────────────────
 
