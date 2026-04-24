@@ -7062,14 +7062,14 @@ Table.FieldError:
   notes: overloads=2; MockRecordHandle.ALFieldError(fieldNo) / ALFieldError(fieldNo, msg) — throws validation error; delegated on Record classes
 
 Table.CallGetAutoFormatStringExtensionMethod:
-  layer: compiler-infra
+  layer: runtime-api
   category: Table
   status: stub
   tests: tests/bucket-1/96-fielderror-autoformat
   notes: BC internal formatting hook; no-op stub returning false on Record classes
 
 Table.EnsureGlobalVariablesInitialized:
-  layer: compiler-infra
+  layer: runtime-api
   category: Table
   status: stub
   tests: tests/bucket-1/96-fielderror-autoformat
