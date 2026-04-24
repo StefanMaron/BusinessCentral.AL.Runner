@@ -39,9 +39,12 @@ public class MockMedia : NavValue
 
     // ── MediaId ──────────────────────────────────────────────────────────────────
 
-    /// <summary>BC emits <c>m.ALMediaId(errorLevel)</c> for <c>Media.MediaId()</c>.</summary>
-    public NavGuid ALMediaId(DataError errorLevel) => new NavGuid(_id);
-    public NavGuid ALMediaId() => new NavGuid(_id);
+    /// <summary>
+    /// BC emits <c>m.ALMediaId</c> (property access, no parentheses) for
+    /// <c>Media.MediaId()</c>. Must be a property — a method overload would
+    /// produce CS1503 / CS0428 "method group" errors when used as an argument.
+    /// </summary>
+    public Guid ALMediaId => _id;
 
     // ── ALImport (BC-emitted name for Media.ImportFile) ───────────────────────────
 
