@@ -5203,7 +5203,7 @@ record_to_recordref_implicit:
     - tests/bucket-1/1275-record-to-recordref-implicit
 
 recordref_array_factory:
-  layer: rewriter
+  layer: syntax
   category: RecordRef
   status: covered
   notes: >
