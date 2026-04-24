@@ -325,6 +325,32 @@ public class MockTestPageHandle
     }
 
     /// <summary>
+    /// object? overload for <c>ALGoToKey</c> — required when BC emits a key
+    /// argument that the Roslyn rewriter cannot pre-wrap as <see cref="NavValue"/>.
+    /// The most common case is a TestField reference: AL's
+    /// <c>TestPage.GoToKey(Variant)</c> accepts any value, including another
+    /// TestPage's field, and BC emits the raw <c>tp.GetField(hash)</c> call —
+    /// a <see cref="MockTestPageField"/> — positionally where the NavValue[]
+    /// form expects a NavValue.  Resolves CS1503 (MockTestPageField → NavValue)
+    /// reported via telemetry in issue #1215.
+    ///
+    /// Each argument is normalized: MockTestPageField is unwrapped via ALValue,
+    /// MockVariant is unwrapped via Value, raw CLR values and NavValue
+    /// instances are passed through <see cref="AlCompat.ToNavValue"/>.
+    /// </summary>
+    public bool ALGoToKey(DataError errorLevel, params object?[] keyValues)
+    {
+        var navValues = new NavValue[keyValues.Length];
+        for (var i = 0; i < keyValues.Length; i++)
+        {
+            var v = keyValues[i];
+            if (v is MockTestPageField f) v = f.ALValue;
+            navValues[i] = AlCompat.ToNavValue(v);
+        }
+        return ALGoToKey(errorLevel, navValues);
+    }
+
+    /// <summary>
     /// Returns a filter object for the TestPage. BC emits:
     ///   tP.ALFilter.ALSetFilter(fieldNo, filterValue)
     /// </summary>
