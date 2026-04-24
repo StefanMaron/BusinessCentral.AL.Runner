@@ -2915,6 +2915,17 @@ public static class AlCompat
         return ei;
     }
 
+    /// <summary>
+    /// String overload — BC may emit ErrorInfo.Create('literal') as a raw C# string
+    /// argument.  Without this overload, Roslyn reports CS1503 (string → NavText).
+    /// </summary>
+    public static NavALErrorInfo CreateErrorInfo(string message)
+    {
+        var ei = new NavALErrorInfo();
+        ei.ALMessage = message;
+        return ei;
+    }
+
     public static NavALErrorInfo CreateErrorInfo()
     {
         return new NavALErrorInfo();

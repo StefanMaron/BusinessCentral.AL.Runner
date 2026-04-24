@@ -2436,9 +2436,10 @@ ErrorInfo.Create:
   layer: runtime-api
   category: ErrorInfo
   status: covered
-  notes: overloads=2; NavALErrorInfo.ALCreate(...) loads Microsoft.Dynamics.Nav.CodeAnalysis at runtime. Intercepted in RoslynRewriter — rewritten to AlCompat.CreateErrorInfo(msg) which creates NavALErrorInfo() directly and sets ALMessage. Default (no-arg) variant also intercepted.
+  notes: overloads=2; NavALErrorInfo.ALCreate(...) loads Microsoft.Dynamics.Nav.CodeAnalysis at runtime. Intercepted in RoslynRewriter — rewritten to AlCompat.CreateErrorInfo(msg) which creates NavALErrorInfo() directly and sets ALMessage. Default (no-arg) variant also intercepted. String overload added in #1278 to fix CS1503 when BC emits string literal for the message argument.
   tests:
     - tests/bucket-1/191-errorinfo-methods
+    - tests/bucket-1/1278-string-to-navtext
 
 ErrorInfo.CustomDimensions:
   layer: runtime-api
