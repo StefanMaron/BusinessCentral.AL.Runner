@@ -1925,6 +1925,30 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
             }
         }
 
+        // new MockArray<MockRecordRef>(new MockRecordRef.Factory(...), N) -> new MockArray<MockRecordRef>(N, () => new MockRecordRef())
+        // NavArray with Factory pattern for RecordRef arrays: replace Factory-based construction with lambda-based MockArray
+        if (typeText.StartsWith("MockArray<MockRecordRef>") && visited.ArgumentList != null &&
+            visited.ArgumentList.Arguments.Count == 2)
+        {
+            var factoryArg = visited.ArgumentList.Arguments[0].Expression;
+            var sizeArg = visited.ArgumentList.Arguments[1].Expression;
+            if (factoryArg is ObjectCreationExpressionSyntax)
+            {
+                // new MockArray<MockRecordRef>(size, () => new MockRecordRef())
+                return SyntaxFactory.ObjectCreationExpression(
+                    SyntaxFactory.ParseTypeName("MockArray<MockRecordRef>"))
+                    .WithArgumentList(SyntaxFactory.ArgumentList(
+                        SyntaxFactory.SeparatedList(new[] {
+                            SyntaxFactory.Argument(sizeArg),
+                            SyntaxFactory.Argument(
+                                SyntaxFactory.ParenthesizedLambdaExpression(
+                                    SyntaxFactory.ObjectCreationExpression(
+                                        SyntaxFactory.ParseTypeName("MockRecordRef"))
+                                        .WithArgumentList(SyntaxFactory.ArgumentList())))
+                        })));
+            }
+        }
+
         // Catch any remaining MockVariant.Factory or NavVariant.Factory construction
         if (typeText.Contains("MockVariant") && typeText.Contains("Factory") && visited.ArgumentList != null)
         {

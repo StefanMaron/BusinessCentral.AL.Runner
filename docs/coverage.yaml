@@ -5202,6 +5202,19 @@ record_to_recordref_implicit:
   tests:
     - tests/bucket-1/1275-record-to-recordref-implicit
 
+recordref_array_factory:
+  layer: rewriter
+  category: RecordRef
+  status: covered
+  notes: >
+    BC compiler emits NavRecordRef.Factory for arrays of RecordRef variables
+    (e.g. array[3] of RecordRef). After rewriting NavRecordRef to MockRecordRef,
+    the Factory nested type reference caused CS0426. RoslynRewriter now rewrites
+    new MockArray<MockRecordRef>(new MockRecordRef.Factory(...), N) to
+    new MockArray<MockRecordRef>(N, () => new MockRecordRef()). Fixed in issue #1261.
+  tests:
+    - tests/bucket-2/100-recref-factory
+
 RecordRef.AddLink:
   layer: runtime-api
   category: RecordRef
