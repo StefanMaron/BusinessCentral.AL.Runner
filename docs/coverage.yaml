@@ -2890,8 +2890,8 @@ File.UploadIntoStream:
   layer: runtime-api
   category: File
   status: covered
-  notes: overloads=5; 5-arg and 6-arg (with/without Guid) for BC≤25 5-param AL form; 4-arg (no DataError/Folder/Guid) for newer BC 4-param AL form; 2-param AL form (Title, var InStream) emitting (DataError, string, ByRef&lt;MockInStream&gt;, Guid) — all no-op stubs returning false
-  test: tests/bucket-1/1210-upload-into-stream-2arg/test/UisShort.Test.al
+  notes: overloads=6; 5-arg and 6-arg (with/without Guid) for BC≤25 5-param AL form; 4-arg (no DataError/Folder/Guid) for newer BC 4-param AL form; 2-param AL form (Title, var InStream) emitting (DataError, string, ByRef&lt;MockInStream&gt;, Guid) — both (object?, string, ByRef&lt;MockInStream&gt;, Guid) and DataError-typed (DataError, string, ByRef&lt;MockInStream&gt;, Guid) overloads for issues #1213/#1214; all no-op stubs returning false
+  test: tests/bucket-1/1213-upload-into-stream-local-instream/test/UisLocal.Test.al
 
 File.View:
   layer: runtime-api

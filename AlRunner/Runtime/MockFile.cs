@@ -257,6 +257,18 @@ public class MockFile
     }
 
     /// <summary>
+    /// 2-arg AL form with explicit DataError typing — preferred by C# overload
+    /// resolution over the <c>object?</c> variant when BC emits
+    /// <c>ALUploadIntoStream(DataError.TrapError, title, ByRef&lt;MockInStream&gt;, Guid)</c>
+    /// (issues #1213/#1214). Functionally identical — always returns false (no UI
+    /// in standalone mode).
+    /// </summary>
+    public static bool ALUploadIntoStream(DataError errorLevel, string dialogTitle, ByRef<MockInStream> inStream, Guid extra)
+    {
+        return false;
+    }
+
+    /// <summary>
     /// 2-arg AL form fallback without trailing Guid (older/newer BC emit variants).
     /// </summary>
     public static bool ALUploadIntoStream(object? scope, string dialogTitle, ByRef<MockInStream> inStream)
