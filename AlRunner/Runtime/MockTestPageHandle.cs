@@ -747,6 +747,15 @@ public class MockTestPageField
     }
 
     /// <summary>
+    /// ALAsDateTime(session) — session-aware overload that BC emits for
+    /// <c>TestField.AsDateTime()</c>. BC's NavTestField has both a 0-arg
+    /// (obsolete) overload and a 1-arg overload that takes a NavSession;
+    /// recent BC compilers always emit the session form. The mock ignores
+    /// the session argument since standalone mode has no client timezone.
+    /// </summary>
+    public NavDateTime ALAsDateTime(object? session) => ALAsDateTime();
+
+    /// <summary>
     /// ALAssertEquals — asserts that the stored field value equals the expected value.
     /// Throws if the values differ (string comparison via AlCompat.Format).
     /// BC emits <c>tP.GetField(hash).ALAssertEquals(session, expected)</c>.
