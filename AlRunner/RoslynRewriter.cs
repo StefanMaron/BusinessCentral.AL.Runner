@@ -662,9 +662,14 @@ public class RoslynRewriter : CSharpSyntaxRewriter
             var delegatingCode = @"
 public NavValue GetFieldValueSafe(int fieldNo, NavType expectedType) => Rec.GetFieldValueSafe(fieldNo, expectedType);
 public NavValue GetFieldValueSafe(int fieldNo, NavType expectedType, bool useLocale) => Rec.GetFieldValueSafe(fieldNo, expectedType, useLocale);
+public NavValue GetFieldValueSafe(DataError errorLevel, int fieldNo, NavType expectedType) => Rec.GetFieldValueSafe(fieldNo, expectedType);
+public NavValue GetFieldValueSafe(DataError errorLevel, int fieldNo, NavType expectedType, bool useLocale) => Rec.GetFieldValueSafe(fieldNo, expectedType, useLocale);
 public void SetFieldValueSafe(int fieldNo, NavType expectedType, NavValue value) => Rec.SetFieldValueSafe(fieldNo, expectedType, value);
 public void SetFieldValueSafe(int fieldNo, NavType expectedType, NavValue value, bool validate) => Rec.SetFieldValueSafe(fieldNo, expectedType, value, validate);
+public void SetFieldValueSafe(DataError errorLevel, int fieldNo, NavType expectedType, NavValue value) => Rec.SetFieldValueSafe(fieldNo, expectedType, value);
+public void SetFieldValueSafe(DataError errorLevel, int fieldNo, NavType expectedType, NavValue value, bool validate) => Rec.SetFieldValueSafe(fieldNo, expectedType, value, validate);
 public NavValue GetFieldRefSafe(int fieldNo, NavType expectedType) => Rec.GetFieldRefSafe(fieldNo, expectedType);
+public NavValue GetFieldRefSafe(DataError errorLevel, int fieldNo, NavType expectedType) => Rec.GetFieldRefSafe(fieldNo, expectedType);
 public bool ALInsert(DataError errorLevel) => Rec.ALInsert(errorLevel);
 public bool ALInsert(DataError errorLevel, bool runTrigger) => Rec.ALInsert(errorLevel, runTrigger);
 public bool ALModify(DataError errorLevel) => Rec.ALModify(errorLevel);
@@ -688,8 +693,13 @@ public void ALSetRange(int fieldNo, NavType expectedType, NavValue fromValue, Na
 public void ALSetRangeSafe(int fieldNo, NavType expectedType) => Rec.ALSetRangeSafe(fieldNo, expectedType);
 public void ALSetRangeSafe(int fieldNo, NavType expectedType, NavValue value) => Rec.ALSetRangeSafe(fieldNo, expectedType, value);
 public void ALSetRangeSafe(int fieldNo, NavType expectedType, NavValue fromValue, NavValue toValue) => Rec.ALSetRangeSafe(fieldNo, expectedType, fromValue, toValue);
+public void ALSetRangeSafe(DataError errorLevel, int fieldNo, NavType expectedType) => Rec.ALSetRangeSafe(fieldNo, expectedType);
+public void ALSetRangeSafe(DataError errorLevel, int fieldNo, NavType expectedType, NavValue value) => Rec.ALSetRangeSafe(fieldNo, expectedType, value);
+public void ALSetRangeSafe(DataError errorLevel, int fieldNo, NavType expectedType, NavValue fromValue, NavValue toValue) => Rec.ALSetRangeSafe(fieldNo, expectedType, fromValue, toValue);
 public void ALSetFilter(int fieldNo, string filterExpression, params NavValue[] args) => Rec.ALSetFilter(fieldNo, filterExpression, args);
 public void ALSetFilter(int fieldNo, NavType expectedType, string filterExpression, params NavValue[] args) => Rec.ALSetFilter(fieldNo, expectedType, filterExpression, args);
+public void ALSetFilter(DataError errorLevel, int fieldNo, string filterExpression, params NavValue[] args) => Rec.ALSetFilter(fieldNo, filterExpression, args);
+public void ALSetFilter(DataError errorLevel, int fieldNo, NavType expectedType, string filterExpression, params NavValue[] args) => Rec.ALSetFilter(fieldNo, expectedType, filterExpression, args);
 public void ALCopy(MockRecordHandle source, bool shareFilters = false) => Rec.ALCopy(source, shareFilters);
 public void ALCopyFilter(int fromFieldNo, MockRecordHandle target) => Rec.ALCopyFilter(fromFieldNo, target);
 public void ALCopyFilter(int fromFieldNo, MockRecordHandle target, int toFieldNo) => Rec.ALCopyFilter(fromFieldNo, target, toFieldNo);

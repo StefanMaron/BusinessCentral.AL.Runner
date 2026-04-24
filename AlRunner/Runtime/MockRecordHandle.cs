@@ -430,6 +430,14 @@ public class MockRecordHandle : IConvertible
         SetFieldValueSafe(fieldNo, expectedType, value, validate);
     }
 
+    /// <summary>DataError-prefixed overload — BC compiler may prepend DataError to field assignment calls.</summary>
+    public void SetFieldValueSafe(DataError errorLevel, int fieldNo, NavType expectedType, NavValue value)
+        => SetFieldValueSafe(fieldNo, expectedType, value);
+
+    /// <summary>DataError-prefixed overload with validate flag.</summary>
+    public void SetFieldValueSafe(DataError errorLevel, int fieldNo, NavType expectedType, NavValue value, bool validate)
+        => SetFieldValueSafe(fieldNo, expectedType, value, validate);
+
     public NavValue GetFieldValueSafe(int fieldNo, NavType expectedType)
     {
         if (_fields.TryGetValue(fieldNo, out var val))
@@ -513,6 +521,18 @@ public class MockRecordHandle : IConvertible
     {
         return GetFieldValueSafe(fieldNo, expectedType);
     }
+
+    /// <summary>DataError-prefixed overload — BC compiler may prepend DataError to field read calls.</summary>
+    public NavValue GetFieldValueSafe(DataError errorLevel, int fieldNo, NavType expectedType)
+        => GetFieldValueSafe(fieldNo, expectedType);
+
+    /// <summary>DataError-prefixed overload with locale flag.</summary>
+    public NavValue GetFieldValueSafe(DataError errorLevel, int fieldNo, NavType expectedType, bool useLocale)
+        => GetFieldValueSafe(fieldNo, expectedType, useLocale);
+
+    /// <summary>DataError-prefixed GetFieldRefSafe overload.</summary>
+    public NavValue GetFieldRefSafe(DataError errorLevel, int fieldNo, NavType expectedType)
+        => GetFieldRefSafe(fieldNo, expectedType);
 
     public void Clear()
     {
@@ -852,6 +872,14 @@ public class MockRecordHandle : IConvertible
         }
     }
 
+    /// <summary>DataError-prefixed overload — BC compiler may prepend DataError to ModifyAll calls.</summary>
+    public void ALModifyAllSafe(DataError errorLevel, int fieldNo, NavType expectedType, NavValue value)
+        => ALModifyAllSafe(fieldNo, expectedType, value);
+
+    /// <summary>DataError-prefixed overload with runTrigger flag.</summary>
+    public void ALModifyAllSafe(DataError errorLevel, int fieldNo, NavType expectedType, NavValue value, bool runTrigger)
+        => ALModifyAllSafe(fieldNo, expectedType, value, runTrigger);
+
     public bool ALGet(DataError errorLevel, params NavValue[] keyValues)
     {
         var table = GetRows();
@@ -1168,6 +1196,18 @@ public class MockRecordHandle : IConvertible
         ALSetRange(fieldNo, expectedType, fromValue, toValue);
     }
 
+    /// <summary>DataError-prefixed overload — clear range.</summary>
+    public void ALSetRangeSafe(DataError errorLevel, int fieldNo, NavType expectedType)
+        => ALSetRangeSafe(fieldNo, expectedType);
+
+    /// <summary>DataError-prefixed overload — single value range.</summary>
+    public void ALSetRangeSafe(DataError errorLevel, int fieldNo, NavType expectedType, NavValue value)
+        => ALSetRangeSafe(fieldNo, expectedType, value);
+
+    /// <summary>DataError-prefixed overload — from/to range.</summary>
+    public void ALSetRangeSafe(DataError errorLevel, int fieldNo, NavType expectedType, NavValue fromValue, NavValue toValue)
+        => ALSetRangeSafe(fieldNo, expectedType, fromValue, toValue);
+
     // -----------------------------------------------------------------------
     // SetFilter — expression-based filtering
     // -----------------------------------------------------------------------
@@ -1204,6 +1244,14 @@ public class MockRecordHandle : IConvertible
             IsRangeFilter = false,
         };
     }
+
+    /// <summary>DataError-prefixed overload — BC compiler may prepend DataError to SetFilter calls.</summary>
+    public void ALSetFilter(DataError errorLevel, int fieldNo, string filterExpression, params NavValue[] args)
+        => ALSetFilter(fieldNo, filterExpression, args);
+
+    /// <summary>DataError-prefixed overload with NavType.</summary>
+    public void ALSetFilter(DataError errorLevel, int fieldNo, NavType expectedType, string filterExpression, params NavValue[] args)
+        => ALSetFilter(fieldNo, expectedType, filterExpression, args);
 
     // -----------------------------------------------------------------------
     // SetCurrentKey — set sort key (with DataError first param)

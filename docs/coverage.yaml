@@ -7385,7 +7385,7 @@ Table.ModifyAll:
   status: covered
   tests:
     - tests/bucket-1/30-modify-all
-  notes: overloads=1; bulk-sets a field value on all filtered records
+  notes: overloads=4; ALModifyAllSafe(fieldNo, NavType, value[, runTrigger]) plus DataError-prefixed overloads for each (issue #1267).
 
 Table.Next:
   layer: runtime-api
@@ -7495,7 +7495,7 @@ Table.SetFilter:
   layer: runtime-api
   category: Table
   status: covered
-  notes: overloads=2; ALSetFilter(fieldNo, filterExpression, params NavValue[] args) stores filter expression for use in Find/Count.
+  notes: overloads=4; ALSetFilter(fieldNo, expr, args), ALSetFilter(fieldNo, NavType, expr, args), plus DataError-prefixed overloads for each (issue #1267).
   tests:
     - tests/bucket-1/188-table-crud
     - tests/bucket-1/09-setfilter-expressions
@@ -7526,7 +7526,7 @@ Table.SetRange:
   layer: runtime-api
   category: Table
   status: covered
-  notes: overloads=3; ALSetRange(fieldNo, type) clears range, ALSetRange(fieldNo, type, value) sets equality, ALSetRange(fieldNo, type, from, to) sets range filter.
+  notes: overloads=6; ALSetRange/ALSetRangeSafe (clear/single/range) plus DataError-prefixed overloads for each (issue #1267).
   tests:
     - tests/bucket-1/188-table-crud
     - tests/bucket-1/240-setrange-clear
