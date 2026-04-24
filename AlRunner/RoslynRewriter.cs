@@ -758,9 +758,13 @@ public bool ALHasLinks => Rec.ALHasLinks;
 public void ALCopyLinks(MockRecordHandle source) => Rec.ALCopyLinks(source);
 public bool ALWritePermission => Rec.ALWritePermission;
 public void ALSetPermissionFilter() => Rec.ALSetPermissionFilter();
+public void ALFieldError(int fieldNo) => Rec.ALFieldError(fieldNo);
+public void ALFieldError(int fieldNo, string message) => Rec.ALFieldError(fieldNo, message);
 protected bool CallGetDecimalPlacesExtensionMethod(int fieldNo, ref string result) { return false; }
 protected bool CallGetTableRelationExtensionMethod(int fieldNo, MockRecordHandle rec, ref bool result) { return false; }
 protected bool CallGetFormatExtensionMethod(int fieldNo, ref string result) { return false; }
+protected bool CallGetAutoFormatStringExtensionMethod(int fieldNo, ref string result) { return false; }
+protected void EnsureGlobalVariablesInitialized() { }
 ";
             var delegatingMembers = CSharpSyntaxTree.ParseText(
                 $"class _Temp_ {{ {delegatingCode} }}").GetRoot()
