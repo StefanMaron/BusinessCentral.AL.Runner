@@ -7329,10 +7329,11 @@ Table.Get:
   layer: runtime-api
   category: Table
   status: covered
-  notes: overloads=1; ALGet(DataError, params NavValue[] keyValues) returns true and positions on record when found.
+  notes: overloads=5; ALGet(DataError, params NavValue[]) plus object catch-all overloads for 1–4 keys (issue #1260, NavComplexValue→object rewrite).
   tests:
     - tests/bucket-1/188-table-crud
     - tests/bucket-1/02-record-operations
+    - tests/bucket-1/96-object-to-navvalue
 
 Table.GetAscending:
   layer: runtime-api
@@ -7501,7 +7502,8 @@ Table.ModifyAll:
   status: covered
   tests:
     - tests/bucket-1/30-modify-all
-  notes: overloads=4; ALModifyAllSafe(fieldNo, NavType, value[, runTrigger]) plus DataError-prefixed overloads for each (issue #1267).
+    - tests/bucket-1/96-object-to-navvalue
+  notes: overloads=8; ALModifyAllSafe(fieldNo, NavType, value[, runTrigger]) plus DataError-prefixed overloads for each (issue #1267), plus object catch-all overloads (issue #1260).
 
 Table.Next:
   layer: runtime-api
@@ -7557,7 +7559,7 @@ Table.Rename:
   layer: runtime-api
   category: Table
   status: covered
-  notes: overloads=1 (single-field and composite PK)
+  notes: overloads=5; ALRename(DataError, params NavValue[]) plus object catch-all overloads for 1–4 keys (issue #1260).
   tests:
     - tests/bucket-2/107-rename
 
@@ -7611,10 +7613,11 @@ Table.SetFilter:
   layer: runtime-api
   category: Table
   status: covered
-  notes: overloads=4; ALSetFilter(fieldNo, expr, args), ALSetFilter(fieldNo, NavType, expr, args), plus DataError-prefixed overloads for each (issue #1267).
+  notes: overloads=12; ALSetFilter(fieldNo, expr, args), ALSetFilter(fieldNo, NavType, expr, args), plus DataError-prefixed overloads for each (issue #1267), plus object catch-all overloads for 1–2 args (issue #1260).
   tests:
     - tests/bucket-1/188-table-crud
     - tests/bucket-1/09-setfilter-expressions
+    - tests/bucket-1/96-object-to-navvalue
 
 Table.SetLoadFields:
   layer: runtime-api
@@ -7642,10 +7645,11 @@ Table.SetRange:
   layer: runtime-api
   category: Table
   status: covered
-  notes: overloads=6; ALSetRange/ALSetRangeSafe (clear/single/range) plus DataError-prefixed overloads for each (issue #1267).
+  notes: overloads=11; ALSetRange/ALSetRangeSafe (clear/single/range) plus DataError-prefixed overloads for each (issue #1267), plus object catch-all overloads (issue #1260).
   tests:
     - tests/bucket-1/188-table-crud
     - tests/bucket-1/240-setrange-clear
+    - tests/bucket-1/96-object-to-navvalue
 
 Table.SetRecFilter:
   layer: runtime-api
@@ -7732,8 +7736,10 @@ Table.Validate:
   layer: runtime-api
   category: Table
   status: covered
-  tests: tests/bucket-1/18-validate-trigger
-  notes: overloads=2; Validate(Field, Value) and Validate(Field) (no value, re-validates current value)
+  tests:
+    - tests/bucket-1/18-validate-trigger
+    - tests/bucket-1/96-object-to-navvalue
+  notes: overloads=4; Validate(Field, NavValue), Validate(Field, object), Validate(Field) plus DataError overloads (issue #1260).
 
 Table.Validate (2-arg, no value):
   layer: runtime-api
