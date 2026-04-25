@@ -1,0 +1,4 @@
+{
+  "expectedExitCode": 1,
+  "extraFlags": "--test-timeout 2"
+}

@@ -120,14 +120,31 @@ jobs:
           echo "=== Summary ==="
           echo "AL tests: $total_passed passed, $total_failed failed in ${total_secs}s"
 
-      - name: Verify intentional-failure fixture
+      - name: Verify excluded fixtures
         run: |
-          # This fixture must exit 1 (test failures). Any other exit code is a bug.
-          # Use || to capture exit code without triggering set -e.
-          dotnet run --no-build --project AlRunner --framework net10.0 -- \
-            tests/excluded/06-intentional-failure/src tests/excluded/06-intentional-failure/test \
-            || rc=$?
-          [ "${rc:-0}" -eq 1 ] || { echo "Expected exit 1, got ${rc:-0}"; exit 1; }
+          # Each excluded test directory that contains an al-runner.json with an
+          # "expectedExitCode" field is verified here. Directories without the file
+          # are documentation-only fixtures and are skipped automatically.
+          for suite in tests/excluded/*/; do
+            json="${suite}al-runner.json"
+            [ -f "$json" ] || continue
+
+            expected_exit=$(python3 -c "import json; d=json.load(open('$json')); print(d.get('expectedExitCode', 0))")
+            extra_flags=$(python3 -c "import json; d=json.load(open('$json')); print(d.get('extraFlags', ''))")
+
+            args=""
+            [ -d "${suite}src"  ] && args="$args ${suite}src"
+            for appdir in "${suite}"app*/; do
+              [ -d "$appdir" ] && args="$args $appdir"
+            done
+            [ -d "${suite}stubs" ] && extra_flags="--stubs ${suite}stubs $extra_flags"
+            [ -d "${suite}test"  ] && args="$args ${suite}test"
+
+            echo "=== $suite (expected exit $expected_exit) ==="
+            rc=0
+            dotnet run --no-build --project AlRunner --framework net10.0 -- $extra_flags $args || rc=$?
+            [ "$rc" -eq "$expected_exit" ] || { echo "Expected exit $expected_exit, got $rc"; exit 1; }
+          done
 
   all-tests:
     name: All BC versions passed

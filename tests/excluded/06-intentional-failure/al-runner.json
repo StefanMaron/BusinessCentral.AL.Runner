@@ -1,4 +1,5 @@
 {
   "sourcePath": "./src",
-  "testPath": "./test"
+  "testPath": "./test",
+  "expectedExitCode": 1
 }
