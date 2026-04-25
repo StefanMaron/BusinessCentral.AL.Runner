@@ -129,20 +129,21 @@ jobs:
             json="${suite}al-runner.json"
             [ -f "$json" ] || continue
 
-            expected_exit=$(python3 -c "import json; d=json.load(open('$json')); print(d.get('expectedExitCode', 0))")
-            extra_flags=$(python3 -c "import json; d=json.load(open('$json')); print(d.get('extraFlags', ''))")
+            expected_exit=$(jq -e '.expectedExitCode' "$json") || { echo "ERROR: $json is missing required 'expectedExitCode' field"; exit 1; }
+            extra_flags_str=$(jq -r '.extraFlags // ""' "$json")
+            read -ra extra_flags_arr <<< "$extra_flags_str"
 
-            args=""
-            [ -d "${suite}src"  ] && args="$args ${suite}src"
+            args=()
+            [ -d "${suite}src"  ] && args+=("${suite}src")
             for appdir in "${suite}"app*/; do
-              [ -d "$appdir" ] && args="$args $appdir"
+              [ -d "$appdir" ] && args+=("$appdir")
             done
-            [ -d "${suite}stubs" ] && extra_flags="--stubs ${suite}stubs $extra_flags"
-            [ -d "${suite}test"  ] && args="$args ${suite}test"
+            [ -d "${suite}stubs" ] && extra_flags_arr=("--stubs" "${suite}stubs" "${extra_flags_arr[@]}")
+            [ -d "${suite}test"  ] && args+=("${suite}test")
 
             echo "=== $suite (expected exit $expected_exit) ==="
             rc=0
-            dotnet run --no-build --project AlRunner --framework net10.0 -- $extra_flags $args || rc=$?
+            dotnet run --no-build --project AlRunner --framework net10.0 -- "${extra_flags_arr[@]}" "${args[@]}" || rc=$?
             [ "$rc" -eq "$expected_exit" ] || { echo "Expected exit $expected_exit, got $rc"; exit 1; }
           done
 
