@@ -1085,10 +1085,11 @@ public static class AlTranspiler
             parsedResults[i] = (tree, diags);
         });
 
-        // Build a reverse map from tree object identity to source file path for diagnostic formatting.
-        var treeToPath = new Dictionary<SyntaxTree, string>(ReferenceEqualityComparer.Instance);
+        // Build a map from tree object identity to source file path for diagnostic formatting.
+        Dictionary<SyntaxTree, string>? treeToPath = null;
         if (sourceFilePaths != null)
         {
+            treeToPath = new Dictionary<SyntaxTree, string>(ReferenceEqualityComparer.Instance);
             for (int i = 0; i < parsedResults.Length && i < sourceFilePaths.Count; i++)
             {
                 if (sourceFilePaths[i] != null)
