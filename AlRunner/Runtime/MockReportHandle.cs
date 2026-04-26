@@ -341,6 +341,21 @@ public class MockReportHandle
     }
 
     /// <summary>
+    /// Static Report.Run(reportName, requestPage, systemPrinter) — Text-name 3-argument overload.
+    /// BC emits this form when AL passes a report name string and no record argument.
+    /// Report-name lookup is not supported in standalone mode; call is a no-op.
+    /// </summary>
+    public static void StaticRun(string reportName, bool requestPage, bool systemPrinter) { }
+
+    /// <summary>
+    /// Static Report.Run(reportName, requestPage, systemPrinter, record) — Text-name 4-argument overload.
+    /// BC emits this form for <c>Report.Run(Report::"X", requestPage, systemPrinter, Rec)</c> when the
+    /// first argument is resolved to a string name at compile time.
+    /// Report-name lookup is not supported in standalone mode; call is a no-op.
+    /// </summary>
+    public static void StaticRun(string reportName, bool requestPage, bool systemPrinter, object record) { }
+
+    /// <summary>
     /// Static Report.RunModal(reportId) — redirected from NavReport.RunModal() by the rewriter.
     /// If a ReportHandler is registered, invoke it; otherwise create an instance and RunModal().
     /// </summary>
@@ -384,6 +399,21 @@ public class MockReportHandle
     }
 
     /// <summary>
+    /// Static Report.RunModal(reportName, requestWindow, systemPrinter) — Text-name 3-argument overload.
+    /// BC emits this form when AL passes a report name string and no record argument.
+    /// Report-name lookup is not supported in standalone mode; call is a no-op.
+    /// </summary>
+    public static void StaticRunModal(string reportName, bool requestWindow, bool systemPrinter) { }
+
+    /// <summary>
+    /// Static Report.RunModal(reportName, requestWindow, systemPrinter, record) — Text-name 4-argument overload.
+    /// BC emits this form for <c>Report.RunModal(Report::"X", requestWindow, systemPrinter, Rec)</c> when the
+    /// first argument is resolved to a string name at compile time.
+    /// Report-name lookup is not supported in standalone mode; call is a no-op.
+    /// </summary>
+    public static void StaticRunModal(string reportName, bool requestWindow, bool systemPrinter, object record) { }
+
+    /// <summary>
     /// AL assignment: <c>Rep1 := Rep2</c>.
     /// The BC compiler emits <c>Rep1.ALAssign(Rep2)</c> for report variable assignment.
     /// Copies the report ID, table-view filter, and internal report instance reference
@@ -420,6 +450,20 @@ public class MockReportHandle
 
     /// <summary>BC emits <c>MockReportHandle.StaticExecute(reportId, requestPage)</c> for <c>Report.Execute(N, requestPage)</c>.</summary>
     public static void StaticExecute(int reportId, string requestPage) { }
+
+    /// <summary>
+    /// BC emits <c>MockReportHandle.StaticExecute(reportId, requestPage, recordRef)</c> for
+    /// <c>Report.Execute(N, RequestPageXml, RecordRef)</c> — Integer-id 3-argument overload.
+    /// No-op in standalone mode (no rendering engine).
+    /// </summary>
+    public static void StaticExecute(int reportId, string requestPage, MockRecordRef recordRef) { }
+
+    /// <summary>
+    /// BC emits <c>MockReportHandle.StaticExecute(reportName, requestPage, recordRef)</c> for
+    /// <c>Report.Execute(ReportName, RequestPageXml, RecordRef)</c> — Text-name 3-argument overload.
+    /// Report-name lookup is not supported in standalone mode; call is a no-op.
+    /// </summary>
+    public static void StaticExecute(string reportName, string requestPage, MockRecordRef recordRef) { }
 
     public static void StaticPrint(int reportId) { }
 
