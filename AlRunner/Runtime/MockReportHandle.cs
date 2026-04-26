@@ -366,6 +366,22 @@ public class MockReportHandle
     }
 
     /// <summary>
+    /// AL assignment: <c>Rep1 := Rep2</c>.
+    /// The BC compiler emits <c>Rep1.ALAssign(Rep2)</c> for report variable assignment.
+    /// Copies the report ID, table-view filter, and internal report instance reference
+    /// so both variables point at the same execution state — matching AL semantics.
+    /// </summary>
+    public void ALAssign(MockReportHandle other)
+    {
+        // ReportId is init-only; share internal state by copying mutable fields.
+        _reportInstance = other._reportInstance;
+        _tableView = other._tableView;
+        UseRequestForm = other.UseRequestForm;
+        FormatRegion = other.FormatRegion;
+        Language = other.Language;
+    }
+
+    /// <summary>
     /// AL's <c>Clear(rep)</c> — the rewriter emits <c>rep.Clear()</c>. Resets the
     /// report handle to its default (un-run) state. No-op in standalone mode.
     /// </summary>

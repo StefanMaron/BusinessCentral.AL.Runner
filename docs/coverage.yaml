@@ -5850,6 +5850,13 @@ RecordRef.WritePermission:
 
 # ── Report ──────────────────────────────────────────────────────
 
+Report.ALAssign:
+  layer: runtime-api
+  category: Report
+  status: covered
+  tests: tests/bucket-2/111-report-alassign
+  notes: "overloads=1; AL Rep1 := Rep2 emits Rep1.ALAssign(Rep2) — added to MockReportHandle; copies _reportInstance, _tableView, UseRequestForm, FormatRegion, Language — closes #1328."
+
 Report.Clear:
   layer: runtime-api
   category: Report
