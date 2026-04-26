@@ -190,7 +190,7 @@ reportextension_declaration:
   notes: >
 
 ReportExtension.GetGlobalVariable (int, NavType):
-  layer: runtime
+  layer: runtime-api
   category: report
   status: covered
   tests:
@@ -202,7 +202,7 @@ ReportExtension.GetGlobalVariable (int, NavType):
     stub returning NavInteger.Default. Issue #1450.
 
 ReportExtension.SetGlobalVariable (int, NavType, object):
-  layer: runtime
+  layer: runtime-api
   category: report
   status: covered
   tests:
