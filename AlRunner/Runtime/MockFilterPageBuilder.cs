@@ -76,6 +76,22 @@ public class MockFilterPageBuilder
     public int ALAddField(DataError errorLevel, string caption, MockFieldRef fieldRef)
         => ALAddField(caption, fieldRef);
 
+    /// <summary>
+    /// 3-arg form: <c>FilterPageBuilder.AddField(caption, field, defaultFilter)</c>.
+    /// Registers the field and stores the supplied default filter as the initial view for
+    /// the table associated with the field.
+    /// </summary>
+    public int ALAddField(string caption, MockFieldRef fieldRef, string defaultFilter)
+    {
+        var tableId = 0;
+        try { tableId = (int)fieldRef.ALRecord().TableId; } catch { /* ignore */ }
+        _tables.Add((caption, tableId, defaultFilter ?? string.Empty));
+        return _tables.Count;
+    }
+
+    public int ALAddField(DataError errorLevel, string caption, MockFieldRef fieldRef, string defaultFilter)
+        => ALAddField(caption, fieldRef, defaultFilter);
+
     // ── GetView / SetView ─────────────────────────────────────────────────────
 
     /// <summary>

@@ -1910,7 +1910,12 @@ Dialog.Error (ErrorInfo):
 Dialog.Error (Text, Joker):
   layer: runtime-api
   category: Dialog
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/310-missing-overloads
+  notes: >
+    Routed through AlDialog.Error(string format, params object?[] args); AlDialog.ConvertAlFormat
+    translates %1 placeholders. Tested with int and text joker arguments.
 
 Dialog.HideSubsequentDialogs (Boolean):
   layer: runtime-api
@@ -2010,7 +2015,13 @@ EnumType.Ordinals ():
 ErrorInfo.AddAction (Text, Integer, Text, Text):
   layer: runtime-api
   category: ErrorInfo
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/310-missing-overloads
+  notes: >
+    4-arg form (caption, codeunitId, method, parameters). Rewriter strips the call
+    (no-op); interactive drill-down actions don't fire without a UI. The strip
+    correctly handles both the 4th-arg-as-description and 4th-arg-as-params forms.
 
 ErrorInfo.AddAction (Text, Integer, Text):
   layer: runtime-api
@@ -2023,7 +2034,13 @@ ErrorInfo.AddAction (Text, Integer, Text):
 ErrorInfo.AddNavigationAction (Text, Text):
   layer: runtime-api
   category: ErrorInfo
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/310-missing-overloads
+  notes: >
+    2-arg form (caption, description). Rewriter strips the call (no-op);
+    navigation drill-downs require a UI client. Tested: no-throw, empty description,
+    and ErrorInfo.Message is preserved after call.
 
 ErrorInfo.AddNavigationAction (Text):
   layer: runtime-api
@@ -2818,7 +2835,13 @@ FilterPageBuilder.AddField (Text, FieldRef, Text):
 FilterPageBuilder.AddField (Text, Joker, Text):
   layer: runtime-api
   category: FilterPageBuilder
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/310-missing-overloads
+  notes: >
+    3-arg form (caption, fieldRef, defaultFilter). Added ALAddField(string, MockFieldRef, string)
+    and DataError overload to MockFilterPageBuilder; stores the defaultFilter as the initial view.
+    Count increases per call.
 
 FilterPageBuilder.AddFieldNo (Text, Integer, Text):
   layer: runtime-api
@@ -8561,7 +8584,12 @@ TestField.Lookup ():
 TestField.Lookup (RecordRef):
   layer: runtime-api
   category: TestField
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/310-missing-overloads
+  notes: >
+    Added ALLookup(MockRecordRef) and ALLookup(DataError, MockRecordRef) to MockTestPageField.
+    No-op in standalone mode. Tested: no-throw and field value unchanged after call.
 
 TestField.OptionCount ():
   layer: runtime-api

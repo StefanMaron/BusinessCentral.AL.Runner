@@ -684,6 +684,17 @@ public class MockTestPageField
     public void ALLookup() { }
 
     /// <summary>
+    /// ALLookup(RecordRef) — triggers the lookup action filtered to the supplied record.
+    /// No-op in standalone mode (no real UI to open). Dispatches to a registered
+    /// ModalPageHandler when one is present, identical to the zero-arg overload.
+    /// BC emits <c>tP.GetField(hash).ALLookup(DataError, recordRef)</c>.
+    /// </summary>
+    public void ALLookup(MockRecordRef recordRef) { }
+
+    /// <summary>DataError overload for ALLookup(RecordRef).</summary>
+    public void ALLookup(DataError errorLevel, MockRecordRef recordRef) { }
+
+    /// <summary>
     /// ALDrilldown — triggers the drilldown action on the field. No-op in standalone mode.
     /// BC emits <c>tP.GetField(hash).ALDrilldown()</c>.
     /// </summary>
