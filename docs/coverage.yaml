@@ -7922,117 +7922,186 @@ Table.TableName ():
 Table.TestField (Joker, BigInteger, ErrorInfo):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
+  tests:
+    - tests/bucket-2/309100-testfield-typed-overloads
 
 Table.TestField (Joker, BigInteger):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
+  tests:
+    - tests/bucket-2/309100-testfield-typed-overloads
 
 Table.TestField (Joker, Boolean, ErrorInfo):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
+  tests:
+    - tests/bucket-2/309100-testfield-typed-overloads
 
 Table.TestField (Joker, Boolean):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
+  tests:
+    - tests/bucket-2/309100-testfield-typed-overloads
 
 Table.TestField (Joker, Code, ErrorInfo):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
+  tests:
+    - tests/bucket-2/309100-testfield-typed-overloads
 
 Table.TestField (Joker, Code):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
+  tests:
+    - tests/bucket-2/309100-testfield-typed-overloads
 
 Table.TestField (Joker, Decimal, ErrorInfo):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
+  tests:
+    - tests/bucket-2/309100-testfield-typed-overloads
 
 Table.TestField (Joker, Decimal):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
+  tests:
+    - tests/bucket-2/309100-testfield-typed-overloads
 
 Table.TestField (Joker, Enum, ErrorInfo):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
+  tests:
+    - tests/bucket-2/309100-testfield-typed-overloads
 
 Table.TestField (Joker, Enum):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
+  tests:
+    - tests/bucket-2/309100-testfield-typed-overloads
 
 Table.TestField (Joker, ErrorInfo):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  notes: routes through ALTestFieldSafe(NavALErrorInfo) — non-empty check with error context — issue #1369
+  tests:
+    - tests/bucket-2/309100-testfield-typed-overloads
 
 Table.TestField (Joker, Guid, ErrorInfo):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
+  tests:
+    - tests/bucket-2/309100-testfield-typed-overloads
 
 Table.TestField (Joker, Guid):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
+  tests:
+    - tests/bucket-2/309100-testfield-typed-overloads
 
 Table.TestField (Joker, Integer, ErrorInfo):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
+  tests:
+    - tests/bucket-2/309100-testfield-typed-overloads
 
 Table.TestField (Joker, Integer):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
+  tests:
+    - tests/bucket-2/309100-testfield-typed-overloads
 
 Table.TestField (Joker, Joker, ErrorInfo):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
+  tests:
+    - tests/bucket-2/309100-testfield-typed-overloads
 
 Table.TestField (Joker, Joker):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
+  tests:
+    - tests/bucket-2/309100-testfield-typed-overloads
 
 Table.TestField (Joker, Label, ErrorInfo):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
+  tests:
+    - tests/bucket-2/309100-testfield-typed-overloads
 
 Table.TestField (Joker, Label):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
+  tests:
+    - tests/bucket-2/309100-testfield-typed-overloads
 
 Table.TestField (Joker, Text, ErrorInfo):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
+  tests:
+    - tests/bucket-2/309100-testfield-typed-overloads
 
 Table.TestField (Joker, Text):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
+  tests:
+    - tests/bucket-2/309100-testfield-typed-overloads
 
 Table.TestField (Joker, TextConst, ErrorInfo):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
+  tests:
+    - tests/bucket-2/309100-testfield-typed-overloads
 
 Table.TestField (Joker, TextConst):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
+  tests:
+    - tests/bucket-2/309100-testfield-typed-overloads
 
 Table.TestField (Joker):
   layer: runtime-api

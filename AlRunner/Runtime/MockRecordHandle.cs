@@ -1759,6 +1759,28 @@ public class MockRecordHandle : IConvertible
         ALTestFieldSafe(fieldNo, expectedType, expectedValue);
     }
 
+    /// <summary>
+    /// ALTestFieldNavValueSafe(NavValue, NavALErrorInfo) — 4-arg form emitted by the BC transpiler
+    /// for TestField(Field, Value, ErrorInfo) where Value is a NavValue type (e.g. DateTime).
+    /// The ErrorInfo provides error context; the assertion logic is unchanged.
+    /// Fixes CS1501 (no overload with 4 arguments) — issue #1369.
+    /// </summary>
+    public void ALTestFieldNavValueSafe(int fieldNo, NavType expectedType, NavValue expectedValue, NavALErrorInfo errorInfo)
+    {
+        ALTestFieldSafe(fieldNo, expectedType, expectedValue);
+    }
+
+    /// <summary>
+    /// ALTestFieldNavValueSafe(object, NavALErrorInfo) — 4-arg catch-all form emitted by the BC
+    /// transpiler for TestField(Field, Value, ErrorInfo) where Value is typed as object.
+    /// Delegates to the existing ALTestFieldSafe(object) overload.
+    /// Fixes CS1501 (no overload with 4 arguments) — issue #1369.
+    /// </summary>
+    public void ALTestFieldNavValueSafe(int fieldNo, NavType expectedType, object expectedValue, NavALErrorInfo errorInfo)
+    {
+        ALTestFieldSafe(fieldNo, expectedType, expectedValue);
+    }
+
     /// <summary>Overload: TestField with DataError level.</summary>
     public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType, NavValue expectedValue)
     {
@@ -3668,6 +3690,14 @@ public class MockRecordHandle : IConvertible
     /// This mirrors <c>CompanyName()</c> built-in, which BC also routes here on record instances.
     /// </summary>
     public string ALCurrentCompany => MockSession.GetCompanyName();
+
+    /// <summary>
+    /// AL FullyQualifiedName — returns the fully qualified name of the table in the format
+    /// "&lt;CompanyName&gt;$&lt;TableName&gt;" (e.g. "CRONUS$Customer").
+    /// In standalone mode, uses the configured company name and the AL table name.
+    /// </summary>
+    public string ALFullyQualifiedName =>
+        $"{MockSession.GetCompanyName()}${ALTableName}";
 
     /// <summary>
     /// AL SetPermissionFilter — applies permission-based filtering.
