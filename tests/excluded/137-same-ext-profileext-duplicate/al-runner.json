@@ -1,0 +1,4 @@
+{
+  "expectedExitCode": 3,
+  "comment": "Duplicate profileextension names in the same extension must fail with AL0197 (exit 3). Fixed by #1365."
+}

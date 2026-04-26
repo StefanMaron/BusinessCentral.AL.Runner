@@ -12400,3 +12400,60 @@ XmlportInstance.TextEncoding (TextEncoding):
   tests:
     - tests/bucket-1/90-xmlport-instance
   notes: property on MockXmlPortHandle
+
+# ══════════════════════════════════════════════════════════════
+# Diagnostic suppression branches — hand-curated entries
+# These use the syntax layer (closest match; represent pipeline
+# behaviour rather than AL language constructs).
+# ══════════════════════════════════════════════════════════════
+
+DiagnosticSuppression.Case1.SelfDuplicatePackage:
+  layer: syntax
+  category: diagnostic-suppression
+  status: not-tested
+  notes: >
+    AL0275/AL0197 where both extension identities are identical (same publisher+name+version).
+    Runner artifact: same .app loaded twice via depSpecs. PackageScanner deduplication
+    re-runs and clears the error. No automated fixture possible without real .app package files.
+    Logic audited in #1365; no code change required.
+
+DiagnosticSuppression.Case2.StubsVsPackage:
+  layer: syntax
+  category: diagnostic-suppression
+  status: covered
+  tests:
+    - tests/stubs/39-stubs
+  notes: >
+    AL0275/AL0197 when stubs (--stubs flag) redefine objects already in packages.
+    Gated strictly on Log.HasStubs. Runner artifact: stub intentionally overrides
+    the package. Audited in #1365; no code change required.
+
+DiagnosticSuppression.Case3.CrossExtensionExtensionObject:
+  layer: syntax
+  category: diagnostic-suppression
+  status: covered
+  tests:
+    - tests/bucket-2/130-cross-ext-al0275
+    - tests/excluded/138-cross-ext-pageext-suppressed
+    - tests/excluded/135-same-ext-pageext-duplicate
+    - tests/excluded/131-genuine-codeunit-collision
+  notes: >
+    AL0197 for extension-type objects (PageExtension, TableExtension, etc.) from 2+
+    different extension identities: runner artifact of single-pass compilation.
+    In source-only multi-app mode, the IsCrossExtensionDuplicateDeclaration filter at
+    line 1482 prevents extension-type AL0197 from being treated as genuine duplicates.
+    Same-extension dups are caught by DetectSameExtensionDuplicates pre-scan (exit 3).
+    Non-extension types (Codeunit, Table, Page) are always forwarded. Audited in #1365.
+
+DiagnosticSuppression.Backfill.SameExtProfileextDuplicate:
+  layer: syntax
+  category: diagnostic-suppression
+  status: covered
+  tests:
+    - tests/excluded/137-same-ext-profileext-duplicate
+  notes: >
+    profileextension uses syntax without a numeric ID (unlike other extension objects).
+    Added ProfileExtensionDeclPattern to Pipeline.cs DetectSameExtensionDuplicates
+    so same-extension profileextension name duplicates are caught as genuine errors
+    (exit 3). Fixed in #1365. BC API correctly emits AL0197 for this case but the
+    IsCrossExtensionDuplicateDeclaration filter would previously have eaten it.

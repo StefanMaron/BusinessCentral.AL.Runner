@@ -1213,8 +1213,17 @@ public class AlRunnerPipeline
     // Regex to detect extension object declarations: captures type and name.
     // Matches: pageextension, tableextension, reportextension, enumextension,
     //          permissionsetextension, pageCustomization (all extension-type objects).
+    // Pattern for numbered extension objects: type ID "Name" extends Target
+    // Covers: pageextension, tableextension, reportextension, enumextension,
+    //         permissionsetextension, pagecustomization.
     private static readonly Regex ExtensionObjectDeclPattern = new(
         @"^\s*(?<type>pageextension|tableextension|reportextension|enumextension|permissionsetextension|pagecustomization)\s+\d+\s+""(?<name>[^""]+)""",
+        RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Compiled);
+
+    // Pattern for profileextension (no numeric ID; unquoted identifier name):
+    //   profileextension MyProfileExt extends SomeProfile { ... }
+    private static readonly Regex ProfileExtensionDeclPattern = new(
+        @"^\s*(?<type>profileextension)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s+extends\b",
         RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Compiled);
 
     // Canonical type names matching the BC compiler's AL0197 message format.
@@ -1227,6 +1236,7 @@ public class AlRunnerPipeline
             { "enumextension",          "EnumExtension" },
             { "permissionsetextension", "PermissionSetExtension" },
             { "pagecustomization",      "PageCustomization" },
+            { "profileextension",       "ProfileExtension" },
         };
 
     /// <summary>
@@ -1284,7 +1294,29 @@ public class AlRunnerPipeline
 
             foreach (var (filePath, source) in files)
             {
+                // Match numbered extension objects (pageextension, tableextension, etc.)
                 foreach (Match m in ExtensionObjectDeclPattern.Matches(source))
+                {
+                    var rawType  = m.Groups["type"].Value;
+                    var displayType = ExtensionTypeDisplayNames.TryGetValue(rawType, out var dt) ? dt : rawType;
+                    var objectName = m.Groups["name"].Value;
+                    var key = $"{rawType}:{objectName}";
+                    if (seen.TryGetValue(key, out var firstFile))
+                    {
+                        errors.Add(
+                            $"error AL0197: An application object of type '{displayType}' " +
+                            $"with name '{objectName}' is already declared in " +
+                            $"'{Path.GetFileName(firstFile)}' " +
+                            $"(same extension: {Path.GetFileName(appJson)})");
+                    }
+                    else
+                    {
+                        seen[key] = filePath;
+                    }
+                }
+
+                // Match profileextension objects (no numeric ID; unquoted identifier name)
+                foreach (Match m in ProfileExtensionDeclPattern.Matches(source))
                 {
                     var rawType  = m.Groups["type"].Value;
                     var displayType = ExtensionTypeDisplayNames.TryGetValue(rawType, out var dt) ? dt : rawType;
