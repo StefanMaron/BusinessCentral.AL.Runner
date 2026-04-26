@@ -1,0 +1,3 @@
+{
+  "description": "Methods that return Boolean used in `if not` guards (CS0023 void operator): IsolatedStorage.Set, XmlElement.AddBeforeSelf/AddAfterSelf/Remove, ReportInstance.SaveAs/SaveAsPdf — issue #1432"
+}

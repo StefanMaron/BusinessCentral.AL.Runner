@@ -3444,11 +3444,15 @@ IsolatedStorage.Set (Text, SecretText, DataScope):
   layer: runtime-api
   category: IsolatedStorage
   status: covered
+  notes: MockIsolatedStorage.ALSet now returns bool (true on success) — issue #1432.
 
 IsolatedStorage.Set (Text, Text, DataScope):
   layer: runtime-api
   category: IsolatedStorage
-  status: not-tested
+  status: covered
+  tests:
+    - bucket-2/data-formats/314-void-returning-bool
+  notes: MockIsolatedStorage.ALSet returns bool (true on success); `if not IsolatedStorage.Set(...)` guard compiles — issue #1432.
 
 IsolatedStorage.SetEncrypted (Text, SecretText, DataScope):
   layer: runtime-api
@@ -6841,7 +6845,9 @@ ReportInstance.SaveAs (Text, ReportFormat, OutStream, RecordRef):
   layer: runtime-api
   category: ReportInstance
   status: covered
-  notes: MockReportHandle.SaveAs(errorLevel, requestParams, format, outStream) — no-op in standalone mode.
+  tests:
+    - bucket-2/data-formats/314-void-returning-bool
+  notes: MockReportHandle.SaveAs now returns bool (true on success); `if not Rep.SaveAs(...)` guard compiles — issue #1432.
 
 ReportInstance.SaveAsExcel (Text):
   layer: runtime-api
@@ -6859,7 +6865,9 @@ ReportInstance.SaveAsPdf (Text):
   layer: runtime-api
   category: ReportInstance
   status: covered
-  notes: MockReportHandle.SaveAsPdf() is a no-op in standalone mode.
+  tests:
+    - bucket-2/data-formats/314-void-returning-bool
+  notes: MockReportHandle.SaveAsPdf now returns bool (true on success); `if not Rep.SaveAsPdf(...)` guard compiles — issue #1432.
 
 ReportInstance.SaveAsWord (Text):
   layer: runtime-api
@@ -7357,7 +7365,9 @@ System.CompressArray (Array):
   layer: runtime-api
   category: System
   status: covered
-  notes: . ALSystemArray.ALCompressArray redirected to AlCompat.ALCompressArray; shifts non-blank elements to front, fills tail with default.
+  notes: ALSystemArray.ALCompressArray redirected to AlCompat.ALCompressArray; shifts non-blank elements to front, fills tail with default; returns Integer count of non-blank elements (fixes CS0029 when result is assigned).
+  tests:
+    - bucket-1/codeunit-runtime/199-system-array-random: CompressArray_ReturnsNonBlankCount_WithGaps, CompressArray_ReturnsZero_AllBlank, CompressArray_ReturnsAll_NoGaps
 
 System.CopyArray (Array, Array, Integer, Integer):
   layer: runtime-api
@@ -11489,13 +11499,17 @@ XmlElement.AddAfterSelf (Joker):
   layer: runtime-api
   category: XmlElement
   status: covered
-  notes: . Covered via NavXmlElement native.
+  tests:
+    - bucket-2/data-formats/314-void-returning-bool
+  notes: AlCompat.XmlAddAfterSelf now returns bool (true on success); `if not Element.AddAfterSelf(...)` guard compiles — issue #1432.
 
 XmlElement.AddBeforeSelf (Joker):
   layer: runtime-api
   category: XmlElement
   status: covered
-  notes: . Covered via NavXmlElement native.
+  tests:
+    - bucket-2/data-formats/314-void-returning-bool
+  notes: AlCompat.XmlAddBeforeSelf now returns bool (true on success); `if not Element.AddBeforeSelf(...)` guard compiles — issue #1432.
 
 XmlElement.AddFirst (Joker):
   layer: runtime-api
@@ -11679,7 +11693,9 @@ XmlElement.Remove ():
   layer: runtime-api
   category: XmlElement
   status: covered
-  notes: . Covered via NavXmlElement native — removes element from parent tree.
+  tests:
+    - bucket-2/data-formats/314-void-returning-bool
+  notes: AlCompat.XmlRemove now returns bool (true on success); `if not Element.Remove()` guard compiles — issue #1432.
 
 XmlElement.RemoveAllAttributes ():
   layer: runtime-api

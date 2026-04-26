@@ -26,59 +26,71 @@ public static class MockIsolatedStorage
     }
 
     // ALSet overloads (with DataScope parameter — original BC signature)
-    public static void ALSet(DataError errorLevel, string key, string value, object dataScope)
+    // BC AL: IsolatedStorage.Set returns Boolean (true on success) — issue #1432.
+    public static bool ALSet(DataError errorLevel, string key, string value, object dataScope)
     {
         _store[key] = value;
+        return true;
     }
 
-    public static void ALSet(DataError errorLevel, string key, NavSecretText value, object dataScope)
+    public static bool ALSet(DataError errorLevel, string key, NavSecretText value, object dataScope)
     {
         _store[key] = ExtractSecretValue(value);
+        return true;
     }
 
-    public static void ALSet(DataError errorLevel, string key, string value, object dataScope, object encryption)
+    public static bool ALSet(DataError errorLevel, string key, string value, object dataScope, object encryption)
     {
         _store[key] = value;
+        return true;
     }
 
-    public static void ALSet(DataError errorLevel, string key, NavSecretText value, object dataScope, object encryption)
+    public static bool ALSet(DataError errorLevel, string key, NavSecretText value, object dataScope, object encryption)
     {
         _store[key] = ExtractSecretValue(value);
+        return true;
     }
 
     // ALSet overloads (without DataScope — transpiler strips it for simple IsolatedStorage.Set calls)
-    public static void ALSet(DataError errorLevel, string key, string value)
+    public static bool ALSet(DataError errorLevel, string key, string value)
     {
         _store[key] = value;
+        return true;
     }
 
-    public static void ALSet(DataError errorLevel, string key, NavSecretText value)
+    public static bool ALSet(DataError errorLevel, string key, NavSecretText value)
     {
         _store[key] = ExtractSecretValue(value);
+        return true;
     }
 
     // ALSetEncrypted — encrypted variant. In the mock, encryption is transparent
     // (no crypto); the value round-trips through Get/Contains like a plain ALSet.
     // Overloads cover the same arg shapes as ALSet: with/without DataScope, and
     // Text vs NavSecretText value.
-    public static void ALSetEncrypted(DataError errorLevel, string key, string value)
+    // BC AL: IsolatedStorage.SetEncrypted returns Boolean (true on success) — issue #1432.
+    public static bool ALSetEncrypted(DataError errorLevel, string key, string value)
     {
         _store[key] = value;
+        return true;
     }
 
-    public static void ALSetEncrypted(DataError errorLevel, string key, NavSecretText value)
+    public static bool ALSetEncrypted(DataError errorLevel, string key, NavSecretText value)
     {
         _store[key] = ExtractSecretValue(value);
+        return true;
     }
 
-    public static void ALSetEncrypted(DataError errorLevel, string key, string value, object dataScope)
+    public static bool ALSetEncrypted(DataError errorLevel, string key, string value, object dataScope)
     {
         _store[key] = value;
+        return true;
     }
 
-    public static void ALSetEncrypted(DataError errorLevel, string key, NavSecretText value, object dataScope)
+    public static bool ALSetEncrypted(DataError errorLevel, string key, NavSecretText value, object dataScope)
     {
         _store[key] = ExtractSecretValue(value);
+        return true;
     }
 
     // ALGet overloads (with DataScope)
