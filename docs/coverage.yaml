@@ -5585,12 +5585,22 @@ OutStream.Write (Table, Integer):
 OutStream.Write (Text, Integer):
   layer: runtime-api
   category: OutStream
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/311-stream-writestring
+  notes: >
+    BC compiler emits ALStream.ALWriteString(writer, error, string) for this overload in some BC
+    versions; MockStream.ALWriteString(string) and ALWriteString(string, int) added (issue #1437).
 
 OutStream.Write (TextConst, Integer):
   layer: runtime-api
   category: OutStream
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/311-stream-writestring
+  notes: >
+    NavTextConstant write routes through MockStream.ALWriteString — added alongside
+    OutStream.Write(Text) fix (issue #1437).
 
 OutStream.Write (Time, Integer):
   layer: runtime-api
