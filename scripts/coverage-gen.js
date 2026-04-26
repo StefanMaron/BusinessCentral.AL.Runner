@@ -345,8 +345,17 @@ function extractAlMethodsFromMock(filePath) {
 }
 
 /**
- * For every type in runtime-api.json, return a map { "Type.Method" → { status, mockFiles } }.
+ * For every overload in runtime-api.json, return a map keyed by
+ * "Type.Method (sig)" → { status, mockFiles, type, method, signature }.
  * A method is covered when `AL<Method>` appears in any mapped mock file.
+ *
+ * Status logic:
+ *   - not-possible: type or method is in the architectural exclusion lists
+ *   - gap:          no mock file mapping, or AL<Method> not found in mocks
+ *   - not-tested:   AL<Method> found in mocks, but method has >1 overload —
+ *                   we can confirm the name is implemented but can't determine
+ *                   which specific signatures are covered without deeper analysis
+ *   - covered:      AL<Method> found in mocks, and method has exactly 1 overload
  */
 function buildRuntimeApiCoverage(runtimeApi) {
   const entries = {};
@@ -366,20 +375,44 @@ function buildRuntimeApiCoverage(runtimeApi) {
     for (const f of mockFiles) {
       for (const s of load(f).syms) unionSyms.add(s);
     }
+
+    // Group overloads by method name so we can tell when a name has >1 overload
+    const byName = {};
     for (const method of typeEntry.methods || []) {
-      const key = `${typeName}.${method.name}`;
+      (byName[method.name] ||= []).push(method);
+    }
+
+    for (const method of typeEntry.methods || []) {
+      const baseKey = `${typeName}.${method.name}`;
+      const sig = method.signature || "()";
+      // Key includes signature so each overload is a separate entry
+      const key = `${baseKey} ${sig}`;
       const alName = `AL${method.name}`;
       let status;
-      if (RUNTIME_API_NOT_POSSIBLE_TYPES.has(typeName)) status = "not-possible";
-      else if (RUNTIME_API_NOT_POSSIBLE_METHODS.has(key)) status = "not-possible";
-      else if (mockFiles.length === 0) status = "gap";
-      else status = unionSyms.has(alName) ? "covered" : "gap";
+      if (RUNTIME_API_NOT_POSSIBLE_TYPES.has(typeName)) {
+        status = "not-possible";
+      } else if (RUNTIME_API_NOT_POSSIBLE_METHODS.has(baseKey)) {
+        status = "not-possible";
+      } else if (mockFiles.length === 0) {
+        status = "gap";
+      } else if (!unionSyms.has(alName)) {
+        // Method name not found at all → gap
+        status = "gap";
+      } else if (byName[method.name].length > 1) {
+        // Method name exists in mock but has multiple overloads — we know the
+        // name is implemented but can't confirm which signatures are covered
+        // without deeper analysis; mark as not-tested.
+        status = "not-tested";
+      } else {
+        // Single overload, name found in mock → covered
+        status = "covered";
+      }
       entries[key] = {
         status,
         mockFiles: mockFiles.slice(),
-        overloads: method.overloads,
         type: typeName,
         method: method.name,
+        signature: sig,
       };
     }
   }
@@ -391,6 +424,9 @@ function buildRuntimeApiCoverage(runtimeApi) {
 /**
  * Entry shape: { name, layer, category, status, tests: [], notes?: string }.
  * Preserves order of appearance in the source file.
+ *
+ * Top-level keys may contain spaces and parens for per-overload entries, e.g.:
+ *   BigText.AddText (Text, Integer):
  */
 function parseYaml(text) {
   const entries = [];
@@ -403,10 +439,11 @@ function parseYaml(text) {
       }
       continue;
     }
-    const topMatch = line.match(/^([A-Za-z0-9_.]+):$/);
+    // Match any top-level key: alphanumeric, dots, underscores, spaces, parens, commas
+    const topMatch = line.match(/^([A-Za-z0-9_.][A-Za-z0-9_. ,()]*):$/);
     if (topMatch) {
       if (current) entries.push(current);
-      current = { name: topMatch[1], tests: [] };
+      current = { name: topMatch[1].trimEnd(), tests: [] };
       continue;
     }
     if (!current) continue;
@@ -479,18 +516,87 @@ function emitYaml(entries, headerLines) {
 /**
  * Merge hand-curation (from existing YAML) into freshly-generated entries.
  * Curated status/tests/notes win when present; auto-detected values fill gaps.
+ *
+ * Migration: if an existing entry has an old-format key "Type.Method" and the
+ * generated entries use new-format keys "Type.Method (sig)", the old entry's
+ * curation is copied to the lowest-arity overload (the one with fewest params),
+ * determined alphabetically when arity is equal.
  */
 function mergeEntries(generated, existing) {
   const existingMap = new Map(existing.map(e => [e.name, e]));
+
+  // Build a secondary map from old-style "Type.Method" → list of new-format entries
+  // so we can migrate hand-curation to the primary (lowest-arity) overload.
+  const oldStyleSiblings = new Map(); // "Type.Method" → [newEntry, ...]
+  for (const gen of generated) {
+    if (gen.layer !== "runtime-api") continue;
+    // New key pattern: "Type.Method (sig)" — extract base "Type.Method"
+    const baseMatch = gen.name.match(/^(.+?) \(.*\)$/);
+    if (!baseMatch) continue;
+    const base = baseMatch[1];
+    if (!oldStyleSiblings.has(base)) oldStyleSiblings.set(base, []);
+    oldStyleSiblings.get(base).push(gen);
+  }
+
+  // For a given base key, find which new-format entry is the "primary":
+  // lowest-arity overload (fewest commas in signature), then alphabetically.
+  function primaryName(base) {
+    const siblings = oldStyleSiblings.get(base) || [];
+    if (siblings.length === 0) return null;
+    return siblings.slice().sort((a, b) => {
+      const arity = (name) => {
+        const m = name.match(/\(([^)]*)\)$/);
+        if (!m || m[1].trim() === "") return 0;
+        return m[1].split(",").length;
+      };
+      const diff = arity(a.name) - arity(b.name);
+      return diff !== 0 ? diff : a.name.localeCompare(b.name);
+    })[0].name;
+  }
+
   return generated.map(gen => {
+    // Exact match (new-format key already in existing YAML, or non-runtime-api entries)
     const prev = existingMap.get(gen.name);
-    if (!prev) return gen;
-    return {
-      ...gen,
-      status: prev.status ?? gen.status,
-      tests: (prev.tests && prev.tests.length > 0) ? prev.tests : gen.tests,
-      notes: prev.notes ?? gen.notes,
-    };
+    if (prev) {
+      // Strip "overloads=N" prefix from notes — auto-generated by the old format
+      // and now meaningless in the per-overload schema. Handle "overloads=N; rest",
+      // "overloads=N rest", and bare "; rest" (from intermediate regenerations
+      // where the overloads= token was already partially stripped).
+      const cleanedNotes = prev.notes
+        ? prev.notes.replace(/^overloads=\d+[;,]?\s*/, "").replace(/^;\s*/, "").trim() || undefined
+        : undefined;
+      return {
+        ...gen,
+        status: prev.status ?? gen.status,
+        tests: (prev.tests && prev.tests.length > 0) ? prev.tests : gen.tests,
+        notes: cleanedNotes ?? gen.notes,
+      };
+    }
+
+    // Migration: look for old-format key "Type.Method" (no signature suffix)
+    if (gen.layer === "runtime-api") {
+      const baseMatch = gen.name.match(/^(.+?) \(.*\)$/);
+      if (baseMatch) {
+        const base = baseMatch[1];
+        const oldEntry = existingMap.get(base);
+        if (oldEntry && primaryName(base) === gen.name) {
+          // Migrate curation from old entry to the primary overload.
+          // Strip "overloads=N" notes — those were auto-generated by the old
+          // format and are now meaningless in the per-overload schema.
+          const migratedNotes = oldEntry.notes
+            ? oldEntry.notes.replace(/^overloads=\d+[;,]?\s*/, "").replace(/^;\s*/, "").trim() || undefined
+            : undefined;
+          return {
+            ...gen,
+            status: oldEntry.status ?? gen.status,
+            tests: (oldEntry.tests && oldEntry.tests.length > 0) ? oldEntry.tests : gen.tests,
+            notes: migratedNotes ?? gen.notes,
+          };
+        }
+      }
+    }
+
+    return gen;
   });
 }
 
@@ -499,21 +605,35 @@ function mergeEntries(generated, existing) {
 function renderMarkdown(entries) {
   const statusIcon = {
     covered: "✅", "not-possible": "❌", gap: "🔲", "out-of-scope": "⬜",
+    "not-tested": "🔶",
   };
   const lines = [
     "# AL Language Coverage Map", "",
     "Auto-generated from `docs/coverage.yaml`. Do not edit directly.", "",
+    "## Per-overload signature tracking", "",
+    "Runtime-API coverage is tracked at **per-overload signature granularity** since " +
+    "[PR #1363](https://github.com/StefanMaron/BusinessCentral.AL.Runner/pull/1363). " +
+    "Each BC built-in method overload gets its own entry, keyed by `Type.Method (ParamTypes)`.", "",
+    "### Status meanings for runtime-api", "",
+    "| Status | Meaning |",
+    "|--------|---------|",
+    "| ✅ covered | Single overload and `AL<Method>` found in mock — confirmed implemented |",
+    "| 🔶 not-tested | `AL<Method>` found in mock but method has multiple overloads — name is implemented but per-overload coverage is unconfirmed |",
+    "| 🔲 gap | `AL<Method>` not found in any mapped mock file — not yet implemented |",
+    "| ❌ not-possible | Architectural limit (parallel session, real HTTP I/O, debugger) |",
+    "",
   ];
 
   // Summary per layer
   for (const layer of ["syntax", "runtime-api"]) {
     const scope = entries.filter(e => (e.layer || "syntax") === layer);
     if (scope.length === 0) continue;
-    const counts = { covered: 0, gap: 0, "not-possible": 0, "out-of-scope": 0 };
+    const counts = { covered: 0, gap: 0, "not-possible": 0, "out-of-scope": 0, "not-tested": 0 };
     for (const e of scope) counts[e.status] = (counts[e.status] || 0) + 1;
     lines.push(`## Summary — ${layer}`, "");
     lines.push(`| Status | Count |`, `|--------|-------|`);
     lines.push(`| ✅ Covered | ${counts.covered || 0} |`);
+    lines.push(`| 🔶 Not tested (overload) | ${counts["not-tested"] || 0} |`);
     lines.push(`| 🔲 Gap | ${counts.gap || 0} |`);
     lines.push(`| ❌ Not possible | ${counts["not-possible"] || 0} |`);
     lines.push(`| ⬜ Out of scope | ${counts["out-of-scope"] || 0} |`);
@@ -547,24 +667,31 @@ function renderMarkdown(entries) {
   }
 
   // Runtime-API section (grouped by AL type, i.e. category)
+  // Each row is one overload signature.
   const runtime = entries.filter(e => e.layer === "runtime-api");
   if (runtime.length > 0) {
     lines.push("# Runtime API layer", "");
     lines.push("Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. " +
-               "Coverage = AL-prefixed method present in `AlRunner/Runtime/*.cs`.", "");
+               "Coverage = AL-prefixed method present in `AlRunner/Runtime/*.cs`. " +
+               "Each row is one overload signature.", "");
     const grouped = groupBy(runtime, e => e.category || "uncategorized");
     const types = Object.keys(grouped).sort();
     for (const t of types) {
       const bucket = grouped[t];
       const coveredCount = bucket.filter(e => e.status === "covered").length;
       lines.push(`## ${t}  (${coveredCount}/${bucket.length})`, "");
-      lines.push("| Method | Status | Overloads | Notes |");
-      lines.push("|--------|--------|-----------|-------|");
+      lines.push("| Method | Signature | Status | Notes |");
+      lines.push("|--------|-----------|--------|-------|");
       for (const e of bucket.sort((a, b) => a.name.localeCompare(b.name))) {
         const icon = statusIcon[e.status] || "❓";
-        const method = e.name.includes(".") ? e.name.split(".").slice(1).join(".") : e.name;
-        const overloads = (e.notes && /overloads=(\d+)/.exec(e.notes)) ? RegExp.$1 : "";
-        lines.push(`| \`${method}\` | ${icon} ${e.status} | ${overloads} | ${(e.notes || "").replace(/overloads=\d+\s*/, "")} |`);
+        // Extract "Method (sig)" from "Type.Method (sig)"
+        const dotIdx = e.name.indexOf(".");
+        const methodAndSig = dotIdx >= 0 ? e.name.slice(dotIdx + 1) : e.name;
+        // Split into method name and signature
+        const sigMatch = methodAndSig.match(/^(.+?) (\(.*\))$/);
+        const methodName = sigMatch ? sigMatch[1] : methodAndSig;
+        const sig = sigMatch ? sigMatch[2] : "";
+        lines.push(`| \`${methodName}\` | \`${sig}\` | ${icon} ${e.status} | ${e.notes || ""} |`);
       }
       lines.push("");
     }
@@ -601,7 +728,7 @@ function validate(entries) {
       }
     }
     if (e.layer === "runtime-api" && !e.name.includes(".")) {
-      console.error(`ERROR: runtime-api entry ${e.name} must be 'Type.Method'`); errors++;
+      console.error(`ERROR: runtime-api entry ${e.name} must be 'Type.Method' or 'Type.Method (sig)'`); errors++;
     }
   }
   return errors;
@@ -678,14 +805,15 @@ async function main() {
   if (fs.existsSync(RUNTIME_API_JSON)) {
     const runtimeApi = JSON.parse(fs.readFileSync(RUNTIME_API_JSON, "utf8"));
     const coverage = buildRuntimeApiCoverage(runtimeApi);
-    console.log(`[runtime-api] ${Object.keys(coverage).length} entries from ${Object.keys(runtimeApi.types).length} types`);
+    console.log(`[runtime-api] ${Object.keys(coverage).length} overload entries from ${Object.keys(runtimeApi.types).length} types`);
     const generated = Object.values(coverage).map(c => ({
-      name: `${c.type}.${c.method}`,
+      // Key includes signature so each overload is a separate entry:
+      // e.g. "BigText.AddText (Text, Integer)"
+      name: `${c.type}.${c.method} ${c.signature}`,
       layer: "runtime-api",
       category: c.type,
       status: c.status,
       tests: [],
-      notes: `overloads=${c.overloads}`,
     }));
     runtimeEntries = mergeEntries(generated, existingEntries.filter(e => e.layer === "runtime-api"));
   } else {
@@ -706,6 +834,8 @@ async function main() {
     "# Status values:",
     "#   covered       — supported with proof (tests for syntax, mock impl for runtime-api)",
     "#   not-possible  — architectural limits prevent support",
+    "#   not-tested    — method name exists in mock but has multiple overloads;",
+    "#                   per-overload coverage is unconfirmed",
     "#   gap           — in-scope but not yet implemented",
     "#   out-of-scope  — not relevant to the runner",
     "#",

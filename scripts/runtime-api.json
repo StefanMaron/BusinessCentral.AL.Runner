@@ -1,12 +1,12 @@
 {
-  "generated": "2026-04-15T16:09:53Z",
+  "generated": "2026-04-26T10.13.08Z",
   "compiler_dll": "Microsoft.Dynamics.Nav.CodeAnalysis.dll",
   "types": {
     "BigInteger": {
       "methods": [
         {
           "name": "ToText",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -14,27 +14,35 @@
       "methods": [
         {
           "name": "AddText",
-          "overloads": 2
+          "signature": "(BigText, Integer)"
+        },
+        {
+          "name": "AddText",
+          "signature": "(Text, Integer)"
         },
         {
           "name": "GetSubText",
-          "overloads": 2
+          "signature": "(BigText, Integer, Integer)"
+        },
+        {
+          "name": "GetSubText",
+          "signature": "(Text, Integer, Integer)"
         },
         {
           "name": "Length",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Read",
-          "overloads": 1
+          "signature": "(InStream)"
         },
         {
           "name": "TextPos",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Write",
-          "overloads": 1
+          "signature": "(OutStream)"
         }
       ]
     },
@@ -42,27 +50,27 @@
       "methods": [
         {
           "name": "CreateInStream",
-          "overloads": 1
+          "signature": "(InStream, TextEncoding)"
         },
         {
           "name": "CreateOutStream",
-          "overloads": 1
+          "signature": "(OutStream, TextEncoding)"
         },
         {
           "name": "Export",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "HasValue",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Import",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Length",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -70,7 +78,11 @@
       "methods": [
         {
           "name": "ToText",
-          "overloads": 2
+          "signature": "()"
+        },
+        {
+          "name": "ToText",
+          "signature": "(Boolean)"
         }
       ]
     },
@@ -78,7 +90,11 @@
       "methods": [
         {
           "name": "ToText",
-          "overloads": 2
+          "signature": "()"
+        },
+        {
+          "name": "ToText",
+          "signature": "(Boolean)"
         }
       ]
     },
@@ -86,7 +102,11 @@
       "methods": [
         {
           "name": "Run",
-          "overloads": 1
+          "signature": "(Integer, Table)"
+        },
+        {
+          "name": "Run",
+          "signature": "(Text, Table)"
         }
       ]
     },
@@ -94,7 +114,7 @@
       "methods": [
         {
           "name": "Run",
-          "overloads": 1
+          "signature": "(Table)"
         }
       ]
     },
@@ -102,15 +122,15 @@
       "methods": [
         {
           "name": "DisplayName",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ID",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "UrlName",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -118,31 +138,31 @@
       "methods": [
         {
           "name": "Domain",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Expires",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "HttpOnly",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Name",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Path",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Secure",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Value",
-          "overloads": 1
+          "signature": "(Text)"
         }
       ]
     },
@@ -150,35 +170,39 @@
       "methods": [
         {
           "name": "AddConstantValue",
-          "overloads": 1
+          "signature": "(Joker, Integer)"
+        },
+        {
+          "name": "AddDestinationFilter",
+          "signature": "(Integer, Text, Joker)"
         },
         {
           "name": "AddFieldValue",
-          "overloads": 1
+          "signature": "(Integer, Integer)"
         },
         {
           "name": "AddJoin",
-          "overloads": 1
+          "signature": "(Integer, Integer)"
         },
         {
           "name": "AddSourceFilter",
-          "overloads": 1
+          "signature": "(Integer, Text, Joker)"
         },
         {
           "name": "CopyFields",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "CopyRows",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SetTables",
-          "overloads": 1
+          "signature": "(Integer, Integer)"
         },
         {
           "name": "UpdateAuditFields",
-          "overloads": 1
+          "signature": "(Boolean)"
         }
       ]
     },
@@ -186,119 +210,123 @@
       "methods": [
         {
           "name": "AlterKey",
-          "overloads": 1
+          "signature": "(KeyRef, Boolean)"
         },
         {
           "name": "ChangeUserPassword",
-          "overloads": 1
+          "signature": "(Text, Text)"
         },
         {
           "name": "CheckLicenseFile",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "Commit",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "CompanyName",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "CopyCompany",
-          "overloads": 1
+          "signature": "(Text, Text)"
         },
         {
           "name": "CurrentTransactionType",
-          "overloads": 1
+          "signature": "(TransactionType)"
         },
         {
           "name": "DataFileInformation",
-          "overloads": 1
+          "signature": "(Boolean, Text, Text, Boolean, Boolean, Boolean, Text, DateTime, Table)"
         },
         {
           "name": "ExportData",
-          "overloads": 1
+          "signature": "(Boolean, Text, Text, Boolean, Boolean, Boolean, Table)"
         },
         {
           "name": "GetDefaultTableConnection",
-          "overloads": 1
+          "signature": "(TableConnectionType)"
         },
         {
           "name": "HasTableConnection",
-          "overloads": 1
+          "signature": "(TableConnectionType, Text)"
         },
         {
           "name": "ImportData",
-          "overloads": 1
+          "signature": "(Boolean, Text, Boolean, Boolean, Table)"
         },
         {
           "name": "IsInWriteTransaction",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "LastUsedRowVersion",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "LockTimeout",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "LockTimeoutDuration",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "MinimumActiveRowVersion",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "RegisterTableConnection",
-          "overloads": 1
+          "signature": "(TableConnectionType, Text, Text)"
         },
         {
           "name": "SID",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "SelectLatestVersion",
-          "overloads": 2
+          "signature": "()"
+        },
+        {
+          "name": "SelectLatestVersion",
+          "signature": "(Integer)"
         },
         {
           "name": "SerialNumber",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ServiceInstanceId",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SessionId",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SetDefaultTableConnection",
-          "overloads": 1
+          "signature": "(TableConnectionType, Text, Boolean)"
         },
         {
           "name": "SetUserPassword",
-          "overloads": 1
+          "signature": "(Guid, Text)"
         },
         {
           "name": "TenantId",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "UnregisterTableConnection",
-          "overloads": 1
+          "signature": "(TableConnectionType, Text)"
         },
         {
           "name": "UserId",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "UserSecurityId",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -306,27 +334,27 @@
       "methods": [
         {
           "name": "Day",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "DayOfWeek",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Month",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ToText",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "WeekNo",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Year",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -334,15 +362,15 @@
       "methods": [
         {
           "name": "Date",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Time",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ToText",
-          "overloads": 1
+          "signature": "(Boolean)"
         }
       ]
     },
@@ -350,79 +378,79 @@
       "methods": [
         {
           "name": "Activate",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Attach",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "Break",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "BreakOnError",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "BreakOnRecordChanges",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "Continue",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Deactivate",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "DebuggedSessionID",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "DebuggingSessionID",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "EnableSqlTrace",
-          "overloads": 1
+          "signature": "(Integer, Boolean)"
         },
         {
           "name": "GetLastErrorText",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsActive",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsAttached",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsBreakpointHit",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SkipSystemTriggers",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "StepInto",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "StepOut",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "StepOver",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Stop",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -430,7 +458,11 @@
       "methods": [
         {
           "name": "ToText",
-          "overloads": 2
+          "signature": "()"
+        },
+        {
+          "name": "ToText",
+          "signature": "(Boolean)"
         }
       ]
     },
@@ -438,39 +470,47 @@
       "methods": [
         {
           "name": "Close",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Confirm",
-          "overloads": 1
+          "signature": "(Text, Boolean, Joker)"
         },
         {
           "name": "Error",
-          "overloads": 2
+          "signature": "(ErrorInfo)"
+        },
+        {
+          "name": "Error",
+          "signature": "(Text, Joker)"
         },
         {
           "name": "HideSubsequentDialogs",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "LogInternalError",
-          "overloads": 2
+          "signature": "(Text, DataClassification, Verbosity)"
+        },
+        {
+          "name": "LogInternalError",
+          "signature": "(Text, Text, DataClassification, Verbosity)"
         },
         {
           "name": "Message",
-          "overloads": 1
+          "signature": "(Text, Joker)"
         },
         {
           "name": "Open",
-          "overloads": 1
+          "signature": "(Text, Joker)"
         },
         {
           "name": "StrMenu",
-          "overloads": 1
+          "signature": "(Text, Integer, Text)"
         },
         {
           "name": "Update",
-          "overloads": 1
+          "signature": "(Integer, Joker)"
         }
       ]
     },
@@ -478,7 +518,7 @@
       "methods": [
         {
           "name": "ToText",
-          "overloads": 1
+          "signature": "(Boolean)"
         }
       ]
     },
@@ -486,19 +526,19 @@
       "methods": [
         {
           "name": "AsInteger",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "FromInteger",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "Names",
-          "overloads": 2
+          "signature": "()"
         },
         {
           "name": "Ordinals",
-          "overloads": 2
+          "signature": "()"
         }
       ]
     },
@@ -506,75 +546,87 @@
       "methods": [
         {
           "name": "AddAction",
-          "overloads": 2
+          "signature": "(Text, Integer, Text)"
+        },
+        {
+          "name": "AddAction",
+          "signature": "(Text, Integer, Text, Text)"
         },
         {
           "name": "AddNavigationAction",
-          "overloads": 2
+          "signature": "(Text)"
+        },
+        {
+          "name": "AddNavigationAction",
+          "signature": "(Text, Text)"
         },
         {
           "name": "Callstack",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Collectible",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "ControlName",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Create",
-          "overloads": 2
+          "signature": "()"
+        },
+        {
+          "name": "Create",
+          "signature": "(Text, Boolean, Table, Integer, Integer, Text, Verbosity, DataClassification, Dictionary)"
         },
         {
           "name": "CustomDimensions",
-          "overloads": 1
+          "signature": "(Dictionary)"
         },
         {
           "name": "DataClassification",
-          "overloads": 1
+          "signature": "(DataClassification)"
         },
         {
           "name": "DetailedMessage",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "ErrorType",
-          "overloads": 1
+          "signature": "(ErrorType)"
         },
         {
           "name": "FieldNo",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "Message",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "PageNo",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "RecordId",
-          "overloads": 1
+          "signature": "(RecordId)"
         },
         {
           "name": "SystemId",
-          "overloads": 1
+          "signature": "(Guid)"
         },
         {
           "name": "TableId",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "Title",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Verbosity",
-          "overloads": 1
+          "signature": "(Verbosity)"
         }
       ]
     },
@@ -582,127 +634,271 @@
       "methods": [
         {
           "name": "Active",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "CalcField",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "CalcSum",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Caption",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Class",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "EnumValueCount",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "FieldError",
-          "overloads": 2
+          "signature": "(ErrorInfo)"
+        },
+        {
+          "name": "FieldError",
+          "signature": "(Text)"
         },
         {
           "name": "GetEnumValueCaption",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GetEnumValueCaptionFromOrdinalValue",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GetEnumValueName",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GetEnumValueNameFromOrdinalValue",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GetEnumValueOrdinal",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GetFilter",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetRangeMax",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetRangeMin",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsEnum",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsOptimizedForTextSearch",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Length",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Name",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Number",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "OptionCaption",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "OptionMembers",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "OptionString",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Record",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Relation",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SetFilter",
-          "overloads": 1
+          "signature": "(Text, Joker)"
         },
         {
           "name": "SetRange",
-          "overloads": 1
+          "signature": "(Joker, Joker)"
         },
         {
           "name": "TestField",
-          "overloads": 38
+          "signature": "()"
+        },
+        {
+          "name": "TestField",
+          "signature": "(BigInteger)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(BigInteger, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Boolean)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Boolean, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Byte)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Byte, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Char)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Char, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Code)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Code, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Date)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Date, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(DateTime)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(DateTime, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Decimal)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Decimal, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Enum)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Enum, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Guid)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Guid, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Integer)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Integer, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Label)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Label, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Option)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Option, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Text)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Text, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Time)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Time, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Variant)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Variant, ErrorInfo)"
         },
         {
           "name": "Type",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Validate",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "Value",
-          "overloads": 1
+          "signature": "(Joker)"
         }
       ]
     },
@@ -710,115 +906,195 @@
       "methods": [
         {
           "name": "Close",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Copy",
-          "overloads": 1
+          "signature": "(Text, Text)"
         },
         {
           "name": "Create",
-          "overloads": 1
+          "signature": "(Text, TextEncoding)"
         },
         {
           "name": "CreateInStream",
-          "overloads": 1
+          "signature": "(InStream)"
         },
         {
           "name": "CreateOutStream",
-          "overloads": 1
+          "signature": "(OutStream)"
         },
         {
           "name": "CreateTempFile",
-          "overloads": 1
+          "signature": "(TextEncoding)"
         },
         {
           "name": "Download",
-          "overloads": 1
+          "signature": "(Text, Text, Text, Text, Text)"
         },
         {
           "name": "DownloadFromStream",
-          "overloads": 1
+          "signature": "(InStream, Text, Text, Text, Text)"
         },
         {
           "name": "Erase",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Exists",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "GetStamp",
-          "overloads": 1
+          "signature": "(Text, Date, Time)"
         },
         {
           "name": "IsPathTemporary",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Len",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Name",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Open",
-          "overloads": 1
+          "signature": "(Text, TextEncoding)"
         },
         {
           "name": "Pos",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Read",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "Rename",
-          "overloads": 1
+          "signature": "(Text, Text)"
         },
         {
           "name": "Seek",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "SetStamp",
-          "overloads": 1
+          "signature": "(Text, Date, Time)"
         },
         {
           "name": "TextMode",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "Trunc",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Upload",
-          "overloads": 1
+          "signature": "(Text, Text, Text, Text, Text)"
         },
         {
           "name": "UploadIntoStream",
-          "overloads": 2
+          "signature": "(Text, InStream)"
+        },
+        {
+          "name": "UploadIntoStream",
+          "signature": "(Text, Text, Text, Text, InStream)"
         },
         {
           "name": "View",
-          "overloads": 1
+          "signature": "(Text, Boolean)"
         },
         {
           "name": "ViewFromStream",
-          "overloads": 1
+          "signature": "(InStream, Text, Boolean)"
         },
         {
           "name": "Write",
-          "overloads": 21
+          "signature": "(BigInteger)"
+        },
+        {
+          "name": "Write",
+          "signature": "(BigText)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Boolean)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Byte)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Char)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Code)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Date)"
+        },
+        {
+          "name": "Write",
+          "signature": "(DateFormula)"
+        },
+        {
+          "name": "Write",
+          "signature": "(DateTime)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Decimal)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Duration)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Guid)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Integer)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Joker)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Label)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Option)"
+        },
+        {
+          "name": "Write",
+          "signature": "(RecordId)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Table)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Text)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Time)"
         },
         {
           "name": "WriteMode",
-          "overloads": 1
+          "signature": "(Boolean)"
         }
       ]
     },
@@ -826,11 +1102,15 @@
       "methods": [
         {
           "name": "CreateInStream",
-          "overloads": 2
+          "signature": "(InStream)"
+        },
+        {
+          "name": "CreateInStream",
+          "signature": "(InStream, TextEncoding)"
         },
         {
           "name": "FileName",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -838,47 +1118,51 @@
       "methods": [
         {
           "name": "AddField",
-          "overloads": 2
+          "signature": "(Text, FieldRef, Text)"
+        },
+        {
+          "name": "AddField",
+          "signature": "(Text, Joker, Text)"
         },
         {
           "name": "AddFieldNo",
-          "overloads": 1
+          "signature": "(Text, Integer, Text)"
         },
         {
           "name": "AddRecord",
-          "overloads": 1
+          "signature": "(Text, Table)"
         },
         {
           "name": "AddRecordRef",
-          "overloads": 1
+          "signature": "(Text, RecordRef)"
         },
         {
           "name": "AddTable",
-          "overloads": 1
+          "signature": "(Text, Integer)"
         },
         {
           "name": "Count",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetView",
-          "overloads": 1
+          "signature": "(Text, Boolean)"
         },
         {
           "name": "Name",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "PageCaption",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "RunModal",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SetView",
-          "overloads": 1
+          "signature": "(Text, Text)"
         }
       ]
     },
@@ -886,15 +1170,19 @@
       "methods": [
         {
           "name": "CreateGuid",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "CreateSequentialGuid",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ToText",
-          "overloads": 2
+          "signature": "()"
+        },
+        {
+          "name": "ToText",
+          "signature": "(Boolean)"
         }
       ]
     },
@@ -902,67 +1190,75 @@
       "methods": [
         {
           "name": "AddCertificate",
-          "overloads": 2
+          "signature": "(SecretText, SecretText)"
+        },
+        {
+          "name": "AddCertificate",
+          "signature": "(Text, Text)"
         },
         {
           "name": "Clear",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "DefaultRequestHeaders",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Delete",
-          "overloads": 1
+          "signature": "(Text, HttpResponseMessage)"
         },
         {
           "name": "Get",
-          "overloads": 1
+          "signature": "(Text, HttpResponseMessage)"
         },
         {
           "name": "GetBaseAddress",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Patch",
-          "overloads": 1
+          "signature": "(Text, HttpContent, HttpResponseMessage)"
         },
         {
           "name": "Post",
-          "overloads": 1
+          "signature": "(Text, HttpContent, HttpResponseMessage)"
         },
         {
           "name": "Put",
-          "overloads": 1
+          "signature": "(Text, HttpContent, HttpResponseMessage)"
         },
         {
           "name": "Send",
-          "overloads": 1
+          "signature": "(HttpRequestMessage, HttpResponseMessage)"
         },
         {
           "name": "SetBaseAddress",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Timeout",
-          "overloads": 1
+          "signature": "(Duration)"
         },
         {
           "name": "UseDefaultNetworkWindowsAuthentication",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "UseResponseCookies",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "UseServerCertificateValidation",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "UseWindowsAuthentication",
-          "overloads": 2
+          "signature": "(SecretText, SecretText, SecretText)"
+        },
+        {
+          "name": "UseWindowsAuthentication",
+          "signature": "(Text, Text, Text)"
         }
       ]
     },
@@ -970,23 +1266,39 @@
       "methods": [
         {
           "name": "Clear",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetHeaders",
-          "overloads": 1
+          "signature": "(HttpHeaders)"
         },
         {
           "name": "IsSecretContent",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ReadAs",
-          "overloads": 3
+          "signature": "(InStream)"
+        },
+        {
+          "name": "ReadAs",
+          "signature": "(SecretText)"
+        },
+        {
+          "name": "ReadAs",
+          "signature": "(Text)"
         },
         {
           "name": "WriteFrom",
-          "overloads": 3
+          "signature": "(InStream)"
+        },
+        {
+          "name": "WriteFrom",
+          "signature": "(SecretText)"
+        },
+        {
+          "name": "WriteFrom",
+          "signature": "(Text)"
         }
       ]
     },
@@ -994,39 +1306,55 @@
       "methods": [
         {
           "name": "Add",
-          "overloads": 2
+          "signature": "(Text, SecretText)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Text, Text)"
         },
         {
           "name": "Clear",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Contains",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "ContainsSecret",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "GetSecretValues",
-          "overloads": 2
+          "signature": "(Text, Array)"
+        },
+        {
+          "name": "GetSecretValues",
+          "signature": "(Text, List)"
         },
         {
           "name": "GetValues",
-          "overloads": 2
+          "signature": "(Text, Array)"
+        },
+        {
+          "name": "GetValues",
+          "signature": "(Text, List)"
         },
         {
           "name": "Keys",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Remove",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "TryAddWithoutValidation",
-          "overloads": 2
+          "signature": "(Text, SecretText)"
+        },
+        {
+          "name": "TryAddWithoutValidation",
+          "signature": "(Text, Text)"
         }
       ]
     },
@@ -1034,47 +1362,51 @@
       "methods": [
         {
           "name": "Content",
-          "overloads": 1
+          "signature": "(HttpContent)"
         },
         {
           "name": "GetCookie",
-          "overloads": 1
+          "signature": "(Text, Cookie)"
         },
         {
           "name": "GetCookieNames",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetHeaders",
-          "overloads": 1
+          "signature": "(HttpHeaders)"
         },
         {
           "name": "GetRequestUri",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetSecretRequestUri",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Method",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "RemoveCookie",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "SetCookie",
-          "overloads": 2
+          "signature": "(Cookie)"
+        },
+        {
+          "name": "SetCookie",
+          "signature": "(Text, Text)"
         },
         {
           "name": "SetRequestUri",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "SetSecretRequestUri",
-          "overloads": 1
+          "signature": "(SecretText)"
         }
       ]
     },
@@ -1082,35 +1414,35 @@
       "methods": [
         {
           "name": "Content",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetCookie",
-          "overloads": 1
+          "signature": "(Text, Cookie)"
         },
         {
           "name": "GetCookieNames",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Headers",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "HttpStatusCode",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsBlockedByEnvironment",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsSuccessStatusCode",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ReasonPhrase",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -1118,27 +1450,59 @@
       "methods": [
         {
           "name": "EOS",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Length",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Position",
-          "overloads": 1
+          "signature": "(BigInteger)"
         },
         {
           "name": "Read",
-          "overloads": 9
+          "signature": "(BigInteger, Integer)"
+        },
+        {
+          "name": "Read",
+          "signature": "(Boolean, Integer)"
+        },
+        {
+          "name": "Read",
+          "signature": "(Byte, Integer)"
+        },
+        {
+          "name": "Read",
+          "signature": "(Char, Integer)"
+        },
+        {
+          "name": "Read",
+          "signature": "(Decimal, Integer)"
+        },
+        {
+          "name": "Read",
+          "signature": "(Guid, Integer)"
+        },
+        {
+          "name": "Read",
+          "signature": "(Integer, Integer)"
+        },
+        {
+          "name": "Read",
+          "signature": "(Joker, Integer)"
+        },
+        {
+          "name": "Read",
+          "signature": "(Text, Integer)"
         },
         {
           "name": "ReadText",
-          "overloads": 1
+          "signature": "(Text, Integer)"
         },
         {
           "name": "ResetPosition",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -1146,7 +1510,7 @@
       "methods": [
         {
           "name": "ToText",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -1154,23 +1518,47 @@
       "methods": [
         {
           "name": "Contains",
-          "overloads": 2
+          "signature": "(Text, DataScope)"
+        },
+        {
+          "name": "Contains",
+          "signature": "(Text, DataScope, Boolean)"
         },
         {
           "name": "Delete",
-          "overloads": 1
+          "signature": "(Text, DataScope)"
         },
         {
           "name": "Get",
-          "overloads": 4
+          "signature": "(Text, DataScope, SecretText)"
+        },
+        {
+          "name": "Get",
+          "signature": "(Text, DataScope, Text)"
+        },
+        {
+          "name": "Get",
+          "signature": "(Text, SecretText)"
+        },
+        {
+          "name": "Get",
+          "signature": "(Text, Text)"
         },
         {
           "name": "Set",
-          "overloads": 2
+          "signature": "(Text, SecretText, DataScope)"
+        },
+        {
+          "name": "Set",
+          "signature": "(Text, Text, DataScope)"
         },
         {
           "name": "SetEncrypted",
-          "overloads": 2
+          "signature": "(Text, SecretText, DataScope)"
+        },
+        {
+          "name": "SetEncrypted",
+          "signature": "(Text, Text, DataScope)"
         }
       ]
     },
@@ -1178,111 +1566,363 @@
       "methods": [
         {
           "name": "Add",
-          "overloads": 16
+          "signature": "(BigInteger)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Boolean)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Byte)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Char)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Date)"
+        },
+        {
+          "name": "Add",
+          "signature": "(DateTime)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Decimal)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Duration)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Integer)"
+        },
+        {
+          "name": "Add",
+          "signature": "(JsonArray)"
+        },
+        {
+          "name": "Add",
+          "signature": "(JsonObject)"
+        },
+        {
+          "name": "Add",
+          "signature": "(JsonToken)"
+        },
+        {
+          "name": "Add",
+          "signature": "(JsonValue)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Option)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Text)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Time)"
         },
         {
           "name": "AsToken",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Clone",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Count",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Get",
-          "overloads": 1
+          "signature": "(Integer, JsonToken)"
         },
         {
           "name": "GetArray",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GetBigInteger",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GetBoolean",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GetByte",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GetChar",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GetDate",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GetDateTime",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GetDecimal",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GetDuration",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GetInteger",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GetObject",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GetOption",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GetText",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GetTime",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "IndexOf",
-          "overloads": 16
+          "signature": "(BigInteger)"
+        },
+        {
+          "name": "IndexOf",
+          "signature": "(Boolean)"
+        },
+        {
+          "name": "IndexOf",
+          "signature": "(Byte)"
+        },
+        {
+          "name": "IndexOf",
+          "signature": "(Char)"
+        },
+        {
+          "name": "IndexOf",
+          "signature": "(Date)"
+        },
+        {
+          "name": "IndexOf",
+          "signature": "(DateTime)"
+        },
+        {
+          "name": "IndexOf",
+          "signature": "(Decimal)"
+        },
+        {
+          "name": "IndexOf",
+          "signature": "(Duration)"
+        },
+        {
+          "name": "IndexOf",
+          "signature": "(Integer)"
+        },
+        {
+          "name": "IndexOf",
+          "signature": "(JsonArray)"
+        },
+        {
+          "name": "IndexOf",
+          "signature": "(JsonObject)"
+        },
+        {
+          "name": "IndexOf",
+          "signature": "(JsonToken)"
+        },
+        {
+          "name": "IndexOf",
+          "signature": "(JsonValue)"
+        },
+        {
+          "name": "IndexOf",
+          "signature": "(Option)"
+        },
+        {
+          "name": "IndexOf",
+          "signature": "(Text)"
+        },
+        {
+          "name": "IndexOf",
+          "signature": "(Time)"
         },
         {
           "name": "Insert",
-          "overloads": 16
+          "signature": "(Integer, BigInteger)"
+        },
+        {
+          "name": "Insert",
+          "signature": "(Integer, Boolean)"
+        },
+        {
+          "name": "Insert",
+          "signature": "(Integer, Byte)"
+        },
+        {
+          "name": "Insert",
+          "signature": "(Integer, Char)"
+        },
+        {
+          "name": "Insert",
+          "signature": "(Integer, Date)"
+        },
+        {
+          "name": "Insert",
+          "signature": "(Integer, DateTime)"
+        },
+        {
+          "name": "Insert",
+          "signature": "(Integer, Decimal)"
+        },
+        {
+          "name": "Insert",
+          "signature": "(Integer, Duration)"
+        },
+        {
+          "name": "Insert",
+          "signature": "(Integer, Integer)"
+        },
+        {
+          "name": "Insert",
+          "signature": "(Integer, JsonArray)"
+        },
+        {
+          "name": "Insert",
+          "signature": "(Integer, JsonObject)"
+        },
+        {
+          "name": "Insert",
+          "signature": "(Integer, JsonToken)"
+        },
+        {
+          "name": "Insert",
+          "signature": "(Integer, JsonValue)"
+        },
+        {
+          "name": "Insert",
+          "signature": "(Integer, Option)"
+        },
+        {
+          "name": "Insert",
+          "signature": "(Integer, Text)"
+        },
+        {
+          "name": "Insert",
+          "signature": "(Integer, Time)"
         },
         {
           "name": "Path",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ReadFrom",
-          "overloads": 2
+          "signature": "(InStream)"
+        },
+        {
+          "name": "ReadFrom",
+          "signature": "(Text)"
         },
         {
           "name": "RemoveAt",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "SelectToken",
-          "overloads": 1
+          "signature": "(Text, JsonToken)"
+        },
+        {
+          "name": "SelectTokens",
+          "signature": "(Text, List)"
         },
         {
           "name": "Set",
-          "overloads": 16
+          "signature": "(Integer, BigInteger)"
+        },
+        {
+          "name": "Set",
+          "signature": "(Integer, Boolean)"
+        },
+        {
+          "name": "Set",
+          "signature": "(Integer, Byte)"
+        },
+        {
+          "name": "Set",
+          "signature": "(Integer, Char)"
+        },
+        {
+          "name": "Set",
+          "signature": "(Integer, Date)"
+        },
+        {
+          "name": "Set",
+          "signature": "(Integer, DateTime)"
+        },
+        {
+          "name": "Set",
+          "signature": "(Integer, Decimal)"
+        },
+        {
+          "name": "Set",
+          "signature": "(Integer, Duration)"
+        },
+        {
+          "name": "Set",
+          "signature": "(Integer, Integer)"
+        },
+        {
+          "name": "Set",
+          "signature": "(Integer, JsonArray)"
+        },
+        {
+          "name": "Set",
+          "signature": "(Integer, JsonObject)"
+        },
+        {
+          "name": "Set",
+          "signature": "(Integer, JsonToken)"
+        },
+        {
+          "name": "Set",
+          "signature": "(Integer, JsonValue)"
+        },
+        {
+          "name": "Set",
+          "signature": "(Integer, Option)"
+        },
+        {
+          "name": "Set",
+          "signature": "(Integer, Text)"
+        },
+        {
+          "name": "Set",
+          "signature": "(Integer, Time)"
         },
         {
           "name": "WriteTo",
-          "overloads": 2
+          "signature": "(OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(Text)"
         }
       ]
     },
@@ -1290,123 +1930,267 @@
       "methods": [
         {
           "name": "Add",
-          "overloads": 16
+          "signature": "(Text, BigInteger)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Text, Boolean)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Text, Byte)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Text, Char)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Text, Date)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Text, DateTime)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Text, Decimal)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Text, Duration)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Text, Integer)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Text, JsonArray)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Text, JsonObject)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Text, JsonToken)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Text, JsonValue)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Text, Option)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Text, Text)"
+        },
+        {
+          "name": "Add",
+          "signature": "(Text, Time)"
         },
         {
           "name": "AsToken",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Clone",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Contains",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Get",
-          "overloads": 1
+          "signature": "(Text, JsonToken)"
         },
         {
           "name": "GetArray",
-          "overloads": 1
+          "signature": "(Text, Boolean)"
         },
         {
           "name": "GetBigInteger",
-          "overloads": 1
+          "signature": "(Text, Boolean)"
         },
         {
           "name": "GetBoolean",
-          "overloads": 1
+          "signature": "(Text, Boolean)"
         },
         {
           "name": "GetByte",
-          "overloads": 1
+          "signature": "(Text, Boolean)"
         },
         {
           "name": "GetChar",
-          "overloads": 1
+          "signature": "(Text, Boolean)"
         },
         {
           "name": "GetDate",
-          "overloads": 1
+          "signature": "(Text, Boolean)"
         },
         {
           "name": "GetDateTime",
-          "overloads": 1
+          "signature": "(Text, Boolean)"
         },
         {
           "name": "GetDecimal",
-          "overloads": 1
+          "signature": "(Text, Boolean)"
         },
         {
           "name": "GetDuration",
-          "overloads": 1
+          "signature": "(Text, Boolean)"
         },
         {
           "name": "GetInteger",
-          "overloads": 1
+          "signature": "(Text, Boolean)"
         },
         {
           "name": "GetObject",
-          "overloads": 1
+          "signature": "(Text, Boolean)"
         },
         {
           "name": "GetOption",
-          "overloads": 1
+          "signature": "(Text, Boolean)"
         },
         {
           "name": "GetText",
-          "overloads": 1
+          "signature": "(Text, Boolean)"
         },
         {
           "name": "GetTime",
-          "overloads": 1
+          "signature": "(Text, Boolean)"
         },
         {
           "name": "Keys",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Path",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ReadFrom",
-          "overloads": 2
+          "signature": "(InStream)"
+        },
+        {
+          "name": "ReadFrom",
+          "signature": "(Text)"
         },
         {
           "name": "ReadFromYaml",
-          "overloads": 2
+          "signature": "(InStream)"
+        },
+        {
+          "name": "ReadFromYaml",
+          "signature": "(Text)"
         },
         {
           "name": "Remove",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Replace",
-          "overloads": 16
+          "signature": "(Text, BigInteger)"
+        },
+        {
+          "name": "Replace",
+          "signature": "(Text, Boolean)"
+        },
+        {
+          "name": "Replace",
+          "signature": "(Text, Byte)"
+        },
+        {
+          "name": "Replace",
+          "signature": "(Text, Char)"
+        },
+        {
+          "name": "Replace",
+          "signature": "(Text, Date)"
+        },
+        {
+          "name": "Replace",
+          "signature": "(Text, DateTime)"
+        },
+        {
+          "name": "Replace",
+          "signature": "(Text, Decimal)"
+        },
+        {
+          "name": "Replace",
+          "signature": "(Text, Duration)"
+        },
+        {
+          "name": "Replace",
+          "signature": "(Text, Integer)"
+        },
+        {
+          "name": "Replace",
+          "signature": "(Text, JsonArray)"
+        },
+        {
+          "name": "Replace",
+          "signature": "(Text, JsonObject)"
+        },
+        {
+          "name": "Replace",
+          "signature": "(Text, JsonToken)"
+        },
+        {
+          "name": "Replace",
+          "signature": "(Text, JsonValue)"
+        },
+        {
+          "name": "Replace",
+          "signature": "(Text, Option)"
+        },
+        {
+          "name": "Replace",
+          "signature": "(Text, Text)"
+        },
+        {
+          "name": "Replace",
+          "signature": "(Text, Time)"
         },
         {
           "name": "SelectToken",
-          "overloads": 1
+          "signature": "(Text, JsonToken)"
+        },
+        {
+          "name": "SelectTokens",
+          "signature": "(Text, List)"
         },
         {
           "name": "Values",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "WriteTo",
-          "overloads": 2
+          "signature": "(OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(Text)"
         },
         {
           "name": "WriteToYaml",
-          "overloads": 2
+          "signature": "(OutStream)"
+        },
+        {
+          "name": "WriteToYaml",
+          "signature": "(Text)"
         },
         {
           "name": "WriteWithSecretsTo",
-          "overloads": 2
+          "signature": "(Dictionary, SecretText)"
+        },
+        {
+          "name": "WriteWithSecretsTo",
+          "signature": "(Text, SecretText, SecretText)"
         }
       ]
     },
@@ -1414,47 +2198,59 @@
       "methods": [
         {
           "name": "AsArray",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsObject",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsValue",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Clone",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsArray",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsObject",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsValue",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Path",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ReadFrom",
-          "overloads": 2
+          "signature": "(InStream)"
+        },
+        {
+          "name": "ReadFrom",
+          "signature": "(Text)"
         },
         {
           "name": "SelectToken",
-          "overloads": 1
+          "signature": "(Text, JsonToken)"
+        },
+        {
+          "name": "SelectTokens",
+          "signature": "(Text, List)"
         },
         {
           "name": "WriteTo",
-          "overloads": 2
+          "signature": "(OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(Text)"
         }
       ]
     },
@@ -1462,99 +2258,151 @@
       "methods": [
         {
           "name": "AsBigInteger",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsBoolean",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsByte",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsChar",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsCode",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsDate",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsDateTime",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsDecimal",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsDuration",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsInteger",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsOption",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsText",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsTime",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsToken",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Clone",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsNull",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsUndefined",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Path",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ReadFrom",
-          "overloads": 2
+          "signature": "(InStream)"
+        },
+        {
+          "name": "ReadFrom",
+          "signature": "(Text)"
         },
         {
           "name": "SelectToken",
-          "overloads": 1
+          "signature": "(Text, JsonToken)"
         },
         {
           "name": "SetValue",
-          "overloads": 12
+          "signature": "(BigInteger)"
+        },
+        {
+          "name": "SetValue",
+          "signature": "(Boolean)"
+        },
+        {
+          "name": "SetValue",
+          "signature": "(Byte)"
+        },
+        {
+          "name": "SetValue",
+          "signature": "(Char)"
+        },
+        {
+          "name": "SetValue",
+          "signature": "(Date)"
+        },
+        {
+          "name": "SetValue",
+          "signature": "(DateTime)"
+        },
+        {
+          "name": "SetValue",
+          "signature": "(Decimal)"
+        },
+        {
+          "name": "SetValue",
+          "signature": "(Duration)"
+        },
+        {
+          "name": "SetValue",
+          "signature": "(Integer)"
+        },
+        {
+          "name": "SetValue",
+          "signature": "(Option)"
+        },
+        {
+          "name": "SetValue",
+          "signature": "(Text)"
+        },
+        {
+          "name": "SetValue",
+          "signature": "(Time)"
         },
         {
           "name": "SetValueToNull",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SetValueToUndefined",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "WriteTo",
-          "overloads": 2
+          "signature": "(OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(Text)"
         }
       ]
     },
@@ -1562,19 +2410,19 @@
       "methods": [
         {
           "name": "Active",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "FieldCount",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "FieldIndex",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "Record",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -1582,71 +2430,79 @@
       "methods": [
         {
           "name": "Contains",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "EndsWith",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "IndexOf",
-          "overloads": 1
+          "signature": "(Text, Integer)"
         },
         {
           "name": "IndexOfAny",
-          "overloads": 2
+          "signature": "(List, Integer)"
+        },
+        {
+          "name": "IndexOfAny",
+          "signature": "(Text, Integer)"
         },
         {
           "name": "LastIndexOf",
-          "overloads": 1
+          "signature": "(Text, Integer)"
         },
         {
           "name": "PadLeft",
-          "overloads": 1
+          "signature": "(Integer, Char)"
         },
         {
           "name": "PadRight",
-          "overloads": 1
+          "signature": "(Integer, Char)"
         },
         {
           "name": "Remove",
-          "overloads": 1
+          "signature": "(Integer, Integer)"
         },
         {
           "name": "Replace",
-          "overloads": 1
+          "signature": "(Text, Text)"
         },
         {
           "name": "Split",
-          "overloads": 3
+          "signature": "(List)"
+        },
+        {
+          "name": "Split",
+          "signature": "(Text)"
         },
         {
           "name": "StartsWith",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Substring",
-          "overloads": 1
+          "signature": "(Integer, Integer)"
         },
         {
           "name": "ToLower",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ToUpper",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Trim",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "TrimEnd",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "TrimStart",
-          "overloads": 1
+          "signature": "(Text)"
         }
       ]
     },
@@ -1654,31 +2510,35 @@
       "methods": [
         {
           "name": "ExportFile",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "ExportStream",
-          "overloads": 1
+          "signature": "(OutStream)"
         },
         {
           "name": "FindOrphans",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "HasValue",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ImportFile",
-          "overloads": 1
+          "signature": "(Text, Text, Text)"
         },
         {
           "name": "ImportStream",
-          "overloads": 2
+          "signature": "(InStream, Text, Text)"
+        },
+        {
+          "name": "ImportStream",
+          "signature": "(InStream, Text, Text, Text)"
         },
         {
           "name": "MediaId",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -1686,39 +2546,39 @@
       "methods": [
         {
           "name": "Count",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ExportFile",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "FindOrphans",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ImportFile",
-          "overloads": 1
+          "signature": "(Text, Text, Text)"
         },
         {
           "name": "ImportStream",
-          "overloads": 1
+          "signature": "(InStream, Text, Text)"
         },
         {
           "name": "Insert",
-          "overloads": 1
+          "signature": "(Guid)"
         },
         {
           "name": "Item",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "MediaId",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Remove",
-          "overloads": 1
+          "signature": "(Guid)"
         }
       ]
     },
@@ -1726,15 +2586,15 @@
       "methods": [
         {
           "name": "Id",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Name",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Publisher",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -1742,31 +2602,31 @@
       "methods": [
         {
           "name": "AppVersion",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "DataVersion",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Dependencies",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Id",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Name",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "PackageId",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Publisher",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -1774,67 +2634,67 @@
       "methods": [
         {
           "name": "DeleteArchiveData",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GetArchiveRecordRef",
-          "overloads": 1
+          "signature": "(Integer, RecordRef)"
         },
         {
           "name": "GetArchiveVersion",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetCallerCallstackModuleInfos",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetCallerModuleInfo",
-          "overloads": 1
+          "signature": "(ModuleInfo)"
         },
         {
           "name": "GetCurrentModuleInfo",
-          "overloads": 1
+          "signature": "(ModuleInfo)"
         },
         {
           "name": "GetModuleInfo",
-          "overloads": 1
+          "signature": "(Guid, ModuleInfo)"
         },
         {
           "name": "GetResource",
-          "overloads": 1
+          "signature": "(Text, InStream, TextEncoding)"
         },
         {
           "name": "GetResourceAsJson",
-          "overloads": 1
+          "signature": "(Text, TextEncoding)"
         },
         {
           "name": "GetResourceAsText",
-          "overloads": 1
+          "signature": "(Text, TextEncoding)"
         },
         {
           "name": "IsEntitled",
-          "overloads": 1
+          "signature": "(Text, Guid)"
         },
         {
           "name": "IsInstalling",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsUnlicensed",
-          "overloads": 1
+          "signature": "(Guid)"
         },
         {
           "name": "ListResources",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "LoadPackageData",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "RestoreArchiveData",
-          "overloads": 1
+          "signature": "(Integer, Boolean)"
         }
       ]
     },
@@ -1842,39 +2702,43 @@
       "methods": [
         {
           "name": "AddAction",
-          "overloads": 2
+          "signature": "(Text, Integer, Text)"
+        },
+        {
+          "name": "AddAction",
+          "signature": "(Text, Integer, Text, Text)"
         },
         {
           "name": "GetData",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "HasData",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Id",
-          "overloads": 1
+          "signature": "(Guid)"
         },
         {
           "name": "Message",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Recall",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Scope",
-          "overloads": 1
+          "signature": "(NotificationScope)"
         },
         {
           "name": "Send",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SetData",
-          "overloads": 1
+          "signature": "(Text, Text)"
         }
       ]
     },
@@ -1882,31 +2746,35 @@
       "methods": [
         {
           "name": "Current",
-          "overloads": 1
+          "signature": "(Text, Boolean)"
         },
         {
           "name": "Delete",
-          "overloads": 1
+          "signature": "(Text, Boolean)"
         },
         {
           "name": "Exists",
-          "overloads": 1
+          "signature": "(Text, Boolean)"
         },
         {
           "name": "Insert",
-          "overloads": 1
+          "signature": "(Text, BigInteger, BigInteger, Boolean)"
         },
         {
           "name": "Next",
-          "overloads": 1
+          "signature": "(Text, Boolean)"
         },
         {
           "name": "Range",
-          "overloads": 2
+          "signature": "(Text, Integer, BigInteger, Boolean)"
+        },
+        {
+          "name": "Range",
+          "signature": "(Text, Integer, Boolean)"
         },
         {
           "name": "Restart",
-          "overloads": 1
+          "signature": "(Text, BigInteger, Boolean)"
         }
       ]
     },
@@ -1914,11 +2782,95 @@
       "methods": [
         {
           "name": "Write",
-          "overloads": 23
+          "signature": "(BigInteger, Integer)"
+        },
+        {
+          "name": "Write",
+          "signature": "(BigText, Integer)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Boolean, Integer)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Byte, Integer)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Char, Integer)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Code, Integer)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Date, Integer)"
+        },
+        {
+          "name": "Write",
+          "signature": "(DateFormula, Integer)"
+        },
+        {
+          "name": "Write",
+          "signature": "(DateTime, Integer)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Decimal, Integer)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Duration, Integer)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Guid, Integer)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Integer, Integer)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Joker, Integer)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Label, Integer)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Option, Integer)"
+        },
+        {
+          "name": "Write",
+          "signature": "(RecordId, Integer)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Table, Integer)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Text, Integer)"
+        },
+        {
+          "name": "Write",
+          "signature": "(TextConst, Integer)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Time, Integer)"
+        },
+        {
+          "name": "Write",
+          "signature": "(Variant, Integer)"
         },
         {
           "name": "WriteText",
-          "overloads": 1
+          "signature": "(Text, Integer)"
         }
       ]
     },
@@ -1926,79 +2878,119 @@
       "methods": [
         {
           "name": "Activate",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "CancelBackgroundTask",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "Caption",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Close",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Editable",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "EnqueueBackgroundTask",
-          "overloads": 1
+          "signature": "(Integer, Integer, Dictionary, Integer, PageBackgroundTaskErrorLevel)"
         },
         {
           "name": "GetBackgroundParameters",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetRecord",
-          "overloads": 1
+          "signature": "(Table)"
         },
         {
           "name": "LookupMode",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "ObjectId",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "PromptMode",
-          "overloads": 1
+          "signature": "(PromptMode)"
         },
         {
           "name": "Run",
-          "overloads": 3
+          "signature": "()"
+        },
+        {
+          "name": "Run",
+          "signature": "(Integer, Table, Integer)"
+        },
+        {
+          "name": "Run",
+          "signature": "(Integer, Table, Joker)"
+        },
+        {
+          "name": "Run",
+          "signature": "(Text, Table, Integer)"
+        },
+        {
+          "name": "Run",
+          "signature": "(Text, Table, Joker)"
         },
         {
           "name": "RunModal",
-          "overloads": 4
+          "signature": "()"
+        },
+        {
+          "name": "RunModal",
+          "signature": "(Integer, Table, FieldRef)"
+        },
+        {
+          "name": "RunModal",
+          "signature": "(Integer, Table, Integer)"
+        },
+        {
+          "name": "RunModal",
+          "signature": "(Integer, Table, Joker)"
+        },
+        {
+          "name": "RunModal",
+          "signature": "(Text, Table, FieldRef)"
+        },
+        {
+          "name": "RunModal",
+          "signature": "(Text, Table, Integer)"
+        },
+        {
+          "name": "RunModal",
+          "signature": "(Text, Table, Joker)"
         },
         {
           "name": "SaveRecord",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SetBackgroundTaskResult",
-          "overloads": 1
+          "signature": "(Dictionary)"
         },
         {
           "name": "SetRecord",
-          "overloads": 1
+          "signature": "(Table)"
         },
         {
           "name": "SetSelectionFilter",
-          "overloads": 1
+          "signature": "(Table)"
         },
         {
           "name": "SetTableView",
-          "overloads": 1
+          "signature": "(Table)"
         },
         {
           "name": "Update",
-          "overloads": 1
+          "signature": "(Boolean)"
         }
       ]
     },
@@ -2006,15 +2998,15 @@
       "methods": [
         {
           "name": "Full",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Marketing",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Short",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -2022,15 +3014,23 @@
       "methods": [
         {
           "name": "SaveAsCsv",
-          "overloads": 2
+          "signature": "(Integer, OutStream, Integer, Text)"
+        },
+        {
+          "name": "SaveAsCsv",
+          "signature": "(Integer, Text, Integer, Text)"
         },
         {
           "name": "SaveAsJson",
-          "overloads": 1
+          "signature": "(Integer, OutStream)"
         },
         {
           "name": "SaveAsXml",
-          "overloads": 2
+          "signature": "(Integer, OutStream)"
+        },
+        {
+          "name": "SaveAsXml",
+          "signature": "(Integer, Text)"
         }
       ]
     },
@@ -2038,63 +3038,71 @@
       "methods": [
         {
           "name": "Close",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ColumnCaption",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "ColumnName",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "ColumnNo",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "GetFilter",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "GetFilters",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Open",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Read",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SaveAsCsv",
-          "overloads": 2
+          "signature": "(OutStream, Integer, Text)"
+        },
+        {
+          "name": "SaveAsCsv",
+          "signature": "(Text, Integer, Text)"
         },
         {
           "name": "SaveAsJson",
-          "overloads": 1
+          "signature": "(OutStream)"
         },
         {
           "name": "SaveAsXml",
-          "overloads": 2
+          "signature": "(OutStream)"
+        },
+        {
+          "name": "SaveAsXml",
+          "signature": "(Text)"
         },
         {
           "name": "SecurityFiltering",
-          "overloads": 1
+          "signature": "(SecurityFilter)"
         },
         {
           "name": "SetFilter",
-          "overloads": 1
+          "signature": "(Joker, Text, Joker)"
         },
         {
           "name": "SetRange",
-          "overloads": 1
+          "signature": "(Joker, Joker, Joker)"
         },
         {
           "name": "TopNumberOfRows",
-          "overloads": 1
+          "signature": "(Integer)"
         }
       ]
     },
@@ -2102,11 +3110,11 @@
       "methods": [
         {
           "name": "GetRecord",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "TableNo",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -2114,303 +3122,347 @@
       "methods": [
         {
           "name": "AddLink",
-          "overloads": 1
+          "signature": "(Text, Text)"
         },
         {
           "name": "AddLoadFields",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "AreFieldsLoaded",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "Ascending",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "Caption",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ChangeCompany",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "ClearMarks",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Close",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Copy",
-          "overloads": 2
+          "signature": "(RecordRef, Boolean)"
+        },
+        {
+          "name": "Copy",
+          "signature": "(Table, Boolean)"
         },
         {
           "name": "CopyLinks",
-          "overloads": 3
+          "signature": "(RecordRef)"
+        },
+        {
+          "name": "CopyLinks",
+          "signature": "(Table)"
+        },
+        {
+          "name": "CopyLinks",
+          "signature": "(Variant)"
         },
         {
           "name": "Count",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "CountApprox",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "CurrentCompany",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "CurrentKey",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "CurrentKeyIndex",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "Delete",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "DeleteAll",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "DeleteLink",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "DeleteLinks",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Duplicate",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Field",
-          "overloads": 2
+          "signature": "(Integer)"
+        },
+        {
+          "name": "Field",
+          "signature": "(Text)"
         },
         {
           "name": "FieldCount",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "FieldExist",
-          "overloads": 2
+          "signature": "(Integer)"
+        },
+        {
+          "name": "FieldExist",
+          "signature": "(Text)"
         },
         {
           "name": "FieldIndex",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "FilterGroup",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "Find",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "FindFirst",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "FindLast",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "FindSet",
-          "overloads": 2
+          "signature": "(Boolean)"
+        },
+        {
+          "name": "FindSet",
+          "signature": "(Boolean, Boolean)"
+        },
+        {
+          "name": "FullyQualifiedName",
+          "signature": "()"
         },
         {
           "name": "Get",
-          "overloads": 1
+          "signature": "(RecordId)"
         },
         {
           "name": "GetBySystemId",
-          "overloads": 1
+          "signature": "(Guid)"
         },
         {
           "name": "GetFilters",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetPosition",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "GetTable",
-          "overloads": 1
+          "signature": "(Table)"
         },
         {
           "name": "GetView",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "HasFilter",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "HasLinks",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Init",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Insert",
-          "overloads": 3
+          "signature": "()"
+        },
+        {
+          "name": "Insert",
+          "signature": "(Boolean)"
+        },
+        {
+          "name": "Insert",
+          "signature": "(Boolean, Boolean)"
         },
         {
           "name": "IsDirty",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsEmpty",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsTemporary",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "KeyCount",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "KeyIndex",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "LoadFields",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "LockTable",
-          "overloads": 1
+          "signature": "(Boolean, Boolean)"
         },
         {
           "name": "Mark",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "MarkedOnly",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "Modify",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "Name",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Next",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "Number",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Open",
-          "overloads": 1
+          "signature": "(Integer, Boolean, Text)"
+        },
+        {
+          "name": "Open",
+          "signature": "(Text, Boolean, Text)"
         },
         {
           "name": "ReadConsistency",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ReadIsolation",
-          "overloads": 1
+          "signature": "(IsolationLevel)"
         },
         {
           "name": "ReadPermission",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "RecordId",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "RecordLevelLocking",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Rename",
-          "overloads": 1
+          "signature": "(Joker, Joker)"
         },
         {
           "name": "Reset",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SecurityFiltering",
-          "overloads": 1
+          "signature": "(SecurityFilter)"
         },
         {
           "name": "SetAutoCalcFields",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "SetLoadFields",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "SetPermissionFilter",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SetPosition",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "SetRecFilter",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SetTable",
-          "overloads": 2
+          "signature": "(Table)"
+        },
+        {
+          "name": "SetTable",
+          "signature": "(Table, Boolean)"
         },
         {
           "name": "SetView",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "SystemCreatedAtNo",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SystemCreatedByNo",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SystemIdNo",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SystemModifiedAtNo",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SystemModifiedByNo",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Truncate",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "WritePermission",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -2418,75 +3470,87 @@
       "methods": [
         {
           "name": "DefaultLayout",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "ExcelLayout",
-          "overloads": 1
+          "signature": "(Integer, InStream)"
         },
         {
           "name": "Execute",
-          "overloads": 1
+          "signature": "(Integer, Text, RecordRef)"
+        },
+        {
+          "name": "Execute",
+          "signature": "(Text, Text, RecordRef)"
         },
         {
           "name": "GetSubstituteReportId",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "Print",
-          "overloads": 1
+          "signature": "(Integer, Text, Text, RecordRef)"
         },
         {
           "name": "RdlcLayout",
-          "overloads": 1
+          "signature": "(Integer, InStream)"
         },
         {
           "name": "Run",
-          "overloads": 1
+          "signature": "(Integer, Boolean, Boolean, Table)"
+        },
+        {
+          "name": "Run",
+          "signature": "(Text, Boolean, Boolean, Table)"
         },
         {
           "name": "RunModal",
-          "overloads": 1
+          "signature": "(Integer, Boolean, Boolean, Table)"
+        },
+        {
+          "name": "RunModal",
+          "signature": "(Text, Boolean, Boolean, Table)"
         },
         {
           "name": "RunRequestPage",
-          "overloads": 1
+          "signature": "(Integer, Text)"
         },
         {
           "name": "SaveAs",
-          "overloads": 1
+          "signature": "(Integer, Text, ReportFormat, OutStream, RecordRef)"
         },
         {
           "name": "SaveAsExcel",
-          "overloads": 1
+          "signature": "(Integer, Text, Table)"
         },
         {
           "name": "SaveAsHtml",
-          "overloads": 1
+          "signature": "(Integer, Text, Table)"
         },
         {
           "name": "SaveAsPdf",
-          "overloads": 1
+          "signature": "(Integer, Text, Table)"
         },
         {
           "name": "SaveAsWord",
-          "overloads": 1
+          "signature": "(Integer, Text, Table)"
         },
         {
           "name": "SaveAsXml",
-          "overloads": 1
+          "signature": "(Integer, Text, Table)"
         },
         {
           "name": "ValidateAndPrepareLayout",
-          "overloads": 1
+          "signature": "(Integer, InStream, InStream, ReportLayoutType)"
         },
         {
           "name": "WordLayout",
-          "overloads": 1
+          "signature": "(Integer, InStream)"
         },
         {
           "name": "WordXmlPart",
-          "overloads": 1
+          "signature": "(Integer, Boolean)"
         }
       ]
     },
@@ -2494,147 +3558,155 @@
       "methods": [
         {
           "name": "Break",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "CreateTotals",
-          "overloads": 2
+          "signature": "(Array)"
+        },
+        {
+          "name": "CreateTotals",
+          "signature": "(Decimal, Decimal)"
         },
         {
           "name": "DefaultLayout",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ExcelLayout",
-          "overloads": 1
+          "signature": "(InStream)"
         },
         {
           "name": "Execute",
-          "overloads": 1
+          "signature": "(Text, RecordRef)"
         },
         {
           "name": "FormatRegion",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "IsReadOnly",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Language",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "NewPage",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "NewPagePerRecord",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "ObjectId",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "PageNo",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "PaperSource",
-          "overloads": 1
+          "signature": "(Integer, Integer)"
         },
         {
           "name": "Preview",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Print",
-          "overloads": 1
+          "signature": "(Text, Text, RecordRef)"
         },
         {
           "name": "PrintOnlyIfDetail",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "Quit",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "RDLCLayout",
-          "overloads": 1
+          "signature": "(InStream)"
         },
         {
           "name": "Run",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "RunModal",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "RunRequestPage",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "SaveAs",
-          "overloads": 1
+          "signature": "(Text, ReportFormat, OutStream, RecordRef)"
         },
         {
           "name": "SaveAsExcel",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "SaveAsHtml",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "SaveAsPdf",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "SaveAsWord",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "SaveAsXml",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "SetTableView",
-          "overloads": 1
+          "signature": "(Table)"
         },
         {
           "name": "ShowOutput",
-          "overloads": 2
+          "signature": "()"
+        },
+        {
+          "name": "ShowOutput",
+          "signature": "(Boolean)"
         },
         {
           "name": "Skip",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "TargetFormat",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "TotalsCausedBy",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "UseRequestPage",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "ValidateAndPrepareLayout",
-          "overloads": 1
+          "signature": "(InStream, InStream, ReportLayoutType)"
         },
         {
           "name": "WordLayout",
-          "overloads": 1
+          "signature": "(InStream)"
         },
         {
           "name": "WordXmlPart",
-          "overloads": 1
+          "signature": "(Boolean)"
         }
       ]
     },
@@ -2642,39 +3714,39 @@
       "methods": [
         {
           "name": "Activate",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "Caption",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Close",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Editable",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "LookupMode",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "ObjectId",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "SaveRecord",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SetSelectionFilter",
-          "overloads": 1
+          "signature": "(Table)"
         },
         {
           "name": "Update",
-          "overloads": 1
+          "signature": "(Boolean)"
         }
       ]
     },
@@ -2682,15 +3754,15 @@
       "methods": [
         {
           "name": "IsEmpty",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SecretStrSubstNo",
-          "overloads": 1
+          "signature": "(Text, SecretText)"
         },
         {
           "name": "Unwrap",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -2698,79 +3770,91 @@
       "methods": [
         {
           "name": "ApplicationArea",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "ApplicationIdentifier",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "BindSubscription",
-          "overloads": 1
+          "signature": "(Codeunit)"
         },
         {
           "name": "CurrentClientType",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "CurrentExecutionMode",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "DefaultClientType",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "EnableVerboseTelemetry",
-          "overloads": 1
+          "signature": "(Boolean, Duration)"
         },
         {
           "name": "GetCurrentModuleExecutionContext",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetExecutionContext",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetModuleExecutionContext",
-          "overloads": 1
+          "signature": "(Guid)"
         },
         {
           "name": "IsSessionActive",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "LogAuditMessage",
-          "overloads": 1
+          "signature": "(Text, SecurityOperationResult, AuditCategory, Integer, Integer, Dictionary)"
         },
         {
           "name": "LogMessage",
-          "overloads": 2
+          "signature": "(Text, Text, Verbosity, DataClassification, TelemetryScope, Dictionary)"
+        },
+        {
+          "name": "LogMessage",
+          "signature": "(Text, Text, Verbosity, DataClassification, TelemetryScope, Text, Text, Text, Text)"
         },
         {
           "name": "LogSecurityAudit",
-          "overloads": 1
+          "signature": "(Text, SecurityOperationResult, Text, AuditCategory, Array, Array)"
         },
         {
           "name": "SendTraceTag",
-          "overloads": 1
+          "signature": "(Text, Text, Verbosity, Text, DataClassification)"
         },
         {
           "name": "SetDocumentServiceToken",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "StartSession",
-          "overloads": 3
+          "signature": "(Integer, Integer, Duration, Text, Table)"
+        },
+        {
+          "name": "StartSession",
+          "signature": "(Integer, Integer, Text, Table)"
+        },
+        {
+          "name": "StartSession",
+          "signature": "(Integer, Integer, Text, Table, Duration)"
         },
         {
           "name": "StopSession",
-          "overloads": 1
+          "signature": "(Integer, Text)"
         },
         {
           "name": "UnbindSubscription",
-          "overloads": 1
+          "signature": "(Codeunit)"
         }
       ]
     },
@@ -2778,19 +3862,19 @@
       "methods": [
         {
           "name": "AITokensUsed",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Callstack",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SqlRowsRead",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SqlStatementsExecuted",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -2798,39 +3882,39 @@
       "methods": [
         {
           "name": "Company",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Init",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "LanguageId",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "LocaleId",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "ProfileAppId",
-          "overloads": 1
+          "signature": "(Guid)"
         },
         {
           "name": "ProfileId",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "ProfileSystemScope",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "RequestSessionUpdate",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "TimeZone",
-          "overloads": 1
+          "signature": "(Text)"
         }
       ]
     },
@@ -2838,287 +3922,319 @@
       "methods": [
         {
           "name": "Abs",
-          "overloads": 1
+          "signature": "(Decimal)"
         },
         {
           "name": "ApplicationPath",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ArrayLen",
-          "overloads": 1
+          "signature": "(Array, Integer)"
         },
         {
           "name": "CalcDate",
-          "overloads": 2
+          "signature": "(DateFormula, Date)"
+        },
+        {
+          "name": "CalcDate",
+          "signature": "(Text, Date)"
         },
         {
           "name": "CanLoadType",
-          "overloads": 1
+          "signature": "(DotNet)"
         },
         {
           "name": "CaptionClassTranslate",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Clear",
-          "overloads": 3
+          "signature": "(Array)"
+        },
+        {
+          "name": "Clear",
+          "signature": "(Joker)"
+        },
+        {
+          "name": "Clear",
+          "signature": "(SecretText)"
         },
         {
           "name": "ClearAll",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ClearCollectedErrors",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ClearLastError",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ClosingDate",
-          "overloads": 1
+          "signature": "(Date)"
         },
         {
           "name": "CodeCoverageInclude",
-          "overloads": 1
+          "signature": "(Table)"
         },
         {
           "name": "CodeCoverageLoad",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "CodeCoverageLog",
-          "overloads": 1
+          "signature": "(Boolean, Boolean)"
         },
         {
           "name": "CodeCoverageRefresh",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "CompressArray",
-          "overloads": 1
+          "signature": "(Array)"
         },
         {
           "name": "CopyArray",
-          "overloads": 1
+          "signature": "(Array, Array, Integer, Integer)"
         },
         {
           "name": "CopyStream",
-          "overloads": 1
+          "signature": "(OutStream, InStream, Integer)"
         },
         {
           "name": "CreateDateTime",
-          "overloads": 1
+          "signature": "(Date, Time)"
         },
         {
           "name": "CreateEncryptionKey",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "CreateGuid",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "CurrentDateTime",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "DMY2Date",
-          "overloads": 1
+          "signature": "(Integer, Integer, Integer)"
         },
         {
           "name": "DT2Date",
-          "overloads": 1
+          "signature": "(DateTime)"
         },
         {
           "name": "DT2Time",
-          "overloads": 1
+          "signature": "(DateTime)"
         },
         {
           "name": "DWY2Date",
-          "overloads": 1
+          "signature": "(Integer, Integer, Integer)"
         },
         {
           "name": "DaTi2Variant",
-          "overloads": 1
+          "signature": "(Date, Time)"
         },
         {
           "name": "Date2DMY",
-          "overloads": 1
+          "signature": "(Date, Integer)"
         },
         {
           "name": "Date2DWY",
-          "overloads": 1
+          "signature": "(Date, Integer)"
         },
         {
           "name": "Decrypt",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "DeleteEncryptionKey",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Encrypt",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "EncryptionEnabled",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "EncryptionKeyExists",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Evaluate",
-          "overloads": 1
+          "signature": "(Joker, Text, Integer)"
         },
         {
           "name": "ExportEncryptionKey",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "ExportObjects",
-          "overloads": 1
+          "signature": "(Text, Table, Integer)"
         },
         {
           "name": "Format",
-          "overloads": 2
+          "signature": "(Joker, Integer, Integer)"
+        },
+        {
+          "name": "Format",
+          "signature": "(Joker, Integer, Text)"
         },
         {
           "name": "GetCollectedErrors",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "GetDocumentUrl",
-          "overloads": 1
+          "signature": "(Guid)"
         },
         {
           "name": "GetDotNetType",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "GetLastErrorCallStack",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetLastErrorCode",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetLastErrorObject",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetLastErrorText",
-          "overloads": 2
+          "signature": "()"
+        },
+        {
+          "name": "GetLastErrorText",
+          "signature": "(Boolean)"
         },
         {
           "name": "GetUrl",
-          "overloads": 4
+          "signature": "(ClientType, Text, ObjectType, Integer, RecordRef, Boolean)"
+        },
+        {
+          "name": "GetUrl",
+          "signature": "(ClientType, Text, ObjectType, Integer, RecordRef, Boolean, Text)"
+        },
+        {
+          "name": "GetUrl",
+          "signature": "(ClientType, Text, ObjectType, Integer, Table, Boolean)"
+        },
+        {
+          "name": "GetUrl",
+          "signature": "(ClientType, Text, ObjectType, Integer, Table, Boolean, Text)"
         },
         {
           "name": "GlobalLanguage",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GuiAllowed",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "HasCollectedErrors",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Hyperlink",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "ImportEncryptionKey",
-          "overloads": 1
+          "signature": "(Text, Text)"
         },
         {
           "name": "ImportObjects",
-          "overloads": 1
+          "signature": "(Text, Integer)"
         },
         {
           "name": "ImportStreamWithUrlAccess",
-          "overloads": 1
+          "signature": "(InStream, Text, Integer)"
         },
         {
           "name": "IsCollectingErrors",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsNull",
-          "overloads": 1
+          "signature": "(DotNet)"
         },
         {
           "name": "IsNullGuid",
-          "overloads": 1
+          "signature": "(Guid)"
         },
         {
           "name": "IsServiceTier",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "NormalDate",
-          "overloads": 1
+          "signature": "(Date)"
         },
         {
           "name": "Power",
-          "overloads": 1
+          "signature": "(Decimal, Decimal)"
         },
         {
           "name": "Random",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "Randomize",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "Round",
-          "overloads": 1
+          "signature": "(Decimal, Decimal, Text)"
         },
         {
           "name": "RoundDateTime",
-          "overloads": 1
+          "signature": "(DateTime, BigInteger, Text)"
         },
         {
           "name": "Sleep",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "TemporaryPath",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Time",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Today",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Variant2Date",
-          "overloads": 1
+          "signature": "(Variant)"
         },
         {
           "name": "Variant2Time",
-          "overloads": 1
+          "signature": "(Variant)"
         },
         {
           "name": "WindowsLanguage",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "WorkDate",
-          "overloads": 1
+          "signature": "(Date)"
         }
       ]
     },
@@ -3126,323 +4242,443 @@
       "methods": [
         {
           "name": "AddLink",
-          "overloads": 1
+          "signature": "(Text, Text)"
         },
         {
           "name": "AddLoadFields",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AreFieldsLoaded",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "Ascending",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "CalcFields",
-          "overloads": 1
+          "signature": "(Joker, Joker)"
         },
         {
           "name": "CalcSums",
-          "overloads": 1
+          "signature": "(Joker, Joker)"
         },
         {
           "name": "ChangeCompany",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "ClearMarks",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Consistent",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "Copy",
-          "overloads": 1
+          "signature": "(Table, Boolean)"
         },
         {
           "name": "CopyFilter",
-          "overloads": 1
+          "signature": "(Joker, Joker)"
         },
         {
           "name": "CopyFilters",
-          "overloads": 1
+          "signature": "(Table)"
         },
         {
           "name": "CopyLinks",
-          "overloads": 2
+          "signature": "(RecordRef)"
+        },
+        {
+          "name": "CopyLinks",
+          "signature": "(Table)"
         },
         {
           "name": "Count",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "CountApprox",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "CurrentCompany",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "CurrentKey",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Delete",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "DeleteAll",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "DeleteLink",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "DeleteLinks",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "FieldActive",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "FieldCaption",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "FieldError",
-          "overloads": 2
+          "signature": "(Joker, ErrorInfo)"
+        },
+        {
+          "name": "FieldError",
+          "signature": "(Joker, Text)"
         },
         {
           "name": "FieldName",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "FieldNo",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "FilterGroup",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "Find",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "FindFirst",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "FindLast",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "FindSet",
-          "overloads": 2
+          "signature": "(Boolean)"
+        },
+        {
+          "name": "FindSet",
+          "signature": "(Boolean, Boolean)"
+        },
+        {
+          "name": "FullyQualifiedName",
+          "signature": "()"
         },
         {
           "name": "Get",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "GetAscending",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "GetBySystemId",
-          "overloads": 1
+          "signature": "(Guid)"
         },
         {
           "name": "GetFilter",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "GetFilters",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetPosition",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "GetRangeMax",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "GetRangeMin",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "GetView",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "HasFilter",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "HasLinks",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Init",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Insert",
-          "overloads": 3
+          "signature": "()"
+        },
+        {
+          "name": "Insert",
+          "signature": "(Boolean)"
+        },
+        {
+          "name": "Insert",
+          "signature": "(Boolean, Boolean)"
         },
         {
           "name": "IsEmpty",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsTemporary",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "LoadFields",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "LockTable",
-          "overloads": 1
+          "signature": "(Boolean, Boolean)"
         },
         {
           "name": "Mark",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "MarkedOnly",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "Modify",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "ModifyAll",
-          "overloads": 1
+          "signature": "(Joker, Joker, Boolean)"
         },
         {
           "name": "Next",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "ReadConsistency",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ReadIsolation",
-          "overloads": 1
+          "signature": "(IsolationLevel)"
         },
         {
           "name": "ReadPermission",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "RecordId",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "RecordLevelLocking",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Relation",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "Rename",
-          "overloads": 1
+          "signature": "(Joker, Joker)"
         },
         {
           "name": "Reset",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SecurityFiltering",
-          "overloads": 1
+          "signature": "(SecurityFilter)"
         },
         {
           "name": "SetAscending",
-          "overloads": 1
+          "signature": "(Joker, Boolean)"
         },
         {
           "name": "SetAutoCalcFields",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "SetBaseLoadFields",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SetCurrentKey",
-          "overloads": 1
+          "signature": "(Joker, Joker)"
         },
         {
           "name": "SetFilter",
-          "overloads": 1
+          "signature": "(Joker, Text, Joker)"
         },
         {
           "name": "SetLoadFields",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "SetPermissionFilter",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SetPosition",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "SetRange",
-          "overloads": 1
+          "signature": "(Joker, Joker, Joker)"
         },
         {
           "name": "SetRecFilter",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SetView",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "TableCaption",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "TableName",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "TestField",
-          "overloads": 26
+          "signature": "(Joker)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, BigInteger)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, BigInteger, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, Boolean)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, Boolean, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, Code)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, Code, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, Decimal)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, Decimal, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, Enum)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, Enum, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, Guid)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, Guid, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, Integer)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, Integer, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, Joker)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, Joker, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, Label)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, Label, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, Text)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, Text, ErrorInfo)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, TextConst)"
+        },
+        {
+          "name": "TestField",
+          "signature": "(Joker, TextConst, ErrorInfo)"
         },
         {
           "name": "TransferFields",
-          "overloads": 2
+          "signature": "(Table, Boolean)"
+        },
+        {
+          "name": "TransferFields",
+          "signature": "(Table, Boolean, Boolean)"
         },
         {
           "name": "Truncate",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "Validate",
-          "overloads": 1
+          "signature": "(Joker, Joker)"
         },
         {
           "name": "WritePermission",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -3450,23 +4686,27 @@
       "methods": [
         {
           "name": "CanCreateTask",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "CancelTask",
-          "overloads": 1
+          "signature": "(Guid)"
         },
         {
           "name": "CreateTask",
-          "overloads": 2
+          "signature": "(Integer, Integer, Boolean, Text, DateTime, RecordId)"
+        },
+        {
+          "name": "CreateTask",
+          "signature": "(Integer, Integer, Boolean, Text, DateTime, RecordId, Duration)"
         },
         {
           "name": "SetTaskReady",
-          "overloads": 1
+          "signature": "(Guid, DateTime)"
         },
         {
           "name": "TaskExists",
-          "overloads": 1
+          "signature": "(Guid)"
         }
       ]
     },
@@ -3474,15 +4714,15 @@
       "methods": [
         {
           "name": "Enabled",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Invoke",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Visible",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -3490,99 +4730,103 @@
       "methods": [
         {
           "name": "Activate",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsBoolean",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsDate",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsDateTime",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsDecimal",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsInteger",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsTime",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AssertEquals",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AssistEdit",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Caption",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Drilldown",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Editable",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Enabled",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetOption",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GetValidationError",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "HideValue",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Invoke",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Lookup",
-          "overloads": 2
+          "signature": "()"
+        },
+        {
+          "name": "Lookup",
+          "signature": "(RecordRef)"
         },
         {
           "name": "OptionCount",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SetValue",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "ShowMandatory",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ValidationErrorCount",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Value",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Visible",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -3590,23 +4834,23 @@
       "methods": [
         {
           "name": "Ascending",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "CurrentKey",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetFilter",
-          "overloads": 1
+          "signature": "(TestFilterField)"
         },
         {
           "name": "SetCurrentKey",
-          "overloads": 1
+          "signature": "(TestFilterField, TestFilterField)"
         },
         {
           "name": "SetFilter",
-          "overloads": 1
+          "signature": "(TestFilterField, Text)"
         }
       ]
     },
@@ -3614,19 +4858,19 @@
       "methods": [
         {
           "name": "HasSecretUri",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Path",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "QueryParameters",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "RequestType",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -3634,27 +4878,27 @@
       "methods": [
         {
           "name": "Content",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Headers",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "HttpStatusCode",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "IsBlockedByEnvironment",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "IsSuccessfulRequest",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "ReasonPhrase",
-          "overloads": 1
+          "signature": "(Text)"
         }
       ]
     },
@@ -3662,123 +4906,123 @@
       "methods": [
         {
           "name": "Cancel",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Caption",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Close",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Edit",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Editable",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Expand",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "FindFirstField",
-          "overloads": 1
+          "signature": "(TestField, Joker)"
         },
         {
           "name": "FindNextField",
-          "overloads": 1
+          "signature": "(TestField, Joker)"
         },
         {
           "name": "FindPreviousField",
-          "overloads": 1
+          "signature": "(TestField, Joker)"
         },
         {
           "name": "First",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetField",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GetValidationError",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GoToKey",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "GoToRecord",
-          "overloads": 1
+          "signature": "(Table)"
         },
         {
           "name": "IsExpanded",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Last",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "New",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Next",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "No",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "OK",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "OpenEdit",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "OpenNew",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "OpenView",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Prev",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Previous",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "RunPageBackgroundTask",
-          "overloads": 1
+          "signature": "(Integer, Dictionary, Boolean)"
         },
         {
           "name": "Trap",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ValidationErrorCount",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "View",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Yes",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -3786,83 +5030,83 @@
       "methods": [
         {
           "name": "Caption",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Editable",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Enabled",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Expand",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "FindFirstField",
-          "overloads": 1
+          "signature": "(TestField, Joker)"
         },
         {
           "name": "FindNextField",
-          "overloads": 1
+          "signature": "(TestField, Joker)"
         },
         {
           "name": "FindPreviousField",
-          "overloads": 1
+          "signature": "(TestField, Joker)"
         },
         {
           "name": "First",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetField",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GetValidationError",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GoToKey",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "GoToRecord",
-          "overloads": 1
+          "signature": "(Table)"
         },
         {
           "name": "IsExpanded",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Last",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "New",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Next",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Prev",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Previous",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ValidationErrorCount",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Visible",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -3870,103 +5114,103 @@
       "methods": [
         {
           "name": "Cancel",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Caption",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Editable",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Expand",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "FindFirstField",
-          "overloads": 1
+          "signature": "(TestField, Joker)"
         },
         {
           "name": "FindNextField",
-          "overloads": 1
+          "signature": "(TestField, Joker)"
         },
         {
           "name": "FindPreviousField",
-          "overloads": 1
+          "signature": "(TestField, Joker)"
         },
         {
           "name": "First",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetValidationError",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "GoToKey",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "GoToRecord",
-          "overloads": 1
+          "signature": "(Table)"
         },
         {
           "name": "IsExpanded",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Last",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "New",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Next",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "OK",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Preview",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Previous",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Print",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SaveAsExcel",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "SaveAsPdf",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "SaveAsWord",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "SaveAsXml",
-          "overloads": 1
+          "signature": "(Text, Text)"
         },
         {
           "name": "Schedule",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ValidationErrorCount",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -3974,131 +5218,147 @@
       "methods": [
         {
           "name": "Contains",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "ConvertStr",
-          "overloads": 1
+          "signature": "(Text, Text, Text)"
         },
         {
           "name": "CopyStr",
-          "overloads": 1
+          "signature": "(Text, Integer, Integer)"
         },
         {
           "name": "DelChr",
-          "overloads": 1
+          "signature": "(Text, Text, Text)"
         },
         {
           "name": "DelStr",
-          "overloads": 1
+          "signature": "(Text, Integer, Integer)"
         },
         {
           "name": "EndsWith",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "IncStr",
-          "overloads": 2
+          "signature": "(Text)"
+        },
+        {
+          "name": "IncStr",
+          "signature": "(Text, BigInteger)"
         },
         {
           "name": "IndexOf",
-          "overloads": 1
+          "signature": "(Text, Integer)"
         },
         {
           "name": "IndexOfAny",
-          "overloads": 2
+          "signature": "(List, Integer)"
+        },
+        {
+          "name": "IndexOfAny",
+          "signature": "(Text, Integer)"
         },
         {
           "name": "InsStr",
-          "overloads": 1
+          "signature": "(Text, Text, Integer)"
         },
         {
           "name": "LastIndexOf",
-          "overloads": 1
+          "signature": "(Text, Integer)"
         },
         {
           "name": "LowerCase",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "MaxStrLen",
-          "overloads": 2
+          "signature": "(Text)"
+        },
+        {
+          "name": "MaxStrLen",
+          "signature": "(Variant)"
         },
         {
           "name": "PadLeft",
-          "overloads": 1
+          "signature": "(Integer, Char)"
         },
         {
           "name": "PadRight",
-          "overloads": 1
+          "signature": "(Integer, Char)"
         },
         {
           "name": "PadStr",
-          "overloads": 1
+          "signature": "(Text, Integer, Text)"
         },
         {
           "name": "Remove",
-          "overloads": 1
+          "signature": "(Integer, Integer)"
         },
         {
           "name": "Replace",
-          "overloads": 1
+          "signature": "(Text, Text)"
         },
         {
           "name": "SelectStr",
-          "overloads": 1
+          "signature": "(Integer, Text)"
         },
         {
           "name": "Split",
-          "overloads": 3
+          "signature": "(List)"
+        },
+        {
+          "name": "Split",
+          "signature": "(Text)"
         },
         {
           "name": "StartsWith",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "StrCheckSum",
-          "overloads": 1
+          "signature": "(Text, Text, Integer)"
         },
         {
           "name": "StrLen",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "StrPos",
-          "overloads": 1
+          "signature": "(Text, Text)"
         },
         {
           "name": "StrSubstNo",
-          "overloads": 1
+          "signature": "(Text, Joker)"
         },
         {
           "name": "Substring",
-          "overloads": 1
+          "signature": "(Integer, Integer)"
         },
         {
           "name": "ToLower",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ToUpper",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Trim",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "TrimEnd",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "TrimStart",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "UpperCase",
-          "overloads": 1
+          "signature": "(Text)"
         }
       ]
     },
@@ -4106,47 +5366,55 @@
       "methods": [
         {
           "name": "Append",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "AppendLine",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Capacity",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "Clear",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "EnsureCapacity",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "Insert",
-          "overloads": 1
+          "signature": "(Integer, Text)"
         },
         {
           "name": "Length",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "MaxCapacity",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Remove",
-          "overloads": 1
+          "signature": "(Integer, Integer)"
         },
         {
           "name": "Replace",
-          "overloads": 2
+          "signature": "(Text, Text)"
+        },
+        {
+          "name": "Replace",
+          "signature": "(Text, Text, Integer, Integer)"
         },
         {
           "name": "ToText",
-          "overloads": 2
+          "signature": "()"
+        },
+        {
+          "name": "ToText",
+          "signature": "(Integer, Integer)"
         }
       ]
     },
@@ -4154,71 +5422,79 @@
       "methods": [
         {
           "name": "Contains",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "EndsWith",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "IndexOf",
-          "overloads": 1
+          "signature": "(Text, Integer)"
         },
         {
           "name": "IndexOfAny",
-          "overloads": 2
+          "signature": "(List, Integer)"
+        },
+        {
+          "name": "IndexOfAny",
+          "signature": "(Text, Integer)"
         },
         {
           "name": "LastIndexOf",
-          "overloads": 1
+          "signature": "(Text, Integer)"
         },
         {
           "name": "PadLeft",
-          "overloads": 1
+          "signature": "(Integer, Char)"
         },
         {
           "name": "PadRight",
-          "overloads": 1
+          "signature": "(Integer, Char)"
         },
         {
           "name": "Remove",
-          "overloads": 1
+          "signature": "(Integer, Integer)"
         },
         {
           "name": "Replace",
-          "overloads": 1
+          "signature": "(Text, Text)"
         },
         {
           "name": "Split",
-          "overloads": 3
+          "signature": "(List)"
+        },
+        {
+          "name": "Split",
+          "signature": "(Text)"
         },
         {
           "name": "StartsWith",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Substring",
-          "overloads": 1
+          "signature": "(Integer, Integer)"
         },
         {
           "name": "ToLower",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ToUpper",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Trim",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "TrimEnd",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "TrimStart",
-          "overloads": 1
+          "signature": "(Text)"
         }
       ]
     },
@@ -4226,23 +5502,23 @@
       "methods": [
         {
           "name": "Hour",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Millisecond",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Minute",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Second",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ToText",
-          "overloads": 1
+          "signature": "(Boolean)"
         }
       ]
     },
@@ -4250,271 +5526,271 @@
       "methods": [
         {
           "name": "IsAction",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsAutomation",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsBigInteger",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsBinary",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsBoolean",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsByte",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsChar",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsClientType",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsCode",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsCodeunit",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsDataClassification",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsDataClassificationType",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsDate",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsDateFormula",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsDateTime",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsDecimal",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsDefaultLayout",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsDictionary",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsDotNet",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsDuration",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsExecutionMode",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsFieldRef",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsFile",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsFilterPageBuilder",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsGuid",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsInStream",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsInteger",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsJsonArray",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsJsonObject",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsJsonToken",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsJsonValue",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsList",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsNotification",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsObjectType",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsOption",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsOutStream",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsPromptMode",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsRecord",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsRecordId",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsRecordRef",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsReportFormat",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsSecurityFiltering",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsTableConnectionType",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsTestPermissions",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsText",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsTextBuilder",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsTextConstant",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsTextEncoding",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsTime",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsTransactionType",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsWideChar",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlAttribute",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlAttributeCollection",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlCData",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlComment",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlDeclaration",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlDocument",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlDocumentType",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlElement",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlNameTable",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlNamespaceManager",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlNode",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlNodeList",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlProcessingInstruction",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlReadOptions",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlText",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlWriteOptions",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -4522,27 +5798,31 @@
       "methods": [
         {
           "name": "Build",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Create",
-          "overloads": 2
+          "signature": "(Integer, Integer, Integer, Integer)"
+        },
+        {
+          "name": "Create",
+          "signature": "(Text)"
         },
         {
           "name": "Major",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Minor",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Revision",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ToText",
-          "overloads": 1
+          "signature": "()"
         }
       ]
     },
@@ -4550,31 +5830,31 @@
       "methods": [
         {
           "name": "AddEntityKey",
-          "overloads": 1
+          "signature": "(Integer, Joker)"
         },
         {
           "name": "GetObjectId",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetObjectType",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetResultCode",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SetObjectId",
-          "overloads": 1
+          "signature": "(Integer)"
         },
         {
           "name": "SetObjectType",
-          "overloads": 1
+          "signature": "(ObjectType)"
         },
         {
           "name": "SetResultCode",
-          "overloads": 1
+          "signature": "(WebServiceActionResultCode)"
         }
       ]
     },
@@ -4582,75 +5862,99 @@
       "methods": [
         {
           "name": "AddAfterSelf",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AddBeforeSelf",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AsXmlNode",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Create",
-          "overloads": 2
+          "signature": "(Text, Text)"
+        },
+        {
+          "name": "Create",
+          "signature": "(Text, Text, Text)"
         },
         {
           "name": "CreateNamespaceDeclaration",
-          "overloads": 1
+          "signature": "(Text, Text)"
         },
         {
           "name": "GetDocument",
-          "overloads": 1
+          "signature": "(XmlDocument)"
         },
         {
           "name": "GetParent",
-          "overloads": 1
+          "signature": "(XmlElement)"
         },
         {
           "name": "IsNamespaceDeclaration",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "LocalName",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Name",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "NamespacePrefix",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "NamespaceUri",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Remove",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ReplaceWith",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "SelectNodes",
-          "overloads": 2
+          "signature": "(Text, XmlNamespaceManager, XmlNodeList)"
+        },
+        {
+          "name": "SelectNodes",
+          "signature": "(Text, XmlNodeList)"
         },
         {
           "name": "SelectSingleNode",
-          "overloads": 2
+          "signature": "(Text, XmlNamespaceManager, XmlNode)"
+        },
+        {
+          "name": "SelectSingleNode",
+          "signature": "(Text, XmlNode)"
         },
         {
           "name": "Value",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "WriteTo",
-          "overloads": 4
+          "signature": "(OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(Text)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(XmlWriteOptions, OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(XmlWriteOptions, Text)"
         }
       ]
     },
@@ -4658,23 +5962,43 @@
       "methods": [
         {
           "name": "Count",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Get",
-          "overloads": 3
+          "signature": "(Integer, XmlAttribute)"
+        },
+        {
+          "name": "Get",
+          "signature": "(Text, Text, XmlAttribute)"
+        },
+        {
+          "name": "Get",
+          "signature": "(Text, XmlAttribute)"
         },
         {
           "name": "Remove",
-          "overloads": 3
+          "signature": "(Text)"
+        },
+        {
+          "name": "Remove",
+          "signature": "(Text, Text)"
+        },
+        {
+          "name": "Remove",
+          "signature": "(XmlAttribute)"
         },
         {
           "name": "RemoveAll",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Set",
-          "overloads": 2
+          "signature": "(Text, Text)"
+        },
+        {
+          "name": "Set",
+          "signature": "(Text, Text, Text)"
         }
       ]
     },
@@ -4682,51 +6006,71 @@
       "methods": [
         {
           "name": "AddAfterSelf",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AddBeforeSelf",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AsXmlNode",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Create",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "GetDocument",
-          "overloads": 1
+          "signature": "(XmlDocument)"
         },
         {
           "name": "GetParent",
-          "overloads": 1
+          "signature": "(XmlElement)"
         },
         {
           "name": "Remove",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ReplaceWith",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "SelectNodes",
-          "overloads": 2
+          "signature": "(Text, XmlNamespaceManager, XmlNodeList)"
+        },
+        {
+          "name": "SelectNodes",
+          "signature": "(Text, XmlNodeList)"
         },
         {
           "name": "SelectSingleNode",
-          "overloads": 2
+          "signature": "(Text, XmlNamespaceManager, XmlNode)"
+        },
+        {
+          "name": "SelectSingleNode",
+          "signature": "(Text, XmlNode)"
         },
         {
           "name": "Value",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "WriteTo",
-          "overloads": 4
+          "signature": "(OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(Text)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(XmlWriteOptions, OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(XmlWriteOptions, Text)"
         }
       ]
     },
@@ -4734,51 +6078,71 @@
       "methods": [
         {
           "name": "AddAfterSelf",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AddBeforeSelf",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AsXmlNode",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Create",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "GetDocument",
-          "overloads": 1
+          "signature": "(XmlDocument)"
         },
         {
           "name": "GetParent",
-          "overloads": 1
+          "signature": "(XmlElement)"
         },
         {
           "name": "Remove",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ReplaceWith",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "SelectNodes",
-          "overloads": 2
+          "signature": "(Text, XmlNamespaceManager, XmlNodeList)"
+        },
+        {
+          "name": "SelectNodes",
+          "signature": "(Text, XmlNodeList)"
         },
         {
           "name": "SelectSingleNode",
-          "overloads": 2
+          "signature": "(Text, XmlNamespaceManager, XmlNode)"
+        },
+        {
+          "name": "SelectSingleNode",
+          "signature": "(Text, XmlNode)"
         },
         {
           "name": "Value",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "WriteTo",
-          "overloads": 4
+          "signature": "(OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(Text)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(XmlWriteOptions, OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(XmlWriteOptions, Text)"
         }
       ]
     },
@@ -4786,59 +6150,79 @@
       "methods": [
         {
           "name": "AddAfterSelf",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AddBeforeSelf",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AsXmlNode",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Create",
-          "overloads": 1
+          "signature": "(Text, Text, Text)"
         },
         {
           "name": "Encoding",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "GetDocument",
-          "overloads": 1
+          "signature": "(XmlDocument)"
         },
         {
           "name": "GetParent",
-          "overloads": 1
+          "signature": "(XmlElement)"
         },
         {
           "name": "Remove",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ReplaceWith",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "SelectNodes",
-          "overloads": 2
+          "signature": "(Text, XmlNamespaceManager, XmlNodeList)"
+        },
+        {
+          "name": "SelectNodes",
+          "signature": "(Text, XmlNodeList)"
         },
         {
           "name": "SelectSingleNode",
-          "overloads": 2
+          "signature": "(Text, XmlNamespaceManager, XmlNode)"
+        },
+        {
+          "name": "SelectSingleNode",
+          "signature": "(Text, XmlNode)"
         },
         {
           "name": "Standalone",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Version",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "WriteTo",
-          "overloads": 4
+          "signature": "(OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(Text)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(XmlWriteOptions, OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(XmlWriteOptions, Text)"
         }
       ]
     },
@@ -4846,103 +6230,155 @@
       "methods": [
         {
           "name": "Add",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AddAfterSelf",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AddBeforeSelf",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AddFirst",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AsXmlNode",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Create",
-          "overloads": 2
+          "signature": "()"
+        },
+        {
+          "name": "Create",
+          "signature": "(Joker)"
         },
         {
           "name": "GetChildElements",
-          "overloads": 3
+          "signature": "()"
+        },
+        {
+          "name": "GetChildElements",
+          "signature": "(Text)"
+        },
+        {
+          "name": "GetChildElements",
+          "signature": "(Text, Text)"
         },
         {
           "name": "GetChildNodes",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetDeclaration",
-          "overloads": 1
+          "signature": "(XmlDeclaration)"
         },
         {
           "name": "GetDescendantElements",
-          "overloads": 3
+          "signature": "()"
+        },
+        {
+          "name": "GetDescendantElements",
+          "signature": "(Text)"
+        },
+        {
+          "name": "GetDescendantElements",
+          "signature": "(Text, Text)"
         },
         {
           "name": "GetDescendantNodes",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetDocument",
-          "overloads": 1
+          "signature": "(XmlDocument)"
         },
         {
           "name": "GetDocumentType",
-          "overloads": 1
+          "signature": "(XmlDocumentType)"
         },
         {
           "name": "GetParent",
-          "overloads": 1
+          "signature": "(XmlElement)"
         },
         {
           "name": "GetRoot",
-          "overloads": 1
+          "signature": "(XmlElement)"
         },
         {
           "name": "NameTable",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ReadFrom",
-          "overloads": 4
+          "signature": "(InStream, XmlDocument)"
+        },
+        {
+          "name": "ReadFrom",
+          "signature": "(InStream, XmlReadOptions, XmlDocument)"
+        },
+        {
+          "name": "ReadFrom",
+          "signature": "(Text, XmlDocument)"
+        },
+        {
+          "name": "ReadFrom",
+          "signature": "(Text, XmlReadOptions, XmlDocument)"
         },
         {
           "name": "Remove",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "RemoveNodes",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ReplaceNodes",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "ReplaceWith",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "SelectNodes",
-          "overloads": 2
+          "signature": "(Text, XmlNamespaceManager, XmlNodeList)"
+        },
+        {
+          "name": "SelectNodes",
+          "signature": "(Text, XmlNodeList)"
         },
         {
           "name": "SelectSingleNode",
-          "overloads": 2
+          "signature": "(Text, XmlNamespaceManager, XmlNode)"
+        },
+        {
+          "name": "SelectSingleNode",
+          "signature": "(Text, XmlNode)"
         },
         {
           "name": "SetDeclaration",
-          "overloads": 1
+          "signature": "(XmlDeclaration)"
         },
         {
           "name": "WriteTo",
-          "overloads": 4
+          "signature": "(OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(Text)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(XmlWriteOptions, OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(XmlWriteOptions, Text)"
         }
       ]
     },
@@ -4950,79 +6386,111 @@
       "methods": [
         {
           "name": "AddAfterSelf",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AddBeforeSelf",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AsXmlNode",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Create",
-          "overloads": 4
+          "signature": "(Text)"
+        },
+        {
+          "name": "Create",
+          "signature": "(Text, Text)"
+        },
+        {
+          "name": "Create",
+          "signature": "(Text, Text, Text)"
+        },
+        {
+          "name": "Create",
+          "signature": "(Text, Text, Text, Text)"
         },
         {
           "name": "GetDocument",
-          "overloads": 1
+          "signature": "(XmlDocument)"
         },
         {
           "name": "GetInternalSubset",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "GetName",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "GetParent",
-          "overloads": 1
+          "signature": "(XmlElement)"
         },
         {
           "name": "GetPublicId",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "GetSystemId",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Remove",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ReplaceWith",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "SelectNodes",
-          "overloads": 2
+          "signature": "(Text, XmlNamespaceManager, XmlNodeList)"
+        },
+        {
+          "name": "SelectNodes",
+          "signature": "(Text, XmlNodeList)"
         },
         {
           "name": "SelectSingleNode",
-          "overloads": 2
+          "signature": "(Text, XmlNamespaceManager, XmlNode)"
+        },
+        {
+          "name": "SelectSingleNode",
+          "signature": "(Text, XmlNode)"
         },
         {
           "name": "SetInternalSubset",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "SetName",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "SetPublicId",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "SetSystemId",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "WriteTo",
-          "overloads": 4
+          "signature": "(OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(Text)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(XmlWriteOptions, OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(XmlWriteOptions, Text)"
         }
       ]
     },
@@ -5030,135 +6498,195 @@
       "methods": [
         {
           "name": "Add",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AddAfterSelf",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AddBeforeSelf",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AddFirst",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AsXmlNode",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Attributes",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Create",
-          "overloads": 4
+          "signature": "(Text)"
+        },
+        {
+          "name": "Create",
+          "signature": "(Text, Joker)"
+        },
+        {
+          "name": "Create",
+          "signature": "(Text, Text)"
+        },
+        {
+          "name": "Create",
+          "signature": "(Text, Text, Joker)"
         },
         {
           "name": "GetChildElements",
-          "overloads": 3
+          "signature": "()"
+        },
+        {
+          "name": "GetChildElements",
+          "signature": "(Text)"
+        },
+        {
+          "name": "GetChildElements",
+          "signature": "(Text, Text)"
         },
         {
           "name": "GetChildNodes",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetDescendantElements",
-          "overloads": 3
+          "signature": "()"
+        },
+        {
+          "name": "GetDescendantElements",
+          "signature": "(Text)"
+        },
+        {
+          "name": "GetDescendantElements",
+          "signature": "(Text, Text)"
         },
         {
           "name": "GetDescendantNodes",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetDocument",
-          "overloads": 1
+          "signature": "(XmlDocument)"
         },
         {
           "name": "GetNamespaceOfPrefix",
-          "overloads": 1
+          "signature": "(Text, Text)"
         },
         {
           "name": "GetParent",
-          "overloads": 1
+          "signature": "(XmlElement)"
         },
         {
           "name": "GetPrefixOfNamespace",
-          "overloads": 1
+          "signature": "(Text, Text)"
         },
         {
           "name": "HasAttributes",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "HasElements",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "InnerText",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "InnerXml",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsEmpty",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "LocalName",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Name",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "NamespaceUri",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Remove",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "RemoveAllAttributes",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "RemoveAttribute",
-          "overloads": 3
+          "signature": "(Text)"
+        },
+        {
+          "name": "RemoveAttribute",
+          "signature": "(Text, Text)"
+        },
+        {
+          "name": "RemoveAttribute",
+          "signature": "(XmlAttribute)"
         },
         {
           "name": "RemoveNodes",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ReplaceNodes",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "ReplaceWith",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "SelectNodes",
-          "overloads": 2
+          "signature": "(Text, XmlNamespaceManager, XmlNodeList)"
+        },
+        {
+          "name": "SelectNodes",
+          "signature": "(Text, XmlNodeList)"
         },
         {
           "name": "SelectSingleNode",
-          "overloads": 2
+          "signature": "(Text, XmlNamespaceManager, XmlNode)"
+        },
+        {
+          "name": "SelectSingleNode",
+          "signature": "(Text, XmlNode)"
         },
         {
           "name": "SetAttribute",
-          "overloads": 2
+          "signature": "(Text, Text)"
+        },
+        {
+          "name": "SetAttribute",
+          "signature": "(Text, Text, Text)"
         },
         {
           "name": "WriteTo",
-          "overloads": 4
+          "signature": "(OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(Text)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(XmlWriteOptions, OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(XmlWriteOptions, Text)"
         }
       ]
     },
@@ -5166,11 +6694,11 @@
       "methods": [
         {
           "name": "Add",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Get",
-          "overloads": 1
+          "signature": "(Text, Text)"
         }
       ]
     },
@@ -5178,35 +6706,35 @@
       "methods": [
         {
           "name": "AddNamespace",
-          "overloads": 1
+          "signature": "(Text, Text)"
         },
         {
           "name": "HasNamespace",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "LookupNamespace",
-          "overloads": 1
+          "signature": "(Text, Text)"
         },
         {
           "name": "LookupPrefix",
-          "overloads": 1
+          "signature": "(Text, Text)"
         },
         {
           "name": "NameTable",
-          "overloads": 1
+          "signature": "(XmlNameTable)"
         },
         {
           "name": "PopScope",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "PushScope",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "RemoveNamespace",
-          "overloads": 1
+          "signature": "(Text, Text)"
         }
       ]
     },
@@ -5214,111 +6742,131 @@
       "methods": [
         {
           "name": "AddAfterSelf",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AddBeforeSelf",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AsXmlAttribute",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsXmlCData",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsXmlComment",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsXmlDeclaration",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsXmlDocument",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsXmlDocumentType",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsXmlElement",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsXmlProcessingInstruction",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "AsXmlText",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "GetDocument",
-          "overloads": 1
+          "signature": "(XmlDocument)"
         },
         {
           "name": "GetParent",
-          "overloads": 1
+          "signature": "(XmlElement)"
         },
         {
           "name": "IsXmlAttribute",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlCData",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlComment",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlDeclaration",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlDocument",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlDocumentType",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlElement",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlProcessingInstruction",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "IsXmlText",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Remove",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ReplaceWith",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "SelectNodes",
-          "overloads": 2
+          "signature": "(Text, XmlNamespaceManager, XmlNodeList)"
+        },
+        {
+          "name": "SelectNodes",
+          "signature": "(Text, XmlNodeList)"
         },
         {
           "name": "SelectSingleNode",
-          "overloads": 2
+          "signature": "(Text, XmlNamespaceManager, XmlNode)"
+        },
+        {
+          "name": "SelectSingleNode",
+          "signature": "(Text, XmlNode)"
         },
         {
           "name": "WriteTo",
-          "overloads": 4
+          "signature": "(OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(Text)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(XmlWriteOptions, OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(XmlWriteOptions, Text)"
         }
       ]
     },
@@ -5326,11 +6874,11 @@
       "methods": [
         {
           "name": "Count",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Get",
-          "overloads": 1
+          "signature": "(Integer, XmlNode)"
         }
       ]
     },
@@ -5338,63 +6886,83 @@
       "methods": [
         {
           "name": "AddAfterSelf",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AddBeforeSelf",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AsXmlNode",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Create",
-          "overloads": 1
+          "signature": "(Text, Text)"
         },
         {
           "name": "GetData",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "GetDocument",
-          "overloads": 1
+          "signature": "(XmlDocument)"
         },
         {
           "name": "GetParent",
-          "overloads": 1
+          "signature": "(XmlElement)"
         },
         {
           "name": "GetTarget",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Remove",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ReplaceWith",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "SelectNodes",
-          "overloads": 2
+          "signature": "(Text, XmlNamespaceManager, XmlNodeList)"
+        },
+        {
+          "name": "SelectNodes",
+          "signature": "(Text, XmlNodeList)"
         },
         {
           "name": "SelectSingleNode",
-          "overloads": 2
+          "signature": "(Text, XmlNamespaceManager, XmlNode)"
+        },
+        {
+          "name": "SelectSingleNode",
+          "signature": "(Text, XmlNode)"
         },
         {
           "name": "SetData",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "SetTarget",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "WriteTo",
-          "overloads": 4
+          "signature": "(OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(Text)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(XmlWriteOptions, OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(XmlWriteOptions, Text)"
         }
       ]
     },
@@ -5402,7 +6970,7 @@
       "methods": [
         {
           "name": "PreserveWhitespace",
-          "overloads": 1
+          "signature": "(Boolean)"
         }
       ]
     },
@@ -5410,51 +6978,71 @@
       "methods": [
         {
           "name": "AddAfterSelf",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AddBeforeSelf",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "AsXmlNode",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Create",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "GetDocument",
-          "overloads": 1
+          "signature": "(XmlDocument)"
         },
         {
           "name": "GetParent",
-          "overloads": 1
+          "signature": "(XmlElement)"
         },
         {
           "name": "Remove",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ReplaceWith",
-          "overloads": 1
+          "signature": "(Joker)"
         },
         {
           "name": "SelectNodes",
-          "overloads": 2
+          "signature": "(Text, XmlNamespaceManager, XmlNodeList)"
+        },
+        {
+          "name": "SelectNodes",
+          "signature": "(Text, XmlNodeList)"
         },
         {
           "name": "SelectSingleNode",
-          "overloads": 2
+          "signature": "(Text, XmlNamespaceManager, XmlNode)"
+        },
+        {
+          "name": "SelectSingleNode",
+          "signature": "(Text, XmlNode)"
         },
         {
           "name": "Value",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "WriteTo",
-          "overloads": 4
+          "signature": "(OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(Text)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(XmlWriteOptions, OutStream)"
+        },
+        {
+          "name": "WriteTo",
+          "signature": "(XmlWriteOptions, Text)"
         }
       ]
     },
@@ -5462,7 +7050,7 @@
       "methods": [
         {
           "name": "PreserveWhitespace",
-          "overloads": 1
+          "signature": "(Boolean)"
         }
       ]
     },
@@ -5470,15 +7058,15 @@
       "methods": [
         {
           "name": "Export",
-          "overloads": 1
+          "signature": "(Integer, OutStream, Table)"
         },
         {
           "name": "Import",
-          "overloads": 1
+          "signature": "(Integer, InStream, Table)"
         },
         {
           "name": "Run",
-          "overloads": 1
+          "signature": "(Integer, Boolean, Boolean, Table)"
         }
       ]
     },
@@ -5486,75 +7074,75 @@
       "methods": [
         {
           "name": "Break",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "BreakUnbound",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "CurrentPath",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "Export",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "FieldDelimiter",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "FieldSeparator",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Filename",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Import",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "ImportFile",
-          "overloads": 1
+          "signature": "(Boolean)"
         },
         {
           "name": "Quit",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "RecordSeparator",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "Run",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "SetDestination",
-          "overloads": 1
+          "signature": "(OutStream)"
         },
         {
           "name": "SetSource",
-          "overloads": 1
+          "signature": "(InStream)"
         },
         {
           "name": "SetTableView",
-          "overloads": 1
+          "signature": "(Table)"
         },
         {
           "name": "Skip",
-          "overloads": 1
+          "signature": "()"
         },
         {
           "name": "TableSeparator",
-          "overloads": 1
+          "signature": "(Text)"
         },
         {
           "name": "TextEncoding",
-          "overloads": 1
+          "signature": "(TextEncoding)"
         }
       ]
     }
