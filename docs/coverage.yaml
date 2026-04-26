@@ -301,6 +301,21 @@ tableextension_declaration:
     - tests/bucket-2/33-extension-validate
     - tests/bucket-2/34-extension-parent-object
 
+al0197_duplicate_extension_name_same_extension:
+  layer: syntax
+  category: extension
+  status: covered
+  notes: >
+    AL diagnostic AL0197: runner detects duplicate extension object names (pageextension,
+    tableextension, etc.) within the same app.json scope as a compile error (exit 3).
+    Cross-extension duplicates from different app.json directories are correctly
+    suppressed (they are valid in BC where each extension compiles independently).
+    Implemented as a pre-compile scan in Pipeline.DetectSameExtensionDuplicates.
+    Issue #1345.
+  tests:
+    - tests/excluded/135-same-ext-pageext-duplicate
+    - tests/bucket-2/130-cross-ext-al0275
+
 # ── statement ───────────────────────────────────────────────────
 
 asserterror_statement:

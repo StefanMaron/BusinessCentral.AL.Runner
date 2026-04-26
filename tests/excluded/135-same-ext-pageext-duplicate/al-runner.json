@@ -1,5 +1,4 @@
 {
-  "expectedExitCode": 0,
-  "knownGap": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1345",
-  "comment": "Runner does not detect duplicate pageextension names in same extension (AL0197 not enforced). Should be exit 3 once #1345 is fixed."
+  "expectedExitCode": 3,
+  "comment": "Duplicate pageextension names in the same extension must fail with AL0197 (exit 3). Fixed by #1345."
 }

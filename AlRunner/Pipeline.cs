@@ -542,6 +542,21 @@ public class AlRunnerPipeline
         while (sourceFilePaths.Count < alSources.Count)
             sourceFilePaths.Add(null);
 
+        // Pre-compile check: detect duplicate extension object names within the same
+        // app.json scope. These are genuine AL0197 errors that the runner must enforce
+        // because when all source files are compiled together in a single BC compilation
+        // pass, the BC compiler assigns ONE extension identity to all objects and cannot
+        // distinguish same-extension from cross-extension duplicates. We detect them here
+        // using the actual app.json file structure instead.
+        var sameExtDups = DetectSameExtensionDuplicates(sourceFilePaths, alSources);
+        if (sameExtDups.Count > 0)
+        {
+            stderr.WriteLine($"AL compile error (AL0197): duplicate extension object name within the same extension ({sameExtDups.Count} error(s)):");
+            foreach (var msg in sameExtDups)
+                stderr.WriteLine($"  {msg}");
+            return 3;
+        }
+
         // Step 1: Transpile
         Timer.StartStage("AL transpilation");
         var generatedCSharpList = Transpile(options, alSources, inputGroups, inputPaths, stubSources, stderr,
@@ -1193,6 +1208,92 @@ public class AlRunnerPipeline
         }
 
         return source;
+    }
+
+    // Regex to detect extension object declarations: captures type and name.
+    // Matches: pageextension, tableextension, reportextension, enumextension,
+    //          permissionsetextension, pageCustomization (all extension-type objects).
+    private static readonly Regex ExtensionObjectDeclPattern = new(
+        @"^\s*(?<type>pageextension|tableextension|reportextension|enumextension|permissionsetextension|pagecustomization)\s+\d+\s+""(?<name>[^""]+)""",
+        RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Compiled);
+
+    /// <summary>
+    /// Walks up from <paramref name="filePath"/> to find the nearest app.json.
+    /// Returns the app.json path, or null if none found.
+    /// </summary>
+    private static string? FindOwningAppJson(string filePath)
+    {
+        var dir = Path.GetDirectoryName(Path.GetFullPath(filePath));
+        while (dir != null)
+        {
+            var candidate = Path.Combine(dir, "app.json");
+            if (File.Exists(candidate))
+                return candidate;
+            dir = Path.GetDirectoryName(dir);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Scans source files for same-extension duplicate extension object names.
+    /// Groups files by owning app.json; within each group, if two files declare an
+    /// extension object (pageextension, tableextension, etc.) with the same name,
+    /// that is a genuine AL0197 error — not a cross-extension collision.
+    /// Returns a list of error messages, or an empty list if no duplicates detected.
+    /// </summary>
+    private static List<string> DetectSameExtensionDuplicates(
+        List<string?> sourceFilePaths,
+        List<string> alSources)
+    {
+        var errors = new List<string>();
+
+        // Group file paths by their owning app.json.
+        // Files with no owning app.json are grouped under a null key (skip them).
+        var appJsonToFiles = new Dictionary<string, List<(string FilePath, string Source)>>(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < sourceFilePaths.Count && i < alSources.Count; i++)
+        {
+            var fp = sourceFilePaths[i];
+            if (fp == null) continue;
+            var appJson = FindOwningAppJson(fp);
+            if (appJson == null) continue;
+            if (!appJsonToFiles.TryGetValue(appJson, out var list))
+            {
+                list = new List<(string, string)>();
+                appJsonToFiles[appJson] = list;
+            }
+            list.Add((fp, alSources[i]));
+        }
+
+        // For each app.json group, detect duplicate extension object names.
+        foreach (var (appJson, files) in appJsonToFiles)
+        {
+            // Map of "type:name" (case-insensitive) → first declaring file path
+            var seen = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var (filePath, source) in files)
+            {
+                foreach (Match m in ExtensionObjectDeclPattern.Matches(source))
+                {
+                    var objectType = m.Groups["type"].Value;
+                    var objectName = m.Groups["name"].Value;
+                    var key = $"{objectType}:{objectName}";
+                    if (seen.TryGetValue(key, out var firstFile))
+                    {
+                        errors.Add(
+                            $"error AL0197: An application object of type '{objectType}' " +
+                            $"with name '{objectName}' is already declared in " +
+                            $"'{Path.GetFileName(firstFile)}' " +
+                            $"(same extension: {Path.GetFileName(appJson)})");
+                    }
+                    else
+                    {
+                        seen[key] = filePath;
+                    }
+                }
+            }
+        }
+
+        return errors;
     }
 
     private static List<(string Name, string Code)>? Transpile(
