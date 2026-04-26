@@ -2507,18 +2507,23 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
         //
         // Discriminators (before visiting — receiver still un-visited):
         //   ALGet   4 args: (DataError, string, string, ByRef<NavXmlAttribute>)
-        //   ALRemove 2 args: (string, string)   — no DataError first arg
-        //   ALSet   3 args: (string, string, string)
+        //   ALRemove 2 args: (string, string) where receiver is an InvocationExpression
+        //   ALSet   3 args: (string, string, string) where receiver is an InvocationExpression
         //
         // ALGet 4-arg is unique to NavXmlAttributeCollection (record ALGet uses
-        // fewer args and ByRef<record> types).  ALRemove 2-string and ALSet 3-string
-        // are similarly distinct from other AL ALRemove/ALSet overloads.
+        // fewer args and ByRef<record> types).
+        //
+        // ALRemove 2-arg and ALSet 3-arg: restrict to receivers that are invocations
+        // (i.e. result of a method call like ALAttributes()) rather than static type
+        // references (e.g. NavTextExtensions.ALRemove(lbl, idx) from Label.Remove in AL,
+        // which is also a 2-arg non-DataError call on a plain type identifier).
         if (node.Expression is MemberAccessExpressionSyntax xmlAttrMa)
         {
             var xmlAttrMethodName = xmlAttrMa.Name.Identifier.Text;
             var args = node.ArgumentList.Arguments;
 
-            // ALGet(DataError, string, string, ByRef<NavXmlAttribute>) — 4-arg namespace Get
+            // ALGet(DataError, string, string, ByRef<NavXmlAttribute>) — 4-arg namespace Get.
+            // The ByRef<NavXmlAttribute> arg makes this unique to NavXmlAttributeCollection.
             if (xmlAttrMethodName == "ALGet" &&
                 args.Count == 4 &&
                 args[0].Expression.ToString().StartsWith("DataError") &&
@@ -2544,10 +2549,14 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
                     }))).WithTriviaFrom(node);
             }
 
-            // ALRemove(string, string) — 2-arg namespace Remove (no DataError)
+            // ALRemove(string, string) — 2-arg namespace Remove.
+            // Guard: receiver must be an invocation (e.g. el.ALAttributes()), not a
+            // static type reference like NavTextExtensions (which also has a 2-arg
+            // ALRemove(NavText, int) that BC emits for Label.Remove(index)).
             if (xmlAttrMethodName == "ALRemove" &&
                 args.Count == 2 &&
-                !args[0].Expression.ToString().StartsWith("DataError"))
+                !args[0].Expression.ToString().StartsWith("DataError") &&
+                xmlAttrMa.Expression is InvocationExpressionSyntax)
             {
                 var receiverExpr = (ExpressionSyntax)Visit(xmlAttrMa.Expression)!;
                 var nsExpr       = (ExpressionSyntax)Visit(args[0].Expression)!;
@@ -2565,10 +2574,12 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
                     }))).WithTriviaFrom(node);
             }
 
-            // ALSet(string, string, string) — 3-arg namespace Set
+            // ALSet(string, string, string) — 3-arg namespace Set.
+            // Guard: receiver must be an invocation (same reason as ALRemove above).
             if (xmlAttrMethodName == "ALSet" &&
                 args.Count == 3 &&
-                !args[0].Expression.ToString().StartsWith("DataError"))
+                !args[0].Expression.ToString().StartsWith("DataError") &&
+                xmlAttrMa.Expression is InvocationExpressionSyntax)
             {
                 var receiverExpr = (ExpressionSyntax)Visit(xmlAttrMa.Expression)!;
                 var nsExpr       = (ExpressionSyntax)Visit(args[0].Expression)!;
