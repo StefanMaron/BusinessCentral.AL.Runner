@@ -214,6 +214,13 @@ public class MockReportHandle
     }
 
     /// <summary>
+    /// Instance <c>Rep.RunRequestPage(requestParameters)</c> — 1-argument overload.
+    /// BC emits this when AL code calls <c>SomeReport.RunRequestPage(OldParameters)</c>
+    /// on a report variable. Returns empty string in standalone mode (no request-page UI).
+    /// </summary>
+    public string RunRequestPage(string requestParameters) => string.Empty;
+
+    /// <summary>
     /// Extension-scoped Invoke — called when invoking a method defined in a report
     /// extension. The BC compiler emits (extensionId, memberId, args).
     /// We ignore the extensionId and delegate to the standard Invoke.

@@ -6009,6 +6009,14 @@ Report.RunRequestPage (2-arg):
   tests:
     - tests/bucket-2/301-report-static-runrequestpage
 
+Report.RunRequestPage (instance 1-arg):
+  layer: runtime-api
+  category: Report
+  status: covered
+  notes: overloads=1; Rep.RunRequestPage(requestParameters) instance form — BC emits this when a Report variable calls RunRequestPage with one Text argument (e.g. SuggestVendorPayments.RunRequestPage(OldParameters)). Returns empty string in standalone mode. Fixes #1333.
+  tests:
+    - tests/bucket-2/308-report-instance-runrequestpage
+
 Report.SaveAs:
   layer: runtime-api
   category: Report
