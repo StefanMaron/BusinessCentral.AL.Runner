@@ -84,8 +84,16 @@ public class MockHttpClient
         throw new NotSupportedException(HttpNotSupportedMessage);
     }
 
-    /// <summary>Timeout property stub (seconds). No-op in standalone mode.</summary>
-    public int ALTimeout { get; set; } = 30;
+    /// <summary>
+    /// Timeout property stub (milliseconds). No-op in standalone mode.
+    /// BC's HttpClient.Timeout is Integer (milliseconds), but AL allows assigning
+    /// a Duration value directly (Duration → Integer implicit conversion in AL).
+    /// The BC compiler emits <c>client.ALTimeout = navDuration</c> without any explicit
+    /// cast, so this property uses NavDuration to accept either form.
+    /// NavDuration has implicit conversions from long and to long, covering Integer
+    /// assignments too (ALCompiler.ToInt32(NavDuration) resolves via long overload).
+    /// </summary>
+    public NavDuration ALTimeout { get; set; } = 30L;
 
     /// <summary>DefaultRequestHeaders property stub.</summary>
     public MockHttpHeaders ALDefaultRequestHeaders => _defaultHeaders;
@@ -114,7 +122,7 @@ public class MockHttpClient
     {
         _baseAddress = string.Empty;
         _defaultHeaders = new MockHttpHeaders();
-        ALTimeout = 30;
+        ALTimeout = 30L;
         ALUseDefaultNetworkWindowsAuthentication = false;
         ALUseServerCertificateValidation = false;
     }

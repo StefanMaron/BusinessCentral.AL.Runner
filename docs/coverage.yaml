@@ -3050,6 +3050,9 @@ HttpClient.Timeout (Duration):
   layer: runtime-api
   category: HttpClient
   status: covered
+  notes: ALTimeout changed from int to NavDuration so Duration→Integer assignment compiles — issue #1445
+  tests:
+    - tests/bucket-2/data-formats/313-duration-to-integer
 
 HttpClient.UseDefaultNetworkWindowsAuthentication ():
   layer: runtime-api
