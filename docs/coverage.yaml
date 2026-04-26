@@ -7098,6 +7098,9 @@ Session.StopSession (Integer, Text):
   layer: runtime-api
   category: Session
   status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/311443-stopsession-comment
+  notes: . closes #1443. comment param ignored — single-process runner.
 
 Session.UnbindSubscription (Codeunit):
   layer: runtime-api
