@@ -1550,6 +1550,16 @@ public class AlRunnerPipeline
             alStubs.Add(stubAl ?? $"table {id} \"AutoStub{id}\" {{ fields {{ field(1; PK; Integer) {{ }} }} keys {{ key(PK; PK) {{ Clustered = true; }} }} }}");
         }
 
+        // Register stub AL with the field/init-value registries so runtime mocks
+        // (MockRecordHandle.ALInsert auto-increment, FieldRef metadata, etc.)
+        // see auto-stubbed tables the same way they see source-AL tables.
+        // Without this, AutoIncrement on a packaged table is silently dropped.
+        foreach (var stubAl in alStubs)
+        {
+            Runtime.TableFieldRegistry.ParseAndRegister(stubAl);
+            Runtime.TableInitValueRegistry.ParseAndRegister(stubAl);
+        }
+
         // 4. Compile stubs in a second BC pass (same packages → proper scope classes)
         var savedErr = Console.Error;
         Console.SetError(TextWriter.Null);
@@ -1799,14 +1809,41 @@ public class AlRunnerPipeline
             sb.AppendLine($"table {tableId} \"{foundName.Replace("\"", "\"\"")}\"");
             sb.AppendLine("{");
 
-            // Fields section
+            // Read primary-key field names from the symbol so the stub preserves
+            // the real PK shape. Without this, Insert on auto-stubbed tables
+            // collides on the empty default of a placeholder PK field, and
+            // AutoIncrement metadata is lost (BC fires AutoIncrement on every
+            // Insert overload — see the BC docs for RecordRef.Insert).
+            var pkFieldNames = ExtractPrimaryKeyFieldNames(found);
+            var pkFieldSymbols = ExtractPrimaryKeyFieldSymbols(found);
+
             sb.AppendLine("    fields");
             sb.AppendLine("    {");
-            sb.AppendLine("        field(1; PK; Integer) { }");
+            if (pkFieldSymbols.Count > 0)
+            {
+                foreach (var fieldSymbol in pkFieldSymbols)
+                {
+                    var rendered = RenderPrimaryKeyFieldDecl(fieldSymbol);
+                    if (rendered != null)
+                        sb.AppendLine(rendered);
+                }
+            }
+            else
+            {
+                sb.AppendLine("        field(1; PK; Integer) { }");
+            }
             sb.AppendLine("    }");
             sb.AppendLine("    keys");
             sb.AppendLine("    {");
-            sb.AppendLine("        key(PK; PK) { Clustered = true; }");
+            if (pkFieldNames.Count > 0)
+            {
+                var keyList = string.Join(", ", pkFieldNames.Select(n => $"\"{n.Replace("\"", "\"\"")}\""));
+                sb.AppendLine($"        key(PK; {keyList}) {{ Clustered = true; }}");
+            }
+            else
+            {
+                sb.AppendLine("        key(PK; PK) { Clustered = true; }");
+            }
             sb.AppendLine("    }");
 
             // Methods — same approach as codeunit stubs
@@ -1876,6 +1913,143 @@ public class AlRunnerPipeline
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Read a property whether it is declared on the runtime type, a base type,
+    /// or an interface. BC symbol contracts (e.g. <c>ITableTypeSymbol.PrimaryKey</c>)
+    /// live on interfaces, so plain <c>GetType().GetProperty</c> on a concrete
+    /// reference symbol misses them.
+    /// </summary>
+    private static object? GetSymbolPropertyValue(object obj, string propertyName)
+    {
+        var t = obj.GetType();
+        for (var cur = t; cur != null; cur = cur.BaseType)
+        {
+            var prop = cur.GetProperty(propertyName,
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+            if (prop != null) return prop.GetValue(obj);
+        }
+        foreach (var iface in t.GetInterfaces())
+        {
+            var prop = iface.GetProperty(propertyName);
+            if (prop != null) return prop.GetValue(obj);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Read the field names that compose a table's primary key from the BC
+    /// symbol via reflection. Falls back to an empty list when the symbol
+    /// shape is unfamiliar so callers can use a synthesized PK field.
+    /// </summary>
+    private static List<string> ExtractPrimaryKeyFieldNames(object tableSymbol)
+    {
+        var names = new List<string>();
+        try
+        {
+            var pk = GetSymbolPropertyValue(tableSymbol, "PrimaryKey");
+            if (pk == null) return names;
+            var fieldsObj = GetSymbolPropertyValue(pk, "Fields");
+            if (fieldsObj is not System.Collections.IEnumerable fields) return names;
+            foreach (var f in fields)
+            {
+                var name = GetSymbolPropertyValue(f, "Name")?.ToString();
+                if (!string.IsNullOrEmpty(name))
+                    names.Add(name);
+            }
+        }
+        catch { }
+        return names;
+    }
+
+    /// <summary>Read primary-key FieldSymbols from a TableTypeSymbol, in PK order.</summary>
+    private static List<object> ExtractPrimaryKeyFieldSymbols(object tableSymbol)
+    {
+        var result = new List<object>();
+        try
+        {
+            var pk = GetSymbolPropertyValue(tableSymbol, "PrimaryKey");
+            if (pk == null) return result;
+            var fieldsObj = GetSymbolPropertyValue(pk, "Fields");
+            if (fieldsObj is not System.Collections.IEnumerable fields) return result;
+            foreach (var f in fields)
+                if (f != null) result.Add(f);
+        }
+        catch { }
+        return result;
+    }
+
+    /// <summary>
+    /// Render a single primary-key field declaration with the field's real id,
+    /// name, type, length, and AutoIncrement so the stub preserves enough
+    /// schema for Insert(true) to work like base BC.
+    /// </summary>
+    private static string? RenderPrimaryKeyFieldDecl(object fieldSymbol)
+    {
+        try
+        {
+            var idObj = GetSymbolPropertyValue(fieldSymbol, "Id");
+            var nameObj = GetSymbolPropertyValue(fieldSymbol, "Name");
+            if (idObj is not int id || nameObj is not string name || string.IsNullOrEmpty(name))
+                return null;
+
+            var typeObj = GetSymbolPropertyValue(fieldSymbol, "Type");
+            var typeText = RenderFieldTypeForStub(fieldSymbol, typeObj);
+
+            var autoInc = ReadAutoIncrement(fieldSymbol);
+            var props = autoInc ? " AutoIncrement = true; " : " ";
+
+            return $"        field({id}; \"{name.Replace("\"", "\"\"")}\"; {typeText}) {{{props}}}";
+        }
+        catch { return null; }
+    }
+
+    /// <summary>Render a stub field's type, preserving Text[N]/Code[N] length when available.</summary>
+    private static string RenderFieldTypeForStub(object fieldSymbol, object? typeSymbol)
+    {
+        if (typeSymbol == null) return "Variant";
+        var navTypeKind = GetSymbolPropertyValue(typeSymbol, "NavTypeKind")?.ToString();
+        if (navTypeKind is "Text" or "Code")
+        {
+            var hasLengthObj = GetSymbolPropertyValue(fieldSymbol, "HasLength");
+            var lengthObj = GetSymbolPropertyValue(fieldSymbol, "Length");
+            if (hasLengthObj is true && lengthObj is int length && length > 0)
+                return $"{navTypeKind}[{length}]";
+            return navTypeKind == "Code" ? "Code[20]" : "Text[250]";
+        }
+        return RenderSymbolTypeViaReflection(typeSymbol);
+    }
+
+    /// <summary>Returns true when the FieldSymbol carries AutoIncrement = true.</summary>
+    private static bool ReadAutoIncrement(object fieldSymbol)
+    {
+        try
+        {
+            var propsObj = GetSymbolPropertyValue(fieldSymbol, "Properties");
+            if (propsObj is not System.Collections.IEnumerable props) return false;
+
+            foreach (var p in props)
+            {
+                var kind = GetSymbolPropertyValue(p, "PropertyKind")?.ToString();
+                if (kind != "AutoIncrement") continue;
+
+                // The presence of an AutoIncrement property in the Properties
+                // array means the field declared it explicitly; AL syntax only
+                // ever sets AutoIncrement = true (the default is false). Read
+                // the value when available, otherwise treat presence as truth.
+                var value = GetSymbolPropertyValue(p, "Value");
+                if (value is bool b) return b;
+                if (value != null && bool.TryParse(value.ToString(), out var parsed)) return parsed;
+
+                var valueText = GetSymbolPropertyValue(p, "ValueText")?.ToString();
+                if (valueText != null && bool.TryParse(valueText, out var parsedText)) return parsedText;
+
+                return true;
+            }
+        }
+        catch { }
+        return false;
     }
 
     /// <summary>Render an AL type from a BC symbol type object using reflection.</summary>

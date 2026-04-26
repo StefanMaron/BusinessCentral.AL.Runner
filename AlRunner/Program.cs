@@ -690,7 +690,10 @@ compilation, the runner:
 2. Queries the BC compiler's symbol table for each missing object
 3. Generates AL stubs with **full method signatures** — correct parameter names, types,
    `var` modifiers, and return types — extracted from the symbol table metadata
-4. Compiles them in a second BC pass to produce proper scope classes with correct
+4. For tables, emits the real primary-key fields with their declared type, length,
+   and `AutoIncrement` setting so `Insert(true)` auto-assigns IDs the same way
+   base BC does. Non-PK fields are not emitted; access them by id (`FieldRef`).
+5. Compiles them in a second BC pass to produce proper scope classes with correct
    member IDs and default return values
 
 This means calling methods on dependency objects (e.g., LibraryERM, Rest Client,
