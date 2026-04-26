@@ -7099,6 +7099,14 @@ Session.SetDocumentServiceToken (Text):
   status: stub
   notes: . Stripped via StripEntireCallMethods — OneDrive integration; no-op standalone. No explicit test (no return value to assert).
 
+Session.StartSession (Integer, Integer):
+  layer: runtime-api
+  category: Session
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/311435-startsession-2arg
+  notes: 2-arg AL form (no Company). MockSession.ALStartSession(DataError, ByRef<int>, int) delegates to the 4-arg overload with the current company name; closes #1435
+
 Session.StartSession (Integer, Integer, Duration, Text, Table):
   layer: runtime-api
   category: Session
