@@ -5079,6 +5079,28 @@ Page.SetRecord (CurrPage):
   tests: tests/bucket-1/1262-page-bookmarktype
   notes: overloads=1; SetRecord(MockRecordHandle) on page class — BC lowers CurrPage.SetRecord(rec) to this.SetRecord(rec.Target); separate from MockFormHandle.SetRecord
 
+PagePart.Close:
+  layer: runtime-api
+  category: PagePart
+  status: covered
+  tests: tests/bucket-2/306-partformhandle-close-getrecord
+  notes: >
+    No-op stub on MockPartFormHandle. BC generates
+    CurrPage.SubPart.Page.Close() as
+    CurrPage.GetPart(hash).CreateNavFormHandle(scope).Close().
+    Issue #1325.
+
+PagePart.GetRecord:
+  layer: runtime-api
+  category: PagePart
+  status: covered
+  tests: tests/bucket-2/306-partformhandle-close-getrecord
+  notes: >
+    No-op stub on MockPartFormHandle. BC generates
+    CurrPage.SubPart.Page.GetRecord(rec) as
+    CurrPage.GetPart(hash).CreateNavFormHandle(scope).GetRecord(rec.Target).
+    Issue #1325.
+
 PagePart.SetTableView:
   layer: runtime-api
   category: PagePart
