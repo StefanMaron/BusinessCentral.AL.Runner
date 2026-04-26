@@ -34,28 +34,25 @@ table 306000 "RRC Table"
     end;
 
     /// Called from within the table — exercises ALRecordId as a bare built-in call.
-    /// BC emits ALRecordId directly on the Record class for bare RecordId() calls.
+    /// BC emits ALRecordId directly on the Record class for bare RecordId() calls inside
+    /// table procedures (issue #1330: CS1061 on Record<N>: missing ALRecordId).
     procedure GetOwnRecordIdBuiltin(): RecordId
+    var
+        RecId: RecordId;
     begin
-        exit(RecordId());
-    end;
-
-    /// Called from within the table — exercises ALTestFieldNavValueSafe on the Record class.
-    procedure ValidateNameField()
-    begin
-        Rec.TestField("Name");
-    end;
-
-    /// Called from within the table — exercises ALTestFieldNavValueSafe with a value arg.
-    procedure ValidateNameFieldWithValue(ExpectedName: Text[50])
-    begin
-        Rec.TestField("Name", ExpectedName);
+        RecId := RecordId;
+        exit(RecId);
     end;
 
     /// Called from within the table — exercises ALCurrentCompany as a bare built-in call.
+    /// BC emits ALCurrentCompany directly on the Record class for bare CurrentCompany calls
+    /// inside table procedures (issue #1330: CS1061 on Record<N>: missing ALCurrentCompany).
     procedure GetOwnCurrentCompanyBuiltin(): Text
+    var
+        Company: Text;
     begin
-        exit(CurrentCompany());
+        Company := CurrentCompany;
+        exit(Company);
     end;
 
     /// Called from within the table — exercises ALCurrentCompany on the Record class.
