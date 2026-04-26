@@ -4697,7 +4697,10 @@ Label.IndexOfAny (List, Integer):
 Label.IndexOfAny (Text, Integer):
   layer: runtime-api
   category: Label
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309800-text-overloads
+  notes: BC native NavTextExtensions.ALIndexOfAny works standalone (2-arg startIndex form). Tested positive and negative cases.
 
 Label.LastIndexOf (Text, Integer):
   layer: runtime-api
@@ -4750,7 +4753,10 @@ Label.Split (List):
 Label.Split (Text):
   layer: runtime-api
   category: Label
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309800-text-overloads
+  notes: BC native NavText.ALSplit works on Label values. Multi-char separator tested — positive and negative (absent separator) cases.
 
 Label.StartsWith (Text):
   layer: runtime-api
@@ -8981,7 +8987,10 @@ Text.EndsWith (Text):
 Text.IncStr (Text, BigInteger):
   layer: runtime-api
   category: Text
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309800-text-overloads
+  notes: AlCompat.IncStr(string, long) — increments trailing numeric segment by N steps. Tested: +10, +1, large-step overflow, zero-step no-op.
 
 Text.IncStr (Text):
   layer: runtime-api
@@ -9003,7 +9012,10 @@ Text.IndexOfAny (List, Integer):
 Text.IndexOfAny (Text, Integer):
   layer: runtime-api
   category: Text
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309800-text-overloads
+  notes: BC native NavTextExtensions.ALIndexOfAny 2-arg (Text, startIndex) overload works standalone. Tested: found, skips-before, not-found.
 
 Text.InsStr (Text, Text, Integer):
   layer: runtime-api
@@ -9032,7 +9044,10 @@ Text.MaxStrLen (Text):
 Text.MaxStrLen (Variant):
   layer: runtime-api
   category: Text
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309800-text-overloads
+  notes: ALSystemString.ALMaxStrLen(NavText) works for declared Text[N] and Code[N] local variables. Tested Text[42] and Code[15].
 
 Text.PadLeft (Integer, Char):
   layer: runtime-api
@@ -9078,7 +9093,10 @@ Text.Split (List):
 Text.Split (Text):
   layer: runtime-api
   category: Text
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309800-text-overloads
+  notes: BC native NavText.ALSplit 1-arg (Text separator) overload works standalone. Multi-char separator tested — count, element, differs-from-single-char trap.
 
 Text.StartsWith (Text):
   layer: runtime-api
@@ -9267,7 +9285,10 @@ TextConst.IndexOfAny (List, Integer):
 TextConst.IndexOfAny (Text, Integer):
   layer: runtime-api
   category: TextConst
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309800-text-overloads
+  notes: BC native NavTextExtensions.ALIndexOfAny 2-arg (Text, startIndex) form works on TextConst after NavTextConstant→NavText rewrite. Positive and negative cases.
 
 TextConst.LastIndexOf (Text, Integer):
   layer: runtime-api
@@ -9320,7 +9341,10 @@ TextConst.Split (List):
 TextConst.Split (Text):
   layer: runtime-api
   category: TextConst
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309800-text-overloads
+  notes: BC native NavText.ALSplit 1-arg (Text separator) form works on TextConst after NavTextConstant→NavText rewrite. Tested count and absent-separator cases.
 
 TextConst.StartsWith (Text):
   layer: runtime-api

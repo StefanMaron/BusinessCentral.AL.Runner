@@ -2919,6 +2919,29 @@ public static class AlCompat
     }
 
     /// <summary>
+    /// AL <c>IncStr(s, stepCount)</c> — increments the trailing numeric sequence in s
+    /// by <paramref name="steps"/> positions. Equivalent to calling <c>IncStr(s)</c>
+    /// <paramref name="steps"/> times, but handles zero and large steps correctly.
+    /// Returns s unchanged if no digits are found or steps is zero.
+    /// </summary>
+    public static string IncStr(string s, long steps)
+    {
+        if (string.IsNullOrEmpty(s) || steps == 0) return s ?? "";
+        if (steps < 0) throw new Exception($"IncStr step count must be non-negative, got {steps}.");
+        // Find the last run of digit characters
+        int end = s.Length - 1;
+        while (end >= 0 && !char.IsDigit(s[end]))
+            end--;
+        if (end < 0) return s; // no digits — return unchanged
+        int start = end;
+        while (start > 0 && char.IsDigit(s[start - 1]))
+            start--;
+        var digits = s.Substring(start, end - start + 1);
+        var incremented = (long.Parse(digits) + steps).ToString().PadLeft(digits.Length, '0');
+        return s.Substring(0, start) + incremented + s.Substring(end + 1);
+    }
+
+    /// <summary>
     /// Object overload for IncStr — handles NavComplexValue→object rewrite.
     /// </summary>
     public static string IncStr(object s) => IncStr(Format(s));
