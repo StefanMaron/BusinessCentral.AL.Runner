@@ -137,4 +137,42 @@ public class PagePromptModeRewriterTests
 
         Assert.DoesNotContain("this.PromptMode", output);
     }
+
+    [Fact]
+    public void PromptMode_BareEnumRhs_QualifiedInsidePageClass()
+    {
+        var input = WrapInPageClass("var x = PromptMode.Content;");
+        var output = RoslynRewriter.Rewrite(input);
+
+        Assert.Contains("Microsoft.Dynamics.Nav.Types.Metadata.PromptMode.Content", output);
+    }
+
+    [Fact]
+    public void PromptMode_InstanceAccessLhs_NotQualified()
+    {
+        var input = WrapInPageClass("CurrPage.PromptMode = null;");
+        var output = RoslynRewriter.Rewrite(input);
+
+        Assert.Contains("CurrPage.PromptMode", output);
+        Assert.DoesNotContain("Microsoft.Dynamics.Nav.Types.Metadata.PromptMode = null", output);
+    }
+
+    [Fact]
+    public void PromptMode_BareEnumRhs_NotQualifiedInCodeunit()
+    {
+        var input = """
+            namespace Microsoft.Dynamics.Nav.BusinessApplication
+            {
+                using AlRunner.Runtime;
+                using Microsoft.Dynamics.Nav.Runtime;
+                using Microsoft.Dynamics.Nav.Types.Metadata;
+                class Codeunit50000 : NavCodeunit {
+                    void M() { var x = PromptMode.Content; }
+                }
+            }
+            """;
+        var output = RoslynRewriter.Rewrite(input);
+
+        Assert.DoesNotContain("Microsoft.Dynamics.Nav.Types.Metadata.PromptMode.Content", output);
+    }
 }

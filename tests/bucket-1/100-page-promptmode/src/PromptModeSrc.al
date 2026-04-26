@@ -7,6 +7,11 @@ page 113000 "PM Test Page"
     PageType = PromptDialog;
     ApplicationArea = All;
     UsageCategory = None;
+
+    procedure SetPromptModeToContent()
+    begin
+        CurrPage.PromptMode := PromptMode::Content;
+    end;
 }
 
 pageextension 113001 "PM Page Ext" extends "PM Test Page"

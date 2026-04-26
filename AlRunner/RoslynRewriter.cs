@@ -21,6 +21,9 @@ public class RoslynRewriter : CSharpSyntaxRewriter
     // BC emits CurrPage.PromptMode as a static reference on the page class (issue #1266).
     private string? _currentPageClassName;
 
+    private static readonly NameSyntax PromptModeQualifiedName =
+        SyntaxFactory.ParseName("Microsoft.Dynamics.Nav.Types.Metadata.PromptMode");
+
     private static readonly HashSet<string> BcAttributeNames = new(StringComparer.Ordinal)
     {
         "NavCodeunitOptions",
@@ -784,6 +787,7 @@ public bool ALRename(DataError errorLevel, object key1, object key2) => Rec.ALRe
 public bool ALRename(DataError errorLevel, object key1, object key2, object key3) => Rec.ALRename(errorLevel, key1, key2, key3);
 public bool ALRename(DataError errorLevel, object key1, object key2, object key3, object key4) => Rec.ALRename(errorLevel, key1, key2, key3, key4);
 public void ALSetLoadFields(params int[] fieldNos) => Rec.ALSetLoadFields(fieldNos);
+public void ALSetLoadFields(DataError errorLevel, params int[] fieldNos) => Rec.ALSetLoadFields(errorLevel, fieldNos);
 public void ALAddLoadFields(params int[] fieldNos) => Rec.ALAddLoadFields(fieldNos);
 public void ALAddLoadFields(DataError errorLevel, params int[] fieldNos) => Rec.ALAddLoadFields(errorLevel, fieldNos);
 public bool ALAreFieldsLoaded(params int[] fieldNos) => Rec.ALAreFieldsLoaded(fieldNos);
@@ -930,7 +934,7 @@ public bool LookupMode {{ get; set; }}
 // BC generates as calls on the Page<N> class directly (same pattern as LookupMode/#1079).
 public bool Editable {{ get; set; }} = true;
 public string PageCaption {{ get; set; }} = string.Empty;
-public NavOption? PromptMode {{ get; set; }}
+public Microsoft.Dynamics.Nav.Types.Metadata.PromptMode? PromptMode {{ get; set; }}
 public NavText ObjectID(bool withCaption = false) {{ return NavText.Empty; }}
 // SetRecord — BC lowers CurrPage.SetRecord(rec) to this.SetRecord(rec.Target).
 // NavForm provided this; after stripping it we need a stub (issue #1262).
@@ -2035,6 +2039,30 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
                                 SyntaxFactory.ParenthesizedLambdaExpression(
                                     SyntaxFactory.ObjectCreationExpression(
                                         SyntaxFactory.ParseTypeName("MockRecordRef"))
+                                        .WithArgumentList(SyntaxFactory.ArgumentList())))
+                        })));
+            }
+        }
+
+        // new MockArray<MockInterfaceHandle>(new MockInterfaceHandle.Factory(...), N) -> new MockArray<MockInterfaceHandle>(N, () => new MockInterfaceHandle())
+        // BC emits MockInterfaceHandle.Factory for `array[N] of Interface I` local-var declarations;
+        // MockInterfaceHandle has no nested Factory, so without this rewrite Roslyn fails with CS0426.
+        if (typeText.StartsWith("MockArray<MockInterfaceHandle>") && visited.ArgumentList != null &&
+            visited.ArgumentList.Arguments.Count == 2)
+        {
+            var factoryArg = visited.ArgumentList.Arguments[0].Expression;
+            var sizeArg = visited.ArgumentList.Arguments[1].Expression;
+            if (factoryArg is ObjectCreationExpressionSyntax)
+            {
+                return SyntaxFactory.ObjectCreationExpression(
+                    SyntaxFactory.ParseTypeName("MockArray<MockInterfaceHandle>"))
+                    .WithArgumentList(SyntaxFactory.ArgumentList(
+                        SyntaxFactory.SeparatedList(new[] {
+                            SyntaxFactory.Argument(sizeArg),
+                            SyntaxFactory.Argument(
+                                SyntaxFactory.ParenthesizedLambdaExpression(
+                                    SyntaxFactory.ObjectCreationExpression(
+                                        SyntaxFactory.ParseTypeName("MockInterfaceHandle"))
                                         .WithArgumentList(SyntaxFactory.ArgumentList())))
                         })));
             }
@@ -4509,6 +4537,15 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
             visited.Name.Identifier.Text == "PromptMode")
         {
             return visited.WithExpression(SyntaxFactory.ThisExpression());
+        }
+
+        // Bare PromptMode is shadowed by the wrapper-injected instance property
+        // via nested-class simple-name lookup; qualify so it binds to the enum.
+        if (_currentPageClassName != null &&
+            visited.Expression is IdentifierNameSyntax bareIdName &&
+            bareIdName.Identifier.Text == "PromptMode")
+        {
+            return visited.WithExpression(PromptModeQualifiedName);
         }
 
         // Pattern: xxx.Target -> xxx (strip .Target accessor on handles)

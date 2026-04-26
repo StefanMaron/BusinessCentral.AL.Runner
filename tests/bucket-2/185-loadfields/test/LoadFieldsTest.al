@@ -58,6 +58,12 @@ codeunit 60111 "LF Test"
     end;
 
     [Test]
+    procedure SetLoadFieldsOnSelf_NoThrow()
+    begin
+        Src.DriveSetLoadFieldsOnSelf();
+    end;
+
+    [Test]
     procedure AddLoadFieldsOnSelf_NoThrow()
     begin
         Src.DriveAddLoadFieldsOnSelf();
