@@ -7287,7 +7287,12 @@ System.Clear (Array):
   layer: runtime-api
   category: System
   status: covered
-  notes: . Covered: Text, Integer, Decimal, Boolean, Date, Record, List — each resets to type default.
+  tests:
+    - tests/bucket-2/data-formats/312100-array-clear-single-int
+  notes: >
+    Covered: Text, Integer, Decimal, Boolean, Date, Record, List — each resets to type default.
+    BC emits arr.Clear(int) for Clear(arr[i]) on 1-D arrays; MockArray<T>.Clear(int) single-int
+    overload added alongside the existing int[] overload (issue #1448).
 
 System.Clear (Joker):
   layer: runtime-api
