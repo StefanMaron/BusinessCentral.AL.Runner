@@ -3,12 +3,15 @@
 //
 // Every AL built-in type is exposed as a sealed <Name>ClassTypeSymbol with a
 // static `Instance` property. Instance.GetMembers() returns BuiltInMethodTypeSymbol
-// entries with Name + Kind. Methods appear once per overload, so we group.
+// entries with Name + Kind. Methods appear once per overload, and we now extract
+// per-overload parameter signatures from the Parameters property.
 //
 // Output: runtime-api.json
-//   { "BigText": { "methods": [ { "name": "AddText", "overloads": 2 }, ... ] },
-//     "RecordRef": { "methods": [ ... ] },
-//     ... }
+//   { "BigText": { "methods": [
+//       { "name": "AddText", "signature": "(Text)" },
+//       { "name": "AddText", "signature": "(BigText, Integer)" },
+//       ...
+//   ] }, ... }
 //
 // Usage:
 //   DOTNET_ROLL_FORWARD=LatestMajor dotnet run --project tools/RuntimeApiEnumerator \
@@ -80,7 +83,8 @@ foreach (var t in classTypeSymbols)
     catch (Exception ex) { skipped.Add($"{alTypeName}: {ex.GetType().Name} on GetMembers"); continue; }
     if (members == null) continue;
 
-    var methodOverloads = new Dictionary<string, int>(StringComparer.Ordinal);
+    // Collect per-overload entries (one entry per method invocation in the symbol table).
+    var methodEntries = new List<MethodEntry>();
     foreach (var m in members)
     {
         if (m == null) continue;
@@ -90,22 +94,33 @@ foreach (var t in classTypeSymbols)
         if (kind != "Method") continue;
         var name = m.GetType().GetProperty("Name")?.GetValue(m) as string;
         if (string.IsNullOrEmpty(name)) continue;
-        methodOverloads[name] = methodOverloads.TryGetValue(name, out var c) ? c + 1 : 1;
+
+        var signature = ExtractSignature(m);
+        methodEntries.Add(new MethodEntry { Name = name, Signature = signature });
     }
 
-    if (methodOverloads.Count == 0) { skipped.Add($"{alTypeName}: no method members"); continue; }
+    if (methodEntries.Count == 0) { skipped.Add($"{alTypeName}: no method members"); continue; }
+
+    // Deduplicate (same name+signature can appear in both instance and static variants).
+    var seen = new HashSet<string>();
+    var deduped = new List<MethodEntry>();
+    foreach (var e in methodEntries)
+    {
+        var key = $"{e.Name}|{e.Signature}";
+        if (seen.Add(key)) deduped.Add(e);
+    }
 
     output[alTypeName] = new TypeEntry
     {
-        Methods = methodOverloads
-            .OrderBy(kv => kv.Key, StringComparer.Ordinal)
-            .Select(kv => new MethodEntry { Name = kv.Key, Overloads = kv.Value })
+        Methods = deduped
+            .OrderBy(e => e.Name, StringComparer.Ordinal)
+            .ThenBy(e => e.Signature, StringComparer.Ordinal)
             .ToList(),
     };
 }
 
 Console.Error.WriteLine($"[enumerate] types with methods: {output.Count}");
-Console.Error.WriteLine($"[enumerate] total methods: {output.Sum(kv => kv.Value.Methods.Count)}");
+Console.Error.WriteLine($"[enumerate] total overloads: {output.Sum(kv => kv.Value.Methods.Count)}");
 if (skipped.Count > 0)
 {
     Console.Error.WriteLine($"[enumerate] skipped {skipped.Count}:");
@@ -129,6 +144,43 @@ File.WriteAllText(outputPath,
 Console.Error.WriteLine($"[enumerate] wrote {outputPath}");
 
 return 0;
+
+/// <summary>
+/// Extracts the parameter-type signature string from a method symbol.
+/// Uses the type symbol's Name property which contains the AL type name
+/// (e.g. "Text", "Integer", "RecordRef").  Falls back to NavTypeKind when
+/// Name is blank, and to "?" for unknown parameters.
+/// </summary>
+static string ExtractSignature(object methodSymbol)
+{
+    try
+    {
+        var paramsProp = methodSymbol.GetType().GetProperty("Parameters");
+        if (paramsProp == null) return "()";
+        var paramsList = paramsProp.GetValue(methodSymbol) as System.Collections.IEnumerable;
+        if (paramsList == null) return "()";
+
+        var typeNames = new List<string>();
+        foreach (var param in paramsList)
+        {
+            if (param == null) { typeNames.Add("?"); continue; }
+            var paramType = param.GetType().GetProperty("Type")?.GetValue(param);
+            if (paramType == null) { typeNames.Add("?"); continue; }
+            var typeName = paramType.GetType().GetProperty("Name")?.GetValue(paramType) as string;
+            if (string.IsNullOrEmpty(typeName))
+            {
+                // Fall back to NavTypeKind enum name
+                typeName = paramType.GetType().GetProperty("NavTypeKind")?.GetValue(paramType)?.ToString() ?? "?";
+            }
+            typeNames.Add(typeName);
+        }
+        return $"({string.Join(", ", typeNames)})";
+    }
+    catch
+    {
+        return "()";
+    }
+}
 
 static string StripSuffix(string s, string suffix) =>
     s.EndsWith(suffix) ? s.Substring(0, s.Length - suffix.Length) : s;
@@ -164,5 +216,5 @@ internal sealed class TypeEntry
 internal sealed class MethodEntry
 {
     public string Name { get; set; } = "";
-    public int Overloads { get; set; }
+    public string Signature { get; set; } = "()";
 }
