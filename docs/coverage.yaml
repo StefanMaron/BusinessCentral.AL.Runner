@@ -12362,22 +12362,23 @@ XmlportInstance.TextEncoding (TextEncoding):
   notes: property on MockXmlPortHandle
 
 # ══════════════════════════════════════════════════════════════
-# Layer: pipeline-diagnostics
-# Diagnostic suppression branches in Program.cs and Pipeline.cs
+# Diagnostic suppression branches — hand-curated entries
+# These use the syntax layer (closest match; represent pipeline
+# behaviour rather than AL language constructs).
 # ══════════════════════════════════════════════════════════════
 
 DiagnosticSuppression.Case1.SelfDuplicatePackage:
-  layer: pipeline-diagnostics
+  layer: syntax
   category: diagnostic-suppression
-  status: covered
+  status: not-tested
   notes: >
     AL0275/AL0197 where both extension identities are identical (same publisher+name+version).
     Runner artifact: same .app loaded twice via depSpecs. PackageScanner deduplication
-    re-runs and clears the error. Not testable with source-only fixtures (requires .app files).
+    re-runs and clears the error. No automated fixture possible without real .app package files.
     Logic audited in #1365; no code change required.
 
 DiagnosticSuppression.Case2.StubsVsPackage:
-  layer: pipeline-diagnostics
+  layer: syntax
   category: diagnostic-suppression
   status: covered
   tests:
@@ -12388,7 +12389,7 @@ DiagnosticSuppression.Case2.StubsVsPackage:
     the package. Audited in #1365; no code change required.
 
 DiagnosticSuppression.Case3.CrossExtensionExtensionObject:
-  layer: pipeline-diagnostics
+  layer: syntax
   category: diagnostic-suppression
   status: covered
   tests:
@@ -12405,7 +12406,7 @@ DiagnosticSuppression.Case3.CrossExtensionExtensionObject:
     Non-extension types (Codeunit, Table, Page) are always forwarded. Audited in #1365.
 
 DiagnosticSuppression.Backfill.SameExtProfileextDuplicate:
-  layer: pipeline-diagnostics
+  layer: syntax
   category: diagnostic-suppression
   status: covered
   tests:
