@@ -122,18 +122,21 @@ tests/bucket-N/NN-descriptive-name/
 ### Running tests
 
 ```bash
-# Run all buckets
+# Run all buckets (mirrors .github/workflows/test-matrix.yml)
 for bucket in tests/bucket-*/; do
   args=""
   for suite in "$bucket"*/; do
     [ -d "${suite}src"  ] && args="$args ${suite}src"
+    for appdir in "${suite}"app*/; do
+      [ -d "$appdir" ] && args="$args $appdir"
+    done
     [ -d "${suite}test" ] && args="$args ${suite}test"
   done
-  dotnet run --project AlRunner -- $args
+  dotnet run --project AlRunner --framework net10.0 -- --strict --test-isolation method $args
 done
 
 # Stubs test (separate invocation)
-dotnet run --project AlRunner -- --stubs tests/stubs/39-stubs/stubs tests/stubs/39-stubs/src tests/stubs/39-stubs/test
+dotnet run --project AlRunner --framework net10.0 -- --stubs tests/stubs/39-stubs/stubs tests/stubs/39-stubs/src tests/stubs/39-stubs/test
 ```
 
 ### Build

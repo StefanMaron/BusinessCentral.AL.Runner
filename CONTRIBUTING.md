@@ -65,7 +65,7 @@ Write the failing test first, verify it fails for the right reason, then impleme
 
 ## The full CI pipeline must pass
 
-All pull requests run against a matrix of BC versions (currently 26.0–27.5) on both net8.0 and net9.0. A PR cannot merge unless every job in the matrix is green.
+All pull requests run against a matrix of BC versions (currently 26.0–27.5) on net10.0. A PR cannot merge unless every job in the matrix is green.
 
 To run the same checks locally before pushing:
 
@@ -76,20 +76,23 @@ dotnet build AlRunner.slnx
 # C# unit tests
 dotnet test AlRunner.Tests/
 
-# AL end-to-end tests (net8.0)
+# AL end-to-end tests (mirrors .github/workflows/test-matrix.yml)
 for bucket in tests/bucket-*/; do
   args=""
   for suite in "$bucket"*/; do
     [ -d "${suite}src"  ] && args="$args ${suite}src"
+    for appdir in "${suite}"app*/; do
+      [ -d "$appdir" ] && args="$args $appdir"
+    done
     [ -d "${suite}test" ] && args="$args ${suite}test"
   done
-  dotnet run --project AlRunner --framework net8.0 -- $args || {
+  dotnet run --project AlRunner --framework net10.0 -- --strict --test-isolation method $args || {
     rc=$?; [ $rc -eq 2 ] || exit $rc
   }
 done
 
 # Stubs suite (needs --stubs flag)
-dotnet run --project AlRunner --framework net8.0 -- \
+dotnet run --project AlRunner --framework net10.0 -- \
   --stubs tests/stubs/39-stubs/stubs tests/stubs/39-stubs/src tests/stubs/39-stubs/test
 ```
 
