@@ -2996,6 +2996,20 @@ File.ViewFromStream:
   notes: overloads=1; MockFile.ALViewFromStream() no-op (no UI in standalone)
   test: tests/bucket-1/87-file-io/test/FileTest.al
 
+File.ViewFromStream (3-arg):
+  layer: runtime-api
+  category: File
+  status: covered
+  notes: static overload (scope, InStream, FileName); 2-arg AL form File.ViewFromStream(InStream, FileName)
+  test: tests/bucket-2/307-viewfromstream-4arg/test/ViewFromStreamTests.al
+
+File.ViewFromStream (4-arg):
+  layer: runtime-api
+  category: File
+  status: covered
+  notes: static overload (scope, InStream, FileName, IsEditable); 3-arg AL form File.ViewFromStream(InStream, FileName, IsEditable); fixes CS1501 telemetry gap
+  test: tests/bucket-2/307-viewfromstream-4arg/test/ViewFromStreamTests.al
+
 File.Write:
   layer: runtime-api
   category: File
