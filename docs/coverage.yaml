@@ -6461,7 +6461,9 @@ RecordRef.Truncate (Boolean):
   layer: runtime-api
   category: RecordRef
   status: covered
-  notes: MockRecordRef.ALTruncate delegates to ALDeleteAll without triggers
+  tests:
+    - tests/bucket-1/record-table/92-recordref-stub-methods
+  notes: MockRecordRef.ALTruncate (0/1/2-arg) delegates to ALDeleteAll; 2-arg overload (DataError, bool raiseTrigger) added in #1431
 
 RecordRef.WritePermission ():
   layer: runtime-api
@@ -8511,7 +8513,9 @@ Table.Truncate (Boolean):
   layer: runtime-api
   category: Table
   status: covered
-  notes: . Deletes all rows without triggers (delegates to DeleteAll(false)).
+  tests:
+    - tests/bucket-1/record-table/205-table-extra-methods
+  notes: MockRecordHandle.ALTruncate (0/1/2-arg). 2-arg overload (DataError, bool raiseTrigger) added in #1431; delegates to DeleteAll(errorLevel, raiseTrigger).
 
 Table.Validate (Joker, Joker):
   layer: runtime-api

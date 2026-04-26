@@ -75,6 +75,16 @@ codeunit 97701 "TRM Src"
         exit(Rec.Count());
     end;
 
+    procedure InsertAndTruncateWithTrigger(var Rec: Record "TRM Table"; RaiseTrigger: Boolean): Integer
+    begin
+        Rec."No." := 'C';
+        Rec.Insert();
+        Rec."No." := 'D';
+        Rec.Insert();
+        Rec.Truncate(RaiseTrigger);
+        exit(Rec.Count());
+    end;
+
     // ── Relation ──────────────────────────────────────────────────────────────
 
     procedure GetRelation(var Rec: Record "TRM Table"): Integer

@@ -121,6 +121,28 @@ codeunit 97702 "TRM Test"
         Assert.AreEqual(0, CountAfter, 'Truncate must delete all rows');
     end;
 
+    [Test]
+    procedure Truncate_WithTriggerFalse_DeletesAllRows()
+    var
+        Rec: Record "TRM Table";
+        CountAfter: Integer;
+    begin
+        // Truncate(false) — 2-arg overload must compile and delete all rows
+        CountAfter := H.InsertAndTruncateWithTrigger(Rec, false);
+        Assert.AreEqual(0, CountAfter, 'Truncate(false) must delete all rows');
+    end;
+
+    [Test]
+    procedure Truncate_WithTriggerTrue_DeletesAllRows()
+    var
+        Rec: Record "TRM Table";
+        CountAfter: Integer;
+    begin
+        // Truncate(true) — 2-arg overload must compile and delete all rows
+        CountAfter := H.InsertAndTruncateWithTrigger(Rec, true);
+        Assert.AreEqual(0, CountAfter, 'Truncate(true) must delete all rows');
+    end;
+
     // ── Relation ──────────────────────────────────────────────────────────────
 
     [Test]
