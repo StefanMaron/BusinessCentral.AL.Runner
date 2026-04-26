@@ -40,6 +40,33 @@ public struct MockVersion
         => ALCreate(null, major, minor, build, revision);
 
     /// <summary>
+    /// BC lowers <c>Version.Create(major, minor, build)</c>
+    /// to <c>NavVersion.ALCreate(major, minor, build)</c>.
+    /// Build is set; revision defaults to 0.
+    /// </summary>
+    public static MockVersion ALCreate(object? major, object? minor, object? build)
+    {
+        var result = new MockVersion();
+        result._major = AlCompat.NavIndirectValueToInt32(major);
+        result._minor = AlCompat.NavIndirectValueToInt32(minor);
+        result._build = AlCompat.NavIndirectValueToInt32(build);
+        return result;
+    }
+
+    /// <summary>
+    /// BC lowers <c>Version.Create(major, minor)</c>
+    /// to <c>NavVersion.ALCreate(major, minor)</c>.
+    /// Build and revision default to 0.
+    /// </summary>
+    public static MockVersion ALCreate(object? major, object? minor)
+    {
+        var result = new MockVersion();
+        result._major = AlCompat.NavIndirectValueToInt32(major);
+        result._minor = AlCompat.NavIndirectValueToInt32(minor);
+        return result;
+    }
+
+    /// <summary>
     /// BC lowers <c>Version.Create(Text)</c> to <c>NavVersion.ALCreate(text)</c>.
     /// Parses a dotted version string (e.g. <c>"25.1.30000.12345"</c>) into its
     /// major/minor/build/revision components.
