@@ -1478,6 +1478,22 @@ public static class AlTranspiler
             // duplicate-object error — two different apps define the same object.  This is
             // never valid and the real BC compiler rejects it.  Return null so the pipeline
             // exits with code 3 (AL compile error).
+            //
+            // Extension-type AL0197 errors (PageExtension, TableExtension, ProfileExtension,
+            // etc.) are NOT flagged as genuine duplicates here because:
+            //   • Cross-extension (two different app.json scopes defining the same extension
+            //     object name) is a runner artifact — in real BC, each extension compiles
+            //     independently and can legitimately share extension object names.
+            //     These errors have already been handled (or ignored) above via Case 3 for
+            //     package-backed scenarios, and via the IsCrossExtensionDuplicateDeclaration
+            //     filter here for source-only multi-app compilations.
+            //   • Same-extension (same app.json scope defining the same extension object name
+            //     twice) is a genuine error — but it is caught BEFORE this point by the
+            //     DetectSameExtensionDuplicates pre-scan in Pipeline.cs, which exits with
+            //     code 3 before compilation begins.  Any same-extension extension-type AL0197
+            //     that reaches this path indicates a gap in the pre-scan coverage; add the
+            //     missing type to DetectSameExtensionDuplicates (Pipeline.cs) rather than
+            //     changing this filter.
             var genuineDuplicates = declErrors
                 .Where(d => d.Id == "AL0197" && !DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration(d.GetMessage()))
                 .ToList();

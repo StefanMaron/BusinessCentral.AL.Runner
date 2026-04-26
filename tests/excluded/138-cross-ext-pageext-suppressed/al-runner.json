@@ -1,0 +1,4 @@
+{
+  "expectedExitCode": 0,
+  "comment": "Two apps compiled together that each define a pageextension with the same name: this is a runner artifact (single-pass compilation; in real BC each extension compiles independently and can share extension-object names). The runner suppresses the cross-extension collision and proceeds (exit 0). Contrast with fixture 135 (same-extension dup, must exit 3) and fixture 137 (same-extension profileextension dup, must exit 3)."
+}
