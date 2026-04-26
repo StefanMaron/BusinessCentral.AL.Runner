@@ -5628,6 +5628,16 @@ Page.Caption (Text):
   category: Page
   status: covered
 
+Page.Caption (subpage part handle):
+  layer: runtime-api
+  category: Page
+  status: covered
+  notes: >
+    MockPartFormHandle.PageCaption get/set stub; also fixed MockPagePartHandle.CreateNavFormHandle
+    to return a cached handle instance so that set-then-get round-trips work correctly.
+    GetPart() on the generated Page<N> class now caches MockPagePartHandle by hash.
+    Closes #1440.
+
 Page.Close ():
   layer: runtime-api
   category: Page

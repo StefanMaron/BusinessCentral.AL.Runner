@@ -922,8 +922,12 @@ protected bool CallGetAutoFormatStringExtensionMethod(int fieldNo, ref string re
 protected void EnsureGlobalVariablesInitialized() {{ }}
 // BC emits CurrPage.SubPart.Page.SomeProcedure() as
 // CurrPage.GetPart(partHash).CreateNavFormHandle(scope).Invoke(methodHash, args).
-// Returns a MockPagePartHandle that dispatches the call to the subpage class.
-public MockPagePartHandle GetPart(int partHash) {{ return new MockPagePartHandle(partHash); }}
+// Returns a cached MockPagePartHandle so that state (e.g. PageCaption) set in one
+// BC statement is visible when the same part handle is read in the next statement.
+// _partHandles is initialised lazily to survive GetUninitializedObject construction.
+// Issue #1440.
+private System.Collections.Generic.Dictionary<int, MockPagePartHandle>? _partHandles;
+public MockPagePartHandle GetPart(int partHash) {{ _partHandles ??= new(); if (!_partHandles.TryGetValue(partHash, out var handle)) {{ handle = new MockPagePartHandle(partHash); _partHandles[partHash] = handle; }} return handle; }}
 // RunModal() — dispatches to ModalPageHandler if registered, otherwise no-op.
 // BC generates CurrPage.RunModal() as a call on the Page<N> class directly (issue #1079).
 public FormResult RunModal() {{ return HandlerRegistry.InvokeModalPageHandler({pageIdStr}); }}
