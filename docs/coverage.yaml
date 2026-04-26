@@ -9969,7 +9969,8 @@ XmlAttribute.ReplaceWith (Joker):
 XmlAttribute.SelectNodes (Text, XmlNamespaceManager, XmlNodeList):
   layer: runtime-api
   category: XmlAttribute
-  status: gap
+  status: covered
+  notes: Namespace-aware XPath overload. RoslynRewriter intercepts 4-arg ALSelectNodes/ALSelectSingleNode; XmlDeclaration returns false (no child nodes), all other types delegate to native NavXmlNode via AlCompat.XmlSelectNodesNs/XmlSelectSingleNodeNs. Proven by suite 96-xml-nsmgr-xpath — issue #1371.
 
 XmlAttribute.SelectNodes (Text, XmlNodeList):
   layer: runtime-api
@@ -9980,7 +9981,8 @@ XmlAttribute.SelectNodes (Text, XmlNodeList):
 XmlAttribute.SelectSingleNode (Text, XmlNamespaceManager, XmlNode):
   layer: runtime-api
   category: XmlAttribute
-  status: gap
+  status: covered
+  notes: Namespace-aware XPath overload. RoslynRewriter intercepts 4-arg ALSelectNodes/ALSelectSingleNode; XmlDeclaration returns false (no child nodes), all other types delegate to native NavXmlNode via AlCompat.XmlSelectNodesNs/XmlSelectSingleNodeNs. Proven by suite 96-xml-nsmgr-xpath — issue #1371.
 
 XmlAttribute.SelectSingleNode (Text, XmlNode):
   layer: runtime-api
@@ -10130,7 +10132,8 @@ XmlCData.ReplaceWith (Joker):
 XmlCData.SelectNodes (Text, XmlNamespaceManager, XmlNodeList):
   layer: runtime-api
   category: XmlCData
-  status: gap
+  status: covered
+  notes: Namespace-aware XPath overload. RoslynRewriter intercepts 4-arg ALSelectNodes/ALSelectSingleNode; XmlDeclaration returns false (no child nodes), all other types delegate to native NavXmlNode via AlCompat.XmlSelectNodesNs/XmlSelectSingleNodeNs. Proven by suite 96-xml-nsmgr-xpath — issue #1371.
 
 XmlCData.SelectNodes (Text, XmlNodeList):
   layer: runtime-api
@@ -10141,7 +10144,8 @@ XmlCData.SelectNodes (Text, XmlNodeList):
 XmlCData.SelectSingleNode (Text, XmlNamespaceManager, XmlNode):
   layer: runtime-api
   category: XmlCData
-  status: gap
+  status: covered
+  notes: Namespace-aware XPath overload. RoslynRewriter intercepts 4-arg ALSelectNodes/ALSelectSingleNode; XmlDeclaration returns false (no child nodes), all other types delegate to native NavXmlNode via AlCompat.XmlSelectNodesNs/XmlSelectSingleNodeNs. Proven by suite 96-xml-nsmgr-xpath — issue #1371.
 
 XmlCData.SelectSingleNode (Text, XmlNode):
   layer: runtime-api
@@ -10245,7 +10249,8 @@ XmlComment.ReplaceWith (Joker):
 XmlComment.SelectNodes (Text, XmlNamespaceManager, XmlNodeList):
   layer: runtime-api
   category: XmlComment
-  status: gap
+  status: covered
+  notes: Namespace-aware XPath overload. RoslynRewriter intercepts 4-arg ALSelectNodes/ALSelectSingleNode; XmlDeclaration returns false (no child nodes), all other types delegate to native NavXmlNode via AlCompat.XmlSelectNodesNs/XmlSelectSingleNodeNs. Proven by suite 96-xml-nsmgr-xpath — issue #1371.
 
 XmlComment.SelectNodes (Text, XmlNodeList):
   layer: runtime-api
@@ -10258,7 +10263,8 @@ XmlComment.SelectNodes (Text, XmlNodeList):
 XmlComment.SelectSingleNode (Text, XmlNamespaceManager, XmlNode):
   layer: runtime-api
   category: XmlComment
-  status: gap
+  status: covered
+  notes: Namespace-aware XPath overload. RoslynRewriter intercepts 4-arg ALSelectNodes/ALSelectSingleNode; XmlDeclaration returns false (no child nodes), all other types delegate to native NavXmlNode via AlCompat.XmlSelectNodesNs/XmlSelectSingleNodeNs. Proven by suite 96-xml-nsmgr-xpath — issue #1371.
 
 XmlComment.SelectSingleNode (Text, XmlNode):
   layer: runtime-api
@@ -10358,7 +10364,8 @@ XmlDeclaration.ReplaceWith (Joker):
 XmlDeclaration.SelectNodes (Text, XmlNamespaceManager, XmlNodeList):
   layer: runtime-api
   category: XmlDeclaration
-  status: gap
+  status: covered
+  notes: Namespace-aware XPath overload. RoslynRewriter intercepts 4-arg ALSelectNodes/ALSelectSingleNode; XmlDeclaration returns false (no child nodes), all other types delegate to native NavXmlNode via AlCompat.XmlSelectNodesNs/XmlSelectSingleNodeNs. Proven by suite 96-xml-nsmgr-xpath — issue #1371.
 
 XmlDeclaration.SelectNodes (Text, XmlNodeList):
   layer: runtime-api
@@ -10369,7 +10376,8 @@ XmlDeclaration.SelectNodes (Text, XmlNodeList):
 XmlDeclaration.SelectSingleNode (Text, XmlNamespaceManager, XmlNode):
   layer: runtime-api
   category: XmlDeclaration
-  status: gap
+  status: covered
+  notes: Namespace-aware XPath overload. RoslynRewriter intercepts 4-arg ALSelectNodes/ALSelectSingleNode; XmlDeclaration returns false (no child nodes), all other types delegate to native NavXmlNode via AlCompat.XmlSelectNodesNs/XmlSelectSingleNodeNs. Proven by suite 96-xml-nsmgr-xpath — issue #1371.
 
 XmlDeclaration.SelectSingleNode (Text, XmlNode):
   layer: runtime-api
@@ -10625,7 +10633,8 @@ XmlDocument.ReplaceWith (Joker):
 XmlDocument.SelectNodes (Text, XmlNamespaceManager, XmlNodeList):
   layer: runtime-api
   category: XmlDocument
-  status: gap
+  status: covered
+  notes: Namespace-aware XPath overload. RoslynRewriter intercepts 4-arg ALSelectNodes/ALSelectSingleNode; XmlDeclaration returns false (no child nodes), all other types delegate to native NavXmlNode via AlCompat.XmlSelectNodesNs/XmlSelectSingleNodeNs. Proven by suite 96-xml-nsmgr-xpath — issue #1371.
 
 XmlDocument.SelectNodes (Text, XmlNodeList):
   layer: runtime-api
@@ -10638,7 +10647,8 @@ XmlDocument.SelectNodes (Text, XmlNodeList):
 XmlDocument.SelectSingleNode (Text, XmlNamespaceManager, XmlNode):
   layer: runtime-api
   category: XmlDocument
-  status: gap
+  status: covered
+  notes: Namespace-aware XPath overload. RoslynRewriter intercepts 4-arg ALSelectNodes/ALSelectSingleNode; XmlDeclaration returns false (no child nodes), all other types delegate to native NavXmlNode via AlCompat.XmlSelectNodesNs/XmlSelectSingleNodeNs. Proven by suite 96-xml-nsmgr-xpath — issue #1371.
 
 XmlDocument.SelectSingleNode (Text, XmlNode):
   layer: runtime-api
@@ -10785,7 +10795,8 @@ XmlDocumentType.ReplaceWith (Joker):
 XmlDocumentType.SelectNodes (Text, XmlNamespaceManager, XmlNodeList):
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
+  status: covered
+  notes: Namespace-aware XPath overload. RoslynRewriter intercepts 4-arg ALSelectNodes/ALSelectSingleNode; XmlDeclaration returns false (no child nodes), all other types delegate to native NavXmlNode via AlCompat.XmlSelectNodesNs/XmlSelectSingleNodeNs. Proven by suite 96-xml-nsmgr-xpath — issue #1371.
 
 XmlDocumentType.SelectNodes (Text, XmlNodeList):
   layer: runtime-api
@@ -10798,7 +10809,8 @@ XmlDocumentType.SelectNodes (Text, XmlNodeList):
 XmlDocumentType.SelectSingleNode (Text, XmlNamespaceManager, XmlNode):
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
+  status: covered
+  notes: Namespace-aware XPath overload. RoslynRewriter intercepts 4-arg ALSelectNodes/ALSelectSingleNode; XmlDeclaration returns false (no child nodes), all other types delegate to native NavXmlNode via AlCompat.XmlSelectNodesNs/XmlSelectSingleNodeNs. Proven by suite 96-xml-nsmgr-xpath — issue #1371.
 
 XmlDocumentType.SelectSingleNode (Text, XmlNode):
   layer: runtime-api
@@ -11083,7 +11095,8 @@ XmlElement.ReplaceWith (Joker):
 XmlElement.SelectNodes (Text, XmlNamespaceManager, XmlNodeList):
   layer: runtime-api
   category: XmlElement
-  status: gap
+  status: covered
+  notes: Namespace-aware XPath overload. RoslynRewriter intercepts 4-arg ALSelectNodes/ALSelectSingleNode; XmlDeclaration returns false (no child nodes), all other types delegate to native NavXmlNode via AlCompat.XmlSelectNodesNs/XmlSelectSingleNodeNs. Proven by suite 96-xml-nsmgr-xpath — issue #1371.
 
 XmlElement.SelectNodes (Text, XmlNodeList):
   layer: runtime-api
@@ -11094,7 +11107,8 @@ XmlElement.SelectNodes (Text, XmlNodeList):
 XmlElement.SelectSingleNode (Text, XmlNamespaceManager, XmlNode):
   layer: runtime-api
   category: XmlElement
-  status: gap
+  status: covered
+  notes: Namespace-aware XPath overload. RoslynRewriter intercepts 4-arg ALSelectNodes/ALSelectSingleNode; XmlDeclaration returns false (no child nodes), all other types delegate to native NavXmlNode via AlCompat.XmlSelectNodesNs/XmlSelectSingleNodeNs. Proven by suite 96-xml-nsmgr-xpath — issue #1371.
 
 XmlElement.SelectSingleNode (Text, XmlNode):
   layer: runtime-api
@@ -11369,7 +11383,8 @@ XmlNode.ReplaceWith (Joker):
 XmlNode.SelectNodes (Text, XmlNamespaceManager, XmlNodeList):
   layer: runtime-api
   category: XmlNode
-  status: gap
+  status: covered
+  notes: Namespace-aware XPath overload. RoslynRewriter intercepts 4-arg ALSelectNodes/ALSelectSingleNode; XmlDeclaration returns false (no child nodes), all other types delegate to native NavXmlNode via AlCompat.XmlSelectNodesNs/XmlSelectSingleNodeNs. Proven by suite 96-xml-nsmgr-xpath — issue #1371.
 
 XmlNode.SelectNodes (Text, XmlNodeList):
   layer: runtime-api
@@ -11380,7 +11395,8 @@ XmlNode.SelectNodes (Text, XmlNodeList):
 XmlNode.SelectSingleNode (Text, XmlNamespaceManager, XmlNode):
   layer: runtime-api
   category: XmlNode
-  status: gap
+  status: covered
+  notes: Namespace-aware XPath overload. RoslynRewriter intercepts 4-arg ALSelectNodes/ALSelectSingleNode; XmlDeclaration returns false (no child nodes), all other types delegate to native NavXmlNode via AlCompat.XmlSelectNodesNs/XmlSelectSingleNodeNs. Proven by suite 96-xml-nsmgr-xpath — issue #1371.
 
 XmlNode.SelectSingleNode (Text, XmlNode):
   layer: runtime-api
@@ -11492,7 +11508,8 @@ XmlProcessingInstruction.ReplaceWith (Joker):
 XmlProcessingInstruction.SelectNodes (Text, XmlNamespaceManager, XmlNodeList):
   layer: runtime-api
   category: XmlProcessingInstruction
-  status: gap
+  status: covered
+  notes: Namespace-aware XPath overload. RoslynRewriter intercepts 4-arg ALSelectNodes/ALSelectSingleNode; XmlDeclaration returns false (no child nodes), all other types delegate to native NavXmlNode via AlCompat.XmlSelectNodesNs/XmlSelectSingleNodeNs. Proven by suite 96-xml-nsmgr-xpath — issue #1371.
 
 XmlProcessingInstruction.SelectNodes (Text, XmlNodeList):
   layer: runtime-api
@@ -11503,7 +11520,8 @@ XmlProcessingInstruction.SelectNodes (Text, XmlNodeList):
 XmlProcessingInstruction.SelectSingleNode (Text, XmlNamespaceManager, XmlNode):
   layer: runtime-api
   category: XmlProcessingInstruction
-  status: gap
+  status: covered
+  notes: Namespace-aware XPath overload. RoslynRewriter intercepts 4-arg ALSelectNodes/ALSelectSingleNode; XmlDeclaration returns false (no child nodes), all other types delegate to native NavXmlNode via AlCompat.XmlSelectNodesNs/XmlSelectSingleNodeNs. Proven by suite 96-xml-nsmgr-xpath — issue #1371.
 
 XmlProcessingInstruction.SelectSingleNode (Text, XmlNode):
   layer: runtime-api
@@ -11607,7 +11625,8 @@ XmlText.ReplaceWith (Joker):
 XmlText.SelectNodes (Text, XmlNamespaceManager, XmlNodeList):
   layer: runtime-api
   category: XmlText
-  status: gap
+  status: covered
+  notes: Namespace-aware XPath overload. RoslynRewriter intercepts 4-arg ALSelectNodes/ALSelectSingleNode; XmlDeclaration returns false (no child nodes), all other types delegate to native NavXmlNode via AlCompat.XmlSelectNodesNs/XmlSelectSingleNodeNs. Proven by suite 96-xml-nsmgr-xpath — issue #1371.
 
 XmlText.SelectNodes (Text, XmlNodeList):
   layer: runtime-api
@@ -11618,7 +11637,8 @@ XmlText.SelectNodes (Text, XmlNodeList):
 XmlText.SelectSingleNode (Text, XmlNamespaceManager, XmlNode):
   layer: runtime-api
   category: XmlText
-  status: gap
+  status: covered
+  notes: Namespace-aware XPath overload. RoslynRewriter intercepts 4-arg ALSelectNodes/ALSelectSingleNode; XmlDeclaration returns false (no child nodes), all other types delegate to native NavXmlNode via AlCompat.XmlSelectNodesNs/XmlSelectSingleNodeNs. Proven by suite 96-xml-nsmgr-xpath — issue #1371.
 
 XmlText.SelectSingleNode (Text, XmlNode):
   layer: runtime-api

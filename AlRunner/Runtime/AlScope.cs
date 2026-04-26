@@ -3169,6 +3169,27 @@ public static class AlCompat
         return dyn.ALSelectSingleNode(de, xpath, resultRef);
     }
 
+    // Namespace-aware variants: ALSelectNodes(DataError, xpath, nsmgr, nodeList) — 4 args.
+    // NavXmlDeclaration.ALSelectNodes(4-arg) also throws NavNCLNotSupportedOperationException.
+    // For all other node types, forward the nsmgr to the native BC implementation which handles
+    // namespace-qualified XPath via System.Xml.XmlNode.SelectNodes(xpath, nsmgr) internally.
+    public static bool XmlSelectNodesNs(object node, DataError de, string xpath, NavXmlNamespaceManager nsmgr, ByRef<NavXmlNodeList> nodeListRef)
+    {
+        if (node is NavXmlDeclaration)
+            return false;
+        dynamic dyn = node;
+        return dyn.ALSelectNodes(de, xpath, nsmgr, nodeListRef);
+    }
+
+    // Namespace-aware SelectSingleNode: ALSelectSingleNode(DataError, xpath, nsmgr, node) — 4 args.
+    public static bool XmlSelectSingleNodeNs(object node, DataError de, string xpath, NavXmlNamespaceManager nsmgr, ByRef<NavXmlNode> resultRef)
+    {
+        if (node is NavXmlDeclaration)
+            return false;
+        dynamic dyn = node;
+        return dyn.ALSelectSingleNode(de, xpath, nsmgr, resultRef);
+    }
+
     // -----------------------------------------------------------------------
     // ErrorInfo.Create(message) safe factory
     // NavALErrorInfo.ALCreate(msg, ...) calls UpdateWithRecordInfo() which loads
