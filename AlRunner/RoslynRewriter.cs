@@ -784,6 +784,7 @@ public bool ALRename(DataError errorLevel, object key1, object key2) => Rec.ALRe
 public bool ALRename(DataError errorLevel, object key1, object key2, object key3) => Rec.ALRename(errorLevel, key1, key2, key3);
 public bool ALRename(DataError errorLevel, object key1, object key2, object key3, object key4) => Rec.ALRename(errorLevel, key1, key2, key3, key4);
 public void ALSetLoadFields(params int[] fieldNos) => Rec.ALSetLoadFields(fieldNos);
+public void ALSetLoadFields(DataError errorLevel, params int[] fieldNos) => Rec.ALSetLoadFields(errorLevel, fieldNos);
 public void ALSetAutoCalcFields(params object[] fields) => Rec.ALSetAutoCalcFields(fields);
 public string ALGetFilter() => Rec.ALGetFilter();
 public string ALGetFilter(int fieldNo) => Rec.ALGetFilter(fieldNo);

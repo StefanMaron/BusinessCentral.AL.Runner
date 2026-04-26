@@ -7,6 +7,11 @@ table 60110 "LF Row"
         field(3; "City"; Text[100]) { }
     }
     keys { key(PK; "Id") { Clustered = true; } }
+
+    internal procedure SetLoadFieldsOnSelf()
+    begin
+        SetLoadFields("Id", "Name");
+    end;
 }
 
 /// Helper codeunit exercising AddLoadFields (standalone no-op because all
@@ -101,5 +106,12 @@ codeunit 60110 "LF Src"
         // Even fields not explicitly in the load set still report as loaded
         // because the standalone store keeps all fields resident.
         exit(recRef.AreFieldsLoaded(1, 2, 3));
+    end;
+
+    procedure DriveSetLoadFieldsOnSelf()
+    var
+        r: Record "LF Row";
+    begin
+        r.SetLoadFieldsOnSelf();
     end;
 }
