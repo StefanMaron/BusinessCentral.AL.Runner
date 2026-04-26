@@ -1745,6 +1745,20 @@ public class MockRecordHandle : IConvertible
         ALTestFieldSafe(fieldNo, expectedType, expectedValue);
     }
 
+    /// <summary>
+    /// ALTestFieldNavValueSafe(object) — catch-all overload that resolves CS1503 when the BC
+    /// transpiler emits ALTestFieldNavValueSafe(fieldNo, NavType, objectValue) for patterns like
+    /// Rec.TestField("Table No.") inside table procedures.  Some BC compiler versions type the
+    /// value argument as object rather than a concrete NavValue subtype, producing
+    /// CS1503 'object' → 'NavValue'.  Delegates to the existing ALTestFieldSafe(object) overload
+    /// so all primitive unwrapping logic (bool/int/Decimal18/string/NavValue) is shared.
+    /// Fixes issue #1324.
+    /// </summary>
+    public void ALTestFieldNavValueSafe(int fieldNo, NavType expectedType, object expectedValue)
+    {
+        ALTestFieldSafe(fieldNo, expectedType, expectedValue);
+    }
+
     /// <summary>Overload: TestField with DataError level.</summary>
     public void ALTestField(DataError errorLevel, int fieldNo, NavType expectedType, NavValue expectedValue)
     {

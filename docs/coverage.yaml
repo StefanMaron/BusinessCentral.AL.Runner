@@ -7825,6 +7825,7 @@ Table.TestField:
     - tests/bucket-1/291-testfield-find-navtext-bool
     - tests/bucket-2/100-testfield-value
     - tests/bucket-2/100-record-recordid-testfield-company
+    - tests/bucket-2/101-testfield-object-overload
   notes: >
     overloads=32; non-empty check, enum value comparison, and scalar value comparison
     (Text/Code/Integer/Decimal/Boolean) covered. CS0121 ambiguity between NavValue and
@@ -7843,6 +7844,26 @@ Table.TestField:
     ALTestFieldNavValueSafe(int, NavType, NavValue) overload injected into Record class by
     RoslynRewriter delegatingCode — fixes CS1061 when some BC compiler versions emit this
     overload name instead of ALTestFieldSafe (issue #1330).
+    ALTestFieldNavValueSafe(fieldNo, NavType, object) overload added for BC versions that
+    emit ALTestFieldNavValueSafe inside table procedures with an object-typed value argument
+    (e.g. Rec.TestField("Table No.") on Integer fields) — resolves CS1503 ('object' →
+    'NavValue') — issue #1324.
+
+Table.TestField (ALTestFieldNavValueSafe object overload):
+  layer: runtime-api
+  category: Table
+  status: covered
+  tests:
+    - tests/bucket-2/101-testfield-object-overload
+    - AlRunner.Tests/TestFieldNavValueObjectOverloadTests.cs
+  notes: >
+    ALTestFieldNavValueSafe(int fieldNo, NavType expectedType, object expectedValue) — resolves
+    CS1503 ('object' cannot be converted to 'NavValue') emitted when the BC transpiler generates
+    ALTestFieldNavValueSafe inside table procedures with object-typed value arguments.
+    Mirrors the ALTestFieldSafe(object) catch-all pattern: delegates to ALTestFieldSafe(object)
+    which handles all primitive unwrapping (bool/int/Decimal18/string/NavValue).
+    Also added to the RoslynRewriter delegating template so that bare calls inside Record classes
+    are correctly forwarded to Rec.ALTestFieldNavValueSafe. Issue #1324.
 
 Table.TransferFields:
   layer: runtime-api

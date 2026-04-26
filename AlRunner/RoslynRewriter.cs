@@ -828,6 +828,7 @@ protected void EnsureGlobalVariablesInitialized() { }
 public NavRecordId ALRecordId => Rec.ALRecordId;
 public string ALCurrentCompany => Rec.ALCurrentCompany;
 public void ALTestFieldNavValueSafe(int fieldNo, NavType expectedType, NavValue expectedValue) => Rec.ALTestFieldNavValueSafe(fieldNo, expectedType, expectedValue);
+public void ALTestFieldNavValueSafe(int fieldNo, NavType expectedType, object expectedValue) => Rec.ALTestFieldNavValueSafe(fieldNo, expectedType, expectedValue);
 ";
             var delegatingMembers = CSharpSyntaxTree.ParseText(
                 $"class _Temp_ {{ {delegatingCode} }}").GetRoot()
