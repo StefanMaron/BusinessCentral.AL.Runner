@@ -8936,10 +8936,11 @@ TestFilter.SetFilter (TestFilterField, Text):
   status: covered
   tests:
     - tests/bucket-2/page-report/313000-testpage-filter-object-setfilter
+    - tests/bucket-2/page-report/312200-testpage-filter-object
   notes: >-
     ALSetFilter(int fieldNo, string filterExpression) stores per-field filters.
-    Object overload (issue #1442) resolves CS1503 when BC's code generator for
-    standard pages emits NavComplexValue-typed filter expressions that become
+    Object overload (issues #1442 / #1459) resolves CS1503 when BC's code generator
+    for standard pages emits NavComplexValue-typed filter expressions that become
     object after the Roslyn Rewriter; NavText overload added for explicitness.
 
 # ── TestHttpRequestMessage ──────────────────────────────────────

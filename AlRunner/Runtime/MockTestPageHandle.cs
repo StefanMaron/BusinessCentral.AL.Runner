@@ -984,7 +984,7 @@ public class MockTestPageFilter
     /// <summary>
     /// Object overload for ALSetFilter — resolves CS1503 when BC's code generator
     /// for standard pages emits NavComplexValue-typed filter expressions that become
-    /// <c>object</c> after the Roslyn Rewriter (issue #1442).
+    /// <c>object</c> after the Roslyn Rewriter (issues #1442 / #1459).
     /// Converts via <see cref="AlCompat.Format"/> so any BC value type is rendered
     /// to its standard AL string representation before storing as a filter string.
     /// </summary>
