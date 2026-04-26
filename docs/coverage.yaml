@@ -2328,6 +2328,17 @@ FieldRef.Record ():
   category: FieldRef
   status: covered
 
+FieldRef.KeyIndex (Integer):
+  layer: runtime-api
+  category: FieldRef
+  status: covered
+  notes: >
+    The BC transpiler lowers `KeyRef := FldRef.Record().KeyIndex(n)` to
+    `KeyRef.ALAssign(FldRef.ALKeyIndex(compilationTarget, n))` — the `.Record()`
+    call is inlined and KeyIndex is called directly on MockFieldRef.
+    MockFieldRef.ALKeyIndex(int) and ALKeyIndex(object, int) delegate to the
+    owning MockRecordRef.ALKeyIndex. Issue #1434.
+
 FieldRef.Relation ():
   layer: runtime-api
   category: FieldRef
@@ -3033,6 +3044,12 @@ HttpClient.UseWindowsAuthentication (Text, Text, Text):
   layer: runtime-api
   category: HttpClient
   status: not-tested
+
+HttpClient.:= (ALAssign):
+  layer: runtime-api
+  category: HttpClient
+  status: covered
+  notes: ALAssign copies baseAddress, defaultHeaders, timeout, useDefaultNetworkWindowsAuthentication, useServerCertificateValidation — issue #1447
 
 # ── HttpContent ─────────────────────────────────────────────────
 
@@ -6442,6 +6459,9 @@ RecordRef.WritePermission ():
   layer: runtime-api
   category: RecordRef
   status: covered
+  tests:
+    - tests/bucket-1/record-table/311-recref-writepermission
+  notes: MockRecordRef.ALWritePermission always returns true in standalone (no permission system)
 
 # ── Report ──────────────────────────────────────────────────────
 

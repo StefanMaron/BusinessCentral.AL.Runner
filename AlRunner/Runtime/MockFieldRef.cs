@@ -173,6 +173,22 @@ public class MockFieldRef
     /// <summary>ALRecord — returns the owning record ref. Stub for compile compat.</summary>
     public MockRecordRef ALRecord() => _owner ?? new MockRecordRef();
 
+    /// <summary>
+    /// ALKeyIndex — called when the BC transpiler lowers
+    /// <c>KeyRef := FldRef.Record().KeyIndex(n)</c> to
+    /// <c>KeyRef.ALAssign(FldRef.ALKeyIndex(compilationTarget, n))</c>.
+    /// Delegates to the owning RecordRef's KeyIndex implementation.
+    /// </summary>
+    public MockKeyRef ALKeyIndex(int index)
+        => (_owner ?? new MockRecordRef()).ALKeyIndex(index);
+
+    /// <summary>
+    /// ALKeyIndex with compilation-target argument — BC emits an extra object
+    /// parameter (the compilation target) before the index for chained calls.
+    /// </summary>
+    public MockKeyRef ALKeyIndex(object compilationTarget, int index)
+        => ALKeyIndex(index);
+
     /// <summary>ALValidate — set value and fire OnValidate trigger.</summary>
     public void ALValidate(NavValue value)
     {
