@@ -427,6 +427,13 @@ public class MockReportHandle
     // Report.RunRequestPage — no request page UI in standalone mode
     public static string StaticRunRequestPage(int reportId) => string.Empty;
 
+    /// <summary>
+    /// BC emits <c>MockReportHandle.StaticRunRequestPage(reportId, requestParameters)</c>
+    /// for <c>Report.RunRequestPage(ReportId, RequestPageParameters)</c>.
+    /// Returns empty string in standalone mode (no UI available).
+    /// </summary>
+    public static string StaticRunRequestPage(int reportId, string requestParameters) => string.Empty;
+
     // Report.ValidateAndPrepareLayout / Report.WordXmlPart — no-ops
     public static void StaticValidateAndPrepareLayout(int reportId) { }
 

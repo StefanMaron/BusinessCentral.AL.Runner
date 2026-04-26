@@ -5941,13 +5941,22 @@ Report.RunModal:
     - tests/bucket-1/90-report-static
     - tests/bucket-1/287-report-runmodal-4arg
 
-Report.RunRequestPage:
+Report.RunRequestPage (1-arg):
   layer: runtime-api
   category: Report
   status: covered
-  notes: overloads=1; NavReport.RunRequestPage → MockReportHandle.StaticRunRequestPage (returns empty string).
+  notes: NavReport.RunRequestPage(ReportId) → MockReportHandle.StaticRunRequestPage(int) (returns empty string).
   tests:
     - tests/bucket-1/90-report-static
+    - tests/bucket-2/301-report-static-runrequestpage
+
+Report.RunRequestPage (2-arg):
+  layer: runtime-api
+  category: Report
+  status: covered
+  notes: NavReport.RunRequestPage(ReportId, RequestPageParameters) → MockReportHandle.StaticRunRequestPage(int, string) (returns empty string in standalone mode). Fixes CS1501 compilation gap — issue #1329.
+  tests:
+    - tests/bucket-2/301-report-static-runrequestpage
 
 Report.SaveAs:
   layer: runtime-api
