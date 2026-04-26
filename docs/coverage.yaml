@@ -3734,7 +3734,9 @@ JsonArray.GetArray (Integer):
   layer: runtime-api
   category: JsonArray
   status: covered
-  notes: . Indirectly covered via JsonArray.Get + JsonToken.AsArray(). The BC 21+ typed GetArray(idx) overload is not present in the AL 16.2 compiler bundled with the runner.
+  tests:
+    - tests/bucket-2/data-formats/316-jsonarray-gettext-integer-index
+  notes: MockJsonHelper.GetArray(token, int index) added — issue #1426. BC 17+ (AL compiler 17.0) emits ALGetArray(Int32) which the rewriter redirects to MockJsonHelper.GetArray; without this overload Roslyn rejects with CS1503 int→string.
 
 JsonArray.GetBigInteger (Integer):
   layer: runtime-api
@@ -3748,7 +3750,9 @@ JsonArray.GetBoolean (Integer):
   layer: runtime-api
   category: JsonArray
   status: covered
-  notes: . Indirectly covered via JsonArray.Get + JsonToken.AsValue().AsBoolean(). The BC 21+ typed GetBoolean(idx) overload is not present in the AL 16.2 compiler bundled with the runner.
+  tests:
+    - tests/bucket-2/data-formats/316-jsonarray-gettext-integer-index
+  notes: MockJsonHelper.GetBoolean(token, int index) added — issue #1426. BC 17+ emits ALGetBoolean(Int32) which the rewriter redirects; without this overload Roslyn rejects with CS1503 int→string.
 
 JsonArray.GetByte (Integer):
   layer: runtime-api
@@ -3786,7 +3790,9 @@ JsonArray.GetDecimal (Integer):
   layer: runtime-api
   category: JsonArray
   status: covered
-  notes: . Indirectly covered via JsonArray.Get + JsonToken.AsValue().AsDecimal(). The BC 21+ typed GetDecimal(idx) overload is not present in the AL 16.2 compiler bundled with the runner.
+  tests:
+    - tests/bucket-2/data-formats/316-jsonarray-gettext-integer-index
+  notes: MockJsonHelper.GetDecimal(token, int index) added — issue #1426. BC 17+ emits ALGetDecimal(Int32) which the rewriter redirects; without this overload Roslyn rejects with CS1503 int→string.
 
 JsonArray.GetDuration (Integer):
   layer: runtime-api
@@ -3800,7 +3806,9 @@ JsonArray.GetInteger (Integer):
   layer: runtime-api
   category: JsonArray
   status: covered
-  notes: . Indirectly covered via JsonArray.Get + JsonToken.AsValue().AsInteger(). The BC 21+ typed GetInteger(idx) overload is not present in the AL 16.2 compiler bundled with the runner.
+  tests:
+    - tests/bucket-2/data-formats/316-jsonarray-gettext-integer-index
+  notes: MockJsonHelper.GetInteger(token, int index) added — issue #1426. BC 17+ emits ALGetInteger(Int32) which the rewriter redirects; without this overload Roslyn rejects with CS1503 int→string.
 
 JsonArray.GetObject (Integer):
   layer: runtime-api
@@ -3823,7 +3831,9 @@ JsonArray.GetText (Integer):
   layer: runtime-api
   category: JsonArray
   status: covered
-  notes: . Indirectly covered via JsonArray.Get + JsonToken.AsValue().AsText(). The BC 21+ typed GetText(idx) overload is not present in the AL 16.2 compiler bundled with the runner.
+  tests:
+    - tests/bucket-2/data-formats/316-jsonarray-gettext-integer-index
+  notes: MockJsonHelper.GetText(token, int index) added — issue #1426. BC 17+ (AL compiler 17.0) emits ALGetText(Int32) for JsonArray.GetText(idx); the rewriter redirects to MockJsonHelper.GetText which previously only had a string-key overload, causing CS1503 int→string.
 
 JsonArray.GetTime (Integer):
   layer: runtime-api

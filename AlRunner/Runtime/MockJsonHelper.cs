@@ -356,6 +356,25 @@ public static class MockJsonHelper
     }
 
     /// <summary>
+    /// Replacement for NavJsonArray.ALGetBoolean(index).
+    /// Returns the boolean value at the given integer index.
+    /// AL: JsonArray.GetBoolean(index)  →  MockJsonHelper.GetBoolean(token, index)
+    /// Issue #1426: BC emits ALGetBoolean(Int32) for JsonArray — adds int overload.
+    /// </summary>
+    public static bool GetBoolean(NavJsonToken token, int index)
+    {
+        var backingToken = GetBackingToken(token);
+        if (backingToken is not JArray arr)
+            throw new Exception("The JSON token is not an array.");
+        if (index < 0 || index >= arr.Count)
+            throw new Exception($"The index {index} is outside the bounds of the JSON array.");
+        var elem = arr[index];
+        if (elem.Type != JTokenType.Boolean)
+            throw new Exception($"The element at index {index} cannot be converted to a Boolean value.");
+        return elem.Value<bool>();
+    }
+
+    /// <summary>
     /// Replacement for NavJsonToken.ALPath(DataError).
     /// Returns the BC-style JSON path for the token (e.g. "$" for root, "$.foo" for a field).
     /// Newtonsoft.Json uses "" for root and "foo" for a field — this converts to BC format.
@@ -467,6 +486,23 @@ public static class MockJsonHelper
     }
 
     /// <summary>
+    /// Replacement for NavJsonArray.ALGetText(index).
+    /// Returns the string value at the given integer index.
+    /// AL: JsonArray.GetText(index)  →  MockJsonHelper.GetText(token, index)
+    /// Issue #1426: BC emits ALGetText(Int32 index) for JsonArray — adds int overload
+    /// so the rewriter redirect does not produce CS1503 int→string.
+    /// </summary>
+    public static NavText GetText(NavJsonToken token, int index)
+    {
+        var backingToken = GetBackingToken(token);
+        if (backingToken is not JArray arr)
+            throw new Exception("The JSON token is not an array.");
+        if (index < 0 || index >= arr.Count)
+            throw new Exception($"The index {index} is outside the bounds of the JSON array.");
+        return new NavText(arr[index].Value<string>() ?? string.Empty);
+    }
+
+    /// <summary>
     /// Replacement for NavJsonObject.ALGetText(key, requireValueExists).
     /// Returns the string value of the named property, with optional existence check.
     /// AL: JsonObject.GetText('key', true)  →  MockJsonHelper.GetText(token, key, requireValueExists)
@@ -501,6 +537,22 @@ public static class MockJsonHelper
     }
 
     /// <summary>
+    /// Replacement for NavJsonArray.ALGetInteger(index).
+    /// Returns the integer value at the given integer index.
+    /// AL: JsonArray.GetInteger(index)  →  MockJsonHelper.GetInteger(token, index)
+    /// Issue #1426: BC emits ALGetInteger(Int32) for JsonArray — adds int overload.
+    /// </summary>
+    public static int GetInteger(NavJsonToken token, int index)
+    {
+        var backingToken = GetBackingToken(token);
+        if (backingToken is not JArray arr)
+            throw new Exception("The JSON token is not an array.");
+        if (index < 0 || index >= arr.Count)
+            throw new Exception($"The index {index} is outside the bounds of the JSON array.");
+        return arr[index].Value<int>();
+    }
+
+    /// <summary>
     /// Replacement for NavJsonObject.ALGetInteger(key, requireValueExists).
     /// Returns the integer value of the named property, with optional existence check.
     /// AL: JsonObject.GetInteger('key', true)  →  MockJsonHelper.GetInteger(token, key, requireValueExists)
@@ -532,6 +584,22 @@ public static class MockJsonHelper
         if (!obj.TryGetValue(key, out var val))
             throw new Exception($"The JSON object does not contain a property with the name '{key}'.");
         return NavDecimal.Create(new Decimal18(val.Value<decimal>()));
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonArray.ALGetDecimal(index).
+    /// Returns the decimal value at the given integer index.
+    /// AL: JsonArray.GetDecimal(index)  →  MockJsonHelper.GetDecimal(token, index)
+    /// Issue #1426: BC emits ALGetDecimal(Int32) for JsonArray — adds int overload.
+    /// </summary>
+    public static NavDecimal GetDecimal(NavJsonToken token, int index)
+    {
+        var backingToken = GetBackingToken(token);
+        if (backingToken is not JArray arr)
+            throw new Exception("The JSON token is not an array.");
+        if (index < 0 || index >= arr.Count)
+            throw new Exception($"The index {index} is outside the bounds of the JSON array.");
+        return NavDecimal.Create(new Decimal18(arr[index].Value<decimal>()));
     }
 
     /// <summary>
@@ -602,6 +670,25 @@ public static class MockJsonHelper
             throw new Exception($"The JSON object does not contain a property with the name '{key}'.");
         if (val is not JArray jArr)
             throw new Exception($"The value of JSON property '{key}' is not an array.");
+        return CreateJsonToken<NavJsonArray>(jArr);
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonArray.ALGetArray(index).
+    /// Returns the nested JsonArray element at the given integer index.
+    /// AL: JsonArray.GetArray(index)  →  MockJsonHelper.GetArray(token, index)
+    /// Issue #1426: BC emits ALGetArray(Int32) for JsonArray — adds int overload.
+    /// </summary>
+    public static NavJsonArray GetArray(NavJsonToken token, int index)
+    {
+        var backingToken = GetBackingToken(token);
+        if (backingToken is not JArray arr)
+            throw new Exception("The JSON token is not an array.");
+        if (index < 0 || index >= arr.Count)
+            throw new Exception($"The index {index} is outside the bounds of the JSON array.");
+        var elem = arr[index];
+        if (elem is not JArray jArr)
+            throw new Exception($"The element at index {index} is not a JSON array.");
         return CreateJsonToken<NavJsonArray>(jArr);
     }
 
