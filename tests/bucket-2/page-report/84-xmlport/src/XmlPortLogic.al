@@ -22,7 +22,7 @@ codeunit 58400 "XmlPort Logic"
         XP: XmlPort "XmlPort Items";
     begin
         // Declaring XP must compile; the returned constant is a compilation smoke-test.
-        exit(1058400);
+        exit(58400);
     end;
 
     /// Calls the instance form XP.Import() — must throw NotSupportedException.

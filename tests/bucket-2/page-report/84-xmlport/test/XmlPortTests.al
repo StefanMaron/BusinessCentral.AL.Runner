@@ -27,7 +27,7 @@ codeunit 1058401 "XmlPort Tests"
         // [GIVEN] A procedure that returns the XmlPort object ID
         // [WHEN]  We call it
         // [THEN]  The ID matches the XmlPort definition
-        Assert.AreEqual(1058400, Logic.GetXmlPortId(), 'XmlPort ID should be 1058400');
+        Assert.AreEqual(58400, Logic.GetXmlPortId(), 'XmlPort ID should be 58400');
     end;
 
     // ------------------------------------------------------------------
