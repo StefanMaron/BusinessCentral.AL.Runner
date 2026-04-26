@@ -467,6 +467,21 @@ public class RoslynRewriter : CSharpSyntaxRewriter
                 preservedMembers.Add(
                     SyntaxFactory.ParseMemberDeclaration(
                         $"public {node.Identifier.Text} ParentObject => this;")!);
+
+                // GetGlobalVariable / SetGlobalVariable — newer BC compiler versions emit these
+                // on scope classes inside ReportExtension<N> when accessing global variables
+                // declared on the reportextension. After stripping NavReportExtension, the
+                // base class no longer provides them; inject no-op stubs so compilation
+                // succeeds. Returns NavInteger.Default for get (a safe non-null NavValue
+                // fallback); discards the value for set.
+                // Same pattern as the stubs on MockRecordHandle (page/page-extension variant).
+                // Issue #1450.
+                preservedMembers.Add(
+                    SyntaxFactory.ParseMemberDeclaration(
+                        "public Microsoft.Dynamics.Nav.Runtime.NavValue GetGlobalVariable(int id, Microsoft.Dynamics.Nav.Types.NavType type) => Microsoft.Dynamics.Nav.Runtime.NavInteger.Default;")!);
+                preservedMembers.Add(
+                    SyntaxFactory.ParseMemberDeclaration(
+                        "public void SetGlobalVariable(int id, Microsoft.Dynamics.Nav.Types.NavType type, object value) { }")!);
             }
 
             var stubClass = node

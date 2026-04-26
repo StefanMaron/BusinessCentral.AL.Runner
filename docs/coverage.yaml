@@ -186,7 +186,32 @@ reportextension_declaration:
   tests:
     - tests/bucket-2/page-report/130-reportext-header-scope
     - tests/bucket-2/page-report/129-reportext-parent
+    - tests/bucket-2/page-report/311800-reportext-globalvar
   notes: >
+
+ReportExtension.GetGlobalVariable (int, NavType):
+  layer: runtime
+  category: report
+  status: covered
+  tests:
+    - tests/bucket-2/page-report/311800-reportext-globalvar
+  notes: >
+    Newer BC compiler versions emit GetGlobalVariable(int id, NavType type) calls on
+    scope classes inside ReportExtension<N> when accessing global variables declared
+    on the reportextension. After stripping NavReportExtension, injected as a no-op
+    stub returning NavInteger.Default. Issue #1450.
+
+ReportExtension.SetGlobalVariable (int, NavType, object):
+  layer: runtime
+  category: report
+  status: covered
+  tests:
+    - tests/bucket-2/page-report/311800-reportext-globalvar
+  notes: >
+    Newer BC compiler versions emit SetGlobalVariable(int id, NavType type, object)
+    calls on scope classes inside ReportExtension<N> when accessing global variables
+    declared on the reportextension. After stripping NavReportExtension, injected as
+    a no-op stub. Issue #1450.
 
 tableextension_declaration:
   layer: syntax
