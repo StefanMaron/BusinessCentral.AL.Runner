@@ -155,6 +155,16 @@ public static class MockSession
     }
 
     /// <summary>
+    /// StopSession with comment — no-op (session already completed synchronously).
+    /// Maps to the AL <c>StopSession(SessionId, Comment)</c> 2-arg overload.
+    /// The comment parameter is accepted but ignored in standalone mode.
+    /// </summary>
+    public static void ALStopSession(DataError errorLevel, int sessionId, string comment)
+    {
+        // No-op: session already completed synchronously; comment is ignored.
+    }
+
+    /// <summary>
     /// Sleep — no-op in standalone mode.
     /// Replaces NavSession.Sleep(int milliseconds).
     /// </summary>
