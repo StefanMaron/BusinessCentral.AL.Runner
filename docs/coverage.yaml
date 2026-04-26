@@ -7496,17 +7496,19 @@ Table.GetRangeMax:
   layer: runtime-api
   category: Table
   status: covered
-  notes: overloads=1
+  notes: "overloads=1; field types covered: Integer, Decimal, Date, Text, Code, Boolean (ALCompiler.NavValueToNavValue<T> rewriter fix for Date/Text/Code; ToBoolean fix for Boolean)"
   tests:
     - tests/bucket-2/141-record-getrangemin
+    - tests/bucket-2/100-getrange-date-filter
 
 Table.GetRangeMin:
   layer: runtime-api
   category: Table
   status: covered
-  notes: overloads=1
+  notes: "overloads=1; field types covered: Integer, Decimal, Date, Text, Code, Boolean (ALCompiler.NavValueToNavValue<T> rewriter fix for Date/Text/Code; ToBoolean fix for Boolean)"
   tests:
     - tests/bucket-2/141-record-getrangemin
+    - tests/bucket-2/100-getrange-date-filter
 
 Table.GetView:
   layer: runtime-api

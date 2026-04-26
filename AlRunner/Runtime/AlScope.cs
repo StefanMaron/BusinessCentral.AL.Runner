@@ -1211,6 +1211,40 @@ public static class AlCompat
         => NavIndirectValueToNavValue<T>(value);
 
     /// <summary>
+    /// Replacement for ALCompiler.NavValueToNavValue&lt;T&gt;(NavValue).
+    /// The BC compiler emits this call when assigning GetRangeMin/GetRangeMax results to typed
+    /// variables (e.g. Date, Text, Code). MockRecordHandle.ALGetRangeMinSafe returns <c>object</c>
+    /// (unwrapped from NavValue) so the real BC method — whose parameter is NavValue — fails to
+    /// compile. This helper accepts <c>object?</c> and rehydrates scalar CLR values to their
+    /// NavValue counterparts before delegating to NavIndirectValueToNavValue&lt;T&gt;.
+    /// Covered types:
+    ///   NavDate  — object is NavDate (from UnwrapRangeValue fallthrough)
+    ///   NavText  — object is string (unwrapped by UnwrapRangeValue)
+    ///   NavCode  — object is string (unwrapped by UnwrapRangeValue)
+    ///   NavInteger — object is int   (unwrapped by UnwrapRangeValue)
+    ///   NavBoolean — object is bool  (unwrapped by UnwrapRangeValue)
+    ///   NavBigInteger — object is long (unwrapped by UnwrapRangeValue)
+    ///   NavGuid  — object is Guid   (unwrapped by UnwrapRangeValue)
+    /// </summary>
+    public static T NavValueToNavValue<T>(object? value) where T : NavValue
+    {
+        // Rehydrate primitive CLR values that UnwrapRangeValue produces
+        if (value is int intVal) return NavIndirectValueToNavValue<T>(NavInteger.Create(intVal));
+        if (value is bool boolVal) return NavIndirectValueToNavValue<T>(NavBoolean.Create(boolVal));
+        if (value is long longVal) return NavIndirectValueToNavValue<T>(NavBigInteger.Create(longVal));
+        if (value is Guid guidVal) return NavIndirectValueToNavValue<T>(new NavGuid(guidVal));
+        if (value is string strVal)
+        {
+            // NavCode and NavText both store strings; try NavCode first (it IS-A NavText)
+            if (typeof(T) == typeof(NavCode))
+                return (T)(NavValue)new NavCode(20, strVal);
+            return NavIndirectValueToNavValue<T>(new NavText(strVal));
+        }
+        // For NavDate and any remaining NavValue subtypes delegate directly
+        return NavIndirectValueToNavValue<T>(value);
+    }
+
+    /// <summary>
     /// Safe replacement for ALCompiler.ObjectToExactNavValue&lt;T&gt;(x).
     /// The rewriter converts <c>ALCompiler.ObjectToExactNavValue&lt;T&gt;(x)</c> to
     /// <c>(T)(object)(x)</c>, which fails at runtime when x is a C# primitive (bool, int)

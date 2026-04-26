@@ -2528,6 +2528,30 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
                 .WithTriviaFrom(visited);
         }
 
+        // `<expr>.ToBoolean()` where <expr> is ALGetRangeMinSafe or ALGetRangeMaxSafe
+        // → `AlCompat.ObjectToBoolean(<expr>)`
+        // BC emits `rec.ALGetRangeMinSafe(fieldNo, NavType.Boolean).ToBoolean()` for Boolean
+        // GetRangeMin/GetRangeMax assignments. ALGetRangeMinSafe/ALGetRangeMaxSafe return object,
+        // so the NavValue extension method ToBoolean() cannot be found by the C# compiler.
+        // Route through AlCompat.ObjectToBoolean which accepts object?.
+        if (visited.Expression is MemberAccessExpressionSyntax toBoolMa &&
+            toBoolMa.Name.Identifier.Text == "ToBoolean" &&
+            toBoolMa.Expression is InvocationExpressionSyntax toBoolInner &&
+            toBoolInner.Expression is MemberAccessExpressionSyntax toBoolInnerMa &&
+            (toBoolInnerMa.Name.Identifier.Text == "ALGetRangeMinSafe" ||
+             toBoolInnerMa.Name.Identifier.Text == "ALGetRangeMaxSafe"))
+        {
+            return SyntaxFactory.InvocationExpression(
+                SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("AlCompat"),
+                    SyntaxFactory.IdentifierName("ObjectToBoolean")),
+                SyntaxFactory.ArgumentList(
+                    SyntaxFactory.SingletonSeparatedList(
+                        SyntaxFactory.Argument(toBoolMa.Expression))))
+                .WithTriviaFrom(visited);
+        }
+
         // NavCode.op_Equality(a, b) / NavCode.op_Inequality(a, b)
         // BC may emit explicit static operator calls for Code[N] comparisons in case statements
         // (rather than a binary == expression), depending on the BC version. Both forms need
@@ -3400,6 +3424,20 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
                 }
 
                 // Preserve the generic type arguments (e.g., <NavText>)
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        memberAccess.Name)); // keep GenericNameSyntax with type args
+            }
+
+            // ALCompiler.NavValueToNavValue<T>(x) -> AlCompat.NavValueToNavValue<T>(x)
+            // BC emits this when assigning GetRangeMin/GetRangeMax results to typed variables
+            // (e.g. Date, Text, Code). ALGetRangeMinSafe/ALGetRangeMaxSafe return object, so
+            // the real BC method (parameter: NavValue) fails. AlCompat.NavValueToNavValue<T>
+            // accepts object? and rehydrates the unwrapped scalar before converting.
+            if (exprText == "ALCompiler" && methodName == "NavValueToNavValue")
+            {
                 return visited.WithExpression(
                     SyntaxFactory.MemberAccessExpression(
                         SyntaxKind.SimpleMemberAccessExpression,
