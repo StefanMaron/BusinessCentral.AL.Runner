@@ -2498,6 +2498,97 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
             }
         }
 
+        // XmlAttributeCollection namespace-qualified overloads.
+        // BC's NavXmlAttributeCollection uses LINQ-to-XML internally.  When the
+        // namespace URI contains ':' (e.g. "http://…") the NCL XML layer rejects
+        // it as a literal XML name fragment and throws NavNCLXmlException.
+        // Redirect the three failing overloads to AlCompat helpers that bypass NCL
+        // and operate directly on the underlying XElement.
+        //
+        // Discriminators (before visiting — receiver still un-visited):
+        //   ALGet   4 args: (DataError, string, string, ByRef<NavXmlAttribute>)
+        //   ALRemove 2 args: (string, string)   — no DataError first arg
+        //   ALSet   3 args: (string, string, string)
+        //
+        // ALGet 4-arg is unique to NavXmlAttributeCollection (record ALGet uses
+        // fewer args and ByRef<record> types).  ALRemove 2-string and ALSet 3-string
+        // are similarly distinct from other AL ALRemove/ALSet overloads.
+        if (node.Expression is MemberAccessExpressionSyntax xmlAttrMa)
+        {
+            var xmlAttrMethodName = xmlAttrMa.Name.Identifier.Text;
+            var args = node.ArgumentList.Arguments;
+
+            // ALGet(DataError, string, string, ByRef<NavXmlAttribute>) — 4-arg namespace Get
+            if (xmlAttrMethodName == "ALGet" &&
+                args.Count == 4 &&
+                args[0].Expression.ToString().StartsWith("DataError") &&
+                args[3].ToString().Contains("NavXmlAttribute"))
+            {
+                var receiverExpr = (ExpressionSyntax)Visit(xmlAttrMa.Expression)!;
+                var deExpr       = (ExpressionSyntax)Visit(args[0].Expression)!;
+                var nsExpr       = (ExpressionSyntax)Visit(args[1].Expression)!;
+                var nameExpr     = (ExpressionSyntax)Visit(args[2].Expression)!;
+                var refExpr      = (ExpressionSyntax)Visit(args[3].Expression)!;
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("XmlAttrCollGetByNs")),
+                    SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList(new[]
+                    {
+                        SyntaxFactory.Argument(receiverExpr),
+                        SyntaxFactory.Argument(deExpr),
+                        SyntaxFactory.Argument(nsExpr),
+                        SyntaxFactory.Argument(nameExpr),
+                        SyntaxFactory.Argument(refExpr)
+                    }))).WithTriviaFrom(node);
+            }
+
+            // ALRemove(string, string) — 2-arg namespace Remove (no DataError)
+            if (xmlAttrMethodName == "ALRemove" &&
+                args.Count == 2 &&
+                !args[0].Expression.ToString().StartsWith("DataError"))
+            {
+                var receiverExpr = (ExpressionSyntax)Visit(xmlAttrMa.Expression)!;
+                var nsExpr       = (ExpressionSyntax)Visit(args[0].Expression)!;
+                var nameExpr     = (ExpressionSyntax)Visit(args[1].Expression)!;
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("XmlAttrCollRemoveByNs")),
+                    SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList(new[]
+                    {
+                        SyntaxFactory.Argument(receiverExpr),
+                        SyntaxFactory.Argument(nsExpr),
+                        SyntaxFactory.Argument(nameExpr)
+                    }))).WithTriviaFrom(node);
+            }
+
+            // ALSet(string, string, string) — 3-arg namespace Set
+            if (xmlAttrMethodName == "ALSet" &&
+                args.Count == 3 &&
+                !args[0].Expression.ToString().StartsWith("DataError"))
+            {
+                var receiverExpr = (ExpressionSyntax)Visit(xmlAttrMa.Expression)!;
+                var nsExpr       = (ExpressionSyntax)Visit(args[0].Expression)!;
+                var nameExpr     = (ExpressionSyntax)Visit(args[1].Expression)!;
+                var valExpr      = (ExpressionSyntax)Visit(args[2].Expression)!;
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("XmlAttrCollSetByNs")),
+                    SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList(new[]
+                    {
+                        SyntaxFactory.Argument(receiverExpr),
+                        SyntaxFactory.Argument(nsExpr),
+                        SyntaxFactory.Argument(nameExpr),
+                        SyntaxFactory.Argument(valExpr)
+                    }))).WithTriviaFrom(node);
+            }
+        }
+
         // Now recurse into children first
         var visited = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
 

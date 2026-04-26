@@ -3304,6 +3304,92 @@ public static class AlCompat
         }
     }
 
+    // -----------------------------------------------------------------------
+    // XmlAttributeCollection namespace-qualified overloads.
+    //
+    // BC's NavXmlAttributeCollection uses LINQ-to-XML (XElement) internally.
+    // When the namespace URI contains ':' (e.g. 'http://...'), BC's NCL XML
+    // layer interprets it as an XML name fragment and throws
+    // NavNCLXmlException("':' character cannot be included in a name").
+    //
+    // These helpers bypass the NCL layer and operate directly on the XElement
+    // via reflection, using System.Xml.Linq.XName for correct namespace lookup.
+    //
+    // BC compiler mapping (AL → emitted C#):
+    //   Get(ns, name, var attr)       → ALGet(errorLevel, ns, name, ByRef)   [4 args]
+    //   Remove(ns, name)              → ALRemove(ns, name)                   [2 strings]
+    //   Set(ns, name, value)          → ALSet(ns, name, value)               [3 strings]
+    //
+    // Note: Get(Text, XmlAttribute) and Remove(XmlAttribute) work correctly
+    // via BC native and need no override.
+    // -----------------------------------------------------------------------
+
+    // Reflection accessors — initialised once per AppDomain.
+    private static readonly System.Reflection.FieldInfo? s_xmlAttrCollElementField =
+        typeof(NavXmlAttributeCollection).GetField("element",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+    private static readonly System.Reflection.ConstructorInfo? s_navXmlAttributeCtor =
+        typeof(NavXmlAttribute).GetConstructor(
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic,
+            null,
+            new[] { typeof(System.Xml.Linq.XAttribute) },
+            null);
+
+    /// <summary>
+    /// Get(namespaceURI, localName, var attr) — namespace-qualified lookup.
+    /// BC emits: <c>ALGet(errorLevel, namespaceURI, localName, ByRef)</c>.
+    /// Uses LINQ-to-XML to look up <c>{namespaceURI}localName</c> on the element.
+    /// </summary>
+    public static bool XmlAttrCollGetByNs(
+        NavXmlAttributeCollection coll,
+        DataError errorLevel,
+        string namespaceURI,
+        string localName,
+        ByRef<NavXmlAttribute> result)
+    {
+        var el = s_xmlAttrCollElementField?.GetValue(coll) as System.Xml.Linq.XElement;
+        if (el == null) return false;
+
+        var xattr = el.Attribute(System.Xml.Linq.XName.Get(localName, namespaceURI));
+        if (xattr == null) return false;
+
+        var navAttr = s_navXmlAttributeCtor?.Invoke(new object[] { xattr }) as NavXmlAttribute;
+        if (navAttr == null) return false;
+
+        result.Value = navAttr;
+        return true;
+    }
+
+    /// <summary>
+    /// Remove(namespaceURI, localName) — namespace-qualified remove.
+    /// BC emits: <c>ALRemove(namespaceURI, localName)</c>.
+    /// Uses LINQ-to-XML to locate and remove <c>{namespaceURI}localName</c>.
+    /// </summary>
+    public static void XmlAttrCollRemoveByNs(
+        NavXmlAttributeCollection coll,
+        string namespaceURI,
+        string localName)
+    {
+        var el = s_xmlAttrCollElementField?.GetValue(coll) as System.Xml.Linq.XElement;
+        el?.Attribute(System.Xml.Linq.XName.Get(localName, namespaceURI))?.Remove();
+    }
+
+    /// <summary>
+    /// Set(namespaceURI, localName, value) — namespace-qualified set/overwrite.
+    /// BC emits: <c>ALSet(namespaceURI, localName, value)</c>.
+    /// Uses LINQ-to-XML <c>SetAttributeValue</c> to create or replace the attribute.
+    /// </summary>
+    public static void XmlAttrCollSetByNs(
+        NavXmlAttributeCollection coll,
+        string namespaceURI,
+        string localName,
+        string value)
+    {
+        var el = s_xmlAttrCollElementField?.GetValue(coll) as System.Xml.Linq.XElement;
+        el?.SetAttributeValue(System.Xml.Linq.XName.Get(localName, namespaceURI), value);
+    }
+
 }
 
 /// <summary>
