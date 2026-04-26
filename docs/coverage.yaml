@@ -6440,7 +6440,10 @@ Report.Execute (Integer, Text, RecordRef):
 Report.Execute (Text, Text, RecordRef):
   layer: runtime-api
   category: Report
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309700-report-text-name-overloads
+  notes: MockReportHandle.StaticExecute(string, string, MockRecordRef) — no-op in standalone mode. Fixes #1377.
 
 Report.GetSubstituteReportId (Integer):
   layer: runtime-api
@@ -6480,7 +6483,10 @@ Report.Run (Integer, Boolean, Boolean, Table):
 Report.Run (Text, Boolean, Boolean, Table):
   layer: runtime-api
   category: Report
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309700-report-text-name-overloads
+  notes: MockReportHandle.StaticRun(string, bool, bool) and StaticRun(string, bool, bool, object) — no-op in standalone mode. Fixes #1377.
 
 Report.RunModal (Integer, Boolean, Boolean, Table):
   layer: runtime-api
@@ -6498,12 +6504,19 @@ Report.RunModal (Integer, Boolean, Boolean, Table):
 Report.RunModal (Text, Boolean, Boolean, Table):
   layer: runtime-api
   category: Report
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309700-report-text-name-overloads
+  notes: MockReportHandle.StaticRunModal(string, bool, bool) and StaticRunModal(string, bool, bool, object) — no-op in standalone mode. Fixes #1377.
 
 Report.RunRequestPage (Integer, Text):
   layer: runtime-api
   category: Report
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309700-report-text-name-overloads
+    - tests/bucket-2/301-report-static-runrequestpage
+  notes: MockReportHandle.StaticRunRequestPage(int, string) — returns empty string in standalone mode. Fixes #1377.
 
 Report.SaveAs (Integer, Text, ReportFormat, OutStream, RecordRef):
   layer: runtime-api
