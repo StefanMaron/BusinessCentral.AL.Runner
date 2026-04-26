@@ -80,4 +80,47 @@ codeunit 60190 "XAT Src"
         attr := XmlAttribute.Create('id', '42');
         exit(attr.Name = attr.Value);
     end;
+
+    // ── XmlAttribute.Create(LocalName, NamespaceUri, Value) ──────────────────
+
+    procedure Create3Arg_Value(): Text
+    var
+        attr: XmlAttribute;
+    begin
+        attr := XmlAttribute.Create('isbn', 'urn:books:1', '978-0-13');
+        exit(attr.Value);
+    end;
+
+    procedure Create3Arg_LocalName(): Text
+    var
+        attr: XmlAttribute;
+    begin
+        attr := XmlAttribute.Create('isbn', 'urn:books:1', '978-0-13');
+        exit(attr.LocalName);
+    end;
+
+    procedure Create3Arg_NamespaceUri(): Text
+    var
+        attr: XmlAttribute;
+    begin
+        attr := XmlAttribute.Create('isbn', 'urn:books:1', '978-0-13');
+        exit(attr.NamespaceUri);
+    end;
+
+    procedure Create3Arg_EmptyNamespace_NamespaceUri(): Text
+    var
+        attr: XmlAttribute;
+    begin
+        attr := XmlAttribute.Create('isbn', '', '978-0-13');
+        exit(attr.NamespaceUri);
+    end;
+
+    procedure Create3Arg_NamespaceUri_Aliases_Value_NegativeTrap(): Boolean
+    var
+        attr: XmlAttribute;
+    begin
+        // Negative trap: NamespaceUri and Value must be different slots.
+        attr := XmlAttribute.Create('isbn', 'urn:books:1', '978-0-13');
+        exit(attr.NamespaceUri = attr.Value);
+    end;
 }

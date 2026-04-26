@@ -10340,7 +10340,10 @@ XmlAttribute.AsXmlNode ():
 XmlAttribute.Create (Text, Text, Text):
   layer: runtime-api
   category: XmlAttribute
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/193-xmlattribute
+  notes: . Covered via NavXmlAttribute native — 3-arg Create(localName, namespaceUri, value) round-trips all three parameters; namespace URI with ':' works without the NCL validation issue that bit XmlAttributeCollection in #1376. Closes #1399.
 
 XmlAttribute.Create (Text, Text):
   layer: runtime-api

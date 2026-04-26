@@ -2054,14 +2054,14 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `SetObjectType` | `(ObjectType)` | ✅ covered | (base + DataError); MockWebServiceActionContext; stores int; round-trip tested |
 | `SetResultCode` | `(WebServiceActionResultCode)` | ✅ covered | (base + DataError); MockWebServiceActionContext; stores WebServiceActionResultCode enum; round-trip tested for Created and OkResponse |
 
-## XmlAttribute  (21/24)
+## XmlAttribute  (22/24)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
 | `AddAfterSelf` | `(Joker)` | ✅ covered | . Covered via NavXmlAttribute native — AddAfterSelf inserts sibling attr into parent element, attr count increases to 2. |
 | `AddBeforeSelf` | `(Joker)` | ✅ covered | . Covered via NavXmlAttribute native — AddBeforeSelf inserts sibling attr into parent element, attr count increases to 2. |
 | `AsXmlNode` | `()` | ✅ covered | . Covered via NavXmlAttribute native — AsXmlNode().AsXmlAttribute().LocalName round-trips. |
-| `Create` | `(Text, Text, Text)` | 🔲 gap |  |
+| `Create` | `(Text, Text, Text)` | ✅ covered | . Covered via NavXmlAttribute native — 3-arg Create(localName, namespaceUri, value) round-trips all three parameters; namespace URI with ':' works without the NCL validation issue that bit XmlAttributeCollection in #1376. Closes #1399. |
 | `Create` | `(Text, Text)` | ✅ covered | . Covered via NavXmlAttribute native — 2-arg Create(name, value) exercised. |
 | `CreateNamespaceDeclaration` | `(Text, Text)` | ✅ covered | . Covered via NavXmlAttribute native — CreateNamespaceDeclaration(prefix, uri) returns attr with IsNamespaceDeclaration=true and LocalName=prefix. |
 | `GetDocument` | `(XmlDocument)` | ✅ covered | . Covered via NavXmlAttribute native — GetDocument returns false for detached attribute. |
