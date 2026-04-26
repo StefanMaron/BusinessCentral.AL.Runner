@@ -1104,6 +1104,24 @@ public class MockCodeunitHandle
                 return false;
         }
 
+        // ByRef<T> → U (non-ByRef): unwrap the ByRef and convert the inner value.
+        // When an auto-stub has a non-var Integer param (after the "strip var from primitives"
+        // fix) but the caller was compiled against a "var Decimal" overload, the Invoke args
+        // array may still contain a ByRef<Decimal18>.  Unwrapping it lets the existing
+        // NavValue → primitive conversions below do the right thing.
+        if (arg != null
+            && arg.GetType().IsGenericType
+            && arg.GetType().GetGenericTypeDefinition() == typeof(ByRef<>)
+            && !targetType.IsGenericType)
+        {
+            var valueProp = arg.GetType().GetProperty("Value");
+            if (valueProp != null)
+            {
+                var innerVal = valueProp.GetValue(arg);
+                return ConvertArgInternal(innerVal, targetType);
+            }
+        }
+
         // any value -> ByRef<T>: when target is ByRef<T>, convert arg to T first then wrap.
         if (targetType.IsGenericType
             && targetType.GetGenericTypeDefinition() == typeof(ByRef<>))

@@ -1713,7 +1713,15 @@ public class AlRunnerPipeline
                             var pType = p.GetType().GetProperty("ParameterType")?.GetValue(p)
                                      ?? p.GetType().GetProperty("Type")?.GetValue(p);
                             var typeName = pType != null ? RenderSymbolTypeViaReflection(pType) : "Variant";
-                            var prefix = pIsVar ? "var " : "";
+                            // Strip "var" from primitive numeric/boolean params in auto-stubs.
+                            // "var Integer" → ByRef<int> and "var Boolean" → ByRef<bool> in the
+                            // generated C#.  When the stub has ByRef<int> but the caller passes
+                            // ByRef<Decimal18> (because the real codeunit has a Decimal overload),
+                            // Roslyn rejects the call with CS1503.  Auto-stubs have empty bodies
+                            // so they never actually use by-reference semantics; stripping "var"
+                            // makes the stub use value params and avoids the ByRef mismatch.
+                            var effectiveIsVar = pIsVar && !IsCSharpPrimitiveMappedType(typeName);
+                            var prefix = effectiveIsVar ? "var " : "";
                             paramParts.Add($"{prefix}{pName}: {typeName}");
                         }
                     }
@@ -1925,5 +1933,15 @@ public class AlRunnerPipeline
             _ => "Variant", // Use Variant for complex/unknown types to avoid syntax errors
         };
     }
+
+    /// <summary>
+    /// Returns true for AL type names that map to C# primitive types (int, bool, etc.).
+    /// These types produce <c>ByRef&lt;int&gt;</c>/<c>ByRef&lt;bool&gt;</c> when used as
+    /// <c>var</c> parameters, which causes CS1503 when the caller passes a
+    /// <c>ByRef&lt;Decimal18&gt;</c> or other concrete BC value type.  Auto-stubs have
+    /// empty bodies so stripping <c>var</c> from these types is safe.
+    /// </summary>
+    private static bool IsCSharpPrimitiveMappedType(string typeName) => typeName is
+        "Integer" or "BigInteger" or "Boolean" or "Char" or "Byte";
 
 }

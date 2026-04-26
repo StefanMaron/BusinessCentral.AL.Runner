@@ -595,6 +595,8 @@ parameter:
     - tests/bucket-1/codeunit-runtime/01-pure-function
     - tests/bucket-1/codeunit-runtime/32-interface-param
     - tests/bucket-2/data-formats/83-list-byref
+    - tests/bucket-1/codeunit-runtime/312600-assert-byref-coercion
+  notes: var-param (ByRef<T>) coercion through Assert.AreEqual covered; auto-stub generator strips "var" from Integer/Boolean params to prevent CS1503 ByRef mismatch; ConvertArgInternal unwraps ByRef<T> for non-ByRef targets; closes #1433
 
 parameter_list:
   layer: syntax
