@@ -21,6 +21,9 @@ public class RoslynRewriter : CSharpSyntaxRewriter
     // BC emits CurrPage.PromptMode as a static reference on the page class (issue #1266).
     private string? _currentPageClassName;
 
+    private static readonly NameSyntax PromptModeQualifiedName =
+        SyntaxFactory.ParseName("Microsoft.Dynamics.Nav.Types.Metadata.PromptMode");
+
     private static readonly HashSet<string> BcAttributeNames = new(StringComparer.Ordinal)
     {
         "NavCodeunitOptions",
@@ -927,7 +930,7 @@ public bool LookupMode {{ get; set; }}
 // BC generates as calls on the Page<N> class directly (same pattern as LookupMode/#1079).
 public bool Editable {{ get; set; }} = true;
 public string PageCaption {{ get; set; }} = string.Empty;
-public NavOption? PromptMode {{ get; set; }}
+public Microsoft.Dynamics.Nav.Types.Metadata.PromptMode? PromptMode {{ get; set; }}
 public NavText ObjectID(bool withCaption = false) {{ return NavText.Empty; }}
 // SetRecord — BC lowers CurrPage.SetRecord(rec) to this.SetRecord(rec.Target).
 // NavForm provided this; after stripping it we need a stub (issue #1262).
@@ -4506,6 +4509,15 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
             visited.Name.Identifier.Text == "PromptMode")
         {
             return visited.WithExpression(SyntaxFactory.ThisExpression());
+        }
+
+        // Bare PromptMode is shadowed by the wrapper-injected instance property
+        // via nested-class simple-name lookup; qualify so it binds to the enum.
+        if (_currentPageClassName != null &&
+            visited.Expression is IdentifierNameSyntax bareIdName &&
+            bareIdName.Identifier.Text == "PromptMode")
+        {
+            return visited.WithExpression(PromptModeQualifiedName);
         }
 
         // Pattern: xxx.Target -> xxx (strip .Target accessor on handles)

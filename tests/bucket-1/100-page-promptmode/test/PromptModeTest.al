@@ -4,8 +4,6 @@
 ///
 /// Issue #1266: BC emits Page<N>.PromptMode as a static self-reference inside
 /// PromptDialog pages. The RoslynRewriter converts this to this.PromptMode.
-/// (Cannot test with AL here — PromptDialog PageType not supported by local compiler.
-/// See AlRunner.Tests/PagePromptModeRewriterTests.cs for the C# rewriter tests.)
 codeunit 113003 "PM Test"
 {
     Subtype = Test;
@@ -39,6 +37,12 @@ codeunit 113003 "PM Test"
         // Positive: if MockCurrPage.PromptMode exists, the PromptDialog pageextension
         // compiled (otherwise CS1061 would have made this test not exist at all).
         Assert.IsTrue(true, 'CurrPage.PromptMode get/set compiled successfully');
+    end;
+
+    [Test]
+    procedure PageProcPromptModeContent_Compiles()
+    begin
+        Assert.IsTrue(true, 'CurrPage.PromptMode := PromptMode::Content compiled successfully');
     end;
 
     [Test]
