@@ -1,4 +1,4 @@
-codeunit 306010 "RecRef Perm Test"
+codeunit 306022 "RecRef Perm Test"
 {
     Subtype = Test;
 
