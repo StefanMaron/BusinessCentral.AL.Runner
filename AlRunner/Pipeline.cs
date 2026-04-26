@@ -1217,6 +1217,18 @@ public class AlRunnerPipeline
         @"^\s*(?<type>pageextension|tableextension|reportextension|enumextension|permissionsetextension|pagecustomization)\s+\d+\s+""(?<name>[^""]+)""",
         RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Compiled);
 
+    // Canonical type names matching the BC compiler's AL0197 message format.
+    private static readonly Dictionary<string, string> ExtensionTypeDisplayNames =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            { "pageextension",          "PageExtension" },
+            { "tableextension",         "TableExtension" },
+            { "reportextension",        "ReportExtension" },
+            { "enumextension",          "EnumExtension" },
+            { "permissionsetextension", "PermissionSetExtension" },
+            { "pagecustomization",      "PageCustomization" },
+        };
+
     /// <summary>
     /// Walks up from <paramref name="filePath"/> to find the nearest app.json.
     /// Returns the app.json path, or null if none found.
@@ -1274,13 +1286,14 @@ public class AlRunnerPipeline
             {
                 foreach (Match m in ExtensionObjectDeclPattern.Matches(source))
                 {
-                    var objectType = m.Groups["type"].Value;
+                    var rawType  = m.Groups["type"].Value;
+                    var displayType = ExtensionTypeDisplayNames.TryGetValue(rawType, out var dt) ? dt : rawType;
                     var objectName = m.Groups["name"].Value;
-                    var key = $"{objectType}:{objectName}";
+                    var key = $"{rawType}:{objectName}";
                     if (seen.TryGetValue(key, out var firstFile))
                     {
                         errors.Add(
-                            $"error AL0197: An application object of type '{objectType}' " +
+                            $"error AL0197: An application object of type '{displayType}' " +
                             $"with name '{objectName}' is already declared in " +
                             $"'{Path.GetFileName(firstFile)}' " +
                             $"(same extension: {Path.GetFileName(appJson)})");
