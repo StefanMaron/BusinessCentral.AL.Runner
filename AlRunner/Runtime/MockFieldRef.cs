@@ -383,6 +383,27 @@ public class MockFieldRef
         _calcSumResult = NavDecimal.Create(new Decimal18(sum));
     }
 
+    /// <summary>
+    /// ALFieldError() — 0-arg overload: BC FieldRef.FieldError() with no arguments.
+    /// Produces the same error format as the Record.FieldError() default:
+    /// "&lt;FieldCaption&gt; must have a value in &lt;TableCaption&gt;: &lt;PK&gt;."
+    /// Delegates to MockRecordHandle.ALFieldError when an owner record is available.
+    /// </summary>
+    public void ALFieldError()
+    {
+        if (_owner?.Handle != null)
+        {
+            _owner.Handle.ALFieldError(_fieldNo);
+            return;
+        }
+        // Fallback when not bound to a record (e.g. standalone FieldRef).
+        var caption = (_owner != null
+            ? TableFieldRegistry.GetFieldCaption(_owner.Number, _fieldNo)
+              ?? TableFieldRegistry.GetFieldName(_owner.Number, _fieldNo)
+            : null) ?? $"Field{_fieldNo}";
+        throw new Exception($"{caption} must have a value");
+    }
+
     /// <summary>ALFieldError — throws a field-level error.</summary>
     public void ALFieldError(string message)
     {

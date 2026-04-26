@@ -2223,6 +2223,12 @@ FieldRef.EnumValueCount ():
   status: covered
   notes: . Covered: returns member count for enum fields; returns 0 for non-enum fields.
 
+FieldRef.FieldError ():
+  layer: runtime-api
+  category: FieldRef
+  status: covered
+  notes: 0-arg overload — delegates to MockRecordHandle.ALFieldError(fieldNo) producing "<FieldCaption> must have a value in <TableCaption>: <PK>" format. Closes #1428.
+
 FieldRef.FieldError (ErrorInfo):
   layer: runtime-api
   category: FieldRef
