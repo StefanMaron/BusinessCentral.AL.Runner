@@ -56,4 +56,10 @@ codeunit 60111 "LF Test"
         Assert.IsTrue(Src.RecRefAreFieldsLoaded_AfterSetLoadFields(),
             'RecordRef.AreFieldsLoaded must remain true even for fields not in the load set');
     end;
+
+    [Test]
+    procedure SetLoadFieldsOnSelf_NoThrow()
+    begin
+        Src.DriveSetLoadFieldsOnSelf();
+    end;
 }
