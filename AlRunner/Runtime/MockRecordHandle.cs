@@ -3148,11 +3148,22 @@ public class MockRecordHandle : IConvertible
     /// </summary>
     public void ALTransferFields(MockRecordHandle source, bool initPrimaryKey = true)
     {
+        ALTransferFields(source, initPrimaryKey, false);
+    }
+
+    /// <summary>
+    /// AL's TRANSFERFIELDS(FromRecord, InitPrimaryKey, ValidateFields) — 3-arg overload.
+    /// Copies field values from source; when validateFields is true, fires OnValidate for each copied field.
+    /// </summary>
+    public void ALTransferFields(MockRecordHandle source, bool initPrimaryKey, bool validateFields)
+    {
         var pkFields = new HashSet<int>(GetPrimaryKeyFields());
         foreach (var kv in source._fields)
         {
             if (!initPrimaryKey && pkFields.Contains(kv.Key)) continue;
             _fields[kv.Key] = kv.Value;
+            if (validateFields)
+                FireOnValidate(kv.Key);
         }
     }
 

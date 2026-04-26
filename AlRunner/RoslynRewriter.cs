@@ -795,6 +795,7 @@ public int ALFilterGroup { get => Rec.ALFilterGroup; set => Rec.ALFilterGroup = 
 public object ALReadIsolation { get => Rec.ALReadIsolation; set => Rec.ALReadIsolation = value; }
 public void Clear() => Rec.Clear();
 public void ALTransferFields(MockRecordHandle source, bool initPrimaryKey = true) => Rec.ALTransferFields(source, initPrimaryKey);
+public void ALTransferFields(MockRecordHandle source, bool initPrimaryKey, bool validateFields) => Rec.ALTransferFields(source, initPrimaryKey, validateFields);
 public void ALMark(bool mark) => Rec.ALMark(mark);
 public bool ALMark() => Rec.ALMark();
 public void ALClearMarks() => Rec.ALClearMarks();
@@ -896,6 +897,13 @@ public void CancelBackgroundTask(DataError errorLevel, int taskId) {{ }}
 protected bool CallGetDecimalPlacesExtensionMethod(int fieldNo, ref string result) {{ return false; }}
 protected bool CallGetTableRelationExtensionMethod(int fieldNo, MockRecordHandle rec, ref bool result) {{ return false; }}
 protected bool CallGetFormatExtensionMethod(int fieldNo, ref string result) {{ return false; }}
+// BC emits CallGetAutoFormatStringExtensionMethod on Page<N> classes when a field has
+// AutoFormatType set. NavForm provided this as a virtual method; stub it as a no-op
+// (issue #1332).
+protected bool CallGetAutoFormatStringExtensionMethod(int fieldNo, ref string result) {{ return false; }}
+// BC emits EnsureGlobalVariablesInitialized on Page<N> classes to lazily initialise
+// page-level globals. NavForm provided this; stub it as a no-op (issue #1332).
+protected void EnsureGlobalVariablesInitialized() {{ }}
 // BC emits CurrPage.SubPart.Page.SomeProcedure() as
 // CurrPage.GetPart(partHash).CreateNavFormHandle(scope).Invoke(methodHash, args).
 // Returns a MockPagePartHandle that dispatches the call to the subpage class.

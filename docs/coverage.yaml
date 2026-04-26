@@ -7807,6 +7807,16 @@ Table.TransferFields:
     - tests/bucket-2/110-transferfields
   notes: overloads=2
 
+Table.TransferFields (3-arg):
+  layer: runtime-api
+  category: Table
+  status: covered
+  tests:
+    - tests/bucket-2/308-transferfields-3arg
+  notes: >
+    3-arg overload TransferFields(FromRecord, InitPrimaryKey, ValidateFields) — closes #1337.
+    When ValidateFields=true, OnValidate triggers fire for each copied field.
+
 Table.Truncate:
   layer: runtime-api
   category: Table
