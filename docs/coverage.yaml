@@ -3635,77 +3635,122 @@ JsonArray.IndexOf (BigInteger):
 JsonArray.IndexOf (Boolean):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.IndexOf (Byte):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.IndexOf (Char):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.IndexOf (Date):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.IndexOf (DateTime):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.IndexOf (Decimal):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.IndexOf (Duration):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.IndexOf (Integer):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.IndexOf (JsonArray):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.IndexOf (JsonObject):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.IndexOf (JsonToken):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.IndexOf (JsonValue):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.IndexOf (Option):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.IndexOf (Text):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.IndexOf (Time):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Insert (Integer, BigInteger):
   layer: runtime-api
@@ -3716,77 +3761,122 @@ JsonArray.Insert (Integer, BigInteger):
 JsonArray.Insert (Integer, Boolean):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Insert (Integer, Byte):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Insert (Integer, Char):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Insert (Integer, Date):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Insert (Integer, DateTime):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Insert (Integer, Decimal):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Insert (Integer, Duration):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Insert (Integer, Integer):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Insert (Integer, JsonArray):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Insert (Integer, JsonObject):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Insert (Integer, JsonToken):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Insert (Integer, JsonValue):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Insert (Integer, Option):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Insert (Integer, Text):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Insert (Integer, Time):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Path ():
   layer: runtime-api
@@ -3829,77 +3919,122 @@ JsonArray.Set (Integer, BigInteger):
 JsonArray.Set (Integer, Boolean):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Set (Integer, Byte):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Set (Integer, Char):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Set (Integer, Date):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Set (Integer, DateTime):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Set (Integer, Decimal):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Set (Integer, Duration):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Set (Integer, Integer):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Set (Integer, JsonArray):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Set (Integer, JsonObject):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Set (Integer, JsonToken):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Set (Integer, JsonValue):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Set (Integer, Option):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Set (Integer, Text):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.Set (Integer, Time):
   layer: runtime-api
   category: JsonArray
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonArray.WriteTo (OutStream):
   layer: runtime-api
@@ -4208,77 +4343,122 @@ JsonObject.Replace (Text, BigInteger):
 JsonObject.Replace (Text, Boolean):
   layer: runtime-api
   category: JsonObject
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonObject.Replace (Text, Byte):
   layer: runtime-api
   category: JsonObject
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonObject.Replace (Text, Char):
   layer: runtime-api
   category: JsonObject
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonObject.Replace (Text, Date):
   layer: runtime-api
   category: JsonObject
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonObject.Replace (Text, DateTime):
   layer: runtime-api
   category: JsonObject
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonObject.Replace (Text, Decimal):
   layer: runtime-api
   category: JsonObject
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonObject.Replace (Text, Duration):
   layer: runtime-api
   category: JsonObject
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonObject.Replace (Text, Integer):
   layer: runtime-api
   category: JsonObject
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonObject.Replace (Text, JsonArray):
   layer: runtime-api
   category: JsonObject
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonObject.Replace (Text, JsonObject):
   layer: runtime-api
   category: JsonObject
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonObject.Replace (Text, JsonToken):
   layer: runtime-api
   category: JsonObject
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonObject.Replace (Text, JsonValue):
   layer: runtime-api
   category: JsonObject
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonObject.Replace (Text, Option):
   layer: runtime-api
   category: JsonObject
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonObject.Replace (Text, Text):
   layer: runtime-api
   category: JsonObject
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonObject.Replace (Text, Time):
   layer: runtime-api
   category: JsonObject
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonObject.SelectToken (Text, JsonToken):
   layer: runtime-api
@@ -4564,57 +4744,90 @@ JsonValue.SetValue (BigInteger):
 JsonValue.SetValue (Boolean):
   layer: runtime-api
   category: JsonValue
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonValue.SetValue (Byte):
   layer: runtime-api
   category: JsonValue
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonValue.SetValue (Char):
   layer: runtime-api
   category: JsonValue
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonValue.SetValue (Date):
   layer: runtime-api
   category: JsonValue
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonValue.SetValue (DateTime):
   layer: runtime-api
   category: JsonValue
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonValue.SetValue (Decimal):
   layer: runtime-api
   category: JsonValue
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonValue.SetValue (Duration):
   layer: runtime-api
   category: JsonValue
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonValue.SetValue (Integer):
   layer: runtime-api
   category: JsonValue
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonValue.SetValue (Option):
   layer: runtime-api
   category: JsonValue
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonValue.SetValue (Text):
   layer: runtime-api
   category: JsonValue
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonValue.SetValue (Time):
   layer: runtime-api
   category: JsonValue
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-json-primitive-overloads
+  notes: works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads
 
 JsonValue.SetValueToNull ():
   layer: runtime-api
