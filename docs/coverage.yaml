@@ -198,21 +198,6 @@ tableextension_declaration:
     - tests/bucket-2/33-extension-validate
     - tests/bucket-2/34-extension-parent-object
 
-al0197_duplicate_extension_name_same_extension:
-  layer: syntax
-  category: extension
-  status: covered
-  notes: >
-    AL diagnostic AL0197: runner detects duplicate extension object names (pageextension,
-    tableextension, etc.) within the same app.json scope as a compile error (exit 3).
-    Cross-extension duplicates from different app.json directories are correctly
-    suppressed (they are valid in BC where each extension compiles independently).
-    Implemented as a pre-compile scan in Pipeline.DetectSameExtensionDuplicates.
-    Issue #1345.
-  tests:
-    - tests/excluded/135-same-ext-pageext-duplicate
-    - tests/bucket-2/130-cross-ext-al0275
-
 # ── statement ───────────────────────────────────────────────────
 
 asserterror_statement:
@@ -4807,20 +4792,6 @@ Label.TrimStart (Text):
   tests:
     - tests/bucket-2/186-label-string-methods
   notes: . Covered via NavText native — leading strip only.
-
-# ── List ────────────────────────────────────────────────────────
-
-List.Assign (:=):
-  layer: runtime-api
-  category: List
-  status: covered
-  tests:
-    - tests/bucket-2/308700-list-of-recordref
-  notes: |
-    BC emits `list.ALAssign(other)` for the `:=` assignment operator on
-    `List of [T]` (NavObjectList<T>) variables passed by `var`. MockObjectList<T>
-    was missing ALAssign — caused CS1061 (surfaced as CS1503 in some BC versions)
-    on codeunits with a `var List of [RecordRef]` parameter — closes #1335.
 
 # ── Media ───────────────────────────────────────────────────────
 
@@ -10003,17 +9974,20 @@ XmlAttribute.WriteTo (OutStream):
 XmlAttribute.WriteTo (Text):
   layer: runtime-api
   category: XmlAttribute
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, ByRef<NavText>) via reflection — tested in suite 220-xml-writeto-overloads.
 
 XmlAttribute.WriteTo (XmlWriteOptions, OutStream):
   layer: runtime-api
   category: XmlAttribute
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored, delegates to text overload.
 
 XmlAttribute.WriteTo (XmlWriteOptions, Text):
   layer: runtime-api
   category: XmlAttribute
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored, delegates to plain WriteTo.
 
 # ── XmlAttributeCollection ──────────────────────────────────────
 
@@ -10164,17 +10138,20 @@ XmlCData.WriteTo (OutStream):
 XmlCData.WriteTo (Text):
   layer: runtime-api
   category: XmlCData
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, ByRef<NavText>) via reflection — tested in suite 220-xml-writeto-overloads.
 
 XmlCData.WriteTo (XmlWriteOptions, OutStream):
   layer: runtime-api
   category: XmlCData
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored.
 
 XmlCData.WriteTo (XmlWriteOptions, Text):
   layer: runtime-api
   category: XmlCData
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored.
 
 # ── XmlComment ──────────────────────────────────────────────────
 
@@ -10287,17 +10264,20 @@ XmlComment.WriteTo (OutStream):
 XmlComment.WriteTo (Text):
   layer: runtime-api
   category: XmlComment
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, ByRef<NavText>) via reflection — tested in suite 220-xml-writeto-overloads.
 
 XmlComment.WriteTo (XmlWriteOptions, OutStream):
   layer: runtime-api
   category: XmlComment
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored.
 
 XmlComment.WriteTo (XmlWriteOptions, Text):
   layer: runtime-api
   category: XmlComment
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored.
 
 # ── XmlDeclaration ──────────────────────────────────────────────
 
@@ -10398,17 +10378,20 @@ XmlDeclaration.WriteTo (OutStream):
 XmlDeclaration.WriteTo (Text):
   layer: runtime-api
   category: XmlDeclaration
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, ByRef<NavText>) via reflection — tested in suite 220-xml-writeto-overloads.
 
 XmlDeclaration.WriteTo (XmlWriteOptions, OutStream):
   layer: runtime-api
   category: XmlDeclaration
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored.
 
 XmlDeclaration.WriteTo (XmlWriteOptions, Text):
   layer: runtime-api
   category: XmlDeclaration
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored.
 
 # ── XmlDocument ─────────────────────────────────────────────────
 
@@ -10667,17 +10650,20 @@ XmlDocument.WriteTo (OutStream):
 XmlDocument.WriteTo (Text):
   layer: runtime-api
   category: XmlDocument
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, ByRef<NavText>) via reflection — tested in suite 220-xml-writeto-overloads.
 
 XmlDocument.WriteTo (XmlWriteOptions, OutStream):
   layer: runtime-api
   category: XmlDocument
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored; tested in suite 220-xml-writeto-overloads.
 
 XmlDocument.WriteTo (XmlWriteOptions, Text):
   layer: runtime-api
   category: XmlDocument
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored; tested in suite 220-xml-writeto-overloads.
 
 # ── XmlDocumentType ─────────────────────────────────────────────
 
@@ -10843,17 +10829,20 @@ XmlDocumentType.WriteTo (OutStream):
 XmlDocumentType.WriteTo (Text):
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, ByRef<NavText>) via reflection — same fallback as OutStream overload.
 
 XmlDocumentType.WriteTo (XmlWriteOptions, OutStream):
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored.
 
 XmlDocumentType.WriteTo (XmlWriteOptions, Text):
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored.
 
 # ── XmlElement ──────────────────────────────────────────────────
 
@@ -11124,17 +11113,20 @@ XmlElement.WriteTo (OutStream):
 XmlElement.WriteTo (Text):
   layer: runtime-api
   category: XmlElement
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, ByRef<NavText>) via reflection — tested in suite 220-xml-writeto-overloads.
 
 XmlElement.WriteTo (XmlWriteOptions, OutStream):
   layer: runtime-api
   category: XmlElement
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored; tested in suite 220-xml-writeto-overloads.
 
 XmlElement.WriteTo (XmlWriteOptions, Text):
   layer: runtime-api
   category: XmlElement
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored; tested in suite 220-xml-writeto-overloads.
 
 # ── XmlNameTable ────────────────────────────────────────────────
 
@@ -11397,17 +11389,20 @@ XmlNode.WriteTo (OutStream):
 XmlNode.WriteTo (Text):
   layer: runtime-api
   category: XmlNode
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, ByRef<NavText>) via reflection — tested in suite 220-xml-writeto-overloads.
 
 XmlNode.WriteTo (XmlWriteOptions, OutStream):
   layer: runtime-api
   category: XmlNode
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored.
 
 XmlNode.WriteTo (XmlWriteOptions, Text):
   layer: runtime-api
   category: XmlNode
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored; tested in suite 220-xml-writeto-overloads.
 
 # ── XmlNodeList ─────────────────────────────────────────────────
 
@@ -11532,17 +11527,20 @@ XmlProcessingInstruction.WriteTo (OutStream):
 XmlProcessingInstruction.WriteTo (Text):
   layer: runtime-api
   category: XmlProcessingInstruction
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, ByRef<NavText>) via reflection — tested in suite 220-xml-writeto-overloads.
 
 XmlProcessingInstruction.WriteTo (XmlWriteOptions, OutStream):
   layer: runtime-api
   category: XmlProcessingInstruction
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored.
 
 XmlProcessingInstruction.WriteTo (XmlWriteOptions, Text):
   layer: runtime-api
   category: XmlProcessingInstruction
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored; tested in suite 220-xml-writeto-overloads.
 
 # ── XmlReadOptions ──────────────────────────────────────────────
 
@@ -11640,17 +11638,20 @@ XmlText.WriteTo (OutStream):
 XmlText.WriteTo (Text):
   layer: runtime-api
   category: XmlText
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, ByRef<NavText>) via reflection — tested in suite 220-xml-writeto-overloads.
 
 XmlText.WriteTo (XmlWriteOptions, OutStream):
   layer: runtime-api
   category: XmlText
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored.
 
 XmlText.WriteTo (XmlWriteOptions, Text):
   layer: runtime-api
   category: XmlText
-  status: gap
+  status: covered
+  notes: MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored; tested in suite 220-xml-writeto-overloads.
 
 # ── XmlWriteOptions ─────────────────────────────────────────────
 

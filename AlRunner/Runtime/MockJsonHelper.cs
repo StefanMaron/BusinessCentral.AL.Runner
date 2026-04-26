@@ -190,6 +190,30 @@ public static class MockJsonHelper
     }
 
     /// <summary>
+    /// WriteTo(XmlWriteOptions, var Text) overload for XML node types.
+    /// AL: <c>xmlNode.WriteTo(Options, var Result)</c>
+    ///     → <c>MockJsonHelper.WriteTo(xmlNode, DataError, NavXmlWriteOptions, ByRef&lt;NavText&gt;)</c>.
+    /// <para>
+    /// <see cref="NavXmlWriteOptions"/> carries formatting hints (indentation, whitespace preservation).
+    /// The runner ignores these hints and delegates to the plain text overload.
+    /// </para>
+    /// </summary>
+    public static bool WriteTo(object xmlNode, DataError errorLevel, NavXmlWriteOptions opts, ByRef<NavText> data)
+        => WriteTo(xmlNode, errorLevel, data);
+
+    /// <summary>
+    /// WriteTo(XmlWriteOptions, var OutStream) overload for XML node types.
+    /// AL: <c>xmlNode.WriteTo(Options, var Stream)</c>
+    ///     → <c>MockJsonHelper.WriteTo(xmlNode, DataError, NavXmlWriteOptions, MockOutStream)</c>.
+    /// <para>
+    /// <see cref="NavXmlWriteOptions"/> formatting hints are ignored; delegates to the plain
+    /// stream overload which in turn serializes via the text overload.
+    /// </para>
+    /// </summary>
+    public static bool WriteTo(object xmlNode, DataError errorLevel, NavXmlWriteOptions opts, MockOutStream stream)
+        => WriteTo(xmlNode, errorLevel, stream);
+
+    /// <summary>
     /// Replacement for NavJsonToken.ALReadFrom(DataError, string).
     /// Parses a JSON string into the token without going through
     /// TrappableOperationExecutor or NavCurrentThread.Session.
