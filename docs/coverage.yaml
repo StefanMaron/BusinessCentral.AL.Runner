@@ -5696,6 +5696,14 @@ Page.PromptMode (PromptMode):
   status: covered
   notes: MockCurrPage.PromptMode and MockFormHandle.PromptMode NavOption stubs; injected on Page<N> class for CurrPage.PromptMode access inside page triggers (issue #1079); RoslynRewriter converts static self-reference Page<N>.PromptMode → this.PromptMode to fix CS0120 (issue #1266)
 
+CurrPage.Run ():
+  layer: runtime-api
+  category: Page
+  status: covered
+  tests:
+    - tests/bucket-2/page-report/312-currpage-run
+  notes: "BC lowers CurrPage.Run() inside a page trigger to this.Run() on the Page<N> class (issue #1444). Injected as a no-op void stub on every emitted Page<N> class; consistent with headless no-UI contract."
+
 Page.Run ():
   layer: runtime-api
   category: Page
