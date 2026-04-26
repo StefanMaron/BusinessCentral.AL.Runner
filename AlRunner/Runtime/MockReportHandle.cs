@@ -333,8 +333,21 @@ public class MockReportHandle
     }
 
     /// <summary>
+    /// Static Report.Run(reportId, requestPage) — 2-argument overload.
+    /// BC emits this form for <c>Report.Run(id, true)</c> when only the request-page flag
+    /// is supplied and <c>systemPrinter</c> is omitted.
+    /// <paramref name="requestPage"/> is ignored in standalone mode.
+    /// Fixes CS1501 'StaticRun' (2 args) — issue #1427.
+    /// </summary>
+    public static void StaticRun(int reportId, bool requestPage)
+    {
+        var handle = new MockReportHandle(reportId) { UseRequestForm = requestPage };
+        handle.Run();
+    }
+
+    /// <summary>
     /// Static Report.Run(reportId, requestPage, systemPrinter) — 3-argument overload.
-    /// BC emits this form when no record argument is supplied (e.g. <c>Report.Run(id, true)</c>).
+    /// BC emits this form when no record argument is supplied (e.g. <c>Report.Run(id, true, false)</c>).
     /// <paramref name="requestPage"/> and <paramref name="systemPrinter"/> are ignored in standalone mode.
     /// </summary>
     public static void StaticRun(int reportId, bool requestPage, bool systemPrinter)

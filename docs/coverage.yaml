@@ -6530,6 +6530,14 @@ Report.RdlcLayout (Integer, InStream):
     - tests/bucket-2/page-report/90-report-static
   notes: NavReport.RdlcLayout → MockReportHandle.StaticRdlcLayout (returns 0).
 
+Report.Run (Integer, Boolean):
+  layer: runtime-api
+  category: Report
+  status: covered
+  tests:
+    - tests/bucket-2/page-report/310200-report-run-2arg
+  notes: "Report.Run(ReportId, RequestPage) — 2-arg overload. BC emits this when systemPrinter is omitted. Fixes CS1501 'StaticRun' (2 args) — issue #1427."
+
 Report.Run (Integer, Boolean, Boolean, Table):
   layer: runtime-api
   category: Report
