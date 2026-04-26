@@ -891,6 +891,7 @@ public void EnqueueBackgroundTask(DataError errorLevel, ByRef<int> taskId, int c
 public void EnqueueBackgroundTask(DataError errorLevel, ByRef<int> taskId, int codeunitId, NavDictionary<NavText, NavText> parameters) {{ taskId.Value = 1; }}
 public void EnqueueBackgroundTask(DataError errorLevel, ByRef<int> taskId, int codeunitId, int timeout) {{ taskId.Value = 1; }}
 public void EnqueueBackgroundTask(DataError errorLevel, ByRef<int> taskId, int codeunitId, NavDictionary<NavText, NavText> parameters, int timeout) {{ taskId.Value = 1; }}
+public void EnqueueBackgroundTask(DataError errorLevel, ByRef<int> taskId, int codeunitId, NavDictionary<NavText, NavText> parameters, int timeout, PageBackgroundTaskErrorLevel backgroundTaskErrorLevel) {{ taskId.Value = 1; }}
 public void CancelBackgroundTask(int taskId) {{ }}
 public void CancelBackgroundTask(DataError errorLevel, int taskId) {{ }}
 protected bool CallGetDecimalPlacesExtensionMethod(int fieldNo, ref string result) {{ return false; }}

@@ -4960,7 +4960,14 @@ Page.EnqueueBackgroundTask:
   category: Page
   status: covered
   tests: tests/bucket-1/273-page-background-task
-  notes: overloads=1; sets taskId=1 stub, no real dispatch in standalone mode
+  notes: overloads=4 (2-arg, 3-arg params, 4-arg, 4-arg timeout); sets taskId=1 stub, no real dispatch in standalone mode
+
+Page.EnqueueBackgroundTask (5-arg with errorLevel):
+  layer: runtime-api
+  category: Page
+  status: covered
+  tests: tests/bucket-2/100-enqueue-bgt-5arg
+  notes: overload=1; AL(taskId, codeunitId, params, timeout, PageBackgroundTaskErrorLevel) → C#(DataError, ByRef<int>, int, NavDictionary, int, PageBackgroundTaskErrorLevel); closes #1327
 
 Page.GetBackgroundParameters:
   layer: runtime-api
