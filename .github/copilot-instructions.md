@@ -61,12 +61,13 @@ Flag any PR that changes observable behavior but skips these updates:
 
 | File | What to check |
 |---|---|
-| `CHANGELOG.md` | Entry under `[Unreleased]` — always required for behavior changes |
 | `README.md` | Supported/unsupported feature list, CLI flags |
 | `PrintGuide()` in `AlRunner/Program.cs` | `--guide` output updated to match new capabilities |
 | `CLAUDE.md` | Mock surface table, Known Limitations, Implemented Features, Key File Index |
 
-If a change only touches internal implementation with no externally visible effect, README and guide updates may be skipped — but the `CHANGELOG.md` entry is always required.
+`CHANGELOG.md` is auto-generated from squash-commit messages by `.github/scripts/generate_changelog.py` during release — do not manually edit it in PRs.
+
+If a change only touches internal implementation with no externally visible effect, README and guide updates may be skipped.
 
 ---
 

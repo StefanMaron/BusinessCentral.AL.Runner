@@ -99,9 +99,18 @@ Exit code 2 means the runner hit a known limitation (not a test failure). Exit c
 
 ## CHANGELOG.md
 
-Every change that affects behavior, CLI flags, mock capabilities, or exit codes must have an entry under `[Unreleased]` in `CHANGELOG.md`. The publish pipeline reads this file directly — it does not auto-generate release notes.
+`CHANGELOG.md` is **auto-generated** during release by `.github/scripts/generate_changelog.py`, which reads squash-commit messages and injects categorized release notes. The publish pipeline runs this script and commits the result — manual edits will be overwritten.
 
-Use the existing entries as a template for tone and granularity. A one-line entry per logical change is enough; a paragraph is not necessary.
+**Do not manually edit `CHANGELOG.md` in PRs.**
+
+To make sure your change appears correctly in the generated release notes, use a [Conventional Commit](https://www.conventionalcommits.org/) prefix in your PR title and squash-commit message:
+
+- `feat:` — new feature or capability visible to users
+- `fix:` — bug fix
+- `docs:` — documentation-only change
+- `chore:` — maintenance, dependency bumps, CI changes
+
+The generator uses these prefixes to categorize entries automatically.
 
 ---
 
@@ -114,9 +123,8 @@ When your change affects observable behavior, update all of the following before
 | `README.md` | Supported/unsupported feature list, CLI flags |
 | `PrintGuide()` in `Program.cs` | The `--guide` output (primary discovery mechanism for AI coding agents) |
 | `CLAUDE.md` | Mock surface table, Known Limitations, Implemented Features, Key File Index |
-| `CHANGELOG.md` | Entry under `[Unreleased]` |
 
-If a change only touches internal implementation with no externally visible effect, you can skip the README and guide updates — but the CHANGELOG entry is always required.
+If a change only touches internal implementation with no externally visible effect, you can skip the README and guide updates.
 
 ---
 
