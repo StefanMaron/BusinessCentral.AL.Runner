@@ -344,7 +344,7 @@ public class MockTestPageHandle
         for (var i = 0; i < keyValues.Length; i++)
         {
             var v = keyValues[i];
-            if (v is MockTestPageField f) v = f.ALValue;
+            if (v is MockTestPageField f) v = f.RawValue;
             navValues[i] = AlCompat.ToNavValue(v);
         }
         return ALGoToKey(errorLevel, navValues);
@@ -496,7 +496,7 @@ public class MockTestPageHandle
         foreach (var (hash, fieldId) in _hashToFieldId)
         {
             var value = rec.GetFieldValueSafe(fieldId, default);
-            GetField(hash).ALValue = value;
+            GetField(hash).ALSetValue(null!, value);
         }
     }
 
@@ -612,7 +612,9 @@ public class MockTestPageHandle
 ///
 /// Stores the last set value and returns it via the settable ALValue property.
 /// The backing store is <c>object?</c> so both <see cref="NavValue"/> instances
-/// and raw CLR values (assigned through the setter) are supported.
+/// and raw CLR values (assigned through <see cref="ALSetValue"/>) are supported.
+/// The <see cref="ALValue"/> property is typed <see cref="NavValue"/> to match BC's
+/// emit pattern <c>new NavText(field.ALValue)</c>.
 /// </summary>
 public class MockTestPageField
 {
@@ -639,15 +641,30 @@ public class MockTestPageField
     }
 
     /// <summary>
-    /// Get or set the current field value.
-    /// The getter returns the last value written via <see cref="ALSetValue"/> or the setter.
-    /// The value may be a <see cref="NavValue"/>, a raw CLR type, or <c>null</c>.
+    /// Get or set the current field value. Typed as <c>string</c> to match BC's
+    /// real <c>NavTestPageField.ALValue</c> (BC's <c>TestPage.&lt;Field&gt;.Value</c>
+    /// is typed <c>Text</c>). This lets BC's emit pattern
+    /// <c>new NavText(field.ALValue)</c> resolve the <c>string</c> constructor
+    /// overload, which is the case BC reaches when assigning <c>.Value</c> to a
+    /// typed Text/Code local variable. Storage stays <c>object?</c> so values
+    /// flowing through <see cref="ALSetValue"/> keep their original type for other
+    /// callers; the getter renders via <see cref="AlCompat.Format"/>.
     /// </summary>
-    public object? ALValue
+    public string ALValue
     {
-        get => _value;
+        get => AlCompat.Format(AlCompat.ToNavValue(_value));
         set => _value = value;
     }
+
+    /// <summary>
+    /// Internal access to the raw stored value (pre-formatting). Used by C#
+    /// callers that need to preserve the original CLR type of the value (e.g.
+    /// key-value lookups in <see cref="MockTestPageHandle.ALGoToKey"/>) — going
+    /// through <see cref="ALValue"/> would coerce the value to a <c>string</c>
+    /// and a subsequent <see cref="AlCompat.ToNavValue"/> would re-wrap it as
+    /// <c>NavText</c>, losing the typed comparison against the table key.
+    /// </summary>
+    internal object? RawValue => _value;
 
     /// <summary>
     /// ALCaption — returns the field caption. Stub: empty string.
