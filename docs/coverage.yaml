@@ -190,7 +190,7 @@ reportextension_declaration:
   notes: >
 
 ReportExtension.GetGlobalVariable (int, NavType):
-  layer: runtime
+  layer: runtime-api
   category: report
   status: covered
   tests:
@@ -202,7 +202,7 @@ ReportExtension.GetGlobalVariable (int, NavType):
     stub returning NavInteger.Default. Issue #1450.
 
 ReportExtension.SetGlobalVariable (int, NavType, object):
-  layer: runtime
+  layer: runtime-api
   category: report
   status: covered
   tests:
@@ -1252,6 +1252,14 @@ attribute_item:
     - tests/bucket-1/codeunit-runtime/100-bind-subscription
     - tests/bucket-1/codeunit-runtime/41-try-function
     - tests/bucket-1/codeunit-runtime/66-event-subscribers
+
+navtest_attribute_discovery:
+  layer: syntax
+  category: attribute
+  status: covered
+  notes: Executor discovers only methods bearing [NavTest]/[Test]; procedures named Test* on tables, pages, or non-test codeunits are NOT picked up as test cases (issue #1420 — removed StartsWith("Test") fallback from RunTests()).
+  tests:
+    - tests/bucket-1/codeunit-runtime/312700-navtest-attribute-discovery
 
 
 # ══════════════════════════════════════════════════════════════
