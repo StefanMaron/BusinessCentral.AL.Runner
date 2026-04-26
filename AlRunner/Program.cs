@@ -1119,6 +1119,10 @@ public static class AlTranspiler
         // Extract app identity from input manifest (for correct InternalsVisibleTo resolution)
         var appIdentity = ExtractAppIdentity(inputPaths);
 
+        // Extract feature flags from app.json (e.g. NoImplicitWith, TranslationFile)
+        var appFeatures = ExtractFeatures(inputPaths);
+        var compilerFeatures = MapCompilerFeatures(appFeatures);
+
         // Create compilation with all syntax trees
         var compilation = Compilation.Create(
             moduleName: appIdentity.Name,
@@ -1131,7 +1135,8 @@ public static class AlTranspiler
                 target: CompilationTarget.OnPrem,
                 // Exclude ReportLayout — the runner has no RDLC file system and
                 // GenerateRdlcLayout crashes with NullReferenceException.
-                generateOptions: CompilationGenerationOptions.Code | CompilationGenerationOptions.Navigation
+                generateOptions: CompilationGenerationOptions.Code | CompilationGenerationOptions.Navigation,
+                compilerFeatures: compilerFeatures
             )
         );
 
@@ -1279,7 +1284,8 @@ public static class AlTranspiler
                     options: new CompilationOptions(
                         continueBuildOnError: true,
                         target: CompilationTarget.OnPrem,
-                        generateOptions: CompilationGenerationOptions.Code | CompilationGenerationOptions.Navigation
+                        generateOptions: CompilationGenerationOptions.Code | CompilationGenerationOptions.Navigation,
+                        compilerFeatures: compilerFeatures
                     ))
                     .WithReferenceLoader(refLoader!)
                     .AddReferences(dedupedSpecs);
@@ -1335,7 +1341,8 @@ public static class AlTranspiler
                         options: new CompilationOptions(
                             continueBuildOnError: true,
                             target: CompilationTarget.OnPrem,
-                            generateOptions: CompilationGenerationOptions.Code | CompilationGenerationOptions.Navigation
+                            generateOptions: CompilationGenerationOptions.Code | CompilationGenerationOptions.Navigation,
+                            compilerFeatures: compilerFeatures
                         ))
                         .WithReferenceLoader(refLoader!)
                         .AddReferences(filteredSpecs);
@@ -1555,6 +1562,76 @@ public static class AlTranspiler
     /// This matters for InternalsVisibleTo resolution (publisher must match).
     /// </summary>
     private record AppIdentity(string Name, string Publisher, Version Version, Guid AppId);
+
+    /// <summary>
+    /// Extract feature flags from the first app.json found by walking up from input paths.
+    /// Returns features like "NoImplicitWith", "TranslationFile", "NoPromotedActionProperties", etc.
+    /// These are passed to CompilationOptions so the BC compiler respects the app's feature flags.
+    /// </summary>
+    private static List<string> ExtractFeatures(List<string>? inputPaths)
+    {
+        if (inputPaths == null || inputPaths.Count == 0) return new List<string>();
+
+        foreach (var inputPath in inputPaths)
+        {
+            var dir = Directory.Exists(inputPath) ? Path.GetFullPath(inputPath) : Path.GetDirectoryName(Path.GetFullPath(inputPath));
+            while (dir != null)
+            {
+                var appJsonPath = Path.Combine(dir, "app.json");
+                if (File.Exists(appJsonPath))
+                {
+                    try
+                    {
+                        var json = JsonDocument.Parse(File.ReadAllText(appJsonPath));
+                        var root = json.RootElement;
+                        if (root.TryGetProperty("features", out var featuresProp) && featuresProp.ValueKind == JsonValueKind.Array)
+                        {
+                            var features = new List<string>();
+                            foreach (var f in featuresProp.EnumerateArray())
+                            {
+                                var val = f.GetString();
+                                if (!string.IsNullOrEmpty(val))
+                                    features.Add(val!);
+                            }
+                            if (features.Count > 0)
+                            {
+                                Log.Info($"Features from app.json: {string.Join(", ", features)}");
+                                return features;
+                            }
+                        }
+                    }
+                    catch { /* fall through */ }
+                }
+                var parent = Path.GetDirectoryName(dir);
+                if (parent == dir) break; // filesystem root
+                dir = parent;
+            }
+        }
+
+        return [];
+    }
+
+    /// <summary>
+    /// Maps app.json feature strings (e.g. "NoImplicitWith", "TranslationFile") to the
+    /// CompilerFeatures flags enum used by the BC compiler.
+    /// </summary>
+    private static CompilerFeatures MapCompilerFeatures(List<string> features)
+    {
+        var result = CompilerFeatures.None;
+        foreach (var feature in features)
+        {
+            result |= feature switch
+            {
+                "NoImplicitWith" => CompilerFeatures.NoImplicitWith,
+                "NoPromotedActionProperties" => CompilerFeatures.NoPromotedActionProperties,
+                "TranslationFile" => CompilerFeatures.GenerateXliffTranslationFile,
+                _ => CompilerFeatures.None,
+            };
+        }
+        if (result != CompilerFeatures.None)
+            Log.Info($"CompilerFeatures: {result}");
+        return result;
+    }
 
     /// <summary>Format a SymbolReferenceSpecification for display.</summary>
     private static string FormatSpec(SymbolReferenceSpecification spec)

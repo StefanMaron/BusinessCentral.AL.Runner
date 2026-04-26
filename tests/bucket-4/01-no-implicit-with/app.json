@@ -1,0 +1,9 @@
+{
+    "id": "00000000-0000-0000-0000-000000310000",
+    "name": "NIWTests",
+    "publisher": "TestPublisher",
+    "version": "1.0.0.0",
+    "features": [
+        "NoImplicitWith"
+    ]
+}

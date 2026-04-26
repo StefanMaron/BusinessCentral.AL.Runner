@@ -1519,6 +1519,44 @@ visible_attribute_condition:
   tests:
     - tests/bucket-1/64-visible-condition
 
+# ── app.json feature flags ───────────────────────────────────────
+
+app_json_feature_no_implicit_with:
+  layer: syntax
+  category: app_json_feature
+  status: covered
+  notes: >
+    NoImplicitWith compiler feature flag — ExtractFeatures() reads the "features" array from
+    app.json and MapCompilerFeatures() maps the string to CompilerFeatures.NoImplicitWith,
+    which is passed to the BC compiler's CompilationOptions. Eliminates false-positive AL0135,
+    AL0129, AL0166, AL0126 errors caused by implicit-with scoping.
+  tests:
+    - tests/bucket-4/01-no-implicit-with
+
+app_json_feature_no_promoted_action_properties:
+  layer: syntax
+  category: app_json_feature
+  status: covered
+  notes: >
+    NoPromotedActionProperties compiler feature flag — mapped from app.json "features" array
+    via MapCompilerFeatures() and forwarded to CompilationOptions. Suppresses deprecated
+    promoted-action property warnings/errors at compile time. No dedicated test suite; covered
+    via the runtime feature-mapping path exercised by the NoImplicitWith suite.
+  tests:
+    - tests/bucket-4/01-no-implicit-with
+
+app_json_feature_translation_file:
+  layer: syntax
+  category: app_json_feature
+  status: covered
+  notes: >
+    TranslationFile compiler feature flag — mapped from app.json "features" array via
+    MapCompilerFeatures() and forwarded to CompilationOptions. Enables .xliff translation file
+    support at compile time. No dedicated test suite; covered via the runtime feature-mapping
+    path exercised by the NoImplicitWith suite.
+  tests:
+    - tests/bucket-4/01-no-implicit-with
+
 
 # ══════════════════════════════════════════════════════════════
 # Layer: runtime-api
