@@ -30,9 +30,9 @@ Runtime-API coverage is tracked at **per-overload signature granularity** since 
 
 | Status | Count |
 |--------|-------|
-| ✅ Covered | 1265 |
+| ✅ Covered | 1408 |
 | 🔶 Not tested (overload) | 164 |
-| 🔲 Gap | 199 |
+| 🔲 Gap | 56 |
 | ❌ Not possible | 33 |
 | ⬜ Out of scope | 0 |
 | **Total** | **1691** |
@@ -697,7 +697,7 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `UseWindowsAuthentication` | `(SecretText, SecretText, SecretText)` | ✅ covered |  |
 | `UseWindowsAuthentication` | `(Text, Text, Text)` | 🔶 not-tested |  |
 
-## HttpContent  (5/9)
+## HttpContent  (7/9)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
@@ -708,10 +708,10 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `ReadAs` | `(SecretText)` | 🔶 not-tested |  |
 | `ReadAs` | `(Text)` | 🔶 not-tested |  |
 | `WriteFrom` | `(InStream)` | ✅ covered | text overload via ALLoadFrom(NavText); stream overload via AlCompat.HttpContentLoadFrom(MockInStream); SecretText overload via AlCompat.HttpContentLoadFrom(NavSecretText) — unwraps secret and stores as plain text (#1086) |
-| `WriteFrom` | `(SecretText)` | 🔲 gap |  |
-| `WriteFrom` | `(Text)` | 🔲 gap |  |
+| `WriteFrom` | `(SecretText)` | ✅ covered | SecretText unwrapped via AlCompat.HttpContentLoadFrom(NavSecretText); round-trip via ReadAs(Text) proves value is stored (#1381) |
+| `WriteFrom` | `(Text)` | ✅ covered | NavText passthrough via AlCompat.HttpContentLoadFrom(NavText) → ALLoadFrom(NavText); round-trip via ReadAs(Text) proves value is stored (#1381) |
 
-## HttpHeaders  (9/13)
+## HttpHeaders  (10/13)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
@@ -721,7 +721,7 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `Contains` | `(Text)` | ✅ covered |  |
 | `ContainsSecret` | `(Text)` | ✅ covered | > |
 | `GetSecretValues` | `(Text, Array)` | ✅ covered |  |
-| `GetSecretValues` | `(Text, List)` | 🔲 gap |  |
+| `GetSecretValues` | `(Text, List)` | ✅ covered | ALGetValues(DataError, NavText, NavList<NavSecretText>) now populates the list; string-key overload also added for literal header names (#1381) |
 | `GetValues` | `(Text, Array)` | ✅ covered | array-form (MockArray<NavText>) and list-form (NavList<NavText>) both covered; fixes issue #1080 |
 | `GetValues` | `(Text, List)` | 🔶 not-tested |  |
 | `Keys` | `()` | ✅ covered |  |
@@ -800,7 +800,7 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `SetEncrypted` | `(Text, SecretText, DataScope)` | ✅ covered | (with/without DataScope; Text and NavSecretText value). Rewriter routes to MockIsolatedStorage.ALSetEncrypted which stores plaintext — encryption is transparent standalone, value round-trips through Get/Contains. |
 | `SetEncrypted` | `(Text, Text, DataScope)` | 🔶 not-tested |  |
 
-## JsonArray  (28/90)
+## JsonArray  (73/90)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
@@ -839,37 +839,37 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `GetText` | `(Integer)` | ✅ covered | . Indirectly covered via JsonArray.Get + JsonToken.AsValue().AsText(). The BC 21+ typed GetText(idx) overload is not present in the AL 16.2 compiler bundled with the runner. |
 | `GetTime` | `(Integer)` | ✅ covered | . Works natively via NavJsonArray; single-arg form GetTime(idx) returns Time directly. |
 | `IndexOf` | `(BigInteger)` | ✅ covered | . Covered via NavJsonArray native — returns 0-based index when found, -1 when absent. |
-| `IndexOf` | `(Boolean)` | 🔲 gap |  |
-| `IndexOf` | `(Byte)` | 🔲 gap |  |
-| `IndexOf` | `(Char)` | 🔲 gap |  |
-| `IndexOf` | `(Date)` | 🔲 gap |  |
-| `IndexOf` | `(DateTime)` | 🔲 gap |  |
-| `IndexOf` | `(Decimal)` | 🔲 gap |  |
-| `IndexOf` | `(Duration)` | 🔲 gap |  |
-| `IndexOf` | `(Integer)` | 🔲 gap |  |
-| `IndexOf` | `(JsonArray)` | 🔲 gap |  |
-| `IndexOf` | `(JsonObject)` | 🔲 gap |  |
-| `IndexOf` | `(JsonToken)` | 🔲 gap |  |
-| `IndexOf` | `(JsonValue)` | 🔲 gap |  |
-| `IndexOf` | `(Option)` | 🔲 gap |  |
-| `IndexOf` | `(Text)` | 🔲 gap |  |
-| `IndexOf` | `(Time)` | 🔲 gap |  |
+| `IndexOf` | `(Boolean)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `IndexOf` | `(Byte)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `IndexOf` | `(Char)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `IndexOf` | `(Date)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `IndexOf` | `(DateTime)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `IndexOf` | `(Decimal)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `IndexOf` | `(Duration)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `IndexOf` | `(Integer)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `IndexOf` | `(JsonArray)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `IndexOf` | `(JsonObject)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `IndexOf` | `(JsonToken)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `IndexOf` | `(JsonValue)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `IndexOf` | `(Option)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `IndexOf` | `(Text)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `IndexOf` | `(Time)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
 | `Insert` | `(Integer, BigInteger)` | ✅ covered | . Covered via NavJsonArray native — increases Count, shifts existing elements, middle-position insertion correct. |
-| `Insert` | `(Integer, Boolean)` | 🔲 gap |  |
-| `Insert` | `(Integer, Byte)` | 🔲 gap |  |
-| `Insert` | `(Integer, Char)` | 🔲 gap |  |
-| `Insert` | `(Integer, Date)` | 🔲 gap |  |
-| `Insert` | `(Integer, DateTime)` | 🔲 gap |  |
-| `Insert` | `(Integer, Decimal)` | 🔲 gap |  |
-| `Insert` | `(Integer, Duration)` | 🔲 gap |  |
-| `Insert` | `(Integer, Integer)` | 🔲 gap |  |
-| `Insert` | `(Integer, JsonArray)` | 🔲 gap |  |
-| `Insert` | `(Integer, JsonObject)` | 🔲 gap |  |
-| `Insert` | `(Integer, JsonToken)` | 🔲 gap |  |
-| `Insert` | `(Integer, JsonValue)` | 🔲 gap |  |
-| `Insert` | `(Integer, Option)` | 🔲 gap |  |
-| `Insert` | `(Integer, Text)` | 🔲 gap |  |
-| `Insert` | `(Integer, Time)` | 🔲 gap |  |
+| `Insert` | `(Integer, Boolean)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Insert` | `(Integer, Byte)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Insert` | `(Integer, Char)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Insert` | `(Integer, Date)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Insert` | `(Integer, DateTime)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Insert` | `(Integer, Decimal)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Insert` | `(Integer, Duration)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Insert` | `(Integer, Integer)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Insert` | `(Integer, JsonArray)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Insert` | `(Integer, JsonObject)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Insert` | `(Integer, JsonToken)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Insert` | `(Integer, JsonValue)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Insert` | `(Integer, Option)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Insert` | `(Integer, Text)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Insert` | `(Integer, Time)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
 | `Path` | `()` | ✅ covered | . Covered via NavJsonArray native — root returns "$", nested returns "$.key" (JSONPath notation). |
 | `ReadFrom` | `(InStream)` | ✅ covered |  |
 | `ReadFrom` | `(Text)` | 🔶 not-tested |  |
@@ -877,25 +877,25 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `SelectToken` | `(Text, JsonToken)` | ✅ covered |  |
 | `SelectTokens` | `(Text, List)` | ✅ covered |  |
 | `Set` | `(Integer, BigInteger)` | ✅ covered | . Covered via NavJsonArray native — replaces element at index, Count unchanged. |
-| `Set` | `(Integer, Boolean)` | 🔲 gap |  |
-| `Set` | `(Integer, Byte)` | 🔲 gap |  |
-| `Set` | `(Integer, Char)` | 🔲 gap |  |
-| `Set` | `(Integer, Date)` | 🔲 gap |  |
-| `Set` | `(Integer, DateTime)` | 🔲 gap |  |
-| `Set` | `(Integer, Decimal)` | 🔲 gap |  |
-| `Set` | `(Integer, Duration)` | 🔲 gap |  |
-| `Set` | `(Integer, Integer)` | 🔲 gap |  |
-| `Set` | `(Integer, JsonArray)` | 🔲 gap |  |
-| `Set` | `(Integer, JsonObject)` | 🔲 gap |  |
-| `Set` | `(Integer, JsonToken)` | 🔲 gap |  |
-| `Set` | `(Integer, JsonValue)` | 🔲 gap |  |
-| `Set` | `(Integer, Option)` | 🔲 gap |  |
-| `Set` | `(Integer, Text)` | 🔲 gap |  |
-| `Set` | `(Integer, Time)` | 🔲 gap |  |
+| `Set` | `(Integer, Boolean)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Set` | `(Integer, Byte)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Set` | `(Integer, Char)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Set` | `(Integer, Date)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Set` | `(Integer, DateTime)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Set` | `(Integer, Decimal)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Set` | `(Integer, Duration)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Set` | `(Integer, Integer)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Set` | `(Integer, JsonArray)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Set` | `(Integer, JsonObject)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Set` | `(Integer, JsonToken)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Set` | `(Integer, JsonValue)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Set` | `(Integer, Option)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Set` | `(Integer, Text)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Set` | `(Integer, Time)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
 | `WriteTo` | `(OutStream)` | ✅ covered |  |
 | `WriteTo` | `(Text)` | 🔶 not-tested |  |
 
-## JsonObject  (31/66)
+## JsonObject  (46/66)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
@@ -941,21 +941,21 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `ReadFromYaml` | `(Text)` | 🔶 not-tested |  |
 | `Remove` | `(Text)` | ✅ covered | rewriter redirects ALRemove to MockJsonHelper.Remove |
 | `Replace` | `(Text, BigInteger)` | ✅ covered | rewriter redirects ALReplace to MockJsonHelper.Replace |
-| `Replace` | `(Text, Boolean)` | 🔲 gap |  |
-| `Replace` | `(Text, Byte)` | 🔲 gap |  |
-| `Replace` | `(Text, Char)` | 🔲 gap |  |
-| `Replace` | `(Text, Date)` | 🔲 gap |  |
-| `Replace` | `(Text, DateTime)` | 🔲 gap |  |
-| `Replace` | `(Text, Decimal)` | 🔲 gap |  |
-| `Replace` | `(Text, Duration)` | 🔲 gap |  |
-| `Replace` | `(Text, Integer)` | 🔲 gap |  |
-| `Replace` | `(Text, JsonArray)` | 🔲 gap |  |
-| `Replace` | `(Text, JsonObject)` | 🔲 gap |  |
-| `Replace` | `(Text, JsonToken)` | 🔲 gap |  |
-| `Replace` | `(Text, JsonValue)` | 🔲 gap |  |
-| `Replace` | `(Text, Option)` | 🔲 gap |  |
-| `Replace` | `(Text, Text)` | 🔲 gap |  |
-| `Replace` | `(Text, Time)` | 🔲 gap |  |
+| `Replace` | `(Text, Boolean)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Replace` | `(Text, Byte)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Replace` | `(Text, Char)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Replace` | `(Text, Date)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Replace` | `(Text, DateTime)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Replace` | `(Text, Decimal)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Replace` | `(Text, Duration)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Replace` | `(Text, Integer)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Replace` | `(Text, JsonArray)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Replace` | `(Text, JsonObject)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Replace` | `(Text, JsonToken)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Replace` | `(Text, JsonValue)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Replace` | `(Text, Option)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Replace` | `(Text, Text)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Replace` | `(Text, Time)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
 | `SelectToken` | `(Text, JsonToken)` | ✅ covered |  |
 | `SelectTokens` | `(Text, List)` | ✅ covered |  |
 | `Values` | `()` | ✅ covered | works natively via NavJsonObject (no TrappableOperationExecutor path); returns List of [JsonToken] in insertion order |
@@ -985,7 +985,7 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `WriteTo` | `(OutStream)` | ✅ covered |  |
 | `WriteTo` | `(Text)` | 🔶 not-tested |  |
 
-## JsonValue  (23/37)
+## JsonValue  (34/37)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
@@ -1011,17 +1011,17 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `ReadFrom` | `(Text)` | 🔶 not-tested |  |
 | `SelectToken` | `(Text, JsonToken)` | ✅ covered |  |
 | `SetValue` | `(BigInteger)` | ✅ covered | text/integer/boolean/decimal overloads proven; BC native works standalone |
-| `SetValue` | `(Boolean)` | 🔲 gap |  |
-| `SetValue` | `(Byte)` | 🔲 gap |  |
-| `SetValue` | `(Char)` | 🔲 gap |  |
-| `SetValue` | `(Date)` | 🔲 gap |  |
-| `SetValue` | `(DateTime)` | 🔲 gap |  |
-| `SetValue` | `(Decimal)` | 🔲 gap |  |
-| `SetValue` | `(Duration)` | 🔲 gap |  |
-| `SetValue` | `(Integer)` | 🔲 gap |  |
-| `SetValue` | `(Option)` | 🔲 gap |  |
-| `SetValue` | `(Text)` | 🔲 gap |  |
-| `SetValue` | `(Time)` | 🔲 gap |  |
+| `SetValue` | `(Boolean)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `SetValue` | `(Byte)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `SetValue` | `(Char)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `SetValue` | `(Date)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `SetValue` | `(DateTime)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `SetValue` | `(Decimal)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `SetValue` | `(Duration)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `SetValue` | `(Integer)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `SetValue` | `(Option)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `SetValue` | `(Text)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `SetValue` | `(Time)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
 | `SetValueToNull` | `()` | ✅ covered | BC native works standalone; verified with IsNull |
 | `SetValueToUndefined` | `()` | ❓ stub | BC 21+ method not tested in AL 16.2; the underlying NavJsonValue method exists but no AL syntax available in 16.2 to exercise it. |
 | `WriteTo` | `(OutStream)` | ✅ covered |  |
@@ -1036,7 +1036,7 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `FieldIndex` | `(Integer)` | ✅ covered |  |
 | `Record` | `()` | ✅ covered |  |
 
-## Label  (17/19)
+## Label  (19/19)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
@@ -1044,14 +1044,14 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `EndsWith` | `(Text)` | ✅ covered | BC native works standalone. |
 | `IndexOf` | `(Text, Integer)` | ✅ covered | BC native works standalone (1-based, 0 when not found). |
 | `IndexOfAny` | `(List, Integer)` | ✅ covered | . Covered via NavText native — returns 1-based position of the earliest matching char; 0 when none match. |
-| `IndexOfAny` | `(Text, Integer)` | 🔲 gap |  |
+| `IndexOfAny` | `(Text, Integer)` | ✅ covered | BC native NavTextExtensions.ALIndexOfAny works standalone (2-arg startIndex form). Tested positive and negative cases. |
 | `LastIndexOf` | `(Text, Integer)` | ✅ covered | . Covered via NavText native — 1-based last occurrence, 0 when not found. |
 | `PadLeft` | `(Integer, Char)` | ✅ covered | (with padChar). Covered via NavText native. |
 | `PadRight` | `(Integer, Char)` | ✅ covered | (with padChar). Covered via NavText native. |
 | `Remove` | `(Integer, Integer)` | ✅ covered | (from-index). Covered via NavText native — 1-based AL convention. |
 | `Replace` | `(Text, Text)` | ✅ covered | BC native works standalone. No-op when substring not found. |
 | `Split` | `(List)` | ✅ covered | (Char, Text, List of [Char]). Covered via NavText native. |
-| `Split` | `(Text)` | 🔲 gap |  |
+| `Split` | `(Text)` | ✅ covered | BC native NavText.ALSplit works on Label values. Multi-char separator tested — positive and negative (absent separator) cases. |
 | `StartsWith` | `(Text)` | ✅ covered | BC native works standalone. |
 | `Substring` | `(Integer, Integer)` | ✅ covered | (from-index, from-index+length). Covered via NavText native. |
 | `ToLower` | `()` | ✅ covered | BC native works standalone. |
@@ -1184,7 +1184,7 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `Write` | `(Variant, Integer)` | 🔶 not-tested |  |
 | `WriteText` | `(Text, Integer)` | ✅ covered | chained-call pattern supported (e.g. blob.CreateOutStream().WriteText(...)) — see issue #1026 |
 
-## Page  (19/29)
+## Page  (29/29)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
@@ -1200,17 +1200,17 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `ObjectId` | `(Boolean)` | ✅ covered |  |
 | `PromptMode` | `(PromptMode)` | ✅ covered | MockCurrPage.PromptMode and MockFormHandle.PromptMode NavOption stubs; injected on Page<N> class for CurrPage.PromptMode access inside page triggers (issue #1079); RoslynRewriter converts static self-reference Page<N>.PromptMode → this.PromptMode to fix CS0120 (issue #1266) |
 | `Run` | `()` | ✅ covered |  |
-| `Run` | `(Integer, Table, Integer)` | 🔲 gap |  |
-| `Run` | `(Integer, Table, Joker)` | 🔲 gap |  |
-| `Run` | `(Text, Table, Integer)` | 🔲 gap |  |
-| `Run` | `(Text, Table, Joker)` | 🔲 gap |  |
+| `Run` | `(Integer, Table, Integer)` | ✅ covered | 3rd argument (position/focus field) accepted and ignored — no real UI in standalone mode. |
+| `Run` | `(Integer, Table, Joker)` | ✅ covered | 3rd argument (position/focus field as Joker) accepted and ignored — no real UI in standalone mode. |
+| `Run` | `(Text, Table, Integer)` | ✅ covered | Text page-ID form. 3rd argument (position/focus field) accepted and ignored — no real UI in standalone mode. |
+| `Run` | `(Text, Table, Joker)` | ✅ covered | Text page-ID form. 3rd argument (position/focus field as Joker) accepted and ignored — no real UI in standalone mode. |
 | `RunModal` | `()` | ✅ covered | . Instance form Page<N>.RunModal() dispatches to ModalPageHandler. Injected on Page<N> class so CurrPage.RunModal() inside a page trigger compiles (issue #1079). |
-| `RunModal` | `(Integer, Table, FieldRef)` | 🔲 gap |  |
-| `RunModal` | `(Integer, Table, Integer)` | 🔲 gap |  |
-| `RunModal` | `(Integer, Table, Joker)` | 🔲 gap |  |
-| `RunModal` | `(Text, Table, FieldRef)` | 🔲 gap |  |
-| `RunModal` | `(Text, Table, Integer)` | 🔲 gap |  |
-| `RunModal` | `(Text, Table, Joker)` | 🔲 gap |  |
+| `RunModal` | `(Integer, Table, FieldRef)` | ✅ covered | 3rd argument (position as FieldRef) accepted and ignored — no real UI in standalone mode. Returns default(FormResult) = Action::None. |
+| `RunModal` | `(Integer, Table, Integer)` | ✅ covered | 3rd argument (position as integer field number) accepted and ignored — no real UI in standalone mode. Returns default(FormResult) = Action::None. |
+| `RunModal` | `(Integer, Table, Joker)` | ✅ covered | 3rd argument (position as Joker) accepted and ignored — no real UI in standalone mode. Returns default(FormResult) = Action::None. |
+| `RunModal` | `(Text, Table, FieldRef)` | ✅ covered | Text page-ID form. 3rd argument (position as FieldRef) accepted and ignored — no real UI in standalone mode. Returns default(FormResult) = Action::None. |
+| `RunModal` | `(Text, Table, Integer)` | ✅ covered | Text page-ID form. 3rd argument (position as integer field number) accepted and ignored — no real UI in standalone mode. Returns default(FormResult) = Action::None. |
+| `RunModal` | `(Text, Table, Joker)` | ✅ covered | Text page-ID form. 3rd argument (position as Joker) accepted and ignored — no real UI in standalone mode. Returns default(FormResult) = Action::None. |
 | `SaveRecord` | `()` | ✅ covered |  |
 | `SetBackgroundTaskResult` | `(Dictionary)` | ✅ covered | no-op in standalone mode |
 | `SetRecord` | `(Table)` | ✅ covered |  |
@@ -1581,7 +1581,7 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `WindowsLanguage` | `()` | ✅ covered | MockLanguage.ALWindowsLanguage → CultureInfo.CurrentCulture.LCID |
 | `WorkDate` | `(Date)` | ✅ covered | (get/set); AlScope.GetWorkDate/SetWorkDate in-memory store; reset to NavDate.Default between tests |
 
-## Table  (80/110)
+## Table  (110/110)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
@@ -1598,7 +1598,7 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `CopyFilter` | `(Joker, Joker)` | ✅ covered | copies filter from one field to a field on another record |
 | `CopyFilters` | `(Table)` | ✅ covered |  |
 | `CopyLinks` | `(RecordRef)` | ✅ covered | (Record; RecordRef); copies all links from source into target |
-| `CopyLinks` | `(Table)` | 🔲 gap |  |
+| `CopyLinks` | `(Table)` | ✅ covered | MockRecordHandle.ALCopyLinks(source) — copies all links from source record; already implemented and tested |
 | `Count` | `()` | ✅ covered |  |
 | `CountApprox` | `()` | ✅ covered | returns exact count (ALCountApprox = ALCount) in runner context |
 | `CurrentCompany` | `()` | ✅ covered | > |
@@ -1610,16 +1610,16 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `FieldActive` | `(Joker)` | ✅ covered | MockRecordHandle.ALFieldActive(fieldNo) — always true in standalone (no field disabling) |
 | `FieldCaption` | `(Joker)` | ✅ covered | MockRecordHandle.ALFieldCaption(fieldNo) — from TableFieldRegistry; falls back to "FieldNN" |
 | `FieldError` | `(Joker, ErrorInfo)` | ✅ covered | MockRecordHandle.ALFieldError(fieldNo) / ALFieldError(fieldNo, msg) — throws validation error; delegated on Record classes |
-| `FieldError` | `(Joker, Text)` | 🔲 gap |  |
+| `FieldError` | `(Joker, Text)` | ✅ covered | MockRecordHandle.ALFieldError(fieldNo, message) — raises field error with custom message; tested in 180-table-metadata-stubs |
 | `FieldName` | `(Joker)` | ✅ covered | MockRecordHandle.ALFieldName(fieldNo) — from TableFieldRegistry; falls back to "FieldNN" |
 | `FieldNo` | `(Joker)` | ✅ covered | ALFieldNo(string) falls back to TableFieldRegistry; suite 63-record-fieldno |
 | `FilterGroup` | `(Integer)` | ✅ covered | no-op stub in standalone mode (filter groups not isolated) |
 | `Find` | `(Text)` | ✅ covered | > |
 | `FindFirst` | `()` | ✅ covered | positions to first matching record in current key order |
 | `FindLast` | `()` | ✅ covered | positions to last matching record in current key order |
-| `FindSet` | `(Boolean, Boolean)` | 🔲 gap |  |
+| `FindSet` | `(Boolean, Boolean)` | ✅ covered | MockRecordHandle.ALFindSet(DataError, forUpdate, forceNewQuery) — delegates to ALFindSet(DataError, forUpdate); tested in 309200-table-overloads |
 | `FindSet` | `(Boolean)` | ✅ covered | > |
-| `FullyQualifiedName` | `()` | 🔲 gap |  |
+| `FullyQualifiedName` | `()` | ✅ covered | MockRecordHandle.ALFullyQualifiedName — returns CompanyName$TableName; implemented in #1373 |
 | `Get` | `(Joker)` | ✅ covered | ALGet(DataError, params NavValue[]) plus object catch-all overloads for 1–4 keys (issue #1260, NavComplexValue→object rewrite). |
 | `GetAscending` | `(Joker)` | ✅ covered | . Returns true by default (ascending); reflects SetAscending calls. |
 | `GetBySystemId` | `(Guid)` | ✅ covered | . Finds record by SystemId field value. |
@@ -1633,8 +1633,8 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `HasLinks` | `()` | ✅ covered | returns true when at least one link exists on the record |
 | `Init` | `()` | ✅ covered | clears non-PK fields to defaults, preserves PK, applies InitValue |
 | `Insert` | `()` | ✅ covered | ALInsert(DataError), ALInsert(DataError, runTrigger), ALInsert(DataError, runTrigger, checkMandatoryFields); CheckMandatoryFields not enforced in standalone mode. |
-| `Insert` | `(Boolean, Boolean)` | 🔲 gap |  |
-| `Insert` | `(Boolean)` | 🔲 gap |  |
+| `Insert` | `(Boolean, Boolean)` | ✅ covered | MockRecordHandle.ALInsert(DataError, runTrigger, checkMandatoryFields) — 3-arg overload; tested in 309200-table-overloads |
+| `Insert` | `(Boolean)` | ✅ covered | MockRecordHandle.ALInsert(DataError, runTrigger) — trigger-aware insert; tested in 309200-table-overloads |
 | `IsEmpty` | `()` | ✅ covered |  |
 | `IsTemporary` | `()` | ✅ covered | MockRecordHandle.ALIsTemporary — reflects _isTemporary flag set at construction |
 | `LoadFields` | `(Joker)` | ✅ covered | . No-op in standalone mode (all fields always loaded). |
@@ -1666,31 +1666,31 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `SetView` | `(Text)` | ✅ covered | parses SORTING+WHERE view string and restores filters |
 | `TableCaption` | `()` | ✅ covered | MockRecordHandle.ALTableCaption — from TableFieldRegistry; falls back to ALTableName |
 | `TableName` | `()` | ✅ covered | MockRecordHandle.ALTableName — from TableFieldRegistry; falls back to "TableNN" |
-| `TestField` | `(Joker, BigInteger, ErrorInfo)` | 🔲 gap |  |
-| `TestField` | `(Joker, BigInteger)` | 🔲 gap |  |
-| `TestField` | `(Joker, Boolean, ErrorInfo)` | 🔲 gap |  |
-| `TestField` | `(Joker, Boolean)` | 🔲 gap |  |
-| `TestField` | `(Joker, Code, ErrorInfo)` | 🔲 gap |  |
-| `TestField` | `(Joker, Code)` | 🔲 gap |  |
-| `TestField` | `(Joker, Decimal, ErrorInfo)` | 🔲 gap |  |
-| `TestField` | `(Joker, Decimal)` | 🔲 gap |  |
-| `TestField` | `(Joker, Enum, ErrorInfo)` | 🔲 gap |  |
-| `TestField` | `(Joker, Enum)` | 🔲 gap |  |
-| `TestField` | `(Joker, ErrorInfo)` | 🔲 gap |  |
-| `TestField` | `(Joker, Guid, ErrorInfo)` | 🔲 gap |  |
-| `TestField` | `(Joker, Guid)` | 🔲 gap |  |
-| `TestField` | `(Joker, Integer, ErrorInfo)` | 🔲 gap |  |
-| `TestField` | `(Joker, Integer)` | 🔲 gap |  |
-| `TestField` | `(Joker, Joker, ErrorInfo)` | 🔲 gap |  |
-| `TestField` | `(Joker, Joker)` | 🔲 gap |  |
-| `TestField` | `(Joker, Label, ErrorInfo)` | 🔲 gap |  |
-| `TestField` | `(Joker, Label)` | 🔲 gap |  |
-| `TestField` | `(Joker, Text, ErrorInfo)` | 🔲 gap |  |
-| `TestField` | `(Joker, Text)` | 🔲 gap |  |
-| `TestField` | `(Joker, TextConst, ErrorInfo)` | 🔲 gap |  |
-| `TestField` | `(Joker, TextConst)` | 🔲 gap |  |
+| `TestField` | `(Joker, BigInteger, ErrorInfo)` | ✅ covered | routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369 |
+| `TestField` | `(Joker, BigInteger)` | ✅ covered | routes through ALTestFieldSafe(object) catch-all — issue #1369 |
+| `TestField` | `(Joker, Boolean, ErrorInfo)` | ✅ covered | routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369 |
+| `TestField` | `(Joker, Boolean)` | ✅ covered | routes through ALTestFieldSafe(object) catch-all — issue #1369 |
+| `TestField` | `(Joker, Code, ErrorInfo)` | ✅ covered | routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369 |
+| `TestField` | `(Joker, Code)` | ✅ covered | routes through ALTestFieldSafe(object) catch-all — issue #1369 |
+| `TestField` | `(Joker, Decimal, ErrorInfo)` | ✅ covered | routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369 |
+| `TestField` | `(Joker, Decimal)` | ✅ covered | routes through ALTestFieldSafe(object) catch-all — issue #1369 |
+| `TestField` | `(Joker, Enum, ErrorInfo)` | ✅ covered | routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369 |
+| `TestField` | `(Joker, Enum)` | ✅ covered | routes through ALTestFieldSafe(object) catch-all — issue #1369 |
+| `TestField` | `(Joker, ErrorInfo)` | ✅ covered | routes through ALTestFieldSafe(NavALErrorInfo) — non-empty check with error context — issue #1369 |
+| `TestField` | `(Joker, Guid, ErrorInfo)` | ✅ covered | routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369 |
+| `TestField` | `(Joker, Guid)` | ✅ covered | routes through ALTestFieldSafe(object) catch-all — issue #1369 |
+| `TestField` | `(Joker, Integer, ErrorInfo)` | ✅ covered | routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369 |
+| `TestField` | `(Joker, Integer)` | ✅ covered | routes through ALTestFieldSafe(object) catch-all — issue #1369 |
+| `TestField` | `(Joker, Joker, ErrorInfo)` | ✅ covered | routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369 |
+| `TestField` | `(Joker, Joker)` | ✅ covered | routes through ALTestFieldSafe(object) catch-all — issue #1369 |
+| `TestField` | `(Joker, Label, ErrorInfo)` | ✅ covered | routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369 |
+| `TestField` | `(Joker, Label)` | ✅ covered | routes through ALTestFieldSafe(object) catch-all — issue #1369 |
+| `TestField` | `(Joker, Text, ErrorInfo)` | ✅ covered | routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369 |
+| `TestField` | `(Joker, Text)` | ✅ covered | routes through ALTestFieldSafe(object) catch-all — issue #1369 |
+| `TestField` | `(Joker, TextConst, ErrorInfo)` | ✅ covered | routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369 |
+| `TestField` | `(Joker, TextConst)` | ✅ covered | routes through ALTestFieldSafe(object) catch-all — issue #1369 |
 | `TestField` | `(Joker)` | ✅ covered | > |
-| `TransferFields` | `(Table, Boolean, Boolean)` | 🔲 gap |  |
+| `TransferFields` | `(Table, Boolean, Boolean)` | ✅ covered | MockRecordHandle.ALTransferFields(source, initPrimaryKey, validateFields) — 3-arg overload; tested in 309200-table-overloads |
 | `TransferFields` | `(Table, Boolean)` | ✅ covered | > |
 | `Truncate` | `(Boolean)` | ✅ covered | . Deletes all rows without triggers (delegates to DeleteAll(false)). |
 | `Validate` | `(Joker, Joker)` | ✅ covered | ALValidateSafe(fieldNo, expectedType) — re-validates current field value without setting a new one. The 2-arg overload was missing from the injected Record class delegate methods. |
@@ -1865,7 +1865,7 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `Schedule` | `()` | ✅ covered | ALSchedule() returns MockTestPageAction (call .Invoke()) |
 | `ValidationErrorCount` | `()` | ✅ covered | ALValidationErrorCount() returns 0 |
 
-## Text  (32/36)
+## Text  (36/36)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
@@ -1875,16 +1875,16 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `DelChr` | `(Text, Text, Text)` | ✅ covered | . Static Text.DelChr form covered — where='=' strips all, '<' strips leading, '>' strips trailing. |
 | `DelStr` | `(Text, Integer, Integer)` | ✅ covered | (pos / pos+count). Both forms covered — 1-based AL convention. |
 | `EndsWith` | `(Text)` | ✅ covered | . Covered via NavText native — positive and negative cases. |
-| `IncStr` | `(Text, BigInteger)` | 🔲 gap |  |
+| `IncStr` | `(Text, BigInteger)` | ✅ covered | AlCompat.IncStr(string, long) — increments trailing numeric segment by N steps. Tested: +10, +1, large-step overflow, zero-step no-op. |
 | `IncStr` | `(Text)` | ✅ covered |  |
 | `IndexOf` | `(Text, Integer)` | ✅ covered | . Covered via NavText native — returns 1-based index (AL convention), 0 when not found, first-occurrence semantics. |
 | `IndexOfAny` | `(List, Integer)` | ✅ covered | BC native NavTextExtensions.ALIndexOfAny works standalone. Tested in bucket-1/67-text-builtins. |
-| `IndexOfAny` | `(Text, Integer)` | 🔲 gap |  |
+| `IndexOfAny` | `(Text, Integer)` | ✅ covered | BC native NavTextExtensions.ALIndexOfAny 2-arg (Text, startIndex) overload works standalone. Tested: found, skips-before, not-found. |
 | `InsStr` | `(Text, Text, Integer)` | ✅ covered | . Static Text.InsStr form covered — insertion at start and middle positions (1-based). |
 | `LastIndexOf` | `(Text, Integer)` | ✅ covered | . Covered via NavText native — 1-based last occurrence, 0 when not found, differs from IndexOf for multi-match strings. |
 | `LowerCase` | `(Text)` | ✅ covered | . Static Text.LowerCase form covered — includes differs-from-UpperCase trap. |
 | `MaxStrLen` | `(Text)` | ✅ covered | . Static Text.MaxStrLen form covered — returns the declared Text[N] length. |
-| `MaxStrLen` | `(Variant)` | 🔲 gap |  |
+| `MaxStrLen` | `(Variant)` | ✅ covered | ALSystemString.ALMaxStrLen(NavText) works for declared Text[N] and Code[N] local variables. Tested Text[42] and Code[15]. |
 | `PadLeft` | `(Integer, Char)` | ✅ covered | (with padChar / default space). Covered via NavText native — pad char, default space, no-op when source already longer. |
 | `PadRight` | `(Integer, Char)` | ✅ covered | (with padChar / default space). Covered via NavText native — includes differs-from-PadLeft trap. |
 | `PadStr` | `(Text, Integer, Text)` | ✅ covered | negative length = left-pad (rewriter routes ALPadStr -> AlCompat.PadStr; BC native rejects negative length). Tested in bucket-1/67-text-builtins. |
@@ -1892,7 +1892,7 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `Replace` | `(Text, Text)` | ✅ covered | (char/char, text/text). Covered via NavText native — single-char, string replace, no-match-unchanged. |
 | `SelectStr` | `(Integer, Text)` | ✅ covered |  |
 | `Split` | `(List)` | ✅ covered | (Char, Text, List of [Char]). Covered via NavText native — preserves empty entries, no-separator returns single-element, multi-char separator not mistaken for single-char, List-of-Char splits on any of the supplied chars. |
-| `Split` | `(Text)` | 🔲 gap |  |
+| `Split` | `(Text)` | ✅ covered | BC native NavText.ALSplit 1-arg (Text separator) overload works standalone. Multi-char separator tested — count, element, differs-from-single-char trap. |
 | `StartsWith` | `(Text)` | ✅ covered | . Covered via NavText native — positive, negative, case-sensitive. |
 | `StrCheckSum` | `(Text, Text, Integer)` | ✅ covered | BC native ALSystemString.ALStrCheckSum works standalone (default modulus 10). Tested in bucket-1/67-text-builtins. |
 | `StrLen` | `(Text)` | ✅ covered | . Static Text.StrLen form covered — length of non-empty and empty strings. |
@@ -1924,7 +1924,7 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `ToText` | `()` | ✅ covered |  |
 | `ToText` | `(Integer, Integer)` | 🔶 not-tested |  |
 
-## TextConst  (17/19)
+## TextConst  (19/19)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
@@ -1932,14 +1932,14 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `EndsWith` | `(Text)` | ✅ covered | BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite. |
 | `IndexOf` | `(Text, Integer)` | ✅ covered | BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite. |
 | `IndexOfAny` | `(List, Integer)` | ✅ covered | BC native NavText.ALIndexOfAny works after NavTextConstant→NavText rewrite. Both 1-arg and 2-arg (with startIndex) overloads tested — positive and negative cases. |
-| `IndexOfAny` | `(Text, Integer)` | 🔲 gap |  |
+| `IndexOfAny` | `(Text, Integer)` | ✅ covered | BC native NavTextExtensions.ALIndexOfAny 2-arg (Text, startIndex) form works on TextConst after NavTextConstant→NavText rewrite. Positive and negative cases. |
 | `LastIndexOf` | `(Text, Integer)` | ✅ covered | BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite. |
 | `PadLeft` | `(Integer, Char)` | ✅ covered | BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite. |
 | `PadRight` | `(Integer, Char)` | ✅ covered | BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite. |
 | `Remove` | `(Integer, Integer)` | ✅ covered | BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite. |
 | `Replace` | `(Text, Text)` | ✅ covered | BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite. |
 | `Split` | `(List)` | ✅ covered | BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite. |
-| `Split` | `(Text)` | 🔲 gap |  |
+| `Split` | `(Text)` | ✅ covered | BC native NavText.ALSplit 1-arg (Text separator) form works on TextConst after NavTextConstant→NavText rewrite. Tested count and absent-separator cases. |
 | `StartsWith` | `(Text)` | ✅ covered | BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite. |
 | `Substring` | `(Integer, Integer)` | ✅ covered | BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite. |
 | `ToLower` | `()` | ✅ covered | BC native NavText methods work on codeunit-level Label (TextConst) values after NavTextConstant→NavText rewrite. |
@@ -2166,7 +2166,7 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `WriteTo` | `(XmlWriteOptions, OutStream)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored. |
 | `WriteTo` | `(XmlWriteOptions, Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored. |
 
-## XmlDocument  (28/38)
+## XmlDocument  (36/38)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
@@ -2176,15 +2176,15 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `AddFirst` | `(Joker)` | ✅ covered | BC native works standalone |
 | `AsXmlNode` | `()` | ✅ covered | BC native works standalone; returned node reports IsXmlDocument=true |
 | `Create` | `()` | ✅ covered | BC native NavXmlDocument.ALCreate works standalone. |
-| `Create` | `(Joker)` | 🔲 gap |  |
+| `Create` | `(Joker)` | ✅ covered | BC native NavXmlDocument.ALCreate(Joker) works standalone; tested with XmlElement node arg |
 | `GetChildElements` | `()` | ✅ covered | BC native works standalone; name-filtered overload tested |
-| `GetChildElements` | `(Text, Text)` | 🔲 gap |  |
-| `GetChildElements` | `(Text)` | 🔲 gap |  |
+| `GetChildElements` | `(Text, Text)` | ✅ covered | BC native works standalone; filters by local name and namespace URI |
+| `GetChildElements` | `(Text)` | ✅ covered | BC native works standalone; filters by element name; returns 0 for no match |
 | `GetChildNodes` | `()` | ✅ covered | BC native works standalone; 0-arg form returns XmlNodeList. |
 | `GetDeclaration` | `(XmlDeclaration)` | ✅ covered | BC native works standalone; returns false when no declaration present. |
 | `GetDescendantElements` | `()` | ✅ covered | BC native works standalone |
-| `GetDescendantElements` | `(Text, Text)` | 🔲 gap |  |
-| `GetDescendantElements` | `(Text)` | 🔲 gap |  |
+| `GetDescendantElements` | `(Text, Text)` | ✅ covered | BC native works standalone; filters descendants by local name and namespace URI |
+| `GetDescendantElements` | `(Text)` | ✅ covered | BC native works standalone; filters descendants by element name |
 | `GetDescendantNodes` | `()` | ✅ covered | BC native works standalone |
 | `GetDocument` | `(XmlDocument)` | ✅ covered | BC native works standalone; document returns itself |
 | `GetDocumentType` | `(XmlDocumentType)` | ✅ covered | BC native works standalone; returns false with no DOCTYPE, true with DOCTYPE |
@@ -2192,9 +2192,9 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `GetRoot` | `(XmlElement)` | ✅ covered | BC native works standalone. |
 | `NameTable` | `()` | ✅ covered | BC native works standalone |
 | `ReadFrom` | `(InStream, XmlDocument)` | ✅ covered | Text and InStream forms (with and without XmlReadOptions); rewriter redirects NavXmlDocument.ALReadFrom to AlCompat.XmlDocumentReadFrom which handles both NavText/string and MockInStream; fixes issue #1081 |
-| `ReadFrom` | `(InStream, XmlReadOptions, XmlDocument)` | 🔲 gap |  |
-| `ReadFrom` | `(Text, XmlDocument)` | 🔲 gap |  |
-| `ReadFrom` | `(Text, XmlReadOptions, XmlDocument)` | 🔲 gap |  |
+| `ReadFrom` | `(InStream, XmlReadOptions, XmlDocument)` | ✅ covered | AlCompat.XmlDocumentReadFrom handles 4-arg form (stream + XmlReadOptions); rewriter redirects NavXmlDocument.ALReadFrom |
+| `ReadFrom` | `(Text, XmlDocument)` | ✅ covered | AlCompat.XmlDocumentReadFrom handles Text form (static call); parses XML string and sets document |
+| `ReadFrom` | `(Text, XmlReadOptions, XmlDocument)` | ✅ covered | AlCompat.XmlDocumentReadFrom handles 4-arg Text+XmlReadOptions form; default options parse correctly |
 | `Remove` | `()` | ✅ covered | rewriter intercepts ALRemove on XmlDocument receiver and routes to AlCompat.XmlRemove which no-ops for document (Remove on a document is a no-op in BC too) |
 | `RemoveNodes` | `()` | ✅ covered | BC native works standalone. |
 | `ReplaceNodes` | `(Joker)` | ✅ covered | BC native works standalone; replaces all child nodes |
@@ -2209,16 +2209,16 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `WriteTo` | `(XmlWriteOptions, OutStream)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored; tested in suite 220-xml-writeto-overloads. |
 | `WriteTo` | `(XmlWriteOptions, Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored; tested in suite 220-xml-writeto-overloads. |
 
-## XmlDocumentType  (22/27)
+## XmlDocumentType  (25/27)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
 | `AddAfterSelf` | `(Joker)` | ✅ covered | works natively via NavXmlDocumentType; tested by inserting PI sibling after DocType in document |
 | `AddBeforeSelf` | `(Joker)` | ✅ covered | works natively via NavXmlDocumentType; tested by inserting PI sibling before DocType in document |
 | `AsXmlNode` | `()` | ✅ covered | works natively via NavXmlDocumentType; result satisfies IsXmlDocumentType() |
-| `Create` | `(Text, Text, Text, Text)` | 🔲 gap |  |
-| `Create` | `(Text, Text, Text)` | 🔲 gap |  |
-| `Create` | `(Text, Text)` | 🔲 gap |  |
+| `Create` | `(Text, Text, Text, Text)` | ✅ covered | BC native NavXmlDocumentType.ALCreate(4) works standalone; name, publicId, systemId and internalSubset all round-trip |
+| `Create` | `(Text, Text, Text)` | ✅ covered | BC native NavXmlDocumentType.ALCreate(3) works standalone; name, publicId, systemId all round-trip |
+| `Create` | `(Text, Text)` | ✅ covered | BC native NavXmlDocumentType.ALCreate(2) works standalone; name and publicId set; can be added to XmlDocument |
 | `Create` | `(Text)` | ✅ covered | uses real BC XmlDocumentType; all 4 overloads exercised |
 | `GetDocument` | `(XmlDocument)` | ✅ covered | works natively; standalone DocType returns false; DocType added to XmlDocument.Create() returns true |
 | `GetInternalSubset` | `(Text)` | ✅ covered | returns value passed to Create; empty when not set |
@@ -2241,7 +2241,7 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `WriteTo` | `(XmlWriteOptions, OutStream)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored. |
 | `WriteTo` | `(XmlWriteOptions, Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored. |
 
-## XmlElement  (36/48)
+## XmlElement  (46/48)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
@@ -2251,17 +2251,17 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `AddFirst` | `(Joker)` | ✅ covered | . Covered via NavXmlElement native — adds first child node and returns the added XmlNode. |
 | `AsXmlNode` | `()` | ✅ covered | . Covered via NavXmlElement native — AsXmlNode().AsXmlElement().Name round-trips. |
 | `Attributes` | `()` | ✅ covered | . Covered via NavXmlElement native — Attributes().Get(name, var XmlAttribute) returns true + populates the attribute. |
-| `Create` | `(Text, Joker)` | 🔲 gap |  |
-| `Create` | `(Text, Text, Joker)` | 🔲 gap |  |
-| `Create` | `(Text, Text)` | 🔲 gap |  |
+| `Create` | `(Text, Joker)` | ✅ covered | BC native NavXmlElement.ALCreate(name, Joker) works standalone; child node included |
+| `Create` | `(Text, Text, Joker)` | ✅ covered | BC native NavXmlElement.ALCreate(name, ns, Joker) works standalone; namespace and child node both set |
+| `Create` | `(Text, Text)` | ✅ covered | BC native NavXmlElement.ALCreate(name, ns) works standalone; NamespaceUri and LocalName both correct |
 | `Create` | `(Text)` | ✅ covered | . Covered via NavXmlElement native — 1-arg Create(name) tested for Name, children, attributes, SelectNodes. |
 | `GetChildElements` | `()` | ✅ covered | . Covered via NavXmlElement native — reflects the number of added child elements. |
-| `GetChildElements` | `(Text, Text)` | 🔲 gap |  |
-| `GetChildElements` | `(Text)` | 🔲 gap |  |
+| `GetChildElements` | `(Text, Text)` | ✅ covered | BC native works standalone; filters direct children by local name and namespace URI |
+| `GetChildElements` | `(Text)` | ✅ covered | BC native works standalone; filters direct children by element name; multiple matches returned |
 | `GetChildNodes` | `()` | ✅ covered | . Covered via NavXmlElement native — returns XmlNodeList of direct child nodes. |
 | `GetDescendantElements` | `()` | ✅ covered | . Covered via NavXmlElement native. |
-| `GetDescendantElements` | `(Text, Text)` | 🔲 gap |  |
-| `GetDescendantElements` | `(Text)` | 🔲 gap |  |
+| `GetDescendantElements` | `(Text, Text)` | ✅ covered | BC native works standalone; filters descendants by local name and namespace URI |
+| `GetDescendantElements` | `(Text)` | ✅ covered | BC native works standalone; filters all descendants by element name |
 | `GetDescendantNodes` | `()` | ✅ covered | . Covered via NavXmlElement native. |
 | `GetDocument` | `(XmlDocument)` | ✅ covered | . Covered via NavXmlElement native. |
 | `GetNamespaceOfPrefix` | `(Text, Text)` | ✅ covered | . Covered via NavXmlElement native. |
@@ -2277,9 +2277,9 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `NamespaceUri` | `()` | ✅ covered | . Covered via NavXmlElement native. |
 | `Remove` | `()` | ✅ covered | . Covered via NavXmlElement native — removes element from parent tree. |
 | `RemoveAllAttributes` | `()` | ✅ covered | BC native works standalone. Preserves element name + children; only attributes are cleared. |
-| `RemoveAttribute` | `(Text, Text)` | 🔲 gap |  |
+| `RemoveAttribute` | `(Text, Text)` | ✅ covered | BC native works standalone; removes attribute by local name and namespace; wrong namespace leaves attribute intact |
 | `RemoveAttribute` | `(Text)` | ✅ covered | . Covered via NavXmlElement native — clears the named attribute; HasAttributes becomes false if it was the only one. |
-| `RemoveAttribute` | `(XmlAttribute)` | 🔲 gap |  |
+| `RemoveAttribute` | `(XmlAttribute)` | ✅ covered | BC native works standalone; removes by XmlAttribute object reference; HasAttributes becomes false when last attribute removed |
 | `RemoveNodes` | `()` | ✅ covered | . Covered via NavXmlElement native — removes all child nodes from element. |
 | `ReplaceNodes` | `(Joker)` | ✅ covered | . Covered via NavXmlElement native. |
 | `ReplaceWith` | `(Joker)` | ✅ covered | . Covered via NavXmlElement native. |
@@ -2287,7 +2287,7 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `SelectNodes` | `(Text, XmlNodeList)` | ✅ covered | . Covered via NavXmlElement native — XPath matches descendants on a programmatically-built element. |
 | `SelectSingleNode` | `(Text, XmlNamespaceManager, XmlNode)` | 🔲 gap |  |
 | `SelectSingleNode` | `(Text, XmlNode)` | ✅ covered | BC native works standalone for programmatically-built XmlElements. Relative XPath is resolved against the receiver element. |
-| `SetAttribute` | `(Text, Text, Text)` | 🔲 gap |  |
+| `SetAttribute` | `(Text, Text, Text)` | ✅ covered | BC native works standalone; sets namespace-qualified attribute; HasAttributes becomes true; round-trips with RemoveAttribute(name, ns) |
 | `SetAttribute` | `(Text, Text)` | ✅ covered | . Covered via NavXmlElement native — value readable via Attributes().Get; HasAttributes becomes true. |
 | `WriteTo` | `(OutStream)` | ✅ covered | . Covered via NavXmlElement native — writes element to XmlWriter with proper formatting. |
 | `WriteTo` | `(Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, ByRef<NavText>) via reflection — tested in suite 220-xml-writeto-overloads. |

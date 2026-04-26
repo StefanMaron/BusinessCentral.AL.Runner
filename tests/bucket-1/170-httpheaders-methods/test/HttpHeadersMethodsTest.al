@@ -52,9 +52,11 @@ codeunit 97001 "HHM Test"
     // ── GetSecretValues ──────────────────────────────────────────
 
     [Test]
-    procedure HttpHeaders_GetSecretValues_EmptyForPlainHeader()
+    procedure HttpHeaders_GetSecretValues_ReturnsOneForPlainHeader()
     begin
-        Assert.AreEqual(0, Src.GetSecretValuesEmptyForPlain('X-Plain', 'value'),
-            'GetSecretValues must return empty list for plain (non-secret) headers');
+        // The runner treats all headers as plain text; GetSecretValues wraps them
+        // as SecretText and returns them — count must be 1 for a single header added.
+        Assert.AreEqual(1, Src.GetSecretValuesCount('X-Plain', 'value'),
+            'GetSecretValues must return 1 entry for a single plain header added');
     end;
 }

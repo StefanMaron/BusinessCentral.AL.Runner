@@ -58,8 +58,9 @@ codeunit 97000 "HHM Src"
         exit(headers.ContainsSecret(name));
     end;
 
-    // GetSecretValues — returns empty list for plain headers
-    procedure GetSecretValuesEmptyForPlain(name: Text; value: Text): Integer
+    // GetSecretValues — runner treats all headers as plain text internally;
+    // values are returned wrapped as SecretText regardless of how they were added.
+    procedure GetSecretValuesCount(name: Text; value: Text): Integer
     var
         req: HttpRequestMessage;
         headers: HttpHeaders;

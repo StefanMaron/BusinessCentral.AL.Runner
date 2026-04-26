@@ -3047,12 +3047,18 @@ HttpContent.WriteFrom (InStream):
 HttpContent.WriteFrom (SecretText):
   layer: runtime-api
   category: HttpContent
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/1381-http-writefrom-getsecretvalues
+  notes: SecretText unwrapped via AlCompat.HttpContentLoadFrom(NavSecretText); round-trip via ReadAs(Text) proves value is stored (#1381)
 
 HttpContent.WriteFrom (Text):
   layer: runtime-api
   category: HttpContent
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/1381-http-writefrom-getsecretvalues
+  notes: NavText passthrough via AlCompat.HttpContentLoadFrom(NavText) → ALLoadFrom(NavText); round-trip via ReadAs(Text) proves value is stored (#1381)
 
 # ── HttpHeaders ─────────────────────────────────────────────────
 
@@ -3093,7 +3099,10 @@ HttpHeaders.GetSecretValues (Text, Array):
 HttpHeaders.GetSecretValues (Text, List):
   layer: runtime-api
   category: HttpHeaders
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/1381-http-writefrom-getsecretvalues
+  notes: ALGetValues(DataError, NavText, NavList<NavSecretText>) now populates the list; string-key overload also added for literal header names (#1381)
 
 HttpHeaders.GetValues (Text, Array):
   layer: runtime-api
@@ -8161,185 +8170,185 @@ Table.TestField (Joker, BigInteger, ErrorInfo):
   layer: runtime-api
   category: Table
   status: covered
-  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
   tests:
     - tests/bucket-2/309100-testfield-typed-overloads
+  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
 
 Table.TestField (Joker, BigInteger):
   layer: runtime-api
   category: Table
   status: covered
-  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
   tests:
     - tests/bucket-2/309100-testfield-typed-overloads
+  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
 
 Table.TestField (Joker, Boolean, ErrorInfo):
   layer: runtime-api
   category: Table
   status: covered
-  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
   tests:
     - tests/bucket-2/309100-testfield-typed-overloads
+  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
 
 Table.TestField (Joker, Boolean):
   layer: runtime-api
   category: Table
   status: covered
-  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
   tests:
     - tests/bucket-2/309100-testfield-typed-overloads
+  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
 
 Table.TestField (Joker, Code, ErrorInfo):
   layer: runtime-api
   category: Table
   status: covered
-  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
   tests:
     - tests/bucket-2/309100-testfield-typed-overloads
+  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
 
 Table.TestField (Joker, Code):
   layer: runtime-api
   category: Table
   status: covered
-  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
   tests:
     - tests/bucket-2/309100-testfield-typed-overloads
+  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
 
 Table.TestField (Joker, Decimal, ErrorInfo):
   layer: runtime-api
   category: Table
   status: covered
-  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
   tests:
     - tests/bucket-2/309100-testfield-typed-overloads
+  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
 
 Table.TestField (Joker, Decimal):
   layer: runtime-api
   category: Table
   status: covered
-  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
   tests:
     - tests/bucket-2/309100-testfield-typed-overloads
+  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
 
 Table.TestField (Joker, Enum, ErrorInfo):
   layer: runtime-api
   category: Table
   status: covered
-  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
   tests:
     - tests/bucket-2/309100-testfield-typed-overloads
+  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
 
 Table.TestField (Joker, Enum):
   layer: runtime-api
   category: Table
   status: covered
-  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
   tests:
     - tests/bucket-2/309100-testfield-typed-overloads
+  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
 
 Table.TestField (Joker, ErrorInfo):
   layer: runtime-api
   category: Table
   status: covered
-  notes: routes through ALTestFieldSafe(NavALErrorInfo) — non-empty check with error context — issue #1369
   tests:
     - tests/bucket-2/309100-testfield-typed-overloads
+  notes: routes through ALTestFieldSafe(NavALErrorInfo) — non-empty check with error context — issue #1369
 
 Table.TestField (Joker, Guid, ErrorInfo):
   layer: runtime-api
   category: Table
   status: covered
-  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
   tests:
     - tests/bucket-2/309100-testfield-typed-overloads
+  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
 
 Table.TestField (Joker, Guid):
   layer: runtime-api
   category: Table
   status: covered
-  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
   tests:
     - tests/bucket-2/309100-testfield-typed-overloads
+  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
 
 Table.TestField (Joker, Integer, ErrorInfo):
   layer: runtime-api
   category: Table
   status: covered
-  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
   tests:
     - tests/bucket-2/309100-testfield-typed-overloads
+  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
 
 Table.TestField (Joker, Integer):
   layer: runtime-api
   category: Table
   status: covered
-  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
   tests:
     - tests/bucket-2/309100-testfield-typed-overloads
+  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
 
 Table.TestField (Joker, Joker, ErrorInfo):
   layer: runtime-api
   category: Table
   status: covered
-  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
   tests:
     - tests/bucket-2/309100-testfield-typed-overloads
+  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
 
 Table.TestField (Joker, Joker):
   layer: runtime-api
   category: Table
   status: covered
-  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
   tests:
     - tests/bucket-2/309100-testfield-typed-overloads
+  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
 
 Table.TestField (Joker, Label, ErrorInfo):
   layer: runtime-api
   category: Table
   status: covered
-  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
   tests:
     - tests/bucket-2/309100-testfield-typed-overloads
+  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
 
 Table.TestField (Joker, Label):
   layer: runtime-api
   category: Table
   status: covered
-  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
   tests:
     - tests/bucket-2/309100-testfield-typed-overloads
+  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
 
 Table.TestField (Joker, Text, ErrorInfo):
   layer: runtime-api
   category: Table
   status: covered
-  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
   tests:
     - tests/bucket-2/309100-testfield-typed-overloads
+  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
 
 Table.TestField (Joker, Text):
   layer: runtime-api
   category: Table
   status: covered
-  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
   tests:
     - tests/bucket-2/309100-testfield-typed-overloads
+  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
 
 Table.TestField (Joker, TextConst, ErrorInfo):
   layer: runtime-api
   category: Table
   status: covered
-  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
   tests:
     - tests/bucket-2/309100-testfield-typed-overloads
+  notes: routes through ALTestFieldSafe(object, NavALErrorInfo) catch-all — issue #1369
 
 Table.TestField (Joker, TextConst):
   layer: runtime-api
   category: Table
   status: covered
-  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
   tests:
     - tests/bucket-2/309100-testfield-typed-overloads
+  notes: routes through ALTestFieldSafe(object) catch-all — issue #1369
 
 Table.TestField (Joker):
   layer: runtime-api

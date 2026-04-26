@@ -162,8 +162,24 @@ public class MockHttpHeaders
     /// <summary>
     /// Overload for <c>HttpHeaders.GetSecretValues(name, secrets)</c>:
     /// BC emits <c>ALGetValues(DataError, NavText, NavList&lt;NavSecretText&gt;)</c>.
-    /// Plain headers have no secret values; the list is left empty.
+    /// Wraps each stored header value as a <see cref="NavSecretText"/> and populates the list.
+    /// In standalone mode, headers added via <c>Add(name, Text)</c> are stored as plain text;
+    /// they are surfaced here as secrets so the round-trip is transparent.
     /// </summary>
     public bool ALGetValues(DataError errorLevel, NavText key, NavList<NavSecretText> values)
-        => false;
+    {
+        var k = key?.ToString() ?? "";
+        if (!_headers.TryGetValue(k, out var list) || list.Count == 0) return false;
+        foreach (var v in list)
+            values.ALAdd(NavSecretText.Create(v));
+        return true;
+    }
+
+    /// <summary>
+    /// String-key overload for <c>HttpHeaders.GetSecretValues(name, secrets)</c>:
+    /// BC emits the key as a raw string literal when a text constant is used.
+    /// Delegates to the <see cref="NavText"/> overload.
+    /// </summary>
+    public bool ALGetValues(DataError errorLevel, string key, NavList<NavSecretText> values)
+        => ALGetValues(errorLevel, new NavText(key), values);
 }
