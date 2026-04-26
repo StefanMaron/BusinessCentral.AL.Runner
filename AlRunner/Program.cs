@@ -2763,7 +2763,11 @@ public static class Executor
                 }
             }
 
-            // Find corresponding scope classes for test methods
+            // Find corresponding scope classes for test methods.
+            // Only include scopes whose parent method bears [NavTest] — the
+            // StartsWith("Test") fallback caused phantom tests for any
+            // procedure named Test* on tables, pages, or non-test codeunits
+            // (issue #1420).
             foreach (var nested in type.GetNestedTypes(BindingFlags.NonPublic | BindingFlags.Public))
             {
                 var name = nested.Name;
@@ -2771,9 +2775,8 @@ public static class Executor
                 {
                     var scopeIdx = name.IndexOf("_Scope_");
                     var testName = name.Substring(0, scopeIdx);
-                    // Include if method has [NavTest] attribute OR starts with "Test" (fallback)
-                    if (testMethodNames.Contains(testName) ||
-                        testName.StartsWith("Test", StringComparison.OrdinalIgnoreCase))
+                    // Include ONLY if the parent method has [NavTest] attribute.
+                    if (testMethodNames.Contains(testName))
                     {
                         testScopes.Add((testName, nested, type));
                     }
