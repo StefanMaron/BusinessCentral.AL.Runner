@@ -125,7 +125,7 @@ public class RoslynRewriter : CSharpSyntaxRewriter
         "ALFindFirst", "ALFindLast", "ALIsEmpty", "ALCalcFields", "ALSetCurrentKey",
         "ALReset", "ALCopy", "ALCopyFilter", "ALCopyFilters", "ALTestField", "ALTestFieldSafe", "ALValidate", "ALValidateSafe", "ALRename",
         "ALLockTable", "ALCalcSums", "ALSetLoadFields", "ALAddLoadFields", "ALAreFieldsLoaded", "ALFieldCaption", "ALSetRecFilter",
-        "ALTableCaption", "ALTableName", "ALTestFieldNavValueSafe",
+        "ALTableCaption", "ALTableName", "ALTestFieldNavValueSafe", "ALRecordId", "ALCurrentCompany",
         "ALFilterGroup", "ALSetRangeSafe", "ALReadIsolation",
         "ALGetView", "ALSetView", "ALGetFilter",
         "ALTransferFields", "ALMark", "ALMarkedOnly", "ALClearMarks",
@@ -825,6 +825,9 @@ protected bool CallGetTableRelationExtensionMethod(int fieldNo, MockRecordHandle
 protected bool CallGetFormatExtensionMethod(int fieldNo, ref string result) { return false; }
 protected bool CallGetAutoFormatStringExtensionMethod(int fieldNo, ref string result) { return false; }
 protected void EnsureGlobalVariablesInitialized() { }
+public NavRecordId ALRecordId => Rec.ALRecordId;
+public string ALCurrentCompany => Rec.ALCurrentCompany;
+public void ALTestFieldNavValueSafe(int fieldNo, NavType expectedType, NavValue expectedValue) => Rec.ALTestFieldNavValueSafe(fieldNo, expectedType, expectedValue);
 ";
             var delegatingMembers = CSharpSyntaxTree.ParseText(
                 $"class _Temp_ {{ {delegatingCode} }}").GetRoot()
