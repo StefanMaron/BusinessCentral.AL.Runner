@@ -34,6 +34,17 @@ public class MockObjectList<T> : IEnumerable<T>
 
     public bool ALRemove(T item) => _items.Remove(item);
 
+    /// <summary>
+    /// ALAssign — BC emits <c>list.ALAssign(other)</c> for the AL <c>:=</c>
+    /// assignment operator on <c>List of [T]</c> variables.  Clears the current
+    /// list and copies all items from <paramref name="other"/>.
+    /// </summary>
+    public void ALAssign(MockObjectList<T> other)
+    {
+        _items.Clear();
+        _items.AddRange(other._items);
+    }
+
     public void Clear() => _items.Clear();
 
     public IEnumerator<T> GetEnumerator() => _items.GetEnumerator();

@@ -4808,6 +4808,20 @@ Label.TrimStart (Text):
     - tests/bucket-2/186-label-string-methods
   notes: . Covered via NavText native — leading strip only.
 
+# ── List ────────────────────────────────────────────────────────
+
+List.Assign (:=):
+  layer: runtime-api
+  category: List
+  status: covered
+  tests:
+    - tests/bucket-2/308700-list-of-recordref
+  notes: |
+    BC emits `list.ALAssign(other)` for the `:=` assignment operator on
+    `List of [T]` (NavObjectList<T>) variables passed by `var`. MockObjectList<T>
+    was missing ALAssign — caused CS1061 (surfaced as CS1503 in some BC versions)
+    on codeunits with a `var List of [RecordRef]` parameter — closes #1335.
+
 # ── Media ───────────────────────────────────────────────────────
 
 Media.ExportFile (Text):
