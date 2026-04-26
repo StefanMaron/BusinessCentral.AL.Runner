@@ -2062,7 +2062,8 @@ public class AlRunnerPipeline
             "Guid" => "Guid",
             "Char" => "Char",
             "Byte" => "Byte",
-            "Option" => "Integer",
+            "Option" => "Option",
+            "Enum" => "Option",       // Enum args arrive as NavOption at runtime; Option compiles without package refs
             "Variant" => "Variant",
             "RecordId" => "RecordId",
             "DateFormula" => "DateFormula",
