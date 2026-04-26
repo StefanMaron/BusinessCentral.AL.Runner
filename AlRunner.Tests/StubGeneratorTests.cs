@@ -445,6 +445,66 @@ codeunit 50100 ""My Test""
                 new List<StubGenerator.TypeSymbol> { new("Text", null, false, null) })));
     }
 
+    // --- Issue #1419: Enum/Option parameter types in stubs ---
+
+    [Fact]
+    public void RenderType_Option_EmitsOptionNotInteger()
+    {
+        // Regression for #1419: Option-typed parameters must emit "Option" in AL,
+        // not "Integer". NavOption at runtime is NavOption, not int.
+        var result = StubGenerator.RenderType(new StubGenerator.TypeSymbol("Option", null, false, null));
+        Assert.Equal("Option", result);
+        Assert.NotEqual("Integer", result);
+    }
+
+    [Fact]
+    public void RenderCodeunit_WithOptionParam_EmitsOptionType()
+    {
+        // Regression for #1419: a stub generated from SymbolReference.json with an
+        // Option-typed parameter must emit "Option", not "Integer".
+        var methods = new List<StubGenerator.MethodSymbol>
+        {
+            new("SetDocumentType",
+                new List<StubGenerator.ParameterSymbol>
+                {
+                    new("DocType", new StubGenerator.TypeSymbol("Option", null, false, null), IsVar: false),
+                },
+                ReturnType: null)
+        };
+        var cu = new StubGenerator.CodeunitSymbol(99001, "Test Lib", methods);
+        var stub = StubGenerator.RenderCodeunit(cu, "test.app");
+
+        Assert.Contains("DocType: Option", stub);
+        Assert.DoesNotContain("DocType: Integer", stub);
+    }
+
+    [Fact]
+    public void RenderCodeunit_WithEnumParam_EmitsEnumType()
+    {
+        // Regression for #1419: a stub generated from SymbolReference.json with an
+        // Enum "Sales Document Type"-typed parameter must emit that enum type, not "Variant".
+        var methods = new List<StubGenerator.MethodSymbol>
+        {
+            new("CreateSalesHeader",
+                new List<StubGenerator.ParameterSymbol>
+                {
+                    new("DocumentType",
+                        new StubGenerator.TypeSymbol("Enum", "Sales Document Type", false, null),
+                        IsVar: false),
+                    new("CustomerNo",
+                        new StubGenerator.TypeSymbol("Code[20]", null, false, null),
+                        IsVar: false),
+                },
+                ReturnType: null)
+        };
+        var cu = new StubGenerator.CodeunitSymbol(130509, "Library - Sales", methods);
+        var stub = StubGenerator.RenderCodeunit(cu, "test.app");
+
+        Assert.Contains("DocumentType: Enum \"Sales Document Type\"", stub);
+        Assert.DoesNotContain("DocumentType: Variant", stub);
+        Assert.Contains("CustomerNo: Code[20]", stub);
+    }
+
     // --- Problem 1: EventSubscriber reference detection ---
 
     [Fact]

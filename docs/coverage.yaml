@@ -630,6 +630,20 @@ parameter_list:
   tests:
     - tests/bucket-1/codeunit-runtime/01-pure-function
 
+StubGen.EnumOptionParam:
+  layer: syntax
+  category: auto-stub
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313-stubgen-enum-arg
+    - AlRunner.Tests/AutoStubEnumParamTests.cs
+  notes: >
+    Auto-stub reflection path (RenderSymbolTypeViaReflection in Pipeline.cs and
+    StubGenerator.cs) previously emitted "Integer" for NavTypeKind=Option and "Variant"
+    for NavTypeKind=Enum; both now emit "Option" so callers passing NavOption (enum
+    literals) no longer get NavOption→NavInteger cast errors. Enum uses "Option" because
+    stubs compile without package references (so Enum "X" would fail). Closes #1419.
+
 var_attribute_item:
   layer: syntax
   category: variable
