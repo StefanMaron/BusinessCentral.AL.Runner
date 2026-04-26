@@ -2040,6 +2040,30 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
             }
         }
 
+        // new MockArray<MockInterfaceHandle>(new MockInterfaceHandle.Factory(...), N) -> new MockArray<MockInterfaceHandle>(N, () => new MockInterfaceHandle())
+        // BC emits MockInterfaceHandle.Factory for `array[N] of Interface I` local-var declarations;
+        // MockInterfaceHandle has no nested Factory, so without this rewrite Roslyn fails with CS0426.
+        if (typeText.StartsWith("MockArray<MockInterfaceHandle>") && visited.ArgumentList != null &&
+            visited.ArgumentList.Arguments.Count == 2)
+        {
+            var factoryArg = visited.ArgumentList.Arguments[0].Expression;
+            var sizeArg = visited.ArgumentList.Arguments[1].Expression;
+            if (factoryArg is ObjectCreationExpressionSyntax)
+            {
+                return SyntaxFactory.ObjectCreationExpression(
+                    SyntaxFactory.ParseTypeName("MockArray<MockInterfaceHandle>"))
+                    .WithArgumentList(SyntaxFactory.ArgumentList(
+                        SyntaxFactory.SeparatedList(new[] {
+                            SyntaxFactory.Argument(sizeArg),
+                            SyntaxFactory.Argument(
+                                SyntaxFactory.ParenthesizedLambdaExpression(
+                                    SyntaxFactory.ObjectCreationExpression(
+                                        SyntaxFactory.ParseTypeName("MockInterfaceHandle"))
+                                        .WithArgumentList(SyntaxFactory.ArgumentList())))
+                        })));
+            }
+        }
+
         // Catch any remaining MockVariant.Factory or NavVariant.Factory construction
         if (typeText.Contains("MockVariant") && typeText.Contains("Factory") && visited.ArgumentList != null)
         {
