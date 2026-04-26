@@ -1,5 +1,4 @@
 {
-  "expectedExitCode": 0,
-  "knownGap": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1344",
-  "comment": "Runner does not detect duplicate codeunit names across apps (AL0197/AL0275 not enforced). Should be exit 3 once #1344 is fixed."
+  "expectedExitCode": 3,
+  "comment": "Duplicate codeunit name across apps emits AL0197 — runner must exit 3. Fixed by #1344."
 }

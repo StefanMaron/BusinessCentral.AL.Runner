@@ -6009,6 +6009,7 @@ Report.RunRequestPage (2-arg):
   tests:
     - tests/bucket-2/301-report-static-runrequestpage
 
+
 Report.RunRequestPage (instance 1-arg):
   layer: runtime-api
   category: Report
@@ -12013,3 +12014,20 @@ MockRecordHandle.CoerceToExpectedType.NavOptionToNavText:
     is passed to a reflected method expecting NavText.
   tests:
     - tests/bucket-2/235-navoption-to-navtext
+
+AL0197.NonExtensionTypeDuplicate:
+  layer: syntax
+  category: diagnostic
+  status: covered
+  notes: >
+    When two source directories define a non-extension object (Codeunit, Table,
+    Page, etc.) with the same name, the BC compiler emits AL0197. Previously the
+    runner logged the error but continued and exited 0 — the test would silently
+    pick one definition and run. Fix: after the AL0275/AL0197 suppression passes,
+    any remaining AL0197 errors whose object type is NOT in ExtensionObjectTypes
+    (i.e. genuine non-extension duplicates) are reported to stderr and cause
+    TranspileMulti to return null → pipeline exits with code 3 (AL compile error).
+    Extension-type collisions (PageExtension, TableExtension, etc.) continue to be
+    suppressed as before, because they compile independently in production BC.
+  tests:
+    - tests/excluded/131-genuine-codeunit-collision

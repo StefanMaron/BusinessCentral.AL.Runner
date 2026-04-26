@@ -1473,6 +1473,23 @@ public static class AlTranspiler
                 Log.Info($"  {FormatAlDiagnostic(d, treeToPath)}");
             if (otherErrors.Count > 10)
                 Log.Info($"  ... and {otherErrors.Count - 10} more");
+
+            // AL0197 for a non-extension type (Codeunit, Table, Page, etc.) is a genuine
+            // duplicate-object error — two different apps define the same object.  This is
+            // never valid and the real BC compiler rejects it.  Return null so the pipeline
+            // exits with code 3 (AL compile error).
+            var genuineDuplicates = declErrors
+                .Where(d => d.Id == "AL0197" && !DiagnosticClassifier.IsCrossExtensionDuplicateDeclaration(d.GetMessage()))
+                .ToList();
+            if (genuineDuplicates.Count > 0)
+            {
+                Console.Error.WriteLine($"AL compilation errors — duplicate object declarations ({genuineDuplicates.Count}):");
+                foreach (var d in genuineDuplicates.Take(10))
+                    Console.Error.WriteLine($"  {FormatAlDiagnostic(d, treeToPath)}");
+                if (genuineDuplicates.Count > 10)
+                    Console.Error.WriteLine($"  ... and {genuineDuplicates.Count - 10} more");
+                return null;
+            }
         }
 
         // Store compilation for symbol table queries by auto-stub generation
