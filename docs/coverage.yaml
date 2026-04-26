@@ -5955,10 +5955,19 @@ Report.Run:
   layer: runtime-api
   category: Report
   status: covered
-  notes: "overloads=2 (1-arg, 4-arg); NavReport.Run → MockReportHandle.StaticRun (no-op/handler dispatch). 4-arg adds requestPage, systemPrinter, record Variant (stored via SetTableView if MockRecordHandle)."
+  notes: "overloads=3 (1-arg, 3-arg, 4-arg); NavReport.Run → MockReportHandle.StaticRun (no-op/handler dispatch). 3-arg adds requestPage+systemPrinter (no record); 4-arg adds record Variant (stored via SetTableView if MockRecordHandle). Fixes CS7036 gap — issue #1336."
   tests:
     - tests/bucket-1/90-report-static
     - tests/bucket-1/298-report-run-4arg
+    - tests/bucket-1/300-report-run-3arg
+
+Report.Run (3-arg):
+  layer: runtime-api
+  category: Report
+  status: covered
+  notes: "Report.Run(ReportId, RequestPage, SystemPrinter) — 3-arg overload. BC emits this when no record is passed. Fixes CS7036 'systemPrinter' missing argument — issue #1336."
+  tests:
+    - tests/bucket-1/300-report-run-3arg
 
 Report.RunModal:
   layer: runtime-api
