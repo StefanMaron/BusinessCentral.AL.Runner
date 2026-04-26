@@ -6,6 +6,57 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.26] - 2026-04-26
+
+### Added
+- support app.json feature flags (NoImplicitWith, NoPromotedActionProperties, TranslationFile)
+- Enhance AL diagnostic formatting with source filename support
+
+### Fixed
+- implement XmlAttributeCollection namespace-qualified overloads — closes #1376
+- implement miscellaneous single-method gaps — closes #1382
+- implement HttpContent.WriteFrom(Text/SecretText) and HttpHeaders.GetSecretValues(Text, List) — closes #1381
+- implement ReportInstance/QueryInstance missing methods — closes #1379
+- implement Report.Execute/Run/RunModal Text-name overloads and mark RunRequestPage(Integer,Text) covered — closes #1377
+- implement Xml*.SelectNodes/SelectSingleNode with XmlNamespaceManager — closes #1371
+- implement System missing overloads — closes #1375
+- implement ErrorInfo/Dialog/FilterPageBuilder/TestField missing overloads — closes #1380
+- implement Text/Label/TextConst missing overloads — closes #1378
+- implement Page.Run/RunModal 3-arg overloads — closes #1374
+- implement XmlDocument/Element/DocumentType missing overloads — closes #1372
+- implement Xml*.WriteTo per-format overloads — closes #1370
+- implement Table.FullyQualifiedName + mark Insert/FindSet/FieldError/TransferFields/CopyLinks overloads as covered — closes #1373
+- implement Json.* per-primitive-type overloads — closes #1368
+- implement Table.TestField typed and ErrorInfo overloads — closes #1369
+- add MockObjectList.ALAssign for List of [RecordRef] var params — closes #1335
+- detect duplicate pageextension names within same extension as AL0197 — closes #1345
+- detect duplicate object names across apps as AL0197 — closes #1344
+- add Report instance RunRequestPage 1-arg overload — closes #1333
+- add ALTestFieldNavValueSafe object-arg overload — closes #1324
+- route ALCompiler.NavValueToNavValue<T> through AlCompat for Date/Code/Text/Boolean filter fields — closes #1341
+- add Page<N>.CallGetAutoFormatStringExtensionMethod/EnsureGlobalVariablesInitialized — closes #1332
+- add Report.Run 3-arg overload (no systemPrinter) — closes #1336
+- add ALTransferFields 3-arg overload — closes #1337
+- inject ALRecordId/ALCurrentCompany/ALTestFieldNavValueSafe into Record classes — closes #1330
+- add Page.EnqueueBackgroundTask 5-arg overload — closes #1327
+- add ALViewFromStream 3-arg and 4-arg static overloads — closes #1331
+- add StaticRunRequestPage 2-arg overload — closes #1329
+- add MockVersion.ALCreate 2-arg and 3-arg overloads — closes #1323
+- add MockReportHandle.ALAssign — closes #1328
+- add RecordRef.ReadPermission/SetAutoCalcFields — closes #1326
+- add MockPartFormHandle.Close/GetRecord — closes #1325
+- add string overload to MockVersion.ALCreate — closes #1322
+- add MockHttpClient.Clear() for global Clear(client) syntax — closes #1334
+
+### Documentation
+- clarify CHANGELOG.md is auto-generated from commits, not manually edited (closes #1340)
+
+### Changed
+- architecture: audit and tighten BC diagnostic suppression cases — closes #1365
+- tooling: track AL method coverage at per-overload signature granularity
+- test: add unit tests for AL diagnostic source filename formatting (follow-up to #1321)
+- ci: iterate all excluded test folders instead of hardcoding one fixture
+
 ## [1.0.25] - 2026-04-24
 
 ### Added
