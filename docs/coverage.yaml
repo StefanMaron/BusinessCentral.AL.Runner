@@ -190,7 +190,7 @@ reportextension_declaration:
   notes: >
 
 ReportExtension.GetGlobalVariable (int, NavType):
-  layer: runtime
+  layer: runtime-api
   category: report
   status: covered
   tests:
@@ -202,7 +202,7 @@ ReportExtension.GetGlobalVariable (int, NavType):
     stub returning NavInteger.Default. Issue #1450.
 
 ReportExtension.SetGlobalVariable (int, NavType, object):
-  layer: runtime
+  layer: runtime-api
   category: report
   status: covered
   tests:
@@ -12614,9 +12614,7 @@ CompilationFixup.CS1503.IntegerToText:
   category: compilation-fixup
   status: covered
   tests:
-    - AlRunner.Tests/PipelineTests.cs::CS1503Fix_WrapsIntArg_WithAlCompatFormat
-    - AlRunner.Tests/PipelineTests.cs::CS1503Fix_NegativeInt_ProducesNegativeString
-    - AlRunner.Tests/PipelineTests.cs::CS1503Fix_NoOp_WhenNoIntToStringErrors
+    - tests/bucket-1/codeunit-runtime/313000-int-to-text-format
   notes: >
     BC 26+ allows implicit Integer→Text coercion in AL and emits the integer value
     directly as 'int' where the procedure parameter is 'string' or 'NavText'. This
@@ -12624,4 +12622,7 @@ CompilationFixup.CS1503.IntegerToText:
     CS1503Fixer.Fix() is called as a second-pass retry in RoslynCompiler.CompileFromTrees:
     it detects CS1503 int→string/NavText errors, wraps each offending argument with
     AlRunner.Runtime.AlCompat.Format(value) (invariant integer formatting), and retries.
+    AL tests in 313000-int-to-text-format prove AlCompat.Format produces the correct
+    string for positive, negative, and zero integers — the same operation the fixer injects.
+    C# unit tests in AlRunner.Tests/PipelineTests.cs verify the fixer at the AST level.
     Fixes #1426.
