@@ -117,7 +117,7 @@ codeunit 59000 "Query Logic"
         Q.Close();
     end;
 
-    /// Tries Q.SaveAsCsv — must throw NotSupportedException.
+    /// Tries Q.SaveAsCsv — no-op stub in standalone mode.
     procedure TrySaveAsCsv()
     var
         Q: Query "Item Ledger Query";
@@ -125,7 +125,7 @@ codeunit 59000 "Query Logic"
         Q.SaveAsCsv('output.csv');
     end;
 
-    /// Tries Q.SaveAsXml — must throw NotSupportedException.
+    /// Tries Q.SaveAsXml — no-op stub in standalone mode.
     procedure TrySaveAsXml()
     var
         Q: Query "Item Ledger Query";

@@ -96,6 +96,22 @@ public class MockReportHandle
     /// </summary>
     public void CreateTotals(params object[] fields) { }
 
+    /// <summary>
+    /// BC emits <c>rep.CreateTotals(decimal1, decimal2)</c> for
+    /// <c>ReportInstance.CreateTotals(Field1, Field2)</c> when both fields are Decimal.
+    /// No-op in standalone mode — the totals engine is a BC service-tier concept.
+    /// </summary>
+    public void CreateTotals(decimal field1, decimal field2) { }
+
+    // ── ShowOutput ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// BC emits <c>rep.ALShowOutput(value)</c> for <c>CurrReport.ShowOutput(value)</c>.
+    /// Controls whether the current line is included in output. No-op in standalone mode
+    /// (no rendering engine exists; all lines are always "included").
+    /// </summary>
+    public void ALShowOutput(bool value) { }
+
     public MockReportHandle() { }
 
     public MockReportHandle(int reportId)

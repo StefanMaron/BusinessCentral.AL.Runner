@@ -108,23 +108,21 @@ codeunit 59001 "Query Tests"
     end;
 
     [Test]
-    procedure QuerySaveAsCsvThrowsNotSupported()
+    procedure QuerySaveAsCsvIsNoOp()
     begin
         // [GIVEN] A declared Query variable
-        // [WHEN]  We call Q.SaveAsCsv()
-        // [THEN]  A clear 'Query' error is raised
-        asserterror Logic.TrySaveAsCsv();
-        Assert.ExpectedError('Query');
+        // [WHEN]  We call Q.SaveAsCsv(FilePath)
+        // [THEN]  No error is raised — SaveAsCsv is a no-op stub in standalone mode
+        Logic.TrySaveAsCsv();
     end;
 
     [Test]
-    procedure QuerySaveAsXmlThrowsNotSupported()
+    procedure QuerySaveAsXmlIsNoOp()
     begin
         // [GIVEN] A declared Query variable
-        // [WHEN]  We call Q.SaveAsXml()
-        // [THEN]  A clear 'Query' error is raised
-        asserterror Logic.TrySaveAsXml();
-        Assert.ExpectedError('Query');
+        // [WHEN]  We call Q.SaveAsXml(FilePath)
+        // [THEN]  No error is raised — SaveAsXml is a no-op stub in standalone mode
+        Logic.TrySaveAsXml();
     end;
 
     [Test]

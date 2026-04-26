@@ -5819,12 +5819,15 @@ QueryInstance.SaveAsCsv (OutStream, Integer, Text):
   status: covered
   tests:
     - tests/bucket-2/90-query-object
-  notes: MockQueryHandle.ALSaveAsCsv throws NotSupportedException.
+  notes: MockQueryHandle.ALSaveAsCsv(DataError, OutStream, int, string) — static overload, throws NotSupportedException (OutStream path not used by test).
 
 QueryInstance.SaveAsCsv (Text, Integer, Text):
   layer: runtime-api
   category: QueryInstance
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/90-query-object
+  notes: MockQueryHandle.ALSaveAsCsv(DataError, string, int, string) — no-op stub returning true in standalone mode.
 
 QueryInstance.SaveAsJson (OutStream):
   layer: runtime-api
@@ -5840,12 +5843,15 @@ QueryInstance.SaveAsXml (OutStream):
   status: covered
   tests:
     - tests/bucket-2/90-query-object
-  notes: MockQueryHandle.ALSaveAsXml throws NotSupportedException.
+  notes: MockQueryHandle.ALSaveAsXml(DataError, OutStream) — throws NotSupportedException (OutStream path).
 
 QueryInstance.SaveAsXml (Text):
   layer: runtime-api
   category: QueryInstance
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/90-query-object
+  notes: MockQueryHandle.ALSaveAsXml(DataError, string) — no-op stub returning true in standalone mode.
 
 QueryInstance.SecurityFiltering (SecurityFilter):
   layer: runtime-api
@@ -6538,7 +6544,10 @@ ReportInstance.CreateTotals (Array):
 ReportInstance.CreateTotals (Decimal, Decimal):
   layer: runtime-api
   category: ReportInstance
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/310100-report-showoutput-createtotals
+  notes: MockReportHandle.CreateTotals(decimal, decimal) — no-op stub in standalone mode.
 
 ReportInstance.DefaultLayout ():
   layer: runtime-api
@@ -6714,7 +6723,10 @@ ReportInstance.ShowOutput ():
 ReportInstance.ShowOutput (Boolean):
   layer: runtime-api
   category: ReportInstance
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/310100-report-showoutput-createtotals
+  notes: MockReportHandle.ALShowOutput(bool) — no-op stub in standalone mode (no rendering engine).
 
 ReportInstance.Skip ():
   layer: runtime-api
