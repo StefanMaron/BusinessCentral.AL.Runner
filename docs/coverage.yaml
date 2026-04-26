@@ -6442,6 +6442,9 @@ RecordRef.WritePermission ():
   layer: runtime-api
   category: RecordRef
   status: covered
+  tests:
+    - tests/bucket-1/record-table/311-recref-writepermission
+  notes: MockRecordRef.ALWritePermission always returns true in standalone (no permission system)
 
 # ── Report ──────────────────────────────────────────────────────
 

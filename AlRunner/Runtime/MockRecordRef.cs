@@ -701,6 +701,15 @@ public class MockRecordRef
     /// </summary>
     public bool ALReadPermission => true;
 
+    // -- WritePermission — always true in standalone (no permission enforcement) --
+
+    /// <summary>
+    /// ALWritePermission — returns whether the current user has write permission on the table.
+    /// Standalone mode has no permission enforcement; always returns <c>true</c>.
+    /// BC compiler emits <c>recRef.ALWritePermission</c>.
+    /// </summary>
+    public bool ALWritePermission => true;
+
     // -- SetAutoCalcFields — no-op in standalone (CalcFields computed on demand) --
 
     /// <summary>
