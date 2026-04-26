@@ -5430,22 +5430,34 @@ Page.Run ():
 Page.Run (Integer, Table, Integer):
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/100-page-run-3arg
+  notes: 3rd argument (position/focus field) accepted and ignored — no real UI in standalone mode.
 
 Page.Run (Integer, Table, Joker):
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/100-page-run-3arg
+  notes: 3rd argument (position/focus field as Joker) accepted and ignored — no real UI in standalone mode.
 
 Page.Run (Text, Table, Integer):
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/100-page-run-3arg
+  notes: Text page-ID form. 3rd argument (position/focus field) accepted and ignored — no real UI in standalone mode.
 
 Page.Run (Text, Table, Joker):
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/100-page-run-3arg
+  notes: Text page-ID form. 3rd argument (position/focus field as Joker) accepted and ignored — no real UI in standalone mode.
 
 Page.RunModal ():
   layer: runtime-api
@@ -5460,32 +5472,50 @@ Page.RunModal ():
 Page.RunModal (Integer, Table, FieldRef):
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/100-page-run-3arg
+  notes: 3rd argument (position as FieldRef) accepted and ignored — no real UI in standalone mode. Returns default(FormResult) = Action::None.
 
 Page.RunModal (Integer, Table, Integer):
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/100-page-run-3arg
+  notes: 3rd argument (position as integer field number) accepted and ignored — no real UI in standalone mode. Returns default(FormResult) = Action::None.
 
 Page.RunModal (Integer, Table, Joker):
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/100-page-run-3arg
+  notes: 3rd argument (position as Joker) accepted and ignored — no real UI in standalone mode. Returns default(FormResult) = Action::None.
 
 Page.RunModal (Text, Table, FieldRef):
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/100-page-run-3arg
+  notes: Text page-ID form. 3rd argument (position as FieldRef) accepted and ignored — no real UI in standalone mode. Returns default(FormResult) = Action::None.
 
 Page.RunModal (Text, Table, Integer):
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/100-page-run-3arg
+  notes: Text page-ID form. 3rd argument (position as integer field number) accepted and ignored — no real UI in standalone mode. Returns default(FormResult) = Action::None.
 
 Page.RunModal (Text, Table, Joker):
   layer: runtime-api
   category: Page
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/100-page-run-3arg
+  notes: Text page-ID form. 3rd argument (position as Joker) accepted and ignored — no real UI in standalone mode. Returns default(FormResult) = Action::None.
 
 Page.SaveRecord ():
   layer: runtime-api
