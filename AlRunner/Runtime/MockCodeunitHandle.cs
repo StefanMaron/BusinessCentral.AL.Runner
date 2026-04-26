@@ -223,6 +223,10 @@ public class MockCodeunitHandle
         if (_codeunitId is 131100)
             return InvokeRunnerConfig(memberId, args);
 
+        // Route codeunit 3971 (Image) to MockImage — provides real header-based width/height
+        if (_codeunitId is 3971)
+            return InvokeImage(memberId, args);
+
         // Track codeunit access for timeout diagnostics
         try { AccessedAutoStubs?.Add(_codeunitId); } catch { }
 
@@ -1144,4 +1148,92 @@ public class MockCodeunitHandle
         try { return Convert.ChangeType(arg, targetType); }
         catch { return arg; }
     }
+
+    // ── InvokeImage ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Routes Codeunit "Image" (3971) method calls to MockImage.
+    /// MockImage stores parsed image dimensions from PNG/JPEG/GIF/BMP headers.
+    /// The MockImage instance is kept in <c>_codeunitInstance</c> so that state
+    /// (width, height, bytes) persists across multiple calls on the same AL variable.
+    /// </summary>
+    private object? InvokeImage(int memberId, object[] args)
+    {
+        // Lazily create or reuse the MockImage instance for this handle.
+        if (_codeunitInstance is not MockImage img)
+        {
+            img = new MockImage();
+            _codeunitInstance = img;
+        }
+
+        var methodName = FindMethodName(memberId, "Codeunit3971");
+        if (methodName == null) return null;
+
+        switch (methodName.ToLowerInvariant())
+        {
+            case "frombase64":
+            {
+                var base64 = args.Length >= 1 ? (args[0]?.ToString() ?? string.Empty) : string.Empty;
+                img.FromBase64(base64);
+                return null;
+            }
+            case "fromstream":
+            {
+                var stream = args.Length >= 1 ? args[0] as MockInStream : null;
+                if (stream == null) return null;
+                img.FromStream(stream);
+                return null;
+            }
+            case "getwidth":
+                return img.GetWidth();
+
+            case "getheight":
+                return img.GetHeight();
+
+            case "resize":
+            {
+                int w = args.Length >= 1 ? ToInt(args[0]) : 0;
+                int h = args.Length >= 2 ? ToInt(args[1]) : 0;
+                img.Resize(w, h);
+                return null;
+            }
+            case "save":
+            {
+                var outStream = args.Length >= 1 ? args[0] as MockOutStream : null;
+                if (outStream != null) img.Save(outStream);
+                return null;
+            }
+            case "tobase64":
+                return new NavText(img.ToBase64());
+
+            case "getformatastext":
+                return new NavText(img.GetFormatAsText());
+
+            case "clear":
+            {
+                // Clear(R,G,B) or Clear(A,R,G,B) — resets the image to a solid-colour state.
+                // The dimensions are unchanged; we only clear stored bytes.
+                // BC semantics: creates a new image filled with the given colour.
+                // In standalone mode we simply treat this as a no-op.
+                return null;
+            }
+            case "crop":
+            {
+                // Crop(X, Y, Width, Height) — crop the image.
+                // Update dimensions if Width/Height args are provided.
+                if (args.Length >= 4)
+                    img.Resize(ToInt(args[2]), ToInt(args[3]));
+                return null;
+            }
+            case "rotateflip":
+            case "setformat":
+            case "getformat":
+            case "getrotatefliptype":
+                return null;
+
+            default:
+                return null;
+        }
+    }
+
 }
