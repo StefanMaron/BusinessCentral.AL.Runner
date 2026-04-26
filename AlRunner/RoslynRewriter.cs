@@ -928,6 +928,10 @@ protected void EnsureGlobalVariablesInitialized() {{ }}
 // Issue #1440.
 private System.Collections.Generic.Dictionary<int, MockPagePartHandle>? _partHandles;
 public MockPagePartHandle GetPart(int partHash) {{ _partHandles ??= new(); if (!_partHandles.TryGetValue(partHash, out var handle)) {{ handle = new MockPagePartHandle(partHash); _partHandles[partHash] = handle; }} return handle; }}
+// Run() — no-op stub for CurrPage.Run() called inside a page trigger.
+// BC lowers CurrPage.Run() to this.Run() on the Page<N> class (issue #1444).
+// In headless mode there is no UI to refresh; this is intentionally a no-op.
+public void Run() {{ }}
 // RunModal() — dispatches to ModalPageHandler if registered, otherwise no-op.
 // BC generates CurrPage.RunModal() as a call on the Page<N> class directly (issue #1079).
 public FormResult RunModal() {{ return HandlerRegistry.InvokeModalPageHandler({pageIdStr}); }}
