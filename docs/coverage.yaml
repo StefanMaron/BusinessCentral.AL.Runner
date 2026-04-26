@@ -9681,6 +9681,13 @@ Version.Create (1-arg text):
   tests: tests/bucket-1/96-version-create-text
   notes: overloads=1; parses dotted version string e.g. '25.1.30000.12345' into major/minor/build/revision
 
+Version.Create (1-arg string literal):
+  layer: runtime-api
+  category: Version
+  status: covered
+  tests: tests/bucket-2/306-version-create-string
+  notes: overloads=1; ALCreate(string) overload added in #1322 to fix CS1503 when BC emits a C# string (not NavText) for string-literal arguments like Version.Create('25.0.0.0') in inline expressions
+
 Version.Major:
   layer: runtime-api
   category: Version

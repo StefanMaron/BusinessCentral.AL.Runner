@@ -45,9 +45,17 @@ public struct MockVersion
     /// major/minor/build/revision components.
     /// </summary>
     public static MockVersion ALCreate(NavText versionText)
+        => ALCreate(versionText.ToString());
+
+    /// <summary>
+    /// Overload accepting a plain <c>string</c>. BC string literals (e.g.
+    /// <c>Version.Create('25.0.0.0')</c>) are emitted as C# <c>string</c> by the
+    /// BC compiler when they appear inline rather than via a <c>Text</c> variable.
+    /// Without this overload, Roslyn raises CS1503: 'string' → 'NavText'.
+    /// </summary>
+    public static MockVersion ALCreate(string versionText)
     {
-        var text = versionText.ToString();
-        var parts = text.Split('.');
+        var parts = (versionText ?? string.Empty).Split('.');
         var result = new MockVersion();
         if (parts.Length > 0 && int.TryParse(parts[0], out var maj)) result._major    = maj;
         if (parts.Length > 1 && int.TryParse(parts[1], out var min)) result._minor    = min;
