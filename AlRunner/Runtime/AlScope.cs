@@ -3121,6 +3121,86 @@ public static class AlCompat
         return false;
     }
 
+    // -----------------------------------------------------------------------
+    // ALEvaluate(ByRef<T>, text) — Evaluate via ALSystemVariable (newer BC)
+    // -----------------------------------------------------------------------
+    // BC (newer versions) lowers AL Evaluate(var Var; Text) to:
+    //   ALSystemVariable.ALEvaluate<T>(DataError, ByRef<T>, text[, radix])
+    // The generic constraint 'where T : class' fails after NavVersion → MockVersion
+    // rewrite (CS0452) because MockVersion is a struct. All common scalar AL types
+    // (int, bool, Decimal18, NavText, long) also flow through this path.
+    //
+    // The rewriter redirects ALSystemVariable.ALEvaluate(dataError, byRef, text[, radix])
+    // → AlCompat.ALEvaluate(byRef, text).  Type-specific overloads handle each type
+    // without a class constraint.
+    // -----------------------------------------------------------------------
+
+    // Explicit fast-path overloads for the most common value-type scalars.
+    // These avoid boxing that would occur in the generic fallback.
+    public static bool ALEvaluate(ByRef<int> result, NavText text) => ALEvaluate(result, text.ToString());
+    public static bool ALEvaluate(ByRef<int> result, string text)
+    { var v = result.Value; var ok = Evaluate(ref v, text); result.Value = v; return ok; }
+
+    public static bool ALEvaluate(ByRef<bool> result, NavText text) => ALEvaluate(result, text.ToString());
+    public static bool ALEvaluate(ByRef<bool> result, string text)
+    { var v = result.Value; var ok = Evaluate(ref v, text); result.Value = v; return ok; }
+
+    public static bool ALEvaluate(ByRef<Decimal18> result, NavText text) => ALEvaluate(result, text.ToString());
+    public static bool ALEvaluate(ByRef<Decimal18> result, string text)
+    { var v = result.Value; var ok = Evaluate(ref v, text); result.Value = v; return ok; }
+
+    public static bool ALEvaluate(ByRef<NavText> result, NavText text) => ALEvaluate(result, text.ToString());
+    public static bool ALEvaluate(ByRef<NavText> result, string text)
+    { var v = result.Value; var ok = Evaluate(ref v, text); result.Value = v; return ok; }
+
+    public static bool ALEvaluate(ByRef<long> result, NavText text) => ALEvaluate(result, text.ToString());
+    public static bool ALEvaluate(ByRef<long> result, string text)
+    { var v = result.Value; var ok = Evaluate(ref v, text); result.Value = v; return ok; }
+
+    public static bool ALEvaluate(ByRef<System.Guid> result, NavText text) => ALEvaluate(result, text.ToString());
+    public static bool ALEvaluate(ByRef<System.Guid> result, string text)
+    {
+        if (System.Guid.TryParse(text.Trim(), out var g)) { result.Value = g; return true; }
+        return false;
+    }
+
+    /// <summary>
+    /// MockVersion Evaluate overload: parses a dotted version string (e.g. "25.1.30000.12345")
+    /// into a <see cref="MockVersion"/> stored in the provided <see cref="ByRef{T}"/>.
+    /// </summary>
+    public static bool ALEvaluate(ByRef<MockVersion> result, NavText text)
+        => ALEvaluate(result, text.ToString());
+
+    public static bool ALEvaluate(ByRef<MockVersion> result, string text)
+    {
+        var s = (text ?? string.Empty).Trim();
+        var parts = s.Split('.');
+        if (parts.Length < 2) return false;
+        if (!int.TryParse(parts[0], out var major)) return false;
+        if (!int.TryParse(parts[1], out var minor)) return false;
+        var build    = 0;
+        var revision = 0;
+        if (parts.Length > 2 && !int.TryParse(parts[2], out build))    return false;
+        if (parts.Length > 3 && !int.TryParse(parts[3], out revision)) return false;
+        result.Value = MockVersion.ALCreate((object?)major, (object?)minor, (object?)build, (object?)revision);
+        return true;
+    }
+
+    /// <summary>
+    /// Generic fallback for <c>ALSystemVariable.ALEvaluate&lt;T&gt;</c> — handles all reference-type
+    /// AL variables (NavDate, NavDateFormula, Guid, etc.) that satisfy the <c>where T : class</c>
+    /// constraint on the BC runtime method.
+    /// C# overload resolution picks the explicit overloads above (int, bool, Decimal18, NavText,
+    /// long, MockVersion) before this generic, so this only runs for the remaining class types.
+    /// For those, we delegate back to <c>ALSystemVariable.ALEvaluate&lt;T&gt;</c> directly —
+    /// the constraint is satisfied because T is a class.
+    /// </summary>
+    public static bool ALEvaluate<T>(ByRef<T> result, NavText text) where T : class
+        => ALEvaluate(result, text.ToString());
+
+    public static bool ALEvaluate<T>(ByRef<T> result, string text) where T : class
+        => ALSystemVariable.ALEvaluate<T>(DataError.TrapError, result, new NavText(text));
+
     // XmlDocument node-manipulation stubs.
     // NavXmlDocument.ALRemove/ALAddAfterSelf/ALAddBeforeSelf/ALReplaceWith reach
     // into NavEnvironment (BC service-tier logging) which is unavailable standalone

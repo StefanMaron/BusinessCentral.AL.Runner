@@ -7420,7 +7420,21 @@ System.Evaluate (Joker, Text, Integer):
   status: covered
   tests:
     - tests/bucket-2/data-formats/140-evaluate
-  notes: supports Integer, Boolean, Decimal, Text, BigInteger, Date
+  notes: supports Integer, Boolean, Decimal, Text, BigInteger, Date; BC NavFormatEvaluateHelper.Evaluate path
+
+System.Evaluate (Version, Text) [ALSystemVariable.ALEvaluate path]:
+  layer: runtime-api
+  category: System
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/97-version-evaluate
+  notes: >
+    Newer BC versions lower Evaluate(var V: Version; T: Text) to ALSystemVariable.ALEvaluate<NavVersion>
+    which has 'where T : class'. After NavVersion → MockVersion rewrite (MockVersion is a struct) this
+    fails CS0452. Fix: rewriter redirects ALSystemVariable.ALEvaluate(...) to AlCompat.ALEvaluate(ByRef<T>, text);
+    AlCompat provides explicit overloads for MockVersion (and struct types int/bool/Decimal18/long/Guid)
+    plus a class-constrained generic fallback that delegates back to ALSystemVariable for reference types.
+    Closes #1429.
 
 System.ExportEncryptionKey (Text):
   layer: runtime-api

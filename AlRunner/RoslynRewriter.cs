@@ -4172,6 +4172,34 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
                 }
             }
 
+            // ALSystemVariable.ALEvaluate<T>(DataError, ByRef<T>, text[, radix])
+            // -> AlCompat.ALEvaluate(ByRef<T>, text)
+            // Newer BC versions lower AL Evaluate(var Var; Text) to a generic call on
+            // ALSystemVariable.ALEvaluate<T> which has 'where T : class'. After type rewriting
+            // NavVersion → MockVersion the constraint fails (CS0452) because MockVersion is a
+            // struct. We redirect ALL ALEvaluate calls to AlCompat.ALEvaluate which is an
+            // unconstrained generic that dispatches by type — no class constraint.
+            // Strip arg[0] (DataError) and arg[3] (optional radix); keep arg[1] (ByRef<T>)
+            // and arg[2] (text).
+            if (exprText == "ALSystemVariable" && methodName == "ALEvaluate")
+            {
+                var args = visited.ArgumentList.Arguments;
+                // Signature: (DataError, ByRef<T>, text[, radix]) — 3 or 4 args
+                if (args.Count >= 3)
+                {
+                    var keptArgs = new SeparatedSyntaxList<ArgumentSyntax>();
+                    // arg[1] = ByRef<T>, arg[2] = text  (drop DataError + optional radix)
+                    keptArgs = keptArgs.Add(args[1]);
+                    keptArgs = keptArgs.Add(args[2]);
+                    return SyntaxFactory.InvocationExpression(
+                        SyntaxFactory.MemberAccessExpression(
+                            SyntaxKind.SimpleMemberAccessExpression,
+                            SyntaxFactory.IdentifierName("AlCompat"),
+                            SyntaxFactory.IdentifierName("ALEvaluate")),
+                        SyntaxFactory.ArgumentList(keptArgs));
+                }
+            }
+
             // ALSystemVariable.ALCopyStream(dataError, outStream, inStream)
             // -> MockStream.ALCopyStream(dataError, outStream, inStream)
             // BC emits COPYSTREAM as a call to ALSystemVariable.ALCopyStream which takes
