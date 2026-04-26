@@ -10749,7 +10749,10 @@ XmlDocument.Create ():
 XmlDocument.Create (Joker):
   layer: runtime-api
   category: XmlDocument
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309500-xml-overloads
+  notes: BC native NavXmlDocument.ALCreate(Joker) works standalone; tested with XmlElement node arg
 
 XmlDocument.GetChildElements ():
   layer: runtime-api
@@ -10762,12 +10765,18 @@ XmlDocument.GetChildElements ():
 XmlDocument.GetChildElements (Text, Text):
   layer: runtime-api
   category: XmlDocument
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309500-xml-overloads
+  notes: BC native works standalone; filters by local name and namespace URI
 
 XmlDocument.GetChildElements (Text):
   layer: runtime-api
   category: XmlDocument
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309500-xml-overloads
+  notes: BC native works standalone; filters by element name; returns 0 for no match
 
 XmlDocument.GetChildNodes ():
   layer: runtime-api
@@ -10797,12 +10806,18 @@ XmlDocument.GetDescendantElements ():
 XmlDocument.GetDescendantElements (Text, Text):
   layer: runtime-api
   category: XmlDocument
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309500-xml-overloads
+  notes: BC native works standalone; filters descendants by local name and namespace URI
 
 XmlDocument.GetDescendantElements (Text):
   layer: runtime-api
   category: XmlDocument
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309500-xml-overloads
+  notes: BC native works standalone; filters descendants by element name
 
 XmlDocument.GetDescendantNodes ():
   layer: runtime-api
@@ -10864,17 +10879,26 @@ XmlDocument.ReadFrom (InStream, XmlDocument):
 XmlDocument.ReadFrom (InStream, XmlReadOptions, XmlDocument):
   layer: runtime-api
   category: XmlDocument
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/195-xmldocument
+  notes: AlCompat.XmlDocumentReadFrom handles 4-arg form (stream + XmlReadOptions); rewriter redirects NavXmlDocument.ALReadFrom
 
 XmlDocument.ReadFrom (Text, XmlDocument):
   layer: runtime-api
   category: XmlDocument
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309500-xml-overloads
+  notes: AlCompat.XmlDocumentReadFrom handles Text form (static call); parses XML string and sets document
 
 XmlDocument.ReadFrom (Text, XmlReadOptions, XmlDocument):
   layer: runtime-api
   category: XmlDocument
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309500-xml-overloads
+  notes: AlCompat.XmlDocumentReadFrom handles 4-arg Text+XmlReadOptions form; default options parse correctly
 
 XmlDocument.Remove ():
   layer: runtime-api
@@ -10997,17 +11021,26 @@ XmlDocumentType.AsXmlNode ():
 XmlDocumentType.Create (Text, Text, Text, Text):
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309500-xml-overloads
+  notes: BC native NavXmlDocumentType.ALCreate(4) works standalone; name, publicId, systemId and internalSubset all round-trip
 
 XmlDocumentType.Create (Text, Text, Text):
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309500-xml-overloads
+  notes: BC native NavXmlDocumentType.ALCreate(3) works standalone; name, publicId, systemId all round-trip
 
 XmlDocumentType.Create (Text, Text):
   layer: runtime-api
   category: XmlDocumentType
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309500-xml-overloads
+  notes: BC native NavXmlDocumentType.ALCreate(2) works standalone; name and publicId set; can be added to XmlDocument
 
 XmlDocumentType.Create (Text):
   layer: runtime-api
@@ -11188,17 +11221,26 @@ XmlElement.Attributes ():
 XmlElement.Create (Text, Joker):
   layer: runtime-api
   category: XmlElement
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309500-xml-overloads
+  notes: BC native NavXmlElement.ALCreate(name, Joker) works standalone; child node included
 
 XmlElement.Create (Text, Text, Joker):
   layer: runtime-api
   category: XmlElement
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309500-xml-overloads
+  notes: BC native NavXmlElement.ALCreate(name, ns, Joker) works standalone; namespace and child node both set
 
 XmlElement.Create (Text, Text):
   layer: runtime-api
   category: XmlElement
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309500-xml-overloads
+  notes: BC native NavXmlElement.ALCreate(name, ns) works standalone; NamespaceUri and LocalName both correct
 
 XmlElement.Create (Text):
   layer: runtime-api
@@ -11215,12 +11257,18 @@ XmlElement.GetChildElements ():
 XmlElement.GetChildElements (Text, Text):
   layer: runtime-api
   category: XmlElement
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309500-xml-overloads
+  notes: BC native works standalone; filters direct children by local name and namespace URI
 
 XmlElement.GetChildElements (Text):
   layer: runtime-api
   category: XmlElement
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309500-xml-overloads
+  notes: BC native works standalone; filters direct children by element name; multiple matches returned
 
 XmlElement.GetChildNodes ():
   layer: runtime-api
@@ -11237,12 +11285,18 @@ XmlElement.GetDescendantElements ():
 XmlElement.GetDescendantElements (Text, Text):
   layer: runtime-api
   category: XmlElement
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309500-xml-overloads
+  notes: BC native works standalone; filters descendants by local name and namespace URI
 
 XmlElement.GetDescendantElements (Text):
   layer: runtime-api
   category: XmlElement
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309500-xml-overloads
+  notes: BC native works standalone; filters all descendants by element name
 
 XmlElement.GetDescendantNodes ():
   layer: runtime-api
@@ -11341,7 +11395,10 @@ XmlElement.RemoveAllAttributes ():
 XmlElement.RemoveAttribute (Text, Text):
   layer: runtime-api
   category: XmlElement
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309500-xml-overloads
+  notes: BC native works standalone; removes attribute by local name and namespace; wrong namespace leaves attribute intact
 
 XmlElement.RemoveAttribute (Text):
   layer: runtime-api
@@ -11352,7 +11409,10 @@ XmlElement.RemoveAttribute (Text):
 XmlElement.RemoveAttribute (XmlAttribute):
   layer: runtime-api
   category: XmlElement
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309500-xml-overloads
+  notes: BC native works standalone; removes by XmlAttribute object reference; HasAttributes becomes false when last attribute removed
 
 XmlElement.RemoveNodes ():
   layer: runtime-api
@@ -11399,7 +11459,10 @@ XmlElement.SelectSingleNode (Text, XmlNode):
 XmlElement.SetAttribute (Text, Text, Text):
   layer: runtime-api
   category: XmlElement
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309500-xml-overloads
+  notes: BC native works standalone; sets namespace-qualified attribute; HasAttributes becomes true; round-trips with RemoveAttribute(name, ns)
 
 XmlElement.SetAttribute (Text, Text):
   layer: runtime-api
