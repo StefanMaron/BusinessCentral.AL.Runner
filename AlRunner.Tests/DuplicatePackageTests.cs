@@ -19,119 +19,7 @@ public class DuplicatePackageTests
     private static string TestPath(string testCase, string sub) =>
         Path.Combine(CliRunner.FindTestCase(testCase), sub);
 
-    // The alc binary path — configurable via env var, falls back to the VS Code extension location.
-    private static readonly string? AlcPath = FindAlcPath();
-
-    private static string? FindAlcPath()
-    {
-        var vscodePath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".vscode", "extensions");
-
-        return ResolveAlcPath(
-            Environment.GetEnvironmentVariable("AL_COMPILER_PATH"),
-            vscodePath,
-            CurrentOsPlatform());
-    }
-
-    private static string CurrentOsPlatform()
-    {
-        if (OperatingSystem.IsWindows()) return "Windows";
-        if (OperatingSystem.IsMacOS()) return "OSX";
-        return "Linux";
-    }
-
-    private static string? ResolveAlcPath(string? alCompilerPath, string vscodeExtensionsPath, string osPlatform)
-    {
-        if (alCompilerPath != null && File.Exists(alCompilerPath)) return alCompilerPath;
-        if (!Directory.Exists(vscodeExtensionsPath)) return null;
-
-        var (platformDir, fileName) = osPlatform switch
-        {
-            "Windows" => ("win32", "alc.exe"),
-            "Linux" or "OSX" => ("linux", "alc"),
-            _ => ("", "")
-        };
-        if (platformDir == "") return null;
-
-        foreach (var extDir in Directory.GetDirectories(vscodeExtensionsPath, "ms-dynamics-smb.al-*"))
-        {
-            var candidate = Path.Combine(extDir, "bin", platformDir, fileName);
-            if (File.Exists(candidate)) return candidate;
-        }
-        return null;
-    }
-
-    // --- AL compiler path resolution ---
-
-    [Fact]
-    public void ResolveAlcPath_Windows_UsesWin32Compiler()
-    {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-alcpath-" + Guid.NewGuid().ToString("N")[..8]);
-        try
-        {
-            var extensionsDir = Path.Combine(dir, "extensions");
-            var expected = CreateFakeAlc(extensionsDir, "ms-dynamics-smb.al-18.0.0", "win32", "alc.exe");
-
-            var actual = ResolveAlcPath(null, extensionsDir, "Windows");
-
-            Assert.Equal(expected, actual);
-        }
-        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
-    }
-
-    [Fact]
-    public void ResolveAlcPath_Windows_IgnoresLinuxCompiler()
-    {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-alcpath-" + Guid.NewGuid().ToString("N")[..8]);
-        try
-        {
-            var extensionsDir = Path.Combine(dir, "extensions");
-            CreateFakeAlc(extensionsDir, "ms-dynamics-smb.al-18.0.0", "linux", "alc");
-
-            var actual = ResolveAlcPath(null, extensionsDir, "Windows");
-
-            Assert.Null(actual);
-        }
-        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
-    }
-
-    [Fact]
-    public void ResolveAlcPath_ExistingEnvPathWins()
-    {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-alcpath-" + Guid.NewGuid().ToString("N")[..8]);
-        try
-        {
-            Directory.CreateDirectory(dir);
-            var envPath = Path.Combine(dir, "custom-alc.exe");
-            File.WriteAllText(envPath, "");
-            var extensionsDir = Path.Combine(dir, "extensions");
-            CreateFakeAlc(extensionsDir, "ms-dynamics-smb.al-18.0.0", "win32", "alc.exe");
-
-            var actual = ResolveAlcPath(envPath, extensionsDir, "Windows");
-
-            Assert.Equal(envPath, actual);
-        }
-        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
-    }
-
-    [Theory]
-    [InlineData("Linux")]
-    [InlineData("OSX")]
-    public void ResolveAlcPath_Unix_UsesLinuxCompiler(string osPlatform)
-    {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-alcpath-" + Guid.NewGuid().ToString("N")[..8]);
-        try
-        {
-            var extensionsDir = Path.Combine(dir, "extensions");
-            var expected = CreateFakeAlc(extensionsDir, "ms-dynamics-smb.al-18.0.0", "linux", "alc");
-
-            var actual = ResolveAlcPath(null, extensionsDir, osPlatform);
-
-            Assert.Equal(expected, actual);
-        }
-        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
-    }
+    private static readonly string? AlcPath = AlcPathResolver.Default;
 
     // --- Proactive deduplication: same publisher/name/version, different GUIDs ---
 
@@ -509,14 +397,6 @@ codeunit 50300 ""Dup Test Tests""
         zipBytes.CopyTo(output, 8);
 
         File.WriteAllBytes(Path.Combine(directory, fileName), output);
-    }
-
-    private static string CreateFakeAlc(string extensionsDir, string extensionName, string platformDir, string fileName)
-    {
-        var alcPath = Path.Combine(extensionsDir, extensionName, "bin", platformDir, fileName);
-        Directory.CreateDirectory(Path.GetDirectoryName(alcPath)!);
-        File.WriteAllText(alcPath, "");
-        return alcPath;
     }
 
     private static void WriteAppJson(string dir, string name, string publisher, string version, Guid id)

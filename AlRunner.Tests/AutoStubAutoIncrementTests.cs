@@ -14,29 +14,7 @@ namespace AlRunner.Tests;
 [Collection("Pipeline")]
 public class AutoStubAutoIncrementTests
 {
-    private static readonly string? AlcPath = FindAlcPath();
-
-    private static string? FindAlcPath()
-    {
-        var envPath = Environment.GetEnvironmentVariable("AL_COMPILER_PATH");
-        if (envPath != null && File.Exists(envPath)) return envPath;
-
-        var vscodePath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".vscode", "extensions");
-        if (!Directory.Exists(vscodePath)) return null;
-
-        var (platformDir, fileName) = OperatingSystem.IsWindows()
-            ? ("win32", "alc.exe")
-            : ("linux", "alc");
-
-        foreach (var extDir in Directory.GetDirectories(vscodePath, "ms-dynamics-smb.al-*"))
-        {
-            var candidate = Path.Combine(extDir, "bin", platformDir, fileName);
-            if (File.Exists(candidate)) return candidate;
-        }
-        return null;
-    }
+    private static readonly string? AlcPath = AlcPathResolver.Default;
 
     [Fact]
     public async Task AutoStub_PreservesAutoIncrement_TwoInsertsGetDistinctIds()
