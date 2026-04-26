@@ -16,6 +16,7 @@ namespace AlRunner.Tests;
 ///
 /// Issue: #1324
 /// </summary>
+[Collection("Pipeline")]
 public class TestFieldNavValueObjectOverloadTests
 {
     private MockRecordHandle CreateHandle()
