@@ -5722,7 +5722,7 @@ Page.Rec (page-as-component public procedures):
   category: Page
   status: covered
   tests:
-    - tests/bucket-2/page-report/313000-page-rec-backing
+    - tests/bucket-2/page-report/313200-page-rec-backing
   notes: >
     When a Page variable is declared ("var P: Page X") and a public procedure is called
     on it that internally accesses Rec (the page's SourceTable record context), the
