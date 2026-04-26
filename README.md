@@ -162,7 +162,7 @@ AL Runner targets **broad AL language compatibility**. The goal is that any AL c
 
 **Cross-codeunit dispatch**: Method calls between codeunits, interface dispatch, event subscribers (both manual and integration events with `--init-events`). With `--init-events`, BC lifecycle events (OnCompanyInitialize, OnInstallAppPerCompany) fire **once** at startup and the resulting DB state is snapshotted as the baseline for every test.
 
-**Mock subsystems**: RecordRef/FieldRef, TestPage, Notification, BigText, JSON types, HttpClient (mock responses), BLOB/InStream/OutStream, Media (ImportStream/ExportStream), File, IsolatedStorage, TaskScheduler, DataTransfer.
+**Mock subsystems**: RecordRef/FieldRef, TestPage, Notification, BigText, JSON types, HttpClient (mock responses), BLOB/InStream/OutStream, Media (ImportStream/ExportStream), Image (FromBase64/FromStream parse real PNG/JPEG/GIF/BMP headers; GetWidth/GetHeight return actual pixel dimensions), File, IsolatedStorage, TaskScheduler, DataTransfer.
 
 **Query objects**: Single-dataitem queries work in-memory (Open/Read/Close, SetFilter, SetRange, TopNumberOfRows).
 

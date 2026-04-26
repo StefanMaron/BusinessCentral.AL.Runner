@@ -3505,6 +3505,108 @@ IsolatedStorage.SetEncrypted (Text, Text, DataScope):
   category: IsolatedStorage
   status: not-tested
 
+# ── Image ───────────────────────────────────────────────────────
+
+Image.FromBase64 (Text):
+  layer: runtime-api
+  category: Image
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/315-image-codeunit
+  notes: "MockImage parses base64-encoded PNG/JPEG/GIF/BMP headers; returns real width/height; throws on empty or unrecognised format. Codeunit 3971 routed via MockCodeunitHandle."
+
+Image.FromStream (InStream):
+  layer: runtime-api
+  category: Image
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/315-image-codeunit
+  notes: "MockImage reads all bytes from InStream and parses PNG/JPEG/GIF/BMP header for real dimensions."
+
+Image.GetHeight ():
+  layer: runtime-api
+  category: Image
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/315-image-codeunit
+  notes: "Returns pixel height parsed from image header (not 0). Closes #1421."
+
+Image.GetWidth ():
+  layer: runtime-api
+  category: Image
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/315-image-codeunit
+  notes: "Returns pixel width parsed from image header (not 0). Closes #1421."
+
+Image.Resize (Integer, Integer):
+  layer: runtime-api
+  category: Image
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/315-image-codeunit
+  notes: "Records new target dimensions; subsequent GetWidth/GetHeight reflect them."
+
+Image.Save (OutStream):
+  layer: runtime-api
+  category: Image
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/315-image-codeunit
+  notes: "Writes stored image bytes back to the OutStream."
+
+Image.ToBase64 ():
+  layer: runtime-api
+  category: Image
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/315-image-codeunit
+  notes: "Returns stored bytes as a base64 string."
+
+Image.GetFormatAsText ():
+  layer: runtime-api
+  category: Image
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/315-image-codeunit
+  notes: "Returns detected format name: Png, Jpeg, Gif, or Bmp."
+
+Image.Clear (Integer, Integer, Integer, Integer):
+  layer: runtime-api
+  category: Image
+  status: stub
+  notes: "No-op stub — creates a solid-colour image; standalone mode does not render pixels."
+
+Image.Crop (Integer, Integer, Integer, Integer):
+  layer: runtime-api
+  category: Image
+  status: stub
+  notes: "Updates stored dimensions to Width×Height; no pixel data manipulation in standalone mode."
+
+Image.RotateFlip (Integer):
+  layer: runtime-api
+  category: Image
+  status: stub
+  notes: "No-op stub — rotation/flip not meaningful without pixel data rendering."
+
+Image.SetFormat (Integer):
+  layer: runtime-api
+  category: Image
+  status: stub
+  notes: "No-op stub — format is auto-detected on load; explicit set not supported."
+
+Image.GetFormat ():
+  layer: runtime-api
+  category: Image
+  status: stub
+  notes: "Returns 0 (default enum value) — use GetFormatAsText() for the format string."
+
+Image.GetRotateFlipType ():
+  layer: runtime-api
+  category: Image
+  status: stub
+  notes: "Returns 0 (no rotation); no rotation state tracking in standalone mode."
+
 # ── JsonArray ───────────────────────────────────────────────────
 
 JsonArray.Add (BigInteger):
