@@ -5103,6 +5103,20 @@ Page.BookmarkType:
   tests: tests/bucket-1/1262-page-bookmarktype
   notes: overloads=1; BookmarkType property (get/set) — BC compiler emits this.BookmarkType = BookmarkType.Temporary on pages with SourceTableTemporary; no-op stub on page classes
 
+Page.CallGetAutoFormatStringExtensionMethod (page-class):
+  layer: runtime-api
+  category: Page
+  status: stub
+  tests: tests/bucket-2/99-page-autoformat
+  notes: overloads=1; CallGetAutoFormatStringExtensionMethod(int fieldNo, ref string result) — BC emits this on Page<N> when a field has AutoFormatType set; NavForm provided it as virtual; stub returns false (issue #1332)
+
+Page.EnsureGlobalVariablesInitialized (page-class):
+  layer: runtime-api
+  category: Page
+  status: stub
+  tests: tests/bucket-2/99-page-autoformat
+  notes: overloads=1; EnsureGlobalVariablesInitialized() — BC emits this on Page<N> to lazily initialise page-level globals; NavForm provided it; stub is a no-op (issue #1332)
+
 Page.CheckType (page-class):
   layer: runtime-api
   category: Page
