@@ -74,7 +74,8 @@ jobs:
 
           for bucket in tests/bucket-*/; do
             args=""
-            for suite in "$bucket"*/; do
+            # Suites live two levels deep: bucket/<category>/<suite>/{src,test,app*}
+            for suite in "$bucket"*/*/; do
               [ -d "${suite}src"  ] && args="$args ${suite}src"
               for appdir in "${suite}"app*/; do
                 [ -d "$appdir" ] && args="$args $appdir"
@@ -174,7 +175,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GIST_TOKEN }}
         run: |
           # Count test procedures in all bucket and stubs test files
-          TESTS=$(grep -rch "^[[:space:]]*procedure " tests/bucket-*/*/test/*.al tests/stubs/*/test/*.al 2>/dev/null | awk '{s+=$1} END {print s+0}')
+          TESTS=$(grep -rch "^[[:space:]]*procedure " tests/bucket-*/*/*/test/*.al tests/stubs/*/test/*.al 2>/dev/null | awk '{s+=$1} END {print s+0}')
           echo "AL test procedures: $TESTS"
 
           BADGE_JSON=$(python3 -c "

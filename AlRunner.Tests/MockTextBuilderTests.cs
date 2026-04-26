@@ -14,7 +14,7 @@ namespace AlRunner.Tests;
 /// round-trips through AppendLine produced different bytes depending on the host.
 ///
 /// The CI matrix (ubuntu-latest only) never exercised the Windows path, so the
-/// existing AL e2e test tests/bucket-1/17-text-builder passed on CI for the
+/// existing AL e2e test tests/bucket-2/data-formats/17-text-builder passed on CI for the
 /// wrong reason and failed on Windows developer machines.
 ///
 /// Note: pre-fix, these assertions fail on Windows (where StringBuilder.AppendLine

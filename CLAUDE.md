@@ -102,22 +102,30 @@ The runner uses **real BC types** (`NavText`, `Decimal18`, `NavOption`, etc.) fr
 
 ## Test Structure
 
+Test suites are grouped into **thematic categories** under three top-level buckets:
+
 ```
 tests/
-  bucket-1/     ← suites 01–32, 71, 77, 79-gui-fieldclass
-  bucket-2/     ← suites 33–95 (remainder)
-  stubs/        ← 39-stubs (requires --stubs flag, separate invocation)
-  excluded/     ← fixtures not in the main loop
+  bucket-1/                 ← backend logic
+    record-table/           — record / table / field / filter / database / permissions
+    codeunit-runtime/       — codeunit / event / dialog / error / scope / handler / session / library / language features
+  bucket-2/                 ← presentation + data
+    page-report/            — page / testpage / report / xmlport / query / action / views / fieldgroup
+    data-formats/           — text / json / xml / date / numeric / format / stream / http / blob / media
+  bucket-feature-niw/       ← suites that need a separate compile unit due to AL feature flags
+    feature-niw/            — uses `"features": ["NoImplicitWith"]` in app.json
+  stubs/                    ← 39-stubs (requires --stubs flag, separate invocation)
+  excluded/                 ← fixtures not in the main loop
 ```
 
 Each suite:
 ```
-tests/bucket-N/NN-descriptive-name/
+tests/<bucket>/<category>/<NN-descriptive-name>/
   src/   — AL source codeunit(s) exercising the feature
   test/  — AL test codeunit (Subtype = Test)
 ```
 
-**When adding a new suite:** put it in the bucket with fewer suites. AL object IDs must be unique within a bucket (suites compile together); IDs may repeat across buckets. Add `bucket-3` etc. when a bucket exceeds ~50 suites.
+**When adding a new suite:** pick the matching `<bucket>/<category>` folder. AL object IDs must be unique within a top-level bucket (suites in the same bucket compile together); IDs may repeat across buckets. Reuse the next free `NN-` prefix in the chosen category.
 
 ### Running tests
 
@@ -125,7 +133,8 @@ tests/bucket-N/NN-descriptive-name/
 # Run all buckets (mirrors .github/workflows/test-matrix.yml)
 for bucket in tests/bucket-*/; do
   args=""
-  for suite in "$bucket"*/; do
+  # Suites live two levels deep: bucket/<category>/<suite>/{src,test,app*}
+  for suite in "$bucket"*/*/; do
     [ -d "${suite}src"  ] && args="$args ${suite}src"
     for appdir in "${suite}"app*/; do
       [ -d "$appdir" ] && args="$args $appdir"

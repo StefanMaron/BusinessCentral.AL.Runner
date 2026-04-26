@@ -17,10 +17,10 @@ page variables, producing false positive errors:
 
 Without `NoImplicitWith` in app.json, this code is genuinely invalid AL — the
 compiler is correct to reject it. The companion test in
-`tests/bucket-4/01-no-implicit-with/` proves that the same patterns compile
+`tests/bucket-feature-niw/feature-niw/01-no-implicit-with/` proves that the same patterns compile
 and run correctly when the `NoImplicitWith` feature flag is present.
 
 ## Related
 
-- `tests/bucket-4/01-no-implicit-with/` — passing tests with feature flag
+- `tests/bucket-feature-niw/feature-niw/01-no-implicit-with/` — passing tests with feature flag
 - `AlRunner/Program.cs` — `ExtractFeatures()` and `MapCompilerFeatures()`

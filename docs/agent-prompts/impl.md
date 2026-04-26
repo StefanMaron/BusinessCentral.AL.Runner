@@ -32,18 +32,20 @@ A test that passes with a no-op implementation is invalid.
 
 Run tests:
   for bucket in tests/bucket-*/; do
-    args=""; for suite in "$bucket"*/; do
+    args=""; for suite in "$bucket"*/*/; do
       [ -d "${suite}src"  ] && args="$args ${suite}src"
       [ -d "${suite}test" ] && args="$args ${suite}test"
     done; dotnet run --project AlRunner -- $args
   done
 
-New suite — pick bucket with fewer suites:
-  ls -d tests/bucket-1/*/ | wc -l
-  ls -d tests/bucket-2/*/ | wc -l
+New suite — pick the `<bucket>/<category>` folder that matches the feature theme:
+  ls -d tests/bucket-1/record-table/*/      | wc -l
+  ls -d tests/bucket-1/codeunit-runtime/*/  | wc -l
+  ls -d tests/bucket-2/page-report/*/       | wc -l
+  ls -d tests/bucket-2/data-formats/*/      | wc -l
 
-Object IDs MUST be unique within the bucket (suites compile together):
-  grep -rh "^codeunit \|^table \|^page \|^enum " tests/bucket-2/ | awk '{print $1, $2}' | sort -k2 -n
+Object IDs MUST be unique within the **top-level bucket** (suites in the same bucket compile together):
+  grep -rh "^codeunit \|^table \|^page \|^enum " tests/bucket-1/ | awk '{print $1, $2}' | sort -k2 -n
 Collisions → CS0101 build errors on all BC versions. IDs may repeat across buckets.
 
 Required doc updates:

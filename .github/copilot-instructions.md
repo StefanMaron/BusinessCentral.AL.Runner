@@ -92,16 +92,24 @@ Hard limits (cannot be fixed without BC service tier): parallel session semantic
 
 ## Test suite structure (for reference)
 
+Test suites are grouped into thematic categories under three top-level buckets. AL object IDs must be unique within a top-level bucket (suites in the same bucket compile together); IDs may repeat across buckets.
+
 ```
 tests/
-  bucket-1/   — suites 01–32, 71, 77, 79-gui-fieldclass
-  bucket-2/   — suites 33–95
-  stubs/      — 39-stubs (run separately with --stubs)
-  excluded/   — fixtures not in the main loop
+  bucket-1/                 ← backend logic
+    record-table/           — record / table / field / filter / database / permissions
+    codeunit-runtime/       — codeunit / event / dialog / error / scope / handler / session / library / language features
+  bucket-2/                 ← presentation + data
+    page-report/            — page / testpage / report / xmlport / query / action / views / fieldgroup
+    data-formats/           — text / json / xml / date / numeric / format / stream / http / blob / media
+  bucket-feature-niw/       ← suites that need a separate compile unit due to AL feature flags
+    feature-niw/            — uses `"features": ["NoImplicitWith"]` in app.json
+  stubs/                    ← 39-stubs (run separately with --stubs)
+  excluded/                 ← fixtures not in the main loop
 
-tests/bucket-N/NN-descriptive-name/
+tests/<bucket>/<category>/<NN-descriptive-name>/
   src/    — AL source codeunit(s)
   test/   — AL test codeunit (Subtype = Test)
 ```
 
-New suites go in the bucket with fewer entries. AL object IDs must be unique within a bucket (suites in the same bucket compile together). IDs may repeat across buckets.
+When adding a new suite, pick the matching `<bucket>/<category>` folder and reuse the next free `NN-` prefix in that category.

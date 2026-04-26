@@ -124,7 +124,7 @@ sufficient precision:
 - Non-extension-type dups (Codeunit, Table, Page, etc.) → always forwarded as genuine errors
 
 ### Test coverage
-- `tests/bucket-2/130-cross-ext-al0275/` — two apps with same pageextension name compile
+- `tests/bucket-1/codeunit-runtime/130-cross-ext-al0275/` — two apps with same pageextension name compile
   successfully (exit 0)
 - `tests/excluded/135-same-ext-pageext-duplicate/` — same-extension pageextension dup
   exits 3

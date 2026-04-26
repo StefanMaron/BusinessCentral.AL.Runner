@@ -377,19 +377,19 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
-| `AlterKey` | `(KeyRef, Boolean)` | ✅ covered | no-op stub (DDL not supported standalone); tests/bucket-2/151-database-alterkey |
+| `AlterKey` | `(KeyRef, Boolean)` | ✅ covered | no-op stub (DDL not supported standalone); tests/bucket-1/record-table/151-database-alterkey |
 | `ChangeUserPassword` | `(Text, Text)` | ✅ covered | rewriter strips the entire call (no user system standalone). Signature is (OldPassword, NewPassword). |
-| `CheckLicenseFile` | `(Integer)` | ✅ covered | no-op stub (no license system standalone); tests/bucket-2/153-database-checklicensefile |
+| `CheckLicenseFile` | `(Integer)` | ✅ covered | no-op stub (no license system standalone); tests/bucket-1/record-table/153-database-checklicensefile |
 | `Commit` | `()` | ✅ covered |  |
 | `CompanyName` | `()` | ✅ covered | returns "CRONUS" by default; configurable via --company-name CLI flag or "AL Runner Config".SetCompanyName(). Per-test reset restores the default. |
 | `CopyCompany` | `(Text, Text)` | ✅ covered | no-op stub (no multi-company store in standalone mode); ALCopyCompany stripped by RoslynRewriter |
 | `CurrentTransactionType` | `(TransactionType)` | ❓ stub | stub returning TransactionType::Update (ordinal 2); runner has no real transaction tracking |
-| `DataFileInformation` | `(Boolean, Text, Text, Boolean, Boolean, Boolean, Text, DateTime, Table)` | ✅ covered | no-op stub; ALDataFileInformation added to StripEntireCallMethods in RoslynRewriter; var params remain at defaults; tests/bucket-2/154-datafileinformation |
+| `DataFileInformation` | `(Boolean, Text, Text, Boolean, Boolean, Boolean, Text, DateTime, Table)` | ✅ covered | no-op stub; ALDataFileInformation added to StripEntireCallMethods in RoslynRewriter; var params remain at defaults; tests/bucket-1/record-table/154-datafileinformation |
 | `ExportData` | `(Boolean, Text, Text, Boolean, Boolean, Boolean, Table)` | ✅ covered | no-op stub (no file I/O in standalone mode); ALExportData stripped by RoslynRewriter |
 | `GetDefaultTableConnection` | `(TableConnectionType)` | ✅ covered | rewriter stubs ALGetDefaultTableConnection(ct) to empty string (no external connections standalone). |
 | `HasTableConnection` | `(TableConnectionType, Text)` | ✅ covered | returns false for unregistered connections. |
 | `ImportData` | `(Boolean, Text, Boolean, Boolean, Table)` | ✅ covered | no-op stub (no file I/O in standalone mode); ALImportData stripped by RoslynRewriter |
-| `IsInWriteTransaction` | `()` | ✅ covered | RoslynRewriter rewrites ALDatabase.ALIsInWriteTransaction() to false literal; runner has no real transactions; tests/bucket-2/157-isinwritetransaction |
+| `IsInWriteTransaction` | `()` | ✅ covered | RoslynRewriter rewrites ALDatabase.ALIsInWriteTransaction() to false literal; runner has no real transactions; tests/bucket-1/record-table/157-isinwritetransaction |
 | `LastUsedRowVersion` | `()` | ✅ covered | method stubbed to `0L` via rewriter (no real DB ⇒ no rows written). |
 | `LockTimeout` | `(Boolean)` | ✅ covered | property get stubbed to `true` via rewriter (BC default); setter already a no-op. |
 | `LockTimeoutDuration` | `(Integer)` | ✅ covered | property get stubbed to `0L` via rewriter (no timeout), flows through ALCompiler.ToDuration. |
@@ -839,37 +839,37 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `GetText` | `(Integer)` | ✅ covered | . Indirectly covered via JsonArray.Get + JsonToken.AsValue().AsText(). The BC 21+ typed GetText(idx) overload is not present in the AL 16.2 compiler bundled with the runner. |
 | `GetTime` | `(Integer)` | ✅ covered | . Works natively via NavJsonArray; single-arg form GetTime(idx) returns Time directly. |
 | `IndexOf` | `(BigInteger)` | ✅ covered | . Covered via NavJsonArray native — returns 0-based index when found, -1 when absent. |
-| `IndexOf` | `(Boolean)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `IndexOf` | `(Byte)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `IndexOf` | `(Char)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `IndexOf` | `(Date)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `IndexOf` | `(DateTime)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `IndexOf` | `(Decimal)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `IndexOf` | `(Duration)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `IndexOf` | `(Integer)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `IndexOf` | `(JsonArray)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `IndexOf` | `(JsonObject)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `IndexOf` | `(JsonToken)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `IndexOf` | `(JsonValue)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `IndexOf` | `(Option)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `IndexOf` | `(Text)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `IndexOf` | `(Time)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `IndexOf` | `(Boolean)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `IndexOf` | `(Byte)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `IndexOf` | `(Char)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `IndexOf` | `(Date)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `IndexOf` | `(DateTime)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `IndexOf` | `(Decimal)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `IndexOf` | `(Duration)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `IndexOf` | `(Integer)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `IndexOf` | `(JsonArray)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `IndexOf` | `(JsonObject)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `IndexOf` | `(JsonToken)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `IndexOf` | `(JsonValue)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `IndexOf` | `(Option)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `IndexOf` | `(Text)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `IndexOf` | `(Time)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
 | `Insert` | `(Integer, BigInteger)` | ✅ covered | . Covered via NavJsonArray native — increases Count, shifts existing elements, middle-position insertion correct. |
-| `Insert` | `(Integer, Boolean)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Insert` | `(Integer, Byte)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Insert` | `(Integer, Char)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Insert` | `(Integer, Date)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Insert` | `(Integer, DateTime)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Insert` | `(Integer, Decimal)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Insert` | `(Integer, Duration)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Insert` | `(Integer, Integer)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Insert` | `(Integer, JsonArray)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Insert` | `(Integer, JsonObject)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Insert` | `(Integer, JsonToken)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Insert` | `(Integer, JsonValue)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Insert` | `(Integer, Option)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Insert` | `(Integer, Text)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Insert` | `(Integer, Time)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Insert` | `(Integer, Boolean)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Insert` | `(Integer, Byte)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Insert` | `(Integer, Char)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Insert` | `(Integer, Date)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Insert` | `(Integer, DateTime)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Insert` | `(Integer, Decimal)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Insert` | `(Integer, Duration)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Insert` | `(Integer, Integer)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Insert` | `(Integer, JsonArray)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Insert` | `(Integer, JsonObject)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Insert` | `(Integer, JsonToken)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Insert` | `(Integer, JsonValue)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Insert` | `(Integer, Option)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Insert` | `(Integer, Text)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Insert` | `(Integer, Time)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
 | `Path` | `()` | ✅ covered | . Covered via NavJsonArray native — root returns "$", nested returns "$.key" (JSONPath notation). |
 | `ReadFrom` | `(InStream)` | ✅ covered |  |
 | `ReadFrom` | `(Text)` | 🔶 not-tested |  |
@@ -877,21 +877,21 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `SelectToken` | `(Text, JsonToken)` | ✅ covered |  |
 | `SelectTokens` | `(Text, List)` | ✅ covered |  |
 | `Set` | `(Integer, BigInteger)` | ✅ covered | . Covered via NavJsonArray native — replaces element at index, Count unchanged. |
-| `Set` | `(Integer, Boolean)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Set` | `(Integer, Byte)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Set` | `(Integer, Char)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Set` | `(Integer, Date)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Set` | `(Integer, DateTime)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Set` | `(Integer, Decimal)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Set` | `(Integer, Duration)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Set` | `(Integer, Integer)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Set` | `(Integer, JsonArray)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Set` | `(Integer, JsonObject)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Set` | `(Integer, JsonToken)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Set` | `(Integer, JsonValue)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Set` | `(Integer, Option)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Set` | `(Integer, Text)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Set` | `(Integer, Time)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Set` | `(Integer, Boolean)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Set` | `(Integer, Byte)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Set` | `(Integer, Char)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Set` | `(Integer, Date)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Set` | `(Integer, DateTime)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Set` | `(Integer, Decimal)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Set` | `(Integer, Duration)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Set` | `(Integer, Integer)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Set` | `(Integer, JsonArray)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Set` | `(Integer, JsonObject)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Set` | `(Integer, JsonToken)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Set` | `(Integer, JsonValue)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Set` | `(Integer, Option)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Set` | `(Integer, Text)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Set` | `(Integer, Time)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
 | `WriteTo` | `(OutStream)` | ✅ covered |  |
 | `WriteTo` | `(Text)` | 🔶 not-tested |  |
 
@@ -941,21 +941,21 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `ReadFromYaml` | `(Text)` | 🔶 not-tested |  |
 | `Remove` | `(Text)` | ✅ covered | rewriter redirects ALRemove to MockJsonHelper.Remove |
 | `Replace` | `(Text, BigInteger)` | ✅ covered | rewriter redirects ALReplace to MockJsonHelper.Replace |
-| `Replace` | `(Text, Boolean)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Replace` | `(Text, Byte)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Replace` | `(Text, Char)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Replace` | `(Text, Date)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Replace` | `(Text, DateTime)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Replace` | `(Text, Decimal)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Replace` | `(Text, Duration)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Replace` | `(Text, Integer)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Replace` | `(Text, JsonArray)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Replace` | `(Text, JsonObject)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Replace` | `(Text, JsonToken)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Replace` | `(Text, JsonValue)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Replace` | `(Text, Option)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Replace` | `(Text, Text)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `Replace` | `(Text, Time)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `Replace` | `(Text, Boolean)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Replace` | `(Text, Byte)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Replace` | `(Text, Char)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Replace` | `(Text, Date)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Replace` | `(Text, DateTime)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Replace` | `(Text, Decimal)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Replace` | `(Text, Duration)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Replace` | `(Text, Integer)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Replace` | `(Text, JsonArray)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Replace` | `(Text, JsonObject)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Replace` | `(Text, JsonToken)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Replace` | `(Text, JsonValue)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Replace` | `(Text, Option)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Replace` | `(Text, Text)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `Replace` | `(Text, Time)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
 | `SelectToken` | `(Text, JsonToken)` | ✅ covered |  |
 | `SelectTokens` | `(Text, List)` | ✅ covered |  |
 | `Values` | `()` | ✅ covered | works natively via NavJsonObject (no TrappableOperationExecutor path); returns List of [JsonToken] in insertion order |
@@ -1011,17 +1011,17 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `ReadFrom` | `(Text)` | 🔶 not-tested |  |
 | `SelectToken` | `(Text, JsonToken)` | ✅ covered |  |
 | `SetValue` | `(BigInteger)` | ✅ covered | text/integer/boolean/decimal overloads proven; BC native works standalone |
-| `SetValue` | `(Boolean)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `SetValue` | `(Byte)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `SetValue` | `(Char)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `SetValue` | `(Date)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `SetValue` | `(DateTime)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `SetValue` | `(Decimal)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `SetValue` | `(Duration)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `SetValue` | `(Integer)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `SetValue` | `(Option)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `SetValue` | `(Text)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
-| `SetValue` | `(Time)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-1/309-json-primitive-overloads |
+| `SetValue` | `(Boolean)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `SetValue` | `(Byte)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `SetValue` | `(Char)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `SetValue` | `(Date)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `SetValue` | `(DateTime)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `SetValue` | `(Decimal)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `SetValue` | `(Duration)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `SetValue` | `(Integer)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `SetValue` | `(Option)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `SetValue` | `(Text)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
+| `SetValue` | `(Time)` | ✅ covered | works natively via NavJsonToken implicit-conversion (BC runtime); covered by tests/bucket-2/data-formats/309-json-primitive-overloads |
 | `SetValueToNull` | `()` | ✅ covered | BC native works standalone; verified with IsNull |
 | `SetValueToUndefined` | `()` | ❓ stub | BC 21+ method not tested in AL 16.2; the underlying NavJsonValue method exists but no AL syntax available in 16.2 to exercise it. |
 | `WriteTo` | `(OutStream)` | ✅ covered |  |
@@ -1099,13 +1099,13 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
-| `AppVersion` | `()` | ✅ covered | default returns Version 0.0.0.0; tests/bucket-1/267-moduleinfo-properties |
-| `DataVersion` | `()` | ✅ covered | default returns Version 0.0.0.0; tests/bucket-1/267-moduleinfo-properties |
-| `Dependencies` | `()` | ✅ covered | default returns empty List of [ModuleDependencyInfo]; tests/bucket-1/267-moduleinfo-properties |
-| `Id` | `()` | ✅ covered | default returns empty GUID; tests/bucket-1/267-moduleinfo-properties |
-| `Name` | `()` | ✅ covered | default returns empty string; tests/bucket-1/267-moduleinfo-properties |
-| `PackageId` | `()` | ✅ covered | default returns empty GUID; tests/bucket-1/267-moduleinfo-properties |
-| `Publisher` | `()` | ✅ covered | default returns empty string; tests/bucket-1/267-moduleinfo-properties |
+| `AppVersion` | `()` | ✅ covered | default returns Version 0.0.0.0; tests/bucket-1/codeunit-runtime/267-moduleinfo-properties |
+| `DataVersion` | `()` | ✅ covered | default returns Version 0.0.0.0; tests/bucket-1/codeunit-runtime/267-moduleinfo-properties |
+| `Dependencies` | `()` | ✅ covered | default returns empty List of [ModuleDependencyInfo]; tests/bucket-1/codeunit-runtime/267-moduleinfo-properties |
+| `Id` | `()` | ✅ covered | default returns empty GUID; tests/bucket-1/codeunit-runtime/267-moduleinfo-properties |
+| `Name` | `()` | ✅ covered | default returns empty string; tests/bucket-1/codeunit-runtime/267-moduleinfo-properties |
+| `PackageId` | `()` | ✅ covered | default returns empty GUID; tests/bucket-1/codeunit-runtime/267-moduleinfo-properties |
+| `Publisher` | `()` | ✅ covered | default returns empty string; tests/bucket-1/codeunit-runtime/267-moduleinfo-properties |
 
 ## NavApp  (16/16)
 
@@ -1572,7 +1572,7 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `Randomize` | `(Integer)` | ✅ covered | . ALSystemNumeric.ALRandomize redirected to AlCompat.ALRandomize; seeds thread-local System.Random. |
 | `Round` | `(Decimal, Decimal, Text)` | ✅ covered | (1-arg/2-arg/3-arg). 1-arg form is redirected to AlCompat.ALRound because the BC SDK's 1-arg overload defaults precision to 0 (no rounding), while AL semantics round to nearest integer. |
 | `RoundDateTime` | `(DateTime, BigInteger, Text)` | ✅ covered | AlCompat.RoundDateTime via BC native ALSystemDate.ALRoundDateTime; rounds to nearest interval boundary |
-| `Sleep` | `(Integer)` | ✅ covered | no-op stub in MockSession.Sleep via RoslynRewriter NavSession.Sleep→MockSession.Sleep rewrite; tests in tests/bucket-2/153-sleep |
+| `Sleep` | `(Integer)` | ✅ covered | no-op stub in MockSession.Sleep via RoslynRewriter NavSession.Sleep→MockSession.Sleep rewrite; tests in tests/bucket-1/codeunit-runtime/153-sleep |
 | `TemporaryPath` | `()` | ✅ covered | MockSystemOperatingSystem.ALTemporaryPath → Path.GetTempPath() |
 | `Time` | `()` | ✅ covered |  |
 | `Today` | `()` | ✅ covered |  |
@@ -1848,9 +1848,9 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `FindPreviousField` | `(TestField, Joker)` | ✅ covered | ALFindPreviousField stub returns false |
 | `First` | `()` | ✅ covered | ALFirst() returns true |
 | `GetValidationError` | `(Integer)` | ✅ covered | ALGetValidationError(int) returns empty NavText |
-| `GoToKey` | `(Joker)` | ✅ covered | ALGoToKey(DataError, params NavValue[]) returns true; tests/bucket-1/269-testrequestpage-methods |
-| `GoToRecord` | `(Table)` | ✅ covered | ALGoToRecord(MockRecordHandle) returns true; tests/bucket-1/269-testrequestpage-methods |
-| `IsExpanded` | `()` | ✅ covered | ALIsExpanded property returns false; tests/bucket-1/269-testrequestpage-methods |
+| `GoToKey` | `(Joker)` | ✅ covered | ALGoToKey(DataError, params NavValue[]) returns true; tests/bucket-2/page-report/269-testrequestpage-methods |
+| `GoToRecord` | `(Table)` | ✅ covered | ALGoToRecord(MockRecordHandle) returns true; tests/bucket-2/page-report/269-testrequestpage-methods |
+| `IsExpanded` | `()` | ✅ covered | ALIsExpanded property returns false; tests/bucket-2/page-report/269-testrequestpage-methods |
 | `Last` | `()` | ✅ covered | ALLast() returns false (empty page) |
 | `New` | `()` | ✅ covered | ALNew() no-op stub |
 | `Next` | `()` | ✅ covered | ALNext() returns false |
@@ -2102,20 +2102,20 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
-| `AddAfterSelf` | `(Joker)` | ✅ covered | tested in tests/bucket-1/166-xmlcdata |
-| `AddBeforeSelf` | `(Joker)` | ✅ covered | tested in tests/bucket-1/166-xmlcdata |
-| `AsXmlNode` | `()` | ✅ covered | tested in tests/bucket-1/166-xmlcdata |
-| `Create` | `(Text)` | ✅ covered | tested in tests/bucket-1/166-xmlcdata |
-| `GetDocument` | `(XmlDocument)` | ✅ covered | tested in tests/bucket-1/166-xmlcdata |
-| `GetParent` | `(XmlElement)` | ✅ covered | tested in tests/bucket-1/166-xmlcdata |
-| `Remove` | `()` | ✅ covered | tested in tests/bucket-1/166-xmlcdata |
-| `ReplaceWith` | `(Joker)` | ✅ covered | tested in tests/bucket-1/166-xmlcdata |
+| `AddAfterSelf` | `(Joker)` | ✅ covered | tested in tests/bucket-2/data-formats/166-xmlcdata |
+| `AddBeforeSelf` | `(Joker)` | ✅ covered | tested in tests/bucket-2/data-formats/166-xmlcdata |
+| `AsXmlNode` | `()` | ✅ covered | tested in tests/bucket-2/data-formats/166-xmlcdata |
+| `Create` | `(Text)` | ✅ covered | tested in tests/bucket-2/data-formats/166-xmlcdata |
+| `GetDocument` | `(XmlDocument)` | ✅ covered | tested in tests/bucket-2/data-formats/166-xmlcdata |
+| `GetParent` | `(XmlElement)` | ✅ covered | tested in tests/bucket-2/data-formats/166-xmlcdata |
+| `Remove` | `()` | ✅ covered | tested in tests/bucket-2/data-formats/166-xmlcdata |
+| `ReplaceWith` | `(Joker)` | ✅ covered | tested in tests/bucket-2/data-formats/166-xmlcdata |
 | `SelectNodes` | `(Text, XmlNamespaceManager, XmlNodeList)` | 🔲 gap |  |
-| `SelectNodes` | `(Text, XmlNodeList)` | ✅ covered | tested in tests/bucket-1/166-xmlcdata |
+| `SelectNodes` | `(Text, XmlNodeList)` | ✅ covered | tested in tests/bucket-2/data-formats/166-xmlcdata |
 | `SelectSingleNode` | `(Text, XmlNamespaceManager, XmlNode)` | 🔲 gap |  |
-| `SelectSingleNode` | `(Text, XmlNode)` | ✅ covered | tested in tests/bucket-1/166-xmlcdata |
-| `Value` | `(Text)` | ✅ covered | tested in tests/bucket-1/166-xmlcdata |
-| `WriteTo` | `(OutStream)` | ✅ covered | WriteTo(Text) covered via MockJsonHelper.WriteTo(object) fallback; tested in tests/bucket-1/166-xmlcdata |
+| `SelectSingleNode` | `(Text, XmlNode)` | ✅ covered | tested in tests/bucket-2/data-formats/166-xmlcdata |
+| `Value` | `(Text)` | ✅ covered | tested in tests/bucket-2/data-formats/166-xmlcdata |
+| `WriteTo` | `(OutStream)` | ✅ covered | WriteTo(Text) covered via MockJsonHelper.WriteTo(object) fallback; tested in tests/bucket-2/data-formats/166-xmlcdata |
 | `WriteTo` | `(Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, ByRef<NavText>) via reflection — tested in suite 220-xml-writeto-overloads. |
 | `WriteTo` | `(XmlWriteOptions, OutStream)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored. |
 | `WriteTo` | `(XmlWriteOptions, Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored. |
