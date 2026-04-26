@@ -310,6 +310,17 @@ public class MockReportHandle
     }
 
     /// <summary>
+    /// Static Report.Run(reportId, requestPage, systemPrinter) — 3-argument overload.
+    /// BC emits this form when no record argument is supplied (e.g. <c>Report.Run(id, true)</c>).
+    /// <paramref name="requestPage"/> and <paramref name="systemPrinter"/> are ignored in standalone mode.
+    /// </summary>
+    public static void StaticRun(int reportId, bool requestPage, bool systemPrinter)
+    {
+        var handle = new MockReportHandle(reportId) { UseRequestForm = requestPage };
+        handle.Run();
+    }
+
+    /// <summary>
     /// Static Report.Run(reportId, requestPage, systemPrinter, record) — 4-argument overload.
     /// <paramref name="requestPage"/> and <paramref name="systemPrinter"/> are ignored in standalone mode.
     /// <paramref name="record"/> is applied as a table-view filter when it is a <see cref="MockRecordHandle"/>.
