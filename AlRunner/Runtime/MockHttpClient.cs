@@ -139,4 +139,23 @@ public class MockHttpClient
 
     /// <summary>AddCertificate(thumbprint, password) — no-op stub.</summary>
     public void ALAddCertificate(DataError errorLevel, NavText thumbprint, NavText password) { }
+
+    // ── ALAssign (issue #1447) ─────────────────────────────────────────────
+
+    /// <summary>
+    /// ALAssign — copy all observable state from <paramref name="other"/> into this instance.
+    /// BC emits <c>target.ALAssign(source)</c> for the AL assignment <c>target := source</c>
+    /// and for the ByRef pattern <c>ByRef&lt;MockHttpClient&gt;(() =&gt; c, v =&gt; c.ALAssign(v))</c>
+    /// used when an HttpClient is passed by var (e.g. <c>var Client: HttpClient</c>).
+    /// Covers the 4 occurrences surfaced by issue #1447.
+    /// </summary>
+    public void ALAssign(MockHttpClient other)
+    {
+        if (other == null) return;
+        _baseAddress = other._baseAddress;
+        _defaultHeaders = other._defaultHeaders;
+        ALTimeout = other.ALTimeout;
+        ALUseDefaultNetworkWindowsAuthentication = other.ALUseDefaultNetworkWindowsAuthentication;
+        ALUseServerCertificateValidation = other.ALUseServerCertificateValidation;
+    }
 }
