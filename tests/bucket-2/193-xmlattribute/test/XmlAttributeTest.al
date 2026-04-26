@@ -65,4 +65,41 @@ codeunit 60191 "XAT Test"
         Assert.IsFalse(Src.AttributeValue_Not_AttributeName_NegativeTrap(),
             'XmlAttribute.Name and XmlAttribute.Value must not alias');
     end;
+
+    // ── XmlAttribute.Create(LocalName, NamespaceUri, Value) ──────────────────
+
+    [Test]
+    procedure Create_3Arg_Value()
+    begin
+        Assert.AreEqual('978-0-13', Src.Create3Arg_Value(),
+            'Create(localName, ns, value).Value must return the third argument');
+    end;
+
+    [Test]
+    procedure Create_3Arg_LocalName()
+    begin
+        Assert.AreEqual('isbn', Src.Create3Arg_LocalName(),
+            'Create(localName, ns, value).LocalName must return the first argument');
+    end;
+
+    [Test]
+    procedure Create_3Arg_NamespaceUri()
+    begin
+        Assert.AreEqual('urn:books:1', Src.Create3Arg_NamespaceUri(),
+            'Create(localName, ns, value).NamespaceUri must return the second argument (with '':'')');
+    end;
+
+    [Test]
+    procedure Create_3Arg_EmptyNamespace_BehavesAsNoNamespace()
+    begin
+        Assert.AreEqual('', Src.Create3Arg_EmptyNamespace_NamespaceUri(),
+            'Create(localName, '''', value) must round-trip an empty NamespaceUri');
+    end;
+
+    [Test]
+    procedure Create_3Arg_NamespaceUri_NotAliasingValue_NegativeTrap()
+    begin
+        Assert.IsFalse(Src.Create3Arg_NamespaceUri_Aliases_Value_NegativeTrap(),
+            'XmlAttribute.NamespaceUri and XmlAttribute.Value must not alias');
+    end;
 }
