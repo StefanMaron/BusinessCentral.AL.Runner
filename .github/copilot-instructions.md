@@ -103,7 +103,8 @@ tests/
     page-report/            — page / testpage / report / xmlport / query / action / views / fieldgroup
     data-formats/           — text / json / xml / date / numeric / format / stream / http / blob / media
   bucket-feature-niw/       ← suites that need a separate compile unit due to AL feature flags
-    feature-niw/            — uses `"features": ["NoImplicitWith"]` in app.json
+                            uses `"features": ["NoImplicitWith"]` in app.json; flat layout
+                            (no category subfolder) since this bucket holds a single theme
   stubs/                    ← 39-stubs (run separately with --stubs)
   excluded/                 ← fixtures not in the main loop
 

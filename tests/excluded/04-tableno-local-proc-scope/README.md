@@ -15,10 +15,10 @@ resolves the call to the record's 0-argument method, producing:
 Without `NoImplicitWith` in app.json, this code is genuinely invalid AL — the
 compiler resolves `GetStatus(Rec)` to the record's parameterless method via
 implicit `with`, then rejects the extra argument. The companion test in
-`tests/bucket-feature-niw/feature-niw/01-no-implicit-with/` proves that the same pattern compiles
+`tests/bucket-feature-niw/01-no-implicit-with/` proves that the same pattern compiles
 and runs correctly when the `NoImplicitWith` feature flag is present.
 
 ## Related
 
-- `tests/bucket-feature-niw/feature-niw/01-no-implicit-with/` — passing tests with feature flag
+- `tests/bucket-feature-niw/01-no-implicit-with/` — passing tests with feature flag
 - `AlRunner/Program.cs` — `ExtractFeatures()` and `MapCompilerFeatures()`

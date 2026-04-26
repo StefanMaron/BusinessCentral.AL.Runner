@@ -74,13 +74,28 @@ jobs:
 
           for bucket in tests/bucket-*/; do
             args=""
-            # Suites live two levels deep: bucket/<category>/<suite>/{src,test,app*}
-            for suite in "$bucket"*/*/; do
-              [ -d "${suite}src"  ] && args="$args ${suite}src"
-              for appdir in "${suite}"app*/; do
-                [ -d "$appdir" ] && args="$args $appdir"
-              done
-              [ -d "${suite}test" ] && args="$args ${suite}test"
+            # Each bucket holds either thematic category subfolders
+            # (bucket/<category>/<suite>/) or — when a single category would be
+            # the only one — flat suites directly under the bucket
+            # (bucket/<suite>/). Auto-detect per entry.
+            for entry in "$bucket"*/; do
+              if [ -d "${entry}src" ] || [ -d "${entry}test" ]; then
+                # Flat layout: <entry> is the suite itself.
+                [ -d "${entry}src"  ] && args="$args ${entry}src"
+                for appdir in "${entry}"app*/; do
+                  [ -d "$appdir" ] && args="$args $appdir"
+                done
+                [ -d "${entry}test" ] && args="$args ${entry}test"
+              else
+                # Categorized layout: <entry> is a category folder; descend.
+                for suite in "$entry"*/; do
+                  [ -d "${suite}src"  ] && args="$args ${suite}src"
+                  for appdir in "${suite}"app*/; do
+                    [ -d "$appdir" ] && args="$args $appdir"
+                  done
+                  [ -d "${suite}test" ] && args="$args ${suite}test"
+                done
+              fi
             done
             echo "=== $bucket ==="
             start=$SECONDS
@@ -185,8 +200,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GIST_TOKEN }}
         run: |
-          # Count test procedures in all bucket and stubs test files
-          TESTS=$(grep -rch "^[[:space:]]*procedure " tests/bucket-*/*/*/test/*.al tests/stubs/*/test/*.al 2>/dev/null | awk '{s+=$1} END {print s+0}')
+          # Count [Test]-attributed procedures (not Initialize/helper procedures)
+          # in all bucket and stubs test files. Globs cover both flat
+          # (bucket-*/<suite>/test) and categorized (bucket-*/<category>/<suite>/test)
+          # layouts.
+          TESTS=$(grep -rch '^[[:space:]]*\[Test\]' \
+              tests/bucket-*/*/test/*.al \
+              tests/bucket-*/*/*/test/*.al \
+              tests/stubs/*/test/*.al 2>/dev/null \
+            | awk '{s+=$1} END {print s+0}')
           echo "AL test procedures: $TESTS"
 
           BADGE_JSON=$(python3 -c "

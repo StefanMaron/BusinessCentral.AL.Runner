@@ -90,7 +90,7 @@ Workers self-select from the `status: ready` queue. The orchestrator does not as
 | `AlRunner/RoslynRewriter.cs` | BC→mock type transformations |
 | `AlRunner/Pipeline.cs` | Pipeline orchestration, exit codes |
 | `AlRunner/Runtime/` | All mock implementations (MockRecordHandle, AlScope, etc.) |
-| `tests/bucket-1/`, `tests/bucket-2/`, `tests/bucket-feature-niw/` | AL test suites, grouped by thematic category subfolders (`record-table`, `codeunit-runtime`, `page-report`, `data-formats`, `feature-niw`) |
+| `tests/bucket-1/`, `tests/bucket-2/`, `tests/bucket-feature-niw/` | AL test suites. `bucket-1` and `bucket-2` group suites under thematic category subfolders (`record-table`, `codeunit-runtime`, `page-report`, `data-formats`); `bucket-feature-niw` is flat (single theme, no category) |
 | `docs/limitations.md` | Known gaps and architectural limits |
 | `CHANGELOG.md` | **Do not edit** — generated from commits post-merge |
 

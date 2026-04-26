@@ -298,19 +298,22 @@ function scanTestSuites() {
   if (fs.existsSync(stubsDir)) bucketDirs.push(stubsDir);
   for (const bucketDir of bucketDirs) {
     const bucketName = path.basename(bucketDir);
-    // Suites are 2 levels deep under each top-level bucket
-    // (bucket-<n>/<category>/<suite>) for the AL test buckets, but only 1 level
-    // deep under tests/stubs (no category subfolder).
+    // Layout:
+    //   tests/stubs/<suite>/{src,test}              — always flat
+    //   tests/bucket-*/<category>/<suite>/{src,test} — categorized (preferred)
+    //   tests/bucket-*/<suite>/{src,test}            — flat (when a single
+    //                                                  category would be the
+    //                                                  only one)
+    // Layout is determined per-child to avoid silently mis-classifying a
+    // misplaced suite in a categorized bucket.
     const isStubs = bucketName === "stubs";
     for (const child of fs.readdirSync(bucketDir, { withFileTypes: true })) {
       if (!child.isDirectory()) continue;
       const childPath = path.join(bucketDir, child.name);
-      // Tier 1: candidate suite directly under bucket (stubs layout, also
-      // tolerates legacy single-level layouts)
-      const directHasSrcOrTest =
+      const childIsSuite =
         fs.existsSync(path.join(childPath, "src")) ||
         fs.existsSync(path.join(childPath, "test"));
-      if (isStubs || directHasSrcOrTest) {
+      if (isStubs || childIsSuite) {
         const alFiles = [
           ...walkDir(path.join(childPath, "src"), ".al"),
           ...walkDir(path.join(childPath, "test"), ".al"),
@@ -320,7 +323,9 @@ function scanTestSuites() {
         suites[relativePath] = { content, name: child.name };
         continue;
       }
-      // Tier 2: thematic category folder, suites live one level deeper
+      // bucket-*: thematic category folder; suites live one level deeper.
+      // Reject any nested "src"/"test" directly inside a category as an error
+      // rather than absorbing it.
       for (const suite of fs.readdirSync(childPath, { withFileTypes: true })) {
         if (!suite.isDirectory()) continue;
         const suiteDir = path.join(childPath, suite.name);

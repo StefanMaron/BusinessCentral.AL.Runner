@@ -16,27 +16,45 @@ public static class CliRunner
     /// Resolves a test case name to its directory under tests/.
     /// Searches bucket-*, stubs/, and excluded/ subdirectories at any depth
     /// (the AL test buckets group suites under category subfolders).
+    ///
+    /// Throws InvalidOperationException if the name is ambiguous (matches more
+    /// than one suite across categories) so cross-category name clashes surface
+    /// instead of silently shadowing.
     /// </summary>
     public static string FindTestCase(string testCaseName)
     {
         var testsRoot = Path.Combine(RepoRoot, "tests");
+        var matches = new List<string>();
         foreach (var bucket in Directory.GetDirectories(testsRoot).OrderBy(d => d))
         {
             // Direct child (covers tests/stubs/<name> and tests/excluded/<name>)
             var direct = Path.Combine(bucket, testCaseName);
             if (Directory.Exists(direct))
-                return direct;
+                matches.Add(direct);
 
             // Category subfolder (covers tests/bucket-*/category/<name>)
             foreach (var category in Directory.GetDirectories(bucket).OrderBy(d => d))
             {
                 var nested = Path.Combine(category, testCaseName);
                 if (Directory.Exists(nested))
-                    return nested;
+                    matches.Add(nested);
             }
         }
-        throw new DirectoryNotFoundException(
-            $"Test case '{testCaseName}' not found under {testsRoot}/*/");
+
+        if (matches.Count == 0)
+        {
+            throw new DirectoryNotFoundException(
+                $"Test case '{testCaseName}' not found under {testsRoot}/*/");
+        }
+
+        if (matches.Count > 1)
+        {
+            throw new InvalidOperationException(
+                $"Test case name '{testCaseName}' is ambiguous; matched {matches.Count} suites: " +
+                string.Join(", ", matches));
+        }
+
+        return matches[0];
     }
 
     public record CliResult(int ExitCode, string StdOut, string StdErr);
