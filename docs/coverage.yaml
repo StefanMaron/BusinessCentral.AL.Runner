@@ -5717,6 +5717,25 @@ Page.GetRecord (Table):
   category: Page
   status: covered
 
+Page.Rec (page-as-component public procedures):
+  layer: runtime-api
+  category: Page
+  status: covered
+  tests:
+    - tests/bucket-2/page-report/313000-page-rec-backing
+  notes: >
+    When a Page variable is declared ("var P: Page X") and a public procedure is called
+    on it that internally accesses Rec (the page's SourceTable record context), the
+    MockFormHandle must initialise the page instance with Rec bound to the correct
+    SourceTable's in-memory store.
+    Fix (issue #1422): RoslynRewriter now tracks _currentClassName for page classes
+    (not only record classes) so the Rec/xRec auto-property is emitted as
+    new MockRecordHandle(sourceTableId) instead of MockRecordHandle(0);
+    the source table ID is resolved via TableFieldRegistry.GetSourceTableId(pageId).
+    MockFormHandle.EnsurePageInstance initialises null MockRecordHandle backing
+    fields to new MockRecordHandle(sourceTableId) after GetUninitializedObject +
+    InitializeComponent, covering any remaining null Rec fields.
+
 Page.LookupMode (Boolean):
   layer: runtime-api
   category: Page

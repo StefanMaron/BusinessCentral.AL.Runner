@@ -530,9 +530,10 @@ public class RoslynRewriter : CSharpSyntaxRewriter
         }
 
         // Track the current class name for Rec/xRec table ID extraction.
-        // Only set for top-level (non-nested) classes that are record types.
+        // Set for record types (Record<N>) and page types (Page<N>) — pages also have Rec/xRec
+        // properties that need the table ID extracted via TableFieldRegistry.
         var previousClassName = _currentClassName;
-        if (isRecordClass)
+        if (isRecordClass || isPageClass)
             _currentClassName = node.Identifier.Text;
 
         // Track page class name for static self-reference rewriting (issue #1266).
@@ -1218,11 +1219,34 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
         // The table ID is extracted from the enclosing class name (e.g. Record74320 -> 74320).
         if (name == "Rec" || name == "xRec")
         {
-            // Extract table ID from enclosing class name (Record74320 -> 74320)
+            // Extract table ID from enclosing class name (Record74320 -> 74320).
+            // For page classes (Page<N>), the property type is Record<N>, so fall back to
+            // extracting the ID from the property's return type name.
             int tableId = 0;
             if (_currentClassName != null && _currentClassName.StartsWith("Record"))
             {
                 int.TryParse(_currentClassName.Substring("Record".Length), out tableId);
+            }
+            if (tableId == 0)
+            {
+                // Fallback 1: extract from the property return type when BC emits
+                // a specific Record<N> type (e.g. "Record313000 Rec => ...").
+                var typeName = node.Type.ToString().Trim();
+                if (typeName.StartsWith("Record") &&
+                    int.TryParse(typeName.Substring("Record".Length), out var idFromType))
+                    tableId = idFromType;
+            }
+            if (tableId == 0 && _currentClassName != null && _currentClassName.StartsWith("Page"))
+            {
+                // Fallback 2: for page classes (Page<N>), BC emits "NavRecord Rec => this.SourceTable"
+                // which gives no type-embedded table ID. Use TableFieldRegistry which is populated
+                // from the AL source scan and knows which SourceTable a page declares.
+                if (int.TryParse(_currentClassName.AsSpan(4), out var pageId))
+                {
+                    var sourceTableId = AlRunner.Runtime.TableFieldRegistry.GetSourceTableId(pageId);
+                    if (sourceTableId.HasValue)
+                        tableId = sourceTableId.Value;
+                }
             }
 
             // Parse a simple auto-property with a default value

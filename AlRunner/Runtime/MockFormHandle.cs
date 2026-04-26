@@ -130,10 +130,42 @@ public class MockFormHandle
     {
         if (_pageInstance == null)
         {
+            // Use GetUninitializedObject so page classes with no parameterless constructor
+            // (those whose ctor required ITreeObject parent) still work after the
+            // constructor is stripped by the rewriter.
             _pageInstance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(pageType);
+            // Run InitializeComponent to initialise global-variable fields such as MockArray
+            // (e.g. myCaption in issue #1232). This is the rewriter-preserved clean version
+            // that omits NavForm-specific calls.
             var initMethod = pageType.GetMethod("InitializeComponent",
                 BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
-            initMethod?.Invoke(_pageInstance, null);
+            try { initMethod?.Invoke(_pageInstance, null); } catch { }
+            // After InitializeComponent, walk all instance fields and initialize any that
+            // are still null. This covers auto-property backing fields whose initializer
+            // (e.g. "Rec { get; } = new MockRecordHandle(tableId)") only runs in the
+            // constructor — which GetUninitializedObject skips.
+            // For MockRecordHandle fields we use the correct source-table ID derived from
+            // the page ID via TableFieldRegistry, rather than the default table-0 fallback
+            // in AlCompat.InitializeUninitializedObject (issue #1422).
+            var sourceTableId = TableFieldRegistry.GetSourceTableId(PageId) ?? 0;
+            foreach (var field in pageType.GetFields(
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+            {
+                if (field.FieldType.IsValueType) continue;
+                if (field.GetValue(_pageInstance) != null) continue;
+                if (field.FieldType == typeof(MockRecordHandle))
+                {
+                    field.SetValue(_pageInstance, new MockRecordHandle(sourceTableId));
+                    continue;
+                }
+                try
+                {
+                    var ctor = field.FieldType.GetConstructor(Type.EmptyTypes);
+                    if (ctor != null)
+                        field.SetValue(_pageInstance, ctor.Invoke(null));
+                }
+                catch { }
+            }
         }
     }
 
