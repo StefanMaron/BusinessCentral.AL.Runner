@@ -12016,7 +12016,7 @@ MockRecordHandle.CoerceToExpectedType.NavOptionToNavText:
     - tests/bucket-2/235-navoption-to-navtext
 
 AL0197.NonExtensionTypeDuplicate:
-  layer: al-compile
+  layer: syntax
   category: diagnostic
   status: covered
   notes: >
