@@ -7,7 +7,7 @@
 ///   (b) Table methods calling bare RecordId()/CurrentCompany() —
 ///       the BC compiler generates _parent.ALRecordId/_parent.ALCurrentCompany on Record<N>,
 ///       which requires the delegating properties injected by RoslynRewriter (issue #1330).
-codeunit 306002 "RRC Test"
+codeunit 307802 "RRC Test"
 {
     Subtype = Test;
 
