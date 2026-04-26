@@ -974,6 +974,24 @@ public class MockTestPageFilter
     }
 
     /// <summary>
+    /// NavText overload for ALSetFilter — resolves calls where BC emits a NavText
+    /// filter expression (NavText has an implicit string operator via NavStringValue,
+    /// but adding an explicit overload avoids any ambiguity).
+    /// </summary>
+    public void ALSetFilter(int fieldNo, NavText filterExpression)
+        => ALSetFilter(fieldNo, filterExpression.ToString());
+
+    /// <summary>
+    /// Object overload for ALSetFilter — resolves CS1503 when BC's code generator
+    /// for standard pages emits NavComplexValue-typed filter expressions that become
+    /// <c>object</c> after the Roslyn Rewriter (issue #1442).
+    /// Converts via <see cref="AlCompat.Format"/> so any BC value type is rendered
+    /// to its standard AL string representation before storing as a filter string.
+    /// </summary>
+    public void ALSetFilter(int fieldNo, object? filterExpression)
+        => ALSetFilter(fieldNo, AlCompat.Format(filterExpression));
+
+    /// <summary>
     /// Returns the last filter set for a field.
     /// BC emits: ALGetFilter(fieldNo) → string
     /// </summary>
@@ -981,6 +999,7 @@ public class MockTestPageFilter
     {
         return _filters.TryGetValue(fieldNo, out var filter) ? filter : "";
     }
+
 
     /// <summary>
     /// Sort direction. Defaults to true (ascending).

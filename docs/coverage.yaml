@@ -8926,7 +8926,13 @@ TestFilter.SetFilter (TestFilterField, Text):
   layer: runtime-api
   category: TestFilter
   status: covered
-  notes: ALSetFilter(int fieldNo, string filterExpression) stores per-field filters
+  tests:
+    - tests/bucket-2/page-report/313000-testpage-filter-object-setfilter
+  notes: >-
+    ALSetFilter(int fieldNo, string filterExpression) stores per-field filters.
+    Object overload (issue #1442) resolves CS1503 when BC's code generator for
+    standard pages emits NavComplexValue-typed filter expressions that become
+    object after the Roslyn Rewriter; NavText overload added for explicitness.
 
 # ── TestHttpRequestMessage ──────────────────────────────────────
 
