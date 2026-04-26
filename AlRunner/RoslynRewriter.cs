@@ -125,7 +125,7 @@ public class RoslynRewriter : CSharpSyntaxRewriter
         "ALFindFirst", "ALFindLast", "ALIsEmpty", "ALCalcFields", "ALSetCurrentKey",
         "ALReset", "ALCopy", "ALCopyFilter", "ALCopyFilters", "ALTestField", "ALTestFieldSafe", "ALValidate", "ALValidateSafe", "ALRename",
         "ALLockTable", "ALCalcSums", "ALSetLoadFields", "ALAddLoadFields", "ALAreFieldsLoaded", "ALFieldCaption", "ALSetRecFilter",
-        "ALTableCaption", "ALTableName", "ALTestFieldNavValueSafe", "ALRecordId", "ALCurrentCompany",
+        "ALTableCaption", "ALTableName", "ALTestFieldNavValueSafe", "ALRecordId", "ALCurrentCompany", "ALFullyQualifiedName",
         "ALFilterGroup", "ALSetRangeSafe", "ALReadIsolation",
         "ALGetView", "ALSetView", "ALGetFilter",
         "ALTransferFields", "ALMark", "ALMarkedOnly", "ALClearMarks",
@@ -830,6 +830,8 @@ public NavRecordId ALRecordId => Rec.ALRecordId;
 public string ALCurrentCompany => Rec.ALCurrentCompany;
 public void ALTestFieldNavValueSafe(int fieldNo, NavType expectedType, NavValue expectedValue) => Rec.ALTestFieldNavValueSafe(fieldNo, expectedType, expectedValue);
 public void ALTestFieldNavValueSafe(int fieldNo, NavType expectedType, object expectedValue) => Rec.ALTestFieldNavValueSafe(fieldNo, expectedType, expectedValue);
+public void ALTestFieldNavValueSafe(int fieldNo, NavType expectedType, NavValue expectedValue, NavALErrorInfo errorInfo) => Rec.ALTestFieldNavValueSafe(fieldNo, expectedType, expectedValue, errorInfo);
+public void ALTestFieldNavValueSafe(int fieldNo, NavType expectedType, object expectedValue, NavALErrorInfo errorInfo) => Rec.ALTestFieldNavValueSafe(fieldNo, expectedType, expectedValue, errorInfo);
 ";
             var delegatingMembers = CSharpSyntaxTree.ParseText(
                 $"class _Temp_ {{ {delegatingCode} }}").GetRoot()
