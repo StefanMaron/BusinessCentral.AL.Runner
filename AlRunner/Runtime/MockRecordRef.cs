@@ -667,6 +667,27 @@ public class MockRecordRef
     public int ALSystemModifiedAtNo => 2000000003;
     public int ALSystemModifiedByNo => 2000000004;
 
+    // -- ReadPermission — always true in standalone (no permission enforcement) --
+
+    /// <summary>
+    /// ALReadPermission — returns whether the current user has read permission on the table.
+    /// Standalone mode has no permission enforcement; always returns <c>true</c>.
+    /// BC compiler emits <c>recRef.ALReadPermission</c>.
+    /// </summary>
+    public bool ALReadPermission => true;
+
+    // -- SetAutoCalcFields — no-op in standalone (CalcFields computed on demand) --
+
+    /// <summary>
+    /// ALSetAutoCalcFields — marks FlowFields / FlowFilters that should be auto-calculated
+    /// when a record is fetched.  In standalone mode all fields are always available in memory
+    /// so this is a no-op.  BC compiler emits
+    /// <c>recRef.ALSetAutoCalcFields(DataError, params int[] fieldNos)</c> and
+    /// <c>recRef.ALSetAutoCalcFields(params int[] fieldNos)</c>.
+    /// </summary>
+    public void ALSetAutoCalcFields(params int[] fieldNos) { }
+    public void ALSetAutoCalcFields(DataError errorLevel, params int[] fieldNos) { }
+
     // -- ReadIsolation (no-op in standalone mode) --
     /// <summary>
     /// AL's RecordRef.ReadIsolation — sets read isolation level.

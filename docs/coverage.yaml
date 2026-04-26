@@ -5727,7 +5727,8 @@ RecordRef.ReadPermission:
   layer: runtime-api
   category: RecordRef
   status: covered
-  notes: overloads=1
+  notes: overloads=1; MockRecordRef.ALReadPermission always returns true in standalone (no permission enforcement)
+  tests: tests/bucket-2/306-recref-readpermission-autocalcfields
 
 RecordRef.RecordId:
   layer: runtime-api
@@ -5765,7 +5766,8 @@ RecordRef.SetAutoCalcFields:
   layer: runtime-api
   category: RecordRef
   status: covered
-  notes: overloads=1
+  notes: overloads=2; MockRecordRef.ALSetAutoCalcFields(params int[]) and ALSetAutoCalcFields(DataError, params int[]); no-op in standalone (all fields always available in memory). Fixed CS1061 in issue #1326.
+  tests: tests/bucket-2/306-recref-readpermission-autocalcfields
 
 RecordRef.SetLoadFields:
   layer: runtime-api
