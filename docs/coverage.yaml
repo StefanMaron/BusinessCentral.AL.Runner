@@ -186,7 +186,32 @@ reportextension_declaration:
   tests:
     - tests/bucket-2/page-report/130-reportext-header-scope
     - tests/bucket-2/page-report/129-reportext-parent
+    - tests/bucket-2/page-report/311800-reportext-globalvar
   notes: >
+
+ReportExtension.GetGlobalVariable (int, NavType):
+  layer: runtime
+  category: report
+  status: covered
+  tests:
+    - tests/bucket-2/page-report/311800-reportext-globalvar
+  notes: >
+    Newer BC compiler versions emit GetGlobalVariable(int id, NavType type) calls on
+    scope classes inside ReportExtension<N> when accessing global variables declared
+    on the reportextension. After stripping NavReportExtension, injected as a no-op
+    stub returning NavInteger.Default. Issue #1450.
+
+ReportExtension.SetGlobalVariable (int, NavType, object):
+  layer: runtime
+  category: report
+  status: covered
+  tests:
+    - tests/bucket-2/page-report/311800-reportext-globalvar
+  notes: >
+    Newer BC compiler versions emit SetGlobalVariable(int id, NavType type, object)
+    calls on scope classes inside ReportExtension<N> when accessing global variables
+    declared on the reportextension. After stripping NavReportExtension, injected as
+    a no-op stub. Issue #1450.
 
 tableextension_declaration:
   layer: syntax
@@ -595,6 +620,8 @@ parameter:
     - tests/bucket-1/codeunit-runtime/01-pure-function
     - tests/bucket-1/codeunit-runtime/32-interface-param
     - tests/bucket-2/data-formats/83-list-byref
+    - tests/bucket-1/codeunit-runtime/312600-assert-byref-coercion
+  notes: var-param (ByRef<T>) coercion through Assert.AreEqual covered; auto-stub generator strips "var" from Integer/Boolean params to prevent CS1503 ByRef mismatch; ConvertArgInternal unwraps ByRef<T> for non-ByRef targets; closes #1433
 
 parameter_list:
   layer: syntax
@@ -2223,6 +2250,12 @@ FieldRef.EnumValueCount ():
   status: covered
   notes: . Covered: returns member count for enum fields; returns 0 for non-enum fields.
 
+FieldRef.FieldError ():
+  layer: runtime-api
+  category: FieldRef
+  status: covered
+  notes: 0-arg overload — delegates to MockRecordHandle.ALFieldError(fieldNo) producing "<FieldCaption> must have a value in <TableCaption>: <PK>" format. Closes #1428.
+
 FieldRef.FieldError (ErrorInfo):
   layer: runtime-api
   category: FieldRef
@@ -3019,6 +3052,9 @@ HttpClient.Timeout (Duration):
   layer: runtime-api
   category: HttpClient
   status: covered
+  notes: ALTimeout changed from int to NavDuration so Duration→Integer assignment compiles — issue #1445
+  tests:
+    - tests/bucket-2/data-formats/313-duration-to-integer
 
 HttpClient.UseDefaultNetworkWindowsAuthentication ():
   layer: runtime-api
@@ -3438,11 +3474,15 @@ IsolatedStorage.Set (Text, SecretText, DataScope):
   layer: runtime-api
   category: IsolatedStorage
   status: covered
+  notes: MockIsolatedStorage.ALSet now returns bool (true on success) — issue #1432.
 
 IsolatedStorage.Set (Text, Text, DataScope):
   layer: runtime-api
   category: IsolatedStorage
-  status: not-tested
+  status: covered
+  tests:
+    - bucket-2/data-formats/314-void-returning-bool
+  notes: MockIsolatedStorage.ALSet returns bool (true on success); `if not IsolatedStorage.Set(...)` guard compiles — issue #1432.
 
 IsolatedStorage.SetEncrypted (Text, SecretText, DataScope):
   layer: runtime-api
@@ -5579,12 +5619,22 @@ OutStream.Write (Table, Integer):
 OutStream.Write (Text, Integer):
   layer: runtime-api
   category: OutStream
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/311-stream-writestring
+  notes: >
+    BC compiler emits ALStream.ALWriteString(writer, error, string) for this overload in some BC
+    versions; MockStream.ALWriteString(string) and ALWriteString(string, int) added (issue #1437).
 
 OutStream.Write (TextConst, Integer):
   layer: runtime-api
   category: OutStream
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/311-stream-writestring
+  notes: >
+    NavTextConstant write routes through MockStream.ALWriteString — added alongside
+    OutStream.Write(Text) fix (issue #1437).
 
 OutStream.Write (Time, Integer):
   layer: runtime-api
@@ -5621,6 +5671,16 @@ Page.Caption (Text):
   layer: runtime-api
   category: Page
   status: covered
+
+Page.Caption (subpage part handle):
+  layer: runtime-api
+  category: Page
+  status: covered
+  notes: >
+    MockPartFormHandle.PageCaption get/set stub; also fixed MockPagePartHandle.CreateNavFormHandle
+    to return a cached handle instance so that set-then-get round-trips work correctly.
+    GetPart() on the generated Page<N> class now caches MockPagePartHandle by hash.
+    Closes #1440.
 
 Page.Close ():
   layer: runtime-api
@@ -5669,6 +5729,14 @@ Page.PromptMode (PromptMode):
   category: Page
   status: covered
   notes: MockCurrPage.PromptMode and MockFormHandle.PromptMode NavOption stubs; injected on Page<N> class for CurrPage.PromptMode access inside page triggers (issue #1079); RoslynRewriter converts static self-reference Page<N>.PromptMode → this.PromptMode to fix CS0120 (issue #1266)
+
+CurrPage.Run ():
+  layer: runtime-api
+  category: Page
+  status: covered
+  tests:
+    - tests/bucket-2/page-report/312-currpage-run
+  notes: "BC lowers CurrPage.Run() inside a page trigger to this.Run() on the Page<N> class (issue #1444). Injected as a no-op void stub on every emitted Page<N> class; consistent with headless no-UI contract."
 
 Page.Run ():
   layer: runtime-api
@@ -6253,12 +6321,14 @@ RecordRef.Insert ():
 RecordRef.Insert (Boolean, Boolean):
   layer: runtime-api
   category: RecordRef
-  status: not-tested
+  status: covered
+  notes: MockRecordRef.ALInsert(DataError, runTrigger, belowXRec) — BelowXRec is no-op in standalone; RunTrigger forwarded to MockRecordHandle. Tested in 312-recref-insert-overloads.
 
 RecordRef.Insert (Boolean):
   layer: runtime-api
   category: RecordRef
-  status: not-tested
+  status: covered
+  notes: MockRecordRef.ALInsert(DataError, runTrigger) — trigger-aware insert via RecordRef. Tested in 312-recref-insert-overloads.
 
 RecordRef.IsDirty ():
   layer: runtime-api
@@ -6453,7 +6523,9 @@ RecordRef.Truncate (Boolean):
   layer: runtime-api
   category: RecordRef
   status: covered
-  notes: MockRecordRef.ALTruncate delegates to ALDeleteAll without triggers
+  tests:
+    - tests/bucket-1/record-table/92-recordref-stub-methods
+  notes: MockRecordRef.ALTruncate (0/1/2-arg) delegates to ALDeleteAll; 2-arg overload (DataError, bool raiseTrigger) added in #1431
 
 RecordRef.WritePermission ():
   layer: runtime-api
@@ -6521,6 +6593,14 @@ Report.RdlcLayout (Integer, InStream):
   tests:
     - tests/bucket-2/page-report/90-report-static
   notes: NavReport.RdlcLayout → MockReportHandle.StaticRdlcLayout (returns 0).
+
+Report.Run (Integer, Boolean):
+  layer: runtime-api
+  category: Report
+  status: covered
+  tests:
+    - tests/bucket-2/page-report/310200-report-run-2arg
+  notes: "Report.Run(ReportId, RequestPage) — 2-arg overload. BC emits this when systemPrinter is omitted. Fixes CS1501 'StaticRun' (2 args) — issue #1427."
 
 Report.Run (Integer, Boolean, Boolean, Table):
   layer: runtime-api
@@ -6795,7 +6875,9 @@ ReportInstance.SaveAs (Text, ReportFormat, OutStream, RecordRef):
   layer: runtime-api
   category: ReportInstance
   status: covered
-  notes: MockReportHandle.SaveAs(errorLevel, requestParams, format, outStream) — no-op in standalone mode.
+  tests:
+    - bucket-2/data-formats/314-void-returning-bool
+  notes: MockReportHandle.SaveAs now returns bool (true on success); `if not Rep.SaveAs(...)` guard compiles — issue #1432.
 
 ReportInstance.SaveAsExcel (Text):
   layer: runtime-api
@@ -6813,7 +6895,9 @@ ReportInstance.SaveAsPdf (Text):
   layer: runtime-api
   category: ReportInstance
   status: covered
-  notes: MockReportHandle.SaveAsPdf() is a no-op in standalone mode.
+  tests:
+    - bucket-2/data-formats/314-void-returning-bool
+  notes: MockReportHandle.SaveAsPdf now returns bool (true on success); `if not Rep.SaveAsPdf(...)` guard compiles — issue #1432.
 
 ReportInstance.SaveAsWord (Text):
   layer: runtime-api
@@ -7071,6 +7155,14 @@ Session.SetDocumentServiceToken (Text):
   status: stub
   notes: . Stripped via StripEntireCallMethods — OneDrive integration; no-op standalone. No explicit test (no return value to assert).
 
+Session.StartSession (Integer, Integer):
+  layer: runtime-api
+  category: Session
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/311435-startsession-2arg
+  notes: 2-arg AL form (no Company). MockSession.ALStartSession(DataError, ByRef<int>, int) delegates to the 4-arg overload with the current company name; closes #1435
+
 Session.StartSession (Integer, Integer, Duration, Text, Table):
   layer: runtime-api
   category: Session
@@ -7090,6 +7182,9 @@ Session.StopSession (Integer, Text):
   layer: runtime-api
   category: Session
   status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/311443-stopsession-comment
+  notes: . closes #1443. comment param ignored — single-process runner.
 
 Session.UnbindSubscription (Codeunit):
   layer: runtime-api
@@ -7230,7 +7325,12 @@ System.Clear (Array):
   layer: runtime-api
   category: System
   status: covered
-  notes: . Covered: Text, Integer, Decimal, Boolean, Date, Record, List — each resets to type default.
+  tests:
+    - tests/bucket-2/data-formats/312100-array-clear-single-int
+  notes: >
+    Covered: Text, Integer, Decimal, Boolean, Date, Record, List — each resets to type default.
+    BC emits arr.Clear(int) for Clear(arr[i]) on 1-D arrays; MockArray<T>.Clear(int) single-int
+    overload added alongside the existing int[] overload (issue #1448).
 
 System.Clear (Joker):
   layer: runtime-api
@@ -7300,7 +7400,9 @@ System.CompressArray (Array):
   layer: runtime-api
   category: System
   status: covered
-  notes: . ALSystemArray.ALCompressArray redirected to AlCompat.ALCompressArray; shifts non-blank elements to front, fills tail with default.
+  notes: ALSystemArray.ALCompressArray redirected to AlCompat.ALCompressArray; shifts non-blank elements to front, fills tail with default; returns Integer count of non-blank elements (fixes CS0029 when result is assigned).
+  tests:
+    - bucket-1/codeunit-runtime/199-system-array-random: CompressArray_ReturnsNonBlankCount_WithGaps, CompressArray_ReturnsZero_AllBlank, CompressArray_ReturnsAll_NoGaps
 
 System.CopyArray (Array, Array, Integer, Integer):
   layer: runtime-api
@@ -7420,7 +7522,21 @@ System.Evaluate (Joker, Text, Integer):
   status: covered
   tests:
     - tests/bucket-2/data-formats/140-evaluate
-  notes: supports Integer, Boolean, Decimal, Text, BigInteger, Date
+  notes: supports Integer, Boolean, Decimal, Text, BigInteger, Date; BC NavFormatEvaluateHelper.Evaluate path
+
+System.Evaluate (Version, Text) [ALSystemVariable.ALEvaluate path]:
+  layer: runtime-api
+  category: System
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/97-version-evaluate
+  notes: >
+    Newer BC versions lower Evaluate(var V: Version; T: Text) to ALSystemVariable.ALEvaluate<NavVersion>
+    which has 'where T : class'. After NavVersion → MockVersion rewrite (MockVersion is a struct) this
+    fails CS0452. Fix: rewriter redirects ALSystemVariable.ALEvaluate(...) to AlCompat.ALEvaluate(ByRef<T>, text);
+    AlCompat provides explicit overloads for MockVersion (and struct types int/bool/Decimal18/long/Guid)
+    plus a class-constrained generic fallback that delegates back to ALSystemVariable for reference types.
+    Closes #1429.
 
 System.ExportEncryptionKey (Text):
   layer: runtime-api
@@ -8503,7 +8619,9 @@ Table.Truncate (Boolean):
   layer: runtime-api
   category: Table
   status: covered
-  notes: . Deletes all rows without triggers (delegates to DeleteAll(false)).
+  tests:
+    - tests/bucket-1/record-table/205-table-extra-methods
+  notes: MockRecordHandle.ALTruncate (0/1/2-arg). 2-arg overload (DataError, bool raiseTrigger) added in #1431; delegates to DeleteAll(errorLevel, raiseTrigger).
 
 Table.Validate (Joker, Joker):
   layer: runtime-api
@@ -9359,6 +9477,12 @@ TestRequestPage.ValidationErrorCount ():
   category: TestRequestPage
   status: covered
   notes: ALValidationErrorCount() returns 0
+
+TestRequestPage.GetDataItem (Text):
+  layer: runtime-api
+  category: TestRequestPage
+  status: covered
+  notes: GetDataItem(string name) on MockTestPageHandle returns a per-name MockTestPageFilter; ALSetFilter/ALGetFilter round-trip proved; two independent data items proved; fixes CS1061 issue #1457.
 
 # ── Text ────────────────────────────────────────────────────────
 
@@ -11410,13 +11534,17 @@ XmlElement.AddAfterSelf (Joker):
   layer: runtime-api
   category: XmlElement
   status: covered
-  notes: . Covered via NavXmlElement native.
+  tests:
+    - bucket-2/data-formats/314-void-returning-bool
+  notes: AlCompat.XmlAddAfterSelf now returns bool (true on success); `if not Element.AddAfterSelf(...)` guard compiles — issue #1432.
 
 XmlElement.AddBeforeSelf (Joker):
   layer: runtime-api
   category: XmlElement
   status: covered
-  notes: . Covered via NavXmlElement native.
+  tests:
+    - bucket-2/data-formats/314-void-returning-bool
+  notes: AlCompat.XmlAddBeforeSelf now returns bool (true on success); `if not Element.AddBeforeSelf(...)` guard compiles — issue #1432.
 
 XmlElement.AddFirst (Joker):
   layer: runtime-api
@@ -11600,7 +11728,9 @@ XmlElement.Remove ():
   layer: runtime-api
   category: XmlElement
   status: covered
-  notes: . Covered via NavXmlElement native — removes element from parent tree.
+  tests:
+    - bucket-2/data-formats/314-void-returning-bool
+  notes: AlCompat.XmlRemove now returns bool (true on success); `if not Element.Remove()` guard compiles — issue #1432.
 
 XmlElement.RemoveAllAttributes ():
   layer: runtime-api

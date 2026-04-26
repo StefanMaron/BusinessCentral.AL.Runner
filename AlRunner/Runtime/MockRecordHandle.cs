@@ -3727,6 +3727,9 @@ public class MockRecordHandle : IConvertible
     /// </summary>
     public void ALTruncate() => ALDeleteAll(DataError.ThrowError, false);
     public void ALTruncate(DataError errorLevel) => ALDeleteAll(errorLevel, false);
+    /// <summary>ALTruncate(DataError, bool raiseTrigger) — 2-arg overload emitted by the BC compiler
+    /// when AL calls Truncate(RaiseTrigger: Boolean). Delegates to DeleteAll with the given trigger flag.</summary>
+    public void ALTruncate(DataError errorLevel, bool raiseTrigger) => ALDeleteAll(errorLevel, raiseTrigger);
 
     /// <summary>
     /// AL Relation — returns the table number that the field relates to via TableRelation.

@@ -62,24 +62,27 @@ public class MockReportHandle
     public string WordXmlPart() => string.Empty;
 
     // ── SaveAs* instance methods ───────────────────────────────────────────────
+    // BC AL: ReportInstance.SaveAs/SaveAsPdf/etc. all return Boolean (true on success) — issue #1432.
+    // The standalone runner cannot perform real file I/O so these are no-ops that
+    // return true to allow `if not Rep.SaveAs(...)` guards to compile and run.
 
-    /// <summary>BC emits <c>rep.SaveAsPdf(errorLevel, path)</c> for <c>Report.SaveAsPdf(FileName)</c>. No-op in standalone mode.</summary>
-    public void SaveAsPdf(DataError errorLevel, string path) { }
+    /// <summary>BC emits <c>rep.SaveAsPdf(errorLevel, path)</c> for <c>Report.SaveAsPdf(FileName)</c>. Returns true (no-op) in standalone mode.</summary>
+    public bool SaveAsPdf(DataError errorLevel, string path) => true;
 
-    /// <summary>BC emits <c>rep.SaveAsExcel(errorLevel, path)</c> for <c>Report.SaveAsExcel(FileName)</c>. No-op in standalone mode.</summary>
-    public void SaveAsExcel(DataError errorLevel, string path) { }
+    /// <summary>BC emits <c>rep.SaveAsExcel(errorLevel, path)</c> for <c>Report.SaveAsExcel(FileName)</c>. Returns true (no-op) in standalone mode.</summary>
+    public bool SaveAsExcel(DataError errorLevel, string path) => true;
 
-    /// <summary>BC emits <c>rep.SaveAsWord(errorLevel, path)</c> for <c>Report.SaveAsWord(FileName)</c>. No-op in standalone mode.</summary>
-    public void SaveAsWord(DataError errorLevel, string path) { }
+    /// <summary>BC emits <c>rep.SaveAsWord(errorLevel, path)</c> for <c>Report.SaveAsWord(FileName)</c>. Returns true (no-op) in standalone mode.</summary>
+    public bool SaveAsWord(DataError errorLevel, string path) => true;
 
-    /// <summary>BC emits <c>rep.SaveAsHtml(errorLevel, path)</c> for <c>Report.SaveAsHtml(FileName)</c>. No-op in standalone mode.</summary>
-    public void SaveAsHtml(DataError errorLevel, string path) { }
+    /// <summary>BC emits <c>rep.SaveAsHtml(errorLevel, path)</c> for <c>Report.SaveAsHtml(FileName)</c>. Returns true (no-op) in standalone mode.</summary>
+    public bool SaveAsHtml(DataError errorLevel, string path) => true;
 
-    /// <summary>BC emits <c>rep.SaveAsXml(errorLevel, path)</c> for <c>Report.SaveAsXml(FileName)</c>. No-op in standalone mode.</summary>
-    public void SaveAsXml(DataError errorLevel, string path) { }
+    /// <summary>BC emits <c>rep.SaveAsXml(errorLevel, path)</c> for <c>Report.SaveAsXml(FileName)</c>. Returns true (no-op) in standalone mode.</summary>
+    public bool SaveAsXml(DataError errorLevel, string path) => true;
 
-    /// <summary>BC emits <c>rep.SaveAs(errorLevel, params, format, ByRef&lt;OutStream&gt;)</c> for <c>Report.SaveAs(Params, Format, OutStream)</c>. No-op in standalone mode.</summary>
-    public void SaveAs(DataError errorLevel, string requestParams, NavReportFormat format, ByRef<MockOutStream> outStream) { }
+    /// <summary>BC emits <c>rep.SaveAs(errorLevel, params, format, ByRef&lt;OutStream&gt;)</c> for <c>Report.SaveAs(Params, Format, OutStream)</c>. Returns true (no-op) in standalone mode.</summary>
+    public bool SaveAs(DataError errorLevel, string requestParams, NavReportFormat format, ByRef<MockOutStream> outStream) => true;
 
     // ── CreateTotals ──────────────────────────────────────────────────────────
 
@@ -333,8 +336,21 @@ public class MockReportHandle
     }
 
     /// <summary>
+    /// Static Report.Run(reportId, requestPage) — 2-argument overload.
+    /// BC emits this form for <c>Report.Run(id, true)</c> when only the request-page flag
+    /// is supplied and <c>systemPrinter</c> is omitted.
+    /// <paramref name="requestPage"/> is ignored in standalone mode.
+    /// Fixes CS1501 'StaticRun' (2 args) — issue #1427.
+    /// </summary>
+    public static void StaticRun(int reportId, bool requestPage)
+    {
+        var handle = new MockReportHandle(reportId) { UseRequestForm = requestPage };
+        handle.Run();
+    }
+
+    /// <summary>
     /// Static Report.Run(reportId, requestPage, systemPrinter) — 3-argument overload.
-    /// BC emits this form when no record argument is supplied (e.g. <c>Report.Run(id, true)</c>).
+    /// BC emits this form when no record argument is supplied (e.g. <c>Report.Run(id, true, false)</c>).
     /// <paramref name="requestPage"/> and <paramref name="systemPrinter"/> are ignored in standalone mode.
     /// </summary>
     public static void StaticRun(int reportId, bool requestPage, bool systemPrinter)

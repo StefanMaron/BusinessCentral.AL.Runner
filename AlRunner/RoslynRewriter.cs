@@ -467,6 +467,21 @@ public class RoslynRewriter : CSharpSyntaxRewriter
                 preservedMembers.Add(
                     SyntaxFactory.ParseMemberDeclaration(
                         $"public {node.Identifier.Text} ParentObject => this;")!);
+
+                // GetGlobalVariable / SetGlobalVariable — newer BC compiler versions emit these
+                // on scope classes inside ReportExtension<N> when accessing global variables
+                // declared on the reportextension. After stripping NavReportExtension, the
+                // base class no longer provides them; inject no-op stubs so compilation
+                // succeeds. Returns NavInteger.Default for get (a safe non-null NavValue
+                // fallback); discards the value for set.
+                // Same pattern as the stubs on MockRecordHandle (page/page-extension variant).
+                // Issue #1450.
+                preservedMembers.Add(
+                    SyntaxFactory.ParseMemberDeclaration(
+                        "public Microsoft.Dynamics.Nav.Runtime.NavValue GetGlobalVariable(int id, Microsoft.Dynamics.Nav.Types.NavType type) => Microsoft.Dynamics.Nav.Runtime.NavInteger.Default;")!);
+                preservedMembers.Add(
+                    SyntaxFactory.ParseMemberDeclaration(
+                        "public void SetGlobalVariable(int id, Microsoft.Dynamics.Nav.Types.NavType type, object value) { }")!);
             }
 
             var stubClass = node
@@ -922,8 +937,16 @@ protected bool CallGetAutoFormatStringExtensionMethod(int fieldNo, ref string re
 protected void EnsureGlobalVariablesInitialized() {{ }}
 // BC emits CurrPage.SubPart.Page.SomeProcedure() as
 // CurrPage.GetPart(partHash).CreateNavFormHandle(scope).Invoke(methodHash, args).
-// Returns a MockPagePartHandle that dispatches the call to the subpage class.
-public MockPagePartHandle GetPart(int partHash) {{ return new MockPagePartHandle(partHash); }}
+// Returns a cached MockPagePartHandle so that state (e.g. PageCaption) set in one
+// BC statement is visible when the same part handle is read in the next statement.
+// _partHandles is initialised lazily to survive GetUninitializedObject construction.
+// Issue #1440.
+private System.Collections.Generic.Dictionary<int, MockPagePartHandle>? _partHandles;
+public MockPagePartHandle GetPart(int partHash) {{ _partHandles ??= new(); if (!_partHandles.TryGetValue(partHash, out var handle)) {{ handle = new MockPagePartHandle(partHash); _partHandles[partHash] = handle; }} return handle; }}
+// Run() — no-op stub for CurrPage.Run() called inside a page trigger.
+// BC lowers CurrPage.Run() to this.Run() on the Page<N> class (issue #1444).
+// In headless mode there is no UI to refresh; this is intentionally a no-op.
+public void Run() {{ }}
 // RunModal() — dispatches to ModalPageHandler if registered, otherwise no-op.
 // BC generates CurrPage.RunModal() as a call on the Page<N> class directly (issue #1079).
 public FormResult RunModal() {{ return HandlerRegistry.InvokeModalPageHandler({pageIdStr}); }}
@@ -4168,6 +4191,34 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
                             SyntaxKind.SimpleMemberAccessExpression,
                             SyntaxFactory.IdentifierName("AlCompat"),
                             SyntaxFactory.IdentifierName("Evaluate")),
+                        SyntaxFactory.ArgumentList(keptArgs));
+                }
+            }
+
+            // ALSystemVariable.ALEvaluate<T>(DataError, ByRef<T>, text[, radix])
+            // -> AlCompat.ALEvaluate(ByRef<T>, text)
+            // Newer BC versions lower AL Evaluate(var Var; Text) to a generic call on
+            // ALSystemVariable.ALEvaluate<T> which has 'where T : class'. After type rewriting
+            // NavVersion → MockVersion the constraint fails (CS0452) because MockVersion is a
+            // struct. We redirect ALL ALEvaluate calls to AlCompat.ALEvaluate which is an
+            // unconstrained generic that dispatches by type — no class constraint.
+            // Strip arg[0] (DataError) and arg[3] (optional radix); keep arg[1] (ByRef<T>)
+            // and arg[2] (text).
+            if (exprText == "ALSystemVariable" && methodName == "ALEvaluate")
+            {
+                var args = visited.ArgumentList.Arguments;
+                // Signature: (DataError, ByRef<T>, text[, radix]) — 3 or 4 args
+                if (args.Count >= 3)
+                {
+                    var keptArgs = new SeparatedSyntaxList<ArgumentSyntax>();
+                    // arg[1] = ByRef<T>, arg[2] = text  (drop DataError + optional radix)
+                    keptArgs = keptArgs.Add(args[1]);
+                    keptArgs = keptArgs.Add(args[2]);
+                    return SyntaxFactory.InvocationExpression(
+                        SyntaxFactory.MemberAccessExpression(
+                            SyntaxKind.SimpleMemberAccessExpression,
+                            SyntaxFactory.IdentifierName("AlCompat"),
+                            SyntaxFactory.IdentifierName("ALEvaluate")),
                         SyntaxFactory.ArgumentList(keptArgs));
                 }
             }

@@ -134,12 +134,22 @@ public class MockArray<T> : IEnumerable<T>
             _items[i] = _factory != null ? _factory() : default!;
     }
 
+    /// <summary>
+    /// AL's Clear(arr[i]) — BC emits <c>arr.Clear(singleInt)</c> for 1-D arrays.
+    /// Resets the element at the given 0-based index to its default value.
+    /// </summary>
+    public void Clear(int index)
+    {
+        _items[index] = _factory != null ? _factory() : default!;
+    }
+
     public void Clear(int[] indexes)
     {
         _items[FlatIndex(indexes)] = _factory != null ? _factory() : default!;
     }
 
     public void ClearReference() => Clear();
+    public void ClearReference(int index) => Clear(index);
     public void ClearReference(int[] indexes) => Clear(indexes);
 
     public IEnumerator<T> GetEnumerator() => ((IEnumerable<T>)_items).GetEnumerator();

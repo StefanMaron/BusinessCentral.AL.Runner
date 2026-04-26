@@ -49,6 +49,44 @@ codeunit 97501 "SAR Test"
         Assert.AreEqual('y', Arr[2], 'no-gap: second element unchanged');
     end;
 
+    [Test]
+    procedure CompressArray_ReturnsNonBlankCount_WithGaps()
+    var
+        Arr: array[5] of Text;
+        N: Integer;
+    begin
+        Arr[1] := 'a';
+        Arr[2] := '';
+        Arr[3] := 'b';
+        Arr[4] := '';
+        Arr[5] := 'c';
+        N := H.CompressTextArrayCount(Arr);
+        Assert.AreEqual(3, N, 'CompressArray must return count of non-blank elements');
+    end;
+
+    [Test]
+    procedure CompressArray_ReturnsZero_AllBlank()
+    var
+        Arr: array[5] of Text;
+        N: Integer;
+    begin
+        N := H.CompressTextArrayCount(Arr);
+        Assert.AreEqual(0, N, 'CompressArray on all-blank array must return 0');
+    end;
+
+    [Test]
+    procedure CompressArray_ReturnsAll_NoGaps()
+    var
+        Arr: array[5] of Text;
+        N: Integer;
+    begin
+        Arr[1] := 'x';
+        Arr[2] := 'y';
+        Arr[3] := 'z';
+        N := H.CompressTextArrayCount(Arr);
+        Assert.AreEqual(3, N, 'CompressArray with no gaps must return count of filled elements');
+    end;
+
     // ── CopyArray ─────────────────────────────────────────────────────────────
 
     [Test]

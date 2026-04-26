@@ -18,6 +18,7 @@ namespace AlRunner.Runtime;
 public class MockPagePartHandle
 {
     private readonly int _partHash;
+    private MockPartFormHandle? _cachedHandle;
 
     public MockPagePartHandle(int partHash)
     {
@@ -26,13 +27,16 @@ public class MockPagePartHandle
 
     /// <summary>
     /// BC calls this to obtain a form handle from the part.
-    /// Returns a <see cref="MockPartFormHandle"/> that can invoke methods
-    /// on the subpage by searching all Page* classes in the assembly.
+    /// Returns a cached <see cref="MockPartFormHandle"/> so that state written
+    /// in one BC statement (e.g. <c>CurrPage.SubPart.Page.Caption := X</c>)
+    /// is visible when the same part handle is read in the next statement
+    /// (e.g. <c>exit(CurrPage.SubPart.Page.Caption)</c>).
     /// The <paramref name="scope"/> argument (the calling scope object) is unused
     /// in standalone mode — no real page lifecycle runs.
+    /// Issue #1440.
     /// </summary>
     public MockPartFormHandle CreateNavFormHandle(object? scope)
-        => new MockPartFormHandle(_partHash);
+        => _cachedHandle ??= new MockPartFormHandle(_partHash);
 }
 
 /// <summary>
@@ -83,6 +87,13 @@ public class MockPartFormHandle
     /// Issue #1186.
     /// </summary>
     public void Update(bool saveRecord = true) { }
+
+    /// <summary>
+    /// Stub property. BC emits <c>CurrPage.SubPart.Page.Caption</c> get/set as
+    /// <c>CurrPage.GetPart(hash).CreateNavFormHandle(scope).PageCaption</c>.
+    /// Issue #1440.
+    /// </summary>
+    public string PageCaption { get; set; } = "";
 
     /// <summary>
     /// Invokes a procedure on the subpage identified by its method hash.

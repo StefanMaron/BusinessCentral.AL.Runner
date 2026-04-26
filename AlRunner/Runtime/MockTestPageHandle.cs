@@ -25,6 +25,7 @@ public class MockTestPageHandle
 
     private readonly Dictionary<int, MockTestPageField> _fields = new();
     private readonly Dictionary<int, MockTestPageHandle> _parts = new();
+    private readonly Dictionary<string, MockTestPageFilter> _dataItems = new();
 
     // ── Custom action dispatch ────────────────────────────────────────────────
     // Lazily created page instance (Page{N}) used to invoke compiled OnAction triggers.
@@ -355,6 +356,31 @@ public class MockTestPageHandle
     ///   tP.ALFilter.ALSetFilter(fieldNo, filterValue)
     /// </summary>
     public MockTestPageFilter ALFilter { get; } = new();
+
+    /// <summary>
+    /// Returns the filter object for a report data item by its internal name.
+    ///
+    /// BC emits <c>tP.Target.GetDataItem("Report{N}DataItem{I}TableView")</c>
+    /// when AL code accesses a report data-item property on a
+    /// <c>TestRequestPage</c> (e.g. <c>RequestPage.Customer.SetFilter(Id, '1..10')</c>).
+    /// The same string is used for both the <c>SetFilter</c> and the subsequent
+    /// <c>GetFilter</c> call, so a per-name dictionary is required to make the
+    /// round-trip work.
+    ///
+    /// The returned <see cref="MockTestPageFilter"/> exposes <c>ALSetFilter</c> /
+    /// <c>ALGetFilter</c> / <c>ALAscending</c> / <c>ALCurrentKey</c> /
+    /// <c>ALSetCurrentKey</c> which match BC's real <c>NavTestFilter</c> API.
+    /// Fixes CS1061 issue #1457.
+    /// </summary>
+    public MockTestPageFilter GetDataItem(string name)
+    {
+        if (!_dataItems.TryGetValue(name, out var filter))
+        {
+            filter = new MockTestPageFilter();
+            _dataItems[name] = filter;
+        }
+        return filter;
+    }
 
     /// <summary>
     /// Returns a MockTestPageField for the given field hash.

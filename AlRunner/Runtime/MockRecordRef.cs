@@ -169,6 +169,8 @@ public class MockRecordRef
     /// <summary>ALTruncate — removes all records from the table without running triggers.</summary>
     public void ALTruncate() => _handle?.ALDeleteAll(DataError.ThrowError, false);
     public void ALTruncate(DataError errorLevel) => _handle?.ALDeleteAll(errorLevel, false);
+    /// <summary>ALTruncate(DataError, bool raiseTrigger) — 2-arg overload for RecordRef.Truncate(RaiseTrigger).</summary>
+    public void ALTruncate(DataError errorLevel, bool raiseTrigger) => _handle?.ALDeleteAll(errorLevel, raiseTrigger);
 
     // -- Caption --
 
@@ -383,6 +385,9 @@ public class MockRecordRef
     public bool Insert(bool runTrigger) => _handle != null && _handle.ALInsert(DataError.ThrowError, runTrigger);
     public bool ALInsert(DataError errorLevel) => _handle != null && _handle.ALInsert(errorLevel);
     public bool ALInsert(DataError errorLevel, bool runTrigger) => _handle != null && _handle.ALInsert(errorLevel, runTrigger);
+    /// <summary>BC emits ALInsert(DataError, RunTrigger, BelowXRec) for <c>RecordRef.Insert(RunTrigger, BelowXRec)</c>.
+    /// BelowXRec is no-op in standalone mode; RunTrigger is forwarded as usual.</summary>
+    public bool ALInsert(DataError errorLevel, bool runTrigger, bool belowXRec) => _handle != null && _handle.ALInsert(errorLevel, runTrigger);
 
     public bool Modify() => Modify(false);
     public bool Modify(bool runTrigger) => _handle != null && _handle.ALModify(DataError.ThrowError, runTrigger);
