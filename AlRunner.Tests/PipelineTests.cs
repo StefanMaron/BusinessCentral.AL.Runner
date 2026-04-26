@@ -769,4 +769,156 @@ namespace AlRunnerGenerated {
         Assert.Contains("No test codeunits found", result.StdErr);
         Assert.Contains("--run-codeunit", result.StdErr);
     }
+
+    // ─── CS1503 int→string fixup (issue #1426) ──────────────────────────────
+
+    /// <summary>
+    /// BC 26+ emits 'int' where older versions emitted a 'NavText' wrapper when an
+    /// AL Integer value is passed to a Text parameter.  The resulting C# fails with
+    /// CS1503 "cannot convert from 'int' to 'string'".
+    ///
+    /// FixIntToStringCS1503 must detect the pattern, wrap the argument with
+    /// AlCompat.Format(), and return fixed trees.
+    /// </summary>
+    [Fact]
+    public void CS1503Fix_WrapsIntArg_WithAlCompatFormat()
+    {
+        // C# that mimics BC 26+ emission: user-defined procedure takes string,
+        // caller passes an int — the classic Integer→Text implicit coercion.
+        const string csharpWithIntToString = """
+            using AlRunner.Runtime;
+            namespace AlRunnerGenerated {
+                public static class FixTestHelper {
+                    public static string TakeString(string s) => s;
+                    public static string Call(int n) => TakeString(n);
+                }
+            }
+            """;
+
+        var trees = new List<Microsoft.CodeAnalysis.SyntaxTree>
+        {
+            Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(csharpWithIntToString,
+                path: "FixTestHelper.cs")
+        };
+        var refs = RoslynCompiler.LoadReferences();
+        var compilation = Microsoft.CodeAnalysis.CSharp.CSharpCompilation.Create(
+            "FixTest", trees, refs,
+            new Microsoft.CodeAnalysis.CSharp.CSharpCompilationOptions(
+                Microsoft.CodeAnalysis.OutputKind.DynamicallyLinkedLibrary));
+        using var ms1 = new System.IO.MemoryStream();
+        var emitResult = compilation.Emit(ms1);
+
+        // Confirm there is a CS1503 int→string error before the fix
+        var cs1503 = emitResult.Diagnostics.Where(d => d.Id == "CS1503").ToList();
+        Assert.NotEmpty(cs1503);   // RED: raw C# must fail before fix
+
+        // The fix must return patched trees
+        var fixedTrees = CS1503Fixer.Fix(compilation, emitResult.Diagnostics);
+        Assert.NotNull(fixedTrees);   // fix must produce trees
+
+        // Patched trees must compile successfully
+        var fixedCompilation = compilation.RemoveAllSyntaxTrees().AddSyntaxTrees(fixedTrees!);
+        using var ms2 = new System.IO.MemoryStream();
+        var fixedResult = fixedCompilation.Emit(ms2);
+        Assert.True(fixedResult.Success,   // GREEN: fixed trees must compile
+            $"Fixed compilation still fails: {string.Join(", ", fixedResult.Diagnostics.Where(d => d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error).Select(d => d.GetMessage()))}");
+
+        // Verify runtime: TakeString(42) must return "42" (AlCompat.Format(42) == "42")
+        ms2.Seek(0, System.IO.SeekOrigin.Begin);
+        var alc = new System.Runtime.Loader.AssemblyLoadContext($"CS1503Test_{Guid.NewGuid():N}", isCollectible: true);
+        try
+        {
+            var asm = alc.LoadFromStream(ms2);
+            var type = asm.GetType("AlRunnerGenerated.FixTestHelper")!;
+            var callMethod = type.GetMethod("Call")!;
+            var output = (string)callMethod.Invoke(null, new object[] { 42 })!;
+            Assert.Equal("42", output);    // prove it's a real string conversion, not default
+        }
+        finally
+        {
+            alc.Unload();
+        }
+    }
+
+    /// <summary>
+    /// FixIntToStringCS1503 must verify negative values also convert correctly:
+    /// AlCompat.Format(-7) must produce "-7".
+    /// </summary>
+    [Fact]
+    public void CS1503Fix_NegativeInt_ProducesNegativeString()
+    {
+        const string csharpWithNegativeInt = """
+            using AlRunner.Runtime;
+            namespace AlRunnerGenerated {
+                public static class NegativeIntHelper {
+                    public static string TakeString(string s) => s;
+                    public static string Call(int n) => TakeString(n);
+                }
+            }
+            """;
+
+        var trees = new List<Microsoft.CodeAnalysis.SyntaxTree>
+        {
+            Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(csharpWithNegativeInt,
+                path: "NegativeIntHelper.cs")
+        };
+        var refs = RoslynCompiler.LoadReferences();
+        var compilation = Microsoft.CodeAnalysis.CSharp.CSharpCompilation.Create(
+            "NegTest", trees, refs,
+            new Microsoft.CodeAnalysis.CSharp.CSharpCompilationOptions(
+                Microsoft.CodeAnalysis.OutputKind.DynamicallyLinkedLibrary));
+        using var ms1 = new System.IO.MemoryStream();
+        var emitResult = compilation.Emit(ms1);
+        Assert.NotEmpty(emitResult.Diagnostics.Where(d => d.Id == "CS1503"));
+
+        var fixedTrees = CS1503Fixer.Fix(compilation, emitResult.Diagnostics);
+        Assert.NotNull(fixedTrees);
+
+        var fixedCompilation = compilation.RemoveAllSyntaxTrees().AddSyntaxTrees(fixedTrees!);
+        using var ms2 = new System.IO.MemoryStream();
+        var fixedResult = fixedCompilation.Emit(ms2);
+        Assert.True(fixedResult.Success);
+
+        ms2.Seek(0, System.IO.SeekOrigin.Begin);
+        var alc = new System.Runtime.Loader.AssemblyLoadContext($"NegCS1503_{Guid.NewGuid():N}", isCollectible: true);
+        try
+        {
+            var asm = alc.LoadFromStream(ms2);
+            var type = asm.GetType("AlRunnerGenerated.NegativeIntHelper")!;
+            var callMethod = type.GetMethod("Call")!;
+            var output = (string)callMethod.Invoke(null, new object[] { -7 })!;
+            Assert.Equal("-7", output);   // negative int must format as "-7"
+        }
+        finally
+        {
+            alc.Unload();
+        }
+    }
+
+    /// <summary>
+    /// FixIntToStringCS1503 is called internally by CompileFromTrees.  Verify the helper
+    /// returns null (no-op) when there are no CS1503 int→string errors.
+    /// </summary>
+    [Fact]
+    public void CS1503Fix_NoOp_WhenNoIntToStringErrors()
+    {
+        const string goodCsharp = """
+            namespace AlRunnerGenerated {
+                public static class NoErrorClass { public static int Value() => 42; }
+            }
+            """;
+
+        var tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(goodCsharp);
+        var refs = RoslynCompiler.LoadReferences();
+        var compilation = Microsoft.CodeAnalysis.CSharp.CSharpCompilation.Create(
+            "Test", new[] { tree }, refs,
+            new Microsoft.CodeAnalysis.CSharp.CSharpCompilationOptions(
+                Microsoft.CodeAnalysis.OutputKind.DynamicallyLinkedLibrary));
+        using var ms = new System.IO.MemoryStream();
+        var emitResult = compilation.Emit(ms);
+
+        // No CS1503 errors → FixIntToStringCS1503 must return null (no retry needed)
+        var fixedTrees = CS1503Fixer.Fix(compilation, emitResult.Diagnostics);
+        Assert.Null(fixedTrees);
+    }
 }

@@ -2560,6 +2560,25 @@ public static class RoslynCompiler
         using var ms = new MemoryStream(512 * 1024);
         var result = compilation.Emit(ms);
 
+        // Second-pass: BC 26+ emits 'int' for integer values passed to 'string' or 'NavText'
+        // parameters (implicit Integer→Text coercion in AL). Detect CS1503 errors that match
+        // this pattern, wrap each offending argument with AlCompat.Format(), and retry once.
+        if (!result.Success)
+        {
+            var fixedTrees = CS1503Fixer.Fix(compilation, result.Diagnostics);
+            if (fixedTrees != null)
+            {
+                // Rebuild with fixed trees and retry
+                ms.SetLength(0);
+                ms.Seek(0, SeekOrigin.Begin);
+                var fixedCompilation = compilation.RemoveAllSyntaxTrees()
+                    .AddSyntaxTrees(fixedTrees);
+                result = fixedCompilation.Emit(ms);
+                if (result.Success)
+                    compilation = fixedCompilation;
+            }
+        }
+
         if (!result.Success)
         {
             var errors = result.Diagnostics
@@ -2628,6 +2647,7 @@ public static class RoslynCompiler
         Console.Error.WriteLine("  Set BC_SERVICE_TIER_PATH environment variable to provide them manually.");
         return null;
     }
+
 }
 
 // ===========================================================================

@@ -12608,3 +12608,20 @@ DiagnosticSuppression.Backfill.SameExtProfileextDuplicate:
     so same-extension profileextension name duplicates are caught as genuine errors
     (exit 3). Fixed in #1365. BC API correctly emits AL0197 for this case but the
     IsCrossExtensionDuplicateDeclaration filter would previously have eaten it.
+
+CompilationFixup.CS1503.IntegerToText:
+  layer: syntax
+  category: compilation-fixup
+  status: covered
+  tests:
+    - AlRunner.Tests/PipelineTests.cs::CS1503Fix_WrapsIntArg_WithAlCompatFormat
+    - AlRunner.Tests/PipelineTests.cs::CS1503Fix_NegativeInt_ProducesNegativeString
+    - AlRunner.Tests/PipelineTests.cs::CS1503Fix_NoOp_WhenNoIntToStringErrors
+  notes: >
+    BC 26+ allows implicit Integer→Text coercion in AL and emits the integer value
+    directly as 'int' where the procedure parameter is 'string' or 'NavText'. This
+    causes CS1503 "cannot convert from 'int' to 'string'" in Roslyn compilation.
+    CS1503Fixer.Fix() is called as a second-pass retry in RoslynCompiler.CompileFromTrees:
+    it detects CS1503 int→string/NavText errors, wraps each offending argument with
+    AlRunner.Runtime.AlCompat.Format(value) (invariant integer formatting), and retries.
+    Fixes #1426.
