@@ -608,7 +608,32 @@ public class MockRecordRef
 
     // -- FieldExists --
     public bool ALFieldExists(int fieldNo) => _handle?.HasField(fieldNo) ?? false;
-    public bool ALFieldExists(string fieldName) => false;
+
+    /// <summary>
+    /// ALFieldExists(string) — checks whether a field with the given name exists on the table.
+    /// Looks up the field ID in the <see cref="TableFieldRegistry"/> by name; returns true
+    /// when the field is registered for this table, false otherwise.
+    /// </summary>
+    public bool ALFieldExists(string fieldName)
+    {
+        if (Number == 0 || string.IsNullOrEmpty(fieldName)) return false;
+        return TableFieldRegistry.GetFieldId(Number, fieldName).HasValue;
+    }
+
+    /// <summary>
+    /// ALFullyQualifiedName — returns the fully qualified name of the table in the format
+    /// "&lt;CompanyName&gt;$&lt;TableName&gt;" (e.g. "CRONUS$Customer").
+    /// Delegates to the underlying handle when open, otherwise builds from registry data.
+    /// </summary>
+    public string ALFullyQualifiedName
+    {
+        get
+        {
+            if (_handle != null) return _handle.ALFullyQualifiedName;
+            var tableName = TableFieldRegistry.GetTableName(Number) ?? $"Table{Number}";
+            return $"{MockSession.GetCompanyName()}${tableName}";
+        }
+    }
 
     // -- RecordLevelLocking --
     /// <summary>Standalone: always true — no SQL table-level locking to worry about.</summary>

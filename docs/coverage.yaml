@@ -1372,7 +1372,10 @@ Codeunit.Run (Integer, Table):
 Codeunit.Run (Text, Table):
   layer: runtime-api
   category: Codeunit
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/310400-misc-single-method-gaps
+  notes: MockCodeunitHandle.RunCodeunit(DataError, NavText/string, MockRecordHandle) overload resolves codeunit name via CodeunitNameRegistry; closes #1382
 
 # ── CodeunitInstance ────────────────────────────────────────────
 
@@ -1457,7 +1460,10 @@ DataTransfer.AddConstantValue (Joker, Integer):
 DataTransfer.AddDestinationFilter (Integer, Text, Joker):
   layer: runtime-api
   category: DataTransfer
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/310400-misc-single-method-gaps
+  notes: MockDataTransfer.ALAddDestinationFilter(int, string/NavText, object?) no-op overload; closes #1382
 
 DataTransfer.AddFieldValue (Integer, Integer):
   layer: runtime-api
@@ -1633,7 +1639,10 @@ Database.SelectLatestVersion ():
 Database.SelectLatestVersion (Integer):
   layer: runtime-api
   category: Database
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/310400-misc-single-method-gaps
+  notes: ALSelectLatestVersion is already in StripEntireCallMethods in RoslynRewriter — the call is stripped as a no-op regardless of argument count; closes #1382
 
 Database.SerialNumber ():
   layer: runtime-api
@@ -5058,7 +5067,10 @@ Media.ImportFile (Text, Text, Text):
 Media.ImportStream (InStream, Text, Text, Text):
   layer: runtime-api
   category: Media
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/310400-misc-single-method-gaps
+  notes: BC emits ALImport(DataError, stream, fileName, mimeType, description) for the 4-arg AL form; 5-arg overloads added to MockMedia; closes #1382
 
 Media.ImportStream (InStream, Text, Text):
   layer: runtime-api
@@ -6079,7 +6091,10 @@ RecordRef.FieldExist (Integer):
 RecordRef.FieldExist (Text):
   layer: runtime-api
   category: RecordRef
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/310400-misc-single-method-gaps
+  notes: MockRecordRef.ALFieldExists(string) now looks up via TableFieldRegistry.GetFieldId(tableId, name); closes #1382
 
 RecordRef.FieldIndex (Integer):
   layer: runtime-api
@@ -6121,7 +6136,10 @@ RecordRef.FindSet (Boolean):
 RecordRef.FullyQualifiedName ():
   layer: runtime-api
   category: RecordRef
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/310400-misc-single-method-gaps
+  notes: MockRecordRef.ALFullyQualifiedName property added; delegates to handle.ALFullyQualifiedName (CompanyName$TableName); closes #1382
 
 RecordRef.Get (RecordId):
   layer: runtime-api
@@ -6953,7 +6971,10 @@ Session.LogMessage (Text, Text, Verbosity, DataClassification, TelemetryScope, D
 Session.LogMessage (Text, Text, Verbosity, DataClassification, TelemetryScope, Text, Text, Text, Text):
   layer: runtime-api
   category: Session
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-2/310400-misc-single-method-gaps
+  notes: ALSession.ALLogMessage is stripped as a no-op by RoslynRewriter for all arities (statement-level strip); closes #1382
 
 Session.LogSecurityAudit (Text, SecurityOperationResult, Text, AuditCategory, Array, Array):
   layer: runtime-api
@@ -10131,7 +10152,11 @@ Version.Build ():
 Version.Create (Integer, Integer, Integer, Integer):
   layer: runtime-api
   category: Version
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/96-version
+    - tests/bucket-2/310400-misc-single-method-gaps
+  notes: MockVersion.ALCreate(session, major, minor, build, revision) and ALCreate(major, minor, build, revision) already implemented; closes #1382
 
 Version.Create (Text):
   layer: runtime-api

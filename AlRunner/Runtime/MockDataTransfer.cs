@@ -55,6 +55,21 @@ public class MockDataTransfer
         // No-op
     }
 
+    /// <summary>
+    /// AddDestinationFilter(Integer, Text, Joker) — 3-argument destination filter.
+    /// BC lowers the 3rd argument (the filter value, which is a "Joker"/any-type in AL)
+    /// to <c>object</c> in C#. No-op in standalone mode.
+    /// </summary>
+    public void ALAddDestinationFilter(int fieldNo, string filterExpression, object? value)
+    {
+        // No-op: destination filtering is a DataTransfer bulk-data feature not supported standalone.
+    }
+
+    public void ALAddDestinationFilter(int fieldNo, NavText filterExpression, object? value)
+    {
+        // No-op
+    }
+
     /// <summary>Copy field values from source to target. No-op in standalone mode.</summary>
     public void ALCopyFields()
     {

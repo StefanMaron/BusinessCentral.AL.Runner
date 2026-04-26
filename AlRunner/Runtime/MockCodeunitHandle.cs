@@ -454,6 +454,28 @@ public class MockCodeunitHandle
         RunCodeunitCore(codeunitId, null);
     }
 
+    /// <summary>
+    /// Codeunit.Run(Text, Table) — run a codeunit by name with an optional record parameter.
+    /// BC lowers <c>Codeunit.Run(Text, Rec)</c> to
+    /// <c>NavCodeunit.RunCodeunit(DataError, NavText codeunitName, MockRecordHandle)</c>.
+    /// The rewriter already maps <c>NavCodeunit.RunCodeunit</c> to <c>MockCodeunitHandle.RunCodeunit</c>,
+    /// so this overload is reached when the second argument is a NavText name rather than an integer ID.
+    /// Resolves the name to an ID via <see cref="CodeunitNameRegistry"/>.
+    /// </summary>
+    public static bool RunCodeunit(DataError errorLevel, NavText codeunitName, MockRecordHandle? record = null)
+        => RunCodeunitByName(errorLevel, codeunitName.ToString(), record);
+
+    public static bool RunCodeunit(DataError errorLevel, string codeunitName, MockRecordHandle? record = null)
+        => RunCodeunitByName(errorLevel, codeunitName, record);
+
+    private static bool RunCodeunitByName(DataError errorLevel, string name, MockRecordHandle? record)
+    {
+        var id = CodeunitNameRegistry.GetIdByName(name);
+        if (id == null)
+            throw new InvalidOperationException($"Codeunit.Run: codeunit '{name}' not found in registry.");
+        return RunCodeunit(errorLevel, id.Value, record);
+    }
+
     private static void RunCodeunitCore(int codeunitId, MockRecordHandle? record = null)
     {
         var handle = new MockCodeunitHandle(codeunitId);

@@ -102,6 +102,35 @@ public class MockMedia : NavValue
         return _id;
     }
 
+    /// <summary>
+    /// BC emits <c>ALImport(errorLevel, stream, fileName, mimeType, description)</c> for
+    /// <c>Media.ImportStream(InStream, Text, Text, Text)</c> — the 4-arg AL form.
+    /// Sets HasValue to true and returns the stable media GUID.
+    /// </summary>
+    public Guid ALImport(DataError errorLevel, MockInStream stream, NavText fileName, NavText mimeType, NavText description)
+    {
+        _hasValue = true;
+        return _id;
+    }
+
+    public Guid ALImport(DataError errorLevel, MockInStream stream, string fileName, string mimeType, string description)
+    {
+        _hasValue = true;
+        return _id;
+    }
+
+    public Guid ALImport(DataError errorLevel, MockInStream stream, NavText fileName, NavText mimeType, string description)
+    {
+        _hasValue = true;
+        return _id;
+    }
+
+    public Guid ALImport(DataError errorLevel, MockInStream stream, string fileName, string mimeType, NavText description)
+    {
+        _hasValue = true;
+        return _id;
+    }
+
     // ── ALExport (BC-emitted for Media.ExportFile and Media.ExportStream) ────────
 
     /// <summary>
