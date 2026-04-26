@@ -2137,8 +2137,9 @@ public static class AlCompat
     /// requires NavArray (needs ITreeObject). Shifts all non-blank elements toward
     /// the beginning of the array, filling the tail with blank/default values.
     /// BC semantics: blank = empty string for Text/Code, 0 for numeric types.
+    /// Returns the count of non-blank elements (matching BC CompressArray return value).
     /// </summary>
-    public static void ALCompressArray<T>(MockArray<T> arr)
+    public static int ALCompressArray<T>(MockArray<T> arr)
     {
         T blank = GetBlankArrayElement(arr);
         int writeIdx = 0;
@@ -2147,8 +2148,10 @@ public static class AlCompat
             if (!IsBlankArrayElement(arr[i]))
                 arr[writeIdx++] = arr[i];
         }
+        int nonBlankCount = writeIdx;
         while (writeIdx < arr.Length)
             arr[writeIdx++] = blank;
+        return nonBlankCount;
     }
 
     /// <summary>
@@ -3207,37 +3210,43 @@ public static class AlCompat
     // and throws TypeInitializationException.  These helpers dispatch through the
     // NavXmlNode path (which works) for node-typed receivers, and are no-ops for
     // NavXmlDocument (standalone documents have no parent to manipulate).
-    public static void XmlRemove(object node)
+    // BC AL: XmlNode.Remove/AddAfterSelf/AddBeforeSelf/ReplaceWith all return Boolean.
+    // Return true on success (operation performed or no-op for unsupported node types).
+    public static bool XmlRemove(object node)
     {
         // NavXmlDeclaration: Remove() throws NavNCLInvalidOperationException in BC's runtime
         // (declarations are not regular child nodes). Treat as no-op.
-        if (node is NavXmlDeclaration) return;
+        if (node is NavXmlDeclaration) return true;
         // NavXmlDocument checked before NavXmlNode: on some BC versions NavXmlDocument
         // inherits NavXmlNode, and ALRemove on a document reaches NavEnvironment (service-tier
         // logging) which is unavailable standalone. A document has no parent, so no-op is correct.
-        if (node is NavXmlDocument) return;
+        if (node is NavXmlDocument) return true;
         if (node is NavXmlNode n) n.ALRemove(DataError.ThrowError);
+        return true;
     }
 
-    public static void XmlAddAfterSelf(object node, NavXmlNode sibling)
+    public static bool XmlAddAfterSelf(object node, NavXmlNode sibling)
     {
-        if (node is NavXmlDeclaration) return;
-        if (node is NavXmlDocument) return;
+        if (node is NavXmlDeclaration) return true;
+        if (node is NavXmlDocument) return true;
         if (node is NavXmlNode n) n.ALAddAfterSelf(DataError.ThrowError, sibling);
+        return true;
     }
 
-    public static void XmlAddBeforeSelf(object node, NavXmlNode sibling)
+    public static bool XmlAddBeforeSelf(object node, NavXmlNode sibling)
     {
-        if (node is NavXmlDeclaration) return;
-        if (node is NavXmlDocument) return;
+        if (node is NavXmlDeclaration) return true;
+        if (node is NavXmlDocument) return true;
         if (node is NavXmlNode n) n.ALAddBeforeSelf(DataError.ThrowError, sibling);
+        return true;
     }
 
-    public static void XmlReplaceWith(object node, NavXmlNode replacement)
+    public static bool XmlReplaceWith(object node, NavXmlNode replacement)
     {
-        if (node is NavXmlDeclaration) return;
-        if (node is NavXmlDocument) return;
+        if (node is NavXmlDeclaration) return true;
+        if (node is NavXmlDocument) return true;
         if (node is NavXmlNode n) n.ALReplaceWith(DataError.ThrowError, replacement);
+        return true;
     }
 
     // BC transpiles the xpath argument to a plain string (not NavText), so both
