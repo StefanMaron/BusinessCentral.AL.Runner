@@ -7132,7 +7132,10 @@ System.CalcDate (DateFormula, Date):
 System.CalcDate (Text, Date):
   layer: runtime-api
   category: System
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-system-missing-overloads
+  notes: AlCompat.CalcDate(string, NavDate) — same implementation as DateFormula overload; Text formula compiled to string before calling ALCalcDate with .NET fallback. Tested in suite 309.
 
 System.CanLoadType (DotNet):
   layer: runtime-api
@@ -7157,12 +7160,18 @@ System.Clear (Array):
 System.Clear (Joker):
   layer: runtime-api
   category: System
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-system-missing-overloads
+  notes: BC emits v.Value.Clear() for Variant and the default-assignment pattern for other value types. Tested via Clear(Variant) in suite 309.
 
 System.Clear (SecretText):
   layer: runtime-api
   category: System
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-system-missing-overloads
+  notes: BC emits s.Value = NavSecretText.Default for Clear(SecretText). Tested in suite 309.
 
 System.ClearAll ():
   layer: runtime-api
@@ -7359,7 +7368,10 @@ System.Format (Joker, Integer, Integer):
 System.Format (Joker, Integer, Text):
   layer: runtime-api
   category: System
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-system-missing-overloads
+  notes: BC emits NavFormatEvaluateHelper.Format(session, value, length, formatString); rewriter strips session → AlCompat.Format(value, length, formatString). Tested with Integer and Decimal + mask in suite 309.
 
 System.GetCollectedErrors (Boolean):
   layer: runtime-api
@@ -7417,27 +7429,42 @@ System.GetLastErrorText ():
 System.GetLastErrorText (Boolean):
   layer: runtime-api
   category: System
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-system-missing-overloads
+  notes: BC emits ALGetLastErrorTextFunc(clearError); rewriter redirects to AlScope.LastErrorText (boolean arg ignored in runner — no real service tier to clear). Tested in suite 309 with both true and false.
 
 System.GetUrl (ClientType, Text, ObjectType, Integer, RecordRef, Boolean, Text):
   layer: runtime-api
   category: System
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-system-missing-overloads
+  notes: MockSystemOperatingSystem.ALGetUrl 7-arg overload (record + useFilters + filterString) returns stub '/mock/{objectType}/{objectId}'. Tested in suite 309.
 
 System.GetUrl (ClientType, Text, ObjectType, Integer, RecordRef, Boolean):
   layer: runtime-api
   category: System
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-system-missing-overloads
+  notes: MockSystemOperatingSystem.ALGetUrl 6-arg overload with RecordRef; covered by existing optional-param overload. Tested in suite 309.
 
 System.GetUrl (ClientType, Text, ObjectType, Integer, Table, Boolean, Text):
   layer: runtime-api
   category: System
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-system-missing-overloads
+  notes: MockSystemOperatingSystem.ALGetUrl 7-arg overload (table record + useFilters + filterString) returns stub '/mock/{objectType}/{objectId}'. Tested in suite 309.
 
 System.GetUrl (ClientType, Text, ObjectType, Integer, Table, Boolean):
   layer: runtime-api
   category: System
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309-system-missing-overloads
+  notes: MockSystemOperatingSystem.ALGetUrl 6-arg overload with Table record; covered by existing optional-param overload. Tested in suite 309.
 
 System.GlobalLanguage (Integer):
   layer: runtime-api

@@ -59,9 +59,20 @@ public static class MockSystemOperatingSystem
     }
 
     /// <summary>
-    /// GetUrl(ClientType, Company, ObjectType, ObjectId [, Record [, UseFilters]]) — full overload.
+    /// GetUrl(ClientType, Company, ObjectType, ObjectId [, Record [, UseFilters]]) — 6-arg overload.
     /// </summary>
     public static string ALGetUrl(object clientType, string company, object objectType, int objectId, object? record = null, bool useFilters = false)
+    {
+        return $"/mock/{objectType}/{objectId}";
+    }
+
+    /// <summary>
+    /// GetUrl(ClientType, Company, ObjectType, ObjectId, Record, UseFilters, FilterString) — 7-arg overload.
+    /// The extra <paramref name="filterString"/> is a pre-built AL filter expression; in standalone
+    /// mode there is no BC service tier to build a real deep-link, so this returns the same
+    /// stub as the 6-arg overload.
+    /// </summary>
+    public static string ALGetUrl(object clientType, string company, object objectType, int objectId, object? record, bool useFilters, string filterString)
     {
         return $"/mock/{objectType}/{objectId}";
     }
