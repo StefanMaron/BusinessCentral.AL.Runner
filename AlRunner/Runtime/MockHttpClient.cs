@@ -104,8 +104,23 @@ public class MockHttpClient
     /// <summary>SetBaseAddress — stores the base URL.</summary>
     public void ALSetBaseAddress(DataError errorLevel, NavText url) => _baseAddress = (string)url;
 
-    /// <summary>Clear — resets base address and other state.</summary>
-    public void ALClear() => _baseAddress = string.Empty;
+    /// <summary>
+    /// Clear — resets all HttpClient state to defaults.
+    /// Called via AL instance method <c>client.Clear()</c> (BC emits <c>client.ALClear()</c>)
+    /// and via AL global <c>Clear(client)</c> (BC emits <c>ALSystemVariable.Clear(client)</c>
+    /// which the rewriter transforms to <c>client.Clear()</c> — issue #1334).
+    /// </summary>
+    public void Clear()
+    {
+        _baseAddress = string.Empty;
+        _defaultHeaders = new MockHttpHeaders();
+        ALTimeout = 30;
+        ALUseDefaultNetworkWindowsAuthentication = false;
+        ALUseServerCertificateValidation = false;
+    }
+
+    /// <summary>ALClear — BC instance-method variant; delegates to <see cref="Clear"/>.</summary>
+    public void ALClear() => Clear();
 
     /// <summary>UseResponseCookies — stores the flag (emitted as method, no DataError).</summary>
     public void ALUseResponseCookies(bool value) { }

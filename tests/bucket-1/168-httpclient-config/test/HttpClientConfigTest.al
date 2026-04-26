@@ -35,6 +35,16 @@ codeunit 94001 "HCC Test"
             'Clear must reset base address to empty string');
     end;
 
+    [Test]
+    procedure HttpClient_GlobalClear_ResetsBaseAddress()
+    begin
+        // Clear(client) lowers to ALSystemVariable.Clear(client) → client.Clear()
+        // MockHttpClient must expose a public Clear() method — issue #1334
+        Assert.AreEqual('',
+            Src.GlobalClearResetsBaseAddress('https://api.example.com'),
+            'Global Clear(client) must reset base address to empty string');
+    end;
+
     // ── UseResponseCookies ───────────────────────────────────────
 
     [Test]

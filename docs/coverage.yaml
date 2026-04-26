@@ -3119,7 +3119,7 @@ HttpClient.Clear:
   layer: runtime-api
   category: HttpClient
   status: covered
-  notes: overloads=1
+  notes: overloads=1; instance method client.Clear() via ALClear(); global Clear(client) via MockHttpClient.Clear() — issue #1334
 
 HttpClient.DefaultRequestHeaders:
   layer: runtime-api

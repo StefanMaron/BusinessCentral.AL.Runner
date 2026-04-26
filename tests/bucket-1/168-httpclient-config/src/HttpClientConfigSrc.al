@@ -10,13 +10,23 @@ codeunit 94000 "HCC Src"
         exit(client.GetBaseAddress());
     end;
 
-    // Clear resets the base address to empty
+    // Clear resets the base address to empty (instance-method syntax)
     procedure ClearResetsBaseAddress(url: Text): Text
     var
         client: HttpClient;
     begin
         client.SetBaseAddress(url);
         client.Clear();
+        exit(client.GetBaseAddress());
+    end;
+
+    // GlobalClear resets the base address to empty (global Clear(x) syntax — issue #1334)
+    procedure GlobalClearResetsBaseAddress(url: Text): Text
+    var
+        client: HttpClient;
+    begin
+        client.SetBaseAddress(url);
+        Clear(client);
         exit(client.GetBaseAddress());
     end;
 
