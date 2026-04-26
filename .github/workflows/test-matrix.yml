@@ -84,9 +84,15 @@ jobs:
             done
             echo "=== $bucket ==="
             start=$SECONDS
-            output=$(dotnet run --no-build --project AlRunner --framework net10.0 -- --strict --test-isolation method $args 2>&1)
+            # Capture exit code without tripping `set -e` so we always print output.
+            rc=0
+            output=$(dotnet run --no-build --project AlRunner --framework net10.0 -- --strict --test-isolation method $args 2>&1) || rc=$?
             elapsed=$(( SECONDS - start ))
             echo "$output"
+            if [ "$rc" -ne 0 ]; then
+              echo "::error::AL test bucket $bucket exited with code $rc"
+              exit "$rc"
+            fi
 
             # Parse "N passed[, M failed] in X.Xs"
             passed=$(echo "$output" | grep -oP '\d+(?= passed)' || echo 0)
@@ -104,9 +110,14 @@ jobs:
           # Stubs test
           echo "=== stubs ==="
           start=$SECONDS
-          output=$(dotnet run --no-build --project AlRunner --framework net10.0 -- --stubs tests/stubs/39-stubs/stubs tests/stubs/39-stubs/src tests/stubs/39-stubs/test 2>&1)
+          rc=0
+          output=$(dotnet run --no-build --project AlRunner --framework net10.0 -- --stubs tests/stubs/39-stubs/stubs tests/stubs/39-stubs/src tests/stubs/39-stubs/test 2>&1) || rc=$?
           elapsed=$(( SECONDS - start ))
           echo "$output"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::Stubs test exited with code $rc"
+            exit "$rc"
+          fi
           passed=$(echo "$output" | grep -oP '\d+(?= passed)' || echo 0)
           total_passed=$(( total_passed + passed ))
           total_ms=$(( total_ms + elapsed * 1000 ))
