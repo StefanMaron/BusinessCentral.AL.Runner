@@ -80,6 +80,16 @@ public static class MockSession
     }
 
     /// <summary>
+    /// StartSession without company parameter (2-arg AL form).
+    /// ALSession.ALStartSession(DataError, ByRef&lt;int&gt; sessionId, int codeunitId)
+    /// Equivalent to calling the 3-arg form with the current company name.
+    /// </summary>
+    public static bool ALStartSession(DataError errorLevel, ByRef<int> sessionId, int codeunitId)
+    {
+        return ALStartSession(errorLevel, sessionId, codeunitId, _companyName);
+    }
+
+    /// <summary>
     /// StartSession without record parameter.
     /// ALSession.ALStartSession(DataError, ByRef&lt;int&gt; sessionId, int codeunitId, string companyName)
     /// Dispatches the codeunit synchronously and returns true.
@@ -152,6 +162,16 @@ public static class MockSession
     public static void ALStopSession(DataError errorLevel, int sessionId)
     {
         // No-op: session already completed synchronously.
+    }
+
+    /// <summary>
+    /// StopSession with comment — no-op (session already completed synchronously).
+    /// Maps to the AL <c>StopSession(SessionId, Comment)</c> 2-arg overload.
+    /// The comment parameter is accepted but ignored in standalone mode.
+    /// </summary>
+    public static void ALStopSession(DataError errorLevel, int sessionId, string comment)
+    {
+        // No-op: session already completed synchronously; comment is ignored.
     }
 
     /// <summary>
