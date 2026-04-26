@@ -1,10 +1,10 @@
-codeunit 60151 "JOM Test"
+codeunit 60151 "JOM Mut Test"
 {
     Subtype = Test;
 
     var
         Assert: Codeunit Assert;
-        Src: Codeunit "JOM Src";
+        Src: Codeunit "JOM Mut Src";
 
     // --- Contains ---
 

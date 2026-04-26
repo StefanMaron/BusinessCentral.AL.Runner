@@ -1,10 +1,10 @@
-codeunit 59921 "EIT Test"
+codeunit 59921 "EIT Tid Test"
 {
     Subtype = Test;
 
     var
         Assert: Codeunit Assert;
-        Src: Codeunit "EIT Src";
+        Src: Codeunit "EIT Tid Src";
 
     [Test]
     procedure TableId_SetAndGet()

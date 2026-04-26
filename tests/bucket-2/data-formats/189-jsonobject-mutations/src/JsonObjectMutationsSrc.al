@@ -1,6 +1,6 @@
 /// Helper codeunit exercising JsonObject mutation and read operations:
 /// Add, Contains, Get, Clone, Keys, AsToken.
-codeunit 60150 "JOM Src"
+codeunit 60150 "JOM Mut Src"
 {
     procedure BuildMixedObject(): JsonObject
     var
