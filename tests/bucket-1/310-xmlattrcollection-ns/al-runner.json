@@ -1,0 +1,4 @@
+{
+  "description": "XmlAttributeCollection namespace-qualified overloads — Get(Text,XmlAttribute), Get(Text,Text,XmlAttribute), Remove(XmlAttribute), Remove(Text,Text), Set(Text,Text,Text)",
+  "issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1376"
+}

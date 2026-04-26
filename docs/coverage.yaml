@@ -10484,17 +10484,26 @@ XmlAttributeCollection.Get (Integer, XmlAttribute):
 XmlAttributeCollection.Get (Text, Text, XmlAttribute):
   layer: runtime-api
   category: XmlAttributeCollection
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/310-xmlattrcollection-ns
+  notes: AlCompat.XmlAttrCollGetByNs — intercepts ALGet(DataError,ns,name,ByRef) to bypass NCL ':' validation; uses LINQ-to-XML XName.Get for lookup. Closes #1376.
 
 XmlAttributeCollection.Get (Text, XmlAttribute):
   layer: runtime-api
   category: XmlAttributeCollection
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/310-xmlattrcollection-ns
+  notes: BC native NavXmlAttributeCollection.ALGet(DataError, string, ByRef) — works without NCL issue. Proven in tests/bucket-1/310-xmlattrcollection-ns.
 
 XmlAttributeCollection.Remove (Text, Text):
   layer: runtime-api
   category: XmlAttributeCollection
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/310-xmlattrcollection-ns
+  notes: AlCompat.XmlAttrCollRemoveByNs — intercepts ALRemove(ns, name) to bypass NCL ':' validation; uses LINQ-to-XML XAttribute.Remove(). Closes #1376.
 
 XmlAttributeCollection.Remove (Text):
   layer: runtime-api
@@ -10505,7 +10514,10 @@ XmlAttributeCollection.Remove (Text):
 XmlAttributeCollection.Remove (XmlAttribute):
   layer: runtime-api
   category: XmlAttributeCollection
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/310-xmlattrcollection-ns
+  notes: BC native NavXmlAttributeCollection.ALRemove(NavXmlAttribute) — works correctly. Proven in tests/bucket-1/310-xmlattrcollection-ns.
 
 XmlAttributeCollection.RemoveAll ():
   layer: runtime-api
@@ -10516,7 +10528,10 @@ XmlAttributeCollection.RemoveAll ():
 XmlAttributeCollection.Set (Text, Text, Text):
   layer: runtime-api
   category: XmlAttributeCollection
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/310-xmlattrcollection-ns
+  notes: AlCompat.XmlAttrCollSetByNs — intercepts ALSet(ns, name, value) to bypass NCL ':' validation; uses LINQ-to-XML SetAttributeValue(XName.Get). Closes #1376.
 
 XmlAttributeCollection.Set (Text, Text):
   layer: runtime-api
