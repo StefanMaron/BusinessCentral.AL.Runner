@@ -14,16 +14,26 @@ public static class CliRunner
 
     /// <summary>
     /// Resolves a test case name to its directory under tests/.
-    /// Searches bucket-*, stubs/, and excluded/ subdirectories.
+    /// Searches bucket-*, stubs/, and excluded/ subdirectories at any depth
+    /// (the AL test buckets group suites under category subfolders).
     /// </summary>
     public static string FindTestCase(string testCaseName)
     {
         var testsRoot = Path.Combine(RepoRoot, "tests");
         foreach (var bucket in Directory.GetDirectories(testsRoot).OrderBy(d => d))
         {
-            var candidate = Path.Combine(bucket, testCaseName);
-            if (Directory.Exists(candidate))
-                return candidate;
+            // Direct child (covers tests/stubs/<name> and tests/excluded/<name>)
+            var direct = Path.Combine(bucket, testCaseName);
+            if (Directory.Exists(direct))
+                return direct;
+
+            // Category subfolder (covers tests/bucket-*/category/<name>)
+            foreach (var category in Directory.GetDirectories(bucket).OrderBy(d => d))
+            {
+                var nested = Path.Combine(category, testCaseName);
+                if (Directory.Exists(nested))
+                    return nested;
+            }
         }
         throw new DirectoryNotFoundException(
             $"Test case '{testCaseName}' not found under {testsRoot}/*/");
