@@ -1,5 +1,5 @@
 /// Helper codeunit exercising XmlProcessingInstruction navigation/tree methods (issue #780).
-codeunit 107100 "XPI Src"
+codeunit 107100 "XPI Pi Src"
 {
     // WriteTo(var Text) — serialize to <?target data?> string
     procedure WriteToText(Target: Text; Data: Text): Text

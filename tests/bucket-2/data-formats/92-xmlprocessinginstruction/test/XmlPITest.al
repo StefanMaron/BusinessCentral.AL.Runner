@@ -4,7 +4,7 @@ codeunit 107101 "XPI Tests"
 
     var
         Assert: Codeunit Assert;
-        Src: Codeunit "XPI Src";
+        Src: Codeunit "XPI Pi Src";
 
     // ── WriteTo ──────────────────────────────────────────────────────────
 
