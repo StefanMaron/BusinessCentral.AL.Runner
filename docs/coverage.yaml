@@ -3045,6 +3045,12 @@ HttpClient.UseWindowsAuthentication (Text, Text, Text):
   category: HttpClient
   status: not-tested
 
+HttpClient.:= (ALAssign):
+  layer: runtime-api
+  category: HttpClient
+  status: covered
+  notes: ALAssign copies baseAddress, defaultHeaders, timeout, useDefaultNetworkWindowsAuthentication, useServerCertificateValidation — issue #1447
+
 # ── HttpContent ─────────────────────────────────────────────────
 
 HttpContent.Clear ():
