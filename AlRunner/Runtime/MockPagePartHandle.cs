@@ -53,6 +53,22 @@ public class MockPartFormHandle
     }
 
     /// <summary>
+    /// Close — no-op in standalone mode.
+    /// BC generates <c>CurrPage.SubPart.Page.Close()</c> as
+    /// <c>CurrPage.GetPart(hash).CreateNavFormHandle(scope).Close()</c>.
+    /// Issue #1325.
+    /// </summary>
+    public void Close() { }
+
+    /// <summary>
+    /// GetRecord — no-op in standalone mode.
+    /// BC generates <c>CurrPage.SubPart.Page.GetRecord(rec)</c> as
+    /// <c>CurrPage.GetPart(hash).CreateNavFormHandle(scope).GetRecord(rec.Target)</c>.
+    /// Issue #1325.
+    /// </summary>
+    public void GetRecord(MockRecordHandle rec) { }
+
+    /// <summary>
     /// SetTableView — no-op in standalone mode.
     /// BC generates <c>CurrPage.SubPart.Page.SetTableView(rec)</c> as
     /// <c>CurrPage.GetPart(hash).CreateNavFormHandle(scope).SetTableView(rec.Target)</c>.
