@@ -30,9 +30,9 @@ Runtime-API coverage is tracked at **per-overload signature granularity** since 
 
 | Status | Count |
 |--------|-------|
-| ✅ Covered | 1235 |
+| ✅ Covered | 1265 |
 | 🔶 Not tested (overload) | 164 |
-| 🔲 Gap | 229 |
+| 🔲 Gap | 199 |
 | ❌ Not possible | 33 |
 | ⬜ Out of scope | 0 |
 | **Total** | **1691** |
@@ -2054,7 +2054,7 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `SetObjectType` | `(ObjectType)` | ✅ covered | (base + DataError); MockWebServiceActionContext; stores int; round-trip tested |
 | `SetResultCode` | `(WebServiceActionResultCode)` | ✅ covered | (base + DataError); MockWebServiceActionContext; stores WebServiceActionResultCode enum; round-trip tested for Created and OkResponse |
 
-## XmlAttribute  (18/24)
+## XmlAttribute  (21/24)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
@@ -2079,9 +2079,9 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `SelectSingleNode` | `(Text, XmlNode)` | ✅ covered | . Covered via NavXmlAttribute native — SelectSingleNode('.', node) called without error. |
 | `Value` | `(Text)` | ✅ covered | . Covered via NavXmlAttribute native — round-trips via Attributes().Get; replaceable via SetAttribute(name, new value). |
 | `WriteTo` | `(OutStream)` | ✅ covered | . Covered via NavXmlAttribute native — WriteTo(var Text) produces non-empty string containing both attribute name and value. |
-| `WriteTo` | `(Text)` | 🔲 gap |  |
-| `WriteTo` | `(XmlWriteOptions, OutStream)` | 🔲 gap |  |
-| `WriteTo` | `(XmlWriteOptions, Text)` | 🔲 gap |  |
+| `WriteTo` | `(Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, ByRef<NavText>) via reflection — tested in suite 220-xml-writeto-overloads. |
+| `WriteTo` | `(XmlWriteOptions, OutStream)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored, delegates to text overload. |
+| `WriteTo` | `(XmlWriteOptions, Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored, delegates to plain WriteTo. |
 
 ## XmlAttributeCollection  (5/10)
 
@@ -2098,7 +2098,7 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `Set` | `(Text, Text, Text)` | 🔲 gap |  |
 | `Set` | `(Text, Text)` | ✅ covered | . Covered via BC native — Set(name, value) replaces existing or adds new attribute. |
 
-## XmlCData  (12/17)
+## XmlCData  (15/17)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
@@ -2116,11 +2116,11 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `SelectSingleNode` | `(Text, XmlNode)` | ✅ covered | tested in tests/bucket-1/166-xmlcdata |
 | `Value` | `(Text)` | ✅ covered | tested in tests/bucket-1/166-xmlcdata |
 | `WriteTo` | `(OutStream)` | ✅ covered | WriteTo(Text) covered via MockJsonHelper.WriteTo(object) fallback; tested in tests/bucket-1/166-xmlcdata |
-| `WriteTo` | `(Text)` | 🔲 gap |  |
-| `WriteTo` | `(XmlWriteOptions, OutStream)` | 🔲 gap |  |
-| `WriteTo` | `(XmlWriteOptions, Text)` | 🔲 gap |  |
+| `WriteTo` | `(Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, ByRef<NavText>) via reflection — tested in suite 220-xml-writeto-overloads. |
+| `WriteTo` | `(XmlWriteOptions, OutStream)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored. |
+| `WriteTo` | `(XmlWriteOptions, Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored. |
 
-## XmlComment  (12/17)
+## XmlComment  (15/17)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
@@ -2138,11 +2138,11 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `SelectSingleNode` | `(Text, XmlNode)` | ✅ covered | BC native works standalone. |
 | `Value` | `(Text)` | ✅ covered | BC native works standalone. Round-trips comment text from Create. |
 | `WriteTo` | `(OutStream)` | ✅ covered | WriteTo(Text) dispatched via MockJsonHelper.WriteTo(object) fallback (PR #712); BC native works standalone. |
-| `WriteTo` | `(Text)` | 🔲 gap |  |
-| `WriteTo` | `(XmlWriteOptions, OutStream)` | 🔲 gap |  |
-| `WriteTo` | `(XmlWriteOptions, Text)` | 🔲 gap |  |
+| `WriteTo` | `(Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, ByRef<NavText>) via reflection — tested in suite 220-xml-writeto-overloads. |
+| `WriteTo` | `(XmlWriteOptions, OutStream)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored. |
+| `WriteTo` | `(XmlWriteOptions, Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored. |
 
-## XmlDeclaration  (14/19)
+## XmlDeclaration  (17/19)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
@@ -2162,11 +2162,11 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `Standalone` | `(Text)` | ✅ covered | . Covered via NavXmlDeclaration native — getter and setter round-trip. |
 | `Version` | `(Text)` | ✅ covered | . Covered via NavXmlDeclaration native — getter and setter round-trip. |
 | `WriteTo` | `(OutStream)` | ✅ covered | (Text overload covered). NavXmlDeclaration.ALWriteTo works natively. |
-| `WriteTo` | `(Text)` | 🔲 gap |  |
-| `WriteTo` | `(XmlWriteOptions, OutStream)` | 🔲 gap |  |
-| `WriteTo` | `(XmlWriteOptions, Text)` | 🔲 gap |  |
+| `WriteTo` | `(Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, ByRef<NavText>) via reflection — tested in suite 220-xml-writeto-overloads. |
+| `WriteTo` | `(XmlWriteOptions, OutStream)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored. |
+| `WriteTo` | `(XmlWriteOptions, Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored. |
 
-## XmlDocument  (25/38)
+## XmlDocument  (28/38)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
@@ -2205,11 +2205,11 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `SelectSingleNode` | `(Text, XmlNode)` | ✅ covered | BC native works standalone. XmlDocument receiver requires .GetRoot first (or call on XmlElement directly). See also XmlElement.SelectSingleNode. |
 | `SetDeclaration` | `(XmlDeclaration)` | ✅ covered | BC native works standalone; round-trips version and encoding |
 | `WriteTo` | `(OutStream)` | ✅ covered | BC native works standalone; Text overload tested. |
-| `WriteTo` | `(Text)` | 🔲 gap |  |
-| `WriteTo` | `(XmlWriteOptions, OutStream)` | 🔲 gap |  |
-| `WriteTo` | `(XmlWriteOptions, Text)` | 🔲 gap |  |
+| `WriteTo` | `(Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, ByRef<NavText>) via reflection — tested in suite 220-xml-writeto-overloads. |
+| `WriteTo` | `(XmlWriteOptions, OutStream)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored; tested in suite 220-xml-writeto-overloads. |
+| `WriteTo` | `(XmlWriteOptions, Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored; tested in suite 220-xml-writeto-overloads. |
 
-## XmlDocumentType  (19/27)
+## XmlDocumentType  (22/27)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
@@ -2237,11 +2237,11 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `SetPublicId` | `(Text)` | ✅ covered | SetPublicId then GetPublicId returns new value |
 | `SetSystemId` | `(Text)` | ✅ covered | SetSystemId then GetSystemId returns new value |
 | `WriteTo` | `(OutStream)` | ✅ covered | ALWriteTo rewriter routes through MockJsonHelper fallback object overload which calls ALWriteTo natively via reflection; output contains doctype name |
-| `WriteTo` | `(Text)` | 🔲 gap |  |
-| `WriteTo` | `(XmlWriteOptions, OutStream)` | 🔲 gap |  |
-| `WriteTo` | `(XmlWriteOptions, Text)` | 🔲 gap |  |
+| `WriteTo` | `(Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, ByRef<NavText>) via reflection — same fallback as OutStream overload. |
+| `WriteTo` | `(XmlWriteOptions, OutStream)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored. |
+| `WriteTo` | `(XmlWriteOptions, Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored. |
 
-## XmlElement  (33/48)
+## XmlElement  (36/48)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
@@ -2290,9 +2290,9 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `SetAttribute` | `(Text, Text, Text)` | 🔲 gap |  |
 | `SetAttribute` | `(Text, Text)` | ✅ covered | . Covered via NavXmlElement native — value readable via Attributes().Get; HasAttributes becomes true. |
 | `WriteTo` | `(OutStream)` | ✅ covered | . Covered via NavXmlElement native — writes element to XmlWriter with proper formatting. |
-| `WriteTo` | `(Text)` | 🔲 gap |  |
-| `WriteTo` | `(XmlWriteOptions, OutStream)` | 🔲 gap |  |
-| `WriteTo` | `(XmlWriteOptions, Text)` | 🔲 gap |  |
+| `WriteTo` | `(Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, ByRef<NavText>) via reflection — tested in suite 220-xml-writeto-overloads. |
+| `WriteTo` | `(XmlWriteOptions, OutStream)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored; tested in suite 220-xml-writeto-overloads. |
+| `WriteTo` | `(XmlWriteOptions, Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored; tested in suite 220-xml-writeto-overloads. |
 
 ## XmlNameTable  (2/2)
 
@@ -2314,7 +2314,7 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `PushScope` | `()` | ✅ covered | BC native works standalone. |
 | `RemoveNamespace` | `(Text, Text)` | ✅ covered | BC native works standalone. HasNamespace returns false after removal. |
 
-## XmlNode  (27/32)
+## XmlNode  (30/32)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
@@ -2347,9 +2347,9 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `SelectSingleNode` | `(Text, XmlNamespaceManager, XmlNode)` | 🔲 gap |  |
 | `SelectSingleNode` | `(Text, XmlNode)` | ✅ covered | BC native NavXmlNode.ALSelectSingleNode works standalone via XPath on programmatic trees |
 | `WriteTo` | `(OutStream)` | ✅ covered | BC native NavXmlNode.ALWriteTo works standalone; elements and attributes serialized correctly |
-| `WriteTo` | `(Text)` | 🔲 gap |  |
-| `WriteTo` | `(XmlWriteOptions, OutStream)` | 🔲 gap |  |
-| `WriteTo` | `(XmlWriteOptions, Text)` | 🔲 gap |  |
+| `WriteTo` | `(Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, ByRef<NavText>) via reflection — tested in suite 220-xml-writeto-overloads. |
+| `WriteTo` | `(XmlWriteOptions, OutStream)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored. |
+| `WriteTo` | `(XmlWriteOptions, Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored; tested in suite 220-xml-writeto-overloads. |
 
 ## XmlNodeList  (2/2)
 
@@ -2358,7 +2358,7 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `Count` | `()` | ✅ covered | BC native works standalone when the XmlElement is built programmatically. |
 | `Get` | `(Integer, XmlNode)` | ✅ covered | works natively via NavXmlNodeList; 1-based index; tested by selecting child element and calling Get(1) |
 
-## XmlProcessingInstruction  (15/20)
+## XmlProcessingInstruction  (18/20)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
@@ -2379,9 +2379,9 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `SetData` | `(Text)` | ✅ covered | . Covered via NavXmlProcessingInstruction native — setter round-trips through GetData. |
 | `SetTarget` | `(Text)` | ✅ covered | . Covered via NavXmlProcessingInstruction native — setter round-trips through GetTarget. |
 | `WriteTo` | `(OutStream)` | ✅ covered | BC native NavXmlProcessingInstruction works standalone |
-| `WriteTo` | `(Text)` | 🔲 gap |  |
-| `WriteTo` | `(XmlWriteOptions, OutStream)` | 🔲 gap |  |
-| `WriteTo` | `(XmlWriteOptions, Text)` | 🔲 gap |  |
+| `WriteTo` | `(Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, ByRef<NavText>) via reflection — tested in suite 220-xml-writeto-overloads. |
+| `WriteTo` | `(XmlWriteOptions, OutStream)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored. |
+| `WriteTo` | `(XmlWriteOptions, Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored; tested in suite 220-xml-writeto-overloads. |
 
 ## XmlReadOptions  (1/1)
 
@@ -2389,7 +2389,7 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 |--------|-----------|--------|-------|
 | `PreserveWhitespace` | `(Boolean)` | ✅ covered | works natively via NavXmlReadOptions; get and set tested (default false, set to true returns true) |
 
-## XmlText  (12/17)
+## XmlText  (15/17)
 
 | Method | Signature | Status | Notes |
 |--------|-----------|--------|-------|
@@ -2407,9 +2407,9 @@ Source: `Microsoft.Dynamics.Nav.CodeAnalysis` method symbol tables. Coverage = A
 | `SelectSingleNode` | `(Text, XmlNode)` | ✅ covered | BC native — no mock needed |
 | `Value` | `(Text)` | ✅ covered | BC native — no mock needed |
 | `WriteTo` | `(OutStream)` | ✅ covered |  |
-| `WriteTo` | `(Text)` | 🔲 gap |  |
-| `WriteTo` | `(XmlWriteOptions, OutStream)` | 🔲 gap |  |
-| `WriteTo` | `(XmlWriteOptions, Text)` | 🔲 gap |  |
+| `WriteTo` | `(Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, ByRef<NavText>) via reflection — tested in suite 220-xml-writeto-overloads. |
+| `WriteTo` | `(XmlWriteOptions, OutStream)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, MockOutStream) — options ignored. |
+| `WriteTo` | `(XmlWriteOptions, Text)` | ✅ covered | MockJsonHelper.WriteTo(object, DataError, NavXmlWriteOptions, ByRef<NavText>) — options ignored; tested in suite 220-xml-writeto-overloads. |
 
 ## XmlWriteOptions  (1/1)
 
