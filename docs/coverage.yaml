@@ -9433,6 +9433,12 @@ TestRequestPage.ValidationErrorCount ():
   status: covered
   notes: ALValidationErrorCount() returns 0
 
+TestRequestPage.GetDataItem (Text):
+  layer: runtime-api
+  category: TestRequestPage
+  status: covered
+  notes: GetDataItem(string name) on MockTestPageHandle returns a per-name MockTestPageFilter; ALSetFilter/ALGetFilter round-trip proved; two independent data items proved; fixes CS1061 issue #1457.
+
 # ── Text ────────────────────────────────────────────────────────
 
 Text.Contains (Text):

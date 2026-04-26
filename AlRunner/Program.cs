@@ -467,6 +467,9 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   FindPreviousField(field,value), GetField() (stubs; First/GoToRecord/GoToKey/FindFirstField
   return true; all others return false/0/empty; parts share MockTestPageHandle with TestPage;
   TestPart.Prev removed in BC runtime 13.0 / BC 26+ — not supported)
+- TestRequestPage.GetDataItem(name) — BC emits GetDataItem("Report{N}DataItem{I}TableView")
+  when AL accesses a report data-item property (e.g. RequestPage.Customer.SetFilter(Id,'1..10')).
+  Returns a per-name MockTestPageFilter; supports SetFilter/GetFilter/SetCurrentKey/Ascending.
 - Request page handler dispatch — [RequestPageHandler] intercepts Report.RunRequestPage() calls
 - Report handler dispatch — [ReportHandler] intercepts Report.Run()/Report.RunModal() and
   report variable .Run()/.RunModal() calls. Handler receives TestRequestPage parameter.
