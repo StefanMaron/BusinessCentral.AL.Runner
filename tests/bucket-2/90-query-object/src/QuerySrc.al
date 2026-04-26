@@ -117,7 +117,7 @@ codeunit 59000 "Query Logic"
         Q.Close();
     end;
 
-    /// Tries Q.SaveAsCsv — no-op stub in standalone mode.
+    /// Tries Q.SaveAsCsv(Text) — 1-arg overload, still throws NotSupportedException.
     procedure TrySaveAsCsv()
     var
         Q: Query "Item Ledger Query";
@@ -125,7 +125,15 @@ codeunit 59000 "Query Logic"
         Q.SaveAsCsv('output.csv');
     end;
 
-    /// Tries Q.SaveAsXml — no-op stub in standalone mode.
+    /// Tries Q.SaveAsCsv(Text, Integer, Text) — 3-arg overload, no-op stub in standalone mode.
+    procedure TrySaveAsCsv3Arg()
+    var
+        Q: Query "Item Ledger Query";
+    begin
+        Q.SaveAsCsv('output.csv', 0, ',');
+    end;
+
+    /// Tries Q.SaveAsXml(Text) — no-op stub in standalone mode.
     procedure TrySaveAsXml()
     var
         Q: Query "Item Ledger Query";

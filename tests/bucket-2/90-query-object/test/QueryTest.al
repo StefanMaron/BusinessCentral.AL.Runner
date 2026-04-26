@@ -108,12 +108,22 @@ codeunit 59001 "Query Tests"
     end;
 
     [Test]
-    procedure QuerySaveAsCsvIsNoOp()
+    procedure QuerySaveAsCsvThrowsNotSupported()
     begin
         // [GIVEN] A declared Query variable
-        // [WHEN]  We call Q.SaveAsCsv(FilePath)
-        // [THEN]  No error is raised — SaveAsCsv is a no-op stub in standalone mode
-        Logic.TrySaveAsCsv();
+        // [WHEN]  We call Q.SaveAsCsv(FilePath) — 1-arg overload
+        // [THEN]  A clear 'Query' error is raised (still not supported in standalone mode)
+        asserterror Logic.TrySaveAsCsv();
+        Assert.ExpectedError('Query');
+    end;
+
+    [Test]
+    procedure QuerySaveAsCsv3ArgIsNoOp()
+    begin
+        // [GIVEN] A declared Query variable
+        // [WHEN]  We call Q.SaveAsCsv(FilePath, MaxLines, FieldSeparator) — 3-arg overload
+        // [THEN]  No error is raised — this overload is a no-op stub in standalone mode
+        Logic.TrySaveAsCsv3Arg();
     end;
 
     [Test]
