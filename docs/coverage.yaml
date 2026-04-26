@@ -7357,7 +7357,9 @@ System.CompressArray (Array):
   layer: runtime-api
   category: System
   status: covered
-  notes: . ALSystemArray.ALCompressArray redirected to AlCompat.ALCompressArray; shifts non-blank elements to front, fills tail with default.
+  notes: ALSystemArray.ALCompressArray redirected to AlCompat.ALCompressArray; shifts non-blank elements to front, fills tail with default; returns Integer count of non-blank elements (fixes CS0029 when result is assigned).
+  tests:
+    - bucket-1/codeunit-runtime/199-system-array-random: CompressArray_ReturnsNonBlankCount_WithGaps, CompressArray_ReturnsZero_AllBlank, CompressArray_ReturnsAll_NoGaps
 
 System.CopyArray (Array, Array, Integer, Integer):
   layer: runtime-api

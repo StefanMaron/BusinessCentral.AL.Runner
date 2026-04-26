@@ -9,6 +9,14 @@ codeunit 97500 "SAR Src"
         CompressArray(Arr);
     end;
 
+    procedure CompressTextArrayCount(var Arr: array[5] of Text): Integer
+    var
+        N: Integer;
+    begin
+        N := CompressArray(Arr);
+        exit(N);
+    end;
+
     // ── CopyArray ─────────────────────────────────────────────────────────────
 
     procedure CopyIntArray(var FromArr: array[5] of Integer; var ToArr: array[5] of Integer; Count: Integer)
