@@ -7256,8 +7256,14 @@ Table.CurrentCompany:
   layer: runtime-api
   category: Table
   status: covered
-  tests: tests/bucket-1/180-table-metadata-stubs
-  notes: overloads=1; MockRecordHandle.ALCurrentCompany → MockSession.GetCompanyName() (default "CRONUS")
+  tests:
+    - tests/bucket-1/180-table-metadata-stubs
+    - tests/bucket-2/100-record-recordid-testfield-company
+  notes: >
+    overloads=1; MockRecordHandle.ALCurrentCompany → MockSession.GetCompanyName() (default "CRONUS").
+    Bare CurrentCompany() calls inside table procedures generate _parent.ALCurrentCompany on the Record
+    class; RoslynRewriter now injects "public string ALCurrentCompany => Rec.ALCurrentCompany" into
+    every Record class via delegatingCode — fixes CS1061 (issue #1330).
 
 Table.CurrentKey:
   layer: runtime-api
@@ -7643,8 +7649,14 @@ Table.RecordId:
   layer: runtime-api
   category: Table
   status: covered
-  tests: tests/bucket-1/180-table-metadata-stubs
-  notes: overloads=1; MockRecordHandle.ALRecordId — returns NavRecordId.Default (no-crash stub); TableNo returns 0 in standalone
+  tests:
+    - tests/bucket-1/180-table-metadata-stubs
+    - tests/bucket-2/100-record-recordid-testfield-company
+  notes: >
+    overloads=1; MockRecordHandle.ALRecordId — returns NavRecordId.Default (no-crash stub); TableNo returns 0 in standalone.
+    Bare RecordId() calls inside table procedures generate _parent.ALRecordId on the Record class;
+    RoslynRewriter now injects "public NavRecordId ALRecordId => Rec.ALRecordId" into every Record class
+    via delegatingCode — fixes CS1061 (issue #1330).
 
 Table.RecordLevelLocking:
   layer: runtime-api
@@ -7805,6 +7817,7 @@ Table.TestField:
     - tests/bucket-1/290-testfield-errorinfo
     - tests/bucket-1/291-testfield-find-navtext-bool
     - tests/bucket-2/100-testfield-value
+    - tests/bucket-2/100-record-recordid-testfield-company
   notes: >
     overloads=32; non-empty check, enum value comparison, and scalar value comparison
     (Text/Code/Integer/Decimal/Boolean) covered. CS0121 ambiguity between NavValue and
@@ -7820,6 +7833,9 @@ Table.TestField:
     ALTestFieldSafe(fieldNo, NavType, object, bool) overload added for BC versions that emit
     TestField(Field, Value) as a 4-arg call with a bool suppressError flag instead of
     NavALErrorInfo — resolves CS1503 (bool → string) — issues #1108, #1109.
+    ALTestFieldNavValueSafe(int, NavType, NavValue) overload injected into Record class by
+    RoslynRewriter delegatingCode — fixes CS1061 when some BC compiler versions emit this
+    overload name instead of ALTestFieldSafe (issue #1330).
 
 Table.TransferFields:
   layer: runtime-api
