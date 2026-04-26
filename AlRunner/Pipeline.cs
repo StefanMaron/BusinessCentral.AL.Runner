@@ -1550,12 +1550,12 @@ public class AlRunnerPipeline
             alStubs.Add(stubAl ?? $"table {id} \"AutoStub{id}\" {{ fields {{ field(1; PK; Integer) {{ }} }} keys {{ key(PK; PK) {{ Clustered = true; }} }} }}");
         }
 
-        // Register stub AL with the field/init-value registries so runtime mocks
-        // (MockRecordHandle.ALInsert auto-increment, FieldRef metadata, etc.)
-        // see auto-stubbed tables the same way they see source-AL tables.
-        // Without this, AutoIncrement on a packaged table is silently dropped.
+        // Register table stubs with field/init-value registries so runtime mocks
+        // see auto-stubbed tables the same way as source-AL tables (e.g. so
+        // AutoIncrement on a packaged table reaches the auto-increment path).
         foreach (var stubAl in alStubs)
         {
+            if (!stubAl.TrimStart().StartsWith("table ", StringComparison.OrdinalIgnoreCase)) continue;
             Runtime.TableFieldRegistry.ParseAndRegister(stubAl);
             Runtime.TableInitValueRegistry.ParseAndRegister(stubAl);
         }
@@ -1809,19 +1809,16 @@ public class AlRunnerPipeline
             sb.AppendLine($"table {tableId} \"{foundName.Replace("\"", "\"\"")}\"");
             sb.AppendLine("{");
 
-            // Read primary-key field names from the symbol so the stub preserves
-            // the real PK shape. Without this, Insert on auto-stubbed tables
-            // collides on the empty default of a placeholder PK field, and
-            // AutoIncrement metadata is lost (BC fires AutoIncrement on every
-            // Insert overload — see the BC docs for RecordRef.Insert).
-            var pkFieldNames = ExtractPrimaryKeyFieldNames(found);
-            var pkFieldSymbols = ExtractPrimaryKeyFieldSymbols(found);
+            // Preserve the real PK shape so Insert collisions and AutoIncrement
+            // work correctly. BC fires AutoIncrement on every Insert overload
+            // (RecordRef.Insert docs).
+            var pkFields = ExtractPrimaryKeyFields(found);
 
             sb.AppendLine("    fields");
             sb.AppendLine("    {");
-            if (pkFieldSymbols.Count > 0)
+            if (pkFields.Count > 0)
             {
-                foreach (var fieldSymbol in pkFieldSymbols)
+                foreach (var (_, fieldSymbol) in pkFields)
                 {
                     var rendered = RenderPrimaryKeyFieldDecl(fieldSymbol);
                     if (rendered != null)
@@ -1835,9 +1832,9 @@ public class AlRunnerPipeline
             sb.AppendLine("    }");
             sb.AppendLine("    keys");
             sb.AppendLine("    {");
-            if (pkFieldNames.Count > 0)
+            if (pkFields.Count > 0)
             {
-                var keyList = string.Join(", ", pkFieldNames.Select(n => $"\"{n.Replace("\"", "\"\"")}\""));
+                var keyList = string.Join(", ", pkFields.Select(p => $"\"{p.Name.Replace("\"", "\"\"")}\""));
                 sb.AppendLine($"        key(PK; {keyList}) {{ Clustered = true; }}");
             }
             else
@@ -1939,34 +1936,13 @@ public class AlRunnerPipeline
     }
 
     /// <summary>
-    /// Read the field names that compose a table's primary key from the BC
-    /// symbol via reflection. Falls back to an empty list when the symbol
-    /// shape is unfamiliar so callers can use a synthesized PK field.
+    /// Read the primary-key FieldSymbols (with names) from a TableTypeSymbol in
+    /// PK order. Falls back to an empty list when the symbol shape is unfamiliar
+    /// so callers can use a synthesized PK field.
     /// </summary>
-    private static List<string> ExtractPrimaryKeyFieldNames(object tableSymbol)
+    private static List<(string Name, object Symbol)> ExtractPrimaryKeyFields(object tableSymbol)
     {
-        var names = new List<string>();
-        try
-        {
-            var pk = GetSymbolPropertyValue(tableSymbol, "PrimaryKey");
-            if (pk == null) return names;
-            var fieldsObj = GetSymbolPropertyValue(pk, "Fields");
-            if (fieldsObj is not System.Collections.IEnumerable fields) return names;
-            foreach (var f in fields)
-            {
-                var name = GetSymbolPropertyValue(f, "Name")?.ToString();
-                if (!string.IsNullOrEmpty(name))
-                    names.Add(name);
-            }
-        }
-        catch { }
-        return names;
-    }
-
-    /// <summary>Read primary-key FieldSymbols from a TableTypeSymbol, in PK order.</summary>
-    private static List<object> ExtractPrimaryKeyFieldSymbols(object tableSymbol)
-    {
-        var result = new List<object>();
+        var result = new List<(string Name, object Symbol)>();
         try
         {
             var pk = GetSymbolPropertyValue(tableSymbol, "PrimaryKey");
@@ -1974,7 +1950,12 @@ public class AlRunnerPipeline
             var fieldsObj = GetSymbolPropertyValue(pk, "Fields");
             if (fieldsObj is not System.Collections.IEnumerable fields) return result;
             foreach (var f in fields)
-                if (f != null) result.Add(f);
+            {
+                if (f == null) continue;
+                var name = GetSymbolPropertyValue(f, "Name")?.ToString();
+                if (string.IsNullOrEmpty(name)) continue;
+                result.Add((name, f));
+            }
         }
         catch { }
         return result;
