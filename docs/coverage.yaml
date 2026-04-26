@@ -6253,12 +6253,14 @@ RecordRef.Insert ():
 RecordRef.Insert (Boolean, Boolean):
   layer: runtime-api
   category: RecordRef
-  status: not-tested
+  status: covered
+  notes: MockRecordRef.ALInsert(DataError, runTrigger, belowXRec) — BelowXRec is no-op in standalone; RunTrigger forwarded to MockRecordHandle. Tested in 312-recref-insert-overloads.
 
 RecordRef.Insert (Boolean):
   layer: runtime-api
   category: RecordRef
-  status: not-tested
+  status: covered
+  notes: MockRecordRef.ALInsert(DataError, runTrigger) — trigger-aware insert via RecordRef. Tested in 312-recref-insert-overloads.
 
 RecordRef.IsDirty ():
   layer: runtime-api
