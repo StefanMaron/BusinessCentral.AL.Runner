@@ -3670,6 +3670,14 @@ public class MockRecordHandle : IConvertible
     public string ALCurrentCompany => MockSession.GetCompanyName();
 
     /// <summary>
+    /// AL FullyQualifiedName — returns the fully qualified name of the table in the format
+    /// "&lt;CompanyName&gt;$&lt;TableName&gt;" (e.g. "CRONUS$Customer").
+    /// In standalone mode, uses the configured company name and the AL table name.
+    /// </summary>
+    public string ALFullyQualifiedName =>
+        $"{MockSession.GetCompanyName()}${ALTableName}";
+
+    /// <summary>
     /// AL SetPermissionFilter — applies permission-based filtering.
     /// No-op in standalone mode (no permission enforcement).
     /// </summary>

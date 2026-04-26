@@ -7434,7 +7434,10 @@ Table.CopyLinks (RecordRef):
 Table.CopyLinks (Table):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/98-table-links
+  notes: MockRecordHandle.ALCopyLinks(source) — copies all links from source record; already implemented and tested
 
 Table.Count ():
   layer: runtime-api
@@ -7515,7 +7518,10 @@ Table.FieldError (Joker, ErrorInfo):
 Table.FieldError (Joker, Text):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/180-table-metadata-stubs
+  notes: MockRecordHandle.ALFieldError(fieldNo, message) — raises field error with custom message; tested in 180-table-metadata-stubs
 
 Table.FieldName (Joker):
   layer: runtime-api
@@ -7566,7 +7572,10 @@ Table.FindLast ():
 Table.FindSet (Boolean, Boolean):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309200-table-overloads
+  notes: MockRecordHandle.ALFindSet(DataError, forUpdate, forceNewQuery) — delegates to ALFindSet(DataError, forUpdate); tested in 309200-table-overloads
 
 Table.FindSet (Boolean):
   layer: runtime-api
@@ -7581,7 +7590,10 @@ Table.FindSet (Boolean):
 Table.FullyQualifiedName ():
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309200-table-overloads
+  notes: MockRecordHandle.ALFullyQualifiedName — returns CompanyName$TableName; implemented in #1373
 
 Table.Get (Joker):
   layer: runtime-api
@@ -7690,12 +7702,18 @@ Table.Insert ():
 Table.Insert (Boolean, Boolean):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309200-table-overloads
+  notes: MockRecordHandle.ALInsert(DataError, runTrigger, checkMandatoryFields) — 3-arg overload; tested in 309200-table-overloads
 
 Table.Insert (Boolean):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309200-table-overloads
+  notes: MockRecordHandle.ALInsert(DataError, runTrigger) — trigger-aware insert; tested in 309200-table-overloads
 
 Table.IsEmpty ():
   layer: runtime-api
@@ -8052,7 +8070,10 @@ Table.TestField (Joker):
 Table.TransferFields (Table, Boolean, Boolean):
   layer: runtime-api
   category: Table
-  status: gap
+  status: covered
+  tests:
+    - tests/bucket-1/309200-table-overloads
+  notes: MockRecordHandle.ALTransferFields(source, initPrimaryKey, validateFields) — 3-arg overload; tested in 309200-table-overloads
 
 Table.TransferFields (Table, Boolean):
   layer: runtime-api
