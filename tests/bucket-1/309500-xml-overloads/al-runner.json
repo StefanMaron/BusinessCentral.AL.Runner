@@ -1,0 +1,3 @@
+{
+  "description": "XmlDocument/XmlElement/XmlDocumentType missing overloads — Create, GetChildElements, GetDescendantElements, ReadFrom (XmlReadOptions), RemoveAttribute, SetAttribute (issue #1372)"
+}
