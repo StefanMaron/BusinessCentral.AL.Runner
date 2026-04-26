@@ -465,6 +465,10 @@ public class MockCurrPage
         NavDictionary<NavText, NavText> parameters, int timeout)
         => taskId.Value = 1;
 
+    public void EnqueueBackgroundTask(DataError errorLevel, ByRef<int> taskId, int codeunitId,
+        NavDictionary<NavText, NavText> parameters, int timeout, PageBackgroundTaskErrorLevel backgroundTaskErrorLevel)
+        => taskId.Value = 1;
+
     /// <summary>
     /// CurrPage.CancelBackgroundTask — no-op in standalone mode (task already ran synchronously).
     /// </summary>
