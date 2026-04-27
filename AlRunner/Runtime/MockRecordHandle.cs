@@ -400,14 +400,26 @@ public class MockRecordHandle : IConvertible
         // "Unable to cast NavBoolean to NavText". Convert using AL's standard Boolean→Text
         // representation: true → "Yes", false → "No".
         if (expectedType == NavType.Text && value is NavBoolean nb)
-            return new NavText((bool)nb ? "Yes" : "No");
+            value = new NavText((bool)nb ? "Yes" : "No");
         // When an Option/Enum value (NavOption) ends up in a Text field slot — e.g. via
         // FieldRef.Value := EnumFieldRef.Value — the BC runtime casts the stored value
         // to NavText with (NavText)GetFieldValueSafe(fieldNo, NavType.Text), which throws
         // "Unable to cast NavOption to NavText" (issue #1199).
         // Convert using the ordinal integer as a string, consistent with AlCompat.Format().
-        if (expectedType == NavType.Text && value is NavOption nopt)
-            return new NavText(nopt.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        else if (expectedType == NavType.Text && value is NavOption nopt)
+            value = new NavText(nopt.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        // When a NavText is stored in a Text field slot but was created without an explicit
+        // MaxLength (e.g. from InitValue parsing, FieldRef cross-type assignment, or other
+        // paths that call new NavText(string)), MaxStrLen() would return Int32.MaxValue
+        // instead of the declared field length (issue #1506).
+        // Fix: if the stored NavText.MaxLength doesn't match the declared field length,
+        // re-wrap with the correct length from the schema registry.
+        if (expectedType == NavType.Text && value is NavText ntText)
+        {
+            var declaredLen = TableFieldRegistry.GetFieldLength(_tableId, fieldNo);
+            if (declaredLen.HasValue && ntText.MaxLength != declaredLen.Value)
+                return new NavText(declaredLen.Value, (string)ntText);
+        }
         return value;
     }
 

@@ -9868,7 +9868,9 @@ Text.MaxStrLen (Text):
   layer: runtime-api
   category: Text
   status: covered
-  notes: . Static Text.MaxStrLen form covered — returns the declared Text[N] length.
+  tests:
+    - tests/bucket-1/codeunit-runtime/112-maxstrlen
+  notes: Returns the declared Text[N]/Code[N] length from GetFieldValueSafe (field not yet in _fields) and after Init()/Insert/Get (field in _fields with InitValue or after round-trip). Fixed issue #1506 — CoerceToExpectedType now re-wraps NavText with declared MaxLength when stored without one.
 
 Text.MaxStrLen (Variant):
   layer: runtime-api
