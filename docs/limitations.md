@@ -54,27 +54,17 @@ pure-logic tests pass, but any test that exercises the parallel contract itself 
 enforcement, transaction isolation between workers, async completion detection — cannot
 pass here.
 
-### Event subscribers — partial support
+### Event subscribers — supported
 
-The runner does dispatch event subscribers. `RunEvent()` calls are rewritten to
-`AlCompat.FireEvent(publisherCodeunitId, eventName)`, which scans the compiled assembly
-for `[NavEventSubscriber]` methods at startup and calls matching subscribers.
+The runner dispatches event subscribers. `RunEvent()` calls are rewritten to
+`AlCompat.FireEvent(publisherCodeunitId, eventName, ...)`, which scans the compiled
+assembly for `[NavEventSubscriber]` methods at startup and calls matching subscribers.
 
-**What works:** custom `[IntegrationEvent]` / `[BusinessEvent]` publishers with
-zero-argument subscribers.
-
-**What does not work:** subscribers that receive event arguments (e.g. `var Rec: Record X`,
-`Sender: Codeunit X`). The parameters are passed as `null` because the BC-generated
-event method does not expose them to the dispatch call. A subscriber that reads or
-modifies its `Rec` parameter will see a null reference and either crash or silently do
-nothing.
-
-The practical effect: a test that calls `Rec.Modify()` and then asserts on state that is
-normally set by an `[EventSubscriber]` on `OnAfterModify` will see the subscriber called
-but unable to modify any record — producing a **silent false positive**.
-
-Always run the full pipeline after al-runner for code whose correctness depends on
-event subscriber side-effects.
+**What works:**
+- Custom `[IntegrationEvent]` / `[BusinessEvent]` publishers with any subscriber signature.
+- Subscribers that receive `var` parameters (e.g. `var Rec: Record X`, `var IsHandled: Boolean`) — the rewriter forwards all event parameters, and `var` arguments are wrapped in `ByRef<T>` so mutations propagate back to the publisher.
+- `IncludeSender = true` — the sender codeunit instance is prepended as the first argument.
+- Database event subscribers (`OnAfterModify`, `OnBeforeInsert`, etc.) receive `Rec` and can read or modify fields; the mutations are visible to the caller after the trigger returns.
 
 ### No UI rendering
 
@@ -111,16 +101,17 @@ The runner executes in a single .NET process with no attached BC debugger. Debug
 
 `Debugger.Activate()`, `Debugger.Deactivate()`, and `Debugger.IsActive()` are supported — they are stripped or return `false`.
 
-### No task scheduler
+### Task scheduler — synchronous dispatch
 
-The BC task scheduler (`TaskScheduler`) submits background tasks to the BC service tier. The runner has no service tier:
+`TaskScheduler.CreateTask()` dispatches the target codeunit **synchronously, inline**,
+before returning — the same pattern as `StartSession`. The implications:
 
-- `TaskScheduler.CreateTask()` — no job queue or service tier exists.
-- `TaskScheduler.CancelTask()` — nothing to cancel.
-- `TaskScheduler.CanCreateTask()` — always `false` standalone (or would throw if emulated).
-- `TaskScheduler.SetTaskReady()`, `TaskExists()` — no persistent task store.
+- `TaskExists()` always returns `false` — the task already completed before the call returned.
+- `CancelTask()` and `SetTaskReady()` are no-ops — the task has already run.
+- `CanCreateTask()` returns `false` — there is no background job queue.
+- `NotBefore` and `CompanyName` parameters are accepted but ignored — the codeunit runs immediately in the current company context.
 
-AL that relies on task-scheduler patterns for background processing cannot be tested here. Inject the scheduling dependency behind an AL interface if you want to unit-test the logic around task creation.
+AL that tests the *logic* around task creation (what codeunit runs, what state it produces) works here. AL that tests the *scheduling contract* (task still pending, NotBefore delay, cancellation before execution) cannot work here because there is no background scheduler.
 
 ### No DotNet interop
 
@@ -254,7 +245,6 @@ fails to run, that is a gap to report, not a reason to restructure your code.
 The hard exceptions — things that require the BC service tier by architecture —
 are listed above. For those, test in the full pipeline:
 
-- Event subscribers that pass data via `var Rec` or `Sender` parameters
 - Real company or setup data being present
 - Parallel sessions running concurrently
 - Transaction boundaries (commit / rollback)
