@@ -147,6 +147,19 @@ ISV DLL, which holds a `MetadataReference` to the Microsoft DLL.
         recompile → new pinned DLL
 ```
 
+### Whole objects, not method slices
+
+Objects are extracted in full. If your code calls one method on
+`Codeunit "Sales-Post"`, you get the entire `Sales-Post` source file — all its
+procedures, including ones you never call and any DotNet-interop methods that won't
+compile in standalone mode. Partial objects would be invalid AL, so there is no
+alternative.
+
+This is why the review step exists. On first extraction, scan the output for
+procedures that reference DotNet types you have no use for and delete them before
+compiling. The edit is versioned: on the next BC upgrade, the diff will show if
+that procedure changed, and you decide again.
+
 If `compile-dep` reports errors after extraction, inspect them:
 
 - **Missing type reference** — an extracted object references something outside the
