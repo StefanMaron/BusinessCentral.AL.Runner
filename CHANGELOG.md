@@ -6,6 +6,61 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.27] - 2026-04-27
+
+### Fixed
+- revert MockImage SA reimplementation to blank shell
+- merge same-arity overloads in auto-stub generator to prevent NavOption/NavCode cast
+- Format(Option) renders member name and Text relational operators no longer NRE
+- tighten ALSetAutoCalcFields wrapper signature to typed overload pair
+- make ALMark(bool) return bool to resolve CS0019 in if-expression context — closes #1492
+- initialize page Rec as temporary when SourceTableTemporary=true — closes #1490
+- add ALEvaluate(ByRef<char>) overload — closes #1483
+- triager must grep runtime before labelling telemetry issues needs-input
+- add MockVariant/object overloads to MockFieldRef.ALValidate/ALValidateSafe — closes #1487
+- persist TestPage Field.SetValue to underlying record — closes #1486
+- tighten triager closing rule and add impl-agent claim race-condition check
+- add MockJsonHelper integer-index overloads for JsonArray.GetText/GetInteger/GetDecimal/GetBoolean/GetArray — closes #1426
+- initialize Rec backing on Page<N> var instantiation — closes #1422
+- add TestPage.Filter.SetFilter object overload and regression tests — closes #1459
+- preserve Enum/Option parameter types in auto-stubbed codeunits — closes #1419
+- parse image dimensions from header — closes #1421
+- add object/NavText overloads to MockTestPageFilter.ALSetFilter — closes #1442
+- only discover tests with [NavTest] attribute, not by name — closes #1420
+- preserve AutoIncrement and PK schema on auto-stubbed packaged tables — closes #1418
+- prevent ByRef<int> CS1503 in auto-stub var-param signatures — closes #1433
+- IsolatedStorage.Set, XmlNode.AddBeforeSelf/AddAfterSelf/Remove, ReportInstance.SaveAs return bool — closes #1432
+- ALCompressArray returns int — closes #1446
+- handle Duration to Integer implicit conversion in HttpClient.Timeout — closes #1445
+- inject GetGlobalVariable/SetGlobalVariable on ReportExtension<N> — closes #1450
+- add MockArray<T>.Clear(int) single-int overload — closes #1448
+- implement TestRequestPage.GetDataItem — closes #1457
+- implement missing CurrPage.Run() stub on Page<N> — closes #1444
+- implement MockStream.ALWriteString — closes #1437
+- implement ALStopSession 3-arg overload — closes #1443
+- handle ALSystemVariable.ALEvaluate<MockVersion> CS0452 — closes #1429
+- implement ALStartSession 3-arg overload — closes #1435
+- implement ALTruncate 2-arg overload — closes #1431
+- implement Report.Run 2-arg (StaticRun 2-arg) — closes #1427
+- implement MockPartFormHandle.PageCaption — closes #1440
+- implement ALFieldError 0-arg overload — closes #1428
+- implement RecordRef.Insert(Boolean) and Insert(Boolean,Boolean) overloads — closes #1430
+- implement MockHttpClient.ALAssign — closes #1447
+- implement MockFieldRef.ALKeyIndex — closes #1434
+- implement MockRecordRef.ALWritePermission — closes #1441
+- shim ALAddLoadFields and ALAreFieldsLoaded on record wrapper — closes #1412
+- type MockTestPageField.ALValue as string to match BC's TestPageField.Value — closes #1407
+- rewrite MockArray<MockInterfaceHandle> Factory ctor to lambda — closes #1406
+- qualify shadowed PromptMode enum reference inside page class — closes #1404
+- shim ALSetLoadFields(DataError, params int[]) on record wrapper — closes #1405
+- prove XmlAttribute.Create(Text, Text, Text) — closes #1399
+
+### Documentation
+- align CONTRIBUTING/CLAUDE bucket-loop with CI — closes #1409
+
+### Changed
+- Regroup test suites into thematic categories under 3 buckets
+
 ## [1.0.26] - 2026-04-26
 
 ### Added
