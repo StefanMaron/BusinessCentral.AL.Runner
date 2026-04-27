@@ -644,6 +644,21 @@ StubGen.EnumOptionParam:
     literals) no longer get NavOption→NavInteger cast errors. Enum uses "Option" because
     stubs compile without package references (so Enum "X" would fail). Closes #1419.
 
+StubGen.MultiOverloadEnumMerge:
+  layer: syntax
+  category: auto-stub
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/315-stubgen-enum-multioverload
+    - AlRunner.Tests/AutoStubEnumParamTests.cs (AutoStub_MultiOverload_EnumAndCodeSameArity_EnumCallDoesNotThrow)
+  notes: >
+    Regression #1501: when a codeunit has same-arity overloads differing in a parameter
+    type (e.g. Enum vs Code[20] for the second param), the first-seen dedup kept only
+    the first overload encountered.  If that was the Code-typed one, calling with an Enum
+    literal caused NavOption→NavCode InvalidCastException.  Fix: same-arity overloads are
+    now MERGED — differing parameter positions are widened to Variant, which accepts both
+    NavOption (Enum callers) and NavCode (Code callers) without a cast error.
+
 var_attribute_item:
   layer: syntax
   category: variable

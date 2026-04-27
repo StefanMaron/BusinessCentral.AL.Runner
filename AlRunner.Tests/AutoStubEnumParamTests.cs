@@ -199,6 +199,162 @@ public class AutoStubEnumParamTests
             """);
     }
 
+    /// <summary>
+    /// Regression test for issue #1501: auto-stubbed multi-overload codeunit with same
+    /// parameter count but different types (Enum vs Code[20]) must be handled without a
+    /// NavOption->NavCode cast error.  Before the fix, first-seen-wins dedup kept the
+    /// Code-typed overload, causing InvalidCastException on any Enum-literal call.
+    /// The fix merges same-arity overloads by widening differing positions to Variant.
+    /// </summary>
+    [Fact]
+    public async Task AutoStub_MultiOverload_EnumAndCodeSameArity_EnumCallDoesNotThrow()
+    {
+        if (AlcPath == null) return;
+
+        await RunAutoStubEnumScenario(async (testDir, pkgDir) =>
+        {
+            var libGuid = Guid.NewGuid();
+            var testGuid = Guid.NewGuid();
+            await BuildMultiOverloadLibraryApp(libGuid, pkgDir);
+
+            File.WriteAllText(Path.Combine(testDir, "app.json"), $$"""
+                {
+                  "id": "{{testGuid}}",
+                  "name": "MultiOLTest",
+                  "publisher": "AlRunnerTest",
+                  "version": "1.0.0.0",
+                  "runtime": "14.0",
+                  "dependencies": [
+                    {
+                      "id": "{{libGuid}}",
+                      "name": "MultiOLLib",
+                      "publisher": "AlRunnerTest",
+                      "version": "1.0.0.0"
+                    }
+                  ]
+                }
+                """);
+
+            // The library has two CreateHeader overloads with 3 params each:
+            //   CreateHeader(var Rec; DocType: Enum "..."; CustomerNo: Code[20])
+            //   CreateHeader(var Rec; TemplateCode: Code[20]; SeriesCode: Code[20])
+            // Before the fix, first-seen-wins kept Code-typed overload, causing
+            // NavOption->NavCode cast error on Enum calls.
+            // After the fix, the second param is widened to Variant, accepting both callers.
+            File.WriteAllText(Path.Combine(testDir, "Test.al"), """
+                codeunit 50301 "Multi Overload Stub Tests"
+                {
+                    Subtype = Test;
+
+                    var Assert: Codeunit Assert;
+
+                    [Test]
+                    procedure CallEnumOverload_Order_NoError()
+                    var
+                        Lib: Codeunit "Multi OL Lib";
+                        Hdr: Record "Multi OL Header";
+                    begin
+                        // [GIVEN] An Enum-typed call on a multi-overload auto-stubbed codeunit
+                        // [WHEN]  Called with an Enum literal (NavOption at runtime)
+                        // [THEN]  No NavOption->NavCode cast error (Variant accepts NavOption)
+                        Lib.CreateHeader(Hdr, "Multi OL Doc Type 2"::Order, 'C0001');
+                        Assert.IsTrue(true, 'Enum overload must not throw a cast error');
+                    end;
+
+                    [Test]
+                    procedure CallEnumOverload_Quote_NoError()
+                    var
+                        Lib: Codeunit "Multi OL Lib";
+                        Hdr: Record "Multi OL Header";
+                    begin
+                        // [GIVEN] Same codeunit, different Enum value
+                        // [WHEN]  Called with a different Enum literal
+                        // [THEN]  No error
+                        Lib.CreateHeader(Hdr, "Multi OL Doc Type 2"::Quote, 'C0002');
+                        Assert.IsTrue(true, 'Enum overload with Quote must not throw a cast error');
+                    end;
+
+                    [Test]
+                    procedure CallCodeOverload_NoError()
+                    var
+                        Lib: Codeunit "Multi OL Lib";
+                        Hdr: Record "Multi OL Header";
+                    begin
+                        // [GIVEN] The Code-typed overload on the same codeunit
+                        // [WHEN]  Called with Code literals
+                        // [THEN]  No error -- Variant also accepts NavCode
+                        Lib.CreateHeader(Hdr, 'TPL', 'SER');
+                        Assert.IsTrue(true, 'Code call must also work after dedup fix');
+                    end;
+                }
+                """);
+
+            var result = RunPipeline(testDir, pkgDir);
+
+            AssertPipelinePassed(result);
+            Assert.Equal(3, result.Passed);
+        });
+    }
+
+    private async Task BuildMultiOverloadLibraryApp(Guid libGuid, string pkgDir)
+    {
+        var libDir = Path.Combine(Path.GetDirectoryName(pkgDir)!, "lib-multioverload");
+        Directory.CreateDirectory(libDir);
+
+        // Table + enum + codeunit with two same-arity overloads differing in second param type.
+        File.WriteAllText(Path.Combine(libDir, "MultiOLLib.al"), """
+            enum 50200 "Multi OL Doc Type 2"
+            {
+                Extensible = false;
+                value(0; " ") { Caption = ' '; }
+                value(1; Order) { Caption = 'Order'; }
+                value(2; Quote) { Caption = 'Quote'; }
+            }
+
+            table 50200 "Multi OL Header"
+            {
+                DataClassification = SystemMetadata;
+                fields
+                {
+                    field(1; PK; Integer) { }
+                    field(2; "Customer No"; Code[20]) { }
+                }
+                keys { key(PK; PK) { Clustered = true; } }
+            }
+
+            codeunit 50200 "Multi OL Lib"
+            {
+                // Enum-typed overload -- same arity as the Code overload below.
+                procedure CreateHeader(var Hdr: Record "Multi OL Header"; DocType: Enum "Multi OL Doc Type 2"; CustomerNo: Code[20])
+                begin
+                    Hdr."Customer No" := CustomerNo;
+                end;
+
+                // Code-typed overload -- same arity, different second-param type.
+                procedure CreateHeader(var Hdr: Record "Multi OL Header"; TemplateCode: Code[20]; SeriesCode: Code[20])
+                begin
+                    Hdr."Customer No" := TemplateCode;
+                end;
+            }
+            """);
+
+        File.WriteAllText(Path.Combine(libDir, "app.json"), $$"""
+            {
+              "id": "{{libGuid}}",
+              "name": "MultiOLLib",
+              "publisher": "AlRunnerTest",
+              "version": "1.0.0.0",
+              "runtime": "14.0"
+            }
+            """);
+
+        var libAppPath = await CompileAlApp(libDir);
+        if (libAppPath == null)
+            throw new InvalidOperationException("Failed to compile MultiOLLib .app via alc.");
+
+        File.Copy(libAppPath, Path.Combine(pkgDir, Path.GetFileName(libAppPath)));
+    }
+
     private static PipelineResult RunPipeline(string testDir, string pkgDir)
     {
         var pipeline = new AlRunnerPipeline();

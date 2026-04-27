@@ -1695,7 +1695,13 @@ public class AlRunnerPipeline
             var members = getMembersMethod.Invoke(found, null) as System.Collections.IEnumerable;
             if (members == null) { sb.AppendLine("}"); return sb.ToString(); }
 
-            var emittedSigs = new HashSet<string>();
+            // Dedup by (name, paramCount): AL does not support method overloads, so only
+            // one procedure can be emitted per (name, arity) pair.
+            // When same-arity overloads differ in a parameter type (e.g. Enum vs Code[20]),
+            // MERGE them by widening differing positions to Variant — fixes #1501.
+            // Variant accepts both NavOption (Enum callers) and NavCode (Code callers),
+            // preventing the NavOption→NavCode InvalidCastException at runtime.
+            var mergedMethods = new Dictionary<string, (string methodName, List<string> types, List<string> prefixedNames, string returnPart)>();
 
             foreach (var member in members)
             {
@@ -1707,7 +1713,8 @@ public class AlRunnerPipeline
 
                 // Get parameters
                 var paramsProp = member.GetType().GetProperty("Parameters");
-                var paramParts = new List<string>();
+                var typeNames = new List<string>();
+                var prefixedNames = new List<string>();
                 if (paramsProp != null)
                 {
                     var parms = paramsProp.GetValue(member) as System.Collections.IEnumerable;
@@ -1732,12 +1739,11 @@ public class AlRunnerPipeline
                             // makes the stub use value params and avoids the ByRef mismatch.
                             var effectiveIsVar = pIsVar && !IsCSharpPrimitiveMappedType(typeName);
                             var prefix = effectiveIsVar ? "var " : "";
-                            paramParts.Add($"{prefix}{pName}: {typeName}");
+                            typeNames.Add(typeName);
+                            prefixedNames.Add($"{prefix}{pName}");
                         }
                     }
                 }
-
-                var paramStr = string.Join("; ", paramParts);
 
                 // Get return type
                 var returnPart = "";
@@ -1753,13 +1759,26 @@ public class AlRunnerPipeline
                     }
                 }
 
-                // Dedup by (name, paramCount): overloaded methods with different
-                // interface/complex types all collapse to Variant in the stub, producing
-                // identical C# signatures and Roslyn CS0121 ambiguity errors.
-                var sig = $"{methodName}/{paramParts.Count}";
-                if (!emittedSigs.Add(sig)) continue;
+                var sig = $"{methodName}/{typeNames.Count}";
+                if (!mergedMethods.TryGetValue(sig, out var existing))
+                {
+                    mergedMethods[sig] = (methodName, new List<string>(typeNames), new List<string>(prefixedNames), returnPart);
+                }
+                else
+                {
+                    // Merge: widen any position where types differ to Variant.
+                    for (var i = 0; i < typeNames.Count && i < existing.types.Count; i++)
+                    {
+                        if (existing.types[i] != typeNames[i])
+                            existing.types[i] = "Variant";
+                    }
+                }
+            }
 
-                sb.AppendLine($"    procedure {methodName}({paramStr}){returnPart}");
+            foreach (var (_, (mName, types, names, rPart)) in mergedMethods)
+            {
+                var paramStr = string.Join("; ", names.Zip(types, (n, t) => $"{n}: {t}"));
+                sb.AppendLine($"    procedure {mName}({paramStr}){rPart}");
                 sb.AppendLine("    begin");
                 sb.AppendLine("    end;");
                 sb.AppendLine();

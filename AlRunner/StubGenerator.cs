@@ -625,7 +625,10 @@ public static class StubGenerator
                 var members = getMembersMethod.Invoke(cuSymbol, null) as System.Collections.IEnumerable;
                 if (members != null)
                 {
-                    var emittedSigs = new HashSet<string>();
+                    // Dedup by (name, paramCount): AL does not support method overloads.
+                    // Same-arity overloads that differ in a parameter type (e.g. Enum vs Code[20])
+                    // are MERGED by widening differing positions to Variant — fixes #1501.
+                    var mergedMethods = new Dictionary<string, (string methodName, List<string> types, List<string> prefixedNames, string returnPart)>();
                     foreach (var member in members)
                     {
                         var memberKind = member.GetType().GetProperty("Kind")?.GetValue(member);
@@ -641,7 +644,8 @@ public static class StubGenerator
                             continue;
 
                         var paramsProp = member.GetType().GetProperty("Parameters");
-                        var paramParts = new List<string>();
+                        var typeNames = new List<string>();
+                        var prefixedNames = new List<string>();
                         if (paramsProp != null)
                         {
                             var parms = paramsProp.GetValue(member) as System.Collections.IEnumerable;
@@ -657,12 +661,11 @@ public static class StubGenerator
                                              ?? p.GetType().GetProperty("Type")?.GetValue(p);
                                     var typeName = pType != null ? RenderSymbolTypeViaReflection(pType) : "Variant";
                                     var prefix = pIsVar ? "var " : "";
-                                    paramParts.Add($"{prefix}{pName}: {typeName}");
+                                    typeNames.Add(typeName);
+                                    prefixedNames.Add($"{prefix}{pName}");
                                 }
                             }
                         }
-
-                        var paramStr = string.Join("; ", paramParts);
 
                         var returnPart = "";
                         var retType = member.GetType().GetProperty("ReturnValueType")?.GetValue(member)
@@ -674,11 +677,25 @@ public static class StubGenerator
                                 returnPart = $": {RenderSymbolTypeViaReflection(retType)}";
                         }
 
-                        // Dedup by (name, paramCount) to avoid overloaded identical C# signatures
-                        var sig = $"{methodName}/{paramParts.Count}";
-                        if (!emittedSigs.Add(sig)) continue;
+                        var sig = $"{methodName}/{typeNames.Count}";
+                        if (!mergedMethods.TryGetValue(sig, out var existing))
+                        {
+                            mergedMethods[sig] = (methodName, new List<string>(typeNames), new List<string>(prefixedNames), returnPart);
+                        }
+                        else
+                        {
+                            for (var i = 0; i < typeNames.Count && i < existing.types.Count; i++)
+                            {
+                                if (existing.types[i] != typeNames[i])
+                                    existing.types[i] = "Variant";
+                            }
+                        }
+                    }
 
-                        sb.AppendLine($"    procedure {methodName}({paramStr}){returnPart}");
+                    foreach (var (_, (mName, types, pNames, rPart)) in mergedMethods)
+                    {
+                        var paramStr = string.Join("; ", pNames.Zip(types, (n, t) => $"{n}: {t}"));
+                        sb.AppendLine($"    procedure {mName}({paramStr}){rPart}");
                         sb.AppendLine("    begin");
                         sb.AppendLine("    end;");
                         sb.AppendLine();
