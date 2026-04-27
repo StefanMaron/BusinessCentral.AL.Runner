@@ -3547,106 +3547,119 @@ IsolatedStorage.SetEncrypted (Text, Text, DataScope):
   status: not-tested
 
 # ── Image ───────────────────────────────────────────────────────
+#
+# Codeunit 3971 "Image" is a System Application codeunit. No global stub is
+# shipped in AlRunner/stubs/. The auto-stub mechanism generates a blank shell
+# from SA package metadata when Image is in --packages. The 315-image-codeunit
+# test suite carries a test-local blank-shell stub in its src/ directory.
+# Every method returns the type-default (0, empty string) and does not throw.
+# The real MockImage C# implementation (PNG/JPEG/GIF/BMP header parsing) was
+# deleted in #1502 because shipping SA business-logic reimplementations
+# violates the runner's scope policy
+# (docs/limitations.md "System Application codeunits").
+# If your tests need real image dimensions, provide your own stub in your src/.
 
 Image.FromBase64 (Text):
   layer: runtime-api
   category: Image
-  status: covered
+  status: gap
   tests:
     - tests/bucket-2/data-formats/315-image-codeunit
-  notes: "MockImage parses base64-encoded PNG/JPEG/GIF/BMP headers; returns real width/height; throws on empty or unrecognised format. Codeunit 3971 routed via MockCodeunitHandle."
+  notes: "Auto-generated blank shell — no-op, no validation, no throw. Real header parsing removed in #1502."
 
 Image.FromStream (InStream):
   layer: runtime-api
   category: Image
-  status: covered
-  tests:
-    - tests/bucket-2/data-formats/315-image-codeunit
-  notes: "MockImage reads all bytes from InStream and parses PNG/JPEG/GIF/BMP header for real dimensions."
+  status: gap
+  notes: "Auto-generated blank shell — no-op. Real header parsing removed in #1502."
 
 Image.GetHeight ():
   layer: runtime-api
   category: Image
-  status: covered
+  status: gap
   tests:
     - tests/bucket-2/data-formats/315-image-codeunit
-  notes: "Returns pixel height parsed from image header (not 0). Closes #1421."
+  notes: "Auto-generated blank shell — returns 0 always. Real header parsing removed in #1502."
 
 Image.GetWidth ():
   layer: runtime-api
   category: Image
-  status: covered
+  status: gap
   tests:
     - tests/bucket-2/data-formats/315-image-codeunit
-  notes: "Returns pixel width parsed from image header (not 0). Closes #1421."
+  notes: "Auto-generated blank shell — returns 0 always. Real header parsing removed in #1502."
 
 Image.Resize (Integer, Integer):
   layer: runtime-api
   category: Image
-  status: covered
+  status: gap
   tests:
     - tests/bucket-2/data-formats/315-image-codeunit
-  notes: "Records new target dimensions; subsequent GetWidth/GetHeight reflect them."
+  notes: "Auto-generated blank shell — no-op; GetWidth/GetHeight return 0 regardless. Real implementation removed in #1502."
 
 Image.Save (OutStream):
   layer: runtime-api
   category: Image
-  status: covered
-  tests:
-    - tests/bucket-2/data-formats/315-image-codeunit
-  notes: "Writes stored image bytes back to the OutStream."
+  status: gap
+  notes: "Auto-generated blank shell — no-op. Real implementation removed in #1502."
 
 Image.ToBase64 ():
   layer: runtime-api
   category: Image
-  status: covered
+  status: gap
   tests:
     - tests/bucket-2/data-formats/315-image-codeunit
-  notes: "Returns stored bytes as a base64 string."
+  notes: "Auto-generated blank shell — returns empty string. Real implementation removed in #1502."
 
 Image.GetFormatAsText ():
   layer: runtime-api
   category: Image
-  status: covered
+  status: gap
   tests:
     - tests/bucket-2/data-formats/315-image-codeunit
-  notes: "Returns detected format name: Png, Jpeg, Gif, or Bmp."
+  notes: "Auto-generated blank shell — returns empty string. Real format detection removed in #1502."
 
 Image.Clear (Integer, Integer, Integer, Integer):
   layer: runtime-api
   category: Image
-  status: stub
-  notes: "No-op stub — creates a solid-colour image; standalone mode does not render pixels."
+  status: gap
+  notes: "Auto-generated blank shell — no-op."
+
+Image.Clear (Integer, Integer, Integer):
+  layer: runtime-api
+  category: Image
+  status: gap
+  notes: "Auto-generated blank shell — no-op."
 
 Image.Crop (Integer, Integer, Integer, Integer):
   layer: runtime-api
   category: Image
-  status: stub
-  notes: "Updates stored dimensions to Width×Height; no pixel data manipulation in standalone mode."
+  status: gap
+  notes: "Auto-generated blank shell — no-op."
 
 Image.RotateFlip (Integer):
   layer: runtime-api
   category: Image
-  status: stub
-  notes: "No-op stub — rotation/flip not meaningful without pixel data rendering."
+  status: gap
+  notes: "Auto-generated blank shell — no-op."
 
 Image.SetFormat (Integer):
   layer: runtime-api
   category: Image
-  status: stub
-  notes: "No-op stub — format is auto-detected on load; explicit set not supported."
+  status: gap
+  notes: "Auto-generated blank shell — no-op."
 
 Image.GetFormat ():
   layer: runtime-api
   category: Image
-  status: stub
-  notes: "Returns 0 (default enum value) — use GetFormatAsText() for the format string."
+  status: gap
+  notes: "Auto-generated blank shell — returns 0 (default)."
 
 Image.GetRotateFlipType ():
   layer: runtime-api
   category: Image
-  status: stub
-  notes: "Returns 0 (no rotation); no rotation state tracking in standalone mode."
+  status: gap
+  notes: "Auto-generated blank shell — returns 0 (default)."
 
 # ── JsonArray ───────────────────────────────────────────────────
 

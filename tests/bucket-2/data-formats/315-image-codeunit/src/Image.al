@@ -1,5 +1,10 @@
-// Stub for BC's Image codeunit (ID 3971) from System Application.
-// At runtime, MockCodeunitHandle routes codeunit 3971 calls to MockImage.
+// Blank-shell stub for BC's Image codeunit (ID 3971) from System Application.
+// Every method returns the type-default (0, empty string) and does not throw.
+// No real header parsing or image processing is performed.
+//
+// This stub is needed so AL that references "Codeunit Image" compiles when
+// the SA package is not present in --packages. Users who need real image
+// behaviour must provide their own stub (see docs/limitations.md).
 codeunit 3971 "Image"
 {
     procedure Clear(Alpha: Integer; Red: Integer; Green: Integer; Blue: Integer)

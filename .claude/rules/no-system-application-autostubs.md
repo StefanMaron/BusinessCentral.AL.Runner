@@ -12,11 +12,21 @@ Auto-generating **blank shells** for every codeunit/object pulled in from depend
 
 What is **forbidden** is shipping a *real implementation* of a System Application codeunit inside the runner — i.e. AL or C# code that actually does the work of an SA codeunit (Image processing, File Mgt., Cryptography, Email, Document Sharing, Web Service Mgt., …) so that AL calling into it gets a "working" answer without the developer providing one.
 
-**The only exceptions are test-automation libraries** that ship with the runner because the whole point of the runner is to execute tests. Currently:
-- `AlRunner/stubs/LibraryAssert.al` — codeunit 130
-- `AlRunner/stubs/LibraryVariableStorage.al` — codeunit 131004
+**The only exceptions are test-automation libraries** that ship with the runner because the whole point of the runner is to execute tests. The approved list is maintained in `docs/limitations.md` "System Application codeunits — scope policy" (always check there for the definitive list):
 
-Adding a new file here is a high bar: it must be a *test-automation* library (something a test codeunit uses to assert / orchestrate), not a piece of business logic.
+| Codeunit ID | Name | File |
+|---|---|---|
+| 130 | `"Assert"` (Library Assert) | `AlRunner/stubs/LibraryAssert.al` + `AlRunner/Runtime/MockAssert.cs` |
+| 131 | `"Library Assert"` (alias) | `AlRunner/stubs/Assert.al` |
+| 130000 / 130002 | BC test toolkit aliases | routing only, no extra file |
+| 131004 | `"Library - Variable Storage"` | `AlRunner/stubs/LibraryVariableStorage.al` + `AlRunner/Runtime/MockVariableStorage.cs` |
+| 130440 | `"Library - Random"` | `AlRunner/stubs/LibraryRandom.al` (pure AL) |
+| 130500 | `"Any"` | `AlRunner/stubs/LibraryAny.al` (pure AL) |
+| 131003 | `"Library - Utility"` | `AlRunner/stubs/LibraryUtility.al` (pure AL) |
+| 132250 | `"Library - Test Initialize"` | `AlRunner/stubs/LibraryTestInitialize.al` (event publishers only) |
+| 131100 | `"AL Runner Config"` | `AlRunner/stubs/AlRunnerConfig.al` (runner-only) |
+
+Adding a new entry is a high bar: it must be a *test-automation* library (something a test codeunit uses to assert / orchestrate), not a piece of business logic.
 
 **What this rule blocks:**
 - A new AL file in `AlRunner/stubs/` that implements an SA business-logic codeunit (e.g. an Image, Cryptography, File Mgt. real implementation).
