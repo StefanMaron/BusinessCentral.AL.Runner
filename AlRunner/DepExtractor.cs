@@ -1,4 +1,3 @@
-using System.IO.Compression;
 using System.Text;
 using Microsoft.Dynamics.Nav.CodeAnalysis;
 using Microsoft.Dynamics.Nav.CodeAnalysis.Syntax;
@@ -8,7 +7,7 @@ namespace AlRunner;
 /// <summary>
 /// Implements <c>al-runner extract-deps</c>: walks an AL extension's source, identifies all
 /// external object references, extracts the minimal reachable slice of those objects from
-/// .app artifact files, and writes the extracted AL source to an output directory.
+/// .app artifacts or source directories, and writes the extracted AL source to an output directory.
 /// </summary>
 public static class DepExtractor
 {
@@ -20,9 +19,12 @@ public static class DepExtractor
     /// Main entry point for --extract-deps. Returns 0 on success, 1 on error.
     /// </summary>
     /// <param name="extensionSrcDir">Directory containing the extension's AL source files.</param>
-    /// <param name="appPaths">One or more .app artifact paths to search for dependency objects.</param>
+    /// <param name="depSources">
+    ///   One or more dependency sources: either a path to a .app artifact file,
+    ///   or a path to a directory containing AL source files.
+    /// </param>
     /// <param name="outputDir">Directory to write extracted AL files.</param>
-    public static int ExtractDeps(string extensionSrcDir, IEnumerable<string> appPaths, string outputDir)
+    public static int ExtractDeps(string extensionSrcDir, IEnumerable<string> depSources, string outputDir)
     {
         if (!Directory.Exists(extensionSrcDir))
         {
@@ -30,127 +32,100 @@ public static class DepExtractor
             return 1;
         }
 
-        var appPathList = appPaths.ToList();
-        var missingApps = appPathList.Where(p => !File.Exists(p)).ToList();
-        if (missingApps.Count > 0)
+        var depSourceList = depSources.ToList();
+        foreach (var src in depSourceList)
         {
-            foreach (var p in missingApps)
-                Console.Error.WriteLine($"Error: .app file not found: {p}");
-            return 1;
+            if (!File.Exists(src) && !Directory.Exists(src))
+            {
+                Console.Error.WriteLine($"Error: dependency source not found: {src}");
+                return 1;
+            }
         }
 
         Directory.CreateDirectory(outputDir);
 
-        // 1. Parse extension source and collect all external references
+        // 1. Parse extension source and collect all external references.
         var alFiles = Directory.GetFiles(extensionSrcDir, "*.al", SearchOption.AllDirectories);
         if (alFiles.Length == 0)
-        {
             Console.Error.WriteLine($"Warning: no .al files found in {extensionSrcDir}");
-        }
 
         var sources = alFiles.Select(File.ReadAllText).ToList();
-        Console.Error.WriteLine($"Scanning {alFiles.Length} AL source file(s) in {extensionSrcDir}");
+        Console.Error.WriteLine($"Scanning {alFiles.Length} AL file(s) in {extensionSrcDir}");
 
         var refs = CollectExternalReferences(sources);
-        Console.Error.WriteLine($"Found external references: {refs.Tables.Count} table(s), {refs.Codeunits.Count} codeunit(s)");
+        Console.Error.WriteLine($"Found external refs: {refs.Tables.Count} table(s), {refs.Codeunits.Count} codeunit(s), {refs.Enums.Count} enum(s)");
         if (refs.Tables.Count > 0)
-            Console.Error.WriteLine($"  Tables: {string.Join(", ", refs.Tables.OrderBy(t => t))}");
+            Console.Error.WriteLine($"  Tables:   {string.Join(", ", refs.Tables.OrderBy(t => t))}");
         if (refs.Codeunits.Count > 0)
-            Console.Error.WriteLine($"  Codeunits: {string.Join(", ", refs.Codeunits.OrderBy(c => c))}");
+            Console.Error.WriteLine($"  Codeunits:{string.Join(", ", refs.Codeunits.OrderBy(c => c))}");
+        if (refs.Enums.Count > 0)
+            Console.Error.WriteLine($"  Enums:    {string.Join(", ", refs.Enums.OrderBy(e => e))}");
 
-        // 2. For each .app, extract all AL sources and find matching objects.
-        //    We do this iteratively to find transitive dependencies.
-        var allExtracted = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // fileName → source
-
-        // Load all sources from all apps up front (so we can scan for event subscribers)
-        var appSources = new List<(string AppPath, string FileName, string Source)>();
-        foreach (var appPath in appPathList)
+        // 2. Load all AL sources from all dependency sources up front.
+        //    Each source can be a .app artifact file or a directory of AL files.
+        var appSources = new List<(string Origin, string FileName, string Source)>();
+        foreach (var depSource in depSourceList)
         {
-            Console.Error.WriteLine($"Loading AL sources from {Path.GetFileName(appPath)}...");
-            List<(string Name, string Source)> entries;
-            try
+            if (File.Exists(depSource))
             {
-                entries = AppPackageReader.ExtractAlSources(appPath);
+                Console.Error.WriteLine($"Loading from .app: {Path.GetFileName(depSource)}");
+                List<(string Name, string Source)> entries;
+                try
+                {
+                    entries = AppPackageReader.ExtractAlSources(depSource);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"Warning: failed to read {depSource}: {ex.Message}");
+                    continue;
+                }
+                Console.Error.WriteLine($"  {entries.Count} AL file(s) found");
+                foreach (var (name, source) in entries)
+                    appSources.Add((depSource, name, source));
             }
-            catch (Exception ex)
+            else
             {
-                Console.Error.WriteLine($"Warning: failed to read {appPath}: {ex.Message}");
-                continue;
+                // Directory — read AL files directly (ISV source directories)
+                Console.Error.WriteLine($"Loading from directory: {depSource}");
+                var dirFiles = Directory.GetFiles(depSource, "*.al", SearchOption.AllDirectories);
+                Console.Error.WriteLine($"  {dirFiles.Length} AL file(s) found");
+                foreach (var f in dirFiles)
+                {
+                    try
+                    {
+                        appSources.Add((depSource, Path.GetRelativePath(depSource, f), File.ReadAllText(f)));
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"Warning: failed to read {f}: {ex.Message}");
+                    }
+                }
             }
-            Console.Error.WriteLine($"  {entries.Count} AL file(s) found");
-            foreach (var (name, source) in entries)
-                appSources.Add((appPath, name, source));
         }
 
-        // 3. Build the reachable slice: start from the extension's direct refs,
-        //    then expand transitively.
-        var pendingTables = new Queue<string>(refs.Tables.Select(t => t.ToLowerInvariant()));
-        var pendingCodeunits = new Queue<string>(refs.Codeunits.Select(c => c.ToLowerInvariant()));
+        // 3. Build the reachable slice using BFS over tables, codeunits and enums.
+        var pendingTables = new Queue<string>(refs.Tables);
+        var pendingCodeunits = new Queue<string>(refs.Codeunits);
+        var pendingEnums = new Queue<string>(refs.Enums);
         var visitedTables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var visitedCodeunits = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var visitedEnums = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var allExtracted = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        while (pendingTables.Count > 0 || pendingCodeunits.Count > 0)
-        {
-            // Drain tables
-            while (pendingTables.Count > 0)
-            {
-                var tableName = pendingTables.Dequeue();
-                if (!visitedTables.Add(tableName)) continue;
+        ExpandSlice(pendingTables, pendingCodeunits, pendingEnums,
+                    visitedTables, visitedCodeunits, visitedEnums,
+                    appSources, allExtracted);
 
-                var tableRefs = new ExternalRefs { Tables = { tableName } };
-                foreach (var (appPath, fileName, source) in appSources)
-                {
-                    if (!SourceMatchesAnyRef(source, tableRefs)) continue;
-                    if (allExtracted.ContainsKey(fileName)) continue;
-
-                    allExtracted[fileName] = source;
-                    Console.Error.WriteLine($"  + {fileName}");
-
-                    // Find transitive deps in this newly added object
-                    var transRefs = CollectExternalReferences(new[] { source });
-                    foreach (var t in transRefs.Tables)
-                        if (!visitedTables.Contains(t))
-                            pendingTables.Enqueue(t.ToLowerInvariant());
-                    foreach (var c in transRefs.Codeunits)
-                        if (!visitedCodeunits.Contains(c))
-                            pendingCodeunits.Enqueue(c.ToLowerInvariant());
-                }
-            }
-
-            // Drain codeunits
-            while (pendingCodeunits.Count > 0)
-            {
-                var cuName = pendingCodeunits.Dequeue();
-                if (!visitedCodeunits.Add(cuName)) continue;
-
-                var cuRefs = new ExternalRefs { Codeunits = { cuName } };
-                foreach (var (appPath, fileName, source) in appSources)
-                {
-                    if (!SourceMatchesAnyRef(source, cuRefs)) continue;
-                    if (allExtracted.ContainsKey(fileName)) continue;
-
-                    allExtracted[fileName] = source;
-                    Console.Error.WriteLine($"  + {fileName}");
-
-                    var transRefs = CollectExternalReferences(new[] { source });
-                    foreach (var t in transRefs.Tables)
-                        if (!visitedTables.Contains(t))
-                            pendingTables.Enqueue(t.ToLowerInvariant());
-                    foreach (var c in transRefs.Codeunits)
-                        if (!visitedCodeunits.Contains(c))
-                            pendingCodeunits.Enqueue(c.ToLowerInvariant());
-                }
-            }
-        }
-
-        // 4. Scan ALL app source for event subscribers that subscribe to events on
-        //    objects already in the slice — include them even though the extension
-        //    doesn't reference them directly.
+        // 4. Scan ALL source for event subscribers targeting objects in the slice.
+        //    Includes: table events (OnAfterInsert, etc.), integration events on
+        //    codeunits in the slice, and global subscribers.
+        //    Iterate to fixpoint: new subscribers may pull in new objects that
+        //    themselves have subscribers.
         int eventSubsAdded;
         do
         {
             eventSubsAdded = 0;
-            foreach (var (appPath, fileName, source) in appSources)
+            foreach (var (origin, fileName, source) in appSources)
             {
                 if (allExtracted.ContainsKey(fileName)) continue;
                 if (!IsEventSubscriberForSlice(source, visitedTables, visitedCodeunits)) continue;
@@ -159,73 +134,126 @@ public static class DepExtractor
                 Console.Error.WriteLine($"  + {fileName} (event subscriber)");
                 eventSubsAdded++;
 
-                // Its refs may expand the slice
+                // New subscriber may reference new objects — expand the slice.
                 var transRefs = CollectExternalReferences(new[] { source });
                 bool anyNew = false;
                 foreach (var t in transRefs.Tables)
-                    if (!visitedTables.Contains(t))
-                    { pendingTables.Enqueue(t.ToLowerInvariant()); anyNew = true; }
+                    if (!visitedTables.Contains(t)) { pendingTables.Enqueue(t); anyNew = true; }
                 foreach (var c in transRefs.Codeunits)
-                    if (!visitedCodeunits.Contains(c))
-                    { pendingCodeunits.Enqueue(c.ToLowerInvariant()); anyNew = true; }
+                    if (!visitedCodeunits.Contains(c)) { pendingCodeunits.Enqueue(c); anyNew = true; }
+                foreach (var e in transRefs.Enums)
+                    if (!visitedEnums.Contains(e)) { pendingEnums.Enqueue(e); anyNew = true; }
 
                 if (anyNew)
-                {
-                    // Re-run the main expansion before continuing event-sub scan
-                    while (pendingTables.Count > 0 || pendingCodeunits.Count > 0)
-                    {
-                        while (pendingTables.Count > 0)
-                        {
-                            var tableName = pendingTables.Dequeue();
-                            if (!visitedTables.Add(tableName)) continue;
-                            var tableRefs = new ExternalRefs { Tables = { tableName } };
-                            foreach (var (ap2, fn2, src2) in appSources)
-                            {
-                                if (!SourceMatchesAnyRef(src2, tableRefs)) continue;
-                                if (allExtracted.ContainsKey(fn2)) continue;
-                                allExtracted[fn2] = src2;
-                                Console.Error.WriteLine($"  + {fn2}");
-                                var tr2 = CollectExternalReferences(new[] { src2 });
-                                foreach (var t in tr2.Tables)
-                                    if (!visitedTables.Contains(t)) pendingTables.Enqueue(t.ToLowerInvariant());
-                                foreach (var c in tr2.Codeunits)
-                                    if (!visitedCodeunits.Contains(c)) pendingCodeunits.Enqueue(c.ToLowerInvariant());
-                            }
-                        }
-                        while (pendingCodeunits.Count > 0)
-                        {
-                            var cuName = pendingCodeunits.Dequeue();
-                            if (!visitedCodeunits.Add(cuName)) continue;
-                            var cuRefs = new ExternalRefs { Codeunits = { cuName } };
-                            foreach (var (ap2, fn2, src2) in appSources)
-                            {
-                                if (!SourceMatchesAnyRef(src2, cuRefs)) continue;
-                                if (allExtracted.ContainsKey(fn2)) continue;
-                                allExtracted[fn2] = src2;
-                                Console.Error.WriteLine($"  + {fn2}");
-                                var tr2 = CollectExternalReferences(new[] { src2 });
-                                foreach (var t in tr2.Tables)
-                                    if (!visitedTables.Contains(t)) pendingTables.Enqueue(t.ToLowerInvariant());
-                                foreach (var c in tr2.Codeunits)
-                                    if (!visitedCodeunits.Contains(c)) pendingCodeunits.Enqueue(c.ToLowerInvariant());
-                            }
-                        }
-                    }
-                }
+                    ExpandSlice(pendingTables, pendingCodeunits, pendingEnums,
+                                visitedTables, visitedCodeunits, visitedEnums,
+                                appSources, allExtracted);
             }
         } while (eventSubsAdded > 0);
 
-        // 5. Write extracted files to output directory
+        // 5. Write extracted files to output directory.
         int written = 0;
         foreach (var (fileName, source) in allExtracted)
         {
             var outPath = Path.Combine(outputDir, fileName);
+            var dir = Path.GetDirectoryName(outPath);
+            if (dir != null) Directory.CreateDirectory(dir);
             File.WriteAllText(outPath, source, Encoding.UTF8);
             written++;
         }
 
         Console.Error.WriteLine($"Extracted {written} AL file(s) to {outputDir}");
         return 0;
+    }
+
+    // -----------------------------------------------------------------------
+    // BFS expansion — extract all objects reachable from pending queues
+    // -----------------------------------------------------------------------
+
+    private static void ExpandSlice(
+        Queue<string> pendingTables,
+        Queue<string> pendingCodeunits,
+        Queue<string> pendingEnums,
+        HashSet<string> visitedTables,
+        HashSet<string> visitedCodeunits,
+        HashSet<string> visitedEnums,
+        List<(string Origin, string FileName, string Source)> appSources,
+        Dictionary<string, string> allExtracted)
+    {
+        while (pendingTables.Count > 0 || pendingCodeunits.Count > 0 || pendingEnums.Count > 0)
+        {
+            while (pendingTables.Count > 0)
+            {
+                var name = pendingTables.Dequeue();
+                if (!visitedTables.Add(name)) continue;
+
+                var lookup = new ExternalRefs { Tables = { name } };
+                foreach (var (_, fileName, source) in appSources)
+                {
+                    if (allExtracted.ContainsKey(fileName)) continue;
+                    if (!SourceMatchesAnyRef(source, lookup)) continue;
+
+                    allExtracted[fileName] = source;
+                    Console.Error.WriteLine($"  + {fileName}");
+                    EnqueueTransitiveDeps(source, visitedTables, visitedCodeunits, visitedEnums,
+                                         pendingTables, pendingCodeunits, pendingEnums);
+                }
+            }
+
+            while (pendingCodeunits.Count > 0)
+            {
+                var name = pendingCodeunits.Dequeue();
+                if (!visitedCodeunits.Add(name)) continue;
+
+                var lookup = new ExternalRefs { Codeunits = { name } };
+                foreach (var (_, fileName, source) in appSources)
+                {
+                    if (allExtracted.ContainsKey(fileName)) continue;
+                    if (!SourceMatchesAnyRef(source, lookup)) continue;
+
+                    allExtracted[fileName] = source;
+                    Console.Error.WriteLine($"  + {fileName}");
+                    EnqueueTransitiveDeps(source, visitedTables, visitedCodeunits, visitedEnums,
+                                         pendingTables, pendingCodeunits, pendingEnums);
+                }
+            }
+
+            while (pendingEnums.Count > 0)
+            {
+                var name = pendingEnums.Dequeue();
+                if (!visitedEnums.Add(name)) continue;
+
+                var lookup = new ExternalRefs { Enums = { name } };
+                foreach (var (_, fileName, source) in appSources)
+                {
+                    if (allExtracted.ContainsKey(fileName)) continue;
+                    if (!SourceMatchesAnyRef(source, lookup)) continue;
+
+                    allExtracted[fileName] = source;
+                    Console.Error.WriteLine($"  + {fileName}");
+                    EnqueueTransitiveDeps(source, visitedTables, visitedCodeunits, visitedEnums,
+                                         pendingTables, pendingCodeunits, pendingEnums);
+                }
+            }
+        }
+    }
+
+    private static void EnqueueTransitiveDeps(
+        string source,
+        HashSet<string> visitedTables,
+        HashSet<string> visitedCodeunits,
+        HashSet<string> visitedEnums,
+        Queue<string> pendingTables,
+        Queue<string> pendingCodeunits,
+        Queue<string> pendingEnums)
+    {
+        var transRefs = CollectExternalReferences(new[] { source });
+        foreach (var t in transRefs.Tables)
+            if (!visitedTables.Contains(t)) pendingTables.Enqueue(t);
+        foreach (var c in transRefs.Codeunits)
+            if (!visitedCodeunits.Contains(c)) pendingCodeunits.Enqueue(c);
+        foreach (var e in transRefs.Enums)
+            if (!visitedEnums.Contains(e)) pendingEnums.Enqueue(e);
     }
 
     // -----------------------------------------------------------------------
@@ -238,21 +266,15 @@ public static class DepExtractor
     public static ExternalRefs CollectExternalReferences(IEnumerable<string> sources)
     {
         var result = new ExternalRefs();
-
         foreach (var source in sources)
         {
             if (string.IsNullOrWhiteSpace(source)) continue;
-            try
+            try { CollectRefsFromSource(source, result); }
+            catch (Exception ex)
             {
-                CollectRefsFromSource(source, result);
-            }
-            catch
-            {
-                // Silently skip unparseable files — we don't want one bad file
-                // to block extraction of everything else.
+                Console.Error.WriteLine($"Warning: failed to parse source for reference collection: {ex.Message}");
             }
         }
-
         return result;
     }
 
@@ -261,31 +283,35 @@ public static class DepExtractor
         var tree = SyntaxTree.ParseObjectText(source);
         var root = tree.GetRoot();
 
-        // Collect Record-type variable declarations: var x: Record "Sales Header"
+        // Record variable declarations: var x: Record "Sales Header"
         foreach (var recRef in root.DescendantNodes().OfType<RecordTypeReferenceSyntax>())
         {
-            var name = ExtractObjectNameFromDataType(recRef.DataType);
+            var name = ExtractNameFromDataType(recRef.DataType);
             if (!string.IsNullOrEmpty(name))
                 result.Tables.Add(name);
         }
 
-        // Collect EventSubscriber attributes — these declare which object must be in the slice
-        // [EventSubscriber(ObjectType::Table, Database::"Sales Header", 'EventName', ...)]
+        // Enum field/variable types: field(1; Status; Enum "Sales Line Type")
+        foreach (var enumDt in root.DescendantNodes().OfType<EnumDataTypeSyntax>())
+        {
+            var name = UnquoteIdentifier(enumDt.EnumTypeName?.ToFullString().Trim());
+            if (!string.IsNullOrEmpty(name))
+                result.Enums.Add(name);
+        }
+
+        // EventSubscriber attributes — declare which object must be in the slice.
+        // Covers table events (platform-triggered OnAfterInsert etc.) and integration
+        // events on codeunits in the slice.
         foreach (var attr in root.DescendantNodes().OfType<MemberAttributeSyntax>())
         {
-            if (!attr.Name.Identifier.ValueText.Equals("EventSubscriber", StringComparison.OrdinalIgnoreCase))
+            if (attr.Name?.Identifier.ValueText?.Equals("EventSubscriber", StringComparison.OrdinalIgnoreCase) != true)
                 continue;
 
             var args = attr.ArgumentList?.Arguments ?? default;
-            // args[0] = ObjectType::Table / ObjectType::Codeunit
-            // args[1] = Database::"Sales Header" / Codeunit::"Sales-Post"
             if (args.Count < 2) continue;
 
-            var objectTypeArg = args[0];
-            var objectNameArg = args[1];
-
-            var objectTypeText = objectTypeArg.ToFullString().Trim();
-            var objectNameText = ExtractNameFromAttributeArg(objectNameArg);
+            var objectTypeText = args[0].ToFullString().Trim();
+            var objectNameText = ExtractNameFromAttributeArg(args[1]);
             if (string.IsNullOrEmpty(objectNameText)) continue;
 
             if (objectTypeText.Contains("Table", StringComparison.OrdinalIgnoreCase))
@@ -294,57 +320,15 @@ public static class DepExtractor
                 result.Codeunits.Add(objectNameText);
         }
 
-        // Collect Codeunit::"Name" option-access expressions
+        // Codeunit::"Name" option-access expressions
         foreach (var optAccess in root.DescendantNodes().OfType<OptionAccessExpressionSyntax>())
         {
             var prefix = optAccess.Expression?.ToFullString().Trim() ?? "";
             if (!prefix.Equals("Codeunit", StringComparison.OrdinalIgnoreCase)) continue;
-            var cuName = optAccess.Name?.ToFullString().Trim().Trim('"');
+            var cuName = UnquoteIdentifier(optAccess.Name?.ToFullString().Trim());
             if (!string.IsNullOrEmpty(cuName))
                 result.Codeunits.Add(cuName);
         }
-    }
-
-    /// <summary>
-    /// Extract the unquoted object name from a DataTypeSyntax node.
-    /// For "Record Customer" the DataType is SubtypedDataTypeSyntax with Subtype.Identifier.
-    /// </summary>
-    private static string? ExtractObjectNameFromDataType(DataTypeSyntax dataType)
-    {
-        if (dataType is SubtypedDataTypeSyntax subtyped)
-        {
-            var raw = subtyped.Subtype?.Identifier?.ToFullString()?.Trim();
-            return UnquoteIdentifier(raw);
-        }
-        return null;
-    }
-
-    /// <summary>
-    /// Extract the object name string from an EventSubscriber attribute argument.
-    /// Handles Database::"Sales Header" and Codeunit::"Sales-Post" forms.
-    /// </summary>
-    private static string? ExtractNameFromAttributeArg(AttributeArgumentSyntax arg)
-    {
-        var fullText = arg.ToFullString().Trim();
-        // Database::"Sales Header" → extract after "::"
-        var colonColon = fullText.IndexOf("::", StringComparison.Ordinal);
-        if (colonColon >= 0)
-        {
-            var after = fullText[(colonColon + 2)..].Trim().Trim('"');
-            return UnquoteIdentifier(after);
-        }
-        // May be a plain identifier or string literal
-        return UnquoteIdentifier(fullText.Trim('\'', '"'));
-    }
-
-    /// <summary>Strip surrounding double-quotes from an AL identifier.</summary>
-    private static string? UnquoteIdentifier(string? raw)
-    {
-        if (raw == null) return null;
-        raw = raw.Trim();
-        if (raw.StartsWith('"') && raw.EndsWith('"') && raw.Length > 1)
-            return raw[1..^1];
-        return raw;
     }
 
     // -----------------------------------------------------------------------
@@ -352,45 +336,74 @@ public static class DepExtractor
     // -----------------------------------------------------------------------
 
     /// <summary>
-    /// Returns true if the given AL source file defines an object (table / codeunit)
-    /// whose name appears in <paramref name="refs"/>.
-    /// Uses regex-based name matching to avoid a full parse per source file.
+    /// Returns true if the given AL source file defines an object (table, tableextension,
+    /// codeunit, enum, or enumextension) whose name or base object appears in <paramref name="refs"/>.
     /// </summary>
     public static bool SourceMatchesAnyRef(string source, ExternalRefs refs)
     {
         if (string.IsNullOrWhiteSpace(source)) return false;
-        if (refs.Tables.Count == 0 && refs.Codeunits.Count == 0) return false;
+        if (refs.Tables.Count == 0 && refs.Codeunits.Count == 0 && refs.Enums.Count == 0) return false;
 
         try
         {
             var tree = SyntaxTree.ParseObjectText(source);
             var root = tree.GetRoot();
-            var compilationUnit = root as CompilationUnitSyntax;
-            if (compilationUnit == null) return false;
+            var cu = root as CompilationUnitSyntax;
+            if (cu == null) return false;
 
-            foreach (var obj in compilationUnit.Objects)
+            foreach (var obj in cu.Objects)
             {
-                var objName = GetObjectName(obj);
-                if (objName == null) continue;
+                switch (obj.Kind)
+                {
+                    case SyntaxKind.TableObject:
+                        if (refs.Tables.Count > 0 && refs.Tables.Contains(GetObjectName(obj) ?? ""))
+                            return true;
+                        break;
 
-                var kind = obj.Kind;
-                if (kind == SyntaxKind.TableObject)
-                {
-                    if (refs.Tables.Contains(objName)) return true;
-                }
-                else if (kind == SyntaxKind.CodeunitObject)
-                {
-                    if (refs.Codeunits.Contains(objName)) return true;
+                    case SyntaxKind.TableExtensionObject:
+                        // Include tableextensions OF tables in the slice — this ensures
+                        // OnValidate triggers and field additions from BA reach the slice.
+                        if (refs.Tables.Count > 0 && obj is TableExtensionSyntax tableExt)
+                        {
+                            var baseTable = UnquoteIdentifier(tableExt.BaseObject?.ToFullString().Trim());
+                            if (baseTable != null && refs.Tables.Contains(baseTable))
+                                return true;
+                        }
+                        break;
+
+                    case SyntaxKind.CodeunitObject:
+                        if (refs.Codeunits.Count > 0 && refs.Codeunits.Contains(GetObjectName(obj) ?? ""))
+                            return true;
+                        break;
+
+                    case SyntaxKind.EnumType:
+                        if (refs.Enums.Count > 0 && obj is EnumTypeSyntax enumObj)
+                        {
+                            var name = UnquoteIdentifier(enumObj.Name.Identifier.ValueText);
+                            if (name != null && refs.Enums.Contains(name))
+                                return true;
+                        }
+                        break;
+
+                    case SyntaxKind.EnumExtensionType:
+                        // Include enumextensions OF enums in the slice.
+                        if (refs.Enums.Count > 0 && obj is EnumExtensionTypeSyntax enumExt)
+                        {
+                            var baseEnum = UnquoteIdentifier(enumExt.BaseObject?.ToFullString().Trim());
+                            if (baseEnum != null && refs.Enums.Contains(baseEnum))
+                                return true;
+                        }
+                        break;
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // On parse failure, fall back to a simple text search
-            foreach (var t in refs.Tables)
-                if (source.Contains(t, StringComparison.OrdinalIgnoreCase)) return true;
-            foreach (var c in refs.Codeunits)
-                if (source.Contains(c, StringComparison.OrdinalIgnoreCase)) return true;
+            // On parse failure, skip the file entirely.
+            // DO NOT fall back to text search — text search matches files that *reference*
+            // the object name (e.g. call Customer.Get()) rather than files that *define* it,
+            // which would silently pull incorrect objects into the slice.
+            Console.Error.WriteLine($"Warning: failed to parse source file for matching (skipped): {ex.Message}");
         }
 
         return false;
@@ -402,7 +415,10 @@ public static class DepExtractor
 
     /// <summary>
     /// Returns true if this source file contains an EventSubscriber that subscribes to
-    /// an event on a table or codeunit that is already in the current slice.
+    /// an event on a table or codeunit already in the slice. Covers:
+    /// - Platform-triggered implicit table events (OnAfterInsert, OnBeforeModify, etc.)
+    /// - Integration/business events published by codeunits in the slice
+    /// - Global event subscribers
     /// </summary>
     private static bool IsEventSubscriberForSlice(
         string source,
@@ -422,9 +438,6 @@ public static class DepExtractor
         return false;
     }
 
-    /// <summary>
-    /// Extract only the EventSubscriber targets (ObjectType + object name) from a source file.
-    /// </summary>
     private static ExternalRefs CollectEventSubscriberTargets(string source)
     {
         var result = new ExternalRefs();
@@ -433,7 +446,7 @@ public static class DepExtractor
 
         foreach (var attr in root.DescendantNodes().OfType<MemberAttributeSyntax>())
         {
-            if (!attr.Name.Identifier.ValueText.Equals("EventSubscriber", StringComparison.OrdinalIgnoreCase))
+            if (attr.Name?.Identifier.ValueText?.Equals("EventSubscriber", StringComparison.OrdinalIgnoreCase) != true)
                 continue;
 
             var args = attr.ArgumentList?.Arguments ?? default;
@@ -455,6 +468,22 @@ public static class DepExtractor
     // Helpers
     // -----------------------------------------------------------------------
 
+    private static string? ExtractNameFromDataType(DataTypeSyntax dataType)
+    {
+        if (dataType is SubtypedDataTypeSyntax subtyped)
+            return UnquoteIdentifier(subtyped.Subtype?.Identifier?.ToFullString()?.Trim());
+        return null;
+    }
+
+    private static string? ExtractNameFromAttributeArg(AttributeArgumentSyntax arg)
+    {
+        var fullText = arg.ToFullString().Trim();
+        var colonColon = fullText.IndexOf("::", StringComparison.Ordinal);
+        if (colonColon >= 0)
+            return UnquoteIdentifier(fullText[(colonColon + 2)..].Trim());
+        return UnquoteIdentifier(fullText.Trim('\'', '"'));
+    }
+
     private static string? GetObjectName(SyntaxNode obj)
     {
         if (obj is ApplicationObjectSyntax appObj)
@@ -465,14 +494,26 @@ public static class DepExtractor
             return UnquoteIdentifier(plain.Name?.Identifier.ValueText);
         return null;
     }
+
+    private static string? UnquoteIdentifier(string? raw)
+    {
+        if (raw == null) return null;
+        raw = raw.Trim();
+        if (raw.StartsWith('"') && raw.EndsWith('"') && raw.Length > 1)
+            return raw[1..^1];
+        return raw;
+    }
 }
 
 /// <summary>
 /// Collected set of external object references from an AL extension's source.
-/// All names are stored in their original casing (comparisons should be case-insensitive).
+/// All names are stored in their original casing; comparisons are case-insensitive.
 /// </summary>
 public class ExternalRefs
 {
     public HashSet<string> Tables { get; } = new(StringComparer.OrdinalIgnoreCase);
     public HashSet<string> Codeunits { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public HashSet<string> Enums { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public bool IsEmpty => Tables.Count == 0 && Codeunits.Count == 0 && Enums.Count == 0;
 }
