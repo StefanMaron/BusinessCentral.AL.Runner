@@ -173,6 +173,35 @@ Compilation errors are signals, not bugs. The extracted AL files are first-class
 reviewable artifacts; manual edits to them are deliberate decisions about what
 your dependency slice contains.
 
+### Slice completeness and the self-healing feedback loop
+
+The BFS extraction is **transitively complete for static references**. If object A
+calls B which calls C, and A is in your slice, B and C will be found and extracted
+automatically.
+
+The one residual gap is **dynamic dispatch** — `Codeunit.Run(someDynamicId)` where
+the ID is computed at runtime. The extractor cannot resolve that statically, so the
+target codeunit won't be in the slice.
+
+This gap surfaces through two mechanisms, in order of speed:
+
+1. **`--fail-on-stub`** — the dynamically dispatched codeunit hits a blank shell
+   and throws `RunnerGapException`. The test fails explicitly, naming the missing
+   object. Fast feedback, no silent pass.
+2. **Nightly BC run** — the same test passes in the runner but fails against real
+   BC, signalling a divergence in the slice.
+
+The fix in both cases: rewrite the test or the production code to reference the
+missing object statically (`Codeunit::"The Missing One"` instead of
+`Codeunit.Run(dynamicId)`). The next `--extract-deps` run picks it up automatically
+and it enters the slice permanently.
+
+The loop **self-heals**. Every gap discovered makes the slice more complete. Over
+time the nightly divergences shrink toward zero, and you are left with a
+machine-verified description of your extension's true runtime dependency surface —
+not a hand-maintained list of stubs, but a graph extracted from the actual BA source
+and validated against real BC.
+
 ---
 
 ## CI pattern
