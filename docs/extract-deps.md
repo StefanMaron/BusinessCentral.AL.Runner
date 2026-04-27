@@ -51,27 +51,56 @@ subscribers. The loop terminates when no new objects are found in a full scan.
 
 ## CLI usage
 
+### Full Microsoft stack + ISV
+
+Microsoft ships four apps together every wave with interdependencies between them.
+Extract and compile them all at once into a single versioned DLL:
+
 ```sh
-# Step 1 — extract the slice and write reviewable AL source
-al-runner extract-deps \
-  --input ./src \
-  --out ./extracted-deps \
-  Microsoft_Base Application_25.0.app \
-  Microsoft_System Application_25.0.app \
-  /path/to/isv-source-dir
+# Step 1 — extract the minimal vertical from all four Microsoft apps
+# Output lands in ./deps/src as plain AL files you can inspect and edit.
+al-runner --extract-deps ./src ./deps/src \
+  ".alpackages/Microsoft_System Application_25.0.app" \
+  ".alpackages/Microsoft_Business Foundation_25.0.app" \
+  ".alpackages/Microsoft_Base Application_25.0.app" \
+  ".alpackages/Microsoft_Application_25.0.app"
 
-# Step 2 — compile to a pinned DLL
-al-runner compile-dep ./extracted-deps ./deps/bc-25.0-slice.dll
+# Step 2 — (optional) review deps/src/
+# Typical result: ~150–200 files instead of ~8 000.
+# Delete methods that reference DotNet types you don't need,
+# or adjust anything that won't compile cleanly.
 
-# Step 3 — run tests against the pinned slice
+# Step 3 — compile to a pinned Microsoft DLL
+al-runner --compile-dep ./deps/src ./deps --packages .alpackages
+
+# deps/src.dll is now your pinned Microsoft 25.0 dependency.
+# Commit deps/src/ (AL source) and deps/src.dll to your repo.
+```
+
+### Adding an ISV dependency
+
+Each ISV app gets its own DLL. The ISV slice references the Microsoft DLL,
+so pass it via `--packages` during compilation:
+
+```sh
+# Extract ISV slice — accepts a .app artifact or a source directory
+al-runner --extract-deps ./src ./deps/isv-src \
+  "/path/to/Continia_Document Capture_25.0.app"
+
+# Compile — --packages gives the compiler access to the Microsoft DLL
+al-runner --compile-dep ./deps/isv-src ./deps --packages .alpackages
+
+# Run tests with all DLLs
 al-runner --dep-dlls ./deps ./src ./test
 ```
 
-Dependency sources can be:
-- **`.app` artifact files** — the runner extracts AL source from the ZIP; used for
-  Microsoft packages downloaded from the artifact feed.
-- **Directories containing AL source** — read directly; used for ISV apps where
-  you have the source tree.
+### Dependency source types
+
+Inputs to `--extract-deps` can be:
+- **`.app` artifact files** — runner extracts AL source from the ZIP; use for
+  Microsoft packages and AppSource ISV apps.
+- **Directories containing AL source** — read directly; use for ISV apps where
+  you have the source tree available locally.
 
 ---
 
@@ -99,14 +128,23 @@ ISV DLL, which holds a `MetadataReference` to the Microsoft DLL.
 ## Developer workflow
 
 ```
-1.  al-runner extract-deps …        → writes AL files to ./extracted-deps/
-2.  Review the AL (optional)        → diff is meaningful: only objects your code touches
-3.  al-runner compile-dep …         → compiles to a pinned DLL; fails loudly on errors
-4.  Commit deps/*.dll (or the AL)   → pinned, reproducible CI dependency
+1.  al-runner --extract-deps ./src ./deps/src <apps...>
+        → writes AL files to ./deps/src/; ~150-200 files for a typical sales extension
+
+2.  Review deps/src/ (optional)
+        → diff is meaningful: only objects your code touches
+        → delete DotNet-heavy methods you don't need, fix anything that won't compile
+
+3.  al-runner --compile-dep ./deps/src ./deps --packages .alpackages
+        → compiles to deps/src.dll; fails loudly on errors
+
+4.  Commit deps/src/ and deps/src.dll
+        → pinned, reproducible dependency; anyone cloning the repo can run tests immediately
+
 5.  On BC version upgrade:
-      re-run extract-deps against new artifacts
-      diff the AL → review what changed in the objects you touch
-      recompile
+        re-run --extract-deps against the new artifacts
+        diff deps/src/ → review what changed in your vertical only
+        recompile → new pinned DLL
 ```
 
 If `compile-dep` reports errors after extraction, inspect them:
