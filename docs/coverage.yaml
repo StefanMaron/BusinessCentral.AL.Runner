@@ -650,7 +650,7 @@ StubGen.MultiOverloadEnumMerge:
   status: covered
   tests:
     - tests/bucket-1/codeunit-runtime/315-stubgen-enum-multioverload
-    - AlRunner.Tests/AutoStubEnumParamTests.cs (AutoStub_MultiOverload_EnumAndCodeSameArity_EnumCallDoesNotThrow)
+    - AlRunner.Tests/AutoStubEnumParamTests.cs
   notes: >
     Regression #1501: when a codeunit has same-arity overloads differing in a parameter
     type (e.g. Enum vs Code[20] for the second param), the first-seen dedup kept only
