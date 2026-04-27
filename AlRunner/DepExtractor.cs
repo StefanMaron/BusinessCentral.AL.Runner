@@ -109,7 +109,64 @@ public static class DepExtractor
             }
         } while (eventSubsAdded > 0);
 
-        // 5. Write extracted files to output directory.
+        // 6. Compiler-driven fixup: trial-compile the current slice, parse missing symbols,
+        //    look them up in the index, add to the slice, repeat.
+        //    This catches object references that static pattern-matching misses (page parts,
+        //    platform tables, edge-case reference patterns). The index makes each resolution
+        //    pass O(1); only the trial compile is expensive, and we run it at most ~5 times.
+        int fixupRound = 0;
+        int fixupAdded;
+        do
+        {
+            fixupAdded = 0;
+            fixupRound++;
+            Console.Error.WriteLine($"Compiler fixup round {fixupRound}: trial-compiling {allExtracted.Count} file(s)...");
+
+            var missing = TrialCompileMissing(allExtracted.Values.ToList());
+            if (missing.Count == 0) { Console.Error.WriteLine("  No missing objects — slice is complete."); break; }
+
+            Console.Error.WriteLine($"  Compiler reports {missing.Count} missing object(s), resolving from index...");
+            foreach (var (t, n) in missing)
+            {
+                if (visited.TryGetValue(t, out var vis) && vis.Contains(n)) continue;
+                if (pending.TryGetValue(t, out var q)) q.Enqueue(n);
+                fixupAdded++;
+            }
+
+            if (fixupAdded > 0)
+            {
+                ExpandSlice(pending, visited, index, allExtracted);
+                // Re-run event subscriber scan for any newly added objects
+                int subsAdded2;
+                do {
+                    subsAdded2 = 0;
+                    foreach (var targetType in new[] { "Table", "Codeunit", "Page", "Report" })
+                    {
+                        if (!index.EventSubscribers.TryGetValue(targetType, out var subsByTarget2)) continue;
+                        foreach (var (targetName, subscribers) in subsByTarget2)
+                        {
+                            if (!visited[targetType].Contains(targetName)) continue;
+                            foreach (var (fn, src) in subscribers)
+                            {
+                                if (allExtracted.ContainsKey(fn)) continue;
+                                allExtracted[fn] = src;
+                                subsAdded2++;
+                                EnqueueTransitiveDeps(src, visited, pending);
+                                ExpandSlice(pending, visited, index, allExtracted);
+                            }
+                        }
+                    }
+                } while (subsAdded2 > 0);
+                Console.Error.WriteLine($"  Added {fixupAdded} object(s) from index ({allExtracted.Count} total).");
+            }
+            else
+            {
+                Console.Error.WriteLine($"  {missing.Count} missing object(s) have no source in the index (platform tables, external deps).");
+                break;
+            }
+        } while (fixupAdded > 0 && fixupRound < 10);
+
+        // 7. Write extracted files to output directory.
         //    DotNet-referencing procedures are replaced with Error() calls so the file
         //    compiles cleanly and fails loudly if ever reached at runtime.
         int written = 0;
@@ -655,6 +712,45 @@ public static class DepExtractor
             else if (objectTypeText.Contains("Report",   StringComparison.OrdinalIgnoreCase)) result.Reports.Add(objectNameText);
         }
         return result;
+    }
+
+    // -----------------------------------------------------------------------
+    // Compiler-driven fixup — trial compile to find statically-undetected refs
+    // -----------------------------------------------------------------------
+
+    private static readonly System.Text.RegularExpressions.Regex MissingSymbolPattern =
+        new(@"(Codeunit|Table|Page|Enum|Interface|Report|Query|XmlPort)\s+'([^']+)'\s+is missing",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Trial-compile the given AL sources and return the set of (typeName, objectName)
+    /// pairs reported as missing by the BC compiler. DotNet misses are ignored — those
+    /// are an architectural limit, not resolvable from source.
+    /// </summary>
+    private static List<(string TypeName, string Name)> TrialCompileMissing(List<string> sources)
+    {
+        if (sources.Count == 0) return [];
+
+        // Strip DotNet procedures first so they don't pollute the diagnostics.
+        var stripped = sources
+            .Select(s => StripDotNetProcedures(s, "").Source ?? s)
+            .ToList();
+
+        // Capture stderr from the BC compiler.
+        var savedErr = Console.Error;
+        var capture = new System.IO.StringWriter();
+        Console.SetError(capture);
+        try { AlTranspiler.TranspileMulti(stripped, null, null); }
+        catch { }
+        finally { Console.SetError(savedErr); }
+
+        var output = capture.ToString();
+        var result = new List<(string, string)>();
+        foreach (System.Text.RegularExpressions.Match m in MissingSymbolPattern.Matches(output))
+            result.Add((m.Groups[1].Value, m.Groups[2].Value));
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        return result.Where(x => seen.Add($"{x.Item1}|{x.Item2}")).ToList();
     }
 
     // -----------------------------------------------------------------------
