@@ -2919,6 +2919,14 @@ public static class Executor
                 if (initMethod != null)
                     initMethod.Invoke(parent, null);
 
+                // Call OnClear() to initialize all application member variables (field initializers
+                // are not run by GetUninitializedObject — OnClear resets them to their declared defaults,
+                // including NavOption fields with inline option metadata). Issue #1488.
+                var onClearMethod = parentType.GetMethod("OnClear",
+                    BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
+                if (onClearMethod != null)
+                    try { onClearMethod.Invoke(parent, null); } catch { /* ignore — OnClear is optional */ }
+
                 // Register test handlers (ConfirmHandler, MessageHandler, etc.)
                 // The [NavTest] attribute has a Handlers property with comma-separated handler names.
                 var testMethod = parentType.GetMethod(testName,

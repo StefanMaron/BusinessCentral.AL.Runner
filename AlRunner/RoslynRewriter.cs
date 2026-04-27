@@ -4455,6 +4455,29 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
             }
         }
 
+        // NavOption.CreateInstance(ordinal) — BC emits this for <OptionVar>::<Member>
+        // (e.g. `Style::Attention` where Style is a NavOption field/variable).
+        // CreateInstance calls NavEnvironment-dependent code in standalone mode (NRE).
+        // Route through AlCompat.NavOptionCreateInstance which extracts NCLOptionMetadata
+        // from the source NavOption and creates the new instance session-independently.
+        if (visited.ArgumentList.Arguments.Count == 1 &&
+            visited.Expression is MemberAccessExpressionSyntax createInstMa &&
+            createInstMa.Name.Identifier.Text == "CreateInstance")
+        {
+            var receiver = createInstMa.Expression;
+            var ordinalArg = visited.ArgumentList.Arguments[0].Expression;
+            return SyntaxFactory.InvocationExpression(
+                SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("AlCompat"),
+                    SyntaxFactory.IdentifierName("NavOptionCreateInstance")),
+                SyntaxFactory.ArgumentList(
+                    SyntaxFactory.SeparatedList<ArgumentSyntax>(new[] {
+                        SyntaxFactory.Argument(receiver),
+                        SyntaxFactory.Argument(ordinalArg)
+                    })));
+        }
+
         return visited;
     }
 
@@ -4485,6 +4508,32 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
 
         bool isEq = visited.IsKind(SyntaxKind.EqualsExpression);
         bool isNe = visited.IsKind(SyntaxKind.NotEqualsExpression);
+        bool isGt = visited.IsKind(SyntaxKind.GreaterThanExpression);
+        bool isLt = visited.IsKind(SyntaxKind.LessThanExpression);
+        bool isGte = visited.IsKind(SyntaxKind.GreaterThanOrEqualExpression);
+        bool isLte = visited.IsKind(SyntaxKind.LessThanOrEqualExpression);
+
+        // NavText / NavCode relational operators (>, <, >=, <=) call NavStringValue.CompareTo
+        // which requires NavEnvironment (null in standalone → NullReferenceException).
+        // Route ALL relational binary expressions through AlCompat helpers that do safe
+        // string comparison for NavText/NavCode and fall back to IComparable for numeric types.
+        // Issue #1488.
+        if (isGt || isLt || isGte || isLte)
+        {
+            var helperName = isGt ? "NavGt" : isLt ? "NavLt" : isGte ? "NavGte" : "NavLte";
+            return SyntaxFactory.InvocationExpression(
+                SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("AlCompat"),
+                    SyntaxFactory.IdentifierName(helperName)),
+                SyntaxFactory.ArgumentList(
+                    SyntaxFactory.SeparatedList<ArgumentSyntax>(new[] {
+                        SyntaxFactory.Argument(visited.Left),
+                        SyntaxFactory.Argument(visited.Right)
+                    })))
+                .WithTriviaFrom(visited);
+        }
+
         if (!isEq && !isNe)
             return visited;
 

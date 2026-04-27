@@ -7729,6 +7729,58 @@ System.Format (Joker, Integer, Text):
     - tests/bucket-1/codeunit-runtime/309-system-missing-overloads
   notes: BC emits NavFormatEvaluateHelper.Format(session, value, length, formatString); rewriter strips session → AlCompat.Format(value, length, formatString). Tested with Integer and Decimal + mask in suite 309.
 
+System.Format (Option):
+  layer: runtime-api
+  category: System
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/318-format-option
+  notes: >
+    Format(NavOption) now returns the member name (e.g. "Attention") rather than the ordinal
+    integer. AlCompat.FormatNavOption uses NCLOptionMetadata.GetOptionFromIndex(ordinal, false)
+    for inline AL Option parameters and EnumRegistry for Enum-typed options. Direct literal
+    syntax (Style::Attention) uses AlCompat.NavOptionCreateInstance (replaces NavOption.CreateInstance
+    which NREs standalone). Test codeunit OnClear() is now called after InitializeComponent()
+    so NavOption fields with inline metadata are properly initialised before tests run.
+    Closes #1488.
+
+System.Text.GreaterThan (Text, Text):
+  layer: runtime-api
+  category: System
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/317-text-relational-ops
+  notes: >
+    BC emits NavText > NavText directly; NavText.operator> calls NavStringValue.CompareTo
+    which NREs standalone. RoslynRewriter now rewrites all relational binary expressions
+    (>, <, >=, <=) to AlCompat.NavGt/NavLt/NavGte/NavLte. These helpers use safe
+    string.Compare for NavText/NavCode and fall through to dynamic dispatch for all
+    other types (Decimal18, int, DateTime, MockVersion, NavDate, etc.). Closes #1488.
+
+System.Text.LessThan (Text, Text):
+  layer: runtime-api
+  category: System
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/317-text-relational-ops
+  notes: covered by the same fix as GreaterThan; see System.Text.GreaterThan (Text, Text).
+
+System.Text.GreaterOrEqual (Text, Text):
+  layer: runtime-api
+  category: System
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/317-text-relational-ops
+  notes: covered by the same fix as GreaterThan; see System.Text.GreaterThan (Text, Text).
+
+System.Text.LessOrEqual (Text, Text):
+  layer: runtime-api
+  category: System
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/317-text-relational-ops
+  notes: covered by the same fix as GreaterThan; see System.Text.GreaterThan (Text, Text).
+
 System.GetCollectedErrors (Boolean):
   layer: runtime-api
   category: System

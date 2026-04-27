@@ -999,6 +999,45 @@ public static class AlCompat
     }
 
     /// <summary>
+    /// Safe replacement for <c>NavOption.CreateInstance(ordinal)</c>.
+    /// BC emits <c>someOptionVar.CreateInstance(N)</c> for <c>Style::Attention</c>
+    /// (where Attention = 1) — it creates a new NavOption with the same metadata
+    /// as the source but a different ordinal.  The native <c>CreateInstance</c> method
+    /// triggers NavSession-dependent code in standalone mode.
+    /// We replicate its behaviour by extracting the <c>NCLOptionMetadata</c> from
+    /// <paramref name="source"/> and calling <c>NavOption.Create(metadata, ordinal)</c>
+    /// which is session-independent.
+    /// </summary>
+    public static NavOption NavOptionCreateInstance(NavOption source, int ordinal)
+    {
+        if (source == null)
+            return AlRunner.Runtime.MockRecordHandle.CreateOptionValue(ordinal);
+
+        try
+        {
+            // NavOption.NavOptionMetadata is a session-independent property that returns
+            // the NCLOptionMetadata attached to this option instance. Use it to create
+            // a new NavOption with the same metadata but a different ordinal value.
+            // NCLOptionMetadata.CreateNavOption(int ordinal) is also session-independent.
+            var meta = source.NavOptionMetadata;
+            if (meta != null)
+            {
+                // NCLOptionMetadata.CreateNavOption(int) creates a NavOption directly.
+                // If that throws, fall back to NavOption.Create(meta, ordinal).
+                try { return meta.CreateNavOption(ordinal); }
+                catch { }
+
+                // NavOption.Create(NCLOptionMetadata, int) — session-independent fallback.
+                return NavOption.Create(meta, ordinal);
+            }
+        }
+        catch { }
+
+        // Fallback: clone the enum-id tag (for Enum-based options).
+        return CloneTaggedOption(source, ordinal);
+    }
+
+    /// <summary>
     /// Called by the rewriter for <c>navOption.ALOrdinals</c> property
     /// access. Looks up the tagged enum id and returns its declared
     /// ordinals via <see cref="GetEnumOrdinals"/>; falls back to the
@@ -1325,17 +1364,14 @@ public static class AlCompat
             }
             catch { }
         }
-        // Handle NavOption — ToString() triggers NavSession via NavOptionFormatter
+        // Handle NavOption — ToString() triggers NavSession via NavOptionFormatter.
+        // Use the option's metadata to return the member name (e.g. "Attention") rather than
+        // the raw ordinal integer. NCLOptionMetadata.GetOptionFromIndex(ordinal, false) is
+        // session-independent and works for both NCLOptionMetadata.Create("A,B,C") options
+        // and for enum-tagged options via _optionEnumId.
         if (typeName == "NavOption")
         {
-            try
-            {
-                // NavOption has a Value property (int) we can use
-                var valProp = value.GetType().GetProperty("Value");
-                if (valProp != null)
-                    return valProp.GetValue(value)?.ToString() ?? "";
-            }
-            catch { }
+            return FormatNavOption(value);
         }
         // NavGuid — check by type name (version-independent) and extract the Guid value.
         // Pattern-match on Microsoft.Dynamics.Nav.Runtime.NavGuid is unreliable across BC versions.
@@ -1407,10 +1443,7 @@ public static class AlCompat
                 }
                 if (typeName == "NavOption")
                 {
-                    var optProp = value.GetType().GetProperty("Value");
-                    if (optProp != null)
-                        return optProp.GetValue(value)?.ToString() ?? "";
-                    return "";
+                    return FormatNavOption(value);
                 }
                 // For NavDecimal, extract the underlying Decimal18
                 var decProp = value.GetType().GetProperty("Value");
@@ -1866,6 +1899,77 @@ public static class AlCompat
         };
     }
 
+    /// <summary>
+    /// Formats a <c>NavOption</c> value without NavSession by reading the option name
+    /// from the option's <c>NCLOptionMetadata</c> (for inline AL Option parameters) or
+    /// from the <see cref="_optionEnumId"/>-tagged enum registry (for Enum-based options).
+    /// Returns the member name (e.g. <c>"Attention"</c>) matching real BC behaviour.
+    /// Falls back to the ordinal integer string when no name information is available.
+    /// </summary>
+    private static string FormatNavOption(object value)
+    {
+        try
+        {
+            var optType = value.GetType();
+            var valProp = optType.GetProperty("Value");
+            if (valProp == null) return "";
+            var ordinal = (int)(valProp.GetValue(value) ?? 0);
+
+            // 1. Check enum-id tag first (options created via CreateTaggedOption / EnumFromInteger).
+            //    The EnumRegistry has the member names; NavOptionMetadata.OptionString is empty
+            //    for these options because they were created with NCLOptionMetadata.Default.
+            if (_optionEnumId.TryGetValue((NavOption)value, out var idObj) && idObj is int enumId)
+            {
+                // Use the EnumRegistry directly: it maps ordinal → member name.
+                var members = EnumRegistry.GetMembers(enumId);
+                foreach (var (ord, name) in members)
+                {
+                    if (ord == ordinal)
+                        return name ?? ordinal.ToString();
+                }
+                // Ordinal not in registry — fall through to NCLOptionMetadata path.
+            }
+
+            // 2. NCLOptionMetadata path (inline AL Option parameters, e.g. NavOption.Create(NCLOptionMetadata.Create("A,B,C"), ordinal)).
+            var metaProp = optType.GetProperty("NavOptionMetadata");
+            if (metaProp != null)
+            {
+                var meta = metaProp.GetValue(value);
+                if (meta != null)
+                {
+                    // NCLOptionMetadata.GetOptionFromIndex(int index, bool getCaption) — session-independent.
+                    var getOptMethod = meta.GetType().GetMethod("GetOptionFromIndex",
+                        new[] { typeof(int), typeof(bool) });
+                    if (getOptMethod != null)
+                    {
+                        var name = getOptMethod.Invoke(meta, new object[] { ordinal, false }) as string;
+                        if (!string.IsNullOrEmpty(name) && name != ordinal.ToString()) return name;
+                    }
+
+                    // Fallback: parse OptionString directly ("Standard,Attention,Favorable").
+                    var optStrProp = meta.GetType().GetProperty("OptionString");
+                    if (optStrProp != null)
+                    {
+                        var optStr = optStrProp.GetValue(meta) as string;
+                        if (!string.IsNullOrEmpty(optStr))
+                        {
+                            var parts = optStr.Split(',');
+                            if (ordinal >= 0 && ordinal < parts.Length)
+                                return parts[ordinal];
+                        }
+                    }
+                }
+            }
+
+            // 3. Last resort: return the ordinal as a string (previous behavior).
+            return ordinal.ToString();
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
     private static string FormatDecimal(decimal d)
     {
         // AL Format() shows whole numbers without decimals, always using invariant (dot) decimal separator
@@ -2058,6 +2162,79 @@ public static class AlCompat
         if (v is NavText nt) return (string)nt;
         return Format(v)?.ToString() ?? "";
     }
+
+    // -----------------------------------------------------------------------
+    // NavText / NavCode relational comparison helpers (issue #1488)
+    // BC emits `a > b`, `a < b`, `a >= b`, `a <= b` for Text/Code parameters.
+    // The native NavText operators call NavStringValue.CompareTo → NavEnvironment
+    // (null in standalone) → NullReferenceException.
+    // These helpers do the same safe string comparison as NavCodeEquals/NavCodeCompare,
+    // routed through the rewriter for ALL relational binary expressions involving
+    // NavText-like types.
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Safe relational helper: returns the sign of comparing <paramref name="a"/> to <paramref name="b"/>.
+    /// NavText and NavCode comparisons are intercepted to use safe session-independent string
+    /// comparison (NavText.operator&gt; calls NavStringValue.CompareTo which NREs standalone).
+    /// All other types fall through to <c>dynamic</c> dispatch which calls the type's own operators.
+    /// Used by <see cref="NavGt"/>, <see cref="NavLt"/>, <see cref="NavGte"/>, <see cref="NavLte"/>.
+    /// </summary>
+    private static int NavRelationalCompare(object? a, object? b)
+    {
+        if (a is null && b is null) return 0;
+        if (a is null) return -1;
+        if (b is null) return 1;
+
+        // NavCode (IS-A NavText) — case-insensitive comparison (BC Code semantics)
+        if (a is NavCode anc && b is NavCode bnc)
+            return string.Compare((string)anc, (string)bnc, StringComparison.OrdinalIgnoreCase);
+        if (a is NavCode anc2)
+            return string.Compare((string)anc2, b?.ToString() ?? "", StringComparison.OrdinalIgnoreCase);
+        if (b is NavCode bnc2)
+            return string.Compare(a?.ToString() ?? "", (string)bnc2, StringComparison.OrdinalIgnoreCase);
+
+        // NavText / plain string — ordinal comparison (BC Text semantics)
+        // NavText.operator> calls NavStringValue.CompareTo → NavEnvironment (null → NRE).
+        if (a is NavText ant && b is NavText bnt)
+            return string.Compare((string)ant, (string)bnt, StringComparison.Ordinal);
+        if (a is NavText ant2 && b is string bS)
+            return string.Compare((string)ant2, bS, StringComparison.Ordinal);
+        if (a is string aS && b is NavText bnt2)
+            return string.Compare(aS, (string)bnt2, StringComparison.Ordinal);
+        if (a is string aS2 && b is string bS2)
+            return string.Compare(aS2, bS2, StringComparison.Ordinal);
+
+        // For all other types (int, long, decimal, Decimal18, DateTime, MockVersion, NavDate, …)
+        // use dynamic dispatch — calls the type's own operator>, which works correctly.
+        try
+        {
+            dynamic da = a;
+            dynamic db = b;
+            if (da > db) return 1;
+            if (da < db) return -1;
+            return 0;
+        }
+        catch
+        {
+            // Last resort: IComparable
+            if (a is IComparable ca)
+                try { return ca.CompareTo(b); } catch { }
+            return 0;
+        }
+    }
+
+    /// <summary>Replacement for <c>NavText a &gt; NavText b</c> (issue #1488).</summary>
+    public static bool NavGt(object? a, object? b) => NavRelationalCompare(a, b) > 0;
+
+    /// <summary>Replacement for <c>NavText a &lt; NavText b</c> (issue #1488).</summary>
+    public static bool NavLt(object? a, object? b) => NavRelationalCompare(a, b) < 0;
+
+    /// <summary>Replacement for <c>NavText a &gt;= NavText b</c> (issue #1488).</summary>
+    public static bool NavGte(object? a, object? b) => NavRelationalCompare(a, b) >= 0;
+
+    /// <summary>Replacement for <c>NavText a &lt;= NavText b</c> (issue #1488).</summary>
+    public static bool NavLte(object? a, object? b) => NavRelationalCompare(a, b) <= 0;
 
     // -----------------------------------------------------------------------
     // ALSystemNumeric replacements (ALRandomize/ALRandom require NavSession)
