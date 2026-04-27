@@ -529,14 +529,17 @@ public class MockRecordRef
 
     /// <summary>
     /// ALMark(bool) — marks or unmarks the current record.
+    /// Returns <c>mark</c> (the value just set) so that BC-generated code of the form
+    /// <c>CStmtHit(N) &amp; rec.ALMark(true)</c> compiles without CS0019 (#1492).
     /// </summary>
-    public void ALMark(bool mark)
+    public bool ALMark(bool mark)
     {
         var key = GetCurrentPkKey();
         if (mark)
             _markedRecords.Add(key);
         else
             _markedRecords.Remove(key);
+        return mark;
     }
 
     /// <summary>

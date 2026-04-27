@@ -820,7 +820,7 @@ public object ALReadIsolation { get => Rec.ALReadIsolation; set => Rec.ALReadIso
 public void Clear() => Rec.Clear();
 public void ALTransferFields(MockRecordHandle source, bool initPrimaryKey = true) => Rec.ALTransferFields(source, initPrimaryKey);
 public void ALTransferFields(MockRecordHandle source, bool initPrimaryKey, bool validateFields) => Rec.ALTransferFields(source, initPrimaryKey, validateFields);
-public void ALMark(bool mark) => Rec.ALMark(mark);
+public bool ALMark(bool mark) => Rec.ALMark(mark);
 public bool ALMark() => Rec.ALMark();
 public void ALClearMarks() => Rec.ALClearMarks();
 public bool ALMarkedOnly { get => Rec.ALMarkedOnly; set => Rec.ALMarkedOnly = value; }

@@ -6526,6 +6526,7 @@ RecordRef.Mark (Boolean):
   layer: runtime-api
   category: RecordRef
   status: covered
+  notes: ALMark(bool) returns bool (matching Table.Mark fix for CS0019 #1492).
 
 RecordRef.MarkedOnly (Boolean):
   layer: runtime-api
@@ -8363,6 +8364,7 @@ Table.Mark (Boolean):
   status: covered
   tests:
     - tests/bucket-1/record-table/37-record-mark
+  notes: ALMark(bool) returns bool (the value just set) so BC-generated "CStmtHit(N) & rec.ALMark(true)" compiles without CS0019 (#1492). ALMark() (no-arg getter) returns bool as before.
 
 Table.MarkedOnly (Boolean):
   layer: runtime-api

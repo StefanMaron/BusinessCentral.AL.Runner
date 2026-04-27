@@ -100,6 +100,31 @@ codeunit 54000 "Test Record Mark"
         Assert.AreEqual(3, Count, 'MarkedOnly(false) should return all records');
     end;
 
+    [Test]
+    procedure MarkBoolInIfCondition_CompileAndRun()
+    var
+        Rec: Record "Record Mark Table";
+        Hit: Boolean;
+    begin
+        // Regression #1492: CS0019 "Operator '&' cannot be applied to operands of type 'bool' and 'void'"
+        // BC emits "CStmtHit(N) & rec.ALMark(true)" for "if Rec.Mark(true) then", which requires
+        // ALMark(bool) to return bool (not void).
+        // The return value after marking should be truthy (mark was just set to true).
+        InsertRow('Z1', 'Zulu', 99);
+        Rec.Get('Z1');
+
+        Hit := false;
+        if Rec.Mark(true) then
+            Hit := true;
+        Assert.IsTrue(Hit, 'Branch must be taken: Mark(true) used in if-condition');
+
+        // Negative: Mark(false) must return false so the branch is not taken
+        Hit := true;
+        if Rec.Mark(false) then
+            Hit := false;
+        Assert.IsTrue(Hit, 'Branch must NOT be taken: Mark(false) used in if-condition');
+    end;
+
     local procedure InsertRow("No.": Code[20]; Name: Text[50]; Amount: Decimal)
     var
         Rec: Record "Record Mark Table";
