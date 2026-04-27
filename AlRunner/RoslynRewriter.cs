@@ -2296,37 +2296,46 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
                 })));
         }
 
-        // Special-case: `NavOption.Create(NCLOptionMetadata, V)` where the first argument is
-        // either a static field reference OR an inline `NCLOptionMetadata.Create("A,B,C")` call.
-        // Route through AlCompat.CreateInlineTaggedOption which tags the NavOption with its
-        // option string so FormatNavOption can safely return the member name.
-        // Exclude the `NCLEnumMetadata.Create(N)` case (handled separately) and the
-        // `.NavOptionMetadata` reassignment pattern (handled above).
+        // Special-case: `NavOption.Create(meta, V)` where meta is either:
+        //   a) A direct `NCLOptionMetadata.Create("literal")` call (field initializer)
+        //      → AlCompat.CreateInlineTaggedOption (tags with the literal option string)
+        //   b) A static field reference to an NCLOptionMetadata (scope constructor)
+        //      → AlCompat.CreateScopeTaggedOption (tags if the metadata was RegisterInlineMeta'd)
         //
-        // Cases matched:
-        //   1. NavOption.Create(someStaticField, ordinal)   — scope static metadata field
-        //   2. NavOption.Create(NCLOptionMetadata.Create("A,B,C"), ordinal) — field initializer
+        // In both cases, the tagging allows FormatNavOption to return the correct member name.
+        // Excluded: `.NavOptionMetadata` reassignment (handled above) and NCLEnumMetadata.Create (handled below).
         if (node.ArgumentList.Arguments.Count == 2 &&
             node.Expression is MemberAccessExpressionSyntax inlineMa &&
             inlineMa.Expression is IdentifierNameSyntax inlineIdent &&
             inlineIdent.Identifier.Text == "NavOption" &&
             inlineMa.Name.Identifier.Text == "Create" &&
-            !(node.ArgumentList.Arguments[0].Expression is MemberAccessExpressionSyntax maArg &&
-              maArg.Name.Identifier.Text == "NavOptionMetadata") &&
-            // Exclude NCLEnumMetadata.Create(N) — handled by CreateTaggedOption rule below
-            !(node.ArgumentList.Arguments[0].Expression is InvocationExpressionSyntax firstArgInv &&
-              firstArgInv.Expression is MemberAccessExpressionSyntax firstArgMa &&
-              firstArgMa.Expression is IdentifierNameSyntax firstArgIdent &&
-              firstArgIdent.Identifier.Text == "NCLEnumMetadata"))
+            !(node.ArgumentList.Arguments[0].Expression is MemberAccessExpressionSyntax maArgCheck &&
+              maArgCheck.Name.Identifier.Text == "NavOptionMetadata") &&
+            // Exclude NCLEnumMetadata.Create — handled by CreateTaggedOption
+            !(node.ArgumentList.Arguments[0].Expression is InvocationExpressionSyntax excInv &&
+              excInv.Expression is MemberAccessExpressionSyntax excMa &&
+              excMa.Expression is IdentifierNameSyntax excIdent &&
+              excIdent.Identifier.Text == "NCLEnumMetadata"))
         {
-            // Recurse into children first.
+            // Determine which helper to use based on the first-arg pattern.
+            // Direct NCLOptionMetadata.Create("literal") → CreateInlineTaggedOption.
+            // Any other pattern (static field, variable) → CreateScopeTaggedOption.
+            bool isDirect = node.ArgumentList.Arguments[0].Expression is InvocationExpressionSyntax dirInv &&
+                dirInv.Expression is MemberAccessExpressionSyntax dirMa &&
+                dirMa.Expression is IdentifierNameSyntax dirIdent &&
+                dirIdent.Identifier.Text == "NCLOptionMetadata" &&
+                dirMa.Name.Identifier.Text == "Create" &&
+                dirInv.ArgumentList.Arguments.Count == 1 &&
+                dirInv.ArgumentList.Arguments[0].Expression is LiteralExpressionSyntax;
+
+            var helperName = isDirect ? "CreateInlineTaggedOption" : "CreateScopeTaggedOption";
             var metaArg = (ExpressionSyntax)Visit(node.ArgumentList.Arguments[0].Expression)!;
             var ordinalArg = (ExpressionSyntax)Visit(node.ArgumentList.Arguments[1].Expression)!;
             return SyntaxFactory.InvocationExpression(
                 SyntaxFactory.MemberAccessExpression(
                     SyntaxKind.SimpleMemberAccessExpression,
                     SyntaxFactory.IdentifierName("AlCompat"),
-                    SyntaxFactory.IdentifierName("CreateInlineTaggedOption")),
+                    SyntaxFactory.IdentifierName(helperName)),
                 SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList(new[]
                 {
                     SyntaxFactory.Argument(metaArg),
@@ -3217,6 +3226,33 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
                     SyntaxKind.SimpleMemberAccessExpression,
                     SyntaxFactory.IdentifierName("NCLOptionMetadata"),
                     SyntaxFactory.IdentifierName("Default"));
+            }
+
+            // NCLOptionMetadata.Create("A,B,C") — inline AL Option member string.
+            // Wrap with AlCompat.RegisterInlineMeta so that subsequent NavOption.Create
+            // calls with this metadata can tag the resulting NavOption for safe
+            // Format(NavOption) name resolution (issue #1488).
+            // Only intercept when the single argument is a string literal — this is
+            // the pattern for explicit AL-source-declared option strings. Dynamic
+            // metadata (from field-registry lookups) uses different patterns.
+            if (exprText == "NCLOptionMetadata" && methodName == "Create" &&
+                visited.ArgumentList.Arguments.Count == 1 &&
+                visited.ArgumentList.Arguments[0].Expression is LiteralExpressionSyntax nclOptLiteral)
+            {
+                var optStr = nclOptLiteral.Token.ValueText;
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("RegisterInlineMeta")),
+                    SyntaxFactory.ArgumentList(
+                        SyntaxFactory.SeparatedList<ArgumentSyntax>(new[] {
+                            SyntaxFactory.Argument(visited),
+                            SyntaxFactory.Argument(
+                                SyntaxFactory.LiteralExpression(
+                                    SyntaxKind.StringLiteralExpression,
+                                    SyntaxFactory.Literal(optStr)))
+                        })));
             }
 
             // ALSession.ALStartSession(...) -> MockSession.ALStartSession(...)

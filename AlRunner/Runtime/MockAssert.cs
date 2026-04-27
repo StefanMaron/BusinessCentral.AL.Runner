@@ -184,6 +184,18 @@ public static class MockAssert
 
     private static bool ValuesEqual(object? a, object? b)
     {
+        // Unwrap MockVariant
+        if (a is MockVariant mva) return ValuesEqual(mva.Value, b);
+        if (b is MockVariant mvb) return ValuesEqual(a, mvb.Value);
+
+        // Integer ordinal vs NavOption comparison.
+        // BC 27.x compiles AL option literals (e.g. Category::Standard) as plain C# integers;
+        // the runner returns NavOption for record field values.  Compare by ordinal value so that
+        // AreEqual(Category::Standard, Item."Category", ...) passes when the ordinals match,
+        // regardless of whether Format() returns "Standard" (name) or "1" (ordinal).
+        if (a is int ia && b is Microsoft.Dynamics.Nav.Runtime.NavOption bno) return ia == bno.Value;
+        if (a is Microsoft.Dynamics.Nav.Runtime.NavOption ano && b is int ib) return ano.Value == ib;
+
         var aStr = FormatValue(a);
         var bStr = FormatValue(b);
         return string.Equals(aStr, bStr, StringComparison.Ordinal);

@@ -725,12 +725,24 @@ public static class AlCompat
     /// return the member name rather than the ordinal integer.
     ///
     /// Populated by <see cref="CreateInlineTaggedOption"/> which the rewriter
-    /// emits in place of <c>NavOption.Create(someStaticNCLMeta, ordinal)</c>
-    /// when the metadata is a scope-level static field (not a BC field-registry
-    /// lookup).  This lets us distinguish "Standard,Attention,Favorable" (safe)
-    /// from a BC-global option metadata that may map to unrelated member names.
+    /// emits in place of <c>NavOption.Create(NCLOptionMetadata.Create("A,B,C"), ordinal)</c>
+    /// where the option string is an explicit string literal from AL source.
+    /// Propagated through <see cref="NavOptionCreateInstance"/> so that
+    /// <c>Style::Attention</c> literals also get the tag.
     /// </summary>
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<NavOption, string> _inlineOptionNames = new();
+
+    /// <summary>
+    /// Maps <c>NCLOptionMetadata</c> instances created via explicit
+    /// <c>NCLOptionMetadata.Create("A,B,C")</c> calls (in static field initializers of
+    /// BC-compiler-generated scope classes) to their option-member string.
+    /// Used by <see cref="TagNavOptionFromMeta"/> / <see cref="CreateTaggedOptionFromMeta"/>
+    /// to propagate the safe inline tag to NavOptions without intercepting every
+    /// <c>NavOption.Create</c> call.
+    /// Populated by <see cref="RegisterInlineMeta"/> which the rewriter emits for
+    /// the static field initializer pattern.
+    /// </summary>
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<NCLOptionMetadata, string> _inlineMetaStrings = new();
 
     /// <summary>
     /// Create a NavOption and remember its source enum object ID so later
@@ -1016,15 +1028,48 @@ public static class AlCompat
     }
 
     /// <summary>
-    /// Emitted by the rewriter for <c>NavOption.Create(someStaticNCLMeta, ordinal)</c>
-    /// in scope constructors where <paramref name="meta"/> is a static field initialised
-    /// from <c>NCLOptionMetadata.Create("A,B,C")</c>.  Creates a NavOption via
-    /// <c>NavOption.Create(meta, ordinal)</c> and tags it with the option-name string
-    /// so <see cref="FormatNavOption"/> can return the member name safely.
+    /// Registers a <c>NCLOptionMetadata</c> instance (a static field initialised from
+    /// <c>NCLOptionMetadata.Create("A,B,C")</c>) so that when a <c>NavOption</c> is later
+    /// created from it via <see cref="CreateScopeTaggedOption"/>, the NavOption will be
+    /// tagged with the correct option-name string for <see cref="FormatNavOption"/>.
     ///
-    /// Using <paramref name="meta"/> directly (rather than <c>MockRecordHandle.CreateOptionValue</c>)
-    /// preserves the full <c>NCLOptionMetadata</c> so that downstream runtime calls
-    /// (e.g. <c>.ALNames</c>, <c>.ALOrdinals</c>) still work.
+    /// Emitted by the rewriter as a side-effect wrapper around the static field initialiser:
+    ///   <c>private static NCLOptionMetadata meta = AlCompat.RegisterInlineMeta(NCLOptionMetadata.Create("A,B,C"), "A,B,C");</c>
+    /// </summary>
+    public static NCLOptionMetadata RegisterInlineMeta(NCLOptionMetadata meta, string optionString)
+    {
+        if (meta != null && !string.IsNullOrEmpty(optionString))
+            _inlineMetaStrings.AddOrUpdate(meta, optionString);
+        return meta;
+    }
+
+    /// <summary>
+    /// Emitted by the rewriter for <c>NavOption.Create(someStaticNCLMeta, ordinal)</c>
+    /// in scope constructors.  If the metadata was registered via <see cref="RegisterInlineMeta"/>,
+    /// tags the resulting NavOption with the safe option-name string.
+    /// This is the scope-constructor path (non-field-initializer).
+    /// </summary>
+    public static NavOption CreateScopeTaggedOption(NCLOptionMetadata meta, int ordinal)
+    {
+        try
+        {
+            var opt = NavOption.Create(meta, ordinal);
+            // Tag only if this metadata was registered from an explicit inline NCLOptionMetadata.Create("...") call.
+            if (_inlineMetaStrings.TryGetValue(meta, out var optStr) && !string.IsNullOrEmpty(optStr))
+                _inlineOptionNames.AddOrUpdate(opt, optStr);
+            return opt;
+        }
+        catch
+        {
+            return AlRunner.Runtime.MockRecordHandle.CreateOptionValue(ordinal);
+        }
+    }
+
+    /// <summary>
+    /// Emitted by the rewriter for <c>NavOption.Create(NCLOptionMetadata.Create("A,B,C"), ordinal)</c>
+    /// in class field initializers and <c>OnClear</c> methods.  The option-name string is
+    /// taken directly from the literal, ensuring BC-global field-registry metadata
+    /// cannot pollute our inline-option lookup.
     /// </summary>
     public static NavOption CreateInlineTaggedOption(NCLOptionMetadata meta, int ordinal)
     {
@@ -1033,12 +1078,15 @@ public static class AlCompat
             var opt = NavOption.Create(meta, ordinal);
             var optStr = meta.OptionString;
             if (!string.IsNullOrEmpty(optStr))
+            {
                 _inlineOptionNames.AddOrUpdate(opt, optStr);
+                // Also register the metadata so scope constructors can find it.
+                _inlineMetaStrings.AddOrUpdate(meta, optStr);
+            }
             return opt;
         }
         catch
         {
-            // Fallback: create a plain option value
             return AlRunner.Runtime.MockRecordHandle.CreateOptionValue(ordinal);
         }
     }
