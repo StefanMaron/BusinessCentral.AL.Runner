@@ -35,6 +35,10 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("  --dep-dlls <dir>      Load pre-compiled dependency DLLs for runtime execution");
     Console.Error.WriteLine("  --compile-dep <app> <out-dir> [--packages <dir>]");
     Console.Error.WriteLine("                        Compile a .app dependency to a rewritten DLL on disk");
+    Console.Error.WriteLine("  --extract-deps <src-dir> <out-dir> <app1> [<app2> ...]");
+    Console.Error.WriteLine("                        Extract the minimal reachable dependency slice from .app");
+    Console.Error.WriteLine("                        artifacts for the extension source in <src-dir> and write");
+    Console.Error.WriteLine("                        extracted AL files to <out-dir>");
     Console.Error.WriteLine("  --stubs <dir>         Override dependency objects with stub AL files");
     Console.Error.WriteLine("  --init-events         Fire BC lifecycle integration events once at runner startup");
     Console.Error.WriteLine("                        (OnCompanyInitialize from CU 2/27, OnInstallAppPerCompany from CU 2)");
@@ -297,6 +301,28 @@ while (argIdx < args.Length)
             options.DepDllPaths.Add(Path.GetFullPath(args[argIdx]));
             argIdx++;
             break;
+        case "--extract-deps":
+        {
+            argIdx++;
+            if (argIdx >= args.Length) { Console.Error.WriteLine("Error: --extract-deps requires <src-dir> <out-dir> <app1> [<app2> ...]"); return 1; }
+            var edSrcDir = Path.GetFullPath(args[argIdx]);
+            argIdx++;
+            if (argIdx >= args.Length) { Console.Error.WriteLine("Error: --extract-deps requires <src-dir> <out-dir> <app1> [<app2> ...]"); return 1; }
+            var edOutDir = Path.GetFullPath(args[argIdx]);
+            argIdx++;
+            var edApps = new List<string>();
+            while (argIdx < args.Length && !args[argIdx].StartsWith("-"))
+            {
+                edApps.Add(Path.GetFullPath(args[argIdx]));
+                argIdx++;
+            }
+            if (edApps.Count == 0)
+            {
+                Console.Error.WriteLine("Error: --extract-deps requires at least one <app> path");
+                return 1;
+            }
+            return AlRunner.DepExtractor.ExtractDeps(edSrcDir, edApps, edOutDir);
+        }
         case "--compile-dep":
         {
             argIdx++;
