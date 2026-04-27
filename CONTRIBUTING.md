@@ -6,7 +6,7 @@ Thanks for your interest in contributing. This guide covers the requirements eve
 
 ## Before you start
 
-Read `CLAUDE.md`. It describes the architecture, mock surface, pipeline stages, and known limitations. Understanding it will save you from building something that conflicts with the project's design.
+Read `README.md` (architecture overview), `docs/limitations.md` (architectural limits and runtime boundaries), and `docs/coverage.yaml` (mock-surface coverage). `CLAUDE.md` is the entry point for AI coding agents working in the repo; it points at the rules in `.claude/rules/` and the on-demand reference in `.claude/skills/`. Understanding the project's design before building will save you from conflicts.
 
 The goal is broad AL language compatibility — targeting the full functional AL surface. A small number of hard architectural limits exist (parallel sessions, transaction isolation, service-tier rendering, HTTP), documented in `docs/limitations.md`. Everything else is a gap to close. If AL code compiles but fails to run in the runner, that is a missing feature, not a design boundary.
 
@@ -125,7 +125,8 @@ When your change affects observable behavior, update all of the following before
 |---|---|
 | `README.md` | Supported/unsupported feature list, CLI flags |
 | `PrintGuide()` in `Program.cs` | The `--guide` output (primary discovery mechanism for AI coding agents) |
-| `CLAUDE.md` | Mock surface table, Known Limitations, Implemented Features, Key File Index |
+| `docs/coverage.yaml` | Mock-surface coverage entry for the implemented method/overload (required for every feature PR) |
+| `docs/limitations.md` | Update if the change closes or reframes a known limit |
 
 If a change only touches internal implementation with no externally visible effect, you can skip the README and guide updates.
 

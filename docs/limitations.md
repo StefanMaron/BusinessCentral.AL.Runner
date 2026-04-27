@@ -122,6 +122,29 @@ AL interface if you want to unit test the logic around HTTP calls.
 
 ---
 
+## System Application codeunits — the runner does not ship implementations
+
+The runner auto-generates **blank shells** for every codeunit/object pulled in from your dependencies (System Application, Base Application, third-party apps). That is how AL compiles without those packages being present at runtime: every method exists with the right signature, returns the type-default, and does nothing.
+
+What the runner **does not do** is ship real implementations of System Application codeunits. There is no built-in Image processor, no Cryptography codeunit re-creating SHA hashes, no File Mgt. that actually reads files, no Email that actually sends, and so on. This is a deliberate boundary: the moment the runner ships a re-implementation of an SA codeunit, it inherits the burden of staying faithful to the real System Application across every BC version, and your tests would be asserting against the runner's reimplementation rather than against BC.
+
+The only exceptions are **test-automation libraries** that ship as AL stubs in `AlRunner/stubs/`:
+- `LibraryAssert` (codeunit 130)
+- `LibraryVariableStorage` (codeunit 131004)
+
+These exist because the whole point of the runner is to execute test codeunits.
+
+### Bring your own stub
+
+If your AL under test depends on real SA behaviour to mean anything, the supported pattern is **provide your own stub** in your test project. Two common shapes:
+
+1. **AL interface + injected implementation.** Define an AL interface, have your production code take it via dependency injection, ship a real implementation that delegates to the SA codeunit, and ship a fake implementation in your test project that does just enough to make the test pass.
+2. **Test-only AL codeunit shadowing the SA call.** Add an AL codeunit in your `test/` directory with the same object ID and a hand-rolled implementation that returns the values your test expects. The runner will use your codeunit because it is in the compile unit; in real BC, your production code never sees it.
+
+Concrete example — `Image` codeunit (System Application). A test that asserts on image dimensions cannot rely on the runner's blank-shell `Image.Width()` (which returns `0`). The fix is to write a small stub in your test project that parses a known fixture image, not to ask the runner to ship an `Image` implementation. If the AL pattern under test is widespread enough that everyone needs the same stub, file a runner-gap issue and we can discuss whether a shared stub belongs in `AlRunner/stubs/` (the bar is high — it must be test-automation infrastructure, not business logic).
+
+---
+
 ## Behavioural differences — same API, different semantics
 
 These don't crash, but they behave differently from real BC. Tests that assert on

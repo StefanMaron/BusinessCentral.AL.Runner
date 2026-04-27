@@ -1,0 +1,7 @@
+cobertura.xml
+**/bin/
+**/obj/
+.claude/worktrees/
+tests/excluded/
+CHANGELOG.md
+*.app

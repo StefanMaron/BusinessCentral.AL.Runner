@@ -49,3 +49,8 @@ publish-*/
 
 # Symbol probe tool (dev-only)
 SymbolProbe/
+
+# Claude Code — local-only state (worktrees, per-user settings, lock files)
+.claude/worktrees/
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
