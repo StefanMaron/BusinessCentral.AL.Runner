@@ -8130,6 +8130,7 @@ System.Format (Option):
   status: covered
   tests:
     - tests/bucket-2/data-formats/318-format-option
+    - tests/bucket-2/data-formats/319-format-enum-record
   notes: >
     Format(NavOption) now returns the member name (e.g. "Attention") rather than the ordinal
     integer. AlCompat.FormatNavOption uses NCLOptionMetadata.GetOptionFromIndex(ordinal, false)
@@ -8138,6 +8139,11 @@ System.Format (Option):
     which NREs standalone). Test codeunit OnClear() is now called after InitializeComponent()
     so NavOption fields with inline metadata are properly initialised before tests run.
     Closes #1488.
+    Format(Rec.EnumField) correctly resolves the caption from the field's own enum type even
+    when multiple enums share the same ordinal values. The NavOption stored in the record field
+    bag carries the enum-id tag from CreateTaggedOption; after Insert/Get the same object
+    reference is returned so FormatNavOption looks up the correct enum in EnumRegistry.
+    Regression tests in suite 319 cover the exact pattern from #1507.
 
 System.Text.GreaterThan (Text, Text):
   layer: runtime-api
@@ -10610,19 +10616,37 @@ Time.ToText (Boolean):
   status: covered
   notes: via Format(T) handled by AlCompat.FormatNavTime
 
+# Format picture-string directives
+
+"Format picture: <Filler Character,N>":
+  layer: runtime-api
+  category: Time
+  status: covered
+  tests:
+    - tests/bucket-2/page-report/85-picture-format
+  notes: >
+    <Filler Character,N> is a directive that sets the pad character for adjacent
+    field tokens in a Format() picture string. It must not emit any character into
+    the output; fixed in ResolveAlDateToken and ResolveAlTimeToken by returning
+    string.Empty instead of the literal token text.
+
 # ── Variant ─────────────────────────────────────────────────────
 
 Variant.IsAction ():
   layer: runtime-api
   category: Variant
   status: stub
-  notes: always returns false (no Action mock in standalone mode)
+  tests:
+    - tests/bucket-2/data-formats/319-variant-stub-is-methods
+  notes: always returns false — Action is a page action object; not Variant-assignable in BC AL; false case proven. Closes #1401.
 
 Variant.IsAutomation ():
   layer: runtime-api
   category: Variant
   status: stub
-  notes: always returns false
+  tests:
+    - tests/bucket-2/data-formats/319-variant-stub-is-methods
+  notes: always returns false — OLE Automation (COM interop) not available in standalone mode; false case proven. Closes #1401.
 
 Variant.IsBigInteger ():
   layer: runtime-api
@@ -10633,7 +10657,9 @@ Variant.IsBinary ():
   layer: runtime-api
   category: Variant
   status: stub
-  notes: always returns false (no Binary mock in standalone mode)
+  tests:
+    - tests/bucket-2/data-formats/319-variant-stub-is-methods
+  notes: always returns false — Binary has no standalone mock; not Variant-assignable in BC AL; false case proven. Closes #1401.
 
 Variant.IsBoolean ():
   layer: runtime-api
@@ -10654,7 +10680,9 @@ Variant.IsClientType ():
   layer: runtime-api
   category: Variant
   status: stub
-  notes: always returns false
+  tests:
+    - tests/bucket-2/data-formats/319-variant-stub-is-methods
+  notes: always returns false — ClientType enum collapses to NavOption in the runner; indistinguishable from a generic Option value; false case proven. Closes #1401.
 
 Variant.IsCode ():
   layer: runtime-api
@@ -10673,13 +10701,17 @@ Variant.IsDataClassification ():
   layer: runtime-api
   category: Variant
   status: stub
-  notes: always returns false
+  tests:
+    - tests/bucket-2/data-formats/319-variant-stub-is-methods
+  notes: always returns false — DataClassification enum collapses to NavOption in the runner; indistinguishable from a generic Option value; false case proven. Closes #1401.
 
 Variant.IsDataClassificationType ():
   layer: runtime-api
   category: Variant
   status: stub
-  notes: always returns false
+  tests:
+    - tests/bucket-2/data-formats/319-variant-stub-is-methods
+  notes: always returns false — DataClassificationType enum collapses to NavOption in the runner; indistinguishable from a generic Option value; false case proven. Closes #1401.
 
 Variant.IsDate ():
   layer: runtime-api
@@ -10705,7 +10737,9 @@ Variant.IsDefaultLayout ():
   layer: runtime-api
   category: Variant
   status: stub
-  notes: always returns false
+  tests:
+    - tests/bucket-2/data-formats/319-variant-stub-is-methods
+  notes: always returns false — DefaultLayout enum collapses to NavOption in the runner; indistinguishable from a generic Option value; false case proven. Closes #1401.
 
 Variant.IsDictionary ():
   layer: runtime-api
@@ -10717,7 +10751,9 @@ Variant.IsDotNet ():
   layer: runtime-api
   category: Variant
   status: stub
-  notes: always returns false (no DotNet interop in standalone mode)
+  tests:
+    - tests/bucket-2/data-formats/319-variant-stub-is-methods
+  notes: always returns false — DotNet interop not available in standalone mode; false case proven. Closes #1401.
 
 Variant.IsDuration ():
   layer: runtime-api
@@ -10728,7 +10764,9 @@ Variant.IsExecutionMode ():
   layer: runtime-api
   category: Variant
   status: stub
-  notes: always returns false
+  tests:
+    - tests/bucket-2/data-formats/319-variant-stub-is-methods
+  notes: always returns false — ExecutionMode enum collapses to NavOption in the runner; indistinguishable from a generic Option value; false case proven. Closes #1401.
 
 Variant.IsFieldRef ():
   layer: runtime-api
@@ -10739,12 +10777,16 @@ Variant.IsFile ():
   layer: runtime-api
   category: Variant
   status: stub
-  notes: always returns false (no File mock in standalone mode)
+  tests:
+    - tests/bucket-2/data-formats/319-variant-stub-is-methods
+  notes: always returns false — File has no standalone mock; not Variant-assignable in BC AL; false case proven. Closes #1401.
 
 Variant.IsFilterPageBuilder ():
   layer: runtime-api
   category: Variant
   status: stub
+  tests:
+    - tests/bucket-2/data-formats/213-variant-xml-types
   notes: always returns false — FilterPageBuilder is not Variant-assignable in BC AL; false case proven.
 
 Variant.IsGuid ():
@@ -10815,7 +10857,9 @@ Variant.IsObjectType ():
   layer: runtime-api
   category: Variant
   status: stub
-  notes: always returns false
+  tests:
+    - tests/bucket-2/data-formats/319-variant-stub-is-methods
+  notes: always returns false — ObjectType enum collapses to NavOption in the runner; indistinguishable from a generic Option value; false case proven. Closes #1401.
 
 Variant.IsOption ():
   layer: runtime-api
@@ -10832,6 +10876,8 @@ Variant.IsPromptMode ():
   layer: runtime-api
   category: Variant
   status: stub
+  tests:
+    - tests/bucket-2/data-formats/213-variant-xml-types
   notes: always returns false — PromptMode enum is indistinguishable from NavOption in a Variant; false case proven.
 
 Variant.IsRecord ():
@@ -10854,25 +10900,33 @@ Variant.IsReportFormat ():
   layer: runtime-api
   category: Variant
   status: stub
+  tests:
+    - tests/bucket-2/data-formats/213-variant-xml-types
   notes: always returns false — ReportFormat enum is indistinguishable from NavOption in a Variant; false case proven.
 
 Variant.IsSecurityFiltering ():
   layer: runtime-api
   category: Variant
   status: stub
-  notes: always returns false
+  tests:
+    - tests/bucket-2/data-formats/319-variant-stub-is-methods
+  notes: always returns false — SecurityFiltering enum collapses to NavOption in the runner; indistinguishable from a generic Option value; false case proven. Closes #1401.
 
 Variant.IsTableConnectionType ():
   layer: runtime-api
   category: Variant
   status: stub
-  notes: always returns false
+  tests:
+    - tests/bucket-2/data-formats/319-variant-stub-is-methods
+  notes: always returns false — TableConnectionType enum collapses to NavOption in the runner; indistinguishable from a generic Option value; false case proven. Closes #1401.
 
 Variant.IsTestPermissions ():
   layer: runtime-api
   category: Variant
   status: stub
-  notes: always returns false
+  tests:
+    - tests/bucket-2/data-formats/319-variant-stub-is-methods
+  notes: always returns false — TestPermissions enum collapses to NavOption in the runner; indistinguishable from a generic Option value; false case proven. Closes #1401.
 
 Variant.IsText ():
   layer: runtime-api
@@ -10891,13 +10945,17 @@ Variant.IsTextConstant ():
   layer: runtime-api
   category: Variant
   status: stub
-  notes: always returns false
+  tests:
+    - tests/bucket-2/data-formats/319-variant-stub-is-methods
+  notes: always returns false — TextConstant is not Variant-assignable in BC AL; false case proven. Closes #1401.
 
 Variant.IsTextEncoding ():
   layer: runtime-api
   category: Variant
   status: stub
-  notes: always returns false
+  tests:
+    - tests/bucket-2/data-formats/319-variant-stub-is-methods
+  notes: always returns false — TextEncoding enum collapses to NavOption in the runner; indistinguishable from a generic Option value; false case proven. Closes #1401.
 
 Variant.IsTime ():
   layer: runtime-api
@@ -10908,13 +10966,17 @@ Variant.IsTransactionType ():
   layer: runtime-api
   category: Variant
   status: stub
-  notes: always returns false
+  tests:
+    - tests/bucket-2/data-formats/319-variant-stub-is-methods
+  notes: always returns false — TransactionType enum collapses to NavOption in the runner; indistinguishable from a generic Option value; false case proven. Closes #1401.
 
 Variant.IsWideChar ():
   layer: runtime-api
   category: Variant
   status: stub
-  notes: always returns false
+  tests:
+    - tests/bucket-2/data-formats/319-variant-stub-is-methods
+  notes: always returns false — WideChar is not Variant-assignable in BC AL (Char is, via IsChar); false case proven. Closes #1401.
 
 Variant.IsXmlAttribute ():
   layer: runtime-api
@@ -10926,6 +10988,8 @@ Variant.IsXmlAttributeCollection ():
   layer: runtime-api
   category: Variant
   status: stub
+  tests:
+    - tests/bucket-2/data-formats/213-variant-xml-types
   notes: checks NavXmlAttributeCollection — XmlAttributeCollection not Variant-assignable in BC AL; false case proven.
 
 Variant.IsXmlCData ():
@@ -10968,12 +11032,16 @@ Variant.IsXmlNamespaceManager ():
   layer: runtime-api
   category: Variant
   status: stub
+  tests:
+    - tests/bucket-2/data-formats/213-variant-xml-types
   notes: checks NavXmlNamespaceManager — XmlNamespaceManager not Variant-assignable in BC AL; false case proven.
 
 Variant.IsXmlNameTable ():
   layer: runtime-api
   category: Variant
   status: stub
+  tests:
+    - tests/bucket-2/data-formats/213-variant-xml-types
   notes: checks MockXmlNameTable — XmlNameTable not Variant-assignable in BC AL; false case proven.
 
 Variant.IsXmlNode ():
@@ -10998,6 +11066,8 @@ Variant.IsXmlReadOptions ():
   layer: runtime-api
   category: Variant
   status: stub
+  tests:
+    - tests/bucket-2/data-formats/213-variant-xml-types
   notes: checks NavXmlReadOptions — XmlReadOptions not Variant-assignable in BC AL; false case proven.
 
 Variant.IsXmlText ():
@@ -11010,6 +11080,8 @@ Variant.IsXmlWriteOptions ():
   layer: runtime-api
   category: Variant
   status: stub
+  tests:
+    - tests/bucket-2/data-formats/213-variant-xml-types
   notes: checks NavXmlWriteOptions — XmlWriteOptions not Variant-assignable in BC AL; false case proven.
 
 # ── Version ─────────────────────────────────────────────────────

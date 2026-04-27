@@ -67,4 +67,45 @@ codeunit 85101 PictureFormatTest
         T := 120000T; // 12:00:00
         Assert.AreEqual('12:00', Helper.FormatTimePicture(T), 'Noon should format as 12:00');
     end;
+
+    // --- Filler Character directive tests ---
+    // <Filler Character,N> sets the pad character for subsequent field tokens;
+    // it must NOT emit any character into the output string.
+
+    [Test]
+    procedure FillerChar_NulByte_DoesNotAppearInOutput()
+    var
+        T: Time;
+        Result: Text;
+    begin
+        T := 093000T; // 09:30:00
+        Result := Format(T, 0, '<Hours24,2><Filler Character,0>:<Minutes,2><Filler Character,0>');
+        Assert.AreEqual(5, StrLen(Result), 'Filler Character token must not emit chars; expected len=5');
+        Assert.AreEqual('09:30', Result, 'Filler Character 0 must not insert NUL byte into output');
+    end;
+
+    [Test]
+    procedure FillerChar_Midnight_NulByteAbsent()
+    var
+        T: Time;
+        Result: Text;
+    begin
+        T := 000000T; // 00:00:00
+        Result := Format(T, 0, '<Hours24,2><Filler Character,0>:<Minutes,2><Filler Character,0>');
+        Assert.AreEqual(5, StrLen(Result), 'Filler Character token must not emit chars at midnight');
+        Assert.AreEqual('00:00', Result, 'Midnight with Filler Character 0 must produce 00:00');
+    end;
+
+    [Test]
+    procedure FillerChar_SpacePad_DoesNotAppearInOutput()
+    var
+        T: Time;
+        Result: Text;
+    begin
+        T := 091523T; // 09:15:23
+        // <Filler Character,32> = space pad — still a directive, still emits nothing
+        Result := Format(T, 0, '<Hours24,2><Filler Character,32>:<Minutes,2>');
+        Assert.AreEqual(5, StrLen(Result), 'Filler Character 32 (space) must not emit a char');
+        Assert.AreEqual('09:15', Result, 'Filler Character 32 must not insert space into output');
+    end;
 }

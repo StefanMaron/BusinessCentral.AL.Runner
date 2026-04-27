@@ -1782,6 +1782,9 @@ public static class AlCompat
             "hours12" => (dt.Hour % 12 == 0 ? 12 : dt.Hour % 12).ToString(width > 0 ? $"D{width}" : ""),
             "minutes" => width > 0 ? dt.Minute.ToString($"D{width}") : dt.Minute.ToString(),
             "seconds" => width > 0 ? dt.Second.ToString($"D{width}") : dt.Second.ToString(),
+            // <Filler Character,N> is a directive that sets the pad character for adjacent field
+            // tokens. It does not emit any character into the output string.
+            "filler character" => string.Empty,
             _ => $"<{token}>", // Unknown token — preserve as-is
         };
         return raw;
@@ -1999,6 +2002,9 @@ public static class AlCompat
             "hours12" => (dt.Hour % 12 == 0 ? 12 : dt.Hour % 12).ToString(width > 0 ? $"D{width}" : ""),
             "minutes" => width > 0 ? dt.Minute.ToString($"D{width}") : dt.Minute.ToString(),
             "seconds" => width > 0 ? dt.Second.ToString($"D{width}") : dt.Second.ToString(),
+            // <Filler Character,N> is a directive that sets the pad character for adjacent field
+            // tokens. It does not emit any character into the output string.
+            "filler character" => string.Empty,
             _ => null, // Not a time token
         };
     }
