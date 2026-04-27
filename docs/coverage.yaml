@@ -3533,15 +3533,16 @@ IsolatedStorage.SetEncrypted (Text, Text, DataScope):
 
 # ── Image ───────────────────────────────────────────────────────
 #
-# Codeunit 3971 "Image" is a System Application codeunit. The runner ships a
-# blank-shell AL stub (AlRunner/stubs/Image.al) so AL that references Image
-# compiles without the SA package in --packages. Every method returns the
-# type-default (0, empty string) and does not throw.
+# Codeunit 3971 "Image" is a System Application codeunit. No global stub is
+# shipped in AlRunner/stubs/. The auto-stub mechanism generates a blank shell
+# from SA package metadata when Image is in --packages. The 315-image-codeunit
+# test suite carries a test-local blank-shell stub in its src/ directory.
+# Every method returns the type-default (0, empty string) and does not throw.
 # The real MockImage C# implementation (PNG/JPEG/GIF/BMP header parsing) was
 # deleted in #1502 because shipping SA business-logic reimplementations
 # violates the runner's scope policy
 # (docs/limitations.md "System Application codeunits").
-# If your tests need real image dimensions, provide your own stub.
+# If your tests need real image dimensions, provide your own stub in your src/.
 
 Image.FromBase64 (Text):
   layer: runtime-api
