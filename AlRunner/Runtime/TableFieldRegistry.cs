@@ -84,6 +84,9 @@ public static class TableFieldRegistry
     // pageId -> source tableId (parsed from page SourceTable declarations)
     private static readonly Dictionary<int, int> _pageSourceTable = new();
 
+    // pageId -> unresolved source table name (for pages parsed before their source table)
+    private static readonly Dictionary<int, string> _pagePendingSourceTable = new();
+
     private static readonly Regex OptionMembersProp = new(
         @"\bOptionMembers\s*=\s*([^;]+);",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -103,6 +106,7 @@ public static class TableFieldRegistry
         _enumFields.Clear();
         _optionMembersFields.Clear();
         _pageSourceTable.Clear();
+        _pagePendingSourceTable.Clear();
     }
 
     public static void ParseAndRegister(string alSource)
@@ -266,6 +270,10 @@ public static class TableFieldRegistry
             var tableName = stMatch.Groups[1].Success ? stMatch.Groups[1].Value : stMatch.Groups[2].Value;
             if (nameToId.TryGetValue(tableName, out var sourceTableId))
                 _pageSourceTable[pageId] = sourceTableId;
+            else
+                // Table not registered yet (page parsed before its source table) — store
+                // the table name for deferred resolution when GetSourceTableId() is called.
+                _pagePendingSourceTable[pageId] = tableName;
         }
 
         // Parse tableextension declarations: register extension fields under the base table ID.
@@ -377,9 +385,31 @@ public static class TableFieldRegistry
     /// <c>SourceTable = "TableName"</c> in the page definition, or <c>null</c> if
     /// not registered.  Populated by <see cref="ParseAndRegister"/> when it
     /// processes page declarations.
+    ///
+    /// When the page was parsed before its source table (file ordering issue),
+    /// the table name is stored as a pending entry and resolved here on first call
+    /// once the table has been registered.
     /// </summary>
     public static int? GetSourceTableId(int pageId)
-        => _pageSourceTable.TryGetValue(pageId, out var id) ? id : null;
+    {
+        if (_pageSourceTable.TryGetValue(pageId, out var id)) return id;
+
+        // Deferred resolution: the page was parsed before its source table was registered.
+        if (_pagePendingSourceTable.TryGetValue(pageId, out var pendingName))
+        {
+            // Try to resolve now that all tables may have been registered.
+            foreach (var kv in _tableNames)
+            {
+                if (string.Equals(kv.Value, pendingName, StringComparison.OrdinalIgnoreCase))
+                {
+                    _pageSourceTable[pageId] = kv.Key;
+                    _pagePendingSourceTable.Remove(pageId);
+                    return kv.Key;
+                }
+            }
+        }
+        return null;
+    }
 
     /// <summary>Returns the table name or null if not registered.</summary>
     public static string? GetTableName(int tableId)
