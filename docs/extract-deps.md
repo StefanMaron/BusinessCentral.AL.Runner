@@ -29,11 +29,19 @@ The extractor walks the syntax tree of your extension and collects:
 |---|---|
 | `var x: Record "Sales Header"` | `Table "Sales Header"` definition |
 | `tableextension … extends "Sales Header"` | All BA tableextensions of every table in the slice |
-| `Codeunit::"Sales-Post"` | `Codeunit "Sales-Post"` definition |
+| `Codeunit::"Sales-Post"` / `var C: Codeunit "Sales-Post"` | `Codeunit "Sales-Post"` definition |
 | `field(1; Status; Enum "Sales Line Type")` | `Enum "Sales Line Type"` definition |
 | `enumextension … extends "Sales Line Type"` | All BA enumextensions of every enum in the slice |
-| `[EventSubscriber(ObjectType::Table, Database::"Sales Header", 'OnAfterInsert', …)]` | The `Sales Header` table (event must fire for the subscriber to be reached) |
-| BA subscribers to events published by objects in the slice | Pulled in automatically — event subscribers are found by scanning all artifact source for `[EventSubscriber]` attributes targeting objects already in the slice |
+| `var P: Page "Customer Card"` / `Page.Run(Page::"Customer Card")` | `Page "Customer Card"` definition |
+| `pageextension … extends "Customer Card"` | All BA pageextensions of every page in the slice |
+| `var R: Report "Sales Invoice"` / `Report.Run(Report::…)` | `Report "Sales Invoice"` definition |
+| `reportextension … extends "Sales Invoice"` | All BA reportextensions of every report in the slice |
+| `var Q: Query "My Query"` / `Query::"My Query"` | `Query "My Query"` definition |
+| `var X: XmlPort "Export Data"` / `XmlPort::…` | `XmlPort "Export Data"` definition |
+| `procedure Run(Handler: Interface IMyHandler)` | `Interface IMyHandler` definition |
+| `[EventSubscriber(ObjectType::Table, Database::"Sales Header", 'OnAfterInsert', …)]` | `Sales Header` table (event must fire for the subscriber to be reached) |
+| `[EventSubscriber(ObjectType::Page, …)]` / codeunit/report variants | The referenced page, codeunit, or report |
+| BA subscribers to events on objects in the slice | Pulled in automatically by scanning all artifact source for `[EventSubscriber]` attributes targeting slice objects |
 
 The extractor iterates to a **fixpoint**: new objects pulled in may themselves
 reference further objects, and newly added objects may have their own event
@@ -140,9 +148,9 @@ ground-truth coverage once a day.
 
 ## Scope and limitations
 
-- **Tables, tableextensions, codeunits, enums, enumextensions** are extracted.
-  Pages, reports, and xmlports are not currently collected as references (they can
-  be added; file an issue if you need them).
+- **All standard object types** are extracted: tables, tableextensions, codeunits,
+  enums, enumextensions, pages, pageextensions, reports, reportextensions, queries,
+  xmlports, and interfaces.
 - **Event subscribers** to table events (platform-triggered `OnAfterInsert`,
   `OnBeforeModify`, etc.) and to integration/business events on codeunits in the
   slice are included.

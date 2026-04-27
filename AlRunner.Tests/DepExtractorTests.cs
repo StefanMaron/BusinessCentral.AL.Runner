@@ -105,6 +105,80 @@ public class DepExtractorTests
     }
 
     [Fact]
+    public void CollectReferences_FindsPageRefFromVariableDeclaration()
+    {
+        const string source = """
+            codeunit 99004 "Test"
+            {
+                procedure Run()
+                var P: Page "Customer Card";
+                begin end;
+            }
+            """;
+
+        var refs = DepExtractor.CollectExternalReferences(new[] { source });
+
+        Assert.Contains("Customer Card", refs.Pages, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void CollectReferences_FindsPageRefFromOptionAccess()
+    {
+        const string source = """
+            codeunit 99005 "Test"
+            {
+                procedure Run()
+                begin
+                    Page.Run(Page::"Customer Card");
+                end;
+            }
+            """;
+
+        var refs = DepExtractor.CollectExternalReferences(new[] { source });
+
+        Assert.Contains("Customer Card", refs.Pages, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void CollectReferences_FindsReportAndQueryRefs()
+    {
+        const string source = """
+            codeunit 99006 "Test"
+            {
+                procedure Run()
+                var
+                    R: Report "Sales Invoice";
+                    Q: Query "My Query";
+                begin
+                    Report.Run(Report::"Customer List");
+                end;
+            }
+            """;
+
+        var refs = DepExtractor.CollectExternalReferences(new[] { source });
+
+        Assert.Contains("Sales Invoice", refs.Reports, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("My Query", refs.Queries, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("Customer List", refs.Reports, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void CollectReferences_FindsInterfaceRef()
+    {
+        const string source = """
+            codeunit 99007 "Test"
+            {
+                procedure Run(Handler: Interface IMyHandler)
+                begin end;
+            }
+            """;
+
+        var refs = DepExtractor.CollectExternalReferences(new[] { source });
+
+        Assert.Contains("IMyHandler", refs.Interfaces, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void CollectReferences_EmptySource_ReturnsEmptyRefs()
     {
         var refs = DepExtractor.CollectExternalReferences(new[] { "" });
@@ -112,6 +186,11 @@ public class DepExtractorTests
         Assert.Empty(refs.Tables);
         Assert.Empty(refs.Codeunits);
         Assert.Empty(refs.Enums);
+        Assert.Empty(refs.Pages);
+        Assert.Empty(refs.Reports);
+        Assert.Empty(refs.Queries);
+        Assert.Empty(refs.XmlPorts);
+        Assert.Empty(refs.Interfaces);
     }
 
     // -----------------------------------------------------------------------
@@ -189,6 +268,42 @@ public class DepExtractorTests
 
         Assert.True(DepExtractor.SourceMatchesAnyRef(src,
             new ExternalRefs { Enums = { "Item Journal Template Type" } }));
+    }
+
+    [Fact]
+    public void SourceMatchesAnyRef_MatchesPageDefinition()
+    {
+        const string src = "page 21 \"Customer Card\" { layout { area(content) { } } }";
+
+        Assert.True(DepExtractor.SourceMatchesAnyRef(src,
+            new ExternalRefs { Pages = { "Customer Card" } }));
+    }
+
+    [Fact]
+    public void SourceMatchesAnyRef_MatchesPageExtensionByBasePage()
+    {
+        const string src = "pageextension 50010 MyExt extends \"Customer Card\" { }";
+
+        Assert.True(DepExtractor.SourceMatchesAnyRef(src,
+            new ExternalRefs { Pages = { "Customer Card" } }));
+    }
+
+    [Fact]
+    public void SourceMatchesAnyRef_MatchesReportDefinition()
+    {
+        const string src = "report 206 \"Sales Invoice\" { dataset { } }";
+
+        Assert.True(DepExtractor.SourceMatchesAnyRef(src,
+            new ExternalRefs { Reports = { "Sales Invoice" } }));
+    }
+
+    [Fact]
+    public void SourceMatchesAnyRef_MatchesInterfaceDefinition()
+    {
+        const string src = "interface IMyHandler { procedure Handle(); }";
+
+        Assert.True(DepExtractor.SourceMatchesAnyRef(src,
+            new ExternalRefs { Interfaces = { "IMyHandler" } }));
     }
 
     [Fact]
