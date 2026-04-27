@@ -472,8 +472,14 @@ public class MockCurrPage
     /// <summary>
     /// CurrPage.CancelBackgroundTask — no-op in standalone mode (task already ran synchronously).
     /// </summary>
-    public void CancelBackgroundTask(int taskId) { }
-    public void CancelBackgroundTask(DataError errorLevel, int taskId) { }
+    public void CancelBackgroundTask(int taskId)
+    {
+        StubCallGuard.CheckNoOp("CurrPage.CancelBackgroundTask");
+    }
+    public void CancelBackgroundTask(DataError errorLevel, int taskId)
+    {
+        StubCallGuard.CheckNoOp("CurrPage.CancelBackgroundTask");
+    }
 
     /// <summary>
     /// CurrPage.GetPart(partHash) — used by page extension code when accessing subpages

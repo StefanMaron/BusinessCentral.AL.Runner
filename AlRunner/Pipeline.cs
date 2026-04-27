@@ -33,6 +33,13 @@ public class PipelineOptions
     public string? OutputJunitPath { get; set; }
     /// <summary>When true, promote exit code 2 (runner limitations) to exit code 1 (failure).</summary>
     public bool Strict { get; set; }
+    /// <summary>
+    /// When true, any call to a blank shell auto-stub or documented runtime no-op causes
+    /// the test to fail with a <see cref="Runtime.RunnerGapException"/> that names the
+    /// offending call. This surfaces false-positive test passes caused by stubs silently
+    /// returning default values instead of real behavior.
+    /// </summary>
+    public bool FailOnStub { get; set; }
     /// <summary>Per-test timeout in seconds. Tests exceeding this are reported as errors
     /// and the runner moves to the next test. Default: 5 seconds. Set to 0 to disable.</summary>
     public int TestTimeoutSeconds { get; set; } = 5;
@@ -363,6 +370,7 @@ public class AlRunnerPipeline
 
         // Apply configurable session properties
         Runtime.AlScope.UserId = options.UserId ?? "TESTUSER";
+        Runtime.StubCallGuard.FailOnStub = options.FailOnStub;
 
         var alSources = new List<string>();
         var sourceFilePaths = new List<string?>(); // parallel to alSources: file path or null
@@ -1630,11 +1638,17 @@ public class AlRunnerPipeline
             result.Add(($"AutoStub_Record{id}", fallback));
         }
 
-        // Track for test output annotation
+        // Track for test output annotation and --fail-on-stub guard
         foreach (var id in missingCodeunits)
+        {
             AutoStubbedCodeunits.TryAdd(id, $"Codeunit {id}");
+            Runtime.StubCallGuard.AutoStubbedCodeunitNames.TryAdd(id, $"Codeunit {id}");
+        }
         foreach (var id in missingTables)
+        {
             AutoStubbedCodeunits.TryAdd(id, $"Table {id}");
+            Runtime.StubCallGuard.AutoStubbedCodeunitNames.TryAdd(id, $"Table {id}");
+        }
 
         // 7. Report
         int total = missingCodeunits.Count + missingTables.Count;
@@ -1786,8 +1800,9 @@ public class AlRunnerPipeline
 
             sb.AppendLine("}");
 
-            // Track the name for reporting
+            // Track the name for reporting and --fail-on-stub guard
             AutoStubbedCodeunits[codeunitId] = foundName;
+            Runtime.StubCallGuard.AutoStubbedCodeunitNames[codeunitId] = foundName;
 
             return sb.ToString();
         }

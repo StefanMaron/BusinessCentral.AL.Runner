@@ -52,6 +52,17 @@ public class RoslynRewriter : CSharpSyntaxRewriter
     // Methods on BC types that accept ITreeObject/NavRecord but should be no-ops in standalone mode.
     // NOTE: RunEvent is NOT stripped here anymore — it's intercepted specifically in the
     // statement-level rewriter so we can dispatch to registered event subscribers (#32).
+    /// <summary>
+    /// Stripped methods that have meaningful side-effects in real BC and should fire
+    /// <see cref="AlRunner.Runtime.StubCallGuard.CheckNoOp"/> when --fail-on-stub is active.
+    /// Maps the C# method name to a human-readable BC description.
+    /// </summary>
+    private static readonly Dictionary<string, string> FailOnStubNoOpMethods =
+        new(StringComparer.Ordinal)
+    {
+        { "ALCommit", "Commit()" },   // SQL transaction commit — commits DB writes in real BC
+    };
+
     private static readonly HashSet<string> StripEntireCallMethods = new(StringComparer.Ordinal)
     {
         "ALCommit",   // ALDatabase.ALCommit() — SQL transaction commit, no-op standalone
@@ -5154,10 +5165,35 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
         if (node.Expression is InvocationExpressionSyntax invocation)
         {
 
-            // Remove calls to BC-only methods (ALGetTable, ALClose, RunEvent) that can't work standalone
+            // Remove calls to BC-only methods (ALGetTable, ALClose, RunEvent) that can't work standalone.
+            // For methods in FailOnStubNoOpMethods, redirect to StubCallGuard.CheckNoOp() so that
+            // --fail-on-stub mode can detect test passes that silently skipped meaningful BC operations.
             if (invocation.Expression is MemberAccessExpressionSyntax stripMa &&
                 StripEntireCallMethods.Contains(stripMa.Name.Identifier.Text))
             {
+                if (FailOnStubNoOpMethods.TryGetValue(stripMa.Name.Identifier.Text, out var noOpDesc))
+                {
+                    // Redirect to StubCallGuard.CheckNoOp("Commit()") — a no-op when FailOnStub is false,
+                    // throws RunnerGapException when FailOnStub is true.
+                    var checkCall = SyntaxFactory.InvocationExpression(
+                        SyntaxFactory.MemberAccessExpression(
+                            SyntaxKind.SimpleMemberAccessExpression,
+                            SyntaxFactory.MemberAccessExpression(
+                                SyntaxKind.SimpleMemberAccessExpression,
+                                SyntaxFactory.MemberAccessExpression(
+                                    SyntaxKind.SimpleMemberAccessExpression,
+                                    SyntaxFactory.IdentifierName("AlRunner"),
+                                    SyntaxFactory.IdentifierName("Runtime")),
+                                SyntaxFactory.IdentifierName("StubCallGuard")),
+                            SyntaxFactory.IdentifierName("CheckNoOp")),
+                        SyntaxFactory.ArgumentList(
+                            SyntaxFactory.SingletonSeparatedList(
+                                SyntaxFactory.Argument(
+                                    SyntaxFactory.LiteralExpression(
+                                        SyntaxKind.StringLiteralExpression,
+                                        SyntaxFactory.Literal(noOpDesc))))));
+                    return SyntaxFactory.ExpressionStatement(checkCall);
+                }
                 // Return empty statement instead of null to avoid crash inside using blocks
                 return SyntaxFactory.EmptyStatement();
             }

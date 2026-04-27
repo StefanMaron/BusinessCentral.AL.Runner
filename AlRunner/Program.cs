@@ -257,6 +257,10 @@ while (argIdx < args.Length)
             options.Strict = true;
             argIdx++;
             break;
+        case "--fail-on-stub":
+            options.FailOnStub = true;
+            argIdx++;
+            break;
         case "--test-timeout":
             argIdx++;
             if (argIdx >= args.Length || !int.TryParse(args[argIdx], out var timeoutSec))
@@ -3025,8 +3029,14 @@ public static class Executor
                     Exception? threadEx = null;
                     (string, int)? threadLastStmt = null;
                     Dictionary<string, int>? threadScopeTracking = null;
+                    // Capture ThreadStatic values from the current thread before spawning
+                    // the background thread. [ThreadStatic] fields start at their CLR default
+                    // (false/null) on every new thread, so we must propagate them explicitly.
+                    var capturedFailOnStub = AlRunner.Runtime.StubCallGuard.FailOnStub;
                     var thread = new Thread(() =>
                     {
+                        // Propagate per-run ThreadStatic flags from the runner thread.
+                        AlRunner.Runtime.StubCallGuard.FailOnStub = capturedFailOnStub;
                         try
                         {
                             if (collectingTest)
