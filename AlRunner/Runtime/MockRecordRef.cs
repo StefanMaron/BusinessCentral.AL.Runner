@@ -195,6 +195,35 @@ public class MockRecordRef
     }
 
     /// <summary>
+    /// ALField(compilationTarget, fieldNo) — 2-arg form where the BC compiler passes
+    /// the current scope object as the first argument.
+    /// </summary>
+    public MockFieldRef ALField(object compilationTarget, int fieldNo) => ALField(fieldNo);
+
+    /// <summary>
+    /// ALField(compilationTarget, NavText fieldName) — BC emits this for
+    /// RecordRef.Field(FieldName: Text). Looks up the field number by name using the
+    /// TableFieldRegistry; throws if the field name is not found.
+    /// Resolves the not-tested gap for RecordRef.Field(Text) — issue #1400.
+    /// </summary>
+    public MockFieldRef ALField(object compilationTarget, NavText fieldName)
+    {
+        var name = (string)fieldName;
+        if (_handle != null)
+        {
+            var fieldNo = TableFieldRegistry.GetFieldId(_handle.TableId, name);
+            if (fieldNo.HasValue)
+                return ALField(fieldNo.Value);
+        }
+        // Fallback: return a stub FieldRef with field number 0
+        var fref = new MockFieldRef();
+        return fref;
+    }
+
+    /// <summary>ALField(NavText) — without compilation target.</summary>
+    public MockFieldRef ALField(NavText fieldName) => ALField(null!, fieldName);
+
+    /// <summary>
     /// ALFieldIndex — returns a MockFieldRef for the nth field (1-based index).
     /// BC compiler emits <c>recRef.ALFieldIndex(n)</c>.
     /// Returns the nth field by field number order. If index is out of range,
@@ -243,6 +272,15 @@ public class MockRecordRef
     public bool ALFindSet() => FindSet();
     public bool ALFindSet(DataError errorLevel) => _handle != null && MarkedOnlyFind(() => _handle.ALFindSet(errorLevel));
     public bool ALFindSet(DataError errorLevel, bool forUpdate) => _handle != null && MarkedOnlyFind(() => _handle.ALFindSet(errorLevel, forUpdate));
+
+    /// <summary>
+    /// ALFindSet(DataError, bool forUpdate, bool updateKey) — BC emits this for the deprecated
+    /// RecordRef.FindSet(ForUpdate, UpdateKey) overload. The updateKey parameter is ignored
+    /// by the runtime (BC docs: "Not used, only there for backwards compatibility").
+    /// Delegates to the 2-arg form — issue #1400.
+    /// </summary>
+    public bool ALFindSet(DataError errorLevel, bool forUpdate, bool updateKey)
+        => ALFindSet(errorLevel, forUpdate);
 
     public bool Find(string which) => TryFind(() => MarkedOnlyFind(() => _handle?.ALFind(DataError.ThrowError, which) ?? false));
     public bool Find() => Find("=");
@@ -844,7 +882,7 @@ public class MockRecordRef
 
     internal void TestField(int fieldNo, NavValue expectedValue)
     {
-        _handle?.ALTestFieldSafe(fieldNo, NavType.Text, expectedValue);
+        _handle?.TestFieldNativeType(fieldNo, expectedValue);
     }
 
     // -- Internal helpers for MockFieldRef filter/range access --

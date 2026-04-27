@@ -1783,6 +1783,32 @@ public class MockRecordHandle : IConvertible
     }
 
     /// <summary>
+    /// TestFieldNativeType — used by MockRecordRef.TestField(fieldNo, NavValue) when the
+    /// expected value already has a concrete NavValue type (e.g. NavBoolean, NavInteger).
+    /// Compares using NavValueToString on both sides without the NavType.Text coercion that
+    /// would convert NavBoolean(true)→"Yes" on the stored side while NavBoolean.Create(true)
+    /// produces "True" on the expected side — those two representations would not match.
+    /// Instead we compare the stored value directly against the expected value, both using
+    /// NavValueToString so that the same formatting path is taken on both sides.
+    /// </summary>
+    internal void TestFieldNativeType(int fieldNo, NavValue expectedValue)
+    {
+        NavValue? actual = _fields.TryGetValue(fieldNo, out var stored) ? stored : null;
+        if (actual == null)
+        {
+            // Field not set — treat as empty/default; fail only when expected is non-default
+            var expectedStr = NavValueToString(expectedValue);
+            if (!string.IsNullOrEmpty(expectedStr) && expectedStr != "0" && expectedStr != "False")
+                throw new Exception($"TestField failed: field {fieldNo} in table {_tableId} expected '{expectedStr}' but field has no value");
+            return;
+        }
+        var actualStr   = NavValueToString(actual);
+        var expectedStr2 = NavValueToString(expectedValue);
+        if (actualStr != expectedStr2)
+            throw new Exception($"TestField failed: field {fieldNo} in table {_tableId} expected '{expectedStr2}' but was '{actualStr}'");
+    }
+
+    /// <summary>
     /// ALTestFieldNavValueSafe(object, NavALErrorInfo) — 4-arg catch-all form emitted by the BC
     /// transpiler for TestField(Field, Value, ErrorInfo) where Value is typed as object.
     /// Delegates to the existing ALTestFieldSafe(object) overload.

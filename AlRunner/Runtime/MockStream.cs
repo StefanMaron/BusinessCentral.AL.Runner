@@ -166,6 +166,13 @@ public static class MockStream
     }
 
     /// <summary>
+    /// ALRead — reads an integer with an explicit length hint (BC 2-arg InStream.Read(var Integer, Length)).
+    /// The length parameter is informational in standalone mode; delegates to the 3-arg overload.
+    /// </summary>
+    public static int ALRead(MockInStream reader, DataError dataError, ByRef<int> passByRef, int length)
+        => ALRead(reader, dataError, passByRef);
+
+    /// <summary>
     /// ALWrite — writes a boolean value to the stream as a single byte.
     /// Matches: ALStream.ALWrite(INavStreamWriter, DataError, bool)
     /// </summary>
@@ -185,6 +192,13 @@ public static class MockStream
         passByRef.Value = b[0] != 0;
         return read;
     }
+
+    /// <summary>
+    /// ALRead — reads a boolean with an explicit length hint (BC 2-arg InStream.Read(var Boolean, Length)).
+    /// Delegates to the 3-arg overload.
+    /// </summary>
+    public static int ALRead(MockInStream reader, DataError dataError, ByRef<bool> passByRef, int length)
+        => ALRead(reader, dataError, passByRef);
 
     /// <summary>
     /// ALWrite — writes a Decimal18 value to the stream as little-endian decimal bytes.
@@ -224,6 +238,13 @@ public static class MockStream
         passByRef.Value = new Decimal18(d);
         return read;
     }
+
+    /// <summary>
+    /// ALRead — reads a Decimal18 with an explicit length hint (BC 2-arg InStream.Read(var Decimal, Length)).
+    /// Delegates to the 3-arg overload.
+    /// </summary>
+    public static int ALRead(MockInStream reader, DataError dataError, ByRef<Decimal18> passByRef, int length)
+        => ALRead(reader, dataError, passByRef);
 
     /// <summary>
     /// ALCopyStream — copies all bytes from InStream to OutStream.

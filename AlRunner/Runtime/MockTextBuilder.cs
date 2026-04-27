@@ -48,6 +48,28 @@ public class MockTextBuilder
         return new NavText(_sb.ToString());
     }
 
+    /// <summary>
+    /// ALToText(startIndex, count) — BC emits this for TextBuilder.ToText(StartIndex, Count).
+    /// Extracts a substring of <paramref name="count"/> characters starting at the 1-based
+    /// <paramref name="startIndex"/> (matching BC's 1-based string indexing convention).
+    /// If startIndex is out of range, returns empty; if count exceeds available characters,
+    /// returns the remaining text.
+    /// Resolves the not-tested gap — issue #1400.
+    /// </summary>
+    public NavText ALToText(DataError errorLevel, int startIndex, int count)
+    {
+        int len = _sb.Length;
+        int idx0 = startIndex - 1;  // Convert 1-based to 0-based
+        if (idx0 < 0 || idx0 >= len) return new NavText("");
+        int available = len - idx0;
+        int toTake = Math.Min(count, available);
+        return new NavText(_sb.ToString(idx0, toTake));
+    }
+
+    /// <summary>ALToText(int, int) — overload without DataError.</summary>
+    public NavText ALToText(int startIndex, int count)
+        => ALToText(DataError.ThrowError, startIndex, count);
+
     // ── New methods (#725) ──────────────────────────────────────────────────────
 
     /// <summary>
@@ -131,6 +153,29 @@ public class MockTextBuilder
         => _sb.Replace((string)oldValue, (string)newValue);
     public void ALReplace(string oldValue, string newValue)
         => _sb.Replace(oldValue, newValue);
+
+    /// <summary>
+    /// ALReplace(DataError, oldValue, newValue, startIndex, count) — BC emits this for
+    /// TextBuilder.Replace(OldValue, NewValue, StartIndex, Count).
+    /// Replaces occurrences within the specified range only.
+    /// Resolves the not-tested gap — issue #1400.
+    /// </summary>
+    /// <summary>
+    /// ALReplace with 1-based startIndex (matching BC's TextBuilder.Replace convention).
+    /// </summary>
+    public void ALReplace(DataError errorLevel, string oldValue, string newValue, int startIndex, int count)
+    {
+        int idx0 = startIndex - 1;  // Convert 1-based to 0-based
+        if (idx0 < 0 || idx0 >= _sb.Length) return;
+        int end = Math.Min(idx0 + count, _sb.Length);
+        string segment = _sb.ToString(idx0, end - idx0);
+        string replaced = segment.Replace(oldValue, newValue);
+        _sb.Remove(idx0, end - idx0);
+        _sb.Insert(idx0, replaced);
+    }
+
+    public void ALReplace(string oldValue, string newValue, int startIndex, int count)
+        => ALReplace(DataError.ThrowError, oldValue, newValue, startIndex, count);
 
     /// <summary>
     /// Implicit conversion to string for formatting contexts.

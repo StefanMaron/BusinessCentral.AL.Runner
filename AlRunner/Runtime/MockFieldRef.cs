@@ -284,6 +284,64 @@ public class MockFieldRef
         _owner?.TestField(_fieldNo, expectedValue);
     }
 
+    // ── Typed ALTestField overloads ──────────────────────────────────────────
+    // BC emits these directly (not via NavValue wrapper) for primitive-typed
+    // fields: TestField(42) → ALTestField(int), TestField(true) → ALTestField(bool), etc.
+    // All delegate to the NavValue overload after wrapping. Resolves CS1503 errors
+    // when FieldRef.TestField is called with typed arguments — issue #1400.
+
+    /// <summary>ALTestField(int) — BC emits this for FieldRef.TestField(Integer value).</summary>
+    public void ALTestField(int expectedValue) =>
+        _owner?.TestField(_fieldNo, NavInteger.Create(expectedValue));
+
+    /// <summary>ALTestField(bool) — BC emits this for FieldRef.TestField(Boolean value).</summary>
+    public void ALTestField(bool expectedValue) =>
+        _owner?.TestField(_fieldNo, NavBoolean.Create(expectedValue));
+
+    /// <summary>ALTestField(Decimal18) — BC emits this for FieldRef.TestField(Decimal value).</summary>
+    public void ALTestField(Decimal18 expectedValue) =>
+        _owner?.TestField(_fieldNo, NavDecimal.Create(expectedValue));
+
+    /// <summary>ALTestField(string) — BC emits this for FieldRef.TestField(Text/Code value).</summary>
+    public void ALTestField(string expectedValue) =>
+        _owner?.TestField(_fieldNo, new NavText(expectedValue));
+
+    // ── Typed ALTestField overloads with ErrorInfo ───────────────────────────
+    // BC emits ALTestField(typedValue, NavALErrorInfo) for FieldRef.TestField(value, EI).
+    // The ErrorInfo provides error context but does not change the assertion logic.
+
+    /// <summary>ALTestField(int, NavALErrorInfo) — TestField(Integer, ErrorInfo).</summary>
+    public void ALTestField(int expectedValue, NavALErrorInfo errorInfo) =>
+        ALTestField(expectedValue);
+
+    /// <summary>ALTestField(bool, NavALErrorInfo) — TestField(Boolean, ErrorInfo).</summary>
+    public void ALTestField(bool expectedValue, NavALErrorInfo errorInfo) =>
+        ALTestField(expectedValue);
+
+    /// <summary>ALTestField(Decimal18, NavALErrorInfo) — TestField(Decimal, ErrorInfo).</summary>
+    public void ALTestField(Decimal18 expectedValue, NavALErrorInfo errorInfo) =>
+        ALTestField(expectedValue);
+
+    /// <summary>ALTestField(string, NavALErrorInfo) — TestField(Text/Code, ErrorInfo).</summary>
+    public void ALTestField(string expectedValue, NavALErrorInfo errorInfo) =>
+        ALTestField(expectedValue);
+
+    /// <summary>ALTestField(NavALErrorInfo) — BC emits this for FieldRef.TestField(ErrorInfo):
+    /// non-empty check where the ErrorInfo provides context but does not change the semantic.</summary>
+    public void ALTestField(NavALErrorInfo errorInfo) =>
+        _owner?.TestField(_fieldNo);
+
+    /// <summary>ALTestFieldNavValue(NavValue) — BC emits this for FieldRef.TestField(ComplexValue)
+    /// where the value is already a NavValue subtype (e.g. NavDateTime, NavDate, NavGuid).</summary>
+    public void ALTestFieldNavValue(NavValue expectedValue) =>
+        _owner?.TestField(_fieldNo, expectedValue);
+
+    /// <summary>ALTestFieldNavValue(NavValue, NavALErrorInfo) — BC emits this for
+    /// FieldRef.TestField(ComplexValue, ErrorInfo) where the value is already a NavValue subtype
+    /// (e.g. NavDateTime, NavDate, NavGuid). The ErrorInfo is accepted but not used.</summary>
+    public void ALTestFieldNavValue(NavValue expectedValue, NavALErrorInfo errorInfo) =>
+        _owner?.TestField(_fieldNo, expectedValue);
+
     /// <summary>ALCalcField — no-op in standalone mode (FlowFields not supported).</summary>
     public void ALCalcField() { }
 

@@ -109,7 +109,14 @@ public class MockHttpHeaders
     /// BC emits: <c>headers.ALTryAddWithoutValidation(DataError, name, value)</c>
     /// for <c>HttpHeaders.TryAddWithoutValidation(name, value)</c> (Text overload).
     /// Adds the header without format validation; always succeeds.
+    /// String overload handles BC versions that emit string literals directly.
     /// </summary>
+    public bool ALTryAddWithoutValidation(DataError errorLevel, string name, string value)
+    {
+        ALAdd(errorLevel, name, value);
+        return true;
+    }
+
     public bool ALTryAddWithoutValidation(DataError errorLevel, NavText name, NavText value)
     {
         ALAdd(errorLevel, (string)name, (string)value);

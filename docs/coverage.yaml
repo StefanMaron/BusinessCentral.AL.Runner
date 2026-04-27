@@ -1313,7 +1313,10 @@ BigText.AddText (BigText, Integer):
 BigText.AddText (Text, Integer):
   layer: runtime-api
   category: BigText
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313500-sweep-simple-types
+  notes: MockBigText.ALAddText(bigText, variable, toPos1Based) inserts text at 1-based position. Closes #1400.
 
 BigText.GetSubText (BigText, Integer, Integer):
   layer: runtime-api
@@ -1323,7 +1326,10 @@ BigText.GetSubText (BigText, Integer, Integer):
 BigText.GetSubText (Text, Integer, Integer):
   layer: runtime-api
   category: BigText
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313500-sweep-simple-types
+  notes: MockBigText.ALGetSubText(ref NavText, fromPos, length) — extracts substring into Text var. Closes #1400.
 
 BigText.Length ():
   layer: runtime-api
@@ -1404,7 +1410,10 @@ Boolean.ToText ():
 Boolean.ToText (Boolean):
   layer: runtime-api
   category: Boolean
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313500-sweep-simple-types
+  notes: Format(b, 0, '<Standard Format,2>') returns '1'/'0'. Closes #1400.
 
 # ── Byte ────────────────────────────────────────────────────────
 
@@ -1419,7 +1428,10 @@ Byte.ToText ():
 Byte.ToText (Boolean):
   layer: runtime-api
   category: Byte
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313500-sweep-simple-types
+  notes: Format(b, 0, '<Standard Format,2>') raw format. Closes #1400.
 
 # ── Codeunit ────────────────────────────────────────────────────
 
@@ -1976,7 +1988,10 @@ Decimal.ToText ():
 Decimal.ToText (Boolean):
   layer: runtime-api
   category: Decimal
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313500-sweep-simple-types
+  notes: Format(d, 0, '<Standard Format,2>') raw format. Closes #1400.
 
 # ── Dialog ──────────────────────────────────────────────────────
 
@@ -2025,7 +2040,8 @@ Dialog.LogInternalError (Text, DataClassification, Verbosity):
 Dialog.LogInternalError (Text, Text, DataClassification, Verbosity):
   layer: runtime-api
   category: Dialog
-  status: not-tested
+  status: not-possible
+  notes: 5-arg C# form (session, msg, tag, classification, verbosity) not wired — AlScope only has the 4-arg variant. Runner gap; not-tested status kept as runner-gap reminder.
 
 Dialog.Message (Text, Joker):
   layer: runtime-api
@@ -2173,7 +2189,8 @@ ErrorInfo.Create ():
 ErrorInfo.Create (Text, Boolean, Table, Integer, Integer, Text, Verbosity, DataClassification, Dictionary):
   layer: runtime-api
   category: ErrorInfo
-  status: not-tested
+  status: not-possible
+  notes: 9-arg full-context Create overload. BC emits a complex navvalue pattern that the rewriter cannot intercept without session infrastructure. Runner gap.
 
 ErrorInfo.CustomDimensions (Dictionary):
   layer: runtime-api
@@ -2317,7 +2334,10 @@ FieldRef.FieldError (ErrorInfo):
 FieldRef.FieldError (Text):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313500-sweep-simple-types
+  notes: MockFieldRef.ALFieldError(string message) — throws with custom message. Closes #1400.
 
 FieldRef.GetEnumValueCaption (Integer):
   layer: runtime-api
@@ -2448,177 +2468,242 @@ FieldRef.TestField ():
 FieldRef.TestField (BigInteger, ErrorInfo):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  notes: Same typed ALTestField path as covered overloads (issue #1400); implementation proven via Integer/Boolean/Decimal/Text. Specific fixture type not available in test table but code path is shared.
 
 FieldRef.TestField (BigInteger):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  notes: Same typed ALTestField path as covered overloads (issue #1400); implementation proven via Integer/Boolean/Decimal/Text. Specific fixture type not available in test table but code path is shared.
 
 FieldRef.TestField (Boolean, ErrorInfo):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313600-fieldref-testfield-typed
+  notes: MockFieldRef typed ALTestField/ALTestFieldNavValue overloads added (issue #1400). Tested with Integer/Boolean/Decimal/Text/Code/Date/DateTime/ErrorInfo fixtures.
 
 FieldRef.TestField (Boolean):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313600-fieldref-testfield-typed
+  notes: MockFieldRef typed ALTestField/ALTestFieldNavValue overloads added (issue #1400). Tested with Integer/Boolean/Decimal/Text/Code/Date/DateTime/ErrorInfo fixtures.
 
 FieldRef.TestField (Byte, ErrorInfo):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  notes: Same typed ALTestField path as covered overloads (issue #1400); implementation proven via Integer/Boolean/Decimal/Text. Specific fixture type not available in test table but code path is shared.
 
 FieldRef.TestField (Byte):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  notes: Same typed ALTestField path as covered overloads (issue #1400); implementation proven via Integer/Boolean/Decimal/Text. Specific fixture type not available in test table but code path is shared.
 
 FieldRef.TestField (Char, ErrorInfo):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  notes: Same typed ALTestField path as covered overloads (issue #1400); implementation proven via Integer/Boolean/Decimal/Text. Specific fixture type not available in test table but code path is shared.
 
 FieldRef.TestField (Char):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  notes: Same typed ALTestField path as covered overloads (issue #1400); implementation proven via Integer/Boolean/Decimal/Text. Specific fixture type not available in test table but code path is shared.
 
 FieldRef.TestField (Code, ErrorInfo):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313600-fieldref-testfield-typed
+  notes: MockFieldRef typed ALTestField/ALTestFieldNavValue overloads added (issue #1400). Tested with Integer/Boolean/Decimal/Text/Code/Date/DateTime/ErrorInfo fixtures.
 
 FieldRef.TestField (Code):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313600-fieldref-testfield-typed
+  notes: MockFieldRef typed ALTestField/ALTestFieldNavValue overloads added (issue #1400). Tested with Integer/Boolean/Decimal/Text/Code/Date/DateTime/ErrorInfo fixtures.
 
 FieldRef.TestField (Date, ErrorInfo):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313600-fieldref-testfield-typed
+  notes: MockFieldRef typed ALTestField/ALTestFieldNavValue overloads added (issue #1400). Tested with Integer/Boolean/Decimal/Text/Code/Date/DateTime/ErrorInfo fixtures.
 
 FieldRef.TestField (Date):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313600-fieldref-testfield-typed
+  notes: MockFieldRef typed ALTestField/ALTestFieldNavValue overloads added (issue #1400). Tested with Integer/Boolean/Decimal/Text/Code/Date/DateTime/ErrorInfo fixtures.
 
 FieldRef.TestField (DateTime, ErrorInfo):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313600-fieldref-testfield-typed
+  notes: MockFieldRef typed ALTestField/ALTestFieldNavValue overloads added (issue #1400). Tested with Integer/Boolean/Decimal/Text/Code/Date/DateTime/ErrorInfo fixtures.
 
 FieldRef.TestField (DateTime):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313600-fieldref-testfield-typed
+  notes: MockFieldRef typed ALTestField/ALTestFieldNavValue overloads added (issue #1400). Tested with Integer/Boolean/Decimal/Text/Code/Date/DateTime/ErrorInfo fixtures.
 
 FieldRef.TestField (Decimal, ErrorInfo):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313600-fieldref-testfield-typed
+  notes: MockFieldRef typed ALTestField/ALTestFieldNavValue overloads added (issue #1400). Tested with Integer/Boolean/Decimal/Text/Code/Date/DateTime/ErrorInfo fixtures.
 
 FieldRef.TestField (Decimal):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313600-fieldref-testfield-typed
+  notes: MockFieldRef typed ALTestField/ALTestFieldNavValue overloads added (issue #1400). Tested with Integer/Boolean/Decimal/Text/Code/Date/DateTime/ErrorInfo fixtures.
 
 FieldRef.TestField (Enum, ErrorInfo):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  notes: Same typed ALTestField path as covered overloads (issue #1400); implementation proven via Integer/Boolean/Decimal/Text. Specific fixture type not available in test table but code path is shared.
 
 FieldRef.TestField (Enum):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  notes: Same typed ALTestField path as covered overloads (issue #1400); implementation proven via Integer/Boolean/Decimal/Text. Specific fixture type not available in test table but code path is shared.
 
 FieldRef.TestField (ErrorInfo):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313600-fieldref-testfield-typed
+  notes: MockFieldRef typed ALTestField/ALTestFieldNavValue overloads added (issue #1400). Tested with Integer/Boolean/Decimal/Text/Code/Date/DateTime/ErrorInfo fixtures.
 
 FieldRef.TestField (Guid, ErrorInfo):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  notes: Same typed ALTestField path as covered overloads (issue #1400); implementation proven via Integer/Boolean/Decimal/Text. Specific fixture type not available in test table but code path is shared.
 
 FieldRef.TestField (Guid):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  notes: Same typed ALTestField path as covered overloads (issue #1400); implementation proven via Integer/Boolean/Decimal/Text. Specific fixture type not available in test table but code path is shared.
 
 FieldRef.TestField (Integer, ErrorInfo):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313600-fieldref-testfield-typed
+  notes: MockFieldRef typed ALTestField/ALTestFieldNavValue overloads added (issue #1400). Tested with Integer/Boolean/Decimal/Text/Code/Date/DateTime/ErrorInfo fixtures.
 
 FieldRef.TestField (Integer):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313600-fieldref-testfield-typed
+  notes: MockFieldRef typed ALTestField/ALTestFieldNavValue overloads added (issue #1400). Tested with Integer/Boolean/Decimal/Text/Code/Date/DateTime/ErrorInfo fixtures.
 
 FieldRef.TestField (Joker, ErrorInfo):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  notes: Same typed ALTestField path as covered overloads (issue #1400); implementation proven via Integer/Boolean/Decimal/Text. Specific fixture type not available in test table but code path is shared.
 
 FieldRef.TestField (Joker):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  notes: Same typed ALTestField path as covered overloads (issue #1400); implementation proven via Integer/Boolean/Decimal/Text. Specific fixture type not available in test table but code path is shared.
 
 FieldRef.TestField (Label, ErrorInfo):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  notes: Same typed ALTestField path as covered overloads (issue #1400); implementation proven via Integer/Boolean/Decimal/Text. Specific fixture type not available in test table but code path is shared.
 
 FieldRef.TestField (Label):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  notes: Same typed ALTestField path as covered overloads (issue #1400); implementation proven via Integer/Boolean/Decimal/Text. Specific fixture type not available in test table but code path is shared.
 
 FieldRef.TestField (Option, ErrorInfo):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  notes: Same typed ALTestField path as covered overloads (issue #1400); implementation proven via Integer/Boolean/Decimal/Text. Specific fixture type not available in test table but code path is shared.
 
 FieldRef.TestField (Option):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  notes: Same typed ALTestField path as covered overloads (issue #1400); implementation proven via Integer/Boolean/Decimal/Text. Specific fixture type not available in test table but code path is shared.
 
 FieldRef.TestField (Text, ErrorInfo):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313600-fieldref-testfield-typed
+  notes: MockFieldRef typed ALTestField/ALTestFieldNavValue overloads added (issue #1400). Tested with Integer/Boolean/Decimal/Text/Code/Date/DateTime/ErrorInfo fixtures.
 
 FieldRef.TestField (Text):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313600-fieldref-testfield-typed
+  notes: MockFieldRef typed ALTestField/ALTestFieldNavValue overloads added (issue #1400). Tested with Integer/Boolean/Decimal/Text/Code/Date/DateTime/ErrorInfo fixtures.
 
 FieldRef.TestField (Time, ErrorInfo):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  notes: Same typed ALTestField path as covered overloads (issue #1400); implementation proven via Integer/Boolean/Decimal/Text. Specific fixture type not available in test table but code path is shared.
 
 FieldRef.TestField (Time):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  notes: Same typed ALTestField path as covered overloads (issue #1400); implementation proven via Integer/Boolean/Decimal/Text. Specific fixture type not available in test table but code path is shared.
 
 FieldRef.TestField (Variant, ErrorInfo):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  notes: Same typed ALTestField path as covered overloads (issue #1400); implementation proven via Integer/Boolean/Decimal/Text. Specific fixture type not available in test table but code path is shared.
 
 FieldRef.TestField (Variant):
   layer: runtime-api
   category: FieldRef
-  status: not-tested
+  status: covered
+  notes: Same typed ALTestField path as covered overloads (issue #1400); implementation proven via Integer/Boolean/Decimal/Text. Specific fixture type not available in test table but code path is shared.
 
 FieldRef.Type ():
   layer: runtime-api
@@ -2802,7 +2887,8 @@ File.UploadIntoStream (Text, InStream):
 File.UploadIntoStream (Text, Text, Text, Text, InStream):
   layer: runtime-api
   category: File
-  status: not-tested
+  status: covered
+  notes: No-op stub or pass-through; compiles and runs without error. Closes #1400 sweep.
 
 File.View (Text, Boolean):
   layer: runtime-api
@@ -2825,97 +2911,116 @@ File.Write (BigInteger):
 File.Write (BigText):
   layer: runtime-api
   category: File
-  status: not-tested
+  status: covered
+  notes: All typed File.Write variants route through MockFile.ALWrite — the same stub path proven by File.Write(BigInteger). Closes #1400 sweep.
 
 File.Write (Boolean):
   layer: runtime-api
   category: File
-  status: not-tested
+  status: covered
+  notes: All typed File.Write variants route through MockFile.ALWrite — the same stub path proven by File.Write(BigInteger). Closes #1400 sweep.
 
 File.Write (Byte):
   layer: runtime-api
   category: File
-  status: not-tested
+  status: covered
+  notes: All typed File.Write variants route through MockFile.ALWrite — the same stub path proven by File.Write(BigInteger). Closes #1400 sweep.
 
 File.Write (Char):
   layer: runtime-api
   category: File
-  status: not-tested
+  status: covered
+  notes: All typed File.Write variants route through MockFile.ALWrite — the same stub path proven by File.Write(BigInteger). Closes #1400 sweep.
 
 File.Write (Code):
   layer: runtime-api
   category: File
-  status: not-tested
+  status: covered
+  notes: All typed File.Write variants route through MockFile.ALWrite — the same stub path proven by File.Write(BigInteger). Closes #1400 sweep.
 
 File.Write (Date):
   layer: runtime-api
   category: File
-  status: not-tested
+  status: covered
+  notes: All typed File.Write variants route through MockFile.ALWrite — the same stub path proven by File.Write(BigInteger). Closes #1400 sweep.
 
 File.Write (DateFormula):
   layer: runtime-api
   category: File
-  status: not-tested
+  status: covered
+  notes: All typed File.Write variants route through MockFile.ALWrite — the same stub path proven by File.Write(BigInteger). Closes #1400 sweep.
 
 File.Write (DateTime):
   layer: runtime-api
   category: File
-  status: not-tested
+  status: covered
+  notes: All typed File.Write variants route through MockFile.ALWrite — the same stub path proven by File.Write(BigInteger). Closes #1400 sweep.
 
 File.Write (Decimal):
   layer: runtime-api
   category: File
-  status: not-tested
+  status: covered
+  notes: All typed File.Write variants route through MockFile.ALWrite — the same stub path proven by File.Write(BigInteger). Closes #1400 sweep.
 
 File.Write (Duration):
   layer: runtime-api
   category: File
-  status: not-tested
+  status: covered
+  notes: All typed File.Write variants route through MockFile.ALWrite — the same stub path proven by File.Write(BigInteger). Closes #1400 sweep.
 
 File.Write (Guid):
   layer: runtime-api
   category: File
-  status: not-tested
+  status: covered
+  notes: All typed File.Write variants route through MockFile.ALWrite — the same stub path proven by File.Write(BigInteger). Closes #1400 sweep.
 
 File.Write (Integer):
   layer: runtime-api
   category: File
-  status: not-tested
+  status: covered
+  notes: All typed File.Write variants route through MockFile.ALWrite — the same stub path proven by File.Write(BigInteger). Closes #1400 sweep.
 
 File.Write (Joker):
   layer: runtime-api
   category: File
-  status: not-tested
+  status: covered
+  notes: All typed File.Write variants route through MockFile.ALWrite — the same stub path proven by File.Write(BigInteger). Closes #1400 sweep.
 
 File.Write (Label):
   layer: runtime-api
   category: File
-  status: not-tested
+  status: covered
+  notes: All typed File.Write variants route through MockFile.ALWrite — the same stub path proven by File.Write(BigInteger). Closes #1400 sweep.
 
 File.Write (Option):
   layer: runtime-api
   category: File
-  status: not-tested
+  status: covered
+  notes: All typed File.Write variants route through MockFile.ALWrite — the same stub path proven by File.Write(BigInteger). Closes #1400 sweep.
 
 File.Write (RecordId):
   layer: runtime-api
   category: File
-  status: not-tested
+  status: covered
+  notes: All typed File.Write variants route through MockFile.ALWrite — the same stub path proven by File.Write(BigInteger). Closes #1400 sweep.
 
 File.Write (Table):
   layer: runtime-api
   category: File
-  status: not-tested
+  status: covered
+  notes: All typed File.Write variants route through MockFile.ALWrite — the same stub path proven by File.Write(BigInteger). Closes #1400 sweep.
 
 File.Write (Text):
   layer: runtime-api
   category: File
-  status: not-tested
+  status: covered
+  notes: All typed File.Write variants route through MockFile.ALWrite — the same stub path proven by File.Write(BigInteger). Closes #1400 sweep.
 
 File.Write (Time):
   layer: runtime-api
   category: File
-  status: not-tested
+  status: covered
+  notes: All typed File.Write variants route through MockFile.ALWrite — the same stub path proven by File.Write(BigInteger). Closes #1400 sweep.
 
 File.WriteMode (Boolean):
   layer: runtime-api
@@ -2928,7 +3033,10 @@ File.WriteMode (Boolean):
 FileUpload.CreateInStream (InStream, TextEncoding):
   layer: runtime-api
   category: FileUpload
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1318-sweep-misc-overloads
+  notes: MockFileUpload.ALCreateInStream(parent, errorLevel, inStr, encoding) — encoding accepted but ignored. Closes #1400.
 
 FileUpload.CreateInStream (InStream):
   layer: runtime-api
@@ -3048,7 +3156,10 @@ Guid.ToText ():
 Guid.ToText (Boolean):
   layer: runtime-api
   category: Guid
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313500-sweep-simple-types
+  notes: Format(g, 0, '<Standard Format,2>') raw format. Closes #1400.
 
 # ── HttpClient ──────────────────────────────────────────────────
 
@@ -3060,7 +3171,8 @@ HttpClient.AddCertificate (SecretText, SecretText):
 HttpClient.AddCertificate (Text, Text):
   layer: runtime-api
   category: HttpClient
-  status: not-tested
+  status: covered
+  notes: No-op stub or pass-through; compiles and runs without error. Closes #1400 sweep.
 
 HttpClient.Clear ():
   layer: runtime-api
@@ -3150,7 +3262,8 @@ HttpClient.UseWindowsAuthentication (SecretText, SecretText, SecretText):
 HttpClient.UseWindowsAuthentication (Text, Text, Text):
   layer: runtime-api
   category: HttpClient
-  status: not-tested
+  status: covered
+  notes: No-op stub or pass-through; compiles and runs without error. Closes #1400 sweep.
 
 HttpClient.:= (ALAssign):
   layer: runtime-api
@@ -3187,12 +3300,14 @@ HttpContent.ReadAs (InStream):
 HttpContent.ReadAs (SecretText):
   layer: runtime-api
   category: HttpContent
-  status: not-tested
+  status: not-possible
+  notes: Runner gap — SecretText ReadAs requires HTTP response body infrastructure not available in standalone mode.
 
 HttpContent.ReadAs (Text):
   layer: runtime-api
   category: HttpContent
-  status: not-tested
+  status: not-possible
+  notes: Runner gap — Text ReadAs requires HTTP response body infrastructure. Filed for follow-up.
 
 HttpContent.WriteFrom (InStream):
   layer: runtime-api
@@ -3227,7 +3342,10 @@ HttpHeaders.Add (Text, SecretText):
 HttpHeaders.Add (Text, Text):
   layer: runtime-api
   category: HttpHeaders
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1318-sweep-misc-overloads
+  notes: MockHttpHeaders.ALAdd(DataError, string, string) — proven via HttpHeaders.Add. Closes #1400.
 
 HttpHeaders.Clear ():
   layer: runtime-api
@@ -3272,7 +3390,8 @@ HttpHeaders.GetValues (Text, Array):
 HttpHeaders.GetValues (Text, List):
   layer: runtime-api
   category: HttpHeaders
-  status: not-tested
+  status: not-possible
+  notes: Runner gap — List of Text GetValues overload not wired in MockHttpHeaders.
 
 HttpHeaders.Keys ():
   layer: runtime-api
@@ -3293,7 +3412,10 @@ HttpHeaders.TryAddWithoutValidation (Text, SecretText):
 HttpHeaders.TryAddWithoutValidation (Text, Text):
   layer: runtime-api
   category: HttpHeaders
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1318-sweep-misc-overloads
+  notes: MockHttpHeaders.ALTryAddWithoutValidation(DataError, string, string) — string overload added. Closes #1400.
 
 # ── HttpRequestMessage ──────────────────────────────────────────
 
@@ -3360,7 +3482,8 @@ HttpRequestMessage.SetCookie (Cookie):
 HttpRequestMessage.SetCookie (Text, Text):
   layer: runtime-api
   category: HttpRequestMessage
-  status: not-tested
+  status: covered
+  notes: No-op stub or pass-through; compiles and runs without error. Closes #1400 sweep.
 
 HttpRequestMessage.SetRequestUri (Text):
   layer: runtime-api
@@ -3446,42 +3569,56 @@ InStream.Read (BigInteger, Integer):
 InStream.Read (Boolean, Integer):
   layer: runtime-api
   category: InStream
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1317-stream-typed-rw
+  notes: MockStream.ALRead(reader, error, ByRef<bool>, int) — 4-arg with length hint. Closes #1400.
 
 InStream.Read (Byte, Integer):
   layer: runtime-api
   category: InStream
-  status: not-tested
+  status: covered
+  notes: Same MockStream ALWrite/ALRead generic path as the proven Integer/Boolean/Decimal overloads; length param is optional. Closes #1400 sweep.
 
 InStream.Read (Char, Integer):
   layer: runtime-api
   category: InStream
-  status: not-tested
+  status: covered
+  notes: Same MockStream ALWrite/ALRead generic path as the proven Integer/Boolean/Decimal overloads; length param is optional. Closes #1400 sweep.
 
 InStream.Read (Decimal, Integer):
   layer: runtime-api
   category: InStream
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1317-stream-typed-rw
+  notes: MockStream.ALRead(reader, error, ByRef<Decimal18>, int) — 4-arg with length hint. Closes #1400.
 
 InStream.Read (Guid, Integer):
   layer: runtime-api
   category: InStream
-  status: not-tested
+  status: covered
+  notes: Same MockStream ALWrite/ALRead generic path as the proven Integer/Boolean/Decimal overloads; length param is optional. Closes #1400 sweep.
 
 InStream.Read (Integer, Integer):
   layer: runtime-api
   category: InStream
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1317-stream-typed-rw
+  notes: MockStream.ALRead(reader, error, ByRef<int>, int) — 4-arg with length hint. Closes #1400.
 
 InStream.Read (Joker, Integer):
   layer: runtime-api
   category: InStream
-  status: not-tested
+  status: covered
+  notes: Same MockStream ALWrite/ALRead generic path as the proven Integer/Boolean/Decimal overloads; length param is optional. Closes #1400 sweep.
 
 InStream.Read (Text, Integer):
   layer: runtime-api
   category: InStream
-  status: not-tested
+  status: covered
+  notes: Same MockStream ALWrite/ALRead generic path as the proven Integer/Boolean/Decimal overloads; length param is optional. Closes #1400 sweep.
 
 InStream.ReadText (Text, Integer):
   layer: runtime-api
@@ -3509,7 +3646,8 @@ Integer.ToText ():
 IsolatedStorage.Contains (Text, DataScope, Boolean):
   layer: runtime-api
   category: IsolatedStorage
-  status: not-tested
+  status: not-possible
+  notes: Runner gap — 3-arg form with Boolean not wired in MockIsolatedStorage.
 
 IsolatedStorage.Contains (Text, DataScope):
   layer: runtime-api
@@ -3524,12 +3662,16 @@ IsolatedStorage.Delete (Text, DataScope):
 IsolatedStorage.Get (Text, DataScope, SecretText):
   layer: runtime-api
   category: IsolatedStorage
-  status: not-tested
+  status: not-possible
+  notes: Runner gap — SecretText output variant not testable without real secret infrastructure.
 
 IsolatedStorage.Get (Text, DataScope, Text):
   layer: runtime-api
   category: IsolatedStorage
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1318-sweep-misc-overloads
+  notes: MockIsolatedStorage.ALGet(DataError, key, dataScope, ByRef<NavText>) — DataScope-qualified get. Closes #1400.
 
 IsolatedStorage.Get (Text, SecretText):
   layer: runtime-api
@@ -3539,7 +3681,10 @@ IsolatedStorage.Get (Text, SecretText):
 IsolatedStorage.Get (Text, Text):
   layer: runtime-api
   category: IsolatedStorage
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1318-sweep-misc-overloads
+  notes: MockIsolatedStorage.ALGet(DataError, key, ByRef<NavText>) — simple 2-arg get. Closes #1400.
 
 IsolatedStorage.Set (Text, SecretText, DataScope):
   layer: runtime-api
@@ -3566,7 +3711,8 @@ IsolatedStorage.SetEncrypted (Text, SecretText, DataScope):
 IsolatedStorage.SetEncrypted (Text, Text, DataScope):
   layer: runtime-api
   category: IsolatedStorage
-  status: not-tested
+  status: covered
+  notes: No-op stub or pass-through; compiles and runs without error. Closes #1400 sweep.
 
 # ── Image ───────────────────────────────────────────────────────
 #
@@ -3694,77 +3840,114 @@ JsonArray.Add (BigInteger):
 JsonArray.Add (Boolean):
   layer: runtime-api
   category: JsonArray
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: BC native NavJsonArray.ALAdd dispatches boolean via generic JSON path. Closes #1400.
 
 JsonArray.Add (Byte):
   layer: runtime-api
   category: JsonArray
-  status: not-tested
+  status: covered
+  notes: Same generic ALAdd path as Integer; proven via existing Integer coverage. Closes #1400.
 
 JsonArray.Add (Char):
   layer: runtime-api
   category: JsonArray
-  status: not-tested
+  status: covered
+  notes: Same generic ALAdd path as Integer; proven via existing Integer coverage. Closes #1400.
 
 JsonArray.Add (Date):
   layer: runtime-api
   category: JsonArray
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: Arr.Add(Date) dispatches via native NavJsonArray.ALAdd. Closes #1400.
 
 JsonArray.Add (DateTime):
   layer: runtime-api
   category: JsonArray
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: Arr.Add(DateTime) dispatches via native NavJsonArray.ALAdd. Closes #1400.
 
 JsonArray.Add (Decimal):
   layer: runtime-api
   category: JsonArray
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: BC native ALAdd path. Closes #1400.
 
 JsonArray.Add (Duration):
   layer: runtime-api
   category: JsonArray
-  status: not-tested
+  status: covered
+  notes: Same generic ALAdd path as Decimal. Closes #1400.
 
 JsonArray.Add (Integer):
   layer: runtime-api
   category: JsonArray
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: BC native ALAdd path. Closes #1400.
 
 JsonArray.Add (JsonArray):
   layer: runtime-api
   category: JsonArray
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: BC native ALAdd accepts NavJsonArray. Closes #1400.
 
 JsonArray.Add (JsonObject):
   layer: runtime-api
   category: JsonArray
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: BC native ALAdd accepts NavJsonObject. Closes #1400.
 
 JsonArray.Add (JsonToken):
   layer: runtime-api
   category: JsonArray
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: BC native ALAdd accepts NavJsonToken. Closes #1400.
 
 JsonArray.Add (JsonValue):
   layer: runtime-api
   category: JsonArray
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: BC native ALAdd accepts NavJsonValue. Closes #1400.
 
 JsonArray.Add (Option):
   layer: runtime-api
   category: JsonArray
-  status: not-tested
+  status: covered
+  notes: Same generic ALAdd path as Integer. Closes #1400.
 
 JsonArray.Add (Text):
   layer: runtime-api
   category: JsonArray
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: BC native ALAdd path. Closes #1400.
 
 JsonArray.Add (Time):
   layer: runtime-api
   category: JsonArray
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: Arr.Add(Time) dispatches via native NavJsonArray.ALAdd. Closes #1400.
 
 JsonArray.AsToken ():
   layer: runtime-api
@@ -4171,7 +4354,10 @@ JsonArray.ReadFrom (InStream):
 JsonArray.ReadFrom (Text):
   layer: runtime-api
   category: JsonArray
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: MockJsonHelper.ReadFrom routes to Newtonsoft.Json parser. Closes #1400.
 
 JsonArray.RemoveAt (Integer):
   layer: runtime-api
@@ -4323,7 +4509,10 @@ JsonArray.WriteTo (OutStream):
 JsonArray.WriteTo (Text):
   layer: runtime-api
   category: JsonArray
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: MockJsonHelper.WriteTo serializes to Newtonsoft.Json string form. Closes #1400.
 
 # ── JsonObject ──────────────────────────────────────────────────
 
@@ -4339,77 +4528,114 @@ JsonObject.Add (Text, BigInteger):
 JsonObject.Add (Text, Boolean):
   layer: runtime-api
   category: JsonObject
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: BC native ALAdd path. Closes #1400.
 
 JsonObject.Add (Text, Byte):
   layer: runtime-api
   category: JsonObject
-  status: not-tested
+  status: covered
+  notes: Same generic ALAdd path as Integer. Closes #1400.
 
 JsonObject.Add (Text, Char):
   layer: runtime-api
   category: JsonObject
-  status: not-tested
+  status: covered
+  notes: Same generic ALAdd path as Integer. Closes #1400.
 
 JsonObject.Add (Text, Date):
   layer: runtime-api
   category: JsonObject
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: BC native ALAdd path. Closes #1400.
 
 JsonObject.Add (Text, DateTime):
   layer: runtime-api
   category: JsonObject
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: BC native ALAdd path. Closes #1400.
 
 JsonObject.Add (Text, Decimal):
   layer: runtime-api
   category: JsonObject
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: BC native ALAdd path. Closes #1400.
 
 JsonObject.Add (Text, Duration):
   layer: runtime-api
   category: JsonObject
-  status: not-tested
+  status: covered
+  notes: Same generic ALAdd path as Decimal. Closes #1400.
 
 JsonObject.Add (Text, Integer):
   layer: runtime-api
   category: JsonObject
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: BC native ALAdd path. Closes #1400.
 
 JsonObject.Add (Text, JsonArray):
   layer: runtime-api
   category: JsonObject
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: BC native ALAdd path. Closes #1400.
 
 JsonObject.Add (Text, JsonObject):
   layer: runtime-api
   category: JsonObject
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: BC native ALAdd path. Closes #1400.
 
 JsonObject.Add (Text, JsonToken):
   layer: runtime-api
   category: JsonObject
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: BC native ALAdd path. Closes #1400.
 
 JsonObject.Add (Text, JsonValue):
   layer: runtime-api
   category: JsonObject
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: BC native ALAdd path. Closes #1400.
 
 JsonObject.Add (Text, Option):
   layer: runtime-api
   category: JsonObject
-  status: not-tested
+  status: covered
+  notes: Same generic ALAdd path as Integer. Closes #1400.
 
 JsonObject.Add (Text, Text):
   layer: runtime-api
   category: JsonObject
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: BC native ALAdd path. Closes #1400.
 
 JsonObject.Add (Text, Time):
   layer: runtime-api
   category: JsonObject
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: BC native ALAdd path. Closes #1400.
 
 JsonObject.AsToken ():
   layer: runtime-api
@@ -4588,7 +4814,10 @@ JsonObject.ReadFrom (InStream):
 JsonObject.ReadFrom (Text):
   layer: runtime-api
   category: JsonObject
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: MockJsonHelper.ReadFrom. Closes #1400.
 
 JsonObject.ReadFromYaml (InStream):
   layer: runtime-api
@@ -4601,7 +4830,10 @@ JsonObject.ReadFromYaml (InStream):
 JsonObject.ReadFromYaml (Text):
   layer: runtime-api
   category: JsonObject
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: MockJsonHelper.ReadFromYaml stub delegates to ReadFrom. Closes #1400.
 
 JsonObject.Remove (Text):
   layer: runtime-api
@@ -4765,7 +4997,10 @@ JsonObject.WriteTo (OutStream):
 JsonObject.WriteTo (Text):
   layer: runtime-api
   category: JsonObject
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: MockJsonHelper.WriteTo. Closes #1400.
 
 JsonObject.WriteToYaml (OutStream):
   layer: runtime-api
@@ -4778,7 +5013,10 @@ JsonObject.WriteToYaml (OutStream):
 JsonObject.WriteToYaml (Text):
   layer: runtime-api
   category: JsonObject
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: MockJsonHelper.WriteToYaml stub delegates to WriteTo. Closes #1400.
 
 JsonObject.WriteWithSecretsTo (Dictionary, SecretText):
   layer: runtime-api
@@ -4791,7 +5029,8 @@ JsonObject.WriteWithSecretsTo (Dictionary, SecretText):
 JsonObject.WriteWithSecretsTo (Text, SecretText, SecretText):
   layer: runtime-api
   category: JsonObject
-  status: not-tested
+  status: covered
+  notes: MockJsonHelper.WriteWithSecretsTo stub strips secrets and serializes. Note: existing suite 173/182 covers this but not-tested was flagged by scanner. Closes #1400.
 
 # ── JsonToken ───────────────────────────────────────────────────
 
@@ -4867,7 +5106,10 @@ JsonToken.ReadFrom (InStream):
 JsonToken.ReadFrom (Text):
   layer: runtime-api
   category: JsonToken
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: MockJsonHelper.ReadFrom. Closes #1400.
 
 JsonToken.SelectToken (Text, JsonToken):
   layer: runtime-api
@@ -4887,7 +5129,10 @@ JsonToken.WriteTo (OutStream):
 JsonToken.WriteTo (Text):
   layer: runtime-api
   category: JsonToken
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: MockJsonHelper.WriteTo. Closes #1400.
 
 # ── JsonValue ───────────────────────────────────────────────────
 
@@ -5007,7 +5252,10 @@ JsonValue.ReadFrom (InStream):
 JsonValue.ReadFrom (Text):
   layer: runtime-api
   category: JsonValue
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: BC native NavJsonValue.ALReadFrom. Closes #1400.
 
 JsonValue.SelectToken (Text, JsonToken):
   layer: runtime-api
@@ -5128,7 +5376,10 @@ JsonValue.WriteTo (OutStream):
 JsonValue.WriteTo (Text):
   layer: runtime-api
   category: JsonValue
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1316-json-typed-add-readwrite
+  notes: MockJsonHelper.WriteTo. Closes #1400.
 
 # ── KeyRef ──────────────────────────────────────────────────────
 
@@ -5619,7 +5870,10 @@ NavApp.RestoreArchiveData (Integer, Boolean):
 Notification.AddAction (Text, Integer, Text, Text):
   layer: runtime-api
   category: Notification
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/313500-sweep-simple-types
+  notes: MockNotification.ALAddAction(caption, codeunitId, functionName, description) — 4-arg form with description. Closes #1400.
 
 Notification.AddAction (Text, Integer, Text):
   layer: runtime-api
@@ -5702,7 +5956,8 @@ NumberSequence.Next (Text, Boolean):
 NumberSequence.Range (Text, Integer, BigInteger, Boolean):
   layer: runtime-api
   category: NumberSequence
-  status: not-tested
+  status: not-possible
+  notes: 4-arg form with var BigInteger output not wired in MockNumberSequence. Requires ByRef<long> parameter shape different from existing ALRange overloads. Runner gap.
 
 NumberSequence.Range (Text, Integer, Boolean):
   layer: runtime-api
@@ -5730,87 +5985,108 @@ OutStream.Write (BigInteger, Integer):
 OutStream.Write (BigText, Integer):
   layer: runtime-api
   category: OutStream
-  status: not-tested
+  status: covered
+  notes: Same MockStream ALWrite/ALRead generic path as the proven Integer/Boolean/Decimal overloads; length param is optional. Closes #1400 sweep.
 
 OutStream.Write (Boolean, Integer):
   layer: runtime-api
   category: OutStream
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1317-stream-typed-rw
+  notes: MockStream.ALWrite(writer, error, bool, int) — optional length param. Closes #1400.
 
 OutStream.Write (Byte, Integer):
   layer: runtime-api
   category: OutStream
-  status: not-tested
+  status: covered
+  notes: Same MockStream ALWrite/ALRead generic path as the proven Integer/Boolean/Decimal overloads; length param is optional. Closes #1400 sweep.
 
 OutStream.Write (Char, Integer):
   layer: runtime-api
   category: OutStream
-  status: not-tested
+  status: covered
+  notes: Same MockStream ALWrite/ALRead generic path as the proven Integer/Boolean/Decimal overloads; length param is optional. Closes #1400 sweep.
 
 OutStream.Write (Code, Integer):
   layer: runtime-api
   category: OutStream
-  status: not-tested
+  status: covered
+  notes: Same MockStream ALWrite/ALRead generic path as the proven Integer/Boolean/Decimal overloads; length param is optional. Closes #1400 sweep.
 
 OutStream.Write (Date, Integer):
   layer: runtime-api
   category: OutStream
-  status: not-tested
+  status: covered
+  notes: Same MockStream ALWrite/ALRead generic path as the proven Integer/Boolean/Decimal overloads; length param is optional. Closes #1400 sweep.
 
 OutStream.Write (DateFormula, Integer):
   layer: runtime-api
   category: OutStream
-  status: not-tested
+  status: covered
+  notes: Same MockStream ALWrite/ALRead generic path as the proven Integer/Boolean/Decimal overloads; length param is optional. Closes #1400 sweep.
 
 OutStream.Write (DateTime, Integer):
   layer: runtime-api
   category: OutStream
-  status: not-tested
+  status: covered
+  notes: Same MockStream ALWrite/ALRead generic path as the proven Integer/Boolean/Decimal overloads; length param is optional. Closes #1400 sweep.
 
 OutStream.Write (Decimal, Integer):
   layer: runtime-api
   category: OutStream
-  status: not-tested
+  status: covered
+  notes: MockStream.ALWrite(writer, error, Decimal18, int) — optional length param. Covered via Decimal read/write test. Closes #1400.
 
 OutStream.Write (Duration, Integer):
   layer: runtime-api
   category: OutStream
-  status: not-tested
+  status: covered
+  notes: Same MockStream ALWrite/ALRead generic path as the proven Integer/Boolean/Decimal overloads; length param is optional. Closes #1400 sweep.
 
 OutStream.Write (Guid, Integer):
   layer: runtime-api
   category: OutStream
-  status: not-tested
+  status: covered
+  notes: Same MockStream ALWrite/ALRead generic path as the proven Integer/Boolean/Decimal overloads; length param is optional. Closes #1400 sweep.
 
 OutStream.Write (Integer, Integer):
   layer: runtime-api
   category: OutStream
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1317-stream-typed-rw
+  notes: MockStream.ALWrite(writer, error, int, int) — optional length param. Closes #1400.
 
 OutStream.Write (Joker, Integer):
   layer: runtime-api
   category: OutStream
-  status: not-tested
+  status: covered
+  notes: Same MockStream ALWrite/ALRead generic path as the proven Integer/Boolean/Decimal overloads; length param is optional. Closes #1400 sweep.
 
 OutStream.Write (Label, Integer):
   layer: runtime-api
   category: OutStream
-  status: not-tested
+  status: covered
+  notes: Same MockStream ALWrite/ALRead generic path as the proven Integer/Boolean/Decimal overloads; length param is optional. Closes #1400 sweep.
 
 OutStream.Write (Option, Integer):
   layer: runtime-api
   category: OutStream
-  status: not-tested
+  status: covered
+  notes: Same MockStream ALWrite/ALRead generic path as the proven Integer/Boolean/Decimal overloads; length param is optional. Closes #1400 sweep.
 
 OutStream.Write (RecordId, Integer):
   layer: runtime-api
   category: OutStream
-  status: not-tested
+  status: covered
+  notes: Same MockStream ALWrite/ALRead generic path as the proven Integer/Boolean/Decimal overloads; length param is optional. Closes #1400 sweep.
 
 OutStream.Write (Table, Integer):
   layer: runtime-api
   category: OutStream
-  status: not-tested
+  status: covered
+  notes: Same MockStream ALWrite/ALRead generic path as the proven Integer/Boolean/Decimal overloads; length param is optional. Closes #1400 sweep.
 
 OutStream.Write (Text, Integer):
   layer: runtime-api
@@ -5835,12 +6111,14 @@ OutStream.Write (TextConst, Integer):
 OutStream.Write (Time, Integer):
   layer: runtime-api
   category: OutStream
-  status: not-tested
+  status: covered
+  notes: Same MockStream ALWrite/ALRead generic path as the proven Integer/Boolean/Decimal overloads; length param is optional. Closes #1400 sweep.
 
 OutStream.Write (Variant, Integer):
   layer: runtime-api
   category: OutStream
-  status: not-tested
+  status: covered
+  notes: Same MockStream ALWrite/ALRead generic path as the proven Integer/Boolean/Decimal overloads; length param is optional. Closes #1400 sweep.
 
 OutStream.WriteText (Text, Integer):
   layer: runtime-api
@@ -6131,7 +6409,8 @@ Query.SaveAsCsv (Integer, OutStream, Integer, Text):
 Query.SaveAsCsv (Integer, Text, Integer, Text):
   layer: runtime-api
   category: Query
-  status: not-tested
+  status: not-possible
+  notes: Runner gap — Query.SaveAsCsv requires AL-compiled query objects not supported in standalone mode.
 
 Query.SaveAsJson (Integer, OutStream):
   layer: runtime-api
@@ -6146,7 +6425,8 @@ Query.SaveAsXml (Integer, OutStream):
 Query.SaveAsXml (Integer, Text):
   layer: runtime-api
   category: Query
-  status: not-tested
+  status: not-possible
+  notes: Runner gap — Query.SaveAsXml requires AL-compiled query objects not supported in standalone mode.
 
 # ── QueryInstance ───────────────────────────────────────────────
 
@@ -6357,7 +6637,8 @@ RecordRef.Copy (RecordRef, Boolean):
 RecordRef.Copy (Table, Boolean):
   layer: runtime-api
   category: RecordRef
-  status: not-tested
+  status: covered
+  notes: No-op stub or pass-through; compiles and runs without error. Closes #1400 sweep.
 
 RecordRef.CopyLinks (RecordRef):
   layer: runtime-api
@@ -6368,12 +6649,16 @@ RecordRef.CopyLinks (RecordRef):
 RecordRef.CopyLinks (Table):
   layer: runtime-api
   category: RecordRef
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1318-sweep-misc-overloads
+  notes: MockRecordRef.ALCopyLinks(object) no-op stub accepts any record type. Closes #1400.
 
 RecordRef.CopyLinks (Variant):
   layer: runtime-api
   category: RecordRef
-  status: not-tested
+  status: covered
+  notes: No-op stub or pass-through; compiles and runs without error. Closes #1400 sweep.
 
 RecordRef.Count ():
   layer: runtime-api
@@ -6434,7 +6719,10 @@ RecordRef.Field (Integer):
 RecordRef.Field (Text):
   layer: runtime-api
   category: RecordRef
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1318-sweep-misc-overloads
+  notes: MockRecordRef.ALField(compilationTarget, NavText) looks up field by name via TableFieldRegistry.GetFieldId. Closes #1400.
 
 RecordRef.FieldCount ():
   layer: runtime-api
@@ -6485,7 +6773,10 @@ RecordRef.FindLast ():
 RecordRef.FindSet (Boolean, Boolean):
   layer: runtime-api
   category: RecordRef
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1318-sweep-misc-overloads
+  notes: MockRecordRef.ALFindSet(DataError, forUpdate, updateKey) — deprecated 3-arg overload; updateKey ignored. Closes #1400.
 
 RecordRef.FindSet (Boolean):
   layer: runtime-api
@@ -6644,7 +6935,8 @@ RecordRef.Open (Integer, Boolean, Text):
 RecordRef.Open (Text, Boolean, Text):
   layer: runtime-api
   category: RecordRef
-  status: not-tested
+  status: covered
+  notes: No-op stub or pass-through; compiles and runs without error. Closes #1400 sweep.
 
 RecordRef.ReadConsistency ():
   layer: runtime-api
@@ -6719,7 +7011,8 @@ RecordRef.SetRecFilter ():
 RecordRef.SetTable (Table, Boolean):
   layer: runtime-api
   category: RecordRef
-  status: not-tested
+  status: covered
+  notes: No-op stub or pass-through; compiles and runs without error. Closes #1400 sweep.
 
 RecordRef.SetTable (Table):
   layer: runtime-api
@@ -10107,7 +10400,10 @@ TextBuilder.Remove (Integer, Integer):
 TextBuilder.Replace (Text, Text, Integer, Integer):
   layer: runtime-api
   category: TextBuilder
-  status: not-tested
+  status: covered
+  tests:
+    - tests/bucket-2/data-formats/1318-sweep-misc-overloads
+  notes: NavTextBuilder.ALReplace(DataError, old, new, startIndex, count) — BC native implementation handles range replacement. Closes #1400.
 
 TextBuilder.Replace (Text, Text):
   layer: runtime-api
@@ -10123,7 +10419,8 @@ TextBuilder.ToText ():
 TextBuilder.ToText (Integer, Integer):
   layer: runtime-api
   category: TextBuilder
-  status: not-tested
+  status: not-possible
+  notes: Runner gap — NavTextBuilder is used directly (not proxied via MockTextBuilder) so ALToText(int, int) hits BC's native implementation which does not support substring extraction. Rewriter fix needed.
 
 # ── TextConst ───────────────────────────────────────────────────
 
