@@ -122,17 +122,44 @@ AL interface if you want to unit test the logic around HTTP calls.
 
 ---
 
-## System Application codeunits — the runner does not ship implementations
+## System Application codeunits — scope policy
 
-The runner auto-generates **blank shells** for every codeunit/object pulled in from your dependencies (System Application, Base Application, third-party apps). That is how AL compiles without those packages being present at runtime: every method exists with the right signature, returns the type-default, and does nothing.
+### What the runner ships
 
-What the runner **does not do** is ship real implementations of System Application codeunits. There is no built-in Image processor, no Cryptography codeunit re-creating SHA hashes, no File Mgt. that actually reads files, no Email that actually sends, and so on. This is a deliberate boundary: the moment the runner ships a re-implementation of an SA codeunit, it inherits the burden of staying faithful to the real System Application across every BC version, and your tests would be asserting against the runner's reimplementation rather than against BC.
+The runner ships hand-written AL stubs and C# mock implementations **only** for objects whose sole purpose is to make test codeunits compile and execute assertions. These contain no BC business-domain logic.
 
-The only exceptions are **test-automation libraries** that ship as AL stubs in `AlRunner/stubs/`:
-- `LibraryAssert` (codeunit 130)
-- `LibraryVariableStorage` (codeunit 131004)
+**Always in scope — test-automation infrastructure (approved exceptions):**
 
-These exist because the whole point of the runner is to execute test codeunits.
+| Codeunit ID | Name | File |
+|---|---|---|
+| 130 | `"Assert"` (Library Assert) | `AlRunner/stubs/LibraryAssert.al` + `AlRunner/Runtime/MockAssert.cs` |
+| 131 | `"Library Assert"` (alias) | `AlRunner/stubs/Assert.al` |
+| 130000 | Assert from BC test toolkit | routing alias, no extra file |
+| 130002 | Real BC "Library Assert" ID | routing alias, no extra file |
+| 131004 | `"Library - Variable Storage"` | `AlRunner/stubs/LibraryVariableStorage.al` + `AlRunner/Runtime/MockVariableStorage.cs` |
+| 130440 | `"Library - Random"` | `AlRunner/stubs/LibraryRandom.al` (pure AL, BC primitives only) |
+| 130500 | `"Any"` | `AlRunner/stubs/LibraryAny.al` (pure AL, BC primitives only) |
+| 131003 | `"Library - Utility"` | `AlRunner/stubs/LibraryUtility.al` (pure AL, GUID/random text) |
+| 132250 | `"Library - Test Initialize"` | `AlRunner/stubs/LibraryTestInitialize.al` (event publishers only) |
+| 131100 | `"AL Runner Config"` | `AlRunner/stubs/AlRunnerConfig.al` (runner-only; not a BC codeunit) |
+
+Adding a new entry here is a high bar: it must be a *test-automation* library (something a test codeunit uses to assert or orchestrate), not a piece of business logic.
+
+**Always out of scope — SA business-logic implementations:**
+The runner must not ship a real implementation of any System Application codeunit (Image, FileMgt, Cryptography, Email, DocumentSharing, WebServiceMgt, …). Auto-generated blank shells are fine — C# classes that re-create SA business behaviour are not.
+
+**Always out of scope — domain test libraries:**
+Domain test libraries such as `Library - Sales` (130509), `Library - Purchase`, etc. are auto-stubbed from BC packages, not hand-shipped. They must stay auto-stubbed only; no hand-written implementation is permitted.
+
+### What the runner auto-generates
+
+For every codeunit/object pulled in from your dependencies (System Application, Base Application, third-party apps), the runner auto-generates a **blank shell**: every method exists with the right signature, returns the type-default, and does nothing.
+
+That is how AL compiles without those packages being present at runtime. It is not a real implementation — it is scaffolding.
+
+### Why no real SA implementations
+
+The moment the runner ships a re-implementation of an SA codeunit, it inherits the burden of staying faithful to the real System Application across every BC version. Your tests would be asserting against the runner's reimplementation rather than against BC. This has happened once (MockImage was reverted in #1502 for exactly this reason).
 
 ### Bring your own stub
 
@@ -141,7 +168,7 @@ If your AL under test depends on real SA behaviour to mean anything, the support
 1. **AL interface + injected implementation.** Define an AL interface, have your production code take it via dependency injection, ship a real implementation that delegates to the SA codeunit, and ship a fake implementation in your test project that does just enough to make the test pass.
 2. **Test-only AL codeunit shadowing the SA call.** Add an AL codeunit in your `test/` directory with the same object ID and a hand-rolled implementation that returns the values your test expects. The runner will use your codeunit because it is in the compile unit; in real BC, your production code never sees it.
 
-Concrete example — `Image` codeunit (System Application). A test that asserts on image dimensions cannot rely on the runner's blank-shell `Image.Width()` (which returns `0`). The fix is to write a small stub in your test project that parses a known fixture image, not to ask the runner to ship an `Image` implementation. If the AL pattern under test is widespread enough that everyone needs the same stub, file a runner-gap issue and we can discuss whether a shared stub belongs in `AlRunner/stubs/` (the bar is high — it must be test-automation infrastructure, not business logic).
+Concrete example — `Image` codeunit (System Application). A test that asserts on image dimensions cannot rely on the runner's blank-shell `Image.GetWidth()` (which returns `0`). The fix is to write a small stub in your test project that parses a known fixture image, not to ask the runner to ship an `Image` implementation. If the AL pattern under test is widespread enough that everyone needs the same stub, file a runner-gap issue and we can discuss whether a shared stub belongs in `AlRunner/stubs/` (the bar is high — it must be test-automation infrastructure, not business logic).
 
 ---
 
