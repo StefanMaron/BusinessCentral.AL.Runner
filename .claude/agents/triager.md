@@ -75,14 +75,16 @@ gh issue edit <N> --add-label "status: needs-input" --repo StefanMaron/BusinessC
 - Quick search for an obvious duplicate (`gh issue list --search "<keyword>" --state all`). If a duplicate exists, comment linking to it.
 - If a recent commit clearly shipped the fix, comment linking the commit/PR.
 
-### Closing rule (applies to C and D)
+### Closing rule
 
-**Close issues that have the `telemetry` label** (auto-reported crashes from runner telemetry — no human reporter to manage). Use:
+**Close an issue only when it is a confirmed duplicate** (you found the exact prior issue or merged PR that covers it). Close applies equally to telemetry-authored and human-reported issues — but only for duplicates. Use:
 ```
-gh issue close <N> --comment "<one-sentence reason>" --repo StefanMaron/BusinessCentral.AL.Runner
+gh issue close <N> --comment "Duplicate of #<M> — closing." --repo StefanMaron/BusinessCentral.AL.Runner
 ```
 
-**For human-reported issues** (no `telemetry` label), leave the comment but **do not close** — let a human maintainer make that call. Add the `wontfix` label if it's clearly out of scope, otherwise just leave the comment and move on.
+**Thin telemetry issues** (single AL line, no surrounding context) are **not** a reason to close. A telemetry report with only one line might be perfectly reproducible once the pattern is understood. Treat them like any other thin issue: add `status: needs-input`, post the standard comment asking for a minimal AL reproducer and surrounding context, and leave them open.
+
+**Out-of-scope issues** (C above): leave the comment and optionally add `wontfix`, but **do not close** — a human maintainer makes that call.
 
 ## Step 3 — Exit
 After one pass over all untriaged issues, print a short summary:
@@ -100,7 +102,7 @@ Then stop. The orchestrator picks up from `status: ready` and merges PRs; the tr
 - **Shallow pass only.** No code investigation beyond what's needed to decide ready vs. needs-input. No fix proposals.
 - **One comment per issue maximum.** Do not start a back-and-forth.
 - **No relabelling or commenting on issues that already carry a `status:` or `agent:` label** — those are owned by someone else.
-- **Close only `telemetry`-labelled issues.** Human-reported issues get a comment (and optionally `wontfix`) but stay open for a human maintainer to close.
+- **Close only confirmed duplicates.** Everything else — thin context, out-of-scope, telemetry with a single line — gets a comment (and optionally `needs-input` or `wontfix`) but stays open for a human maintainer to close.
 - **Do not close issues silently.** Every close gets a one-sentence comment explaining why.
 - **Never edit code, branches, or PRs.** This agent reads issues and writes labels/comments — nothing else.
 - `--repo StefanMaron/BusinessCentral.AL.Runner` on every `gh` command.
