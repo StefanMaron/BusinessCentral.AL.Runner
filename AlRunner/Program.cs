@@ -1857,11 +1857,20 @@ public static class AlTranspiler
     {
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Add explicit --packages paths (scan recursively for subdirectories containing .app files)
+        // Add explicit --packages paths. Accepts both directories and individual .app files.
+        // For individual .app files, the parent directory is added so PackageScanner can find them.
         if (explicitPaths != null)
         {
             foreach (var p in explicitPaths)
             {
+                // Individual .app file — add its parent directory.
+                if (File.Exists(p) && p.EndsWith(".app", StringComparison.OrdinalIgnoreCase))
+                {
+                    var parent = Path.GetDirectoryName(Path.GetFullPath(p));
+                    if (parent != null) result.Add(parent);
+                    continue;
+                }
+
                 if (!Directory.Exists(p)) continue;
                 var fullPath = Path.GetFullPath(p);
 

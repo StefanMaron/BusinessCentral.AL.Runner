@@ -180,7 +180,7 @@ public static class DepExtractor
             var outPath = Path.Combine(outputDir, fileName);
             var dir = Path.GetDirectoryName(outPath);
             if (dir != null) Directory.CreateDirectory(dir);
-            File.WriteAllText(outPath, strippedSource, Encoding.UTF8);
+            File.WriteAllText(outPath, strippedSource, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
             written++;
             strippedProcedures += stripped;
         }
@@ -718,6 +718,59 @@ public static class DepExtractor
     // Compiler-driven fixup — trial compile to find statically-undetected refs
     // -----------------------------------------------------------------------
 
+    /// <summary>
+    /// Removes preprocessor directive lines that are unbalanced after DotNet stripping.
+    /// When a DotNet var wrapped in #if/#endif has the #if removed (as part of the var's
+    /// leading trivia) but the #endif remains (as leading trivia of the next declaration),
+    /// the result is an orphaned #endif that causes AL0624 parse errors.
+    /// This pass removes any #else/#endif with no matching #if, and any #if with no matching #endif.
+    /// </summary>
+    private static string RemoveOrphanedPreprocessorDirectives(string source)
+    {
+        if (!source.Contains('#')) return source;
+
+        var lines = source.Split('\n');
+        var result = new System.Text.StringBuilder(source.Length);
+        int depth = 0;
+
+        foreach (var rawLine in lines)
+        {
+            var trimmed = rawLine.TrimStart();
+            if (trimmed.StartsWith("#if", StringComparison.OrdinalIgnoreCase) &&
+                !trimmed.StartsWith("#ifdef", StringComparison.OrdinalIgnoreCase))
+            {
+                depth++;
+                result.Append(rawLine).Append('\n');
+            }
+            else if (trimmed.StartsWith("#else", StringComparison.OrdinalIgnoreCase) ||
+                     trimmed.StartsWith("#elif", StringComparison.OrdinalIgnoreCase))
+            {
+                if (depth > 0)
+                    result.Append(rawLine).Append('\n');
+                // else: orphaned #else — skip it
+            }
+            else if (trimmed.StartsWith("#endif", StringComparison.OrdinalIgnoreCase))
+            {
+                if (depth > 0)
+                {
+                    depth--;
+                    result.Append(rawLine).Append('\n');
+                }
+                // else: orphaned #endif — skip it
+            }
+            else
+            {
+                result.Append(rawLine).Append('\n');
+            }
+        }
+
+        // Remove the trailing \n we added to the last line if source didn't end with one.
+        var text = result.ToString();
+        if (!source.EndsWith('\n') && text.EndsWith('\n'))
+            text = text[..^1];
+        return text;
+    }
+
     private static readonly System.Text.RegularExpressions.Regex MissingSymbolPattern =
         new(@"(Codeunit|Table|Page|Enum|Interface|Report|Query|XmlPort)\s+'([^']+)'\s+is missing",
             System.Text.RegularExpressions.RegexOptions.Compiled);
@@ -776,7 +829,15 @@ public static class DepExtractor
             // Collect (start, end, replacement) for each DotNet-referencing procedure.
             var replacements = new List<(int Start, int End, string Text)>();
 
-            foreach (var method in root.DescendantNodes().OfType<MethodDeclarationSyntax>())
+            // Strip DotNet from all callable declarations: procedures, field/codeunit triggers,
+            // and event subscriber triggers (EventTriggerDeclarationSyntax).
+            // All share the same child structure: ParameterList, ReturnValue?, VarSection?, Block?.
+            var candidateNodes =
+                root.DescendantNodes().OfType<MethodDeclarationSyntax>().Cast<SyntaxNode>()
+                .Concat(root.DescendantNodes().OfType<TriggerDeclarationSyntax>().Cast<SyntaxNode>())
+                .Concat(root.DescendantNodes().OfType<EventTriggerDeclarationSyntax>().Cast<SyntaxNode>());
+
+            foreach (var method in candidateNodes)
             {
                 var hasDotNet = method.DescendantNodes()
                     .OfType<SubtypedDataTypeSyntax>()
@@ -785,31 +846,98 @@ public static class DepExtractor
 
                 if (!hasDotNet) continue;
 
-                var methodName = method.Name?.Identifier.ValueText ?? "Unknown";
+                var methodName = method switch
+                {
+                    MethodDeclarationSyntax m => m.Name?.Identifier.ValueText ?? "Unknown",
+                    TriggerDeclarationSyntax t => t.Name?.ToFullString().Trim() ?? "Unknown",
+                    EventTriggerDeclarationSyntax e => e.ChildNodes().OfType<IdentifierNameSyntax>().Skip(1).FirstOrDefault()?.Identifier.ValueText ?? "Unknown",
+                    _ => "Unknown"
+                };
                 var varSection = method.ChildNodes().OfType<VarSectionSyntax>().FirstOrDefault();
                 var block = method.ChildNodes().OfType<BlockSyntax>().FirstOrDefault();
-                if (block == null) continue;
 
-                // Replace from start of var section (or block if no var) through end of block.
-                var replaceStart = varSection?.Span.Start ?? block.Span.Start;
-                var replaceEnd = block.Span.End;
-                var escaped = methodName.Replace("'", "''");
-                var errorBody =
-                    "\n    begin\n" +
-                    $"        Error('AL Runner: ''{escaped}'' uses DotNet interop — not supported in standalone mode. Add this object to your compiled dependency slice.');\n" +
-                    "    end;";
+                if (block != null)
+                {
+                    // Replace body and var section with Error() stub.
+                    var replaceStart = varSection?.Span.Start ?? block.Span.Start;
+                    var replaceEnd = block.Span.End;
+                    var escaped = methodName.Replace("'", "''");
+                    var errorBody =
+                        "\n    begin\n" +
+                        $"        Error('AL Runner: ''{escaped}'' uses DotNet interop — not supported in standalone mode. Add this object to your compiled dependency slice.');\n" +
+                        "    end;";
+                    replacements.Add((replaceStart, replaceEnd, errorBody));
+                }
+                // For interface procedures (no block): only clean up signatures below.
 
-                replacements.Add((replaceStart, replaceEnd, errorBody));
+                // Also replace DotNet types in parameter and return type positions.
+                // These are outside the body/var span but still cause unresolved-type errors.
+                // Replace: param: DotNet XmlNode → param: Variant
+                // Replace: ): DotNet XmlNode   → ): Text
+                var returnValue = method.ChildNodes().OfType<ReturnValueSyntax>().FirstOrDefault();
+                if (returnValue != null)
+                {
+                    var retDotNet = returnValue.DescendantNodes()
+                        .OfType<SubtypedDataTypeSyntax>()
+                        .FirstOrDefault(s => s.TypeName.ToFullString().Trim()
+                            .Equals("DotNet", StringComparison.OrdinalIgnoreCase));
+                    if (retDotNet != null)
+                        replacements.Add((retDotNet.Span.Start, retDotNet.Span.End, "Text"));
+                }
+
+                var paramList = method.ChildNodes().OfType<ParameterListSyntax>().FirstOrDefault();
+                if (paramList != null)
+                {
+                    foreach (var param in paramList.DescendantNodes().OfType<SubtypedDataTypeSyntax>()
+                        .Where(s => s.TypeName.ToFullString().Trim()
+                            .Equals("DotNet", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        replacements.Add((param.Span.Start, param.Span.End, "Variant"));
+                    }
+                }
+            }
+
+            // Also remove DotNet variable declarations from object-level (GlobalVarSection).
+            // These are codeunit/page/report-level vars outside any procedure — not handled
+            // by the procedure loop above but still cause the DepCompiler's regex to exclude
+            // the entire file, making the object "missing" from compilation.
+            foreach (var globalVars in root.DescendantNodes().OfType<GlobalVarSectionSyntax>())
+            {
+                var dotNetDecls = globalVars.Variables
+                    .Where(decl => decl.DescendantNodes()
+                        .OfType<SubtypedDataTypeSyntax>()
+                        .Any(s => s.TypeName.ToFullString().Trim()
+                            .Equals("DotNet", StringComparison.OrdinalIgnoreCase)))
+                    .ToList();
+
+                if (dotNetDecls.Count == 0) continue;
+
+                if (dotNetDecls.Count == globalVars.Variables.Count)
+                {
+                    // All vars are DotNet — remove the entire section including the 'var' keyword
+                    // to avoid leaving an empty 'var' which is a syntax error.
+                    replacements.Add((globalVars.FullSpan.Start, globalVars.FullSpan.End, ""));
+                }
+                else
+                {
+                    // Only some vars are DotNet — remove just those declarations.
+                    foreach (var decl in dotNetDecls)
+                        replacements.Add((decl.FullSpan.Start, decl.FullSpan.End, ""));
+                }
             }
 
             if (replacements.Count == 0)
                 return (source, 0);
 
             // Apply replacements from end to start to preserve offsets.
-            var chars = source.ToCharArray();
             var result = source;
             foreach (var (start, end, text) in replacements.OrderByDescending(r => r.Start))
                 result = result[..start] + text + result[end..];
+
+            // Remove orphaned preprocessor directives left behind when a DotNet var that was
+            // wrapped in #if/#endif had its leading #if trivia removed but the closing #endif
+            // (as leading trivia of the next var) was not part of the removed span.
+            result = RemoveOrphanedPreprocessorDirectives(result);
 
             return (result, replacements.Count);
         }
@@ -851,7 +979,14 @@ public static class DepExtractor
                 Console.Error.WriteLine($"  {dirFiles.Length} AL file(s) found");
                 foreach (var f in dirFiles)
                 {
-                    try { result.Add((depSource, Path.GetRelativePath(depSource, f), File.ReadAllText(f))); }
+                    try
+                    {
+                        var src = File.ReadAllText(f);
+                        // Strip UTF-8 BOM if present — SyntaxTree.ParseObjectText does not handle it
+                        // and produces parse errors for files written with BOM.
+                        if (src.Length > 0 && src[0] == '﻿') src = src[1..];
+                        result.Add((depSource, Path.GetRelativePath(depSource, f), src));
+                    }
                     catch (Exception ex) { Console.Error.WriteLine($"Warning: failed to read {f}: {ex.Message}"); }
                 }
             }

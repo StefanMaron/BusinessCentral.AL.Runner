@@ -468,7 +468,40 @@ public static class DepCompiler
         if (Directory.Exists(alPkg) && !allPackagePaths.Contains(alPkg))
             allPackagePaths.Add(alPkg);
 
-        var csharpList = AlTranspiler.TranspileMulti(alSources, allPackagePaths.Count > 0 ? allPackagePaths : null, null);
+        // Pass file paths so parse-error messages include the source filename.
+        var filePaths = alFiles.Select(f => (string?)f).ToList();
+        var effectivePackages = allPackagePaths.Count > 0 ? allPackagePaths : null;
+        var compilableSources = alSources;
+        var compilableFilePaths = filePaths;
+
+        var csharpList = AlTranspiler.TranspileMulti(compilableSources, effectivePackages, null, sourceFilePaths: compilableFilePaths);
+
+        if ((csharpList == null || csharpList.Count == 0) && compilableSources.Count > 0)
+        {
+            // Remove files with residual DotNet type references not caught by extract-time stripping.
+            // Uses AST-based detection (not regex) to avoid false positives from DotNet appearing
+            // in string literals, Obsolete attributes, or codeunit names.
+            static bool HasDotNetTypeRef(string src) {
+                try {
+                    return Microsoft.Dynamics.Nav.CodeAnalysis.Syntax.SyntaxTree
+                        .ParseObjectText(src).GetRoot().DescendantNodes()
+                        .OfType<Microsoft.Dynamics.Nav.CodeAnalysis.Syntax.SubtypedDataTypeSyntax>()
+                        .Any(s => s.TypeName.ToFullString().Trim()
+                            .Equals("DotNet", StringComparison.OrdinalIgnoreCase));
+                } catch { return false; }
+            }
+            var pairs = compilableSources.Zip(compilableFilePaths, (s, p) => (s, p)).ToList();
+            var cleaned = pairs.Where(x => !HasDotNetTypeRef(x.s)).ToList();
+            var dotnetCount = pairs.Count - cleaned.Count;
+            if (dotnetCount > 0)
+            {
+                compilableSources = cleaned.Select(x => x.s).ToList();
+                compilableFilePaths = cleaned.Select(x => x.p).ToList();
+                Console.Error.WriteLine($"  Excluded {dotnetCount} file(s) with residual DotNet interop (unsupported in runner)");
+                csharpList = AlTranspiler.TranspileMulti(compilableSources, effectivePackages, null, sourceFilePaths: compilableFilePaths);
+            }
+        }
+
         if (csharpList == null || csharpList.Count == 0)
         {
             Console.Error.WriteLine($"  AL transpilation produced no output");
