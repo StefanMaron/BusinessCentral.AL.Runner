@@ -36,6 +36,11 @@ public static class TableFieldRegistry
         @"\bSourceTable\s*=\s*(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))\s*;",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    // SourceTableTemporary = true
+    private static readonly Regex SourceTableTemporaryProp = new(
+        @"\bSourceTableTemporary\s*=\s*true\b",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     // tableextension Id "Name" extends "BaseTableName" { fields { ... } }
     private static readonly Regex TableExtHeader = new(
         @"\btableextension\s+\d+\s+(?:""[^""]*""|[A-Za-z_][A-Za-z0-9_]*)\s+extends\s+(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))[^{]*?\{",
@@ -87,6 +92,9 @@ public static class TableFieldRegistry
     // pageId -> unresolved source table name (for pages parsed before their source table)
     private static readonly Dictionary<int, string> _pagePendingSourceTable = new();
 
+    // pageIds that declare SourceTableTemporary = true
+    private static readonly HashSet<int> _pageSourceTableTemporary = new();
+
     private static readonly Regex OptionMembersProp = new(
         @"\bOptionMembers\s*=\s*([^;]+);",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -107,6 +115,7 @@ public static class TableFieldRegistry
         _optionMembersFields.Clear();
         _pageSourceTable.Clear();
         _pagePendingSourceTable.Clear();
+        _pageSourceTableTemporary.Clear();
     }
 
     public static void ParseAndRegister(string alSource)
@@ -274,6 +283,11 @@ public static class TableFieldRegistry
                 // Table not registered yet (page parsed before its source table) — store
                 // the table name for deferred resolution when GetSourceTableId() is called.
                 _pagePendingSourceTable[pageId] = tableName;
+
+            // Track SourceTableTemporary = true so the rewriter can emit
+            // new MockRecordHandle(tableId, true) for the page's Rec property.
+            if (SourceTableTemporaryProp.IsMatch(pageBody))
+                _pageSourceTableTemporary.Add(pageId);
         }
 
         // Parse tableextension declarations: register extension fields under the base table ID.
@@ -410,6 +424,14 @@ public static class TableFieldRegistry
         }
         return null;
     }
+
+    /// <summary>
+    /// Returns <c>true</c> when the page declared <c>SourceTableTemporary = true</c>.
+    /// Used by the rewriter to emit <c>new MockRecordHandle(tableId, true)</c>
+    /// for the page's <c>Rec</c> property.
+    /// </summary>
+    public static bool GetIsSourceTableTemporary(int pageId)
+        => _pageSourceTableTemporary.Contains(pageId);
 
     /// <summary>Returns the table name or null if not registered.</summary>
     public static string? GetTableName(int tableId)
