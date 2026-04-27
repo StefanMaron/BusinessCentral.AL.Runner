@@ -69,33 +69,43 @@ public static class DepExtractor
         //    Each source is a .app artifact file or a directory of AL files.
         var appSources = LoadDepSources(depSourceList);
 
-        // 3. Build reachable slice via BFS over all object types.
+        // 3. Build a name→file index by parsing every source file once.
+        //    This turns BFS lookups from O(N) scans to O(1) dictionary hits,
+        //    reducing the total parse cost from O(N×slice_size) to O(N).
+        Console.Error.WriteLine($"Building index from {appSources.Count} source file(s)...");
+        var index = BuildIndex(appSources);
+        Console.Error.WriteLine($"Index ready — {index.DefinitionCount} definitions, {index.ExtensionCount} extensions, {index.SubscriberCount} event subscribers.");
+
+        // 4. BFS over all object types using the index.
         var pending = AllTypes.ToDictionary(t => t, _ => new Queue<string>(),     StringComparer.OrdinalIgnoreCase);
         var visited = AllTypes.ToDictionary(t => t, _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
         var allExtracted = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         SeedPending(refs, pending);
-        ExpandSlice(pending, visited, appSources, allExtracted);
+        ExpandSlice(pending, visited, index, allExtracted);
 
-        // 4. Scan ALL source for event subscribers targeting objects in the slice.
-        //    Covers platform-triggered implicit table events (OnAfterInsert etc.),
-        //    integration/business events on codeunits in the slice, and page/report events.
-        //    Iterate to fixpoint: new subscribers may pull in new objects.
+        // 5. Add event subscribers targeting objects in the slice.
+        //    Iterate to fixpoint: new subscribers may pull in objects that have their own subscribers.
         int eventSubsAdded;
         do
         {
             eventSubsAdded = 0;
-            foreach (var (_, fileName, source) in appSources)
+            foreach (var targetType in new[] { "Table", "Codeunit", "Page", "Report" })
             {
-                if (allExtracted.ContainsKey(fileName)) continue;
-                if (!IsEventSubscriberForSlice(source, visited)) continue;
-
-                allExtracted[fileName] = source;
-                Console.Error.WriteLine($"  + {fileName} (event subscriber)");
-                eventSubsAdded++;
-
-                EnqueueTransitiveDeps(source, visited, pending);
-                ExpandSlice(pending, visited, appSources, allExtracted);
+                if (!index.EventSubscribers.TryGetValue(targetType, out var subsByTarget)) continue;
+                foreach (var (targetName, subscribers) in subsByTarget)
+                {
+                    if (!visited[targetType].Contains(targetName)) continue;
+                    foreach (var (fileName, source) in subscribers)
+                    {
+                        if (allExtracted.ContainsKey(fileName)) continue;
+                        allExtracted[fileName] = source;
+                        Console.Error.WriteLine($"  + {fileName} (event subscriber)");
+                        eventSubsAdded++;
+                        EnqueueTransitiveDeps(source, visited, pending);
+                        ExpandSlice(pending, visited, index, allExtracted);
+                    }
+                }
             }
         } while (eventSubsAdded > 0);
 
@@ -121,7 +131,7 @@ public static class DepExtractor
     private static void ExpandSlice(
         Dictionary<string, Queue<string>> pending,
         Dictionary<string, HashSet<string>> visited,
-        List<(string Origin, string FileName, string Source)> appSources,
+        DepIndex index,
         Dictionary<string, string> allExtracted)
     {
         bool anyWork;
@@ -136,15 +146,27 @@ public static class DepExtractor
                     if (!visited[typeName].Add(name)) continue;
                     anyWork = true;
 
-                    var lookup = SingleRef(typeName, name);
-                    foreach (var (_, fileName, source) in appSources)
+                    // O(1) definition lookup
+                    if (index.Definitions.TryGetValue(typeName, out var defs) &&
+                        defs.TryGetValue(name, out var def) &&
+                        !allExtracted.ContainsKey(def.FileName))
                     {
-                        if (allExtracted.ContainsKey(fileName)) continue;
-                        if (!SourceMatchesAnyRef(source, lookup)) continue;
+                        allExtracted[def.FileName] = def.Source;
+                        Console.Error.WriteLine($"  + {def.FileName}");
+                        EnqueueTransitiveDeps(def.Source, visited, pending);
+                    }
 
-                        allExtracted[fileName] = source;
-                        Console.Error.WriteLine($"  + {fileName}");
-                        EnqueueTransitiveDeps(source, visited, pending);
+                    // O(1) extension lookup — includes all tableextensions, pageextensions, etc.
+                    if (index.Extensions.TryGetValue(typeName, out var exts) &&
+                        exts.TryGetValue(name, out var extList))
+                    {
+                        foreach (var (fileName, source) in extList)
+                        {
+                            if (allExtracted.ContainsKey(fileName)) continue;
+                            allExtracted[fileName] = source;
+                            Console.Error.WriteLine($"  + {fileName}");
+                            EnqueueTransitiveDeps(source, visited, pending);
+                        }
                     }
                 }
             }
@@ -176,6 +198,104 @@ public static class DepExtractor
         foreach (var n in names)
             if (!visited[typeName].Contains(n))
                 pending[typeName].Enqueue(n);
+    }
+
+    // -----------------------------------------------------------------------
+    // Index — built once from all dep sources, used for O(1) BFS lookups
+    // -----------------------------------------------------------------------
+
+    private static DepIndex BuildIndex(List<(string Origin, string FileName, string Source)> appSources)
+    {
+        var index = new DepIndex();
+        int i = 0;
+        foreach (var (_, fileName, source) in appSources)
+        {
+            i++;
+            if (i % 1000 == 0)
+                Console.Error.WriteLine($"  Indexing {i}/{appSources.Count}...");
+
+            try
+            {
+                var tree = SyntaxTree.ParseObjectText(source);
+                var root = tree.GetRoot();
+                if (root is not CompilationUnitSyntax cu) continue;
+
+                foreach (var obj in cu.Objects)
+                    IndexObject(obj, fileName, source, index);
+
+                IndexEventSubscribers(root, fileName, source, index);
+            }
+            catch { /* skip unparseable files */ }
+        }
+        return index;
+    }
+
+    private static void IndexObject(SyntaxNode obj, string fileName, string source, DepIndex index)
+    {
+        switch (obj.Kind)
+        {
+            case SyntaxKind.TableObject:
+                index.AddDefinition("Table", GetObjectName(obj), fileName, source); break;
+            case SyntaxKind.CodeunitObject:
+                index.AddDefinition("Codeunit", GetObjectName(obj), fileName, source); break;
+            case SyntaxKind.EnumType:
+                if (obj is EnumTypeSyntax et)
+                    index.AddDefinition("Enum", UnquoteIdentifier(et.Name.Identifier.ValueText), fileName, source);
+                break;
+            case SyntaxKind.PageObject:
+                index.AddDefinition("Page", GetObjectName(obj), fileName, source); break;
+            case SyntaxKind.ReportObject:
+                index.AddDefinition("Report", GetObjectName(obj), fileName, source); break;
+            case SyntaxKind.QueryObject:
+                index.AddDefinition("Query", GetObjectName(obj), fileName, source); break;
+            case SyntaxKind.XmlPortObject:
+                index.AddDefinition("XmlPort", GetObjectName(obj), fileName, source); break;
+            case SyntaxKind.Interface:
+                index.AddDefinition("Interface", GetObjectName(obj), fileName, source); break;
+
+            // Extension objects: indexed by the base object they extend
+            case SyntaxKind.TableExtensionObject:
+                if (obj is ApplicationObjectExtensionSyntax te)
+                    index.AddExtension("Table", UnquoteIdentifier(te.BaseObject?.ToFullString().Trim()), fileName, source);
+                break;
+            case SyntaxKind.EnumExtensionType:
+                if (obj is ApplicationObjectExtensionSyntax ee)
+                    index.AddExtension("Enum", UnquoteIdentifier(ee.BaseObject?.ToFullString().Trim()), fileName, source);
+                break;
+            case SyntaxKind.PageExtensionObject:
+                if (obj is ApplicationObjectExtensionSyntax pe)
+                    index.AddExtension("Page", UnquoteIdentifier(pe.BaseObject?.ToFullString().Trim()), fileName, source);
+                break;
+            case SyntaxKind.ReportExtensionObject:
+                if (obj is ApplicationObjectExtensionSyntax re)
+                    index.AddExtension("Report", UnquoteIdentifier(re.BaseObject?.ToFullString().Trim()), fileName, source);
+                break;
+        }
+    }
+
+    private static void IndexEventSubscribers(SyntaxNode root, string fileName, string source, DepIndex index)
+    {
+        foreach (var attr in root.DescendantNodes().OfType<MemberAttributeSyntax>())
+        {
+            if (attr.Name?.Identifier.ValueText?.Equals("EventSubscriber", StringComparison.OrdinalIgnoreCase) != true)
+                continue;
+
+            var args = attr.ArgumentList?.Arguments ?? default;
+            if (args.Count < 2) continue;
+
+            var objectTypeText = args[0].ToFullString().Trim();
+            var objectNameText = ExtractNameFromAttributeArg(args[1]);
+            if (string.IsNullOrEmpty(objectNameText)) continue;
+
+            string? targetType = null;
+            if      (objectTypeText.Contains("Table",    StringComparison.OrdinalIgnoreCase)) targetType = "Table";
+            else if (objectTypeText.Contains("Codeunit", StringComparison.OrdinalIgnoreCase)) targetType = "Codeunit";
+            else if (objectTypeText.Contains("Page",     StringComparison.OrdinalIgnoreCase)) targetType = "Page";
+            else if (objectTypeText.Contains("Report",   StringComparison.OrdinalIgnoreCase)) targetType = "Report";
+
+            if (targetType != null)
+                index.AddEventSubscriber(targetType, objectNameText, fileName, source);
+        }
     }
 
     private static void SeedPending(ExternalRefs refs, Dictionary<string, Queue<string>> pending)
@@ -557,6 +677,57 @@ public static class DepExtractor
         Print("Queries:",    refs.Queries);
         Print("XmlPorts:",   refs.XmlPorts);
         Print("Interfaces:", refs.Interfaces);
+    }
+}
+
+/// <summary>
+/// Pre-built lookup index over all dependency source files.
+/// Parsed once upfront; BFS lookups are O(1) dictionary hits rather than O(N) file scans.
+/// </summary>
+internal class DepIndex
+{
+    // typeName -> objectName -> (fileName, source)
+    public Dictionary<string, Dictionary<string, (string FileName, string Source)>> Definitions { get; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    // baseTypeName -> baseObjectName -> list of (fileName, source)
+    public Dictionary<string, Dictionary<string, List<(string FileName, string Source)>>> Extensions { get; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    // targetTypeName -> targetObjectName -> list of (fileName, source)
+    public Dictionary<string, Dictionary<string, List<(string FileName, string Source)>>> EventSubscribers { get; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    public int DefinitionCount  => Definitions.Values.Sum(d => d.Count);
+    public int ExtensionCount   => Extensions.Values.Sum(d => d.Values.Sum(l => l.Count));
+    public int SubscriberCount  => EventSubscribers.Values.Sum(d => d.Values.Sum(l => l.Count));
+
+    public void AddDefinition(string? typeName, string? objectName, string fileName, string source)
+    {
+        if (string.IsNullOrEmpty(typeName) || string.IsNullOrEmpty(objectName)) return;
+        if (!Definitions.TryGetValue(typeName, out var byName))
+            Definitions[typeName] = byName = new Dictionary<string, (string, string)>(StringComparer.OrdinalIgnoreCase);
+        byName.TryAdd(objectName, (fileName, source));
+    }
+
+    public void AddExtension(string? baseTypeName, string? baseObjectName, string fileName, string source)
+    {
+        if (string.IsNullOrEmpty(baseTypeName) || string.IsNullOrEmpty(baseObjectName)) return;
+        if (!Extensions.TryGetValue(baseTypeName, out var byBase))
+            Extensions[baseTypeName] = byBase = new Dictionary<string, List<(string, string)>>(StringComparer.OrdinalIgnoreCase);
+        if (!byBase.TryGetValue(baseObjectName, out var list))
+            byBase[baseObjectName] = list = [];
+        list.Add((fileName, source));
+    }
+
+    public void AddEventSubscriber(string? targetType, string? targetName, string fileName, string source)
+    {
+        if (string.IsNullOrEmpty(targetType) || string.IsNullOrEmpty(targetName)) return;
+        if (!EventSubscribers.TryGetValue(targetType, out var byTarget))
+            EventSubscribers[targetType] = byTarget = new Dictionary<string, List<(string, string)>>(StringComparer.OrdinalIgnoreCase);
+        if (!byTarget.TryGetValue(targetName, out var list))
+            byTarget[targetName] = list = [];
+        list.Add((fileName, source));
     }
 }
 
