@@ -30,7 +30,16 @@ Claim the first eligible `status: ready` issue with no `agent:` label by labelli
 gh issue edit <N> --add-label "agent: <AGENT-ID>" --add-label "status: in-progress" --remove-label "status: ready" --add-assignee @me --repo StefanMaron/BusinessCentral.AL.Runner
 ```
 
-If the assign step fails (e.g. the issue was just grabbed by another user), drop the labels you just added and pick a different issue.
+**Immediately verify the claim** — two agents can race on the same issue:
+```
+gh issue view <N> --json labels --repo StefanMaron/BusinessCentral.AL.Runner \
+  | jq '[.labels[].name | select(startswith("agent:"))]'
+```
+If the output contains **more than one** `agent:` label, you lost the race. Drop your labels and pick a different issue:
+```
+gh issue edit <N> --remove-label "agent: <AGENT-ID>" --remove-label "status: in-progress" --add-label "status: ready" --remove-assignee @me --repo StefanMaron/BusinessCentral.AL.Runner
+```
+Then repeat Step 2 on the next eligible issue.
 
 Read it: `gh issue view <N> --repo StefanMaron/BusinessCentral.AL.Runner`.
 
