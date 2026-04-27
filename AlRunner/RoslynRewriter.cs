@@ -1236,6 +1236,7 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
                     int.TryParse(typeName.Substring("Record".Length), out var idFromType))
                     tableId = idFromType;
             }
+            bool isSourceTableTemporary = false;
             if (tableId == 0 && _currentClassName != null && _currentClassName.StartsWith("Page"))
             {
                 // Fallback 2: for page classes (Page<N>), BC emits "NavRecord Rec => this.SourceTable"
@@ -1246,8 +1247,24 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
                     var sourceTableId = AlRunner.Runtime.TableFieldRegistry.GetSourceTableId(pageId);
                     if (sourceTableId.HasValue)
                         tableId = sourceTableId.Value;
+                    isSourceTableTemporary = AlRunner.Runtime.TableFieldRegistry.GetIsSourceTableTemporary(pageId);
                 }
             }
+            else if (_currentClassName != null && _currentClassName.StartsWith("Page"))
+            {
+                // tableId was resolved from the property type name, but we still need to check
+                // whether the page declared SourceTableTemporary = true.
+                if (int.TryParse(_currentClassName.AsSpan(4), out var pageId))
+                    isSourceTableTemporary = AlRunner.Runtime.TableFieldRegistry.GetIsSourceTableTemporary(pageId);
+            }
+
+            // Emit new MockRecordHandle(tableId) or new MockRecordHandle(tableId, true)
+            // depending on whether the page declared SourceTableTemporary = true.
+            // The temporary flag ensures the page's Rec uses its own private row store,
+            // isolated from the global table — matching real BC behaviour (issue #1490).
+            var recInitExpr = isSourceTableTemporary
+                ? $"new MockRecordHandle({tableId}, true)"
+                : $"new MockRecordHandle({tableId})";
 
             // Parse a simple auto-property with a default value
             var stubProp = SyntaxFactory.PropertyDeclaration(
@@ -1260,7 +1277,7 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
                         SyntaxFactory.AccessorDeclaration(SyntaxKind.GetAccessorDeclaration)
                             .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.SemicolonToken)))))
                 .WithInitializer(SyntaxFactory.EqualsValueClause(
-                    SyntaxFactory.ParseExpression($"new MockRecordHandle({tableId})")))
+                    SyntaxFactory.ParseExpression(recInitExpr)))
                 .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.SemicolonToken));
             return stubProp;
         }

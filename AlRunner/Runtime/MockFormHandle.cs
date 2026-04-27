@@ -148,6 +148,7 @@ public class MockFormHandle
             // the page ID via TableFieldRegistry, rather than the default table-0 fallback
             // in AlCompat.InitializeUninitializedObject (issue #1422).
             var sourceTableId = TableFieldRegistry.GetSourceTableId(PageId) ?? 0;
+            var sourceTableTemporary = TableFieldRegistry.GetIsSourceTableTemporary(PageId);
             foreach (var field in pageType.GetFields(
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
             {
@@ -155,7 +156,7 @@ public class MockFormHandle
                 if (field.GetValue(_pageInstance) != null) continue;
                 if (field.FieldType == typeof(MockRecordHandle))
                 {
-                    field.SetValue(_pageInstance, new MockRecordHandle(sourceTableId));
+                    field.SetValue(_pageInstance, new MockRecordHandle(sourceTableId, sourceTableTemporary));
                     continue;
                 }
                 try

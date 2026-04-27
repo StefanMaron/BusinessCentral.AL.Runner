@@ -5874,6 +5874,27 @@ Page.Rec (page-as-component public procedures):
     fields to new MockRecordHandle(sourceTableId) after GetUninitializedObject +
     InitializeComponent, covering any remaining null Rec fields.
 
+Page.SourceTableTemporary (Rec isolation):
+  layer: runtime-api
+  category: Page
+  status: covered
+  tests:
+    - tests/bucket-2/page-report/313400-page-sttemp-rec-assign
+  notes: >
+    Pages with SourceTableTemporary = true must have their Rec backed by a private
+    temporary store, not the shared global table. Without this, two Page variables
+    of the same page type in the same test share the global table: the second
+    SetConditions/DeleteAll wipes the first page's rows.
+    Fix (issue #1490):
+    1. TableFieldRegistry.ParseAndRegister now detects SourceTableTemporary = true and
+       stores the page ID in _pageSourceTableTemporary; GetIsSourceTableTemporary(pageId)
+       exposes the flag to callers.
+    2. RoslynRewriter emits new MockRecordHandle(tableId, true) for Rec/xRec auto-properties
+       on pages where SourceTableTemporary is true.
+    3. MockFormHandle.EnsurePageInstance initialises null MockRecordHandle backing fields as
+       new MockRecordHandle(sourceTableId, sourceTableTemporary), so the GetUninitializedObject
+       path also produces a properly isolated Rec.
+
 Page.LookupMode (Boolean):
   layer: runtime-api
   category: Page
