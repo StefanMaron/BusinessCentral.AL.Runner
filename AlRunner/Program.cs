@@ -535,11 +535,6 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   Data store is in-memory; Id auto-generates a Guid.
 - BigText — MockBigText replaces NavBigText. AddText, GetSubText, TextPos, Length
   all work via in-memory StringBuilder. Note: TextPos is 1-based in AL.
-- Image (Codeunit 3971) — MockImage parses real PNG/JPEG/GIF/BMP headers.
-  FromBase64(Text) and FromStream(InStream) detect format and store actual pixel
-  dimensions. GetWidth()/GetHeight() return real values (not 0). Resize() updates
-  stored dimensions. Save() writes bytes back to OutStream. Throws on empty/invalid
-  input — matching BC behaviour.
 - TaskScheduler — CreateTask (dispatches codeunit synchronously, invokes
   failureCodeunitId on exception, returns Guid), TaskExists (returns false),
   CancelTask (no-op), SetTaskReady (no-op)
@@ -548,6 +543,11 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
 
 ### What al-runner does NOT support
 
+- System Application business-logic codeunits are not reimplemented by al-runner.
+  Auto-generated blank shells may let AL compile, but they do not provide real
+  behaviour. Use a test-local stub / bring-your-own-stub pattern when tests need
+  behaviorful dependencies such as image processing, file management, crypto,
+  email, or similar SA services.
 - Pages, Reports — stub them via `--stubs <dir>` or inject via AL interface
 - XmlPort I/O (Import/Export) — XmlPort variables compile and properties work,
   but Import/Export require the BC service tier. Use AL interface injection to
