@@ -7382,16 +7382,34 @@ Session.StartSession (Integer, Integer, Duration, Text, Table):
   layer: runtime-api
   category: Session
   status: not-possible
+  notes: >
+    Argument ordering (Duration before Company) does not match any BC-documented
+    StartSession overload; likely a coverage-gen artefact. The supported overloads
+    (company, record, timeout) are covered — see Session.StartSession entries above.
 
 Session.StartSession (Integer, Integer, Text, Table, Duration):
   layer: runtime-api
   category: Session
-  status: not-possible
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/1402-startsession-overloads
+  notes: >
+    5-arg form (company, record, timeout). MockSession.ALStartSession(DataError,
+    ByRef<int>, int, string, MockRecordHandle, NavDuration) — timeout is ignored in
+    the single-process runner. Re-classified from not-possible: the C# overload was
+    already implemented and tests confirm it works. Issue #1402.
 
 Session.StartSession (Integer, Integer, Text, Table):
   layer: runtime-api
   category: Session
-  status: not-possible
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/1402-startsession-overloads
+  notes: >
+    4-arg form (company, record). MockSession.ALStartSession(DataError, ByRef<int>,
+    int, string, MockRecordHandle) dispatches the codeunit synchronously. Re-classified
+    from not-possible: C# overload was already implemented and tests confirm it works.
+    Issue #1402.
 
 Session.StopSession (Integer, Text):
   layer: runtime-api
@@ -10266,6 +10284,20 @@ Time.ToText (Boolean):
   category: Time
   status: covered
   notes: via Format(T) handled by AlCompat.FormatNavTime
+
+# Format picture-string directives
+
+"Format picture: <Filler Character,N>":
+  layer: runtime-api
+  category: Time
+  status: covered
+  tests:
+    - tests/bucket-2/page-report/85-picture-format
+  notes: >
+    <Filler Character,N> is a directive that sets the pad character for adjacent
+    field tokens in a Format() picture string. It must not emit any character into
+    the output; fixed in ResolveAlDateToken and ResolveAlTimeToken by returning
+    string.Empty instead of the literal token text.
 
 # ── Variant ─────────────────────────────────────────────────────
 
