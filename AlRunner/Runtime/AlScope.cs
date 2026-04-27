@@ -719,6 +719,20 @@ public static class AlCompat
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<NavOption, object> _optionEnumId = new();
 
     /// <summary>
+    /// Maps NavOption instances created from inline AL Option parameters
+    /// (e.g. <c>Style: Option Standard,Attention,Favorable</c>) to their
+    /// option-member name string.  Used by <see cref="FormatNavOption"/> to
+    /// return the member name rather than the ordinal integer.
+    ///
+    /// Populated by <see cref="CreateInlineTaggedOption"/> which the rewriter
+    /// emits in place of <c>NavOption.Create(someStaticNCLMeta, ordinal)</c>
+    /// when the metadata is a scope-level static field (not a BC field-registry
+    /// lookup).  This lets us distinguish "Standard,Attention,Favorable" (safe)
+    /// from a BC-global option metadata that may map to unrelated member names.
+    /// </summary>
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<NavOption, string> _inlineOptionNames = new();
+
+    /// <summary>
     /// Create a NavOption and remember its source enum object ID so later
     /// calls to <see cref="GetOrdinalsForOption"/> / <see cref="GetNamesForOption"/>
     /// can resolve back to the AL enum. Emitted by the rewriter as the
@@ -995,7 +1009,38 @@ public static class AlCompat
         var opt = AlRunner.Runtime.MockRecordHandle.CreateOptionValue(ordinal);
         if (_optionEnumId.TryGetValue(existing, out var id))
             _optionEnumId.AddOrUpdate(opt, id);
+        // Propagate inline option-name tag if set
+        if (_inlineOptionNames.TryGetValue(existing, out var names))
+            _inlineOptionNames.AddOrUpdate(opt, names);
         return opt;
+    }
+
+    /// <summary>
+    /// Emitted by the rewriter for <c>NavOption.Create(someStaticNCLMeta, ordinal)</c>
+    /// in scope constructors where <paramref name="meta"/> is a static field initialised
+    /// from <c>NCLOptionMetadata.Create("A,B,C")</c>.  Creates a NavOption via
+    /// <c>NavOption.Create(meta, ordinal)</c> and tags it with the option-name string
+    /// so <see cref="FormatNavOption"/> can return the member name safely.
+    ///
+    /// Using <paramref name="meta"/> directly (rather than <c>MockRecordHandle.CreateOptionValue</c>)
+    /// preserves the full <c>NCLOptionMetadata</c> so that downstream runtime calls
+    /// (e.g. <c>.ALNames</c>, <c>.ALOrdinals</c>) still work.
+    /// </summary>
+    public static NavOption CreateInlineTaggedOption(NCLOptionMetadata meta, int ordinal)
+    {
+        try
+        {
+            var opt = NavOption.Create(meta, ordinal);
+            var optStr = meta.OptionString;
+            if (!string.IsNullOrEmpty(optStr))
+                _inlineOptionNames.AddOrUpdate(opt, optStr);
+            return opt;
+        }
+        catch
+        {
+            // Fallback: create a plain option value
+            return AlRunner.Runtime.MockRecordHandle.CreateOptionValue(ordinal);
+        }
     }
 
     /// <summary>
@@ -1022,13 +1067,24 @@ public static class AlCompat
             var meta = source.NavOptionMetadata;
             if (meta != null)
             {
+                NavOption? result = null;
                 // NCLOptionMetadata.CreateNavOption(int) creates a NavOption directly.
                 // If that throws, fall back to NavOption.Create(meta, ordinal).
-                try { return meta.CreateNavOption(ordinal); }
+                try { result = meta.CreateNavOption(ordinal); }
                 catch { }
 
                 // NavOption.Create(NCLOptionMetadata, int) — session-independent fallback.
-                return NavOption.Create(meta, ordinal);
+                if (result == null)
+                    try { result = NavOption.Create(meta, ordinal); }
+                    catch { }
+
+                if (result != null)
+                {
+                    // Propagate inline option-name tag from source to the new instance.
+                    if (_inlineOptionNames.TryGetValue(source, out var inlineNames))
+                        _inlineOptionNames.AddOrUpdate(result, inlineNames);
+                    return result;
+                }
             }
         }
         catch { }
@@ -1930,35 +1986,16 @@ public static class AlCompat
                 // Ordinal not in registry — fall through to NCLOptionMetadata path.
             }
 
-            // 2. NCLOptionMetadata path (inline AL Option parameters, e.g. NavOption.Create(NCLOptionMetadata.Create("A,B,C"), ordinal)).
-            var metaProp = optType.GetProperty("NavOptionMetadata");
-            if (metaProp != null)
+            // 2. Inline option-name tag — set by CreateInlineTaggedOption / NavOptionCreateInstance
+            //    for NavOptions created from explicit NCLOptionMetadata.Create("A,B,C") scope fields.
+            //    This path is ONLY used when the rewriter tagged the option, so we know the
+            //    OptionString is correct and not from an unrelated BC-global field metadata.
+            if (_inlineOptionNames.TryGetValue((NavOption)value, out var inlineOptStr) &&
+                !string.IsNullOrEmpty(inlineOptStr))
             {
-                var meta = metaProp.GetValue(value);
-                if (meta != null)
-                {
-                    // NCLOptionMetadata.GetOptionFromIndex(int index, bool getCaption) — session-independent.
-                    var getOptMethod = meta.GetType().GetMethod("GetOptionFromIndex",
-                        new[] { typeof(int), typeof(bool) });
-                    if (getOptMethod != null)
-                    {
-                        var name = getOptMethod.Invoke(meta, new object[] { ordinal, false }) as string;
-                        if (!string.IsNullOrEmpty(name) && name != ordinal.ToString()) return name;
-                    }
-
-                    // Fallback: parse OptionString directly ("Standard,Attention,Favorable").
-                    var optStrProp = meta.GetType().GetProperty("OptionString");
-                    if (optStrProp != null)
-                    {
-                        var optStr = optStrProp.GetValue(meta) as string;
-                        if (!string.IsNullOrEmpty(optStr))
-                        {
-                            var parts = optStr.Split(',');
-                            if (ordinal >= 0 && ordinal < parts.Length)
-                                return parts[ordinal];
-                        }
-                    }
-                }
+                var parts = inlineOptStr.Split(',');
+                if (ordinal >= 0 && ordinal < parts.Length)
+                    return parts[ordinal];
             }
 
             // 3. Last resort: return the ordinal as a string (previous behavior).

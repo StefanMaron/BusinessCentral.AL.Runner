@@ -2296,6 +2296,44 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
                 })));
         }
 
+        // Special-case: `NavOption.Create(NCLOptionMetadata, V)` where the first argument is
+        // either a static field reference OR an inline `NCLOptionMetadata.Create("A,B,C")` call.
+        // Route through AlCompat.CreateInlineTaggedOption which tags the NavOption with its
+        // option string so FormatNavOption can safely return the member name.
+        // Exclude the `NCLEnumMetadata.Create(N)` case (handled separately) and the
+        // `.NavOptionMetadata` reassignment pattern (handled above).
+        //
+        // Cases matched:
+        //   1. NavOption.Create(someStaticField, ordinal)   — scope static metadata field
+        //   2. NavOption.Create(NCLOptionMetadata.Create("A,B,C"), ordinal) — field initializer
+        if (node.ArgumentList.Arguments.Count == 2 &&
+            node.Expression is MemberAccessExpressionSyntax inlineMa &&
+            inlineMa.Expression is IdentifierNameSyntax inlineIdent &&
+            inlineIdent.Identifier.Text == "NavOption" &&
+            inlineMa.Name.Identifier.Text == "Create" &&
+            !(node.ArgumentList.Arguments[0].Expression is MemberAccessExpressionSyntax maArg &&
+              maArg.Name.Identifier.Text == "NavOptionMetadata") &&
+            // Exclude NCLEnumMetadata.Create(N) — handled by CreateTaggedOption rule below
+            !(node.ArgumentList.Arguments[0].Expression is InvocationExpressionSyntax firstArgInv &&
+              firstArgInv.Expression is MemberAccessExpressionSyntax firstArgMa &&
+              firstArgMa.Expression is IdentifierNameSyntax firstArgIdent &&
+              firstArgIdent.Identifier.Text == "NCLEnumMetadata"))
+        {
+            // Recurse into children first.
+            var metaArg = (ExpressionSyntax)Visit(node.ArgumentList.Arguments[0].Expression)!;
+            var ordinalArg = (ExpressionSyntax)Visit(node.ArgumentList.Arguments[1].Expression)!;
+            return SyntaxFactory.InvocationExpression(
+                SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    SyntaxFactory.IdentifierName("AlCompat"),
+                    SyntaxFactory.IdentifierName("CreateInlineTaggedOption")),
+                SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList(new[]
+                {
+                    SyntaxFactory.Argument(metaArg),
+                    SyntaxFactory.Argument(ordinalArg)
+                })));
+        }
+
         // Special-case: `NavOption.Create(NCLEnumMetadata.Create(N), V)`
         // must be rewritten to `AlCompat.CreateTaggedOption(N, V)` so the
         // NavOption instance remembers its source enum — later calls to
