@@ -58,6 +58,24 @@ codeunit 61303 "SACF SetAutoCalcFields Tests"
     end;
 
     // -----------------------------------------------------------------------
+    // SetAutoCalcFields + FindSet/Next — FlowField recalculated on each step
+    // -----------------------------------------------------------------------
+
+    [Test]
+    procedure SetAutoCalcFields_FindSetNext_SumsAllLineCountsCorrectly()
+    begin
+        // Positive: SetAutoCalcFields recalculates FlowField on every Next() call.
+        // BC runtime 16.0+ emits ALSetAutoCalcFields(DataError.ThrowError, fieldNo);
+        // this test proves the typed (DataError, params int[]) overload is wired correctly.
+        Helper.InsertOrder('FSN005');
+        Helper.InsertLines('FSN005', 4);
+        Helper.InsertOrder('FSN006');
+        Helper.InsertLines('FSN006', 2);
+        Assert.AreEqual(6, Helper.SumLineCountFindSetNext('FSN'),
+            'SetAutoCalcFields + FindSet/Next must accumulate Line Count across filtered orders (4+2=6)');
+    end;
+
+    // -----------------------------------------------------------------------
     // Error mechanism
     // -----------------------------------------------------------------------
 

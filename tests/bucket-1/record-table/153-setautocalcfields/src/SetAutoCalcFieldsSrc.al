@@ -79,4 +79,22 @@ codeunit 61302 "SACF Helper"
         Order.FindFirst();
         exit(Order."Line Count");
     end;
+
+    /// Returns a sum of Line Count for orders with the given prefix via FindSet+Next,
+    /// proving SetAutoCalcFields auto-calculates on each Next call.
+    /// BC runtime 16.0+ emits ALSetAutoCalcFields(DataError.ThrowError, fieldNo),
+    /// so this exercises the typed (DataError, params int[]) overload.
+    procedure SumLineCountFindSetNext(prefix: Code[10]): Integer
+    var
+        Order: Record "SACF Order";
+        Total: Integer;
+    begin
+        Order.SetAutoCalcFields("Line Count");
+        Order.SetFilter("No.", prefix + '*');
+        if Order.FindSet() then
+            repeat
+                Total += Order."Line Count";
+            until Order.Next() = 0;
+        exit(Total);
+    end;
 }

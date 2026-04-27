@@ -8474,6 +8474,10 @@ Table.SetAutoCalcFields (Joker):
   status: covered
   tests:
     - tests/bucket-1/record-table/153-setautocalcfields
+  notes: >
+    MockRecordHandle.ALSetAutoCalcFields(params int[]) and ALSetAutoCalcFields(DataError, params int[]).
+    BC runtime 16.0+ emits ALSetAutoCalcFields(DataError.ThrowError, fieldNo); typed overload pair
+    mirrors MockRecordRef and BC's own NavRecord.ALSetAutoCalcFields signature (issue #1413).
 
 Table.SetBaseLoadFields ():
   layer: runtime-api

@@ -3269,14 +3269,20 @@ public class MockRecordHandle : IConvertible
     /// <summary>
     /// AL SetAutoCalcFields — registers FlowFields for automatic calculation after
     /// every Find*/Get/Next operation on this record variable.
+    /// Typed overloads mirror MockRecordRef and BC's own NavRecord.ALSetAutoCalcFields signature:
+    ///   (params int[] fieldNos)               — runtime &lt; 16.0 emit
+    ///   (DataError, params int[] fieldNos)    — runtime 16.0+ emit (DataError is ignored; no permission enforcement)
     /// </summary>
-    public void ALSetAutoCalcFields(params object[] fields)
+    public void ALSetAutoCalcFields(params int[] fieldNos)
     {
-        foreach (var field in fields)
-        {
-            if (field is int fieldNo)
-                _autoCalcFieldNos.Add(fieldNo);
-        }
+        foreach (var fieldNo in fieldNos)
+            _autoCalcFieldNos.Add(fieldNo);
+    }
+
+    public void ALSetAutoCalcFields(DataError errorLevel, params int[] fieldNos)
+    {
+        foreach (var fieldNo in fieldNos)
+            _autoCalcFieldNos.Add(fieldNo);
     }
 
     /// <summary>

@@ -808,7 +808,8 @@ public void ALAddLoadFields(params int[] fieldNos) => Rec.ALAddLoadFields(fieldN
 public void ALAddLoadFields(DataError errorLevel, params int[] fieldNos) => Rec.ALAddLoadFields(errorLevel, fieldNos);
 public bool ALAreFieldsLoaded(params int[] fieldNos) => Rec.ALAreFieldsLoaded(fieldNos);
 public bool ALAreFieldsLoaded(DataError errorLevel, params int[] fieldNos) => Rec.ALAreFieldsLoaded(errorLevel, fieldNos);
-public void ALSetAutoCalcFields(params object[] fields) => Rec.ALSetAutoCalcFields(fields);
+public void ALSetAutoCalcFields(params int[] fieldNos) => Rec.ALSetAutoCalcFields(fieldNos);
+public void ALSetAutoCalcFields(DataError errorLevel, params int[] fieldNos) => Rec.ALSetAutoCalcFields(errorLevel, fieldNos);
 public string ALGetFilter() => Rec.ALGetFilter();
 public string ALGetFilter(int fieldNo) => Rec.ALGetFilter(fieldNo);
 public string ALGetView(bool useNames = true) => Rec.ALGetView(useNames);
