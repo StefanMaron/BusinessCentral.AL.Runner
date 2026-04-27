@@ -391,10 +391,34 @@ public class MockTestPageHandle
     {
         if (!_fields.TryGetValue(fieldHash, out var field))
         {
-            field = new MockTestPageField(fieldHash);
+            field = new MockTestPageField(fieldHash, this);
             _fields[fieldHash] = field;
         }
         return field;
+    }
+
+    /// <summary>
+    /// Called by <see cref="MockTestPageField.ALSetValue"/> to validate and persist
+    /// a value to the field identified by <paramref name="fieldHash"/> on the current
+    /// record.  Throws if the page is not editable (matching BC's behaviour).
+    /// </summary>
+    internal void SetFieldValueOnCurrentRecord(int fieldHash, object? value)
+    {
+        if (!_editable)
+            throw new Exception("The page is in view mode and cannot be edited.");
+
+        EnsureFieldMapping();
+        if (_hashToFieldId == null || !_hashToFieldId.TryGetValue(fieldHash, out var fieldId))
+            return; // field not in source table — nothing to persist
+
+        if (_currentRecord == null)
+            return;
+
+        var navValue = value is NavValue nv ? nv : AlCompat.ToNavValue(value);
+        _currentRecord.ALValidateSafe(fieldId, NavType.Text, navValue);
+        // Persist the validated value back to the in-memory DB so that a
+        // subsequent Record.Get() outside the test page reflects the change.
+        _currentRecord.ALModify(DataError.TrapError, false);
     }
 
     /// <summary>
@@ -522,7 +546,9 @@ public class MockTestPageHandle
         foreach (var (hash, fieldId) in _hashToFieldId)
         {
             var value = rec.GetFieldValueSafe(fieldId, default);
-            GetField(hash).ALSetValue(null!, value);
+            // Use InitializeValue so we copy record data without firing OnValidate triggers
+            // or persisting back — this is a read-only population of the local cache.
+            GetField(hash).InitializeValue(value);
         }
     }
 
@@ -645,6 +671,7 @@ public class MockTestPageHandle
 public class MockTestPageField
 {
     private readonly int _fieldHash;
+    private readonly MockTestPageHandle? _page;
     private object? _value;
 
     public MockTestPageField(int fieldHash)
@@ -653,17 +680,40 @@ public class MockTestPageField
         _value = new NavText("");
     }
 
+    internal MockTestPageField(int fieldHash, MockTestPageHandle page)
+    {
+        _fieldHash = fieldHash;
+        _page = page;
+        _value = new NavText("");
+    }
+
+    /// <summary>
+    /// Internal initialiser — stores the value locally without triggering validation
+    /// or persistence.  Used by <see cref="MockTestPageHandle.PopulateFieldsFromRecord"/>
+    /// to mirror a record's current field values into the page field cache without
+    /// running <c>OnValidate</c> triggers.
+    /// </summary>
+    internal void InitializeValue(object? value)
+    {
+        _value = value;
+    }
+
     /// <summary>
     /// Set the field value. BC passes (session, navValue) — session is null in standalone mode.
+    /// Validates and persists the value to the underlying record when a parent page handle
+    /// is available (i.e. when accessed through <see cref="MockTestPageHandle.GetField"/>).
+    /// Throws if the page was opened in view mode.
     /// </summary>
     public void ALSetValue(object? session, NavValue value)
     {
         _value = value;
+        _page?.SetFieldValueOnCurrentRecord(_fieldHash, value);
     }
 
     public void ALSetValue(object? session, object? value)
     {
         _value = value;
+        _page?.SetFieldValueOnCurrentRecord(_fieldHash, value);
     }
 
     /// <summary>

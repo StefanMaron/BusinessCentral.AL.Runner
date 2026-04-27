@@ -9015,7 +9015,8 @@ TestField.SetValue (Joker):
   tests:
     - tests/bucket-2/page-report/269-testrequestpage-methods
     - tests/bucket-2/page-report/71-testpage
-  notes: stores value in-memory; integer SetValue then AsDecimal proved in TestRequestPage handler
+    - tests/bucket-2/page-report/1486-testpage-setvalue-persist
+  notes: stores value in-memory and persists to underlying record via Validate+Modify; integer SetValue then AsDecimal proved in TestRequestPage handler; view-mode pages reject SetValue with error
 
 TestField.ShowMandatory ():
   layer: runtime-api
