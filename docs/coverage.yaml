@@ -7703,6 +7703,18 @@ System.Evaluate (Version, Text) [ALSystemVariable.ALEvaluate path]:
     plus a class-constrained generic fallback that delegates back to ALSystemVariable for reference types.
     Closes #1429.
 
+System.Evaluate (Char, Text) [ALEvaluate char overload]:
+  layer: runtime-api
+  category: System
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/314-evaluate-char
+  notes: >
+    AL Char lowers to C# char (value type), so the generic ALEvaluate<T> where T : class overload
+    fails with CS0452. Fix: explicit non-generic overload ALEvaluate(ByRef<char>, NavText/string)
+    in AlScope.cs — single-char input assigns the character and returns true; any other length
+    returns false. Closes #1483.
+
 System.ExportEncryptionKey (Text):
   layer: runtime-api
   category: System

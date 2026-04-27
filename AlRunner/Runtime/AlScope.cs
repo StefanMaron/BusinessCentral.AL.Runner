@@ -3167,6 +3167,13 @@ public static class AlCompat
         return false;
     }
 
+    public static bool ALEvaluate(ByRef<char> result, NavText text) => ALEvaluate(result, text.ToString());
+    public static bool ALEvaluate(ByRef<char> result, string text)
+    {
+        if (text != null && text.Length == 1) { result.Value = text[0]; return true; }
+        return false;
+    }
+
     /// <summary>
     /// MockVersion Evaluate overload: parses a dotted version string (e.g. "25.1.30000.12345")
     /// into a <see cref="MockVersion"/> stored in the provided <see cref="ByRef{T}"/>.
