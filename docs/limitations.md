@@ -17,7 +17,8 @@ as .NET code in a single process. This rules out anything that is inherently tie
 the BC runtime environment:
 
 - **Permissions and entitlements** — there is no permission system. All field/table
-  access succeeds unconditionally.
+  access succeeds unconditionally. `entitlement_declaration`, `permissionset_declaration`,
+  and `permissionsetextension_declaration` object types compile but have no effect at runtime.
 - **Company context** — no active BC company. `CompanyName()` defaults to empty
   string but is configurable: pass `--company-name <name>` on the CLI, or call
   codeunit 131100 `"AL Runner Config".SetCompanyName(Name)` from AL tests.
@@ -94,6 +95,41 @@ dispatch, and report/request-page variables support a limited standalone surface
   `OnAfterGetRecord` (once per row in the in-memory table), `OnPostDataItem`, and
   `OnPostReport`. Report layout/rendering is still not available.
 
+### No debugger infrastructure
+
+The runner executes in a single .NET process with no attached BC debugger. Debugger API calls that require a live BC debug session cannot work:
+
+- `Debugger.Attach()` — attaches to a live session; no session infrastructure exists.
+- `Debugger.Break()`, `BreakOnError()`, `BreakOnRecordChanges()` — set breakpoints; no breakpoint mechanism.
+- `Debugger.Continue()`, `StepInto()`, `StepOut()`, `StepOver()`, `Stop()` — step/continue through debugger; no debug loop.
+- `Debugger.DebuggedSessionID()`, `DebuggingSessionID()` — query debugger session IDs; always meaningless standalone.
+- `Debugger.EnableSqlTrace()` — SQL tracing on a specific session; no SQL server exists.
+- `Debugger.GetLastErrorText()` — debugger-specific error query; not to be confused with `GetLastErrorText()` (a System function, which is covered).
+- `Debugger.IsAttached()` — always false (no attached debugger).
+- `Debugger.IsBreakpointHit()` — no breakpoints can be hit.
+- `Debugger.SkipSystemTriggers()` — controls trigger dispatch in a debug session; no debug session.
+
+`Debugger.Activate()`, `Debugger.Deactivate()`, and `Debugger.IsActive()` are supported — they are stripped or return `false`.
+
+### No task scheduler
+
+The BC task scheduler (`TaskScheduler`) submits background tasks to the BC service tier. The runner has no service tier:
+
+- `TaskScheduler.CreateTask()` — no job queue or service tier exists.
+- `TaskScheduler.CancelTask()` — nothing to cancel.
+- `TaskScheduler.CanCreateTask()` — always `false` standalone (or would throw if emulated).
+- `TaskScheduler.SetTaskReady()`, `TaskExists()` — no persistent task store.
+
+AL that relies on task-scheduler patterns for background processing cannot be tested here. Inject the scheduling dependency behind an AL interface if you want to unit-test the logic around task creation.
+
+### No DotNet interop
+
+`.NET interop` requires the BC runtime, which handles `.NET` variable binding, `assembly` declarations, `dotnet` type wrappers, and the `DotNet` AL type:
+
+- `System.CanLoadType(DotNet)` — requires a `.NET` type reference at runtime.
+- `System.GetDotNetType(Joker)` — resolves the `.NET` type for an arbitrary AL value; no `.NET` type resolution without BC service tier.
+- `assembly_declaration`, `dotnet_declaration`, `type_declaration` — object types that wrap .NET assemblies; not compiled in standalone mode.
+
 ### Query — single-dataitem only
 
 Query objects with a single dataitem work in-memory: `Open` reads from the
@@ -104,6 +140,16 @@ Column values are returned from the current row via `GetColumnValueSafe`.
 **Not supported:** multi-dataitem queries (JOINs), aggregation methods
 (Sum, Count, Average, Min, Max), and `SaveAsCsv`/`SaveAsXml`/`SaveAsJson`/
 `SaveAsExcel`. These throw `NotSupportedException`.
+
+### UI objects — out of scope
+
+The following AL object types require the BC client or client-side rendering and are deliberately excluded from the runner. AL files that declare them still compile (the runner accepts whatever the BC compiler emits), but the runner takes no action on the object-level metadata:
+
+- `controladdin_declaration` — control add-ins require a JavaScript/browser runtime.
+- `profile_declaration`, `profileextension_declaration` — user profiles and page customisations are a BC client feature with no standalone equivalent.
+- `usercontrol_section` — user-control page sections require BC client rendering.
+
+These are classified `out-of-scope` because supporting them requires the BC client, which is architecturally outside the runner's scope (run AL unit tests in a single .NET process, no service tier, no browser, no Docker).
 
 ### HTTP — partial support
 

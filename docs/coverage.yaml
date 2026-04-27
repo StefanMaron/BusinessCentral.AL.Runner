@@ -27,7 +27,7 @@ assembly_declaration:
   layer: syntax
   category: object
   status: out-of-scope
-  notes: .NET interop — requires BC runtime
+  notes: .NET interop — requires BC runtime; see 'No DotNet interop' in docs/limitations.md
 
 codeunit_declaration:
   layer: syntax
@@ -43,19 +43,19 @@ controladdin_declaration:
   layer: syntax
   category: object
   status: out-of-scope
-  notes: UI rendering — requires BC client
+  notes: Control add-ins require a JavaScript/browser runtime; see 'UI objects — out of scope' in docs/limitations.md
 
 dotnet_declaration:
   layer: syntax
   category: object
   status: out-of-scope
-  notes: .NET interop — requires BC runtime
+  notes: .NET interop — requires BC runtime; see 'No DotNet interop' in docs/limitations.md
 
 entitlement_declaration:
   layer: syntax
   category: object
   status: not-possible
-  notes: Permission system — requires BC service tier
+  notes: Permission system — requires BC service tier; see 'No BC service tier' / 'Permissions and entitlements' in docs/limitations.md
 
 enum_declaration:
   layer: syntax
@@ -95,13 +95,13 @@ permissionset_declaration:
   layer: syntax
   category: object
   status: not-possible
-  notes: Permission system — requires BC service tier
+  notes: Permission system — requires BC service tier; see 'No BC service tier' / 'Permissions and entitlements' in docs/limitations.md
 
 profile_declaration:
   layer: syntax
   category: object
   status: out-of-scope
-  notes: UI profile — requires BC client
+  notes: User profiles require BC client; see 'UI objects — out of scope' in docs/limitations.md
 
 query_declaration:
   layer: syntax
@@ -171,13 +171,13 @@ permissionsetextension_declaration:
   layer: syntax
   category: extension
   status: not-possible
-  notes: Permission system — requires BC service tier
+  notes: Permission system — requires BC service tier; see 'No BC service tier' / 'Permissions and entitlements' in docs/limitations.md
 
 profileextension_declaration:
   layer: syntax
   category: extension
   status: out-of-scope
-  notes: UI profile — requires BC client
+  notes: User profile extensions require BC client; see 'UI objects — out of scope' in docs/limitations.md
 
 reportextension_declaration:
   layer: syntax
@@ -529,7 +529,7 @@ type_declaration:
   layer: syntax
   category: type
   status: out-of-scope
-  notes: .NET type alias (nested in dotnet/assembly blocks) — requires BC runtime .NET interop
+  notes: .NET type alias (nested in dotnet/assembly blocks) — requires BC runtime .NET interop; see 'No DotNet interop' in docs/limitations.md
 
 type_specification:
   layer: syntax
@@ -925,7 +925,7 @@ usercontrol_section:
   layer: syntax
   category: page
   status: out-of-scope
-  notes: User controls require BC client rendering
+  notes: User controls require BC client rendering; see 'UI objects — out of scope' in docs/limitations.md
 
 view_definition:
   layer: syntax
@@ -1859,26 +1859,31 @@ Debugger.Attach (Integer):
   layer: runtime-api
   category: Debugger
   status: not-possible
+  notes: Debugger infrastructure — requires attached BC debugger; see 'No debugger infrastructure' in docs/limitations.md
 
 Debugger.Break ():
   layer: runtime-api
   category: Debugger
   status: not-possible
+  notes: Debugger infrastructure — requires attached BC debugger; see 'No debugger infrastructure' in docs/limitations.md
 
 Debugger.BreakOnError (Boolean):
   layer: runtime-api
   category: Debugger
   status: not-possible
+  notes: Debugger infrastructure — requires attached BC debugger; see 'No debugger infrastructure' in docs/limitations.md
 
 Debugger.BreakOnRecordChanges (Boolean):
   layer: runtime-api
   category: Debugger
   status: not-possible
+  notes: Debugger infrastructure — requires attached BC debugger; see 'No debugger infrastructure' in docs/limitations.md
 
 Debugger.Continue ():
   layer: runtime-api
   category: Debugger
   status: not-possible
+  notes: Debugger infrastructure — requires attached BC debugger; see 'No debugger infrastructure' in docs/limitations.md
 
 Debugger.Deactivate ():
   layer: runtime-api
@@ -1890,21 +1895,25 @@ Debugger.DebuggedSessionID ():
   layer: runtime-api
   category: Debugger
   status: not-possible
+  notes: Debugger infrastructure — requires attached BC debugger; see 'No debugger infrastructure' in docs/limitations.md
 
 Debugger.DebuggingSessionID ():
   layer: runtime-api
   category: Debugger
   status: not-possible
+  notes: Debugger infrastructure — requires attached BC debugger; see 'No debugger infrastructure' in docs/limitations.md
 
 Debugger.EnableSqlTrace (Integer, Boolean):
   layer: runtime-api
   category: Debugger
   status: not-possible
+  notes: Debugger infrastructure — requires attached BC debugger and SQL server; see 'No debugger infrastructure' in docs/limitations.md
 
 Debugger.GetLastErrorText ():
   layer: runtime-api
   category: Debugger
   status: not-possible
+  notes: Debugger-specific error query (distinct from System.GetLastErrorText which is covered); requires attached BC debugger; see 'No debugger infrastructure' in docs/limitations.md
 
 Debugger.IsActive ():
   layer: runtime-api
@@ -1916,36 +1925,43 @@ Debugger.IsAttached ():
   layer: runtime-api
   category: Debugger
   status: not-possible
+  notes: Debugger infrastructure — requires attached BC debugger; see 'No debugger infrastructure' in docs/limitations.md
 
 Debugger.IsBreakpointHit ():
   layer: runtime-api
   category: Debugger
   status: not-possible
+  notes: Debugger infrastructure — requires attached BC debugger; see 'No debugger infrastructure' in docs/limitations.md
 
 Debugger.SkipSystemTriggers (Boolean):
   layer: runtime-api
   category: Debugger
   status: not-possible
+  notes: Debugger infrastructure — requires attached BC debugger; see 'No debugger infrastructure' in docs/limitations.md
 
 Debugger.StepInto ():
   layer: runtime-api
   category: Debugger
   status: not-possible
+  notes: Debugger infrastructure — requires attached BC debugger; see 'No debugger infrastructure' in docs/limitations.md
 
 Debugger.StepOut ():
   layer: runtime-api
   category: Debugger
   status: not-possible
+  notes: Debugger infrastructure — requires attached BC debugger; see 'No debugger infrastructure' in docs/limitations.md
 
 Debugger.StepOver ():
   layer: runtime-api
   category: Debugger
   status: not-possible
+  notes: Debugger infrastructure — requires attached BC debugger; see 'No debugger infrastructure' in docs/limitations.md
 
 Debugger.Stop ():
   layer: runtime-api
   category: Debugger
   status: not-possible
+  notes: Debugger infrastructure — requires attached BC debugger; see 'No debugger infrastructure' in docs/limitations.md
 
 # ── Decimal ─────────────────────────────────────────────────────
 
@@ -3061,11 +3077,13 @@ HttpClient.Delete (Text, HttpResponseMessage):
   layer: runtime-api
   category: HttpClient
   status: not-possible
+  notes: HTTP calls to external services — throws NotSupportedException; see 'HTTP — partial support' in docs/limitations.md
 
 HttpClient.Get (Text, HttpResponseMessage):
   layer: runtime-api
   category: HttpClient
   status: not-possible
+  notes: HTTP calls to external services — throws NotSupportedException; see 'HTTP — partial support' in docs/limitations.md
 
 HttpClient.GetBaseAddress ():
   layer: runtime-api
@@ -3076,21 +3094,25 @@ HttpClient.Patch (Text, HttpContent, HttpResponseMessage):
   layer: runtime-api
   category: HttpClient
   status: not-possible
+  notes: HTTP calls to external services — throws NotSupportedException; see 'HTTP — partial support' in docs/limitations.md
 
 HttpClient.Post (Text, HttpContent, HttpResponseMessage):
   layer: runtime-api
   category: HttpClient
   status: not-possible
+  notes: HTTP calls to external services — throws NotSupportedException; see 'HTTP — partial support' in docs/limitations.md
 
 HttpClient.Put (Text, HttpContent, HttpResponseMessage):
   layer: runtime-api
   category: HttpClient
   status: not-possible
+  notes: HTTP calls to external services — throws NotSupportedException; see 'HTTP — partial support' in docs/limitations.md
 
 HttpClient.Send (HttpRequestMessage, HttpResponseMessage):
   layer: runtime-api
   category: HttpClient
   status: not-possible
+  notes: HTTP calls to external services — throws NotSupportedException; see 'HTTP — partial support' in docs/limitations.md
 
 HttpClient.SetBaseAddress (Text):
   layer: runtime-api
@@ -7544,7 +7566,7 @@ System.CanLoadType (DotNet):
   layer: runtime-api
   category: System
   status: not-possible
-  notes: requires DotNet type parameter — unavailable in standalone mode; no DotNet type resolution without BC service tier
+  notes: requires DotNet type parameter — unavailable in standalone mode; no DotNet type resolution without BC service tier; see 'No DotNet interop' in docs/limitations.md
 
 System.CaptionClassTranslate (Text):
   layer: runtime-api
@@ -7883,7 +7905,7 @@ System.GetDotNetType (Joker):
   layer: runtime-api
   category: System
   status: not-possible
-  notes: requires DotNet type parameter — unavailable in standalone mode; no DotNet type resolution without BC service tier
+  notes: requires DotNet type parameter — unavailable in standalone mode; no DotNet type resolution without BC service tier; see 'No DotNet interop' in docs/limitations.md
 
 System.GetLastErrorCallStack ():
   layer: runtime-api
@@ -8952,31 +8974,37 @@ TaskScheduler.CancelTask (Guid):
   layer: runtime-api
   category: TaskScheduler
   status: not-possible
+  notes: Task scheduler — requires BC service tier; see 'No task scheduler' in docs/limitations.md
 
 TaskScheduler.CanCreateTask ():
   layer: runtime-api
   category: TaskScheduler
   status: not-possible
+  notes: Task scheduler — requires BC service tier; see 'No task scheduler' in docs/limitations.md
 
 TaskScheduler.CreateTask (Integer, Integer, Boolean, Text, DateTime, RecordId, Duration):
   layer: runtime-api
   category: TaskScheduler
   status: not-possible
+  notes: Task scheduler — requires BC service tier; see 'No task scheduler' in docs/limitations.md
 
 TaskScheduler.CreateTask (Integer, Integer, Boolean, Text, DateTime, RecordId):
   layer: runtime-api
   category: TaskScheduler
   status: not-possible
+  notes: Task scheduler — requires BC service tier; see 'No task scheduler' in docs/limitations.md
 
 TaskScheduler.SetTaskReady (Guid, DateTime):
   layer: runtime-api
   category: TaskScheduler
   status: not-possible
+  notes: Task scheduler — requires BC service tier; see 'No task scheduler' in docs/limitations.md
 
 TaskScheduler.TaskExists (Guid):
   layer: runtime-api
   category: TaskScheduler
   status: not-possible
+  notes: Task scheduler — requires BC service tier; see 'No task scheduler' in docs/limitations.md
 
 # ── TestAction ──────────────────────────────────────────────────
 
