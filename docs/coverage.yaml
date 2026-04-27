@@ -7797,6 +7797,7 @@ System.Format (Option):
   status: covered
   tests:
     - tests/bucket-2/data-formats/318-format-option
+    - tests/bucket-2/data-formats/319-format-enum-record
   notes: >
     Format(NavOption) now returns the member name (e.g. "Attention") rather than the ordinal
     integer. AlCompat.FormatNavOption uses NCLOptionMetadata.GetOptionFromIndex(ordinal, false)
@@ -7805,6 +7806,11 @@ System.Format (Option):
     which NREs standalone). Test codeunit OnClear() is now called after InitializeComponent()
     so NavOption fields with inline metadata are properly initialised before tests run.
     Closes #1488.
+    Format(Rec.EnumField) correctly resolves the caption from the field's own enum type even
+    when multiple enums share the same ordinal values. The NavOption stored in the record field
+    bag carries the enum-id tag from CreateTaggedOption; after Insert/Get the same object
+    reference is returned so FormatNavOption looks up the correct enum in EnumRegistry.
+    Regression tests in suite 319 cover the exact pattern from #1507.
 
 System.Text.GreaterThan (Text, Text):
   layer: runtime-api
