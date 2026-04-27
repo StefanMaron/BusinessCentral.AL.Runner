@@ -368,6 +368,7 @@ public static class DepExtractor
 
             switch (typeName)
             {
+                case "Codeunit":  result.Codeunits.Add(name);  break;
                 case "Page":      result.Pages.Add(name);      break;
                 case "Report":    result.Reports.Add(name);    break;
                 case "Query":     result.Queries.Add(name);    break;
@@ -375,6 +376,85 @@ public static class DepExtractor
                 case "Interface": result.Interfaces.Add(name); break;
                 // "Record" is covered by RecordTypeReferenceSyntax above.
                 // "Enum" is covered by EnumDataTypeSyntax below.
+            }
+        }
+
+        // Report dataitem tables: dataitem(d; Customer) { dataitem(d2; "Cust. Ledger Entry") { ... } }
+        foreach (var di in root.DescendantNodes().OfType<ReportDataItemSyntax>())
+        {
+            var name = UnquoteIdentifier(di.DataItemTable?.ToFullString().Trim());
+            if (!string.IsNullOrEmpty(name))
+                result.Tables.Add(name);
+        }
+
+        // Property-based object references: SourceTable, RunObject, TableRelation, CalcFormula
+        foreach (var prop in root.DescendantNodes().OfType<PropertySyntax>())
+        {
+            var propName = prop.Name?.Identifier.ValueText ?? "";
+            switch (propName)
+            {
+                case "SourceTable":
+                    // page/report: SourceTable = Customer
+                    if (prop.Value is ObjectReferencePropertyValueSyntax srcTbl)
+                    {
+                        var name = UnquoteIdentifier(srcTbl.ObjectNameOrId?.ToFullString().Trim());
+                        if (!string.IsNullOrEmpty(name)) result.Tables.Add(name);
+                    }
+                    break;
+
+                case "RunObject":
+                    // action: RunObject = Page "Customer Card" / Report "..." / Codeunit "..." etc.
+                    if (prop.Value is QualifiedObjectReferencePropertyValueSyntax runObj)
+                    {
+                        var objType = runObj.ObjectType.ToFullString().Trim();
+                        var objName = UnquoteIdentifier(runObj.ObjectNameOrId?.ToFullString().Trim());
+                        if (!string.IsNullOrEmpty(objName))
+                            switch (objType)
+                            {
+                                case "Page":      result.Pages.Add(objName);      break;
+                                case "Report":    result.Reports.Add(objName);    break;
+                                case "Codeunit":  result.Codeunits.Add(objName);  break;
+                                case "Query":     result.Queries.Add(objName);    break;
+                                case "XmlPort":   result.XmlPorts.Add(objName);   break;
+                            }
+                    }
+                    break;
+
+                case "TableRelation":
+                    // field property: TableRelation = Customer  OR  TableRelation = "Sales Header"."No."
+                    // Walk all qualified names in the relation — handles simple, compound and conditional forms.
+                    if (prop.Value != null)
+                    {
+                        // Simple unqualified: TableRelation = Customer
+                        if (prop.Value is TableRelationPropertyValueSyntax tr)
+                        {
+                            var raw = tr.RelatedTableField?.ToFullString().Trim();
+                            // If it contains a dot it's Table.Field — take the left part
+                            var tableName = raw?.Contains('.') == true
+                                ? UnquoteIdentifier(raw[..raw.IndexOf('.')])
+                                : UnquoteIdentifier(raw);
+                            if (!string.IsNullOrEmpty(tableName)) result.Tables.Add(tableName);
+                        }
+                        // Conditional/complex forms — pick up any qualified Table.Field refs
+                        foreach (var qn in prop.Value.DescendantNodes().OfType<QualifiedNameSyntax>())
+                        {
+                            var tableName = UnquoteIdentifier(qn.Left?.ToFullString().Trim());
+                            if (!string.IsNullOrEmpty(tableName)) result.Tables.Add(tableName);
+                        }
+                    }
+                    break;
+
+                case "CalcFormula":
+                    // field: CalcFormula = Sum("Cust. Ledger Entry".Amount WHERE (...))
+                    // All formula variants (Sum, Count, Avg, Min, Max, Exist, Lookup) contain
+                    // qualified Table.Field names — collect the left (table) side of each.
+                    if (prop.Value != null)
+                        foreach (var qn in prop.Value.DescendantNodes().OfType<QualifiedNameSyntax>())
+                        {
+                            var tableName = UnquoteIdentifier(qn.Left?.ToFullString().Trim());
+                            if (!string.IsNullOrEmpty(tableName)) result.Tables.Add(tableName);
+                        }
+                    break;
             }
         }
 
