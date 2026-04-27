@@ -110,15 +110,26 @@ public static class DepExtractor
         } while (eventSubsAdded > 0);
 
         // 5. Write extracted files to output directory.
+        //    DotNet-referencing procedures are replaced with Error() calls so the file
+        //    compiles cleanly and fails loudly if ever reached at runtime.
         int written = 0;
+        int strippedProcedures = 0;
+        int skippedFiles = 0;
         foreach (var (fileName, source) in allExtracted)
         {
+            var (strippedSource, stripped) = StripDotNetProcedures(source, fileName);
+            if (strippedSource == null) { skippedFiles++; continue; } // pure assembly declaration, nothing callable
+
             var outPath = Path.Combine(outputDir, fileName);
             var dir = Path.GetDirectoryName(outPath);
             if (dir != null) Directory.CreateDirectory(dir);
-            File.WriteAllText(outPath, source, Encoding.UTF8);
+            File.WriteAllText(outPath, strippedSource, Encoding.UTF8);
             written++;
+            strippedProcedures += stripped;
         }
+
+        if (strippedProcedures > 0 || skippedFiles > 0)
+            Console.Error.WriteLine($"DotNet stripping: {strippedProcedures} procedure(s) replaced with Error(), {skippedFiles} pure-assembly file(s) skipped.");
 
         Console.Error.WriteLine($"Extracted {written} AL file(s) to {outputDir}");
         return 0;
@@ -564,6 +575,73 @@ public static class DepExtractor
             else if (objectTypeText.Contains("Report",   StringComparison.OrdinalIgnoreCase)) result.Reports.Add(objectNameText);
         }
         return result;
+    }
+
+    // -----------------------------------------------------------------------
+    // DotNet stripping
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Replaces bodies of procedures that reference DotNet types with an <c>Error()</c> call.
+    /// Returns (strippedSource, count) where strippedSource is null if the entire file
+    /// is a pure assembly declaration with nothing callable.
+    /// </summary>
+    private static (string? Source, int Stripped) StripDotNetProcedures(string source, string fileName)
+    {
+        // Fast path: no DotNet keyword, nothing to do.
+        if (!source.Contains("DotNet", StringComparison.Ordinal))
+            return (source, 0);
+
+        try
+        {
+            var tree = SyntaxTree.ParseObjectText(source);
+            var root = tree.GetRoot();
+
+            // Collect (start, end, replacement) for each DotNet-referencing procedure.
+            var replacements = new List<(int Start, int End, string Text)>();
+
+            foreach (var method in root.DescendantNodes().OfType<MethodDeclarationSyntax>())
+            {
+                var hasDotNet = method.DescendantNodes()
+                    .OfType<SubtypedDataTypeSyntax>()
+                    .Any(s => s.TypeName.ToFullString().Trim()
+                        .Equals("DotNet", StringComparison.OrdinalIgnoreCase));
+
+                if (!hasDotNet) continue;
+
+                var methodName = method.Name?.Identifier.ValueText ?? "Unknown";
+                var varSection = method.ChildNodes().OfType<VarSectionSyntax>().FirstOrDefault();
+                var block = method.ChildNodes().OfType<BlockSyntax>().FirstOrDefault();
+                if (block == null) continue;
+
+                // Replace from start of var section (or block if no var) through end of block.
+                var replaceStart = varSection?.Span.Start ?? block.Span.Start;
+                var replaceEnd = block.Span.End;
+                var escaped = methodName.Replace("'", "''");
+                var errorBody =
+                    "\n    begin\n" +
+                    $"        Error('AL Runner: ''{escaped}'' uses DotNet interop — not supported in standalone mode. Add this object to your compiled dependency slice.');\n" +
+                    "    end;";
+
+                replacements.Add((replaceStart, replaceEnd, errorBody));
+            }
+
+            if (replacements.Count == 0)
+                return (source, 0);
+
+            // Apply replacements from end to start to preserve offsets.
+            var chars = source.ToCharArray();
+            var result = source;
+            foreach (var (start, end, text) in replacements.OrderByDescending(r => r.Start))
+                result = result[..start] + text + result[end..];
+
+            return (result, replacements.Count);
+        }
+        catch
+        {
+            // On parse failure, return source unchanged rather than losing the file.
+            return (source, 0);
+        }
     }
 
     // -----------------------------------------------------------------------
