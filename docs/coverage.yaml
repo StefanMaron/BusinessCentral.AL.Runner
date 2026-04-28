@@ -3241,7 +3241,9 @@ HttpClient.Send (HttpRequestMessage, HttpResponseMessage):
   layer: runtime-api
   category: HttpClient
   status: not-possible
-  notes: HTTP calls to external services — throws NotSupportedException; see 'HTTP — partial support' in docs/limitations.md
+  notes: HTTP calls to external services — throws NotSupportedException; if a TestHttpResponseMessage was configured, its non-2xx status emits the BC-style Request/Response/Body envelope; see 'HTTP — partial support' in docs/limitations.md
+  tests:
+    - tests/bucket-1/codeunit-runtime/340-httpclient-error-envelope
 
 HttpClient.SetBaseAddress (Text):
   layer: runtime-api

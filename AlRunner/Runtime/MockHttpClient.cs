@@ -2,6 +2,8 @@ namespace AlRunner.Runtime;
 
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 /// <summary>
 /// Stub for <c>NavHttpClient</c> / AL's <c>HttpClient</c> variable.
@@ -31,7 +33,10 @@ public class MockHttpClient
     public bool ALSend(DataError errorLevel, MockHttpRequestMessage request,
         ByRef<MockHttpResponseMessage> response)
     {
-        throw new NotSupportedException(HttpNotSupportedMessage);
+        var resp = EnsureResponse(response);
+        if (!resp.ALIsSuccessStatusCode)
+            return ThrowHttpError(errorLevel, request?.ALMethod ?? "", request?.ALGetRequestUri ?? "", resp);
+        return ThrowNotSupported(errorLevel);
     }
 
     /// <summary>
@@ -41,7 +46,10 @@ public class MockHttpClient
     public bool ALGet(DataError errorLevel, string url,
         ByRef<MockHttpResponseMessage> response)
     {
-        throw new NotSupportedException(HttpNotSupportedMessage);
+        var resp = EnsureResponse(response);
+        if (!resp.ALIsSuccessStatusCode)
+            return ThrowHttpError(errorLevel, "GET", url ?? "", resp);
+        return ThrowNotSupported(errorLevel);
     }
 
     /// <summary>
@@ -51,7 +59,10 @@ public class MockHttpClient
     public bool ALPost(DataError errorLevel, string url, MockHttpContent content,
         ByRef<MockHttpResponseMessage> response)
     {
-        throw new NotSupportedException(HttpNotSupportedMessage);
+        var resp = EnsureResponse(response);
+        if (!resp.ALIsSuccessStatusCode)
+            return ThrowHttpError(errorLevel, "POST", url ?? "", resp);
+        return ThrowNotSupported(errorLevel);
     }
 
     /// <summary>
@@ -61,7 +72,10 @@ public class MockHttpClient
     public bool ALPut(DataError errorLevel, string url, MockHttpContent content,
         ByRef<MockHttpResponseMessage> response)
     {
-        throw new NotSupportedException(HttpNotSupportedMessage);
+        var resp = EnsureResponse(response);
+        if (!resp.ALIsSuccessStatusCode)
+            return ThrowHttpError(errorLevel, "PUT", url ?? "", resp);
+        return ThrowNotSupported(errorLevel);
     }
 
     /// <summary>
@@ -71,7 +85,10 @@ public class MockHttpClient
     public bool ALDelete(DataError errorLevel, string url,
         ByRef<MockHttpResponseMessage> response)
     {
-        throw new NotSupportedException(HttpNotSupportedMessage);
+        var resp = EnsureResponse(response);
+        if (!resp.ALIsSuccessStatusCode)
+            return ThrowHttpError(errorLevel, "DELETE", url ?? "", resp);
+        return ThrowNotSupported(errorLevel);
     }
 
     /// <summary>
@@ -81,7 +98,10 @@ public class MockHttpClient
     public bool ALPatch(DataError errorLevel, string url, MockHttpContent content,
         ByRef<MockHttpResponseMessage> response)
     {
-        throw new NotSupportedException(HttpNotSupportedMessage);
+        var resp = EnsureResponse(response);
+        if (!resp.ALIsSuccessStatusCode)
+            return ThrowHttpError(errorLevel, "PATCH", url ?? "", resp);
+        return ThrowNotSupported(errorLevel);
     }
 
     /// <summary>
@@ -189,5 +209,63 @@ public class MockHttpClient
         ALTimeout = other.ALTimeout;
         _useDefaultNetworkWindowsAuthentication = other._useDefaultNetworkWindowsAuthentication;
         ALUseServerCertificateValidation = other.ALUseServerCertificateValidation;
+    }
+
+    private static MockHttpResponseMessage EnsureResponse(ByRef<MockHttpResponseMessage> response)
+    {
+        response.Value ??= new MockHttpResponseMessage();
+        var testResponse = MockTestHttpResponseMessage.ConsumeLastConfigured();
+        if (testResponse != null)
+            response.Value.ALAssign(testResponse);
+        return response.Value;
+    }
+
+    private static bool ThrowNotSupported(DataError errorLevel)
+    {
+        if (errorLevel == DataError.ThrowError)
+            throw new NotSupportedException(HttpNotSupportedMessage);
+        return false;
+    }
+
+    private static bool ThrowHttpError(DataError errorLevel, string method, string uri, MockHttpResponseMessage response)
+    {
+        if (errorLevel == DataError.ThrowError)
+            throw new Exception(BuildErrorEnvelope(method, uri, response));
+        return false;
+    }
+
+    private static string BuildErrorEnvelope(string method, string uri, MockHttpResponseMessage response)
+    {
+        var requestObj = new JObject
+        {
+            ["Method"] = method ?? string.Empty,
+            ["URI"] = uri ?? string.Empty
+        };
+        var responseObj = new JObject
+        {
+            ["HTTP Status Code"] = response.ALHttpStatusCode,
+            ["Reason Phrase"] = response.ALReasonPhrase ?? string.Empty,
+            ["Body"] = BuildBodyToken(response.ALContent?.GetText() ?? string.Empty)
+        };
+        var root = new JObject
+        {
+            ["Request"] = requestObj,
+            ["Response"] = responseObj
+        };
+        return "HTTP Request resulted in an error." + root.ToString(Formatting.None);
+    }
+
+    private static JToken BuildBodyToken(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+            return JValue.CreateString(string.Empty);
+        try
+        {
+            return JToken.Parse(body);
+        }
+        catch (JsonReaderException)
+        {
+            return JValue.CreateString(body);
+        }
     }
 }
