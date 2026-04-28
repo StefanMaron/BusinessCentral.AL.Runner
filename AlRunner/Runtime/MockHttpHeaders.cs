@@ -28,8 +28,9 @@ public class MockHttpHeaders
     /// <summary>
     /// BC emits: <c>headers.ALAdd(DataError, key, value)</c>
     /// for <c>HttpHeaders.Add(key, value)</c> (Text overload).
+    /// Returns <c>true</c> so call sites can use the bool result.
     /// </summary>
-    public void ALAdd(DataError errorLevel, string key, string value)
+    public bool ALAdd(DataError errorLevel, string key, string value)
     {
         if (!_headers.TryGetValue(key, out var list))
         {
@@ -37,6 +38,7 @@ public class MockHttpHeaders
             _headers[key] = list;
         }
         list.Add(value);
+        return true;
     }
 
     /// <summary>
@@ -45,7 +47,7 @@ public class MockHttpHeaders
     /// In standalone mode secrets are treated as plain text — the value
     /// is extracted via <see cref="AlCompat.Unwrap"/> and stored normally.
     /// </summary>
-    public void ALAdd(DataError errorLevel, string key, NavSecretText secretValue)
+    public bool ALAdd(DataError errorLevel, string key, NavSecretText secretValue)
         => ALAdd(errorLevel, key, (string)AlCompat.Unwrap(secretValue));
 
     /// <summary>

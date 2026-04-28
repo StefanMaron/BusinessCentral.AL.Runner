@@ -1319,6 +1319,29 @@ public static class AlCompat
     }
 
     /// <summary>
+    /// Replacement for ALCompiler.NavIndirectValueToGuid.
+    /// Extracts a Guid from a variant/indirect value holder.
+    /// </summary>
+    public static Guid NavIndirectValueToGuid(object? value)
+    {
+        if (value is MockVariant mv) return NavIndirectValueToGuid(mv.Value);
+        if (value is Guid guid) return guid;
+        if (value is NavGuid navGuid) return navGuid.Value;
+        if (value is string text && Guid.TryParse(text, out var parsed)) return parsed;
+        if (value is NavText navText && Guid.TryParse(navText.ToString(), out var parsedText)) return parsedText;
+        if (value != null && value.GetType().Name == "NavGuid")
+        {
+            var toGuidMethod = value.GetType().GetMethod("ToGuid", Type.EmptyTypes);
+            if (toGuidMethod != null)
+                return (Guid)toGuidMethod.Invoke(value, null)!;
+            var valueProp = value.GetType().GetProperty("Value");
+            if (valueProp?.PropertyType == typeof(Guid))
+                return (Guid)valueProp.GetValue(value)!;
+        }
+        throw new InvalidCastException($"Cannot convert {value?.GetType().Name ?? "null"} to Guid");
+    }
+
+    /// <summary>
     /// Replacement for ALCompiler.NavIndirectValueToNavValue.
     /// Extracts the NavValue from a variant/indirect value holder.
     /// </summary>

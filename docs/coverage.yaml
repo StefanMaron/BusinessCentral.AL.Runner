@@ -3322,8 +3322,10 @@ HttpContent.ReadAs (InStream):
 HttpContent.ReadAs (SecretText):
   layer: runtime-api
   category: HttpContent
-  status: not-possible
-  notes: Runner gap — SecretText ReadAs requires HTTP response body infrastructure not available in standalone mode.
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/335-httpcontent-readas-secrettext
+  notes: MockHttpContent.ALReadAs returns stored body as SecretText and returns true.
 
 HttpContent.ReadAs (Text):
   layer: runtime-api
@@ -3367,7 +3369,8 @@ HttpHeaders.Add (Text, Text):
   status: covered
   tests:
     - tests/bucket-2/data-formats/1318-sweep-misc-overloads
-  notes: MockHttpHeaders.ALAdd(DataError, string, string) — proven via HttpHeaders.Add. Closes #1400.
+    - tests/bucket-1/codeunit-runtime/333-httpheaders-cookies-bool
+  notes: MockHttpHeaders.ALAdd(DataError, string, string) returns true; proven via HttpHeaders.Add. Closes #1400.
 
 HttpHeaders.Clear ():
   layer: runtime-api
@@ -3494,7 +3497,8 @@ HttpRequestMessage.RemoveCookie (Text):
   status: covered
   tests:
     - tests/bucket-2/data-formats/186-httprequestmessage-cookies
-  notes: ALRemoveCookie(DataError, string) removes cookie by name, no-op if not found.
+    - tests/bucket-1/codeunit-runtime/333-httpheaders-cookies-bool
+  notes: ALRemoveCookie(DataError, string) removes cookie by name; returns true when removed, false when missing.
 
 HttpRequestMessage.SetCookie (Cookie):
   layer: runtime-api
@@ -3502,13 +3506,16 @@ HttpRequestMessage.SetCookie (Cookie):
   status: covered
   tests:
     - tests/bucket-2/data-formats/186-httprequestmessage-cookies
-  notes: ALSetCookie(DataError, string, string) stores MockCookie keyed by name (case-insensitive).
+    - tests/bucket-1/codeunit-runtime/334-httprequestmessage-setcookie-cookie
+  notes: ALSetCookie(DataError, MockCookie) stores a cookie keyed by name and returns true.
 
 HttpRequestMessage.SetCookie (Text, Text):
   layer: runtime-api
   category: HttpRequestMessage
   status: covered
-  notes: No-op stub or pass-through; compiles and runs without error. Closes #1400 sweep.
+  tests:
+    - tests/bucket-1/codeunit-runtime/333-httpheaders-cookies-bool
+  notes: ALSetCookie(DataError, string, string) stores MockCookie keyed by name and returns true.
 
 HttpRequestMessage.SetRequestUri (Text):
   layer: runtime-api
@@ -5590,6 +5597,17 @@ Label.TrimStart (Text):
     - tests/bucket-2/data-formats/186-label-string-methods
   notes: . Covered via NavText native — leading strip only.
 
+# ── List ────────────────────────────────────────────────────────
+
+List.Get (Integer, Codeunit):
+  layer: runtime-api
+  category: List
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/337-codeunit-list-get-negation
+    - tests/bucket-1/codeunit-runtime/338-codeunit-list-get-assign
+  notes: MockObjectList.ALGet(DataError, int, MockCodeunitHandle) assigns via ALAssign and returns bool.
+
 # ── Media ───────────────────────────────────────────────────────
 
 Media.ExportFile (Text):
@@ -6840,6 +6858,8 @@ RecordRef.GetBySystemId (Guid):
   layer: runtime-api
   category: RecordRef
   status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/336-variant-guid-conversion
 
 RecordRef.GetFilters ():
   layer: runtime-api

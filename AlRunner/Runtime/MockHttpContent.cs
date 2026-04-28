@@ -50,6 +50,16 @@ public class MockHttpContent
     }
 
     /// <summary>
+    /// SecretText overload for <c>HttpContent.ReadAs(var SecretText)</c>.
+    /// Returns the stored body wrapped as SecretText.
+    /// </summary>
+    public bool ALReadAs(DataError errorLevel, ByRef<NavSecretText> text)
+    {
+        text.Value = NavSecretText.Create(_textContent);
+        return true;
+    }
+
+    /// <summary>
     /// Content headers. BC emits <c>content.ALGetHeaders(errorLevel, byref headers)</c>
     /// as a method call with a ByRef out parameter. The headers collection is shared
     /// with the content so later mutations round-trip.
