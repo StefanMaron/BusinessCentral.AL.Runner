@@ -1365,6 +1365,38 @@ public static class AlCompat
             // Unwrap variant and retry
             return NavIndirectValueToNavValue<T>(mv.Value);
         }
+        if (value is MockRecordHandle mrh)
+        {
+            if (typeof(T) == typeof(NavCode) || typeof(T) == typeof(NavText))
+            {
+                var pkFields = mrh.GetPrimaryKeyFieldNos();
+                if (pkFields.Length == 1)
+                {
+                    var fieldNo = pkFields[0];
+                    var fieldType = TableFieldRegistry.GetFieldTypeName(mrh.TableId, fieldNo);
+                    var expectedType = string.Equals(fieldType, "Code", StringComparison.OrdinalIgnoreCase)
+                        ? NavType.Code
+                        : NavType.Text;
+                    var fieldValue = mrh.GetFieldValueSafe(fieldNo, expectedType);
+
+                    if (typeof(T) == typeof(NavCode))
+                    {
+                        if (fieldValue is NavCode nc) return (T)(NavValue)nc;
+                        if (fieldValue is NavText nt)
+                        {
+                            var len = TableFieldRegistry.GetFieldLength(mrh.TableId, fieldNo) ?? 250;
+                            return (T)(NavValue)CreateNavCode(len, (string)nt);
+                        }
+                        var fallbackLen = TableFieldRegistry.GetFieldLength(mrh.TableId, fieldNo) ?? 250;
+                        return (T)(NavValue)CreateNavCode(fallbackLen, Format(fieldValue));
+                    }
+
+                    if (fieldValue is NavText nt2) return (T)(NavValue)nt2;
+                    if (fieldValue is NavCode nc2) return (T)(NavValue)nc2;
+                    return (T)(NavValue)new NavText(Format(fieldValue));
+                }
+            }
+        }
         if (value is NavValue nv && nv is T typedValue) return typedValue;
         // Coerce bool/NavBoolean → NavText using AL's "Yes"/"No" representation
         if (typeof(T) == typeof(NavText))

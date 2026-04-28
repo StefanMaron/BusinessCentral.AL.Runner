@@ -10855,6 +10855,14 @@ Variant.GetGenericType (Dictionary):
     - tests/bucket-1/codeunit-runtime/339-variant-dictionary-conversion
   notes: typed Variant→Dictionary assignment rewritten via ALCompiler.NavIndirectValueToGenericType<T> → AlCompat.NavIndirectValueToGenericType<T>
 
+Variant.ToCode (Record):
+  layer: runtime-api
+  category: Variant
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/340-record-code-unwrap
+  notes: Variant containing a Record unwraps the primary-key Code via AlCompat.NavIndirectValueToNavValue<NavCode>
+
 Variant.IsDotNet ():
   layer: runtime-api
   category: Variant
