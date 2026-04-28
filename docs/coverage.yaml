@@ -2876,7 +2876,9 @@ File.Upload (Text, Text, Text, Text, Text):
   layer: runtime-api
   category: File
   status: covered
-  notes: MockFile.ALUpload() no-op (no browser/UI in standalone)
+  tests:
+    - tests/bucket-1/codeunit-runtime/321-file-upload-overload
+  notes: MockFile.ALUpload() no-op (no browser/UI in standalone); 7-arg overload (DataError, title, folder, filter, fromFile, ByRef ToFile, Guid) added for CS1501 fix (issue #1531)
 
 File.UploadIntoStream (Text, InStream):
   layer: runtime-api
