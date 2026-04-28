@@ -3167,6 +3167,9 @@ HttpClient.AddCertificate (SecretText, SecretText):
   layer: runtime-api
   category: HttpClient
   status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/323-secrettext-navtext-conv
+  notes: ALAddCertificate(DataError, NavSecretText, NavSecretText) overload added to fix CS1503 (issue #1533)
 
 HttpClient.AddCertificate (Text, Text):
   layer: runtime-api
@@ -3258,6 +3261,9 @@ HttpClient.UseWindowsAuthentication (SecretText, SecretText, SecretText):
   layer: runtime-api
   category: HttpClient
   status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/323-secrettext-navtext-conv
+  notes: ALUseWindowsAuthentication(DataError, NavSecretText, NavSecretText[, NavSecretText]) overloads added to fix CS1503 (issue #1533)
 
 HttpClient.UseWindowsAuthentication (Text, Text, Text):
   layer: runtime-api

@@ -139,14 +139,26 @@ public class MockHttpClient
     /// <summary>UseWindowsAuthentication(username, password) — no-op stub.</summary>
     public void ALUseWindowsAuthentication(DataError errorLevel, NavText username, NavText password) { }
 
+    /// <summary>UseWindowsAuthentication(username, password) — SecretText overload (issue #1533).</summary>
+    public void ALUseWindowsAuthentication(DataError errorLevel, NavSecretText username, NavSecretText password) { }
+
     /// <summary>UseWindowsAuthentication(username, password, domain) — no-op stub.</summary>
     public void ALUseWindowsAuthentication(DataError errorLevel, NavText username, NavText password, NavText domain) { }
+
+    /// <summary>UseWindowsAuthentication(username, password, domain) — SecretText overload (issue #1533).</summary>
+    public void ALUseWindowsAuthentication(DataError errorLevel, NavSecretText username, NavSecretText password, NavSecretText domain) { }
 
     /// <summary>AddCertificate(thumbprint) — no-op stub.</summary>
     public void ALAddCertificate(DataError errorLevel, NavText thumbprint) { }
 
+    /// <summary>AddCertificate(thumbprint) — SecretText overload (issue #1533).</summary>
+    public void ALAddCertificate(DataError errorLevel, NavSecretText thumbprint) { }
+
     /// <summary>AddCertificate(thumbprint, password) — no-op stub.</summary>
     public void ALAddCertificate(DataError errorLevel, NavText thumbprint, NavText password) { }
+
+    /// <summary>AddCertificate(thumbprint, password) — SecretText overload (issue #1533).</summary>
+    public void ALAddCertificate(DataError errorLevel, NavSecretText thumbprint, NavSecretText password) { }
 
     // ── ALAssign (issue #1447) ─────────────────────────────────────────────
 
