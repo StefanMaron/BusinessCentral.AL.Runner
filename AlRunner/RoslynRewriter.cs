@@ -1723,9 +1723,11 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
         if (visited.Identifier.Text == "NavObjectList" &&
             visited.TypeArgumentList.Arguments.Count == 1)
         {
+            var typeArg = NormalizeObjectTypeArgument(visited.TypeArgumentList.Arguments[0]);
             return SyntaxFactory.GenericName(
                 SyntaxFactory.Identifier("MockObjectList"),
-                visited.TypeArgumentList);
+                SyntaxFactory.TypeArgumentList(
+                    SyntaxFactory.SingletonSeparatedList(typeArg)));
         }
 
         // NavObjectDictionary<TKey, TValue> -> MockObjectDictionary<TKey, TValue>
@@ -1738,12 +1740,87 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
         if (visited.Identifier.Text == "NavObjectDictionary" &&
             visited.TypeArgumentList.Arguments.Count == 2)
         {
+            var keyArg = NormalizeObjectTypeArgument(visited.TypeArgumentList.Arguments[0]);
+            var valueArg = NormalizeObjectTypeArgument(visited.TypeArgumentList.Arguments[1]);
             return SyntaxFactory.GenericName(
                 SyntaxFactory.Identifier("MockObjectDictionary"),
-                visited.TypeArgumentList);
+                SyntaxFactory.TypeArgumentList(
+                    SyntaxFactory.SeparatedList(new[] { keyArg, valueArg })));
+        }
+
+        // Newer compilers can emit NavList/NavDictionary for object-typed generics.
+        // If a Codeunit/Interface handle is used as a type argument, redirect to the
+        // MockObject* types so ALAssign semantics are preserved.
+        if (visited.Identifier.Text == "NavList" &&
+            visited.TypeArgumentList.Arguments.Count == 1)
+        {
+            var typeArg = visited.TypeArgumentList.Arguments[0];
+            if (IsObjectHandleTypeArgument(typeArg))
+            {
+                typeArg = NormalizeObjectTypeArgument(typeArg);
+                return SyntaxFactory.GenericName(
+                    SyntaxFactory.Identifier("MockObjectList"),
+                    SyntaxFactory.TypeArgumentList(
+                        SyntaxFactory.SingletonSeparatedList(typeArg)));
+            }
+        }
+
+        if (visited.Identifier.Text == "NavDictionary" &&
+            visited.TypeArgumentList.Arguments.Count == 2)
+        {
+            var keyArg = visited.TypeArgumentList.Arguments[0];
+            var valueArg = visited.TypeArgumentList.Arguments[1];
+            if (IsObjectHandleTypeArgument(keyArg) || IsObjectHandleTypeArgument(valueArg))
+            {
+                keyArg = NormalizeObjectTypeArgument(keyArg);
+                valueArg = NormalizeObjectTypeArgument(valueArg);
+                return SyntaxFactory.GenericName(
+                    SyntaxFactory.Identifier("MockObjectDictionary"),
+                    SyntaxFactory.TypeArgumentList(
+                        SyntaxFactory.SeparatedList(new[] { keyArg, valueArg })));
+            }
         }
 
         return visited;
+    }
+
+    private static bool IsObjectHandleTypeArgument(TypeSyntax typeArg)
+        => IsCodeunitTypeArgument(typeArg) || IsInterfaceHandleTypeArgument(typeArg);
+
+    private static bool IsCodeunitTypeArgument(TypeSyntax typeArg)
+    {
+        var text = typeArg.ToString();
+        if (text.EndsWith("MockCodeunitHandle", StringComparison.Ordinal)
+            || text.EndsWith("NavCodeunitHandle", StringComparison.Ordinal))
+            return true;
+
+        var lastSegment = text.Split('.').Last();
+        if (!lastSegment.StartsWith("Codeunit", StringComparison.Ordinal))
+            return false;
+        if (lastSegment.Length == "Codeunit".Length)
+            return false;
+        for (int i = "Codeunit".Length; i < lastSegment.Length; i++)
+        {
+            if (!char.IsDigit(lastSegment[i]))
+                return false;
+        }
+        return true;
+    }
+
+    private static bool IsInterfaceHandleTypeArgument(TypeSyntax typeArg)
+    {
+        var text = typeArg.ToString();
+        return text.EndsWith("MockInterfaceHandle", StringComparison.Ordinal)
+            || text.EndsWith("NavInterfaceHandle", StringComparison.Ordinal);
+    }
+
+    private static TypeSyntax NormalizeObjectTypeArgument(TypeSyntax typeArg)
+    {
+        if (IsCodeunitTypeArgument(typeArg))
+            return SyntaxFactory.IdentifierName("MockCodeunitHandle").WithTriviaFrom(typeArg);
+        if (IsInterfaceHandleTypeArgument(typeArg))
+            return SyntaxFactory.IdentifierName("MockInterfaceHandle").WithTriviaFrom(typeArg);
+        return typeArg;
     }
 
     // -----------------------------------------------------------------------

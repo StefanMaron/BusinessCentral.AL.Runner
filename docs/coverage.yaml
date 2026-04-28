@@ -687,6 +687,14 @@ variable_declaration:
   tests:
     - tests/bucket-1/codeunit-runtime/01-pure-function
 
+generic_type_argument_codeunit:
+  layer: syntax
+  category: variable
+  status: covered
+  tests:
+    - AlRunner.Tests/CodeunitGenericArgRewriterTests.cs
+  notes: rewriter normalizes NavList/NavDictionary/NavObjectList/NavObjectDictionary with Codeunit/Interface type arguments to MockObjectList/MockObjectDictionary and Mock*Handle types (covers codeunit generics; closes #1555).
+
 # ── table ───────────────────────────────────────────────────────
 
 aggregate_formula:
