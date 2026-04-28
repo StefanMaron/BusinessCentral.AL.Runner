@@ -10346,6 +10346,37 @@ Text.UpperCase (Text):
   status: covered
   notes: . Static Text.UpperCase form covered — includes differs-from-LowerCase trap.
 
+# User-defined ToText() method collision fix (issue #1528):
+# BC runtime `.ToText()` calls always have ≥ 1 argument (the NavSession, passed as
+# null! or a real reference). A user-defined AL method also named ToText() with
+# 0 parameters produces a 0-arg C# call (e.g. base.Parent.ToText()). Before the
+# fix the rewriter incorrectly rewrote this to AlCompat.Format(_parent), returning
+# `string` where `NavText` is expected and causing CS0029. Fixed by guarding the
+# rewriter rule to only fire when ArgumentList.Arguments.Count >= 1.
+#
+# Extended fix (still #1528): in real BC-compiled .app files (DepCompiler path),
+# BC scope classes call parent methods as _parent.ToText(this) — passing the scope
+# itself as the first arg. The 1-arg guard was not enough: `this` is never a BC
+# runtime session (those are always `null!` or `this.Session`). Fixed by also
+# excluding calls where the first argument is a bare `this` expression.
+RoslynRewriter.user-defined-ToText-fix:
+  layer: runtime-api
+  category: Text
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/100-totext-user-method
+    - tests/bucket-1/codeunit-runtime/318-navtext-string-rewrite
+    - AlRunner.Tests/ToTextRewriterTests.cs
+  notes: >
+    Rewriter guard: `.ToText()` → AlCompat.Format() only applies when the call
+    has ≥ 1 argument (all BC runtime ToText() overloads pass a NavSession argument)
+    AND the first argument is NOT a bare `this` expression (BC scope classes call
+    user-defined parent methods as _parent.ToText(this), never with a real session).
+    The C# unit test (ToTextRewriterTests) directly verifies the rewrite at the
+    syntax level, covering the DepCompiler path where BC-compiled .app files use
+    the _parent.ToText(this) calling convention.
+    Closes #1528.
+
 # ── TextBuilder ─────────────────────────────────────────────────
 
 TextBuilder.Append (Text):
