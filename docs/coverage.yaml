@@ -10346,6 +10346,25 @@ Text.UpperCase (Text):
   status: covered
   notes: . Static Text.UpperCase form covered — includes differs-from-LowerCase trap.
 
+# User-defined ToText() method collision fix (issue #1528):
+# BC runtime `.ToText()` calls always have ≥ 1 argument (the NavSession, passed as
+# null! or a real reference). A user-defined AL method also named ToText() with
+# 0 parameters produces a 0-arg C# call (e.g. base.Parent.ToText()). Before the
+# fix the rewriter incorrectly rewrote this to AlCompat.Format(_parent), returning
+# `string` where `NavText` is expected and causing CS0029. Fixed by guarding the
+# rewriter rule to only fire when ArgumentList.Arguments.Count >= 1.
+RoslynRewriter.user-defined-ToText-fix:
+  layer: runtime-api
+  category: Text
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/100-totext-user-method
+  notes: >
+    Rewriter guard: `.ToText()` → AlCompat.Format() only applies when the call
+    has ≥ 1 argument (all BC runtime ToText() overloads pass a NavSession argument).
+    Zero-arg .ToText() calls are user-defined AL methods and must not be rewritten.
+    Closes #1528.
+
 # ── TextBuilder ─────────────────────────────────────────────────
 
 TextBuilder.Append (Text):

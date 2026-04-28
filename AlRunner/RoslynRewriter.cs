@@ -2760,9 +2760,24 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
         // discarding all arguments since AlCompat.Format does not need them.
         // Special case: .ToText(false) with literal false → Guid no-delimiter form.
         // Exclude ALCompiler.ToText — that static form is handled separately below.
+        //
+        // IMPORTANT: only intercept when the call has at least 1 argument. BC runtime
+        // .ToText() always passes a session argument (null! or a real NavSession reference).
+        // A user-defined AL procedure named ToText() with no parameters produces a 0-arg
+        // C# call — e.g. base.Parent.ToText() (rewritten to _parent.ToText()). If we
+        // rewrote that to AlCompat.Format(_parent) it would return `string` where `NavText`
+        // is expected, causing CS0029 (issue #1528).
+        //
+        // Additionally, BC scope classes call user-defined parent methods as
+        // `_parent.ToText(this)` (passing the scope as the first arg). That bare `this`
+        // is never a BC runtime session argument — those are always `null!` or
+        // `this.Session`. When the first arg is bare `this`, skip the rewrite: the
+        // parent's ToText() is user-defined and returns NavText directly (issue #1528).
         if (visited.Expression is MemberAccessExpressionSyntax toTextMa &&
             toTextMa.Name.Identifier.Text == "ToText" &&
-            !(toTextMa.Expression is IdentifierNameSyntax toTextId && toTextId.Identifier.Text == "ALCompiler"))
+            visited.ArgumentList.Arguments.Count >= 1 &&
+            !(toTextMa.Expression is IdentifierNameSyntax toTextId && toTextId.Identifier.Text == "ALCompiler") &&
+            !visited.ArgumentList.Arguments[0].Expression.IsKind(SyntaxKind.ThisExpression))
         {
             bool isFalseLiteralArg = visited.ArgumentList.Arguments.Count >= 1 &&
                 visited.ArgumentList.Arguments[0].Expression.IsKind(SyntaxKind.FalseLiteralExpression);
