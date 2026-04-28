@@ -2714,16 +2714,19 @@ FieldRef.Validate (Joker):
   layer: runtime-api
   category: FieldRef
   status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/100-fieldref-validate-no-arg
 
 FieldRef.Validate (Variant):
   layer: runtime-api
   category: FieldRef
   status: covered
   notes: >
-    MockVariant-specific overload on MockFieldRef.ALValidate / ALValidateSafe unwraps
-    the Variant to its underlying NavValue via AlCompat.ToNavValue before firing the
-    OnValidate trigger. Fixes NullReferenceException when BC emits fr.Validate(v)
-    with a Variant argument (closes #1487).
+    FieldRef.Validate(Variant) flows through the object/Variant overload on
+    MockFieldRef.ALValidate / ALValidateSafe, which unwraps the Variant via
+    AlCompat.ToNavValue before firing OnValidate. MockVariant-specific overloads
+    were removed to avoid CS0121 ambiguity when BC emits Validate with a null
+    or indirect value.
   tests:
     - tests/bucket-1/record-table/1313-fieldref-validate-variant
 

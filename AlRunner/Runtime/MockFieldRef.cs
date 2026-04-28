@@ -207,15 +207,8 @@ public class MockFieldRef
     public void ALValidate(object value)
         => ALValidate(AlCompat.ToNavValue(value));
 
-    /// <summary>ALValidate — MockVariant overload; unwraps to NavValue via AlCompat then validates.</summary>
-    public void ALValidate(MockVariant value)
-        => ALValidate(AlCompat.ToNavValue(value));
-
     /// <summary>ALValidateSafe — safe variant of Validate.</summary>
     public void ALValidateSafe(NavValue value) => ALValidate(value);
-
-    /// <summary>ALValidateSafe — MockVariant overload; unwraps to NavValue via AlCompat then validates.</summary>
-    public void ALValidateSafe(MockVariant value) => ALValidate(AlCompat.ToNavValue(value));
 
     /// <summary>ALValidateSafe — object/Variant overload; unwraps to NavValue then validates.</summary>
     public void ALValidateSafe(object value) => ALValidate(AlCompat.ToNavValue(value));

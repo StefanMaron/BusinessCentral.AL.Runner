@@ -1572,6 +1572,14 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
             return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.ObjectKeyword))
                 .WithTriviaFrom(node);
 
+        // NavIndirectValue -> object
+        // BC uses NavIndirectValue as a base type for Variant-like parameters.
+        // MockVariant does not extend NavIndirectValue, so rewrite to object
+        // to accept mock values at call sites.
+        if (text == "NavIndirectValue")
+            return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.ObjectKeyword))
+                .WithTriviaFrom(node);
+
         // NavScope — context-sensitive rewrite:
         //
         //   Role 1 (ObjectCreationExpression): "new NavScope(this)"
