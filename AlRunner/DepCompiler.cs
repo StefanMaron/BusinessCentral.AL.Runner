@@ -579,7 +579,7 @@ public static class DepCompiler
                 .ToList();
             if (refs.Count > 0)
                 Console.Error.WriteLine($"  Chaining {refs.Count} prior ModuleInfo(s) into compile.");
-            var rc = CompileDepFromDir(app.Dir, outputDir, accumPackages, refs);
+            var rc = CompileDepFromDir(app.Dir, outputDir, accumPackages, appIdentity: null, extraRefs: refs);
             if (rc != 0)
             {
                 failed.Add(app.Name);
