@@ -1113,7 +1113,8 @@ public static class AlTranspiler
         List<string>? packagePaths = null,
         List<string>? inputPaths = null,
         SyntaxTreeCache? treeCache = null,
-        List<string?>? sourceFilePaths = null)
+        List<string?>? sourceFilePaths = null,
+        IEnumerable<SymbolReferenceSpecification>? extraRefs = null)
     {
         // Parse all sources into syntax trees
         var syntaxTrees = new List<SyntaxTree>();
@@ -1197,6 +1198,11 @@ public static class AlTranspiler
             })
         );
 
+        // Per-app multi-app compile: chain in-memory ModuleInfos from previously-compiled
+        // apps (issue #1521 architecture). Avoids round-tripping through .app files.
+        if (extraRefs != null)
+            compilation = compilation.AddReferences(extraRefs.ToArray());
+
         // --- Symbol reference support ---
         // Always call ResolvePackagePaths so that .alpackages directories adjacent to
         // the input paths are auto-discovered even when --packages is not specified.
@@ -1244,9 +1250,10 @@ public static class AlTranspiler
                 foreach (var spec in depSpecs)
                     Log.Info($"  {FormatSpec(spec)}");
 
+                var allRefs = extraRefs == null ? depSpecs.ToArray() : depSpecs.Concat(extraRefs).ToArray();
                 compilation = compilation
                     .WithReferenceLoader(refLoader)
-                    .AddReferences(depSpecs.ToArray());
+                    .AddReferences(allRefs);
             }
             else
             {
@@ -1273,9 +1280,10 @@ public static class AlTranspiler
                             false, s.AppId, false, ImmutableArray<Guid>.Empty))
                         .ToArray();
                     Log.Info($"  Loaded {allAppSpecs.Length} symbol packages (deduplicated by identity)");
+                    var combined = extraRefs == null ? allAppSpecs : allAppSpecs.Concat(extraRefs).ToArray();
                     compilation = compilation
                         .WithReferenceLoader(refLoader)
-                        .AddReferences(allAppSpecs);
+                        .AddReferences(combined);
                 }
                 else
                 {
@@ -1346,6 +1354,8 @@ public static class AlTranspiler
                     ))
                     .WithReferenceLoader(refLoader!)
                     .AddReferences(dedupedSpecs);
+                if (extraRefs != null)
+                    compilation = compilation.AddReferences(extraRefs.ToArray());
 
                 // Re-check declaration diagnostics
                 declDiags = compilation.GetDeclarationDiagnostics().ToList();
@@ -1403,6 +1413,8 @@ public static class AlTranspiler
                         ))
                         .WithReferenceLoader(refLoader!)
                         .AddReferences(filteredSpecs);
+                    if (extraRefs != null)
+                        compilation = compilation.AddReferences(extraRefs.ToArray());
 
                     // Re-check declaration diagnostics
                     declDiags = compilation.GetDeclarationDiagnostics().ToList();

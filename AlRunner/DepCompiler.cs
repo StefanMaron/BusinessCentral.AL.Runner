@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Xml.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using BcSrs = Microsoft.Dynamics.Nav.CodeAnalysis.SymbolReferenceSpecification;
 
 namespace AlRunner;
 
@@ -440,6 +441,33 @@ public static class DepCompiler
     private record AppInfo(string Dir, Guid Id, string Name, string Publisher, string Version, List<Guid> DepIds);
 
     /// <summary>
+    /// Per-app compiled module-info cache for in-memory symbol chaining. Avoids needing
+    /// to emit a synthetic .app file alongside each .dll — the BC compiler can resolve
+    /// downstream apps' references against the upstream app's compiled module symbol
+    /// directly.
+    /// </summary>
+    private static readonly Dictionary<Guid, BcSrs> CompiledAppRefs = new();
+
+    /// <summary>
+    /// Wrap a compiled BC <c>Compilation</c>'s module symbol in a SymbolReferenceSpecification
+    /// using the <c>(IModuleSymbol)</c> ctor — the BC compiler resolves downstream references
+    /// against the live module without needing to call out to ISymbolReferenceLoader.
+    /// <c>CompiledModule</c> is internal so we access it via reflection.
+    /// </summary>
+    private static BcSrs? TryGetModuleRef(Microsoft.Dynamics.Nav.CodeAnalysis.Compilation comp)
+    {
+        var prop = comp.GetType().GetProperty("CompiledModule",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var moduleObj = prop?.GetValue(comp);
+        if (moduleObj == null) return null;
+        var imsType = comp.GetType().Assembly.GetType("Microsoft.Dynamics.Nav.CodeAnalysis.IModuleSymbol");
+        if (imsType == null || !imsType.IsAssignableFrom(moduleObj.GetType())) return null;
+        var ctor = typeof(BcSrs).GetConstructor(new[] { imsType });
+        if (ctor == null) return null;
+        return (BcSrs)ctor.Invoke(new[] { moduleObj });
+    }
+
+    /// <summary>
     /// Compile a multi-app slice: each subdirectory of <paramref name="srcDir"/> is a
     /// separate app with its own app.json. Build a dependency graph from the manifests,
     /// topologically sort, and compile each app to its own DLL — accumulating prior
@@ -501,20 +529,46 @@ public static class DepCompiler
         }
 
         Directory.CreateDirectory(outputDir);
-        // Accumulate compiled DLLs as packages for subsequent compiles. Each app sees
-        // the user's --packages binaries plus all already-built apps in our output dir.
         var accumPackages = new List<string>(packagePaths);
         var outputDirAbs = Path.GetFullPath(outputDir);
         if (!accumPackages.Contains(outputDirAbs)) accumPackages.Add(outputDirAbs);
+
+        // Reset the compiled-app symbol-ref cache for this build. Each app accumulates
+        // ModuleInfo from its declared deps that are also in our slice — no .app
+        // serialization needed.
+        CompiledAppRefs.Clear();
+
         var failed = new List<string>();
         foreach (var app in ordered)
         {
             Console.Error.WriteLine($"=== Compiling app: {app.Name} by {app.Publisher} v{app.Version} ===");
-            var rc = CompileDepFromDir(app.Dir, outputDir, accumPackages);
+            // Build the in-memory refs list for this app: ModuleInfo of every declared
+            // dependency that's also in our slice and was built successfully.
+            var refs = app.DepIds
+                .Where(CompiledAppRefs.ContainsKey)
+                .Select(id => CompiledAppRefs[id])
+                .ToList();
+            if (refs.Count > 0)
+                Console.Error.WriteLine($"  Chaining {refs.Count} prior ModuleInfo(s) into compile.");
+            var rc = CompileDepFromDir(app.Dir, outputDir, accumPackages, refs);
             if (rc != 0)
             {
                 failed.Add(app.Name);
                 Console.Error.WriteLine($"WARN: compile failed for {app.Name}; continuing with other apps");
+            }
+            else
+            {
+                var compFor = AlTranspiler.LastCompilation;
+                var moduleRef = compFor != null ? TryGetModuleRef(compFor) : null;
+                if (moduleRef != null)
+                {
+                    CompiledAppRefs[app.Id] = moduleRef;
+                    Console.Error.WriteLine($"  Captured module symbol for {app.Name} (id={app.Id})");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"  WARN: no module symbol captured for {app.Name} — chaining will skip it");
+                }
             }
         }
         var built = ordered.Count - failed.Count;
@@ -527,7 +581,7 @@ public static class DepCompiler
         return 0;
     }
 
-    private static int CompileDepFromDir(string srcDir, string outputDir, List<string> packagePaths, AppJsonIdentity? appIdentity = null)
+    private static int CompileDepFromDir(string srcDir, string outputDir, List<string> packagePaths, AppJsonIdentity? appIdentity = null, List<BcSrs>? extraRefs = null)
     {
         Directory.CreateDirectory(outputDir);
 
@@ -642,7 +696,7 @@ public static class DepCompiler
         File.WriteAllText(Path.Combine(sliceManifestDir, "app.json"), manifestJson);
         var inputPaths = new List<string> { sliceManifestDir };
 
-        var csharpList = AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths, sourceFilePaths: compilableFilePaths);
+        var csharpList = AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths, sourceFilePaths: compilableFilePaths, extraRefs: extraRefs);
 
         if ((csharpList == null || csharpList.Count == 0) && compilableSources.Count > 0)
         {
@@ -666,7 +720,7 @@ public static class DepCompiler
                 compilableSources = cleaned.Select(x => x.s).ToList();
                 compilableFilePaths = cleaned.Select(x => x.p).ToList();
                 Console.Error.WriteLine($"  Excluded {dotnetCount} file(s) with residual DotNet interop (unsupported in runner)");
-                csharpList = AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths, sourceFilePaths: compilableFilePaths);
+                csharpList = AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths, sourceFilePaths: compilableFilePaths, extraRefs: extraRefs);
             }
         }
 
@@ -679,7 +733,7 @@ public static class DepCompiler
             Console.SetError(diagCapture);
             var prevVerbose = Log.Verbose;
             Log.Verbose = true;
-            try { AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths, sourceFilePaths: compilableFilePaths); }
+            try { AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths, sourceFilePaths: compilableFilePaths, extraRefs: extraRefs); }
             finally { Console.SetError(savedErr); Log.Verbose = prevVerbose; }
             var diagText = diagCapture.ToString();
             if (!string.IsNullOrWhiteSpace(diagText))
