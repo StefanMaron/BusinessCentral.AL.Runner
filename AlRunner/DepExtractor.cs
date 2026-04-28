@@ -840,6 +840,27 @@ public static class DepExtractor
             // Collect (start, end, replacement) for each DotNet-referencing procedure.
             var replacements = new List<(int Start, int End, string Text)>();
 
+            // Pre-pass: identify DotNet vars at object level so we can fully remove their
+            // dependent page-level event triggers (`trigger VarName::EventName`) instead of
+            // patching their bodies — patching would leave AL0461 since the publisher is gone.
+            var strippedDotNetVarNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var globalVars in root.DescendantNodes().OfType<GlobalVarSectionSyntax>())
+            {
+                foreach (var decl in globalVars.Variables)
+                {
+                    var hasDn = decl.DescendantNodes().OfType<SubtypedDataTypeSyntax>()
+                        .Any(s => s.TypeName.ToFullString().Trim()
+                            .Equals("DotNet", StringComparison.OrdinalIgnoreCase));
+                    if (!hasDn) continue;
+                    if (decl is VariableDeclarationSyntax vd)
+                    {
+                        var ident = vd.Name?.Identifier.ValueText;
+                        if (!string.IsNullOrEmpty(ident))
+                            strippedDotNetVarNames.Add(ident);
+                    }
+                }
+            }
+
             // Strip DotNet from all callable declarations: procedures, field/codeunit triggers,
             // and event subscriber triggers (EventTriggerDeclarationSyntax).
             // All share the same child structure: ParameterList, ReturnValue?, VarSection?, Block?.
@@ -850,6 +871,13 @@ public static class DepExtractor
 
             foreach (var method in candidateNodes)
             {
+                // Skip event triggers whose publisher var was stripped — we will remove
+                // the entire trigger declaration below.
+                if (method is EventTriggerDeclarationSyntax evtSkip
+                    && evtSkip.Publisher?.Identifier.ValueText is string pubName
+                    && strippedDotNetVarNames.Contains(pubName))
+                    continue;
+
                 var hasDotNet = method.DescendantNodes()
                     .OfType<SubtypedDataTypeSyntax>()
                     .Any(s => s.TypeName.ToFullString().Trim()
@@ -869,15 +897,34 @@ public static class DepExtractor
 
                 if (block != null)
                 {
-                    // Replace body and var section with Error() stub.
+                    // [IntegrationEvent] / [BusinessEvent] declarations must have an empty
+                    // body — AL0286 fires if we inject Error(). EventSubscriber bodies are
+                    // real code and DO get the Error() replacement.
+                    bool isEventDecl = method.DescendantNodes()
+                        .OfType<MemberAttributeSyntax>()
+                        .Any(a => {
+                            var n = a.Name?.ToFullString().Trim() ?? "";
+                            return n.Equals("IntegrationEvent", StringComparison.OrdinalIgnoreCase)
+                                || n.Equals("BusinessEvent", StringComparison.OrdinalIgnoreCase)
+                                || n.Equals("InternalEvent", StringComparison.OrdinalIgnoreCase);
+                        });
+
                     var replaceStart = varSection?.Span.Start ?? block.Span.Start;
                     var replaceEnd = block.Span.End;
-                    var escaped = methodName.Replace("'", "''");
-                    var errorBody =
-                        "\n    begin\n" +
-                        $"        Error('AL Runner: ''{escaped}'' uses DotNet interop — not supported in standalone mode. Add this object to your compiled dependency slice.');\n" +
-                        "    end;";
-                    replacements.Add((replaceStart, replaceEnd, errorBody));
+                    string newBody;
+                    if (isEventDecl)
+                    {
+                        newBody = "\n    begin\n    end;";
+                    }
+                    else
+                    {
+                        var escaped = methodName.Replace("'", "''");
+                        newBody =
+                            "\n    begin\n" +
+                            $"        Error('AL Runner: ''{escaped}'' uses DotNet interop — not supported in standalone mode. Add this object to your compiled dependency slice.');\n" +
+                            "    end;";
+                    }
+                    replacements.Add((replaceStart, replaceEnd, newBody));
                 }
                 // For interface procedures (no block): only clean up signatures below.
 
@@ -908,7 +955,7 @@ public static class DepExtractor
                 }
             }
 
-            // Also remove DotNet variable declarations from object-level (GlobalVarSection).
+            // Remove DotNet variable declarations from object-level (GlobalVarSection).
             // These are codeunit/page/report-level vars outside any procedure — not handled
             // by the procedure loop above but still cause the DepCompiler's regex to exclude
             // the entire file, making the object "missing" from compilation.
@@ -924,16 +971,23 @@ public static class DepExtractor
                 if (dotNetDecls.Count == 0) continue;
 
                 if (dotNetDecls.Count == globalVars.Variables.Count)
-                {
-                    // All vars are DotNet — remove the entire section including the 'var' keyword
-                    // to avoid leaving an empty 'var' which is a syntax error.
                     replacements.Add((globalVars.FullSpan.Start, globalVars.FullSpan.End, ""));
-                }
                 else
-                {
-                    // Only some vars are DotNet — remove just those declarations.
                     foreach (var decl in dotNetDecls)
                         replacements.Add((decl.FullSpan.Start, decl.FullSpan.End, ""));
+            }
+
+            // Page-level `trigger VarName::EventName(...)` — these reference a [WithEvents]
+            // DotNet var that we just removed. Leaving the trigger orphans it (AL0461
+            // 'X is not a valid event publisher'). Use Span (not FullSpan) to avoid
+            // consuming the next member's leading trivia.
+            if (strippedDotNetVarNames.Count > 0)
+            {
+                foreach (var evt in root.DescendantNodes().OfType<EventTriggerDeclarationSyntax>())
+                {
+                    var publisher = evt.Publisher?.Identifier.ValueText;
+                    if (!string.IsNullOrEmpty(publisher) && strippedDotNetVarNames.Contains(publisher))
+                        replacements.Add((evt.Span.Start, evt.Span.End, ""));
                 }
             }
 
