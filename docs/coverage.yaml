@@ -2724,8 +2724,9 @@ FieldRef.Validate (Variant):
   notes: >
     FieldRef.Validate(Variant) flows through the object/Variant overload on
     MockFieldRef.ALValidate / ALValidateSafe, which unwraps the Variant via
-    AlCompat.ToNavValue before firing OnValidate. MockVariant-specific overloads
-    were removed to avoid CS0121 ambiguity when BC emits Validate with a null
+    AlCompat.ToNavValue before firing OnValidate. MockVariant overloads handle
+    null variants by re-validating the current value, and the NavValue overload
+    was removed to avoid CS0121 ambiguity when BC emits Validate with a null
     or indirect value.
   tests:
     - tests/bucket-1/record-table/1313-fieldref-validate-variant
