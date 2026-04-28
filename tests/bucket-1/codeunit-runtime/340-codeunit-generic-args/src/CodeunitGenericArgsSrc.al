@@ -1,4 +1,4 @@
-codeunit 1320516 "CGA Worker"
+codeunit 1900001 "CGA Worker"
 {
     procedure GetValue(): Integer
     begin
@@ -6,7 +6,7 @@ codeunit 1320516 "CGA Worker"
     end;
 }
 
-codeunit 1320517 "CGA Manager"
+codeunit 1900002 "CGA Manager"
 {
     procedure BuildList(): List of [Codeunit "CGA Worker"]
     var
