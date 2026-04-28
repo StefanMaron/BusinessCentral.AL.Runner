@@ -410,6 +410,22 @@ public static class DepCompiler
                 .ToList();
             foreach (var d in errors)
                 errorSink?.Add(d.ToString());
+            // DEBUG: dump rewritten trees on failure
+            if (System.Environment.GetEnvironmentVariable("ALRUNNER_DUMP_REWRITTEN") == "1")
+            {
+                var dumpDir = Path.Combine(System.IO.Path.GetTempPath(), "alrunner_debug_" + Path.GetFileNameWithoutExtension(outputPath));
+                Directory.CreateDirectory(dumpDir);
+                int idx = 0;
+                foreach (var tree in syntaxTrees)
+                {
+                    var fp = tree.FilePath;
+                    var fn = (!string.IsNullOrEmpty(fp) ? Path.GetFileName(fp) : null) ?? $"tree_{idx}";
+                    if (string.IsNullOrEmpty(fn)) fn = $"tree_{idx}";
+                    File.WriteAllText(Path.Combine(dumpDir, fn + ".cs"), tree.GetRoot().ToFullString());
+                    idx++;
+                }
+                Console.Error.WriteLine($"  DEBUG: rewritten trees dumped to {dumpDir}");
+            }
             // Clean up partial output
             try { File.Delete(outputPath); } catch { }
             return false;
