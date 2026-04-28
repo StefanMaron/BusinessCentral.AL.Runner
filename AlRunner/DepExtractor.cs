@@ -18,7 +18,7 @@ public static class DepExtractor
     // the pending/visited dictionaries.
     private static readonly string[] AllTypes =
     [
-        "Table", "Codeunit", "Enum", "Page", "Report", "Query", "XmlPort", "Interface", "ControlAddIn"
+        "Table", "Codeunit", "Enum", "Page", "Report", "Query", "XmlPort", "Interface"
     ];
 
     // -----------------------------------------------------------------------
@@ -172,9 +172,24 @@ public static class DepExtractor
         int written = 0;
         int strippedProcedures = 0;
         int skippedFiles = 0;
+        int strippedControlAddInFiles = 0;
+        int strippedUserControls = 0;
         foreach (var (fileName, source) in allExtracted)
         {
-            var (strippedSource, stripped) = StripDotNetProcedures(source, fileName);
+            // 1. ControlAddIn objects need a JS/HTML resource sidecar that the runner cannot
+            //    serve (no browser, no service tier). Skip the file entirely.
+            if (IsControlAddInObjectFile(source))
+            {
+                strippedControlAddInFiles++;
+                continue;
+            }
+
+            // 2. Strip PageUserControl blocks (and their dependent event triggers) from pages.
+            //    Without this the page references a ControlAddIn that we just dropped.
+            var (uncontrolledSource, controlsRemoved) = StripPageUserControls(source);
+            strippedUserControls += controlsRemoved;
+
+            var (strippedSource, stripped) = StripDotNetProcedures(uncontrolledSource, fileName);
             if (strippedSource == null) { skippedFiles++; continue; } // pure assembly declaration, nothing callable
 
             var outPath = Path.Combine(outputDir, fileName);
@@ -187,6 +202,8 @@ public static class DepExtractor
 
         if (strippedProcedures > 0 || skippedFiles > 0)
             Console.Error.WriteLine($"DotNet stripping: {strippedProcedures} procedure(s) replaced with Error(), {skippedFiles} pure-assembly file(s) skipped.");
+        if (strippedControlAddInFiles > 0 || strippedUserControls > 0)
+            Console.Error.WriteLine($"ControlAddIn stripping: {strippedControlAddInFiles} controladdin file(s) dropped, {strippedUserControls} usercontrol block(s) removed from pages.");
 
         Console.Error.WriteLine($"Extracted {written} AL file(s) to {outputDir}");
         return 0;
@@ -326,10 +343,6 @@ public static class DepExtractor
                 index.AddDefinition("XmlPort", GetObjectName(obj), fileName, source); break;
             case SyntaxKind.Interface:
                 index.AddDefinition("Interface", GetObjectName(obj), fileName, source); break;
-            case SyntaxKind.ControlAddInObject:
-                if (obj is ControlAddInSyntax ca)
-                    index.AddDefinition("ControlAddIn", UnquoteIdentifier(ca.Name.Identifier.ValueText), fileName, source);
-                break;
 
             // Extension objects: indexed by the base object they extend
             case SyntaxKind.TableExtensionObject:
@@ -386,7 +399,6 @@ public static class DepExtractor
         foreach (var n in refs.Queries)    pending["Query"].Enqueue(n);
         foreach (var n in refs.XmlPorts)   pending["XmlPort"].Enqueue(n);
         foreach (var n in refs.Interfaces) pending["Interface"].Enqueue(n);
-        foreach (var n in refs.ControlAddIns) pending["ControlAddIn"].Enqueue(n);
     }
 
     // -----------------------------------------------------------------------
@@ -783,7 +795,7 @@ public static class DepExtractor
     }
 
     private static readonly System.Text.RegularExpressions.Regex MissingSymbolPattern =
-        new(@"(Codeunit|Table|Page|Enum|Interface|Report|Query|XmlPort|ControlAddIn)\s+'([^']+)'\s+is missing",
+        new(@"(Codeunit|Table|Page|Enum|Interface|Report|Query|XmlPort)\s+'([^']+)'\s+is missing",
             System.Text.RegularExpressions.RegexOptions.Compiled);
 
     /// <summary>
@@ -815,6 +827,61 @@ public static class DepExtractor
 
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         return result.Where(x => seen.Add($"{x.Item1}|{x.Item2}")).ToList();
+    }
+
+    // -----------------------------------------------------------------------
+    // ControlAddIn stripping
+    // -----------------------------------------------------------------------
+
+    /// <summary>True if the file's top-level object is a controladdin (which we always drop).</summary>
+    private static bool IsControlAddInObjectFile(string source)
+    {
+        try
+        {
+            var tree = SyntaxTree.ParseObjectText(source);
+            if (tree.GetRoot() is not CompilationUnitSyntax cu) return false;
+            return cu.Objects.Any(o => o.Kind == SyntaxKind.ControlAddInObject);
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// Remove `usercontrol(localName; "ControlAddInName")` blocks and their dependent
+    /// page-level event triggers (`trigger localName::EventName(...)`). Returns the
+    /// modified source and the count of usercontrols removed.
+    /// </summary>
+    private static (string Source, int Removed) StripPageUserControls(string source)
+    {
+        if (!source.Contains("usercontrol", StringComparison.OrdinalIgnoreCase)) return (source, 0);
+        try
+        {
+            var tree = SyntaxTree.ParseObjectText(source);
+            var root = tree.GetRoot();
+            var userControls = root.DescendantNodes().OfType<PageUserControlSyntax>().ToList();
+            if (userControls.Count == 0) return (source, 0);
+
+            var localNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var replacements = new List<(int Start, int End, string Text)>();
+            foreach (var uc in userControls)
+            {
+                var ln = uc.Name?.Identifier.ValueText;
+                if (!string.IsNullOrEmpty(ln)) localNames.Add(ln);
+                replacements.Add((uc.Span.Start, uc.Span.End, ""));
+            }
+            // Drop dependent event triggers
+            foreach (var evt in root.DescendantNodes().OfType<EventTriggerDeclarationSyntax>())
+            {
+                var pub = evt.Publisher?.Identifier.ValueText;
+                if (!string.IsNullOrEmpty(pub) && localNames.Contains(pub))
+                    replacements.Add((evt.Span.Start, evt.Span.End, ""));
+            }
+
+            var result = source;
+            foreach (var (s, e, t) in replacements.OrderByDescending(r => r.Start))
+                result = result[..s] + t + result[e..];
+            return (result, userControls.Count);
+        }
+        catch { return (source, 0); }
     }
 
     // -----------------------------------------------------------------------

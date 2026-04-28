@@ -1119,9 +1119,7 @@ public static class AlTranspiler
         var syntaxTrees = new List<SyntaxTree>();
         bool hasErrors = false;
 
-        var parseOptions = PreprocessorSymbols.Count > 0
-            ? new ParseOptions(runtimeVersion: null!, PreprocessorSymbols, DocumentationMode.None)
-            : null;
+        var parseOptions = new ParseOptions(runtimeVersion: null!, PreprocessorSymbols, DocumentationMode.None);
 
         var parsedResults = new (SyntaxTree tree, List<Diagnostic> diags)[alSources.Count];
         Parallel.For(0, alSources.Count, i =>
@@ -1187,7 +1185,12 @@ public static class AlTranspiler
                 // GenerateRdlcLayout crashes with NullReferenceException.
                 generateOptions: CompilationGenerationOptions.Code | CompilationGenerationOptions.Navigation,
                 compilerFeatures: compilerFeatures
-            )
+            ).WithManifestOptions(new Microsoft.Dynamics.Nav.CodeAnalysis.Packaging.NavAppManifest
+            {
+                // Pages with `ContextSensitiveHelpPage` require this URL — runner stub.
+                ContextSensitiveHelpUrl = "https://learn.microsoft.com/en-us/dynamics365/business-central/",
+                AppHelpBaseUrl = "https://learn.microsoft.com/en-us/dynamics365/business-central/"
+            })
         );
 
         // --- Symbol reference support ---

@@ -478,7 +478,18 @@ public static class DepCompiler
         var compilableSources = alSources;
         var compilableFilePaths = filePaths;
 
-        var csharpList = AlTranspiler.TranspileMulti(compilableSources, effectivePackages, null, sourceFilePaths: compilableFilePaths);
+        // Synthesize an app.json so Microsoft pages with `ContextSensitiveHelpPage` set
+        // don't fail with AL0543 ('contextSensitiveHelpUrl must be set'). The URL is a
+        // stub — the runner does not render help pages.
+        var sliceManifestDir = Path.Combine(Path.GetTempPath(), $"alrunner-slice-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(sliceManifestDir);
+        File.WriteAllText(Path.Combine(sliceManifestDir, "app.json"),
+            $"{{\"id\":\"{Guid.NewGuid()}\",\"name\":\"{dirName}\",\"publisher\":\"AlRunner\",\"version\":\"1.0.0.0\"," +
+            "\"contextSensitiveHelpUrl\":\"https://learn.microsoft.com/en-us/dynamics365/business-central/\"," +
+            "\"helpBaseUrl\":\"https://learn.microsoft.com/en-us/dynamics365/business-central/\"}");
+        var inputPaths = new List<string> { sliceManifestDir };
+
+        var csharpList = AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths, sourceFilePaths: compilableFilePaths);
 
         if ((csharpList == null || csharpList.Count == 0) && compilableSources.Count > 0)
         {
@@ -502,7 +513,7 @@ public static class DepCompiler
                 compilableSources = cleaned.Select(x => x.s).ToList();
                 compilableFilePaths = cleaned.Select(x => x.p).ToList();
                 Console.Error.WriteLine($"  Excluded {dotnetCount} file(s) with residual DotNet interop (unsupported in runner)");
-                csharpList = AlTranspiler.TranspileMulti(compilableSources, effectivePackages, null, sourceFilePaths: compilableFilePaths);
+                csharpList = AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths, sourceFilePaths: compilableFilePaths);
             }
         }
 
@@ -515,7 +526,7 @@ public static class DepCompiler
             Console.SetError(diagCapture);
             var prevVerbose = Log.Verbose;
             Log.Verbose = true;
-            try { AlTranspiler.TranspileMulti(compilableSources, effectivePackages, null, sourceFilePaths: compilableFilePaths); }
+            try { AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths, sourceFilePaths: compilableFilePaths); }
             finally { Console.SetError(savedErr); Log.Verbose = prevVerbose; }
             var diagText = diagCapture.ToString();
             if (!string.IsNullOrWhiteSpace(diagText))
