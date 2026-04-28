@@ -226,21 +226,30 @@ public class MockFile
     public void ALView(object? parent) { }
 
     /// <summary>ALViewFromStream — no-op; no UI in standalone mode.</summary>
-    public void ALViewFromStream(object? parent, MockInStream inStream) { }
+    public bool ALViewFromStream(object? parent, MockInStream inStream)
+    {
+        return true;
+    }
 
     /// <summary>
     /// ALViewFromStream static 3-arg overload — BC emits this for the 2-arg AL form:
     ///   File.ViewFromStream(InStream, FileName).
     /// BC passes DataError as the first arg. No-op; no UI in standalone mode.
     /// </summary>
-    public static void ALViewFromStream(object? scope, MockInStream inStream, string fileName) { }
+    public static bool ALViewFromStream(object? scope, MockInStream inStream, string fileName)
+    {
+        return true;
+    }
 
     /// <summary>
     /// ALViewFromStream static 4-arg overload — BC emits this for the 3-arg AL form:
     ///   File.ViewFromStream(InStream, FileName, IsEditable).
     /// BC passes DataError as the first arg. No-op; no UI in standalone mode.
     /// </summary>
-    public static void ALViewFromStream(object? scope, MockInStream inStream, string fileName, bool isEditable) { }
+    public static bool ALViewFromStream(object? scope, MockInStream inStream, string fileName, bool isEditable)
+    {
+        return true;
+    }
 
     /// <summary>
     /// ALUploadIntoStream — BC standalone UploadIntoStream maps here as a static.

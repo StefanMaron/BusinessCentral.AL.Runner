@@ -32,9 +32,10 @@ public class MockHttpRequestMessage
     /// BC emits: <c>request.ALSetRequestUri(DataError, url)</c>
     /// for <c>HttpRequestMessage.SetRequestUri(url)</c>.
     /// </summary>
-    public void ALSetRequestUri(DataError errorLevel, string uri)
+    public bool ALSetRequestUri(DataError errorLevel, string uri)
     {
         ALGetRequestUri = uri;
+        return true;
     }
 
     /// <summary>Request content. BC emits <c>request.ALContent</c> get/set.</summary>
@@ -49,9 +50,10 @@ public class MockHttpRequestMessage
     /// for <c>HttpRequestMessage.GetHeaders(headers)</c>.
     /// Sets the out-parameter to the stored headers instance.
     /// </summary>
-    public void ALGetHeaders(DataError errorLevel, ByRef<MockHttpHeaders> headers)
+    public bool ALGetHeaders(DataError errorLevel, ByRef<MockHttpHeaders> headers)
     {
         headers.Value = _headers;
+        return true;
     }
 
     /// <summary>

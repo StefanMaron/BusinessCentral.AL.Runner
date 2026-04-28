@@ -2908,7 +2908,9 @@ File.ViewFromStream (InStream, Text, Boolean):
   layer: runtime-api
   category: File
   status: covered
-  notes: static overload (scope, InStream, FileName, IsEditable); 3-arg AL form File.ViewFromStream(InStream, FileName, IsEditable); fixes CS1501 telemetry gap
+  tests:
+    - tests/bucket-1/codeunit-runtime/328-file-viewfromstream-bool
+  notes: static overload (scope, InStream, FileName, IsEditable); 3-arg AL form File.ViewFromStream(InStream, FileName, IsEditable); returns bool for 'if not' contexts (issue #1538); fixes CS1501 telemetry gap
 
 File.Write (BigInteger):
   layer: runtime-api
@@ -3256,7 +3258,8 @@ HttpClient.UseDefaultNetworkWindowsAuthentication ():
   status: covered
   tests:
     - tests/bucket-1/codeunit-runtime/322-httpclient-usedefaultnetwork
-  notes: ALUseDefaultNetworkWindowsAuthentication changed from property to method (DataError arg) to fix CS1955 (issue #1532)
+    - tests/bucket-1/codeunit-runtime/324-httpclient-usedefaultnetwork-bool
+  notes: ALUseDefaultNetworkWindowsAuthentication changed from property to method (DataError arg) to fix CS1955 (issue #1532); returns bool for 'if not' contexts (issue #1538)
 
 HttpClient.UseResponseCookies (Boolean):
   layer: runtime-api
@@ -3300,7 +3303,9 @@ HttpContent.GetHeaders (HttpHeaders):
   layer: runtime-api
   category: HttpContent
   status: covered
-  notes: . MockHttpContent.ALGetHeaders is now a method (was a property; BC emits it as a method call with a ByRef out parameter).
+  tests:
+    - tests/bucket-1/codeunit-runtime/326-httpcontent-getheaders-bool
+  notes: MockHttpContent.ALGetHeaders is now a method (was a property; BC emits it as a method call with a ByRef out parameter); returns bool for 'if not' contexts (issue #1538).
 
 HttpContent.IsSecretContent ():
   layer: runtime-api
@@ -3461,6 +3466,9 @@ HttpRequestMessage.GetHeaders (HttpHeaders):
   layer: runtime-api
   category: HttpRequestMessage
   status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/327-httprequestmessage-getheaders-bool
+  notes: ALGetHeaders returns bool for 'if not' contexts (issue #1538).
 
 HttpRequestMessage.GetRequestUri ():
   layer: runtime-api
@@ -3506,6 +3514,9 @@ HttpRequestMessage.SetRequestUri (Text):
   layer: runtime-api
   category: HttpRequestMessage
   status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/325-httprequestmessage-setrequesturi-bool
+  notes: ALSetRequestUri returns bool for 'if not' contexts (issue #1538).
 
 HttpRequestMessage.SetSecretRequestUri (SecretText):
   layer: runtime-api

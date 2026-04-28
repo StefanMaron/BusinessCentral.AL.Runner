@@ -108,9 +108,10 @@ public class MockHttpClient
     /// No-op in standalone mode; records the flag for <see cref="ALAssign"/>.
     /// Fixes CS1955 that arose when this was declared as a property (issue #1532).
     /// </summary>
-    public void ALUseDefaultNetworkWindowsAuthentication(DataError errorLevel = DataError.ThrowError)
+    public bool ALUseDefaultNetworkWindowsAuthentication(DataError errorLevel = DataError.ThrowError)
     {
         _useDefaultNetworkWindowsAuthentication = true;
+        return true;
     }
 
     // ── Configuration methods (issue #732) ────────────────────────────────

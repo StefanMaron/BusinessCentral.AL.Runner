@@ -54,9 +54,10 @@ public class MockHttpContent
     /// as a method call with a ByRef out parameter. The headers collection is shared
     /// with the content so later mutations round-trip.
     /// </summary>
-    public void ALGetHeaders(DataError errorLevel, ByRef<MockHttpHeaders> headers)
+    public bool ALGetHeaders(DataError errorLevel, ByRef<MockHttpHeaders> headers)
     {
         headers.Value = _headers;
+        return true;
     }
 
     /// <summary>
