@@ -85,6 +85,8 @@ public static class DepExtractor
         ExpandSlice(pending, visited, index, allExtracted);
 
         // 5. Add event subscribers targeting objects in the slice.
+        //    Same-app rule: only pull subscribers whose host file lives in the same app
+        //    as the target object. Cross-app subscribers are a fidelity gap tracked in #1545.
         //    Iterate to fixpoint: new subscribers may pull in objects that have their own subscribers.
         int eventSubsAdded;
         do
@@ -96,9 +98,11 @@ public static class DepExtractor
                 foreach (var (targetName, subscribers) in subsByTarget)
                 {
                     if (!visited[targetType].Contains(targetName)) continue;
+                    var targetApps = GetAppsForObject(index, targetType, targetName);
                     foreach (var (fileName, source) in subscribers)
                     {
                         if (allExtracted.ContainsKey(fileName)) continue;
+                        if (targetApps.Count > 0 && !targetApps.Contains(GetAppOfFile(fileName))) continue;
                         allExtracted[fileName] = source;
                         Console.Error.WriteLine($"  + {fileName} (event subscriber)");
                         eventSubsAdded++;
@@ -146,9 +150,11 @@ public static class DepExtractor
                         foreach (var (targetName, subscribers) in subsByTarget2)
                         {
                             if (!visited[targetType].Contains(targetName)) continue;
+                            var targetApps = GetAppsForObject(index, targetType, targetName);
                             foreach (var (fn, src) in subscribers)
                             {
                                 if (allExtracted.ContainsKey(fn)) continue;
+                                if (targetApps.Count > 0 && !targetApps.Contains(GetAppOfFile(fn))) continue;
                                 allExtracted[fn] = src;
                                 subsAdded2++;
                                 EnqueueTransitiveDeps(src, visited, pending);
@@ -283,11 +289,13 @@ public static class DepExtractor
                     // the same object is redefined across modules (obsolete + new
                     // location after a CLEANSCHEMA migration). Pull every occurrence —
                     // the compiler with preprocessor symbols selects the active one.
+                    var baseApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     if (index.Definitions.TryGetValue(typeName, out var defs) &&
                         defs.TryGetValue(name, out var defList))
                     {
                         foreach (var (fileName, source) in defList)
                         {
+                            baseApps.Add(GetAppOfFile(fileName));
                             if (allExtracted.ContainsKey(fileName)) continue;
                             allExtracted[fileName] = source;
                             Console.Error.WriteLine($"  + {fileName}");
@@ -295,13 +303,17 @@ public static class DepExtractor
                         }
                     }
 
-                    // O(1) extension lookup — includes all tableextensions, pageextensions, etc.
+                    // Pull only same-app extensions. An extension that lives in a different
+                    // app from the base it extends is treated as out-of-scope — pulling it
+                    // would drag in that foreign app's transitive deps. See issue #1544.
+                    // Fidelity gap (cross-app extension side-effects) tracked in #1545.
                     if (index.Extensions.TryGetValue(typeName, out var exts) &&
                         exts.TryGetValue(name, out var extList))
                     {
                         foreach (var (fileName, source) in extList)
                         {
                             if (allExtracted.ContainsKey(fileName)) continue;
+                            if (baseApps.Count > 0 && !baseApps.Contains(GetAppOfFile(fileName))) continue;
                             allExtracted[fileName] = source;
                             Console.Error.WriteLine($"  + {fileName}");
                             EnqueueTransitiveDeps(source, visited, pending);
@@ -310,6 +322,33 @@ public static class DepExtractor
                 }
             }
         } while (anyWork);
+    }
+
+    /// <summary>
+    /// Returns the set of dep apps containing a definition of (typeName, objectName).
+    /// Empty when the object is not in the dep index (e.g. consumer-defined). Used to
+    /// gate cross-app pull-in of extensions and event subscribers.
+    /// </summary>
+    private static HashSet<string> GetAppsForObject(DepIndex index, string typeName, string objectName)
+    {
+        var apps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (index.Definitions.TryGetValue(typeName, out var byName) &&
+            byName.TryGetValue(objectName, out var list))
+            foreach (var (fn, _) in list) apps.Add(GetAppOfFile(fn));
+        return apps;
+    }
+
+    /// <summary>
+    /// First path segment of <paramref name="fileName"/>, treated as the app folder name.
+    /// LoadDepSources stores file names as <c>Path.GetRelativePath(depRoot, file)</c>, so
+    /// for layouts like <c>.deps-source/&lt;App&gt;/...</c> this yields the app name.
+    /// Returns "" for flat layouts; callers treat empty as "no app boundary, allow".
+    /// </summary>
+    private static string GetAppOfFile(string fileName)
+    {
+        if (string.IsNullOrEmpty(fileName)) return "";
+        int slash = fileName.IndexOfAny(new[] { '/', '\\' });
+        return slash > 0 ? fileName[..slash] : "";
     }
 
     private static void EnqueueTransitiveDeps(

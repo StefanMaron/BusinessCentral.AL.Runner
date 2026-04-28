@@ -391,6 +391,184 @@ public class DepExtractorTests
     }
 
     // -----------------------------------------------------------------------
+    // App-boundary rules: extensions and event subscribers from foreign apps
+    // are dropped to keep the slice scoped to the consumer's actual surface.
+    // See issue #1544 for the rule rationale; #1545 tracks the future opt-in
+    // for full-app inclusion via direct reference.
+    // -----------------------------------------------------------------------
+
+    /// <summary>Layout: depRoot/AppA/Customer.al, depRoot/AppB/CustomerExt.al
+    /// extending Customer. Consumer references Customer only. Expected: AppA's
+    /// Customer table in slice, AppB's tableextension NOT in slice.</summary>
+    [Fact]
+    public void ExtractDeps_DoesNotPullCrossAppTableExtension()
+    {
+        var depRoot = Path.Combine(Path.GetTempPath(), "al-dep-cross-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir  = Path.Combine(Path.GetTempPath(), "al-out-cross-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir  = Path.Combine(Path.GetTempPath(), "al-ext-cross-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(depRoot, "AppA"));
+            Directory.CreateDirectory(Path.Combine(depRoot, "AppB"));
+            Directory.CreateDirectory(extDir);
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "Customer.al"),
+                "table 18 Customer { fields { field(1; \"No.\"; Code[20]) { } } }");
+            File.WriteAllText(Path.Combine(depRoot, "AppB", "CustomerExt.al"),
+                "tableextension 50001 \"Cust Ext\" extends Customer { fields { field(50000; Foo; Text[10]) { } } }");
+            File.WriteAllText(Path.Combine(extDir, "MyExt.al"), """
+                codeunit 50010 "My Codeunit"
+                {
+                    procedure Run() var Cust: Record Customer; begin Cust.FindFirst(); end;
+                }
+                """);
+
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depRoot }, outDir);
+
+            Assert.Equal(0, rc);
+            var files = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+            Assert.Contains(files, f => File.ReadAllText(f).Contains("table 18 Customer"));
+            Assert.DoesNotContain(files, f => File.ReadAllText(f).Contains("tableextension 50001"));
+        }
+        finally
+        {
+            foreach (var d in new[] { depRoot, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
+    /// <summary>Layout: AppA holds both Customer and a tableextension of Customer.
+    /// Consumer references Customer. Expected: tableextension IS in slice (same app).</summary>
+    [Fact]
+    public void ExtractDeps_PullsSameAppTableExtension()
+    {
+        var depRoot = Path.Combine(Path.GetTempPath(), "al-dep-same-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir  = Path.Combine(Path.GetTempPath(), "al-out-same-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir  = Path.Combine(Path.GetTempPath(), "al-ext-same-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(depRoot, "AppA"));
+            Directory.CreateDirectory(extDir);
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "Customer.al"),
+                "table 18 Customer { fields { field(1; \"No.\"; Code[20]) { } } }");
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "CustomerExt.al"),
+                "tableextension 50001 \"Cust Ext\" extends Customer { fields { field(50000; Foo; Text[10]) { } } }");
+            File.WriteAllText(Path.Combine(extDir, "MyExt.al"), """
+                codeunit 50010 "My Codeunit"
+                {
+                    procedure Run() var Cust: Record Customer; begin Cust.FindFirst(); end;
+                }
+                """);
+
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depRoot }, outDir);
+
+            Assert.Equal(0, rc);
+            var files = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+            Assert.Contains(files, f => File.ReadAllText(f).Contains("tableextension 50001"));
+        }
+        finally
+        {
+            foreach (var d in new[] { depRoot, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
+    /// <summary>Cross-app event subscriber must be dropped: AppA defines codeunit Foo,
+    /// AppB has a codeunit subscribing to events on Foo. Consumer references Foo only.
+    /// Expected: AppB's subscriber NOT in slice.</summary>
+    [Fact]
+    public void ExtractDeps_DoesNotPullCrossAppEventSubscriber()
+    {
+        var depRoot = Path.Combine(Path.GetTempPath(), "al-dep-csub-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir  = Path.Combine(Path.GetTempPath(), "al-out-csub-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir  = Path.Combine(Path.GetTempPath(), "al-ext-csub-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(depRoot, "AppA"));
+            Directory.CreateDirectory(Path.Combine(depRoot, "AppB"));
+            Directory.CreateDirectory(extDir);
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "Foo.al"), """
+                codeunit 60001 Foo
+                {
+                    [IntegrationEvent(false, false)]
+                    procedure OnSomething() begin end;
+                }
+                """);
+            File.WriteAllText(Path.Combine(depRoot, "AppB", "ForeignSub.al"), """
+                codeunit 60002 ForeignSub
+                {
+                    [EventSubscriber(ObjectType::Codeunit, Codeunit::Foo, 'OnSomething', '', false, false)]
+                    local procedure OnFoo() begin end;
+                }
+                """);
+            File.WriteAllText(Path.Combine(extDir, "MyExt.al"), """
+                codeunit 50010 "My Codeunit"
+                {
+                    procedure Run() begin Codeunit.Run(Codeunit::Foo); end;
+                }
+                """);
+
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depRoot }, outDir);
+
+            Assert.Equal(0, rc);
+            var files = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+            Assert.Contains(files, f => File.ReadAllText(f).Contains("codeunit 60001 Foo"));
+            Assert.DoesNotContain(files, f => File.ReadAllText(f).Contains("ForeignSub"));
+        }
+        finally
+        {
+            foreach (var d in new[] { depRoot, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
+    /// <summary>Same-app event subscriber must be pulled: AppA defines Foo and a
+    /// sibling codeunit that subscribes to it. Consumer references Foo. Expected:
+    /// sibling subscriber IS in slice.</summary>
+    [Fact]
+    public void ExtractDeps_PullsSameAppEventSubscriber()
+    {
+        var depRoot = Path.Combine(Path.GetTempPath(), "al-dep-ssub-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir  = Path.Combine(Path.GetTempPath(), "al-out-ssub-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir  = Path.Combine(Path.GetTempPath(), "al-ext-ssub-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(depRoot, "AppA"));
+            Directory.CreateDirectory(extDir);
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "Foo.al"), """
+                codeunit 60001 Foo
+                {
+                    [IntegrationEvent(false, false)]
+                    procedure OnSomething() begin end;
+                }
+                """);
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "Sibling.al"), """
+                codeunit 60002 SiblingSub
+                {
+                    [EventSubscriber(ObjectType::Codeunit, Codeunit::Foo, 'OnSomething', '', false, false)]
+                    local procedure OnFoo() begin end;
+                }
+                """);
+            File.WriteAllText(Path.Combine(extDir, "MyExt.al"), """
+                codeunit 50010 "My Codeunit"
+                {
+                    procedure Run() begin Codeunit.Run(Codeunit::Foo); end;
+                }
+                """);
+
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depRoot }, outDir);
+
+            Assert.Equal(0, rc);
+            var files = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+            Assert.Contains(files, f => File.ReadAllText(f).Contains("SiblingSub"));
+        }
+        finally
+        {
+            foreach (var d in new[] { depRoot, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Integration tests — require local .app and extension source
     // -----------------------------------------------------------------------
 
