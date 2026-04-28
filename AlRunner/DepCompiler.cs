@@ -363,30 +363,17 @@ public static class DepCompiler
             return 1;
         }
 
-        var appJsonPaths = Directory.GetFiles(rootDir, "app.json", SearchOption.AllDirectories);
-        if (appJsonPaths.Length == 0)
-            return CompileDepFromDir(rootDir, outputDir, packagePaths);
-
-        var appDirs = appJsonPaths
-            .Select(Path.GetDirectoryName)
-            .Where(d => !string.IsNullOrEmpty(d))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
+        // Multi-app: top-level slice has subdirectories with app.json files. Delegate to
+        // the private overload which adds topological sorting + in-memory ModuleInfo
+        // chaining so apps see prior siblings' compiled symbols (issue #1521).
+        var directChildAppDirs = Directory.GetDirectories(rootDir)
+            .Where(d => File.Exists(Path.Combine(d, "app.json")))
             .ToList();
+        if (directChildAppDirs.Count > 0)
+            return CompileDepMultiApp(rootDir, directChildAppDirs, outputDir, packagePaths);
 
-        int failures = 0;
-        foreach (var appDir in appDirs)
-        {
-            AppJsonIdentity? identity = null;
-            var appJsonPath = Path.Combine(appDir!, "app.json");
-            if (File.Exists(appJsonPath) && TryReadAppJsonIdentity(appJsonPath, out var parsed))
-                identity = parsed;
-
-            var result = CompileDepFromDir(appDir!, outputDir, packagePaths, identity);
-            if (result != 0)
-                failures++;
-        }
-
-        return failures == 0 ? 0 : 1;
+        // Fallback: single app at root, or no app.jsons anywhere.
+        return CompileDepFromDir(rootDir, outputDir, packagePaths);
     }
 
     /// <summary>
@@ -571,12 +558,14 @@ public static class DepCompiler
         foreach (var app in ordered)
         {
             Console.Error.WriteLine($"=== Compiling app: {app.Name} by {app.Publisher} v{app.Version} ===");
-            // Build the in-memory refs list for this app: ModuleInfo of every declared
-            // dependency that's also in our slice and was built successfully.
-            var refs = app.DepIds
-                .Where(CompiledAppRefs.ContainsKey)
-                .Select(id => CompiledAppRefs[id])
-                .ToList();
+            // Build the in-memory refs list for this app: ModuleInfo of every previously
+            // compiled app in the slice — declared dep or not. Microsoft's real BC source
+            // frequently references objects across apps that the consumer's app.json
+            // does not declare (e.g. Tests-TestLibraries references Base Application
+            // pages without a declared Base App dep). Real BC resolves these via
+            // platform-wide symbol leakage; mirror that by exposing every prior compile's
+            // module to the current one. Issue #1551.
+            var refs = CompiledAppRefs.Values.ToList();
             if (refs.Count > 0)
                 Console.Error.WriteLine($"  Chaining {refs.Count} prior ModuleInfo(s) into compile.");
             var rc = CompileDepFromDir(app.Dir, outputDir, accumPackages, appIdentity: null, extraRefs: refs);
