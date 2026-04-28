@@ -559,12 +559,32 @@ public static class DepCompiler
             else
             {
                 // Capture the compiled app's module symbol for downstream chaining via the
-                // in-memory ISymbolReferenceLoader path. No .app file is produced — the
-                // runner deliberately avoids creating BC-deployable artifacts.
+                // in-memory ISymbolReferenceLoader path.
                 var compFor = AlTranspiler.LastCompilation;
                 var moduleRef = compFor != null ? TryGetModuleRef(compFor) : null;
                 if (moduleRef != null)
                     CompiledAppRefs[app.Id] = moduleRef;
+
+                // Emit a <App>.symbols.json next to the .dll. This is a JSON-only symbol
+                // artifact (NOT a .app — no AL bytecode, cannot be deployed to a BC instance).
+                // Subsequent compiles in the multi-app loop, and any future test-run that
+                // recompiles user AL against this slice, resolve cross-app references via
+                // the JsonSymbolReferenceLoader in TranspileMulti.
+                if (compFor != null)
+                {
+                    try
+                    {
+                        var jsonName = SanitizeName($"{app.Publisher}_{app.Name}_{app.Version}.symbols.json");
+                        var jsonPath = Path.Combine(outputDir, jsonName);
+                        using var fs = File.Create(jsonPath);
+                        SymbolJsonWriter.WriteSymbolJson(compFor, fs);
+                        Console.Error.WriteLine($"  Wrote symbols: {jsonName} ({fs.Length} bytes)");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"  WARN: symbols.json emission failed for {app.Name}: {ex.Message}");
+                    }
+                }
             }
         }
         var built = ordered.Count - failed.Count;

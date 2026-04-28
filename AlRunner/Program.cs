@@ -1244,6 +1244,19 @@ public static class AlTranspiler
 
             refLoader = ReferenceLoaderFactory.CreateReferenceLoader(allPackagePaths);
 
+            // Compose with a JSON-symbols loader so committed `<App>.symbols.json` files
+            // (produced by per-app compile-dep) are usable as symbol references at
+            // downstream compile time without needing .app artifacts.
+            var jsonLoaders = allPackagePaths
+                .Select(p => new JsonSymbolReferenceLoader(p))
+                .Where(l => l.HasAny)
+                .ToList();
+            if (jsonLoaders.Count > 0)
+            {
+                Log.Info($"  +{jsonLoaders.Count} JSON-symbols loader(s) for *.symbols.json");
+                refLoader = new CompositeSymbolReferenceLoader(jsonLoaders.Cast<ISymbolReferenceLoader>().Append(refLoader).ToList());
+            }
+
             if (depSpecs.Count > 0)
             {
                 Log.Info($"Adding {depSpecs.Count} symbol reference specifications:");
@@ -1929,14 +1942,20 @@ public static class AlTranspiler
                 if (!Directory.Exists(p)) continue;
                 var fullPath = Path.GetFullPath(p);
 
-                // Add the directory itself if it contains .app files
-                if (Directory.GetFiles(fullPath, "*.app").Length > 0)
+                // Add the directory itself if it contains .app or .symbols.json files
+                // (the latter come from compile-dep's per-app output and are consumed by
+                // JsonSymbolReferenceLoader downstream).
+                static bool HasSymbolArtifacts(string d) =>
+                    Directory.GetFiles(d, "*.app").Length > 0
+                    || Directory.GetFiles(d, "*.symbols.json").Length > 0;
+
+                if (HasSymbolArtifacts(fullPath))
                     result.Add(fullPath);
 
-                // Recursively scan for subdirectories containing .app files
+                // Recursively scan for subdirectories
                 foreach (var subDir in Directory.GetDirectories(fullPath, "*", SearchOption.AllDirectories))
                 {
-                    if (Directory.GetFiles(subDir, "*.app").Length > 0)
+                    if (HasSymbolArtifacts(subDir))
                         result.Add(subDir);
                 }
             }
