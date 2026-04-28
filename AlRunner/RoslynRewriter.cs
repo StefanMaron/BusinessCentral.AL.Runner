@@ -3796,6 +3796,16 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
                         memberAccess.Name)); // keep GenericNameSyntax with type args
             }
 
+            // ALCompiler.NavIndirectValueToGenericType<T>(x) -> AlCompat.NavIndirectValueToGenericType<T>(x)
+            if (exprText == "ALCompiler" && methodName == "NavIndirectValueToGenericType")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        memberAccess.Name)); // keep GenericNameSyntax with type args
+            }
+
             // ALCompiler.NavIndirectValueToINavRecordHandle(x) -> (MockRecordHandle)x
             if (exprText == "ALCompiler" && methodName == "NavIndirectValueToINavRecordHandle")
             {

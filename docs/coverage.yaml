@@ -10847,6 +10847,14 @@ Variant.IsDictionary ():
   status: covered
   notes: checks NavDictionary open generic via AlCompat.ALIsDictionary
 
+Variant.GetGenericType (Dictionary):
+  layer: runtime-api
+  category: Variant
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/339-variant-dictionary-conversion
+  notes: typed Variant→Dictionary assignment rewritten via ALCompiler.NavIndirectValueToGenericType<T> → AlCompat.NavIndirectValueToGenericType<T>
+
 Variant.IsDotNet ():
   layer: runtime-api
   category: Variant
