@@ -18,7 +18,7 @@ public static class DepExtractor
     // the pending/visited dictionaries.
     private static readonly string[] AllTypes =
     [
-        "Table", "Codeunit", "Enum", "Page", "Report", "Query", "XmlPort", "Interface"
+        "Table", "Codeunit", "Enum", "Page", "Report", "Query", "XmlPort", "Interface", "ControlAddIn"
     ];
 
     // -----------------------------------------------------------------------
@@ -326,6 +326,10 @@ public static class DepExtractor
                 index.AddDefinition("XmlPort", GetObjectName(obj), fileName, source); break;
             case SyntaxKind.Interface:
                 index.AddDefinition("Interface", GetObjectName(obj), fileName, source); break;
+            case SyntaxKind.ControlAddInObject:
+                if (obj is ControlAddInSyntax ca)
+                    index.AddDefinition("ControlAddIn", UnquoteIdentifier(ca.Name.Identifier.ValueText), fileName, source);
+                break;
 
             // Extension objects: indexed by the base object they extend
             case SyntaxKind.TableExtensionObject:
@@ -382,6 +386,7 @@ public static class DepExtractor
         foreach (var n in refs.Queries)    pending["Query"].Enqueue(n);
         foreach (var n in refs.XmlPorts)   pending["XmlPort"].Enqueue(n);
         foreach (var n in refs.Interfaces) pending["Interface"].Enqueue(n);
+        foreach (var n in refs.ControlAddIns) pending["ControlAddIn"].Enqueue(n);
     }
 
     // -----------------------------------------------------------------------
@@ -778,7 +783,7 @@ public static class DepExtractor
     }
 
     private static readonly System.Text.RegularExpressions.Regex MissingSymbolPattern =
-        new(@"(Codeunit|Table|Page|Enum|Interface|Report|Query|XmlPort)\s+'([^']+)'\s+is missing",
+        new(@"(Codeunit|Table|Page|Enum|Interface|Report|Query|XmlPort|ControlAddIn)\s+'([^']+)'\s+is missing",
             System.Text.RegularExpressions.RegexOptions.Compiled);
 
     /// <summary>
@@ -1160,9 +1165,10 @@ public class ExternalRefs
     public HashSet<string> Queries    { get; } = new(StringComparer.OrdinalIgnoreCase);
     public HashSet<string> XmlPorts   { get; } = new(StringComparer.OrdinalIgnoreCase);
     public HashSet<string> Interfaces { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public HashSet<string> ControlAddIns { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public bool IsEmpty =>
         Tables.Count == 0 && Codeunits.Count == 0 && Enums.Count == 0 &&
         Pages.Count == 0 && Reports.Count == 0 && Queries.Count == 0 &&
-        XmlPorts.Count == 0 && Interfaces.Count == 0;
+        XmlPorts.Count == 0 && Interfaces.Count == 0 && ControlAddIns.Count == 0;
 }
