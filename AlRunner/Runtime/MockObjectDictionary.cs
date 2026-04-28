@@ -109,6 +109,17 @@ public class MockObjectDictionary<TKey, TValue> : IEnumerable<KeyValuePair<TKey,
     public void ALSet(TKey key, TValue value) => _dict[key] = value;
 
     /// <summary>
+    /// ALAssign — replaces contents with entries from another dictionary.
+    /// Mirrors the AL <c>:=</c> assignment operator for Dictionary variables.
+    /// </summary>
+    public void ALAssign(MockObjectDictionary<TKey, TValue> other)
+    {
+        _dict.Clear();
+        foreach (var kvp in other._dict)
+            _dict[kvp.Key] = kvp.Value;
+    }
+
+    /// <summary>
     /// ALSet with old-value out-param — sets key/value and returns the previous
     /// value via <paramref name="oldValue"/> wrapper. Returns true if the key existed.
     /// </summary>

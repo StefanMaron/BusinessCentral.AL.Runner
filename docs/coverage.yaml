@@ -693,6 +693,7 @@ generic_type_argument_codeunit:
   status: covered
   tests:
     - AlRunner.Tests/CodeunitGenericArgRewriterTests.cs
+    - tests/bucket-1/codeunit-runtime/340-codeunit-generic-args
   notes: rewriter normalizes NavList/NavDictionary/NavObjectList/NavObjectDictionary with Codeunit/Interface type arguments to MockObjectList/MockObjectDictionary and Mock*Handle types (covers codeunit generics; closes #1555).
 
 # ── table ───────────────────────────────────────────────────────
@@ -5619,6 +5620,16 @@ List.Get (Integer, Codeunit):
     - tests/bucket-1/codeunit-runtime/337-codeunit-list-get-negation
     - tests/bucket-1/codeunit-runtime/338-codeunit-list-get-assign
   notes: MockObjectList.ALGet(DataError, int, MockCodeunitHandle) assigns via ALAssign and returns bool.
+
+# ── Dictionary ──────────────────────────────────────────────────
+
+Dictionary.Assign ():
+  layer: runtime-api
+  category: Dictionary
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/340-codeunit-generic-args
+  notes: MockObjectDictionary.ALAssign copies entries for Dictionary := assignments (used by nested Codeunit list/dict flows).
 
 # ── Media ───────────────────────────────────────────────────────
 
