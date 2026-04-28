@@ -1172,6 +1172,22 @@ public static class AlTranspiler
         var appFeatures = ExtractFeatures(inputPaths);
         var compilerFeatures = MapCompilerFeatures(appFeatures);
 
+        // Only set manifest options when compiling BC source apps (compile-dep flow).
+        // For normal user-AL runs, BC's default manifest behavior matches what tests
+        // expect; injecting our manifest changes implicit-with feature evaluation and
+        // breaks bucket-feature-niw etc.
+        var inCompileDepFlow = extraRefs != null;
+        var compilationOptions = new CompilationOptions(
+            continueBuildOnError: true,
+            target: CompilationTarget.OnPrem,
+            // Exclude ReportLayout — the runner has no RDLC file system and
+            // GenerateRdlcLayout crashes with NullReferenceException.
+            generateOptions: CompilationGenerationOptions.Code | CompilationGenerationOptions.Navigation,
+            compilerFeatures: compilerFeatures
+        );
+        if (inCompileDepFlow)
+            compilationOptions = compilationOptions.WithManifestOptions(BuildManifestOptions(inputPaths));
+
         // Create compilation with all syntax trees
         var compilation = Compilation.Create(
             moduleName: appIdentity.Name,
@@ -1179,23 +1195,7 @@ public static class AlTranspiler
             version: appIdentity.Version,
             appId: appIdentity.AppId,
             syntaxTrees: syntaxTrees.ToArray(),
-            options: new CompilationOptions(
-                continueBuildOnError: true,
-                target: CompilationTarget.OnPrem,
-                // Exclude ReportLayout — the runner has no RDLC file system and
-                // GenerateRdlcLayout crashes with NullReferenceException.
-                generateOptions: CompilationGenerationOptions.Code | CompilationGenerationOptions.Navigation,
-                compilerFeatures: compilerFeatures
-            ).WithManifestOptions(new Microsoft.Dynamics.Nav.CodeAnalysis.Packaging.NavAppManifest
-            {
-                // Pages with `ContextSensitiveHelpPage` require this URL — runner stub.
-                ContextSensitiveHelpUrl = "https://learn.microsoft.com/en-us/dynamics365/business-central/",
-                AppHelpBaseUrl = "https://learn.microsoft.com/en-us/dynamics365/business-central/",
-                // Microsoft's Base/System Application target OnPrem and reference Scope=OnPrem
-                // tables (Intelligent Cloud, User Property, etc.). Without this, AL0296 fires
-                // because the compiler defaults to Extension target when manifest doesn't say.
-                Target = CompilationTarget.OnPrem
-            })
+            options: compilationOptions
         );
 
         // Per-app multi-app compile: chain in-memory ModuleInfos from previously-compiled
@@ -1689,6 +1689,51 @@ public static class AlTranspiler
     /// This matters for InternalsVisibleTo resolution (publisher must match).
     /// </summary>
     private record AppIdentity(string Name, string Publisher, Version Version, Guid AppId);
+
+    /// <summary>
+    /// Build a NavAppManifest with target derived from the consumer's app.json (default
+    /// <see cref="CompilationTarget.Extension"/>). Microsoft's BC source apps declare
+    /// <c>"target": "OnPrem"</c>; user/test apps usually omit the field. Forcing OnPrem
+    /// for everyone breaks user apps (e.g. NoImplicitWith semantics differ by target).
+    /// Help URLs are unconditional — they're only consulted when a page declares
+    /// <c>ContextSensitiveHelpPage</c>, and an empty value crashes that lookup.
+    /// </summary>
+    private static Microsoft.Dynamics.Nav.CodeAnalysis.Packaging.NavAppManifest BuildManifestOptions(List<string>? inputPaths)
+    {
+        var target = CompilationTarget.Extension;
+        if (inputPaths != null)
+        {
+            foreach (var inputPath in inputPaths)
+            {
+                var dir = Directory.Exists(inputPath) ? Path.GetFullPath(inputPath) : Path.GetDirectoryName(Path.GetFullPath(inputPath));
+                while (dir != null)
+                {
+                    var appJsonPath = Path.Combine(dir, "app.json");
+                    if (File.Exists(appJsonPath))
+                    {
+                        try
+                        {
+                            using var json = JsonDocument.Parse(File.ReadAllText(appJsonPath));
+                            if (json.RootElement.TryGetProperty("target", out var tgt) &&
+                                tgt.ValueKind == JsonValueKind.String &&
+                                Enum.TryParse<CompilationTarget>(tgt.GetString(), ignoreCase: true, out var parsed))
+                                target = parsed;
+                        }
+                        catch { /* malformed app.json — keep Extension default */ }
+                        goto found;
+                    }
+                    dir = Path.GetDirectoryName(dir);
+                }
+            }
+            found: { }
+        }
+        return new Microsoft.Dynamics.Nav.CodeAnalysis.Packaging.NavAppManifest
+        {
+            ContextSensitiveHelpUrl = "https://learn.microsoft.com/en-us/dynamics365/business-central/",
+            AppHelpBaseUrl = "https://learn.microsoft.com/en-us/dynamics365/business-central/",
+            Target = target,
+        };
+    }
 
     /// <summary>
     /// Extract feature flags from the first app.json found by walking up from input paths.
