@@ -818,7 +818,7 @@ public static class DepExtractor
     private static (string? Source, int Stripped) StripDotNetProcedures(string source, string fileName)
     {
         // Fast path: no DotNet keyword, nothing to do.
-        if (!source.Contains("DotNet", StringComparison.Ordinal))
+        if (!source.Contains("DotNet", StringComparison.OrdinalIgnoreCase))
             return (source, 0);
 
         try
@@ -1046,6 +1046,19 @@ public static class DepExtractor
     {
         if (raw == null) return null;
         raw = raw.Trim();
+        // Strip namespace prefix: `Microsoft.Sales.Posting."Sales Post Invoice"` → `"Sales Post Invoice"`
+        // and `Microsoft.Sales.Posting.SalesPost` → `SalesPost`. The rightmost segment is the
+        // simple object name we use for indexing.
+        if (raw.EndsWith('"'))
+        {
+            var openQuote = raw.LastIndexOf('"', raw.Length - 2);
+            if (openQuote > 0) raw = raw[openQuote..];
+        }
+        else
+        {
+            var lastDot = raw.LastIndexOf('.');
+            if (lastDot >= 0 && !raw.Contains('"')) raw = raw[(lastDot + 1)..];
+        }
         if (raw.StartsWith('"') && raw.EndsWith('"') && raw.Length > 1)
             return raw[1..^1];
         return raw;

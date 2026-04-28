@@ -240,7 +240,7 @@ public static class DepCompiler
             // AL syntax: `var x: DotNet StreamReader;` or `DotNet "System.IO.StreamReader"`
             var dotnetPattern = new System.Text.RegularExpressions.Regex(
                 @":\s*DotNet\b|\bDotNet\s+[""A-Z]",
-                System.Text.RegularExpressions.RegexOptions.Compiled);
+                System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
             var dotnetCount = compilableSources.Count(s => dotnetPattern.IsMatch(s));
             if (dotnetCount > 0)
             {
@@ -463,7 +463,11 @@ public static class DepCompiler
             Runtime.QueryFieldRegistry.ParseAndRegister(src);
         }
 
-        var allPackagePaths = new List<string>(packagePaths);
+        // Route through ResolvePackagePaths so individual .app files are isolated to a temp
+        // directory rather than exposing every other .app in the same .alpackages folder
+        // (which would pull in System Application as a binary symbol while we already have
+        // its source in the slice — produces AL0275 ambiguous-reference errors).
+        var allPackagePaths = AlTranspiler.ResolvePackagePaths(packagePaths, null);
         var alPkg = Path.Combine(srcDir, ".alpackages");
         if (Directory.Exists(alPkg) && !allPackagePaths.Contains(alPkg))
             allPackagePaths.Add(alPkg);
@@ -504,6 +508,22 @@ public static class DepCompiler
 
         if (csharpList == null || csharpList.Count == 0)
         {
+            // Re-run capturing stderr so we can surface specific compilation diagnostics
+            // (otherErrors, parse errors) that TranspileMulti suppresses by default.
+            var savedErr = Console.Error;
+            var diagCapture = new System.IO.StringWriter();
+            Console.SetError(diagCapture);
+            var prevVerbose = Log.Verbose;
+            Log.Verbose = true;
+            try { AlTranspiler.TranspileMulti(compilableSources, effectivePackages, null, sourceFilePaths: compilableFilePaths); }
+            finally { Console.SetError(savedErr); Log.Verbose = prevVerbose; }
+            var diagText = diagCapture.ToString();
+            if (!string.IsNullOrWhiteSpace(diagText))
+            {
+                Console.Error.WriteLine("  Compilation diagnostics:");
+                foreach (var line in diagText.Split('\n').Take(40))
+                    Console.Error.WriteLine($"    {line.TrimEnd()}");
+            }
             Console.Error.WriteLine($"  AL transpilation produced no output");
             return 1;
         }

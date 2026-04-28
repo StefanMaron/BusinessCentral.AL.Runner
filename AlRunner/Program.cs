@@ -1858,18 +1858,41 @@ public static class AlTranspiler
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // Add explicit --packages paths. Accepts both directories and individual .app files.
-        // For individual .app files, the parent directory is added so PackageScanner can find them.
+        // For individual .app files, isolate them in a temp dir — adding the parent directory
+        // would pull in every other .app sitting alongside, which leaks unrelated symbols and
+        // produces AL0275 ambiguous-reference errors when the slice already contains source
+        // for those apps.
         if (explicitPaths != null)
         {
+            // Group individual .app files by their parent directory and isolate any group
+            // that does NOT include all .app files in that directory (otherwise the parent
+            // is fine to use directly).
+            var individualApps = explicitPaths
+                .Where(p => File.Exists(p) && p.EndsWith(".app", StringComparison.OrdinalIgnoreCase))
+                .Select(Path.GetFullPath)
+                .ToList();
+            string? isolatedDir = null;
+            foreach (var grp in individualApps.GroupBy(p => Path.GetDirectoryName(p)!))
+            {
+                var allInDir = Directory.GetFiles(grp.Key, "*.app").Select(Path.GetFullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var picked = grp.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                if (picked.SetEquals(allInDir))
+                {
+                    result.Add(grp.Key);
+                }
+                else
+                {
+                    isolatedDir ??= Path.Combine(Path.GetTempPath(), $"alrunner-pkgs-{Guid.NewGuid():N}");
+                    Directory.CreateDirectory(isolatedDir);
+                    foreach (var app in picked)
+                        File.Copy(app, Path.Combine(isolatedDir, Path.GetFileName(app)), overwrite: true);
+                    result.Add(isolatedDir);
+                }
+            }
             foreach (var p in explicitPaths)
             {
-                // Individual .app file — add its parent directory.
                 if (File.Exists(p) && p.EndsWith(".app", StringComparison.OrdinalIgnoreCase))
-                {
-                    var parent = Path.GetDirectoryName(Path.GetFullPath(p));
-                    if (parent != null) result.Add(parent);
                     continue;
-                }
 
                 if (!Directory.Exists(p)) continue;
                 var fullPath = Path.GetFullPath(p);
