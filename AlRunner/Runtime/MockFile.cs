@@ -203,6 +203,24 @@ public class MockFile
 
     public void ALUpload(object? parent, string name) { }
 
+    /// <summary>
+    /// ALUpload 7-arg overload — BC emits for the 5-param AL form:
+    ///   File.Upload(DialogTitle, FromFolder, FilterText, FromFile, var ToFile)
+    /// BC emits: ALUpload(DataError, dialogTitle, fromFolder, filterText, fromFile, ByRef&lt;NavText&gt; toFile, Guid extra)
+    /// No-op in standalone (no UI/browser). ToFile is set to empty (no file selected).
+    /// Fixes CS1501 surfaced by per-app DLL compile (issue #1531).
+    /// </summary>
+    public static void ALUpload(DataError errorLevel, string dialogTitle, string fromFolder, string filterText, string fromFile, ByRef<NavText> toFile, Guid extra)
+    {
+        toFile.Value = NavText.Empty;
+    }
+
+    /// <summary>Fallback without Guid for older/newer BC emit variants.</summary>
+    public static void ALUpload(DataError errorLevel, string dialogTitle, string fromFolder, string filterText, string fromFile, ByRef<NavText> toFile)
+    {
+        toFile.Value = NavText.Empty;
+    }
+
     /// <summary>ALView — no-op; no UI in standalone mode.</summary>
     public void ALView(object? parent) { }
 
