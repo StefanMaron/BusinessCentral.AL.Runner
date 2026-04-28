@@ -438,7 +438,8 @@ public static class DepCompiler
     /// <summary>
     /// Compile a directory of AL source files to a dependency .dll.
     /// </summary>
-    private record AppInfo(string Dir, Guid Id, string Name, string Publisher, string Version, List<Guid> DepIds);
+    private record AppInfo(string Dir, Guid Id, string Name, string Publisher, string Version,
+        List<Guid> DepIds, List<DepsSidecarWriter.DepEntry> DepSpecs);
 
     /// <summary>
     /// Per-app compiled module-info cache for in-memory symbol chaining. Avoids needing
@@ -488,12 +489,40 @@ public static class DepCompiler
                 var publisher = root.GetProperty("publisher").GetString() ?? "Unknown";
                 var version = root.GetProperty("version").GetString() ?? "1.0.0.0";
                 var deps = new List<Guid>();
+                var depSpecs = new List<DepsSidecarWriter.DepEntry>();
+
+                // Platform reference: `platform: "27.0.0.0"` in app.json corresponds to the
+                // Microsoft "System" platform package. Its AppId is well-known and stable
+                // across BC versions (8874ed3a-…). Including it here lets the JSON loader
+                // advertise the system→app dependency edge that ReferenceManager needs to
+                // resolve cross-app type references (issue #1546).
+                if (root.TryGetProperty("platform", out var platformProp))
+                {
+                    if (Version.TryParse(platformProp.GetString() ?? "", out var pv))
+                        depSpecs.Add(new DepsSidecarWriter.DepEntry(
+                            "Microsoft", "System", pv,
+                            Guid.Parse("8874ed3a-0643-4247-9ced-7a7002f7135d")));
+                }
+
                 if (root.TryGetProperty("dependencies", out var depArr) && depArr.ValueKind == System.Text.Json.JsonValueKind.Array)
                     foreach (var d in depArr.EnumerateArray())
-                        if (d.TryGetProperty("id", out var didProp) || d.TryGetProperty("appId", out didProp))
-                            if (Guid.TryParse(didProp.GetString(), out var did))
-                                deps.Add(did);
-                apps.Add(new AppInfo(dir, id, name, publisher, version, deps));
+                    {
+                        Guid did = Guid.Empty;
+                        if ((d.TryGetProperty("id", out var didProp) || d.TryGetProperty("appId", out didProp)) &&
+                            Guid.TryParse(didProp.GetString(), out var parsedDid))
+                        {
+                            did = parsedDid;
+                            deps.Add(parsedDid);
+                        }
+                        var dPub = d.TryGetProperty("publisher", out var dp) ? dp.GetString() ?? "" : "";
+                        var dName = d.TryGetProperty("name", out var dn) ? dn.GetString() ?? "" : "";
+                        var dVerText = d.TryGetProperty("version", out var dv) ? dv.GetString() ?? "0.0.0.0" : "0.0.0.0";
+                        if (!Version.TryParse(dVerText, out var dVer)) dVer = new Version(0, 0, 0, 0);
+                        if (!string.IsNullOrEmpty(dName))
+                            depSpecs.Add(new DepsSidecarWriter.DepEntry(dPub, dName, dVer, did));
+                    }
+                Version verParsed = Version.TryParse(version, out var vp) ? vp : new Version(1, 0, 0, 0);
+                apps.Add(new AppInfo(dir, id, name, publisher, version, deps, depSpecs));
             }
             catch (Exception ex)
             {
@@ -576,9 +605,17 @@ public static class DepCompiler
                     {
                         var jsonName = SanitizeName($"{app.Publisher}_{app.Name}_{app.Version}.symbols.json");
                         var jsonPath = Path.Combine(outputDir, jsonName);
-                        using var fs = File.Create(jsonPath);
-                        SymbolJsonWriter.WriteSymbolJson(compFor, fs);
-                        Console.Error.WriteLine($"  Wrote symbols: {jsonName} ({fs.Length} bytes)");
+                        using (var fs = File.Create(jsonPath))
+                        {
+                            SymbolJsonWriter.WriteSymbolJson(compFor, fs);
+                            Console.Error.WriteLine($"  Wrote symbols: {jsonName} ({fs.Length} bytes)");
+                        }
+
+                        // Sidecar deps file — see DepsSidecarWriter / issue #1546.
+                        var depsName = SanitizeName($"{app.Publisher}_{app.Name}_{app.Version}.symbols.deps.json");
+                        var depsPath = Path.Combine(outputDir, depsName);
+                        var appVer = Version.TryParse(app.Version, out var av) ? av : new Version(1, 0, 0, 0);
+                        DepsSidecarWriter.Write(depsPath, app.Publisher, app.Name, appVer, app.Id, app.DepSpecs);
                     }
                     catch (Exception ex)
                     {

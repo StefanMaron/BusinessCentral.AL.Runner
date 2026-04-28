@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Reflection;
 using Microsoft.Dynamics.Nav.CodeAnalysis;
 using Microsoft.Dynamics.Nav.CodeAnalysis.Diagnostics;
@@ -130,6 +131,42 @@ public static class SymbolJsonWriter
 /// involvement at all).
 /// </summary>
 /// <summary>
+/// Sidecar emitted next to <c>&lt;App&gt;.symbols.json</c>. Captures the app's identity
+/// and its declared dependencies (including the platform reference) so the
+/// <see cref="JsonSymbolReferenceLoader"/> can answer
+/// <see cref="ISymbolReferenceLoader.GetDependencies"/> at downstream compile time.
+/// Without this, BC's <c>ReferenceManager</c> cannot link cross-app type references —
+/// see issue #1546.
+/// </summary>
+public static class DepsSidecarWriter
+{
+    public sealed record DepEntry(string Publisher, string Name, Version Version, Guid AppId);
+
+    /// <summary>Write a <c>*.symbols.deps.json</c> file at <paramref name="path"/>.</summary>
+    public static void Write(string path, string publisher, string name, Version version, Guid appId, IEnumerable<DepEntry> dependencies)
+    {
+        var depsArr = dependencies.Select(d => new
+        {
+            publisher = d.Publisher,
+            name = d.Name,
+            version = d.Version.ToString(),
+            appId = d.AppId.ToString(),
+        }).ToList();
+        var payload = new
+        {
+            publisher,
+            name,
+            version = version.ToString(),
+            appId = appId.ToString(),
+            dependencies = depsArr,
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(payload,
+            new System.Text.Json.JsonSerializerOptions { WriteIndented = false });
+        File.WriteAllText(path, json);
+    }
+}
+
+/// <summary>
 /// Tries each child loader in order; first one that resolves a spec wins. Lets us layer
 /// the JSON-symbols loader on top of the standard package-scanner loader without
 /// either replacing the other.
@@ -183,13 +220,21 @@ public sealed class JsonSymbolReferenceLoader : ISymbolReferenceLoader
     private readonly string _rootDirectory;
     private readonly Dictionary<string, ModuleDefinition> _moduleCache = new(StringComparer.OrdinalIgnoreCase);
 
+    // Per-module dependency lists keyed by the same `pub|name|ver` (and `name|pub|ver`)
+    // form as `_moduleCache`. Sourced from `*.symbols.deps.json` sidecars written by
+    // DepCompiler. Without this, `GetDependencies` returns empty and the BC compiler's
+    // ReferenceManager cannot connect cross-module type references (issue #1546).
+    private readonly Dictionary<string, List<SymbolReferenceSpecification>> _dependencyCache =
+        new(StringComparer.OrdinalIgnoreCase);
+
     public JsonSymbolReferenceLoader(string rootDirectory)
     {
         _rootDirectory = rootDirectory ?? throw new ArgumentNullException(nameof(rootDirectory));
         IndexModules();
+        IndexDependencySidecars();
     }
 
-    public bool HasAny => _moduleCache.Count > 0;
+    public bool HasAny => _moduleCache.Count > 0 || _dependencyCache.Count > 0;
 
     /// <summary>
     /// Enumerate (publisher, name, version, appId) tuples for every cached module so
@@ -225,6 +270,7 @@ public sealed class JsonSymbolReferenceLoader : ISymbolReferenceLoader
     {
         if (Environment.GetEnvironmentVariable("ALRUNNER_DUMP_SYMBOLS") == "1")
             Console.Error.WriteLine($"  DEBUG JsonLoader.GetDependencies({reference.Publisher}/{reference.Name} v{reference.Version})");
+        if (TryGetDependencies(reference, out var deps)) return deps;
         return Enumerable.Empty<SymbolReferenceSpecification>();
     }
 
@@ -261,6 +307,83 @@ public sealed class JsonSymbolReferenceLoader : ISymbolReferenceLoader
             }
             catch { /* skip unreadable */ }
         }
+    }
+
+    /// <summary>
+    /// Read every <c>*.symbols.deps.json</c> sidecar under <see cref="_rootDirectory"/>
+    /// and cache its declared dependencies under both `pub|name|ver` and `name|pub|ver`
+    /// keys (mirroring `_moduleCache`'s ordering trick).
+    /// </summary>
+    private void IndexDependencySidecars()
+    {
+        if (!Directory.Exists(_rootDirectory)) return;
+        foreach (var file in Directory.EnumerateFiles(_rootDirectory, "*.symbols.deps.json", SearchOption.AllDirectories))
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(file));
+                var root = doc.RootElement;
+                var publisher = root.GetProperty("publisher").GetString() ?? "";
+                var name = root.GetProperty("name").GetString() ?? "";
+                var versionText = root.GetProperty("version").GetString() ?? "0.0.0.0";
+                if (!Version.TryParse(versionText, out var version)) version = new Version(0, 0, 0, 0);
+
+                var deps = new List<SymbolReferenceSpecification>();
+                if (root.TryGetProperty("dependencies", out var depArr) &&
+                    depArr.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    foreach (var d in depArr.EnumerateArray())
+                    {
+                        var dPub = d.TryGetProperty("publisher", out var p) ? p.GetString() ?? "" : "";
+                        var dName = d.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+                        var dVerText = d.TryGetProperty("version", out var v) ? v.GetString() ?? "0.0.0.0" : "0.0.0.0";
+                        if (!Version.TryParse(dVerText, out var dVer)) dVer = new Version(0, 0, 0, 0);
+                        var dAppId = Guid.Empty;
+                        if (d.TryGetProperty("appId", out var aid) && aid.ValueKind == System.Text.Json.JsonValueKind.String)
+                            Guid.TryParse(aid.GetString(), out dAppId);
+                        deps.Add(new SymbolReferenceSpecification(
+                            dPub, dName, dVer, false, dAppId, false, ImmutableArray<Guid>.Empty));
+                    }
+                }
+
+                var keyForward = $"{publisher}|{name}|{version}";
+                var keyReverse = $"{name}|{publisher}|{version}";
+                _dependencyCache[keyForward] = deps;
+                _dependencyCache[keyReverse] = deps;
+            }
+            catch (Exception ex)
+            {
+                if (Environment.GetEnvironmentVariable("ALRUNNER_DUMP_SYMBOLS") == "1")
+                    Console.Error.WriteLine($"  DEBUG sidecar parse failed for {file}: {ex.Message}");
+            }
+        }
+    }
+
+    private bool TryGetDependencies(SymbolReferenceSpecification reference, out List<SymbolReferenceSpecification> deps)
+    {
+        var requestedVersion = reference.Version ?? new Version(0, 0, 0, 0);
+        foreach (var prefix in new[] {
+            $"{reference.Publisher}|{reference.Name}|",
+            $"{reference.Name}|{reference.Publisher}|",
+        })
+        {
+            var exact = $"{prefix}{requestedVersion}";
+            if (_dependencyCache.TryGetValue(exact, out deps!)) return true;
+
+            var candidates = _dependencyCache
+                .Where(kv => kv.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                .Select(kv => (Version: ParseVersionFromKey(kv.Key), Deps: kv.Value))
+                .Where(c => c.Version >= requestedVersion)
+                .OrderByDescending(c => c.Version)
+                .ToList();
+            if (candidates.Count > 0)
+            {
+                deps = candidates[0].Deps;
+                return true;
+            }
+        }
+        deps = null!;
+        return false;
     }
 
     private bool TryGetModule(SymbolReferenceSpecification reference, out ModuleDefinition module)
