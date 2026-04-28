@@ -2748,7 +2748,9 @@ File.Copy (Text, Text):
   layer: runtime-api
   category: File
   status: covered
-  notes: MockFile.ALCopy() no-op in standalone
+  tests:
+    - tests/bucket-1/codeunit-runtime/320-file-bool-returns
+  notes: MockFile.ALCopy() returns bool true in standalone (issue #1530)
 
 File.Create (Text, TextEncoding):
   layer: runtime-api
@@ -2792,7 +2794,9 @@ File.Erase (Text):
   layer: runtime-api
   category: File
   status: covered
-  notes: MockFile.ALErase() no-op in standalone
+  tests:
+    - tests/bucket-1/codeunit-runtime/320-file-bool-returns
+  notes: MockFile.ALErase() returns bool true in standalone (issue #1530)
 
 File.Exists (Text):
   layer: runtime-api
@@ -2828,7 +2832,9 @@ File.Open (Text, TextEncoding):
   layer: runtime-api
   category: File
   status: covered
-  notes: MockFile.ALOpen() resets position for reading
+  tests:
+    - tests/bucket-1/codeunit-runtime/320-file-bool-returns
+  notes: MockFile.ALOpen() returns bool true in standalone; used in boolean context (issue #1530)
 
 File.Pos ():
   layer: runtime-api

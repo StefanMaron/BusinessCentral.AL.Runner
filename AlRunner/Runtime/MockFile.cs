@@ -45,15 +45,15 @@ public class MockFile
     /// <summary>File.Exists with DataError overload.</summary>
     public static bool ALExists(DataError errorLevel, string name) => false;
 
-    /// <summary>File.Copy — no-op in standalone mode.</summary>
-    public static void ALCopy(string fromName, string toName) { }
+    /// <summary>File.Copy — no-op in standalone mode. Returns true (BC returns Boolean).</summary>
+    public static bool ALCopy(string fromName, string toName) => true;
 
-    public static void ALCopy(DataError errorLevel, string fromName, string toName) { }
+    public static bool ALCopy(DataError errorLevel, string fromName, string toName) => true;
 
-    /// <summary>File.Erase — no-op in standalone mode.</summary>
-    public static void ALErase(string name) { }
+    /// <summary>File.Erase — no-op in standalone mode. Returns true (BC returns Boolean).</summary>
+    public static bool ALErase(string name) => true;
 
-    public static void ALErase(DataError errorLevel, string name) { }
+    public static bool ALErase(DataError errorLevel, string name) => true;
 
     /// <summary>File.Rename — no-op in standalone mode.</summary>
     public static void ALRename(string oldName, string newName) { }
@@ -79,14 +79,15 @@ public class MockFile
 
     public bool ALCreate(object? parent, string name) => ALCreate(parent, DataError.ThrowError, name);
 
-    /// <summary>ALOpen — opens an in-memory buffer for reading.</summary>
-    public void ALOpen(object? parent, DataError errorLevel, string name)
+    /// <summary>ALOpen — opens an in-memory buffer for reading. Returns true (BC File.Open returns Boolean).</summary>
+    public bool ALOpen(object? parent, DataError errorLevel, string name)
     {
         _name = name;
         _pos = 0;
+        return true;
     }
 
-    public void ALOpen(object? parent, string name) => ALOpen(parent, DataError.ThrowError, name);
+    public bool ALOpen(object? parent, string name) => ALOpen(parent, DataError.ThrowError, name);
 
     /// <summary>ALClose — resets stream position.</summary>
     public void ALClose()
