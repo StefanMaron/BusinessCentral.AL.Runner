@@ -4,7 +4,7 @@
 /// This is a static method. BC emits in C#:
 ///   MockFile.ALUpload(scope, DataError, dialogTitle, fromFolder, filterText, fromFile, ByRef NavText toFile)
 /// = 7 args. MockFile only had 1- and 2-arg overloads, so CS1501 resulted.
-codeunit 1320001 "File Upload Overload Test"
+codeunit 1320411 "File Upload Overload Test"
 {
     Subtype = Test;
 

@@ -4,7 +4,7 @@
 /// (a setter-style call with no boolean parameter in AL).
 /// MockHttpClient had it as a property — BC's emit calls it as a method,
 /// causing CS1955: Non-invocable member cannot be used like a method.
-codeunit 1320001 "HC UseDefaultNetwork Test"
+codeunit 1320412 "HC UseDefaultNetwork Test"
 {
     Subtype = Test;
 
