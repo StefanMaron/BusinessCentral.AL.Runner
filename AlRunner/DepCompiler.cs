@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Json;
 using System.Xml.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -13,6 +14,85 @@ namespace AlRunner;
 /// </summary>
 public static class DepCompiler
 {
+    private static readonly Version DefaultAppVersion = new(1, 0, 0, 0);
+    private static bool _loggedVersionFallback;
+
+    private record AppJsonIdentity(string Publisher, string Name, string VersionRaw, Version Version, Guid AppId);
+
+    private static Version ParseVersionTolerant(string? raw, Version fallback)
+    {
+        var text = raw?.Trim() ?? string.Empty;
+        if (Version.TryParse(text, out var parsed))
+            return parsed;
+
+        if (!_loggedVersionFallback)
+        {
+            _loggedVersionFallback = true;
+            Console.Error.WriteLine($"App version unparseable ('{text}'): falling back to {fallback}");
+        }
+
+        return fallback;
+    }
+
+    private static bool TryReadAppJsonIdentity(string appJsonPath, out AppJsonIdentity identity)
+    {
+        identity = default!;
+        try
+        {
+            using var json = JsonDocument.Parse(File.ReadAllText(appJsonPath));
+            var root = json.RootElement;
+
+            var fallbackName = Path.GetFileName(Path.GetDirectoryName(appJsonPath)) ?? "Unknown";
+            var publisher = root.TryGetProperty("publisher", out var publisherProp)
+                ? publisherProp.GetString() ?? "Unknown"
+                : "Unknown";
+            var name = root.TryGetProperty("name", out var nameProp)
+                ? nameProp.GetString() ?? fallbackName
+                : fallbackName;
+            var rawVersion = root.TryGetProperty("version", out var versionProp)
+                ? versionProp.GetString() ?? string.Empty
+                : string.Empty;
+            var version = ParseVersionTolerant(rawVersion, DefaultAppVersion);
+
+            var appId = Guid.Empty;
+            if (root.TryGetProperty("id", out var idProp))
+            {
+                var idRaw = idProp.GetString();
+                if (idRaw != null && Guid.TryParse(idRaw, out var parsed))
+                    appId = parsed;
+            }
+
+            identity = new AppJsonIdentity(publisher, name, rawVersion, version, appId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Warning: failed to parse {appJsonPath}: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static void WriteDepSidecar(string dllPath, string publisher, string name, string versionRaw, Guid appId)
+    {
+        var version = ParseVersionTolerant(versionRaw, DefaultAppVersion);
+        var sidecarPath = Path.ChangeExtension(dllPath, ".app.json");
+        try
+        {
+            var payload = new
+            {
+                id = appId,
+                name,
+                publisher,
+                version = version.ToString()
+            };
+            File.WriteAllText(sidecarPath, JsonSerializer.Serialize(payload));
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Warning: failed to write dep sidecar {sidecarPath}: {ex.Message}");
+        }
+    }
+
     /// <summary>
     /// Compile a single .app dependency (or directory of AL source) to a .dll in <paramref name="outputDir"/>.
     /// Returns 0 on success, 1 on failure.
@@ -21,7 +101,12 @@ public static class DepCompiler
     {
         // If appPath is a directory, compile AL source files directly
         if (Directory.Exists(appPath))
-            return CompileDepFromDir(appPath, outputDir, packagePaths);
+        {
+            var appJsonPath = Path.Combine(appPath, "app.json");
+            return File.Exists(appJsonPath)
+                ? CompileDepFromDir(appPath, outputDir, packagePaths)
+                : CompileDepMultiApp(appPath, outputDir, packagePaths);
+        }
 
         if (!File.Exists(appPath))
         {
@@ -262,7 +347,45 @@ public static class DepCompiler
         }
 
         Console.Error.WriteLine($"  Compiled: {dllName}");
+        WriteDepSidecar(dllPath, publisher, name, version, appGuid);
         return 0;
+    }
+
+    /// <summary>
+    /// Compile multiple app directories (each containing app.json) under a root directory.
+    /// </summary>
+    public static int CompileDepMultiApp(string rootDir, string outputDir, List<string> packagePaths)
+    {
+        if (!Directory.Exists(rootDir))
+        {
+            Console.Error.WriteLine($"Error: directory not found: {rootDir}");
+            return 1;
+        }
+
+        var appJsonPaths = Directory.GetFiles(rootDir, "app.json", SearchOption.AllDirectories);
+        if (appJsonPaths.Length == 0)
+            return CompileDepFromDir(rootDir, outputDir, packagePaths);
+
+        var appDirs = appJsonPaths
+            .Select(Path.GetDirectoryName)
+            .Where(d => !string.IsNullOrEmpty(d))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        int failures = 0;
+        foreach (var appDir in appDirs)
+        {
+            AppJsonIdentity? identity = null;
+            var appJsonPath = Path.Combine(appDir!, "app.json");
+            if (File.Exists(appJsonPath) && TryReadAppJsonIdentity(appJsonPath, out var parsed))
+                identity = parsed;
+
+            var result = CompileDepFromDir(appDir!, outputDir, packagePaths, identity);
+            if (result != 0)
+                failures++;
+        }
+
+        return failures == 0 ? 0 : 1;
     }
 
     /// <summary>
@@ -298,11 +421,20 @@ public static class DepCompiler
     /// <summary>
     /// Compile a directory of AL source files to a dependency .dll.
     /// </summary>
-    private static int CompileDepFromDir(string srcDir, string outputDir, List<string> packagePaths)
+    private static int CompileDepFromDir(string srcDir, string outputDir, List<string> packagePaths, AppJsonIdentity? appIdentity = null)
     {
         Directory.CreateDirectory(outputDir);
         var dirName = Path.GetFileName(srcDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        var dllName = SanitizeName($"{dirName}.dll");
+        if (appIdentity == null)
+        {
+            var appJsonPath = Path.Combine(srcDir, "app.json");
+            if (File.Exists(appJsonPath) && TryReadAppJsonIdentity(appJsonPath, out var parsed))
+                appIdentity = parsed;
+        }
+
+        var dllName = appIdentity != null
+            ? SanitizeName($"{appIdentity.Publisher}_{appIdentity.Name}_{appIdentity.Version}.dll")
+            : SanitizeName($"{dirName}.dll");
         var dllPath = Path.Combine(outputDir, dllName);
 
         if (File.Exists(dllPath))
@@ -379,6 +511,8 @@ public static class DepCompiler
         }
 
         Console.Error.WriteLine($"  Compiled: {dllName}");
+        if (appIdentity != null)
+            WriteDepSidecar(dllPath, appIdentity.Publisher, appIdentity.Name, appIdentity.VersionRaw, appIdentity.AppId);
         return 0;
     }
 
