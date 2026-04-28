@@ -94,8 +94,17 @@ public class MockInStream
     /// <summary>ALLength — BC's InStream.Length property. Returns total byte length.</summary>
     public int ALLength => _data.Length;
 
-    /// <summary>ALPosition — BC's InStream.Position property. Returns current read position.</summary>
-    public int ALPosition => _pos;
+    /// <summary>ALPosition — BC's InStream.Position property. Gets/sets current read position.</summary>
+    public int ALPosition
+    {
+        get => _pos;
+        set
+        {
+            if (value < 0 || value > _data.Length)
+                throw new Exception($"InStream.Position {value} is outside the bounds of the stream.");
+            _pos = value;
+        }
+    }
 
     /// <summary>ALResetPosition — BC's InStream.ResetPosition(). Resets read position to 0.</summary>
     public void ALResetPosition(DataError errorLevel = DataError.ThrowError)

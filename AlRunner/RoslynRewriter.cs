@@ -964,6 +964,9 @@ public NavText ObjectID(bool withCaption = false) {{ return NavText.Empty; }}
 // SetRecord — BC lowers CurrPage.SetRecord(rec) to this.SetRecord(rec.Target).
 // NavForm provided this; after stripping it we need a stub (issue #1262).
 public void SetRecord(MockRecordHandle rec) {{ }}
+// GetRecord — BC lowers CurrPage.GetRecord(rec) to this.GetRecord(rec.Target).
+// NavForm provided this; after stripping it we need a stub (issue #1540).
+public void GetRecord(MockRecordHandle rec) {{ }}
 // BookmarkType — BC emits this.BookmarkType = BookmarkType.Temporary on pages with
 // SourceTableTemporary = true. The BookmarkType enum lives in Microsoft.Dynamics.Nav.Types.
 // NavForm provided this property; after stripping it we need a stub (issue #1262).

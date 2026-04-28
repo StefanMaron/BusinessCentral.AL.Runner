@@ -3588,6 +3588,9 @@ InStream.Position (BigInteger):
   layer: runtime-api
   category: InStream
   status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/331-instream-position-setter
+  notes: MockInStream.ALPosition getter/setter updates read cursor; throws when set out of bounds.
 
 InStream.Read (BigInteger, Integer):
   layer: runtime-api
@@ -4707,7 +4710,8 @@ JsonObject.GetArray (Text, Boolean):
   status: covered
   tests:
     - tests/bucket-2/data-formats/268-jsonobject-methods
-  notes: rewriter redirects ALGetArray to MockJsonHelper.GetArray
+    - tests/bucket-1/codeunit-runtime/330-jsonobject-getarray-bool
+  notes: 2-arg overload (key, requireValueExists); returns empty array when key is missing and requireValueExists=false
 
 JsonObject.GetBigInteger (Text, Boolean):
   layer: runtime-api
@@ -4790,7 +4794,8 @@ JsonObject.GetObject (Text, Boolean):
   status: covered
   tests:
     - tests/bucket-2/data-formats/268-jsonobject-methods
-  notes: rewriter redirects ALGetObject to MockJsonHelper.GetObject
+    - tests/bucket-1/codeunit-runtime/330-jsonobject-getarray-bool
+  notes: 2-arg overload (key, requireValueExists); returns empty object when key is missing and requireValueExists=false
 
 JsonObject.GetOption (Text, Boolean):
   layer: runtime-api
@@ -6210,6 +6215,8 @@ Page.GetRecord (Table):
   layer: runtime-api
   category: Page
   status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/329-recref-links-currpage
 
 Page.Rec (page-as-component public procedures):
   layer: runtime-api
@@ -6393,6 +6400,8 @@ Page.SetRecord (Table):
   layer: runtime-api
   category: Page
   status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/329-recref-links-currpage
 
 Page.SetSelectionFilter (Table):
   layer: runtime-api
@@ -6733,6 +6742,9 @@ RecordRef.DeleteLinks ():
   layer: runtime-api
   category: RecordRef
   status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/329-recref-links-currpage
+  notes: MockRecordRef.ALDeleteLinks clears link state on the bound record handle.
 
 RecordRef.Duplicate ():
   layer: runtime-api
@@ -6862,6 +6874,9 @@ RecordRef.HasLinks ():
   layer: runtime-api
   category: RecordRef
   status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/329-recref-links-currpage
+  notes: MockRecordRef.ALHasLinks forwards to the bound record handle.
 
 RecordRef.Init ():
   layer: runtime-api
@@ -10330,7 +10345,9 @@ Text.StrSubstNo (Text, Joker):
   layer: runtime-api
   category: Text
   status: covered
-  notes: (variadic). Static Text.StrSubstNo form covered — no-placeholder passthrough, single %1, multiple placeholders with mixed Text/Integer args.
+  tests:
+    - tests/bucket-1/codeunit-runtime/332-fieldref-navvalue-conversion
+  notes: (variadic). Static Text.StrSubstNo form covered — no-placeholder passthrough, single %1, multiple placeholders with mixed Text/Integer args; FieldRef arguments supported via MockFieldRef → NavValue conversion.
 
 Text.Substring (Integer, Integer):
   layer: runtime-api

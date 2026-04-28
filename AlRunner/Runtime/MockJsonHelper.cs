@@ -639,6 +639,27 @@ public static class MockJsonHelper
     }
 
     /// <summary>
+    /// Replacement for NavJsonObject.ALGetObject(key, requireValueExists).
+    /// Returns the nested JsonObject value of the named property, with optional existence check.
+    /// AL: JsonObject.GetObject('key', true)  →  MockJsonHelper.GetObject(token, key, requireValueExists)
+    /// </summary>
+    public static NavJsonObject GetObject(NavJsonToken token, string key, bool requireValueExists)
+    {
+        var backingToken = GetBackingToken(token);
+        if (backingToken is not JObject obj)
+            throw new Exception("The JSON token is not an object.");
+        if (!obj.TryGetValue(key, out var val))
+        {
+            if (requireValueExists)
+                throw new Exception($"The JSON object does not contain a property with the name '{key}'.");
+            return CreateJsonToken<NavJsonObject>(new JObject());
+        }
+        if (val is not JObject jObj)
+            throw new Exception($"The value of JSON property '{key}' is not an object.");
+        return CreateJsonToken<NavJsonObject>(jObj);
+    }
+
+    /// <summary>
     /// Replacement for NavJsonArray.ALGetObject(index).
     /// Returns the JsonObject element at the given integer index.
     /// AL: JsonArray.GetObject(0)  →  MockJsonHelper.GetObject(token, 0)
@@ -668,6 +689,27 @@ public static class MockJsonHelper
             throw new Exception("The JSON token is not an object.");
         if (!obj.TryGetValue(key, out var val))
             throw new Exception($"The JSON object does not contain a property with the name '{key}'.");
+        if (val is not JArray jArr)
+            throw new Exception($"The value of JSON property '{key}' is not an array.");
+        return CreateJsonToken<NavJsonArray>(jArr);
+    }
+
+    /// <summary>
+    /// Replacement for NavJsonObject.ALGetArray(key, requireValueExists).
+    /// Returns the nested JsonArray value of the named property, with optional existence check.
+    /// AL: JsonObject.GetArray('key', true)  →  MockJsonHelper.GetArray(token, key, requireValueExists)
+    /// </summary>
+    public static NavJsonArray GetArray(NavJsonToken token, string key, bool requireValueExists)
+    {
+        var backingToken = GetBackingToken(token);
+        if (backingToken is not JObject obj)
+            throw new Exception("The JSON token is not an object.");
+        if (!obj.TryGetValue(key, out var val))
+        {
+            if (requireValueExists)
+                throw new Exception($"The JSON object does not contain a property with the name '{key}'.");
+            return CreateJsonToken<NavJsonArray>(new JArray());
+        }
         if (val is not JArray jArr)
             throw new Exception($"The value of JSON property '{key}' is not an array.");
         return CreateJsonToken<NavJsonArray>(jArr);

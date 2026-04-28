@@ -73,6 +73,13 @@ public class MockPartFormHandle
     public void GetRecord(MockRecordHandle rec) { }
 
     /// <summary>
+    /// SetRecord — no-op in standalone mode.
+    /// BC generates <c>CurrPage.SubPart.Page.SetRecord(rec)</c> as
+    /// <c>CurrPage.GetPart(hash).CreateNavFormHandle(scope).SetRecord(rec.Target)</c>.
+    /// </summary>
+    public void SetRecord(MockRecordHandle rec) { }
+
+    /// <summary>
     /// SetTableView — no-op in standalone mode.
     /// BC generates <c>CurrPage.SubPart.Page.SetTableView(rec)</c> as
     /// <c>CurrPage.GetPart(hash).CreateNavFormHandle(scope).SetTableView(rec.Target)</c>.

@@ -498,6 +498,13 @@ public class MockFieldRef
     public MockFieldRef ALByValue() => this;
 
     /// <summary>
+    /// Implicit conversion to NavValue — returns the field's current value.
+    /// Enables passing FieldRef directly where a NavValue is expected (e.g. StrSubstNo args).
+    /// </summary>
+    public static implicit operator NavValue(MockFieldRef fieldRef)
+        => fieldRef?.ALValue ?? NavText.Default(0);
+
+    /// <summary>
     /// ALSetTable — some BC-generated code (notably page API extensions) emits
     /// <c>fieldRef.ALSetTable(record, shareTable)</c>. NavFieldRef in the SDK does
     /// not have this method, but the emitted code references it on the MockFieldRef

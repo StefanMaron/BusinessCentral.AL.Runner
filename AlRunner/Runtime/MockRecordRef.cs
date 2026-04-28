@@ -147,7 +147,19 @@ public class MockRecordRef
     /// ALAddLink — adds a link to the record. No-op in standalone mode (no BC link service).
     /// Returns 0 as the link ID.
     /// </summary>
-    public int ALAddLink(string url, string description = "") => 0;
+    public int ALAddLink(string url, string description = "")
+    {
+        _handle?.ALAddLink(url, description);
+        return 0;
+    }
+
+    /// <summary>
+    /// ALDeleteLinks — removes all links on the record. No-op if no record is open.
+    /// </summary>
+    public void ALDeleteLinks() => _handle?.ALDeleteLinks();
+
+    /// <summary>ALHasLinks — returns whether the record has any links.</summary>
+    public bool ALHasLinks => _handle?.ALHasLinks ?? false;
 
     // -- ReadConsistency — no SQL transactions in standalone --
 
