@@ -1189,7 +1189,11 @@ public static class AlTranspiler
             {
                 // Pages with `ContextSensitiveHelpPage` require this URL — runner stub.
                 ContextSensitiveHelpUrl = "https://learn.microsoft.com/en-us/dynamics365/business-central/",
-                AppHelpBaseUrl = "https://learn.microsoft.com/en-us/dynamics365/business-central/"
+                AppHelpBaseUrl = "https://learn.microsoft.com/en-us/dynamics365/business-central/",
+                // Microsoft's Base/System Application target OnPrem and reference Scope=OnPrem
+                // tables (Intelligent Cloud, User Property, etc.). Without this, AL0296 fires
+                // because the compiler defaults to Extension target when manifest doesn't say.
+                Target = CompilationTarget.OnPrem
             })
         );
 

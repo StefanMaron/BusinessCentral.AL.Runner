@@ -630,6 +630,10 @@ public static class DepExtractor
                 case "report":   result.Reports.Add(name);   break;
                 case "query":    result.Queries.Add(name);   break;
                 case "xmlport":  result.XmlPorts.Add(name);  break;
+                // `Enum::RegexOptions::IgnoreCase` parses as nested OptionAccess; the inner
+                // node has prefix "Enum" + name "RegexOptions" — pick that up so the enum
+                // gets pulled into the slice.
+                case "enum":     result.Enums.Add(name);     break;
             }
         }
     }
@@ -1010,23 +1014,56 @@ public static class DepExtractor
             if (userControls.Count == 0) return (source, 0);
 
             var localNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var replacements = new List<(int Start, int End, string Text)>();
+            var spans = new List<(int Start, int End, string Text)>();
             foreach (var uc in userControls)
             {
                 var ln = uc.Name?.Identifier.ValueText;
                 if (!string.IsNullOrEmpty(ln)) localNames.Add(ln);
-                replacements.Add((uc.Span.Start, uc.Span.End, ""));
+                spans.Add((uc.Span.Start, uc.Span.End, ""));
             }
-            // Drop dependent event triggers
+            // Drop dependent event triggers (`trigger localName::EventName`).
             foreach (var evt in root.DescendantNodes().OfType<EventTriggerDeclarationSyntax>())
             {
                 var pub = evt.Publisher?.Identifier.ValueText;
                 if (!string.IsNullOrEmpty(pub) && localNames.Contains(pub))
-                    replacements.Add((evt.Span.Start, evt.Span.End, ""));
+                    spans.Add((evt.Span.Start, evt.Span.End, ""));
+            }
+            // Replace bodies of procedures that reference `CurrPage.<strippedLocalName>` —
+            // those calls would dangle (AL0132 'CurrPage X does not contain Y') because the
+            // usercontrol field is gone.
+            foreach (var method in root.DescendantNodes().OfType<MethodDeclarationSyntax>().Cast<SyntaxNode>()
+                .Concat(root.DescendantNodes().OfType<TriggerDeclarationSyntax>().Cast<SyntaxNode>()))
+            {
+                var block = method.ChildNodes().OfType<BlockSyntax>().FirstOrDefault();
+                if (block == null) continue;
+                // Match any `CurrPage.<strippedLocalName>` member access — both as a value
+                // (`Foo(CurrPage.X, ...)`) and as a chain head (`CurrPage.X.Method()`).
+                bool refsStripped = block.DescendantNodes().OfType<MemberAccessExpressionSyntax>()
+                    .Any(m => m.Expression is IdentifierNameSyntax id
+                        && id.Identifier.ValueText.Equals("CurrPage", StringComparison.OrdinalIgnoreCase)
+                        && m.Name is IdentifierNameSyntax cpName
+                        && localNames.Contains(cpName.Identifier.ValueText));
+                if (!refsStripped) continue;
+                var name = (method as MethodDeclarationSyntax)?.Name?.Identifier.ValueText
+                    ?? (method as TriggerDeclarationSyntax)?.Name?.ToFullString().Trim()
+                    ?? "Unknown";
+                var escaped = name.Replace("'", "''");
+                var stub = "\n    begin\n" +
+                    $"        Error('AL Runner: ''{escaped}'' uses a stripped ControlAddIn (no browser in standalone mode).');\n" +
+                    "    end;";
+                spans.Add((block.Span.Start, block.Span.End, stub));
             }
 
+            // Dedupe overlapping spans: an outer usercontrol span swallows any inner
+            // body-stub spans we'd otherwise also apply, which would corrupt the source.
+            var sorted = spans.OrderBy(x => x.Start).ThenByDescending(x => x.End).ToList();
+            var pruned = new List<(int Start, int End, string Text)>();
+            foreach (var sp in sorted)
+                if (pruned.Count == 0 || sp.Start >= pruned[^1].End)
+                    pruned.Add(sp);
+
             var result = source;
-            foreach (var (s, e, t) in replacements.OrderByDescending(r => r.Start))
+            foreach (var (s, e, t) in pruned.OrderByDescending(r => r.Start))
                 result = result[..s] + t + result[e..];
             return (result, userControls.Count);
         }
@@ -1038,14 +1075,21 @@ public static class DepExtractor
     // -----------------------------------------------------------------------
 
     /// <summary>
-    /// Replaces bodies of procedures that reference DotNet types with an <c>Error()</c> call.
-    /// Returns (strippedSource, count) where strippedSource is null if the entire file
-    /// is a pure assembly declaration with nothing callable.
+    /// Replaces bodies of procedures that reference DotNet or ControlAddIn types with an
+    /// <c>Error()</c> call. Returns (strippedSource, count) where strippedSource is null
+    /// if the entire file is a pure assembly declaration with nothing callable.
+    /// ControlAddIn types are treated like DotNet because the runner has no browser to host
+    /// the JS/HTML control — calling such a procedure has no meaningful behavior.
     /// </summary>
+    private static bool IsUnsupportedTypeName(string typeName) =>
+        typeName.Equals("DotNet", StringComparison.OrdinalIgnoreCase)
+        || typeName.Equals("ControlAddIn", StringComparison.OrdinalIgnoreCase);
+
     private static (string? Source, int Stripped) StripDotNetProcedures(string source, string fileName)
     {
-        // Fast path: no DotNet keyword, nothing to do.
-        if (!source.Contains("DotNet", StringComparison.OrdinalIgnoreCase))
+        // Fast path: neither keyword anywhere, nothing to do.
+        if (!source.Contains("DotNet", StringComparison.OrdinalIgnoreCase)
+            && !source.Contains("ControlAddIn", StringComparison.OrdinalIgnoreCase))
             return (source, 0);
 
         try
@@ -1065,8 +1109,7 @@ public static class DepExtractor
                 foreach (var decl in globalVars.Variables)
                 {
                     var hasDn = decl.DescendantNodes().OfType<SubtypedDataTypeSyntax>()
-                        .Any(s => s.TypeName.ToFullString().Trim()
-                            .Equals("DotNet", StringComparison.OrdinalIgnoreCase));
+                        .Any(s => IsUnsupportedTypeName(s.TypeName.ToFullString().Trim()));
                     if (!hasDn) continue;
                     if (decl is VariableDeclarationSyntax vd)
                     {
@@ -1096,10 +1139,17 @@ public static class DepExtractor
 
                 var hasDotNet = method.DescendantNodes()
                     .OfType<SubtypedDataTypeSyntax>()
-                    .Any(s => s.TypeName.ToFullString().Trim()
-                        .Equals("DotNet", StringComparison.OrdinalIgnoreCase));
+                    .Any(s => IsUnsupportedTypeName(s.TypeName.ToFullString().Trim()));
 
-                if (!hasDotNet) continue;
+                // Also stub procedures whose *body* references a global var we just removed
+                // (DotNet/ControlAddIn-typed). The body would otherwise reference an undefined
+                // identifier (AL0118).
+                bool bodyTouchesStripped = strippedDotNetVarNames.Count > 0
+                    && method.ChildNodes().OfType<BlockSyntax>().FirstOrDefault() is BlockSyntax blk
+                    && blk.DescendantNodes().OfType<IdentifierNameSyntax>()
+                        .Any(id => strippedDotNetVarNames.Contains(id.Identifier.ValueText));
+
+                if (!hasDotNet && !bodyTouchesStripped) continue;
 
                 var methodName = method switch
                 {
@@ -1153,8 +1203,7 @@ public static class DepExtractor
                 {
                     var retDotNet = returnValue.DescendantNodes()
                         .OfType<SubtypedDataTypeSyntax>()
-                        .FirstOrDefault(s => s.TypeName.ToFullString().Trim()
-                            .Equals("DotNet", StringComparison.OrdinalIgnoreCase));
+                        .FirstOrDefault(s => IsUnsupportedTypeName(s.TypeName.ToFullString().Trim()));
                     if (retDotNet != null)
                         replacements.Add((retDotNet.Span.Start, retDotNet.Span.End, "Text"));
                 }
@@ -1163,8 +1212,7 @@ public static class DepExtractor
                 if (paramList != null)
                 {
                     foreach (var param in paramList.DescendantNodes().OfType<SubtypedDataTypeSyntax>()
-                        .Where(s => s.TypeName.ToFullString().Trim()
-                            .Equals("DotNet", StringComparison.OrdinalIgnoreCase)))
+                        .Where(s => IsUnsupportedTypeName(s.TypeName.ToFullString().Trim())))
                     {
                         replacements.Add((param.Span.Start, param.Span.End, "Variant"));
                     }
@@ -1180,8 +1228,7 @@ public static class DepExtractor
                 var dotNetDecls = globalVars.Variables
                     .Where(decl => decl.DescendantNodes()
                         .OfType<SubtypedDataTypeSyntax>()
-                        .Any(s => s.TypeName.ToFullString().Trim()
-                            .Equals("DotNet", StringComparison.OrdinalIgnoreCase)))
+                        .Any(s => IsUnsupportedTypeName(s.TypeName.ToFullString().Trim())))
                     .ToList();
 
                 if (dotNetDecls.Count == 0) continue;
