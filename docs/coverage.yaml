@@ -3243,6 +3243,9 @@ HttpClient.UseDefaultNetworkWindowsAuthentication ():
   layer: runtime-api
   category: HttpClient
   status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/322-httpclient-usedefaultnetwork
+  notes: ALUseDefaultNetworkWindowsAuthentication changed from property to method (DataError arg) to fix CS1955 (issue #1532)
 
 HttpClient.UseResponseCookies (Boolean):
   layer: runtime-api

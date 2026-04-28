@@ -99,8 +99,19 @@ public class MockHttpClient
     public MockHttpHeaders ALDefaultRequestHeaders => _defaultHeaders;
     private MockHttpHeaders _defaultHeaders = new();
 
-    /// <summary>UseDefaultNetworkWindowsAuthentication property stub.</summary>
-    public bool ALUseDefaultNetworkWindowsAuthentication { get; set; }
+    // Backing field for UseDefaultNetworkWindowsAuthentication state.
+    private bool _useDefaultNetworkWindowsAuthentication = false;
+
+    /// <summary>
+    /// UseDefaultNetworkWindowsAuthentication() — BC emits as a method call
+    /// (0 AL args → 1 C# arg: DataError).  Declares Windows auth should be used.
+    /// No-op in standalone mode; records the flag for <see cref="ALAssign"/>.
+    /// Fixes CS1955 that arose when this was declared as a property (issue #1532).
+    /// </summary>
+    public void ALUseDefaultNetworkWindowsAuthentication(DataError errorLevel = DataError.ThrowError)
+    {
+        _useDefaultNetworkWindowsAuthentication = true;
+    }
 
     // ── Configuration methods (issue #732) ────────────────────────────────
 
@@ -123,7 +134,7 @@ public class MockHttpClient
         _baseAddress = string.Empty;
         _defaultHeaders = new MockHttpHeaders();
         ALTimeout = 30L;
-        ALUseDefaultNetworkWindowsAuthentication = false;
+        _useDefaultNetworkWindowsAuthentication = false;
         ALUseServerCertificateValidation = false;
     }
 
@@ -163,7 +174,7 @@ public class MockHttpClient
         _baseAddress = other._baseAddress;
         _defaultHeaders = other._defaultHeaders;
         ALTimeout = other.ALTimeout;
-        ALUseDefaultNetworkWindowsAuthentication = other.ALUseDefaultNetworkWindowsAuthentication;
+        _useDefaultNetworkWindowsAuthentication = other._useDefaultNetworkWindowsAuthentication;
         ALUseServerCertificateValidation = other.ALUseServerCertificateValidation;
     }
 }
