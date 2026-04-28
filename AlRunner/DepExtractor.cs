@@ -173,7 +173,9 @@ public static class DepExtractor
         int strippedProcedures = 0;
         int skippedFiles = 0;
         int strippedControlAddInFiles = 0;
+        int strippedUserControlHostPages = 0;
         int strippedUserControls = 0;
+        int strippedHelpProps = 0;
         foreach (var (fileName, source) in allExtracted)
         {
             // 1. ControlAddIn objects need a JS/HTML resource sidecar that the runner cannot
@@ -184,12 +186,25 @@ public static class DepExtractor
                 continue;
             }
 
-            // 2. Strip PageUserControl blocks (and their dependent event triggers) from pages.
-            //    Without this the page references a ControlAddIn that we just dropped.
+            // 2. UserControlHost pages must contain exactly one usercontrol (AL0874).
+            //    After usercontrol stripping the page is invalid — drop the whole file.
+            //    Anything calling Page.Run on it will surface a missing-page error,
+            //    which is the right signal: that page never could have run here.
+            if (IsUserControlHostPage(source))
+            {
+                strippedUserControlHostPages++;
+                continue;
+            }
+
+            // 3. Strip PageUserControl blocks and their dependent event triggers.
             var (uncontrolledSource, controlsRemoved) = StripPageUserControls(source);
             strippedUserControls += controlsRemoved;
 
-            var (strippedSource, stripped) = StripDotNetProcedures(uncontrolledSource, fileName);
+            // 4. Strip ContextSensitiveHelpPage property from all pages (AL0543 trigger).
+            var (helpStrippedSource, helpRemoved) = StripContextSensitiveHelpPage(uncontrolledSource);
+            strippedHelpProps += helpRemoved;
+
+            var (strippedSource, stripped) = StripDotNetProcedures(helpStrippedSource, fileName);
             if (strippedSource == null) { skippedFiles++; continue; } // pure assembly declaration, nothing callable
 
             var outPath = Path.Combine(outputDir, fileName);
@@ -202,8 +217,10 @@ public static class DepExtractor
 
         if (strippedProcedures > 0 || skippedFiles > 0)
             Console.Error.WriteLine($"DotNet stripping: {strippedProcedures} procedure(s) replaced with Error(), {skippedFiles} pure-assembly file(s) skipped.");
-        if (strippedControlAddInFiles > 0 || strippedUserControls > 0)
-            Console.Error.WriteLine($"ControlAddIn stripping: {strippedControlAddInFiles} controladdin file(s) dropped, {strippedUserControls} usercontrol block(s) removed from pages.");
+        if (strippedControlAddInFiles > 0 || strippedUserControls > 0 || strippedUserControlHostPages > 0)
+            Console.Error.WriteLine($"ControlAddIn stripping: {strippedControlAddInFiles} controladdin file(s) dropped, {strippedUserControlHostPages} UserControlHost page(s) dropped, {strippedUserControls} usercontrol block(s) removed.");
+        if (strippedHelpProps > 0)
+            Console.Error.WriteLine($"ContextSensitiveHelpPage stripping: {strippedHelpProps} propertie(s) removed.");
 
         Console.Error.WriteLine($"Extracted {written} AL file(s) to {outputDir}");
         return 0;
@@ -843,6 +860,55 @@ public static class DepExtractor
             return cu.Objects.Any(o => o.Kind == SyntaxKind.ControlAddInObject);
         }
         catch { return false; }
+    }
+
+    /// <summary>
+    /// True if the file is a page with <c>SubType = UserControlHost</c>. Such a page must
+    /// contain exactly one usercontrol; once we strip those, the page no longer compiles
+    /// (AL0874). Drop the whole file — the runner has no browser to host a control anyway.
+    /// </summary>
+    private static bool IsUserControlHostPage(string source)
+    {
+        if (!source.Contains("UserControlHost", StringComparison.OrdinalIgnoreCase)) return false;
+        try
+        {
+            var tree = SyntaxTree.ParseObjectText(source);
+            if (tree.GetRoot() is not CompilationUnitSyntax cu) return false;
+            // The AL keyword is `PageType = UserControlHost;` even though AL0874 calls it
+            // 'SubType' — match either to be safe.
+            return cu.Objects.OfType<PageSyntax>().Any(p =>
+                p.PropertyList?.Properties.OfType<PropertySyntax>().Any(prop =>
+                    (string.Equals(prop.Name?.Identifier.ValueText, "PageType", StringComparison.OrdinalIgnoreCase)
+                     || string.Equals(prop.Name?.Identifier.ValueText, "SubType", StringComparison.OrdinalIgnoreCase))
+                    && prop.Value?.ToFullString().Trim().Equals("UserControlHost", StringComparison.OrdinalIgnoreCase) == true
+                ) ?? false);
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// Remove the <c>ContextSensitiveHelpPage</c> property from all pages. The runner does
+    /// not render help, and Microsoft sets this on most Base/System Application pages —
+    /// the consuming app.json's contextSensitiveHelpUrl is the trigger for AL0543, so the
+    /// cleanest fix in standalone-slice mode is to drop the property entirely.
+    /// </summary>
+    private static (string Source, int Removed) StripContextSensitiveHelpPage(string source)
+    {
+        if (!source.Contains("ContextSensitiveHelpPage", StringComparison.OrdinalIgnoreCase)) return (source, 0);
+        try
+        {
+            var tree = SyntaxTree.ParseObjectText(source);
+            var root = tree.GetRoot();
+            var props = root.DescendantNodes().OfType<PropertySyntax>()
+                .Where(p => string.Equals(p.Name?.Identifier.ValueText, "ContextSensitiveHelpPage", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (props.Count == 0) return (source, 0);
+            var result = source;
+            foreach (var p in props.OrderByDescending(p => p.Span.Start))
+                result = result[..p.Span.Start] + result[p.Span.End..];
+            return (result, props.Count);
+        }
+        catch { return (source, 0); }
     }
 
     /// <summary>
