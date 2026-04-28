@@ -1342,6 +1342,17 @@ public static class AlCompat
     }
 
     /// <summary>
+    /// Replacement for ALCompiler.NavIndirectValueToGenericType&lt;T&gt;.
+    /// Extracts a typed value from a variant/indirect value holder.
+    /// </summary>
+    public static T NavIndirectValueToGenericType<T>(object? value)
+    {
+        if (value is MockVariant mv) return NavIndirectValueToGenericType<T>(mv.Value);
+        if (value is null) return default!;
+        return (T)value;
+    }
+
+    /// <summary>
     /// Replacement for ALCompiler.NavIndirectValueToNavValue.
     /// Extracts the NavValue from a variant/indirect value holder.
     /// </summary>
