@@ -230,6 +230,29 @@ public static class DepExtractor
         if (strippedLayoutProps > 0)
             Console.Error.WriteLine($"Report layout stripping: {strippedLayoutProps} layout block(s)/properties removed.");
 
+        // Copy each extracted app's app.json so compile-dep can use the real per-app
+        // identity (id/name/publisher/version) instead of a synthetic one. Per-app
+        // identity is required for InternalsVisibleTo grants and for resolving cross-app
+        // object name conflicts the way real BC does.
+        int manifestsCopied = 0;
+        foreach (var appDir in Directory.GetDirectories(outputDir))
+        {
+            var appName = Path.GetFileName(appDir);
+            foreach (var depSource in depSourceList)
+            {
+                if (!Directory.Exists(depSource)) continue;
+                var srcManifest = Path.Combine(depSource, appName, "app.json");
+                if (File.Exists(srcManifest))
+                {
+                    File.Copy(srcManifest, Path.Combine(appDir, "app.json"), overwrite: true);
+                    manifestsCopied++;
+                    break;
+                }
+            }
+        }
+        if (manifestsCopied > 0)
+            Console.Error.WriteLine($"Per-app manifests: copied {manifestsCopied} app.json file(s).");
+
         Console.Error.WriteLine($"Extracted {written} AL file(s) to {outputDir}");
         return 0;
     }
@@ -599,13 +622,14 @@ public static class DepExtractor
             var name = UnquoteIdentifier(optAccess.Name?.ToFullString().Trim());
             if (string.IsNullOrEmpty(name)) continue;
 
-            switch (prefix)
+            // AL is case-insensitive on object-type keywords (Xmlport vs XmlPort).
+            switch (prefix.ToLowerInvariant())
             {
-                case "Codeunit": result.Codeunits.Add(name); break;
-                case "Page":     result.Pages.Add(name);     break;
-                case "Report":   result.Reports.Add(name);   break;
-                case "Query":    result.Queries.Add(name);   break;
-                case "XmlPort":  result.XmlPorts.Add(name);  break;
+                case "codeunit": result.Codeunits.Add(name); break;
+                case "page":     result.Pages.Add(name);     break;
+                case "report":   result.Reports.Add(name);   break;
+                case "query":    result.Queries.Add(name);   break;
+                case "xmlport":  result.XmlPorts.Add(name);  break;
             }
         }
     }

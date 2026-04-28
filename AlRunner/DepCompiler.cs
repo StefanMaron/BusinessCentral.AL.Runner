@@ -421,9 +421,112 @@ public static class DepCompiler
     /// <summary>
     /// Compile a directory of AL source files to a dependency .dll.
     /// </summary>
+    private record AppInfo(string Dir, Guid Id, string Name, string Publisher, string Version, List<Guid> DepIds);
+
+    /// <summary>
+    /// Compile a multi-app slice: each subdirectory of <paramref name="srcDir"/> is a
+    /// separate app with its own app.json. Build a dependency graph from the manifests,
+    /// topologically sort, and compile each app to its own DLL — accumulating prior
+    /// outputs as <c>--packages</c> for later compiles. Mirrors BC's actual packaging.
+    /// </summary>
+    private static int CompileDepMultiApp(string srcDir, List<string> appDirs, string outputDir, List<string> packagePaths)
+    {
+        var apps = new List<AppInfo>();
+        foreach (var dir in appDirs)
+        {
+            var manPath = Path.Combine(dir, "app.json");
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(manPath));
+                var root = doc.RootElement;
+                var id = Guid.Parse(root.GetProperty("id").GetString()!);
+                var name = root.GetProperty("name").GetString() ?? Path.GetFileName(dir);
+                var publisher = root.GetProperty("publisher").GetString() ?? "Unknown";
+                var version = root.GetProperty("version").GetString() ?? "1.0.0.0";
+                var deps = new List<Guid>();
+                if (root.TryGetProperty("dependencies", out var depArr) && depArr.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    foreach (var d in depArr.EnumerateArray())
+                        if (d.TryGetProperty("id", out var didProp) || d.TryGetProperty("appId", out didProp))
+                            if (Guid.TryParse(didProp.GetString(), out var did))
+                                deps.Add(did);
+                apps.Add(new AppInfo(dir, id, name, publisher, version, deps));
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Warning: failed to read {manPath}: {ex.Message}");
+            }
+        }
+
+        Console.Error.WriteLine($"Multi-app compile: {apps.Count} apps detected");
+
+        // Topological sort: an app comes after all dependencies it has *that are also
+        // present in our slice*. Dependencies on apps not in the slice are satisfied
+        // by the user-provided --packages binaries.
+        var slicedIds = apps.Select(a => a.Id).ToHashSet();
+        var ordered = new List<AppInfo>();
+        var done = new HashSet<Guid>();
+        var maxIters = apps.Count * apps.Count + 1;
+        while (ordered.Count < apps.Count && maxIters-- > 0)
+        {
+            foreach (var app in apps)
+            {
+                if (done.Contains(app.Id)) continue;
+                if (app.DepIds.Where(slicedIds.Contains).All(done.Contains))
+                {
+                    ordered.Add(app);
+                    done.Add(app.Id);
+                }
+            }
+        }
+        if (ordered.Count < apps.Count)
+        {
+            Console.Error.WriteLine($"Error: dependency cycle in {apps.Count - ordered.Count} apps");
+            return 1;
+        }
+
+        Directory.CreateDirectory(outputDir);
+        // Accumulate compiled DLLs as packages for subsequent compiles. Each app sees
+        // the user's --packages binaries plus all already-built apps in our output dir.
+        var accumPackages = new List<string>(packagePaths);
+        var outputDirAbs = Path.GetFullPath(outputDir);
+        if (!accumPackages.Contains(outputDirAbs)) accumPackages.Add(outputDirAbs);
+        var failed = new List<string>();
+        foreach (var app in ordered)
+        {
+            Console.Error.WriteLine($"=== Compiling app: {app.Name} by {app.Publisher} v{app.Version} ===");
+            var rc = CompileDepFromDir(app.Dir, outputDir, accumPackages);
+            if (rc != 0)
+            {
+                failed.Add(app.Name);
+                Console.Error.WriteLine($"WARN: compile failed for {app.Name}; continuing with other apps");
+            }
+        }
+        var built = ordered.Count - failed.Count;
+        Console.Error.WriteLine($"Multi-app compile: {built}/{ordered.Count} app(s) compiled to {outputDir}");
+        if (failed.Count > 0)
+        {
+            Console.Error.WriteLine($"  Failed apps ({failed.Count}): {string.Join(", ", failed)}");
+            return 1;
+        }
+        return 0;
+    }
+
     private static int CompileDepFromDir(string srcDir, string outputDir, List<string> packagePaths, AppJsonIdentity? appIdentity = null)
     {
         Directory.CreateDirectory(outputDir);
+
+        // Multi-app detection: if subdirectories have app.json files, treat each as a
+        // separate app and produce one DLL per app. This mirrors BC's actual packaging:
+        // each app carries its real identity (id/name/publisher) so InternalsVisibleTo
+        // grants resolve correctly per-DLL, and cross-app object name conflicts that
+        // exist legitimately in BC source (different apps shipping the same FQN) are
+        // dissolved at the compile-unit boundary.
+        var appDirs = Directory.GetDirectories(srcDir)
+            .Where(d => File.Exists(Path.Combine(d, "app.json")))
+            .ToList();
+        if (appDirs.Count > 0)
+            return CompileDepMultiApp(srcDir, appDirs, outputDir, packagePaths);
+
         var dirName = Path.GetFileName(srcDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
         if (appIdentity == null)
         {
@@ -478,15 +581,49 @@ public static class DepCompiler
         var compilableSources = alSources;
         var compilableFilePaths = filePaths;
 
-        // Synthesize an app.json so Microsoft pages with `ContextSensitiveHelpPage` set
-        // don't fail with AL0543 ('contextSensitiveHelpUrl must be set'). The URL is a
-        // stub — the runner does not render help pages.
+        // Use the app's real app.json if present (per-app DLL mode); otherwise synthesize
+        // a stub one. Either way we inject contextSensitiveHelpUrl/helpBaseUrl so Microsoft
+        // pages with `ContextSensitiveHelpPage` don't fail AL0543. Real identity preserves
+        // InternalsVisibleTo grants, which a synthetic identity cannot inherit.
         var sliceManifestDir = Path.Combine(Path.GetTempPath(), $"alrunner-slice-{Guid.NewGuid():N}");
         Directory.CreateDirectory(sliceManifestDir);
-        File.WriteAllText(Path.Combine(sliceManifestDir, "app.json"),
-            $"{{\"id\":\"{Guid.NewGuid()}\",\"name\":\"{dirName}\",\"publisher\":\"AlRunner\",\"version\":\"1.0.0.0\"," +
-            "\"contextSensitiveHelpUrl\":\"https://learn.microsoft.com/en-us/dynamics365/business-central/\"," +
-            "\"helpBaseUrl\":\"https://learn.microsoft.com/en-us/dynamics365/business-central/\"}");
+        var realManifest = Path.Combine(srcDir, "app.json");
+        string manifestJson;
+        if (File.Exists(realManifest))
+        {
+            // Inject the help URLs into the real manifest. We parse and re-emit minimally;
+            // the BC compiler tolerates extra properties.
+            var raw = File.ReadAllText(realManifest);
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(raw);
+                var sb = new System.Text.StringBuilder("{");
+                bool first = true;
+                foreach (var p in doc.RootElement.EnumerateObject())
+                {
+                    if (p.Name.Equals("contextSensitiveHelpUrl", StringComparison.OrdinalIgnoreCase)
+                        || p.Name.Equals("helpBaseUrl", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!first) sb.Append(',');
+                    sb.Append(System.Text.Json.JsonSerializer.Serialize(p.Name)).Append(':').Append(p.Value.GetRawText());
+                    first = false;
+                }
+                if (!first) sb.Append(',');
+                sb.Append("\"contextSensitiveHelpUrl\":\"https://learn.microsoft.com/en-us/dynamics365/business-central/\",")
+                  .Append("\"helpBaseUrl\":\"https://learn.microsoft.com/en-us/dynamics365/business-central/\"}");
+                manifestJson = sb.ToString();
+            }
+            catch
+            {
+                manifestJson = raw; // fallback: use as-is
+            }
+        }
+        else
+        {
+            manifestJson = $"{{\"id\":\"{Guid.NewGuid()}\",\"name\":\"{dirName}\",\"publisher\":\"AlRunner\",\"version\":\"1.0.0.0\"," +
+                "\"contextSensitiveHelpUrl\":\"https://learn.microsoft.com/en-us/dynamics365/business-central/\"," +
+                "\"helpBaseUrl\":\"https://learn.microsoft.com/en-us/dynamics365/business-central/\"}";
+        }
+        File.WriteAllText(Path.Combine(sliceManifestDir, "app.json"), manifestJson);
         var inputPaths = new List<string> { sliceManifestDir };
 
         var csharpList = AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths, sourceFilePaths: compilableFilePaths);
