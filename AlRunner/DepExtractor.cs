@@ -176,6 +176,7 @@ public static class DepExtractor
         int strippedUserControlHostPages = 0;
         int strippedUserControls = 0;
         int strippedHelpProps = 0;
+        int strippedLayoutProps = 0;
         foreach (var (fileName, source) in allExtracted)
         {
             // 1. ControlAddIn objects need a JS/HTML resource sidecar that the runner cannot
@@ -204,7 +205,12 @@ public static class DepExtractor
             var (helpStrippedSource, helpRemoved) = StripContextSensitiveHelpPage(uncontrolledSource);
             strippedHelpProps += helpRemoved;
 
-            var (strippedSource, stripped) = StripDotNetProcedures(helpStrippedSource, fileName);
+            // 5. Strip report layout sections — Windows backslash paths in LayoutFile
+            //    trip AL0363 on Linux, and the runner has no RDLC subsystem anyway.
+            var (layoutStrippedSource, layoutsRemoved) = StripReportLayouts(helpStrippedSource);
+            strippedLayoutProps += layoutsRemoved;
+
+            var (strippedSource, stripped) = StripDotNetProcedures(layoutStrippedSource, fileName);
             if (strippedSource == null) { skippedFiles++; continue; } // pure assembly declaration, nothing callable
 
             var outPath = Path.Combine(outputDir, fileName);
@@ -221,6 +227,8 @@ public static class DepExtractor
             Console.Error.WriteLine($"ControlAddIn stripping: {strippedControlAddInFiles} controladdin file(s) dropped, {strippedUserControlHostPages} UserControlHost page(s) dropped, {strippedUserControls} usercontrol block(s) removed.");
         if (strippedHelpProps > 0)
             Console.Error.WriteLine($"ContextSensitiveHelpPage stripping: {strippedHelpProps} propertie(s) removed.");
+        if (strippedLayoutProps > 0)
+            Console.Error.WriteLine($"Report layout stripping: {strippedLayoutProps} layout block(s)/properties removed.");
 
         Console.Error.WriteLine($"Extracted {written} AL file(s) to {outputDir}");
         return 0;
@@ -884,6 +892,57 @@ public static class DepExtractor
                 ) ?? false);
         }
         catch { return false; }
+    }
+
+    /// <summary>
+    /// Remove report layout properties (<c>RDLCLayout</c>, <c>WordLayout</c>, <c>ExcelLayout</c>,
+    /// <c>RenderingLayout</c>) and the entire <c>rendering { ... }</c> section. Microsoft uses
+    /// Windows backslash separators in <c>LayoutFile = '.\Reports\...'</c> which trip AL0363
+    /// on Linux. The runner already excludes <c>CompilationGenerationOptions.ReportLayout</c>
+    /// from generation, so dropping these is consistent with the runner's no-RDLC architecture.
+    /// </summary>
+    private static (string Source, int Removed) StripReportLayouts(string source)
+    {
+        if (!source.Contains("Layout", StringComparison.OrdinalIgnoreCase)
+            && !source.Contains("rendering", StringComparison.OrdinalIgnoreCase))
+            return (source, 0);
+        try
+        {
+            var tree = SyntaxTree.ParseObjectText(source);
+            var root = tree.GetRoot();
+            var spans = new List<(int Start, int End)>();
+
+            foreach (var rs in root.DescendantNodes().OfType<ReportRenderingSectionSyntax>())
+                spans.Add((rs.Span.Start, rs.Span.End));
+
+            foreach (var prop in root.DescendantNodes().OfType<PropertySyntax>())
+            {
+                var n = prop.Name?.Identifier.ValueText ?? "";
+                if (n.Equals("RDLCLayout", StringComparison.OrdinalIgnoreCase)
+                    || n.Equals("WordLayout", StringComparison.OrdinalIgnoreCase)
+                    || n.Equals("ExcelLayout", StringComparison.OrdinalIgnoreCase)
+                    || n.Equals("RenderingLayout", StringComparison.OrdinalIgnoreCase)
+                    || n.Equals("DefaultLayout", StringComparison.OrdinalIgnoreCase)
+                    || n.Equals("DefaultRenderingLayout", StringComparison.OrdinalIgnoreCase)
+                    || n.Equals("LayoutFile", StringComparison.OrdinalIgnoreCase))
+                    spans.Add((prop.Span.Start, prop.Span.End));
+            }
+
+            if (spans.Count == 0) return (source, 0);
+            // Dedupe: if span A is contained within span B, drop A. Otherwise overlapping
+            // removals corrupt the source (e.g. rendering section + its child layout +
+            // their child LayoutFile property all firing produces garbage).
+            var sorted = spans.OrderBy(x => x.Start).ThenByDescending(x => x.End).ToList();
+            var pruned = new List<(int Start, int End)>();
+            foreach (var sp in sorted)
+                if (pruned.Count == 0 || sp.Start >= pruned[^1].End)
+                    pruned.Add(sp);
+            var result = source;
+            foreach (var (s, e) in pruned.OrderByDescending(x => x.Start))
+                result = result[..s] + result[e..];
+            return (result, pruned.Count);
+        }
+        catch { return (source, 0); }
     }
 
     /// <summary>
