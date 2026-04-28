@@ -454,6 +454,44 @@ public static class DepCompiler
     /// against the live module without needing to call out to ISymbolReferenceLoader.
     /// <c>CompiledModule</c> is internal so we access it via reflection.
     /// </summary>
+    /// <summary>
+    /// Emit a BC .app symbol package alongside the per-app DLL so subsequent compiles in
+    /// the multi-app loop can resolve cross-app references via the default PackageScanner.
+    /// Uses the public <c>PackageModuleOutputter</c>. Failures are non-fatal (logged at the
+    /// caller) since the .app is only needed for chaining; runtime execution uses the .dll.
+    /// </summary>
+    private static void EmitSymbolApp(Microsoft.Dynamics.Nav.CodeAnalysis.Compilation comp, AppInfo app, string outputDir)
+    {
+        var version = Version.TryParse(app.Version, out var v) ? v : new Version(1, 0, 0, 0);
+        var manifest = new Microsoft.Dynamics.Nav.CodeAnalysis.Packaging.NavAppManifest
+        {
+            AppId = app.Id,
+            AppName = app.Name,
+            AppPublisher = app.Publisher,
+            AppVersion = version,
+            AppDescription = $"{app.Name} (slice)",
+            AppBrief = app.Name,
+            Target = Microsoft.Dynamics.Nav.CodeAnalysis.CompilationTarget.OnPrem,
+            Runtime = new Version(15, 0),
+            ContextSensitiveHelpUrl = "https://learn.microsoft.com/en-us/dynamics365/business-central/",
+            AppHelpBaseUrl = "https://learn.microsoft.com/en-us/dynamics365/business-central/",
+        };
+        var appPath = Path.Combine(outputDir, SanitizeName($"{app.Publisher}_{app.Name}_{app.Version}.app"));
+        var emitOptions = new Microsoft.Dynamics.Nav.CodeAnalysis.EmitOptions();
+        using var stream = File.Create(appPath);
+        var outputter = new Microsoft.Dynamics.Nav.CodeAnalysis.Packaging.PackageModuleOutputter(
+            manifest, stream, comp, emitOptions, projectRoot: app.Dir);
+        var result = comp.Emit(emitOptions, outputter, default);
+        if (!result.Success)
+        {
+            stream.Close();
+            try { File.Delete(appPath); } catch { }
+            var firstErr = result.Diagnostics.FirstOrDefault(d => d.Severity == Microsoft.Dynamics.Nav.CodeAnalysis.Diagnostics.DiagnosticSeverity.Error);
+            throw new Exception($".app emission failed: {firstErr?.GetMessage() ?? "(no error message)"}");
+        }
+        Console.Error.WriteLine($"  Emitted symbol package: {Path.GetFileName(appPath)}");
+    }
+
     private static BcSrs? TryGetModuleRef(Microsoft.Dynamics.Nav.CodeAnalysis.Compilation comp)
     {
         var prop = comp.GetType().GetProperty("CompiledModule",
@@ -558,17 +596,22 @@ public static class DepCompiler
             }
             else
             {
+                // Emit a .app symbol package so downstream apps can resolve cross-app
+                // references. Uses BC's PackageModuleOutputter (public API). The .app sits
+                // alongside the .dll in outputDir; outputDir is already in accumPackages,
+                // so the next compile's PackageScanner picks it up automatically.
                 var compFor = AlTranspiler.LastCompilation;
+                if (compFor != null)
+                {
+                    try { EmitSymbolApp(compFor, app, outputDir); }
+                    catch (Exception ex) { Console.Error.WriteLine($"  WARN: .app emission failed for {app.Name}: {ex.Message}"); }
+                }
+                // Also record the in-memory ModuleInfo for downstream chaining via
+                // SymbolReferenceSpecification (kept as fallback, not strictly needed
+                // once .app emission works).
                 var moduleRef = compFor != null ? TryGetModuleRef(compFor) : null;
                 if (moduleRef != null)
-                {
                     CompiledAppRefs[app.Id] = moduleRef;
-                    Console.Error.WriteLine($"  Captured module symbol for {app.Name} (id={app.Id})");
-                }
-                else
-                {
-                    Console.Error.WriteLine($"  WARN: no module symbol captured for {app.Name} — chaining will skip it");
-                }
             }
         }
         var built = ordered.Count - failed.Count;
