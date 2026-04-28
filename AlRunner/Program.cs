@@ -1099,6 +1099,15 @@ public static class AlTranspiler
     /// <param name="alSources">AL source code strings to transpile.</param>
     /// <param name="packagePaths">Directories containing .app files for symbol references (optional).</param>
     /// <param name="inputPaths">Input directories/file paths for auto-discovery of .alpackages (optional).</param>
+    /// <summary>
+    /// Preprocessor symbols defined when parsing AL sources. Issue #1525 will replace
+    /// this with proper CLI/app.json wiring; for now we hardcode CLEANSCHEMA1..CLEANSCHEMA27
+    /// so obsolete-and-moved tables (e.g. \"Source Code Setup\" → Business Foundation) drop
+    /// out of compilation instead of producing AL0797 errors on every reference.
+    /// </summary>
+    public static List<string> PreprocessorSymbols { get; } =
+        Enumerable.Range(1, 27).Select(n => $"CLEANSCHEMA{n}").ToList();
+
     public static List<(string Name, string Code)>? TranspileMulti(
         List<string> alSources,
         List<string>? packagePaths = null,
@@ -1110,6 +1119,10 @@ public static class AlTranspiler
         var syntaxTrees = new List<SyntaxTree>();
         bool hasErrors = false;
 
+        var parseOptions = PreprocessorSymbols.Count > 0
+            ? new ParseOptions(runtimeVersion: null!, PreprocessorSymbols, DocumentationMode.None)
+            : null;
+
         var parsedResults = new (SyntaxTree tree, List<Diagnostic> diags)[alSources.Count];
         Parallel.For(0, alSources.Count, i =>
         {
@@ -1117,7 +1130,7 @@ public static class AlTranspiler
             if (treeCache != null && sourceFilePaths != null && i < sourceFilePaths.Count && sourceFilePaths[i] != null)
                 tree = treeCache.GetOrParse(sourceFilePaths[i]!, alSources[i]);
             else
-                tree = SyntaxTree.ParseObjectText(alSources[i]);
+                tree = SyntaxTree.ParseObjectText(alSources[i], path: "", encoding: null!, parseOptions, default);
             var diags = tree.GetDiagnostics().ToList();
             parsedResults[i] = (tree, diags);
         });

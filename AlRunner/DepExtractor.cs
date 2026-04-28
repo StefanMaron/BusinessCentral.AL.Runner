@@ -214,14 +214,20 @@ public static class DepExtractor
                     if (!visited[typeName].Add(name)) continue;
                     anyWork = true;
 
-                    // O(1) definition lookup
+                    // O(1) definition lookup. A name can resolve to multiple files when
+                    // the same object is redefined across modules (obsolete + new
+                    // location after a CLEANSCHEMA migration). Pull every occurrence —
+                    // the compiler with preprocessor symbols selects the active one.
                     if (index.Definitions.TryGetValue(typeName, out var defs) &&
-                        defs.TryGetValue(name, out var def) &&
-                        !allExtracted.ContainsKey(def.FileName))
+                        defs.TryGetValue(name, out var defList))
                     {
-                        allExtracted[def.FileName] = def.Source;
-                        Console.Error.WriteLine($"  + {def.FileName}");
-                        EnqueueTransitiveDeps(def.Source, visited, pending);
+                        foreach (var (fileName, source) in defList)
+                        {
+                            if (allExtracted.ContainsKey(fileName)) continue;
+                            allExtracted[fileName] = source;
+                            Console.Error.WriteLine($"  + {fileName}");
+                            EnqueueTransitiveDeps(source, visited, pending);
+                        }
                     }
 
                     // O(1) extension lookup — includes all tableextensions, pageextensions, etc.
@@ -1088,8 +1094,12 @@ public static class DepExtractor
 /// </summary>
 internal class DepIndex
 {
-    // typeName -> objectName -> (fileName, source)
-    public Dictionary<string, Dictionary<string, (string FileName, string Source)>> Definitions { get; } =
+    // typeName -> objectName -> list of (fileName, source). A name can resolve to multiple
+    // files when modules redefine the same object — e.g. \"Source Code Setup\" exists as the
+    // obsolete-and-moved table in Base Application AND as the live table in Business Foundation.
+    // The compiler picks the right one via preprocessor symbols (CLEANSCHEMA<N>); we must include
+    // all of them in the slice or the live table is dropped and references fail.
+    public Dictionary<string, Dictionary<string, List<(string FileName, string Source)>>> Definitions { get; } =
         new(StringComparer.OrdinalIgnoreCase);
 
     // baseTypeName -> baseObjectName -> list of (fileName, source)
@@ -1100,7 +1110,7 @@ internal class DepIndex
     public Dictionary<string, Dictionary<string, List<(string FileName, string Source)>>> EventSubscribers { get; } =
         new(StringComparer.OrdinalIgnoreCase);
 
-    public int DefinitionCount  => Definitions.Values.Sum(d => d.Count);
+    public int DefinitionCount  => Definitions.Values.Sum(d => d.Values.Sum(l => l.Count));
     public int ExtensionCount   => Extensions.Values.Sum(d => d.Values.Sum(l => l.Count));
     public int SubscriberCount  => EventSubscribers.Values.Sum(d => d.Values.Sum(l => l.Count));
 
@@ -1108,8 +1118,11 @@ internal class DepIndex
     {
         if (string.IsNullOrEmpty(typeName) || string.IsNullOrEmpty(objectName)) return;
         if (!Definitions.TryGetValue(typeName, out var byName))
-            Definitions[typeName] = byName = new Dictionary<string, (string, string)>(StringComparer.OrdinalIgnoreCase);
-        byName.TryAdd(objectName, (fileName, source));
+            Definitions[typeName] = byName = new Dictionary<string, List<(string, string)>>(StringComparer.OrdinalIgnoreCase);
+        if (!byName.TryGetValue(objectName, out var list))
+            byName[objectName] = list = new List<(string, string)>();
+        if (!list.Any(e => e.Item1 == fileName))
+            list.Add((fileName, source));
     }
 
     public void AddExtension(string? baseTypeName, string? baseObjectName, string fileName, string source)
