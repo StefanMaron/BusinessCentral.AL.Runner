@@ -191,6 +191,26 @@ public sealed class JsonSymbolReferenceLoader : ISymbolReferenceLoader
 
     public bool HasAny => _moduleCache.Count > 0;
 
+    /// <summary>
+    /// Enumerate (publisher, name, version, appId) tuples for every cached module so
+    /// callers can inject these specs into the BC compiler's reference list — without
+    /// this, the compiler's PackageScanner only sees .app files and ignores our
+    /// .symbols.json modules even though the loader has them.
+    /// </summary>
+    public IEnumerable<(string Publisher, string Name, Version Version, Guid AppId)> EnumerateSpecs()
+    {
+        foreach (var kv in _moduleCache)
+        {
+            var m = kv.Value;
+            var publisher = GetModuleString(m, "Publisher");
+            var name = GetModuleString(m, "Name");
+            var version = GetModuleVersion(m);
+            var appIdProp = m.GetType().GetProperty("AppId", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            var appId = appIdProp?.GetValue(m) is Guid g ? g : Guid.Empty;
+            yield return (publisher, name, version, appId);
+        }
+    }
+
     public ModuleDefinition? LoadModule(SymbolReferenceSpecification reference, IList<Diagnostic> diagnostics)
     {
         if (Environment.GetEnvironmentVariable("ALRUNNER_DUMP_SYMBOLS") == "1")
@@ -228,9 +248,16 @@ public sealed class JsonSymbolReferenceLoader : ISymbolReferenceLoader
             {
                 using var stream = File.OpenRead(file);
                 var module = ReadModuleDefinition(stream);
-                var key = BuildModuleKey(module);
-                if (!_moduleCache.ContainsKey(key))
-                    _moduleCache[key] = module;
+                var publisher = GetModuleString(module, "Publisher");
+                var name = GetModuleString(module, "Name");
+                var version = GetModuleVersion(module);
+                // BC sometimes accesses spec.Publisher / spec.Name in swapped order
+                // (e.g. AL1022 error messages and the loader callbacks both use the
+                // reversed form). Index both orderings so the cache resolves either way.
+                var keyForward = $"{publisher}|{name}|{version}";
+                var keyReverse = $"{name}|{publisher}|{version}";
+                if (!_moduleCache.ContainsKey(keyForward)) _moduleCache[keyForward] = module;
+                if (!_moduleCache.ContainsKey(keyReverse)) _moduleCache[keyReverse] = module;
             }
             catch { /* skip unreadable */ }
         }
@@ -238,26 +265,30 @@ public sealed class JsonSymbolReferenceLoader : ISymbolReferenceLoader
 
     private bool TryGetModule(SymbolReferenceSpecification reference, out ModuleDefinition module)
     {
-        // Exact match first
-        var key = BuildSpecKey(reference);
-        if (_moduleCache.TryGetValue(key, out module!)) return true;
-
-        // Version-tolerant fallback: match by Publisher+Name, then prefer the highest cached
-        // version that is >= the requested version (BC dep declarations typically use a
-        // less-specific version like 27.5.0.0 while the actual emitted package uses the
-        // build-specific 27.5.46862.49619).
         var requestedVersion = reference.Version ?? new Version(0, 0, 0, 0);
-        var prefix = $"{reference.Publisher}|{reference.Name}|";
-        var candidates = _moduleCache
-            .Where(kv => kv.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            .Select(kv => (Version: ParseVersionFromKey(kv.Key), Module: kv.Value))
-            .Where(c => c.Version >= requestedVersion)
-            .OrderByDescending(c => c.Version)
-            .ToList();
-        if (candidates.Count > 0)
+
+        // BC may pass publisher/name in either order (see IndexModules comment); try both.
+        foreach (var prefix in new[] {
+            $"{reference.Publisher}|{reference.Name}|",
+            $"{reference.Name}|{reference.Publisher}|",
+        })
         {
-            module = candidates[0].Module;
-            return true;
+            // Exact match first
+            var exact = $"{prefix}{requestedVersion}";
+            if (_moduleCache.TryGetValue(exact, out module!)) return true;
+
+            // Version-tolerant: pick highest cached version >= requested
+            var candidates = _moduleCache
+                .Where(kv => kv.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                .Select(kv => (Version: ParseVersionFromKey(kv.Key), Module: kv.Value))
+                .Where(c => c.Version >= requestedVersion)
+                .OrderByDescending(c => c.Version)
+                .ToList();
+            if (candidates.Count > 0)
+            {
+                module = candidates[0].Module;
+                return true;
+            }
         }
         module = null!;
         return false;

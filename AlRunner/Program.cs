@@ -1285,6 +1285,18 @@ public static class AlTranspiler
 
                 loadedPackageSpecs.AddRange(scannedSpecs);
 
+                // Also contribute specs for *.symbols.json files that JsonSymbolReferenceLoader
+                // indexed — PackageScanner only scans .app files so these would otherwise be
+                // invisible to the compiler's reference resolver.
+                foreach (var jl in jsonLoaders)
+                    foreach (var (publisher, name, version, appId) in jl.EnumerateSpecs())
+                    {
+                        if (appId == appIdentity.AppId) continue;
+                        if (string.Equals(name, appIdentity.Name, StringComparison.OrdinalIgnoreCase)) continue;
+                        if (loadedPackageSpecs.Any(s => s.AppId == appId)) continue;
+                        loadedPackageSpecs.Add(new PackageSpec(publisher, name, version, appId));
+                    }
+
                 if (loadedPackageSpecs.Count > 0)
                 {
                     var allAppSpecs = loadedPackageSpecs
