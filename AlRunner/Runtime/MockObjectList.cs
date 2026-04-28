@@ -1,5 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.Reflection;
+using Microsoft.Dynamics.Nav.Types;
 
 namespace AlRunner.Runtime;
 
@@ -29,6 +31,35 @@ public class MockObjectList<T> : IEnumerable<T>
     public int Count => _items.Count;
 
     public T ALGet(int oneBasedIndex) => _items[oneBasedIndex - 1];
+
+    /// <summary>
+    /// ALGet with out-parameter (DataError, index, handle) — used by lists of ITreeObject
+    /// values (e.g., List of [Codeunit]) where the caller passes the handle directly.
+    /// </summary>
+    public bool ALGet(DataError errorLevel, int oneBasedIndex, T handle)
+    {
+        if (oneBasedIndex < 1 || oneBasedIndex > _items.Count)
+        {
+            if (errorLevel == DataError.ThrowError)
+                throw new InvalidOperationException(
+                    $"The list does not contain an element at position {oneBasedIndex}.");
+            return false;
+        }
+
+        var stored = _items[oneBasedIndex - 1];
+        if (handle != null && stored != null)
+        {
+            var method = handle.GetType().GetMethod(
+                "ALAssign",
+                BindingFlags.Public | BindingFlags.Instance,
+                null,
+                new[] { stored.GetType() },
+                null);
+            method?.Invoke(handle, new object[] { stored });
+        }
+
+        return true;
+    }
 
     public bool ALContains(T item) => _items.Contains(item);
 

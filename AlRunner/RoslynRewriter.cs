@@ -3740,6 +3740,16 @@ public void Unbind() { AlRunner.Runtime.EventSubscriberRegistry.Unbind(this); }
                         SyntaxFactory.IdentifierName("NavIndirectValueToInt32")));
             }
 
+            // ALCompiler.NavIndirectValueToGuid(x) -> AlCompat.NavIndirectValueToGuid(x)
+            if (exprText == "ALCompiler" && methodName == "NavIndirectValueToGuid")
+            {
+                return visited.WithExpression(
+                    SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.IdentifierName("AlCompat"),
+                        SyntaxFactory.IdentifierName("NavIndirectValueToGuid")));
+            }
+
             // ALCompiler.NavIndirectValueToNavValue<T>(x) -> AlCompat.NavIndirectValueToNavValue<T>(x)
             // Special case: T=MockRecordRef (NavRecordRef after rewriting) — MockRecordRef does not
             // implement NavValue and cannot satisfy the generic constraint. Emit a direct cast

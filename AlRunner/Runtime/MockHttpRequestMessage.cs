@@ -73,12 +73,27 @@ public class MockHttpRequestMessage
     /// <summary>
     /// BC emits: <c>req.ALSetCookie(DataError, name, value)</c>
     /// for <c>HttpRequestMessage.SetCookie(name, value)</c>.
-    /// Stores a MockCookie keyed by name (case-insensitive).
+    /// Stores a MockCookie keyed by name (case-insensitive) and returns true.
     /// </summary>
-    public void ALSetCookie(DataError errorLevel, string name, string value)
+    public bool ALSetCookie(DataError errorLevel, string name, string value)
     {
         var cookie = new MockCookie { ALName = name, ALValue = value };
         _cookies[name] = cookie;
+        return true;
+    }
+
+    /// <summary>
+    /// BC emits: <c>req.ALSetCookie(DataError, cookie)</c>
+    /// for <c>HttpRequestMessage.SetCookie(cookie)</c>.
+    /// Stores the cookie keyed by its name and returns true.
+    /// </summary>
+    public bool ALSetCookie(DataError errorLevel, MockCookie cookie)
+    {
+        if (cookie == null) return false;
+        var stored = new MockCookie();
+        stored.ALAssign(cookie);
+        _cookies[stored.ALName] = stored;
+        return true;
     }
 
     /// <summary>
@@ -100,12 +115,10 @@ public class MockHttpRequestMessage
     /// <summary>
     /// BC emits: <c>req.ALRemoveCookie(DataError, name)</c>
     /// for <c>HttpRequestMessage.RemoveCookie(name)</c>.
-    /// Removes the named cookie; no-op if not found.
+    /// Removes the named cookie; returns true if removed.
     /// </summary>
-    public void ALRemoveCookie(DataError errorLevel, string name)
-    {
-        _cookies.Remove(name);
-    }
+    public bool ALRemoveCookie(DataError errorLevel, string name)
+        => _cookies.Remove(name);
 
     /// <summary>
     /// BC emits: <c>req.ALGetCookieNames()</c>
