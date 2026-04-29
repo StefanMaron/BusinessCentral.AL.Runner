@@ -311,6 +311,15 @@ public static class DepExtractor
                         if (!allExtracted.ContainsKey(entry.FileName))
                         {
                             allExtracted[entry.FileName] = entry.Source;
+                            Console.Error.WriteLine($"  + {entry.FileName} (namespace anchor for '{ns}')");
+                            // Follow the anchor's own object references — without this,
+                            // any object the anchor file references (page parts, RunObject
+                            // targets, table relations, etc.) is silently dropped, which
+                            // surfaces downstream as "AL transpilation: no C# code was
+                            // generated" with no diagnostic. Re-run BFS so the new refs
+                            // are resolved against the index.
+                            EnqueueTransitiveDeps(entry.Source, visited, pending);
+                            ExpandSlice(pending, visited, index, allExtracted);
                             changed = true;
                         }
                         nsDeclared.Add(ns);

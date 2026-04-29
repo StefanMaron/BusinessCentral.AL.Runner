@@ -1425,4 +1425,91 @@ public class DepExtractorTests
 
         Assert.Contains("PartTarget", refs.Pages, StringComparer.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// Regression: when a dep file is pulled into the slice solely because it declares
+    /// a namespace that an extension's <c>using</c> directive needs (the "namespace
+    /// anchor" path in <see cref="DepExtractor.RunNamespaceScan"/>), its own object
+    /// references must still be followed so the slice is internally consistent.
+    ///
+    /// Real-world failure: DWF Base Application — JobProjectManagerRC was pulled in as
+    /// the anchor for namespace <c>Microsoft.Projects.RoleCenters</c>, but its
+    /// <c>part(Control102; "Headline RC Project Manager")</c> target was never enqueued,
+    /// so compile-dep failed silently with "AL transpilation: no C# code was generated".
+    /// </summary>
+    [Fact]
+    public void ExtractDeps_NamespaceAnchorFile_TransitiveDepsAreFollowed()
+    {
+        var depDir = Path.Combine(Path.GetTempPath(), "al-nsanchor-dep-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir = Path.Combine(Path.GetTempPath(), "al-nsanchor-out-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir = Path.Combine(Path.GetTempPath(), "al-nsanchor-ext-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(depDir);
+            Directory.CreateDirectory(extDir);
+
+            // Dep codeunit the extension references directly (gives BFS a seed).
+            // Its `using AppA.RoleCenters;` directive triggers the namespace-anchor
+            // pull of AnchorRC.al — which is the path under test.
+            File.WriteAllText(Path.Combine(depDir, "Consumer.al"), """
+                namespace AppA.Consumer;
+                using AppA.RoleCenters;
+                codeunit 60100 Consumer { procedure Run() begin end; }
+                """);
+
+            // The namespace anchor: declares namespace AppA.RoleCenters and
+            // contains a page-part reference to "Anchor Headline" — that page
+            // must follow the anchor into the slice.
+            File.WriteAllText(Path.Combine(depDir, "AnchorRC.al"), """
+                namespace AppA.RoleCenters;
+                page 60110 "Anchor RC"
+                {
+                    PageType = RoleCenter;
+                    layout
+                    {
+                        area(rolecenter)
+                        {
+                            part(Control1; "Anchor Headline") { }
+                        }
+                    }
+                }
+                """);
+
+            // The headline page that the anchor's part references — must end up in slice.
+            File.WriteAllText(Path.Combine(depDir, "AnchorHeadline.al"), """
+                namespace AppA.Visuals;
+                page 60111 "Anchor Headline"
+                {
+                    PageType = HeadlinePart;
+                    Caption = 'Headline';
+                }
+                """);
+
+            // Extension references Consumer (pulled in by BFS).
+            File.WriteAllText(Path.Combine(extDir, "ExtConsumer.al"), """
+                codeunit 60199 ExtConsumer
+                {
+                    procedure Run() begin Codeunit.Run(Codeunit::Consumer); end;
+                }
+                """);
+
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depDir }, outDir);
+
+            Assert.Equal(0, rc);
+
+            var allFiles = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+
+            // Sanity: the namespace anchor itself is in the slice.
+            Assert.Contains(allFiles, f => Path.GetFileName(f).Equals("AnchorRC.al", StringComparison.OrdinalIgnoreCase));
+
+            // The bug: the part target ("Anchor Headline") referenced by the anchor file
+            // was not pulled in. With the fix the file IS in the slice.
+            Assert.Contains(allFiles, f => Path.GetFileName(f).Equals("AnchorHeadline.al", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            foreach (var d in new[] { depDir, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
 }
