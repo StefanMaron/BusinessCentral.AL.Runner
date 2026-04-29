@@ -36,6 +36,23 @@ public static class SourceFileMapper
     /// Falls back to prefix matching when the scope name is a method name
     /// without the _Scope suffix (e.g. ValueCapture uses bare method names).
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Use this method only when <paramref name="scopeName"/> may arrive as a bare
+    /// method name without the <c>_Scope_HASH</c> suffix — for example, when
+    /// <c>IterationTracker</c> stores the parent class name rather than the fully-qualified
+    /// scope class name.  The prefix-match fallback finds the first
+    /// <c>scopeToObject</c> key that starts with <c>scopeName + "_"</c> so those callers
+    /// still resolve to the correct file.
+    /// </para>
+    /// <para>
+    /// <see cref="WriteCobertura"/> and <see cref="CoverageReport.ToJson"/> always receive
+    /// fully-qualified scope names built by <see cref="CoverageReport.BuildScopeToObjectMap"/>
+    /// (which parses actual <c>class … _Scope…</c> declarations), so they use the direct
+    /// <c>scopeToObject.TryGetValue</c> + <see cref="GetFile"/> path and do NOT need this
+    /// method — the prefix fallback would add no coverage for them.
+    /// </para>
+    /// </remarks>
     public static string? GetFileForScope(
         string scopeName,
         Dictionary<string, string> scopeToObject)
