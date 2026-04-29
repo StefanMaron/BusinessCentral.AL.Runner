@@ -1112,7 +1112,23 @@ public static class DepExtractor
         foreach (var optAccess in root.DescendantNodes().OfType<OptionAccessExpressionSyntax>())
         {
             var prefix = optAccess.Expression?.ToFullString().Trim() ?? "";
-            var name = UnquoteIdentifier(optAccess.Name?.ToFullString().Trim());
+            // Namespace-qualified option access like
+            //   Database::Microsoft.Manufacturing.StandardCost."Standard Cost Worksheet"
+            // parses as OptionAccess(Database, Microsoft) wrapped in a MemberAccess chain
+            // (Manufacturing → StandardCost → "Standard Cost Worksheet"). The leftmost
+            // identifier ("Microsoft") is a namespace, NOT the table name. Walk up the
+            // member-access chain so the trailing identifier becomes the table name —
+            // otherwise a stub table named "Microsoft" is generated and clashes with
+            // the Microsoft.* namespace at compile-dep time (AL0275).
+            SyntaxNode candidate = optAccess;
+            while (candidate.Parent is MemberAccessExpressionSyntax memberAccess
+                   && memberAccess.Expression == candidate)
+                candidate = memberAccess;
+            string? name;
+            if (candidate is MemberAccessExpressionSyntax topMemberAccess)
+                name = UnquoteIdentifier(topMemberAccess.Name?.ToFullString().Trim());
+            else
+                name = UnquoteIdentifier(optAccess.Name?.ToFullString().Trim());
             if (string.IsNullOrEmpty(name)) continue;
 
             // AL is case-insensitive on object-type keywords (Xmlport vs XmlPort).

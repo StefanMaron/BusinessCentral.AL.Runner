@@ -1613,6 +1613,36 @@ public class DepExtractorTests
     }
 
     /// <summary>
+    /// Regression: a namespace-qualified <c>Database::Microsoft.X.Y."Some Table"</c>
+    /// reference must collect the *trailing* identifier as the table name, not the
+    /// leftmost namespace segment. Otherwise the BFS auto-stubs a phantom table
+    /// named "Microsoft" (etc.), which collides with the <c>Microsoft.*</c>
+    /// namespace at compile-dep time and produces AL0275 "ambiguous reference"
+    /// errors against the merged namespace.
+    /// </summary>
+    [Fact]
+    public void CollectExternalReferences_NamespaceQualifiedDatabaseColonColon_UsesTrailingIdentifier()
+    {
+        var src = """
+            namespace Microsoft.Assembly.Costing;
+            using Microsoft.Manufacturing.StandardCost;
+            codeunit 60901 "NS Qualified Caller"
+            {
+                [EventSubscriber(ObjectType::Table, Database::Microsoft.Manufacturing.StandardCost."Standard Cost Worksheet", 'OnAfterGetItemCosts', '', false, false)]
+                local procedure Sub(var StandardCostWorksheet: Record Microsoft.Manufacturing.StandardCost."Standard Cost Worksheet")
+                begin
+                end;
+            }
+            """;
+
+        var refs = DepExtractor.CollectExternalReferences(new[] { src });
+
+        Assert.Contains("Standard Cost Worksheet", refs.Tables, StringComparer.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Microsoft", refs.Tables, StringComparer.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Manufacturing", refs.Tables, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// Integration-level proof: a dep codeunit body uses
     /// <c>DATABASE::"PartTarget"</c>, the part-target table is a separate dep
     /// file, and the extension only references the codeunit. The BFS must pull
