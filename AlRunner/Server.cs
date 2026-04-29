@@ -10,6 +10,12 @@ namespace AlRunner;
 /// Long-running server mode. Reads JSON requests from stdin, writes JSON responses to stdout.
 /// Keeps the transpiler and references warm between invocations.
 /// Protocol: one JSON object per line (newline-delimited JSON).
+///
+/// Protocol v2 (the <c>runtests</c> command): the server emits zero or more
+/// <c>{"type":"test"}</c> lines as each test completes, optionally interleaved with
+/// <c>{"type":"progress"}</c> lines, terminated by exactly one <c>{"type":"summary"}</c>
+/// line carrying <c>protocolVersion: 2</c>. Other commands (<c>execute</c>, <c>cancel</c>,
+/// <c>shutdown</c>) remain single-response.
 /// </summary>
 public class AlRunnerServer
 {
@@ -34,6 +40,17 @@ public class AlRunnerServer
     /// </summary>
     private CancellationTokenSource? _activeRequestCts;
 
+    /// <summary>
+    /// Shared serializer options used for every protocol-v2 line. <c>WhenWritingNull</c>
+    /// keeps optional fields (e.g. <c>capturedValues</c>, <c>changedFiles</c>) absent
+    /// from the line when their underlying value is null, matching the schema's
+    /// "field-optional unless present" contract.
+    /// </summary>
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
     public async Task RunAsync(TextReader input, TextWriter output, CancellationToken ct = default)
     {
         // Pre-warm: load Roslyn references once
@@ -49,27 +66,46 @@ public class AlRunnerServer
             var line = await input.ReadLineAsync(ct);
             if (line == null) break; // EOF — client disconnected
 
-            string response;
             try
             {
                 var request = JsonSerializer.Deserialize<ServerRequest>(line);
                 if (request == null)
                 {
-                    response = JsonSerializer.Serialize(new { error = "Invalid request" });
+                    await output.WriteLineAsync(JsonSerializer.Serialize(new { error = "Invalid request" }));
+                    await output.FlushAsync();
+                    continue;
                 }
-                else
-                {
-                    response = request.Command?.ToLowerInvariant() switch
-                    {
-                        "runtests" => HandleRunTests(request, refsTask),
-                        "execute" => HandleExecute(request, refsTask),
-                        "cancel" => HandleCancel(),
-                        "shutdown" => HandleShutdown(),
-                        _ => JsonSerializer.Serialize(new { error = $"Unknown command: {request.Command}" })
-                    };
 
-                    if (request.Command?.ToLowerInvariant() == "shutdown")
+                switch (request.Command?.ToLowerInvariant())
+                {
+                    case "runtests":
+                        // Protocol v2: streaming response. The handler writes its own lines.
+                        await HandleRunTests(request, refsTask, output);
+                        break;
+                    case "execute":
                     {
+                        var response = HandleExecute(request, refsTask);
+                        await output.WriteLineAsync(response);
+                        await output.FlushAsync();
+                        break;
+                    }
+                    case "cancel":
+                    {
+                        var response = HandleCancel();
+                        await output.WriteLineAsync(response);
+                        await output.FlushAsync();
+                        break;
+                    }
+                    case "shutdown":
+                    {
+                        var response = HandleShutdown();
+                        await output.WriteLineAsync(response);
+                        await output.FlushAsync();
+                        return; // exit the dispatch loop
+                    }
+                    default:
+                    {
+                        var response = JsonSerializer.Serialize(new { error = $"Unknown command: {request.Command}" });
                         await output.WriteLineAsync(response);
                         await output.FlushAsync();
                         break;
@@ -78,72 +114,222 @@ public class AlRunnerServer
             }
             catch (Exception ex)
             {
-                response = JsonSerializer.Serialize(new { error = ex.Message });
+                await output.WriteLineAsync(JsonSerializer.Serialize(new { error = ex.Message }));
+                await output.FlushAsync();
             }
-
-            await output.WriteLineAsync(response);
-            await output.FlushAsync();
         }
     }
 
-    private string HandleRunTests(ServerRequest request, Task<List<Microsoft.CodeAnalysis.MetadataReference>> refsTask)
+    /// <summary>
+    /// Handle the protocol-v2 <c>runtests</c> command. Streams one
+    /// <c>{"type":"test"}</c> line per completed test followed by exactly one
+    /// <c>{"type":"summary"}</c> line. The summary always carries
+    /// <c>protocolVersion: 2</c>.
+    /// </summary>
+    private async Task HandleRunTests(ServerRequest request,
+        Task<List<Microsoft.CodeAnalysis.MetadataReference>> refsTask,
+        TextWriter output)
     {
         if (request.SourcePaths == null || request.SourcePaths.Length == 0)
-            return JsonSerializer.Serialize(new { error = "sourcePaths is required" });
+        {
+            // Schema-valid summary that signals an input-validation failure.
+            await output.WriteLineAsync(JsonSerializer.Serialize(new
+            {
+                type = "summary",
+                error = "sourcePaths is required",
+                exitCode = 2,
+                passed = 0,
+                failed = 0,
+                errors = 0,
+                total = 0,
+                protocolVersion = 2,
+            }, JsonOpts));
+            await output.FlushAsync();
+            return;
+        }
 
-        // Create a CTS for this request so a concurrent cancel command can abort it.
-        // See _activeRequestCts field documentation for the thread-safety analysis.
         _activeRequestCts = new CancellationTokenSource();
         try
         {
             var ct = _activeRequestCts.Token;
-
-            // Fingerprint the request — also updates per-file hashes used for the diff.
             var fingerprint = _cache.ComputeFingerprint(request.SourcePaths);
             var cacheHit = _cache.TryGet(fingerprint);
+            var filter = ConvertFilter(request.TestFilter);
+            var coverageRequested = request.Coverage == true;
+            var coberturaRequested = request.Cobertura == true;
+
+            Assembly? assembly;
+            Dictionary<string, List<string>>? compilationErrors;
+            Dictionary<(string Scope, int StmtIndex), int>? sourceSpans;
+            Dictionary<string, string>? scopeToObject;
+            bool cached;
+            List<string>? changedFiles = null;
 
             if (cacheHit != null)
             {
-                // Cache hit — re-run tests on the cached assembly, returning the
-                // compilation errors that were seen when the assembly was first compiled.
-                Runtime.MockCodeunitHandle.CurrentAssembly = cacheHit.Value.Assembly;
-                // TODO(T10): forward request.Filter / onTestComplete once the protocol
-                // surface adds them. Currently the cached-assembly path runs all tests
-                // with no client-side filter. Cancellation is now wired via ct.
-                var results = Executor.RunTests(cacheHit.Value.Assembly,
-                    filter: null, onTestComplete: null, cancellationToken: ct);
-                return SerializeServerResponse(results, Executor.ExitCode(results), cached: true,
-                    compilationErrors: cacheHit.Value.CompilationErrors);
+                assembly = cacheHit.Value.Assembly;
+                compilationErrors = cacheHit.Value.CompilationErrors;
+                sourceSpans = cacheHit.Value.SourceSpans;
+                scopeToObject = cacheHit.Value.ScopeToObject;
+                cached = true;
+                Runtime.MockCodeunitHandle.CurrentAssembly = assembly;
             }
-
-            // Cache miss — diff BEFORE storing the new entry so the report
-            // reflects "what changed since the closest previous run".
-            var changedFiles = _cache.DiffAgainstClosest();
-
-            var options = new PipelineOptions { OutputJson = true, CancellationToken = ct };
-            options.InputPaths.AddRange(request.SourcePaths);
-            if (request.PackagePaths != null)
-                options.PackagePaths.AddRange(request.PackagePaths);
-            if (request.StubPaths != null)
-                options.StubPaths.AddRange(request.StubPaths);
-
-            var pipeline = new AlRunnerPipeline();
-            pipeline.RewriteCache = _rewriteCache;
-            pipeline.SyntaxTreeCache = _syntaxTreeCache;
-            var result = pipeline.Run(options);
-
-            // Compilation errors (file-level exclusion was removed in #80; always empty now).
-            var compilationErrors = new Dictionary<string, List<string>>();
-
-            // Cache the compiled assembly (with its compilation errors) if available.
-            if (result.ExitCode == 0 || result.Tests.Count > 0)
+            else
             {
-                if (result.Assembly != null && result.LoadContext != null)
-                    _cache.Store(fingerprint, result.Assembly, result.LoadContext, compilationErrors);
+                changedFiles = _cache.DiffAgainstClosest();
+                // Reset coverage BEFORE the pipeline runs — otherwise stale hits/totals
+                // from a previous request leak into this run. The pipeline's call to
+                // Executor.RegisterStatements re-populates the total set during compile.
+                Runtime.AlScope.ResetCoverage();
+                var options = new PipelineOptions
+                {
+                    OutputJson = true,
+                    AlwaysComputeSourceSpans = true,
+                    // Required so failing tests' StackFrames carry .al file paths via
+                    // Roslyn-emitted #line directives → portable PDB.
+                    EmitLineDirectives = true,
+                    CancellationToken = ct,
+                };
+                options.InputPaths.AddRange(request.SourcePaths);
+                if (request.PackagePaths != null)
+                    options.PackagePaths.AddRange(request.PackagePaths);
+                if (request.StubPaths != null)
+                    options.StubPaths.AddRange(request.StubPaths);
+
+                var pipeline = new AlRunnerPipeline();
+                pipeline.RewriteCache = _rewriteCache;
+                pipeline.SyntaxTreeCache = _syntaxTreeCache;
+                var pipelineResult = pipeline.Run(options);
+
+                assembly = pipelineResult.Assembly ?? Runtime.MockCodeunitHandle.CurrentAssembly;
+                // Compilation errors (file-level exclusion was removed in #80; always empty now).
+                compilationErrors = new Dictionary<string, List<string>>();
+                sourceSpans = pipelineResult.SourceSpans;
+                scopeToObject = pipelineResult.ScopeToObject;
+                cached = false;
+
+                // Compilation failure short-circuit: emit a summary-only response so the
+                // client knows the request was processed but no tests ran.
+                if (assembly == null)
+                {
+                    await output.WriteLineAsync(JsonSerializer.Serialize(new
+                    {
+                        type = "summary",
+                        exitCode = pipelineResult.ExitCode,
+                        passed = 0,
+                        failed = 0,
+                        errors = 0,
+                        total = 0,
+                        cached = false,
+                        changedFiles = changedFiles?.Count > 0 ? changedFiles : null,
+                        compilationErrors = (compilationErrors != null && compilationErrors.Count > 0)
+                            ? compilationErrors.Select(kvp => new
+                            {
+                                file = Path.GetFileName(kvp.Key),
+                                errors = kvp.Value,
+                            })
+                            : null,
+                        protocolVersion = 2,
+                    }, JsonOpts));
+                    await output.FlushAsync();
+                    return;
+                }
+
+                // Snapshot the total-statement set NOW (right after the pipeline ran
+                // Executor.RegisterStatements) so we can restore it on a cache hit
+                // when we ResetCoverage to clear stale hits. Tuple field names differ
+                // (Type/Id vs Scope/StmtIndex) but the underlying value type is identical.
+                var (_, totalStmtsRaw) = Runtime.AlScope.GetCoverageSets();
+                var totalSnapshot = new HashSet<(string Scope, int StmtIndex)>(
+                    totalStmtsRaw.Select(t => (t.Type, t.Id)));
+
+                // Cache the compiled assembly along with its source-span / scope maps so
+                // a subsequent identical request can serve coverage from the cache.
+                if (pipelineResult.LoadContext != null)
+                    _cache.Store(fingerprint, assembly, pipelineResult.LoadContext, compilationErrors, sourceSpans, scopeToObject, totalSnapshot);
             }
 
-            return SerializeServerResponse(result.Tests, result.ExitCode, cached: false,
-                changedFiles: changedFiles, compilationErrors: compilationErrors);
+            // For cache-miss runs the pipeline already populated totals via
+            // Executor.RegisterStatements before running tests, and we did
+            // ResetCoverage above before that. Cache-hit runs need to:
+            //   (1) reset the leftover hit set from any prior request, AND
+            //   (2) restore the totals that were captured when the assembly was first compiled.
+            if (cached)
+            {
+                Runtime.AlScope.ResetCoverage();
+                if (cacheHit!.Value.TotalStatements != null)
+                {
+                    foreach (var (scope, stmtIdx) in cacheHit.Value.TotalStatements)
+                        Runtime.AlScope.RegisterStatement(scope, stmtIdx);
+                }
+            }
+
+            var allResults = new List<TestResult>();
+
+            // Streaming callback: emit one `{"type":"test"}` line per completed test.
+            // The dispatch loop is sequential, so no other handler is racing with us
+            // for `output`. Sync write keeps the callback's contract simple.
+            // The callback temporarily restores the real Console.Out so its line lands
+            // on the server's protocol stdout channel, then re-redirects so subsequent
+            // AL Message()/etc. calls stay captured.
+            var realConsoleOut = Console.Out;
+            var realConsoleErr = Console.Error;
+            var redirectedOut = new StringWriter();
+            var redirectedErr = new StringWriter();
+            Console.SetOut(redirectedOut);
+            Console.SetError(redirectedErr);
+            try
+            {
+                void OnTestComplete(TestResult t)
+                {
+                    allResults.Add(t);
+                    // Write directly to the protocol writer; Console.Out is currently
+                    // redirected and so is unsafe to use here.
+                    output.WriteLine(SerializeTestEvent(t));
+                    output.Flush();
+                }
+
+                // Per-test isolation: the AL runtime captures Message() output via
+                // TestExecutionScope (no enable flag needed — the scope is itself the
+                // opt-in). Message() also calls Console.WriteLine for legacy CLI
+                // consumers; we redirect Console.Out above so those legacy writes
+                // don't corrupt our NDJSON stream.
+                Executor.RunTests(
+                    assembly!,
+                    captureValues: request.CaptureValues == true,
+                    filter: filter,
+                    onTestComplete: OnTestComplete,
+                    cancellationToken: ct);
+            }
+            finally
+            {
+                Console.SetOut(realConsoleOut);
+                Console.SetError(realConsoleErr);
+            }
+
+            // Coverage emission (only when requested AND we have the source-span data).
+            List<FileCoverage>? coverage = null;
+            if (coverageRequested && sourceSpans != null && scopeToObject != null)
+            {
+                var (hitStmts, totalStmts) = Runtime.AlScope.GetCoverageSets();
+                coverage = CoverageReport.ToJson(sourceSpans, hitStmts, totalStmts, scopeToObject);
+            }
+
+            if (coberturaRequested && sourceSpans != null && scopeToObject != null)
+            {
+                var (hitStmts, totalStmts) = Runtime.AlScope.GetCoverageSets();
+                CoverageReport.WriteCobertura("cobertura.xml", sourceSpans, hitStmts, totalStmts, scopeToObject);
+            }
+
+            await output.WriteLineAsync(SerializeSummary(
+                allResults,
+                Executor.ExitCode(allResults),
+                cached,
+                changedFiles,
+                compilationErrors,
+                coverage,
+                ct.IsCancellationRequested));
+            await output.FlushAsync();
         }
         finally
         {
@@ -159,8 +345,8 @@ public class AlRunnerServer
     /// Because the dispatch loop is sequential, a cancel command can only arrive AFTER a
     /// runtests request has fully completed (and its CTS has been disposed and nulled in
     /// the finally block). The noop=true path is therefore the common case. The noop=false
-    /// path would only be reached if a future T10 streaming extension makes the loop
-    /// non-sequential — at that point this handler already does the right thing.
+    /// path would only be reached if a future extension makes the loop non-sequential —
+    /// at that point this handler already does the right thing.
     /// </summary>
     private string HandleCancel()
     {
@@ -257,44 +443,92 @@ public class AlRunnerServer
         });
     }
 
-    private static string SerializeServerResponse(List<TestResult> tests, int exitCode, bool cached,
-        List<string>? changedFiles = null, Dictionary<string, List<string>>? compilationErrors = null)
+    /// <summary>
+    /// Serialize one protocol-v2 <c>{"type":"test"}</c> line. Field parity with the
+    /// schema definition <c>TestEvent</c>:
+    /// alSourceFile/Line/Column, errorKind, DAP-aligned stackFrames, captured messages,
+    /// per-test capturedValues. Optional fields are omitted when null/empty.
+    /// </summary>
+    private static string SerializeTestEvent(TestResult t)
     {
-        // compilationErrors is passed in explicitly — either from the live compilation (cache miss)
-        // or from the stored cache entry (cache hit).
-        var compilationErrorsObj = compilationErrors != null && compilationErrors.Count > 0
-            ? (object?)compilationErrors.Select(kvp => new
-            {
-                file = System.IO.Path.GetFileName(kvp.Key),
-                errors = kvp.Value
-            })
-            : null;
-
-        var output = new
+        return JsonSerializer.Serialize(new
         {
-            tests = tests.Select(t => new
+            type = "test",
+            name = t.Name,
+            status = t.Status.ToString().ToLowerInvariant(),
+            durationMs = t.DurationMs,
+            message = t.Message,
+            errorKind = t.ErrorKind?.ToString().ToLowerInvariant(),
+            alSourceFile = t.AlSourceFile,
+            alSourceLine = t.AlSourceLine,
+            alSourceColumn = t.AlSourceColumn,
+            stackFrames = t.StackFrames?.Select(f => new
             {
-                name = t.Name,
-                status = t.Status.ToString().ToLowerInvariant(),
-                durationMs = t.DurationMs,
-                message = t.Message,
-                stackTrace = t.StackTrace?.TrimEnd()
+                name = f.Name,
+                source = f.File != null ? new { path = f.File } : null,
+                line = f.Line,
+                column = f.Column,
+                presentationHint = f.Hint.ToString().ToLowerInvariant(),
             }),
+            stackTrace = t.StackTrace?.TrimEnd(),
+            messages = (t.Messages != null && t.Messages.Count > 0) ? t.Messages : null,
+            capturedValues = (t.CapturedValues != null && t.CapturedValues.Count > 0)
+                ? t.CapturedValues.Select(c => new
+                {
+                    scopeName = c.ScopeName,
+                    objectName = c.ObjectName,
+                    variableName = c.VariableName,
+                    value = c.Value,
+                    statementId = c.StatementId,
+                })
+                : null,
+        }, JsonOpts);
+    }
+
+    /// <summary>
+    /// Serialize the terminal <c>{"type":"summary"}</c> line.
+    /// Always carries <c>protocolVersion: 2</c>. Optional fields (cancelled, changedFiles,
+    /// compilationErrors, coverage) are omitted when not applicable.
+    /// </summary>
+    private static string SerializeSummary(
+        List<TestResult> tests,
+        int exitCode,
+        bool cached,
+        List<string>? changedFiles,
+        Dictionary<string, List<string>>? compilationErrors,
+        List<FileCoverage>? coverage,
+        bool cancelled)
+    {
+        return JsonSerializer.Serialize(new
+        {
+            type = "summary",
+            exitCode,
             passed = tests.Count(t => t.Status == TestStatus.Pass),
             failed = tests.Count(t => t.Status == TestStatus.Fail),
             errors = tests.Count(t => t.Status == TestStatus.Error),
             total = tests.Count,
-            exitCode,
-            compilationErrors = compilationErrorsObj,
             cached,
-            // Only emit changedFiles on cache miss — cache hits have no diff.
-            changedFiles = cached ? null : changedFiles
-        };
+            cancelled = cancelled ? (bool?)true : null,
+            // Only emit changedFiles on cache miss with a non-empty diff.
+            changedFiles = (cached || changedFiles == null || changedFiles.Count == 0) ? null : changedFiles,
+            compilationErrors = (compilationErrors != null && compilationErrors.Count > 0)
+                ? compilationErrors.Select(kvp => new
+                {
+                    file = Path.GetFileName(kvp.Key),
+                    errors = kvp.Value,
+                })
+                : null,
+            coverage = (coverage != null && coverage.Count > 0) ? coverage : null,
+            protocolVersion = 2,
+        }, JsonOpts);
+    }
 
-        return JsonSerializer.Serialize(output, new JsonSerializerOptions
-        {
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-        });
+    private static AlRunner.TestFilter? ConvertFilter(TestFilterDto? dto)
+    {
+        if (dto == null) return null;
+        return new AlRunner.TestFilter(
+            CodeunitNames: dto.CodeunitNames != null ? new HashSet<string>(dto.CodeunitNames) : null,
+            ProcNames: dto.ProcNames != null ? new HashSet<string>(dto.ProcNames) : null);
     }
 
     private static string HandleShutdown()
@@ -326,6 +560,14 @@ public class CompilationCache
         public required Assembly Assembly { get; init; }
         public required System.Runtime.Loader.AssemblyLoadContext LoadContext { get; init; }
         public required Dictionary<string, List<string>> CompilationErrors { get; init; }
+        public Dictionary<(string Scope, int StmtIndex), int>? SourceSpans { get; init; }
+        public Dictionary<string, string>? ScopeToObject { get; init; }
+        /// <summary>
+        /// Snapshot of the executable-statement set as registered by
+        /// <see cref="Executor.RegisterStatements"/> at compile time. Used on a cache
+        /// hit to restore the global <c>AlScope</c> total-set after a hit-only reset.
+        /// </summary>
+        public HashSet<(string Scope, int StmtIndex)>? TotalStatements { get; init; }
     }
 
     /// <summary>The result of a successful cache lookup.</summary>
@@ -334,6 +576,23 @@ public class CompilationCache
         public Assembly Assembly { get; init; }
         public System.Runtime.Loader.AssemblyLoadContext LoadContext { get; init; }
         public Dictionary<string, List<string>> CompilationErrors { get; init; }
+        /// <summary>
+        /// Per-statement source-span map captured when the assembly was first compiled
+        /// (cache miss path). Null when the original compile didn't request always-compute
+        /// source spans. Protocol-v2 uses this to emit coverage on a cache hit without
+        /// having to re-run the rewrite/compile pipeline.
+        /// </summary>
+        public Dictionary<(string Scope, int StmtIndex), int>? SourceSpans { get; init; }
+        /// <summary>
+        /// Scope class name → AL object name map captured alongside <see cref="SourceSpans"/>.
+        /// Used to resolve coverage rows back to user-visible source files.
+        /// </summary>
+        public Dictionary<string, string>? ScopeToObject { get; init; }
+        /// <summary>
+        /// Snapshot of the executable-statement set so cache hits can restore the
+        /// global AlScope total set after resetting hit counts for a new run.
+        /// </summary>
+        public HashSet<(string Scope, int StmtIndex)>? TotalStatements { get; init; }
     }
 
     /// <summary>
@@ -382,7 +641,10 @@ public class CompilationCache
                 {
                     Assembly = node.Value.Assembly,
                     LoadContext = node.Value.LoadContext,
-                    CompilationErrors = node.Value.CompilationErrors
+                    CompilationErrors = node.Value.CompilationErrors,
+                    SourceSpans = node.Value.SourceSpans,
+                    ScopeToObject = node.Value.ScopeToObject,
+                    TotalStatements = node.Value.TotalStatements
                 };
             }
             node = node.Next;
@@ -390,10 +652,18 @@ public class CompilationCache
         return null;
     }
 
-    /// <summary>Store an assembly and its compilation errors under the given fingerprint, evicting the LRU tail if full.</summary>
+    /// <summary>
+    /// Store an assembly and its compilation errors under the given fingerprint, evicting
+    /// the LRU tail if full. Optional <paramref name="sourceSpans"/>,
+    /// <paramref name="scopeToObject"/>, and <paramref name="totalStatements"/> are stashed
+    /// alongside the entry so coverage can be served on a cache hit.
+    /// </summary>
     public void Store(string fingerprint, Assembly assembly,
         System.Runtime.Loader.AssemblyLoadContext loadContext,
-        Dictionary<string, List<string>> compilationErrors)
+        Dictionary<string, List<string>> compilationErrors,
+        Dictionary<(string Scope, int StmtIndex), int>? sourceSpans = null,
+        Dictionary<string, string>? scopeToObject = null,
+        HashSet<(string Scope, int StmtIndex)>? totalStatements = null)
     {
         var entry = new CacheEntry
         {
@@ -401,7 +671,10 @@ public class CompilationCache
             FileHashes = new Dictionary<string, string>(LastFileHashes, StringComparer.OrdinalIgnoreCase),
             Assembly = assembly,
             LoadContext = loadContext,
-            CompilationErrors = compilationErrors
+            CompilationErrors = compilationErrors,
+            SourceSpans = sourceSpans,
+            ScopeToObject = scopeToObject,
+            TotalStatements = totalStatements
         };
         _lru.AddFirst(entry);
         while (_lru.Count > MaxSlots)
@@ -504,4 +777,33 @@ public class ServerRequest
     /// <summary>Opt-in to variable capture on <c>execute</c>.</summary>
     [JsonPropertyName("captureValues")]
     public bool? CaptureValues { get; set; }
+
+    /// <summary>Protocol-v2 test filter (codeunit and/or procedure names).</summary>
+    [JsonPropertyName("testFilter")]
+    public TestFilterDto? TestFilter { get; set; }
+
+    /// <summary>Protocol-v2: when true, emit per-file coverage in the summary.</summary>
+    [JsonPropertyName("coverage")]
+    public bool? Coverage { get; set; }
+
+    /// <summary>Protocol-v2: when true, also write a Cobertura XML coverage report.</summary>
+    [JsonPropertyName("cobertura")]
+    public bool? Cobertura { get; set; }
+
+    /// <summary>Optional negotiated protocol version (currently informational).</summary>
+    [JsonPropertyName("protocolVersion")]
+    public int? ProtocolVersion { get; set; }
+}
+
+/// <summary>
+/// Wire-format DTO for the request-side <c>testFilter</c> object. Converted to the
+/// internal <see cref="AlRunner.TestFilter"/> record before being passed to the executor.
+/// </summary>
+public class TestFilterDto
+{
+    [JsonPropertyName("codeunitNames")]
+    public List<string>? CodeunitNames { get; set; }
+
+    [JsonPropertyName("procNames")]
+    public List<string>? ProcNames { get; set; }
 }

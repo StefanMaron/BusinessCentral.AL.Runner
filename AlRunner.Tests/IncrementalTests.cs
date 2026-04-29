@@ -11,6 +11,19 @@ public class IncrementalTests
     private static string TestPath(string testCase, string sub) =>
         Path.Combine(CliRunner.FindTestCase(testCase), sub);
 
+    /// <summary>
+    /// Send a runtests request and return the parsed terminal `summary` line.
+    /// Protocol v2: runtests now streams test events + a summary terminator;
+    /// these tests assert on the summary's incremental-cache properties.
+    /// </summary>
+    private static async Task<JsonDocument> RunTestsSummaryAsync(CliServer server, string jsonRequest)
+    {
+        var lines = await server.SendRequestStreamingAsync(jsonRequest);
+        var summary = lines.LastOrDefault();
+        Assert.NotNull(summary);
+        return JsonDocument.Parse(summary!);
+    }
+
     [Fact]
     public async Task Server_SecondRun_SameFiles_UsesCachedAssembly()
     {
@@ -23,14 +36,12 @@ public class IncrementalTests
         });
 
         // First run — cold
-        var response1 = await server.SendAsync(request);
-        var doc1 = JsonDocument.Parse(response1);
+        var doc1 = await RunTestsSummaryAsync(server, request);
         Assert.Equal(6, doc1.RootElement.GetProperty("passed").GetInt32());
         Assert.False(doc1.RootElement.TryGetProperty("cached", out var c1) && c1.GetBoolean());
 
         // Second run — same paths, should report cache hit
-        var response2 = await server.SendAsync(request);
-        var doc2 = JsonDocument.Parse(response2);
+        var doc2 = await RunTestsSummaryAsync(server, request);
         Assert.Equal(6, doc2.RootElement.GetProperty("passed").GetInt32());
         Assert.True(doc2.RootElement.TryGetProperty("cached", out var c2) && c2.GetBoolean(),
             "Expected second run to report cached=true");
@@ -47,8 +58,7 @@ public class IncrementalTests
             command = "runTests",
             sourcePaths = new[] { TestPath("01-pure-function", "src"), TestPath("01-pure-function", "test") }
         });
-        var response1 = await server.SendAsync(request1);
-        var doc1 = JsonDocument.Parse(response1);
+        var doc1 = await RunTestsSummaryAsync(server, request1);
         Assert.Equal(6, doc1.RootElement.GetProperty("passed").GetInt32());
 
         // Run test case 04 — different files, must not return cached results
@@ -57,8 +67,7 @@ public class IncrementalTests
             command = "runTests",
             sourcePaths = new[] { TestPath("04-asserterror", "src"), TestPath("04-asserterror", "test") }
         });
-        var response2 = await server.SendAsync(request2);
-        var doc2 = JsonDocument.Parse(response2);
+        var doc2 = await RunTestsSummaryAsync(server, request2);
         Assert.Equal(7, doc2.RootElement.GetProperty("passed").GetInt32());
     }
 
@@ -81,15 +90,15 @@ public class IncrementalTests
         });
 
         // Cold: A runs full compile
-        var r1 = JsonDocument.Parse(await server.SendAsync(requestA));
+        var r1 = await RunTestsSummaryAsync(server, requestA);
         Assert.False(r1.RootElement.TryGetProperty("cached", out var c1) && c1.GetBoolean());
 
         // B runs full compile (different inputs)
-        var r2 = JsonDocument.Parse(await server.SendAsync(requestB));
+        var r2 = await RunTestsSummaryAsync(server, requestB);
         Assert.False(r2.RootElement.TryGetProperty("cached", out var c2) && c2.GetBoolean());
 
         // Back to A: must be a cache hit (proves multi-slot cache, not single slot)
-        var r3 = JsonDocument.Parse(await server.SendAsync(requestA));
+        var r3 = await RunTestsSummaryAsync(server, requestA);
         Assert.True(r3.RootElement.TryGetProperty("cached", out var c3) && c3.GetBoolean(),
             "Multi-slot LRU should return cached=true for A after bouncing through B");
     }
@@ -171,12 +180,12 @@ public class IncrementalTests
         });
 
         // First run: no prior state — changedFiles should be absent or empty.
-        var r1 = JsonDocument.Parse(await server.SendAsync(req1));
+        var r1 = await RunTestsSummaryAsync(server, req1);
         Assert.False(r1.RootElement.TryGetProperty("cached", out var c1) && c1.GetBoolean());
 
         // Second run, different project: should report a non-empty changedFiles
         // list (every file is new relative to the prior compile).
-        var r2 = JsonDocument.Parse(await server.SendAsync(req2));
+        var r2 = await RunTestsSummaryAsync(server, req2);
         Assert.False(r2.RootElement.TryGetProperty("cached", out var c2) && c2.GetBoolean());
         Assert.True(r2.RootElement.TryGetProperty("changedFiles", out var changed),
             "cache miss response must include a changedFiles field");

@@ -43,8 +43,9 @@ public class ServerCancelTests
             sourcePaths = new[] { srcPath, testPath }
         });
         // First, run tests synchronously — completes before we send cancel.
-        var runResponse = await server.SendAsync(request);
-        Assert.NotNull(runResponse);
+        // Protocol v2 streams test events + a summary terminator; drain the stream.
+        var runLines = await server.SendRequestStreamingAsync(request);
+        Assert.NotEmpty(runLines);
         // Now send cancel; should be noop because no request is active.
         var cancelResponse = await server.SendAsync("{\"command\":\"cancel\"}");
         Assert.True(JsonDocument.Parse(cancelResponse).RootElement
