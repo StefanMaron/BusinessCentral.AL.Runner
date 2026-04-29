@@ -118,13 +118,13 @@
           "description": "1-based line number of the loop's terminator (`end;` or `until ...`)."
         },
         "parentLoopId": {
-          "type": ["string", "null"],
-          "description": "When this loop is nested inside another, the loopId of the enclosing loop. Null at top level."
+          "type": "string",
+          "description": "When this loop is nested inside another, the loopId of the enclosing loop. Field is omitted entirely at top level (the runner uses WhenWritingNull serialization)."
         },
         "parentIteration": {
-          "type": ["integer", "null"],
+          "type": "integer",
           "minimum": 1,
-          "description": "1-based iteration index of the parent loop at which this nested loop ran. Null at top level."
+          "description": "1-based iteration index of the parent loop at which this nested loop ran. Field is omitted entirely at top level (the runner uses WhenWritingNull serialization)."
         },
         "iterationCount": {
           "type": "integer",
@@ -150,9 +150,9 @@
                 }
               },
               "messages": {
-                "type": ["array", "null"],
+                "type": "array",
                 "items": { "type": "string" },
-                "description": "Message() output collected during this iteration. Null/omitted when no messages were emitted."
+                "description": "Message() output collected during this iteration. Field is omitted entirely when no messages were emitted (the runner uses WhenWritingNull serialization)."
               },
               "linesExecuted": {
                 "type": "array",
@@ -197,9 +197,9 @@
           "items": { "$ref": "#/definitions/FileCoverage" }
         },
         "iterations": {
-          "type": ["array", "null"],
+          "type": "array",
           "items": { "$ref": "#/definitions/IterationLoop" },
-          "description": "Per-loop iteration data. Populated when the runtests request set `iterationTracking: true`. Null/omitted otherwise."
+          "description": "Per-loop iteration data. Populated when the runtests request set `iterationTracking: true`. Field is omitted entirely otherwise (the runner uses WhenWritingNull serialization)."
         },
         "protocolVersion": { "const": 2 }
       }
