@@ -1188,12 +1188,21 @@ public static class AlTranspiler
         if (inCompileDepFlow)
             compilationOptions = compilationOptions.WithManifestOptions(BuildManifestOptions(inputPaths));
 
+        // Propagate `internalsVisibleTo` from the consumer's app.json into the compilation.
+        // Setting it on NavAppManifest is NOT enough — Compilation only consults its dedicated
+        // `internalsVisibleTo` parameter when populating IModuleSymbol.InternalsVisibleToModules.
+        // Without this, downstream apps in the multi-app pipeline hit AL0161 when they touch a
+        // member declared `Access = Internal` in this app even when the manifest grants them
+        // (e.g. BFTL → BF "Temp Current Sequence No." — issue #1521).
+        var ivtRefs = inCompileDepFlow ? BuildInternalsVisibleToRefs(inputPaths) : null;
+
         // Create compilation with all syntax trees
         var compilation = Compilation.Create(
             moduleName: appIdentity.Name,
             publisher: appIdentity.Publisher,
             version: appIdentity.Version,
             appId: appIdentity.AppId,
+            internalsVisibleTo: ivtRefs,
             syntaxTrees: syntaxTrees.ToArray(),
             options: compilationOptions
         );
@@ -1733,6 +1742,85 @@ public static class AlTranspiler
             AppHelpBaseUrl = "https://learn.microsoft.com/en-us/dynamics365/business-central/",
             Target = target,
         };
+    }
+
+    /// <summary>
+    /// Read <c>internalsVisibleTo</c> from the consumer's app.json and return one
+    /// <see cref="SymbolReferenceSpecification"/> per entry. These are passed as the dedicated
+    /// <c>internalsVisibleTo</c> parameter of <see cref="Compilation.Create"/> so the resulting
+    /// <c>IModuleSymbol.InternalsVisibleToModules</c> exposes the grant to subsequent compiles
+    /// in the multi-app pipeline (e.g. BF → BFTL — issue #1521 / AL0161). Setting
+    /// <c>NavAppManifest.InternalsVisibleTo</c> alone is not sufficient: BC consults the
+    /// <c>Compilation.Create</c> parameter, not the manifest, when wiring up IVT.
+    /// app.json schema: <c>[{ id|appId: guid, name: string, publisher: string }]</c>.
+    /// </summary>
+    private static IEnumerable<SymbolReferenceSpecification>? BuildInternalsVisibleToRefs(List<string>? inputPaths)
+    {
+        if (inputPaths == null) return null;
+        foreach (var inputPath in inputPaths)
+        {
+            var dir = Directory.Exists(inputPath) ? Path.GetFullPath(inputPath) : Path.GetDirectoryName(Path.GetFullPath(inputPath));
+            while (dir != null)
+            {
+                var appJsonPath = Path.Combine(dir, "app.json");
+                if (File.Exists(appJsonPath))
+                {
+                    try
+                    {
+                        using var json = JsonDocument.Parse(File.ReadAllText(appJsonPath));
+                        if (!TryFindProperty(json.RootElement, "internalsVisibleTo", out var ivtProp) ||
+                            ivtProp.ValueKind != JsonValueKind.Array)
+                            return null;
+                        var refs = new List<SymbolReferenceSpecification>();
+                        foreach (var entry in ivtProp.EnumerateArray())
+                        {
+                            if (entry.ValueKind != JsonValueKind.Object) continue;
+                            var name = TryFindProperty(entry, "name", out var nProp) && nProp.ValueKind == JsonValueKind.String
+                                ? nProp.GetString() : null;
+                            if (string.IsNullOrEmpty(name)) continue;
+                            var publisher = TryFindProperty(entry, "publisher", out var pProp) && pProp.ValueKind == JsonValueKind.String
+                                ? pProp.GetString() ?? "" : "";
+                            Guid? appId = null;
+                            if ((TryFindProperty(entry, "id", out var idProp) || TryFindProperty(entry, "appId", out idProp)) &&
+                                idProp.ValueKind == JsonValueKind.String &&
+                                Guid.TryParse(idProp.GetString(), out var parsedId))
+                                appId = parsedId;
+                            // Version is not part of the IVT app.json schema; identity is by
+                            // publisher/name/appId. Use 0.0.0.0 as a placeholder — BC's IVT
+                            // matching does not gate on version.
+                            refs.Add(new SymbolReferenceSpecification(
+                                publisher: publisher,
+                                name: name!,
+                                version: new Version(0, 0, 0, 0),
+                                exact: false,
+                                appId: appId));
+                        }
+                        return refs.Count > 0 ? refs : null;
+                    }
+                    catch { return null; }
+                }
+                dir = Path.GetDirectoryName(dir);
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Case-insensitive JSON property lookup.</summary>
+    private static bool TryFindProperty(JsonElement obj, string name, out JsonElement value)
+    {
+        if (obj.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var p in obj.EnumerateObject())
+            {
+                if (string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = p.Value;
+                    return true;
+                }
+            }
+        }
+        value = default;
+        return false;
     }
 
     /// <summary>

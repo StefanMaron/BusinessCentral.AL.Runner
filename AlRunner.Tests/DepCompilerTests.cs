@@ -49,4 +49,104 @@ public class DepCompilerTests
                 Directory.Delete(rootDir, true);
         }
     }
+
+    /// <summary>
+    /// Regression: when a "provider" app's app.json declares <c>internalsVisibleTo</c>
+    /// granting access to a "consumer" app, multi-app compile must propagate that grant
+    /// to the provider's compiled module. Otherwise the consumer hits AL0161 when it
+    /// references an internal member of the provider — see issue #1521 (BFTL accessing
+    /// BF internal field "Temp Current Sequence No.").
+    /// </summary>
+    [Fact]
+    public void CompileDep_RespectsInternalsVisibleTo_WhenGrantorListsConsumer()
+    {
+        var providerId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        var consumerId = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+
+        var rootDir = Path.Combine(Path.GetTempPath(), "al-runner-ivt-" + Guid.NewGuid().ToString("N")[..8]);
+        var providerDir = Path.Combine(rootDir, "Provider");
+        var consumerDir = Path.Combine(rootDir, "Consumer");
+        var outputDir = Path.Combine(rootDir, "out");
+        try
+        {
+            Directory.CreateDirectory(providerDir);
+            Directory.CreateDirectory(consumerDir);
+            Directory.CreateDirectory(outputDir);
+
+            // Provider grants Consumer access to its internal members.
+            File.WriteAllText(Path.Combine(providerDir, "app.json"), $$"""
+            {
+              "id": "{{providerId}}",
+              "name": "Provider",
+              "publisher": "Test",
+              "version": "1.0.0.0",
+              "internalsVisibleTo": [
+                { "id": "{{consumerId}}", "name": "Consumer", "publisher": "Test" }
+              ]
+            }
+            """);
+            File.WriteAllText(Path.Combine(providerDir, "Provider.al"), """
+            table 50100 "My Tab"
+            {
+                fields
+                {
+                    field(1; "X"; Integer) { Access = Internal; }
+                }
+                keys { key(PK; "X") { Clustered = true; } }
+            }
+            """);
+
+            // Consumer depends on Provider and pokes the internal field.
+            File.WriteAllText(Path.Combine(consumerDir, "app.json"), $$"""
+            {
+              "id": "{{consumerId}}",
+              "name": "Consumer",
+              "publisher": "Test",
+              "version": "1.0.0.0",
+              "dependencies": [
+                { "id": "{{providerId}}", "name": "Provider", "publisher": "Test", "version": "1.0.0.0" }
+              ]
+            }
+            """);
+            File.WriteAllText(Path.Combine(consumerDir, "Use.al"), """
+            codeunit 50101 "Use"
+            {
+                procedure P()
+                var
+                    T: Record "My Tab";
+                begin
+                    T.X := 1;
+                end;
+            }
+            """);
+
+            var origErr = Console.Error;
+            using var errCapture = new StringWriter();
+            Console.SetError(errCapture);
+            int result;
+            try
+            {
+                result = DepCompiler.CompileDepMultiApp(rootDir, outputDir, new List<string>());
+            }
+            finally
+            {
+                Console.SetError(origErr);
+            }
+
+            var stderr = errCapture.ToString();
+            var providerDll = Path.Combine(outputDir, "Test_Provider_1.0.0.0.dll");
+            var consumerDll = Path.Combine(outputDir, "Test_Consumer_1.0.0.0.dll");
+
+            Assert.False(stderr.Contains("AL0161"),
+                $"AL0161 (inaccessible due to protection level) should not appear when grantor lists consumer in internalsVisibleTo. stderr:\n{stderr}");
+            Assert.Equal(0, result);
+            Assert.True(File.Exists(providerDll), $"Expected provider DLL {providerDll}");
+            Assert.True(File.Exists(consumerDll), $"Expected consumer DLL {consumerDll}");
+        }
+        finally
+        {
+            if (Directory.Exists(rootDir))
+                Directory.Delete(rootDir, true);
+        }
+    }
 }
