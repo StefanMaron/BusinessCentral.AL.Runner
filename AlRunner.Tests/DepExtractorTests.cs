@@ -780,4 +780,137 @@ public class DepExtractorTests
             Directory.Delete(extDir, true);
         }
     }
+
+    /// <summary>
+    /// When a dep codeunit declares local vars of types that exist nowhere in any dep source,
+    /// ExtractDeps must auto-generate blank-shell AL stub files for those types so that the
+    /// BC compiler can bind the consumer's locals without hitting NavTypeKind.None.
+    /// </summary>
+    [Fact]
+    public void ExtractDeps_GeneratesStubs_ForUnresolvableMissingObjects()
+    {
+        var depRoot = Path.Combine(Path.GetTempPath(), "al-dep-stubs-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir  = Path.Combine(Path.GetTempPath(), "al-out-stubs-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir  = Path.Combine(Path.GetTempPath(), "al-ext-stubs-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(depRoot, "AppA"));
+            Directory.CreateDirectory(extDir);
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "AppACodeunit.al"), """
+                codeunit 60100 AppACodeunit
+                {
+                    procedure DoSomething()
+                    var
+                        p: Page "Missing Phantom Page";
+                        t: Record "Missing Phantom Table";
+                    begin
+                    end;
+                }
+                """);
+            File.WriteAllText(Path.Combine(extDir, "Consumer.al"), """
+                codeunit 60199 Consumer
+                {
+                    procedure Run()
+                    begin
+                        Codeunit.Run(Codeunit::AppACodeunit);
+                    end;
+                }
+                """);
+
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depRoot }, outDir);
+
+            Assert.Equal(0, rc);
+
+            var allFiles = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+
+            // Positive: a stub for the missing page is generated
+            var pageStub = allFiles.FirstOrDefault(f =>
+                Path.GetFileName(f).StartsWith("MissingPhantomPage", StringComparison.OrdinalIgnoreCase)
+                && f.Contains("__GeneratedStubs__", StringComparison.OrdinalIgnoreCase));
+            Assert.NotNull(pageStub);
+            var pageStubContent = File.ReadAllText(pageStub!);
+            Assert.StartsWith("page ", pageStubContent, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("\"Missing Phantom Page\"", pageStubContent);
+
+            // Positive: a stub for the missing table is generated
+            var tableStub = allFiles.FirstOrDefault(f =>
+                Path.GetFileName(f).StartsWith("MissingPhantomTable", StringComparison.OrdinalIgnoreCase)
+                && f.Contains("__GeneratedStubs__", StringComparison.OrdinalIgnoreCase));
+            Assert.NotNull(tableStub);
+            var tableStubContent = File.ReadAllText(tableStub!);
+            Assert.StartsWith("table ", tableStubContent, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("\"Missing Phantom Table\"", tableStubContent);
+
+            // Positive: stub IDs must be in the reserved range >= 1_999_900_000
+            var pageIdMatch = System.Text.RegularExpressions.Regex.Match(pageStubContent, @"page\s+(\d+)");
+            Assert.True(pageIdMatch.Success);
+            Assert.True(int.Parse(pageIdMatch.Groups[1].Value) >= 1_999_900_000);
+
+            var tableIdMatch = System.Text.RegularExpressions.Regex.Match(tableStubContent, @"table\s+(\d+)");
+            Assert.True(tableIdMatch.Success);
+            Assert.True(int.Parse(tableIdMatch.Groups[1].Value) >= 1_999_900_000);
+        }
+        finally
+        {
+            foreach (var d in new[] { depRoot, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
+    /// <summary>
+    /// When a missing object IS resolvable from the dep index, no stub should be generated.
+    /// </summary>
+    [Fact]
+    public void ExtractDeps_DoesNotGenerateStubs_WhenObjectIsInIndex()
+    {
+        var depRoot = Path.Combine(Path.GetTempPath(), "al-dep-nostub-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir  = Path.Combine(Path.GetTempPath(), "al-out-nostub-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir  = Path.Combine(Path.GetTempPath(), "al-ext-nostub-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(depRoot, "AppA"));
+            Directory.CreateDirectory(extDir);
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "PhantomPage.al"), """
+                page 60101 "Missing Phantom Page"
+                {
+                    PageType = Card;
+                    layout { area(content) { } }
+                }
+                """);
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "AppACodeunit.al"), """
+                codeunit 60100 AppACodeunit
+                {
+                    procedure DoSomething()
+                    var
+                        p: Page "Missing Phantom Page";
+                    begin
+                    end;
+                }
+                """);
+            File.WriteAllText(Path.Combine(extDir, "Consumer.al"), """
+                codeunit 60199 Consumer
+                {
+                    procedure Run()
+                    begin
+                        Codeunit.Run(Codeunit::AppACodeunit);
+                    end;
+                }
+                """);
+
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depRoot }, outDir);
+
+            Assert.Equal(0, rc);
+
+            // Negative: no __GeneratedStubs__ directory should be created
+            var stubFiles = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories)
+                .Where(f => f.Contains("__GeneratedStubs__", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            Assert.Empty(stubFiles);
+        }
+        finally
+        {
+            foreach (var d in new[] { depRoot, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
 }

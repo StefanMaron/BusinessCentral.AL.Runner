@@ -21,6 +21,9 @@ public static class DepExtractor
         "Table", "Codeunit", "Enum", "Page", "Report", "Query", "XmlPort", "Interface"
     ];
 
+    // Stub object IDs start at 1_999_900_000 to avoid clashing with real BC object IDs.
+    private const int StubIdBase = 1_999_900_000;
+
     // -----------------------------------------------------------------------
     // Public entry point
     // -----------------------------------------------------------------------
@@ -130,6 +133,7 @@ public static class DepExtractor
         //    pass O(1); only the trial compile is expensive, and we run it at most ~5 times.
         int fixupRound = 0;
         int fixupAdded;
+        List<(string TypeName, string Name)> finalMissingObjects = [];
         do
         {
             fixupAdded = 0;
@@ -178,10 +182,39 @@ public static class DepExtractor
             }
             else
             {
+                finalMissingObjects = missing; // capture for stub-generation pass
                 Console.Error.WriteLine($"  {missing.Count} missing object(s) have no source in the index (platform tables, external deps).");
                 break;
             }
         } while (fixupAdded > 0 && fixupRound < 10);
+
+        // Stub-generation pass: write blank-shell AL stubs for each truly-unresolvable
+        // missing object. Without stubs, consumer locals bind at NavTypeKind.None and
+        // crash EmitFieldInitializer in the BC emitter.
+        if (finalMissingObjects.Count > 0)
+        {
+            var stubsSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            int stubIdCounter = StubIdBase;
+            int stubCount = 0;
+            foreach (var (typeName, objectName) in finalMissingObjects)
+            {
+                var dedupeKey = $"{typeName}|{objectName}";
+                if (!stubsSeen.Add(dedupeKey)) continue;
+
+                var consumerApp = FindFirstConsumerApp(allExtracted, objectName);
+                if (string.IsNullOrEmpty(consumerApp)) continue;
+
+                int stubId = stubIdCounter++;
+                var stubSource = GenerateStub(typeName, objectName, stubId);
+                var safeName = MakeSafeName(objectName) + $"_{stubId}";
+                var stubKey = $"{consumerApp}/__GeneratedStubs__/{safeName}.al";
+                allExtracted[stubKey] = stubSource;
+                stubCount++;
+            }
+
+            if (stubCount > 0)
+                Console.Error.WriteLine($"Generated {stubCount} stub(s) for missing platform objects.");
+        }
 
         // 7. Write extracted files to output directory.
         //    DotNet-referencing procedures are replaced with Error() calls so the file
@@ -408,6 +441,51 @@ public static class DepExtractor
         int slash = fileName.IndexOfAny(new[] { '/', '\\' });
         return slash > 0 ? fileName[..slash] : "";
     }
+
+    /// <summary>
+    /// Returns the app directory of the first file in <paramref name="allExtracted"/> whose
+    /// source contains <paramref name="objectName"/>. Falls back to the first app found if
+    /// no file directly references the name.
+    /// </summary>
+    private static string FindFirstConsumerApp(Dictionary<string, string> allExtracted, string objectName)
+    {
+        foreach (var (fileName, source) in allExtracted)
+        {
+            if (source.Contains(objectName, StringComparison.OrdinalIgnoreCase))
+            {
+                var app = GetAppOfFile(fileName);
+                if (!string.IsNullOrEmpty(app)) return app;
+            }
+        }
+        // Fallback: first app in the slice
+        foreach (var fileName in allExtracted.Keys)
+        {
+            var app = GetAppOfFile(fileName);
+            if (!string.IsNullOrEmpty(app)) return app;
+        }
+        return "";
+    }
+
+    /// <summary>
+    /// Generates a minimal blank-shell AL stub source for the given object type and name.
+    /// </summary>
+    private static string GenerateStub(string typeName, string objectName, int id) =>
+        typeName switch
+        {
+            "Table"     => $"table {id} \"{objectName}\" {{ fields {{ field(1; \"DummyKey\"; Code[20]) {{}} }} keys {{ key(PK; \"DummyKey\") {{}} }} }}",
+            "Page"      => $"page {id} \"{objectName}\" {{ }}",
+            "Codeunit"  => $"codeunit {id} \"{objectName}\" {{ }}",
+            "Enum"      => $"enum {id} \"{objectName}\" {{ value(0; Default) {{}} }}",
+            "Report"    => $"report {id} \"{objectName}\" {{ }}",
+            "Query"     => $"query {id} \"{objectName}\" {{ elements {{ }} }}",
+            "XmlPort"   => $"xmlport {id} \"{objectName}\" {{ schema {{ textelement(root) {{}} }} }}",
+            "Interface" => $"interface \"{objectName}\" {{ }}",
+            _           => $"codeunit {id} \"{objectName}\" {{ }}",
+        };
+
+    /// <summary>Strips all non-alphanumeric characters from a name to make it safe for a filename.</summary>
+    private static string MakeSafeName(string name) =>
+        System.Text.RegularExpressions.Regex.Replace(name, @"[^A-Za-z0-9]", "");
 
     private static void EnqueueTransitiveDeps(
         string source,
