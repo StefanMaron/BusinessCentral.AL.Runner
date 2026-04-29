@@ -334,4 +334,85 @@ public class DepCompilerTests
                 Directory.Delete(rootDir, true);
         }
     }
+
+    /// <summary>
+    /// Regression for issue #1521 final stretch: a CLEANSCHEMA<N> guard in the slice
+    /// strips a field that a consumer in the same slice references unguarded.
+    /// Defining CLEANSCHEMA<N> blindly produces AL0132 / AL0118; the per-slice
+    /// auto-detection must drop <N> from the preprocessor set so the field stays.
+    ///
+    /// Concrete BC 27.x example: GenJournalLine."IC Partner G/L Acc. No." is wrapped
+    /// in <c>#if not CLEANSCHEMA25</c> while UpgradeBaseApp.Codeunit.al references
+    /// the field unguarded.
+    /// </summary>
+    [Fact]
+    public void ComputeCleanSchemaSymbols_SkipsN_WhenStrippedFieldHasUnguardedConsumer()
+    {
+        var tableSrc = """
+            table 50100 "Bank Tab"
+            {
+                fields
+                {
+                    field(1; "PK"; Code[20]) { }
+            #if not CLEANSCHEMA25
+                    field(116; "IC Partner G/L Acc. No."; Code[20]) { }
+            #endif
+                }
+                keys { key(PK; "PK") { Clustered = true; } }
+            }
+            """;
+        var consumerSrc = """
+            codeunit 50101 "Use"
+            {
+                procedure P()
+                var T: Record "Bank Tab";
+                begin
+                    T.SetFilter("IC Partner G/L Acc. No.", '<>''''');
+                end;
+            }
+            """;
+
+        var symbols = AlTranspiler.ComputeCleanSchemaSymbols(
+            new[] { tableSrc, consumerSrc });
+
+        Assert.DoesNotContain("CLEANSCHEMA25", symbols);
+        // Other CLEANSCHEMA<N> not implicated by this slice should still be defined,
+        // matching the historical default behavior.
+        Assert.Contains("CLEANSCHEMA1", symbols);
+        Assert.Contains("CLEANSCHEMA24", symbols);
+    }
+
+    /// <summary>
+    /// Companion: when a CLEANSCHEMA<N> guard wraps a field that nothing else
+    /// references, defining <N> is safe and should remain in the symbol set.
+    /// </summary>
+    [Fact]
+    public void ComputeCleanSchemaSymbols_KeepsN_WhenStrippedFieldHasNoOtherConsumer()
+    {
+        var tableSrc = """
+            table 50100 "Lonely Tab"
+            {
+                fields
+                {
+                    field(1; "PK"; Code[20]) { }
+            #if not CLEANSCHEMA25
+                    field(99; "Unused Obsolete Field"; Code[20]) { }
+            #endif
+                }
+                keys { key(PK; "PK") { Clustered = true; } }
+            }
+            """;
+        var unrelatedSrc = """
+            codeunit 50101 "Other"
+            {
+                procedure P() begin end;
+            }
+            """;
+
+        var symbols = AlTranspiler.ComputeCleanSchemaSymbols(
+            new[] { tableSrc, unrelatedSrc });
+
+        Assert.Contains("CLEANSCHEMA25", symbols);
+    }
+
 }

@@ -1125,8 +1125,150 @@ public static class AlTranspiler
     /// consumers (e.g. PowerBIEmbeddedReportPart.Page.al). CLEANSCHEMA27 is the current
     /// in-development symbol for BC 27.x and similarly should not be defined.
     /// </summary>
-    public static List<string> PreprocessorSymbols { get; } =
+    public static List<string> PreprocessorSymbols { get; set; } =
         Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}").ToList();
+
+    /// <summary>
+    /// Compute a per-slice safe set of <c>CLEANSCHEMA&lt;N&gt;</c> preprocessor symbols.
+    /// For each <c>N</c> mentioned in the slice, scan all <c>#if not CLEANSCHEMA&lt;N&gt;</c>
+    /// blocks for the field/object names they declare. If any other file references one of
+    /// those names (textual occurrence of <c>"name"</c>), defining <c>N</c> would strip a
+    /// declaration that a consumer relies on — so <c>N</c> is excluded. Otherwise <c>N</c>
+    /// is defined.
+    ///
+    /// Designed for the issue #1521 final stretch: BC 27.x slices wrap obsoleted fields
+    /// (e.g. <c>"IC Partner G/L Acc. No."</c>) in <c>#if not CLEANSCHEMA25</c> while leaving
+    /// upgrade codeunits referencing them unguarded — neither defining nor not-defining
+    /// CLEANSCHEMA25 globally is right; per-slice analysis is.
+    /// </summary>
+    public static List<string> ComputeCleanSchemaSymbols(IEnumerable<string> alSources, int defaultMax = 25, int scanMax = 50)
+    {
+        var sources = alSources?.ToList() ?? new List<string>();
+        // Collect every CLEANSCHEMA<N> token mentioned anywhere in the slice.
+        var mentioned = new HashSet<int>();
+        var rxToken = new System.Text.RegularExpressions.Regex(@"\bCLEANSCHEMA(\d+)\b");
+        foreach (var s in sources)
+        {
+            foreach (System.Text.RegularExpressions.Match m in rxToken.Matches(s))
+            {
+                if (int.TryParse(m.Groups[1].Value, out var n) && n > 0 && n <= scanMax)
+                    mentioned.Add(n);
+            }
+        }
+
+        // For each mentioned N, locate every #if not CLEANSCHEMA<N> ... #endif block,
+        // collect declared field names inside it (paired with the source index that
+        // contains the declaration), then check for unguarded textual references in
+        // any *other* source file.
+        var risky = new HashSet<int>();
+        foreach (var n in mentioned)
+        {
+            // (declared-name, declaring-source-index) pairs
+            var declarations = new List<(string Name, int SrcIdx)>();
+            for (int i = 0; i < sources.Count; i++)
+            {
+                ExtractCleanSchemaGuardedNames(sources[i], n, names =>
+                {
+                    foreach (var name in names) declarations.Add((name, i));
+                });
+            }
+            if (declarations.Count == 0) continue;
+
+            foreach (var (name, declIdx) in declarations)
+            {
+                var quoted = "\"" + name + "\"";
+                for (int i = 0; i < sources.Count; i++)
+                {
+                    if (i == declIdx) continue;
+                    if (sources[i].Contains(quoted, StringComparison.Ordinal))
+                    {
+                        risky.Add(n);
+                        break;
+                    }
+                }
+                if (risky.Contains(n)) break;
+            }
+        }
+
+        // Build the final symbol set: 1..max(defaultMax, mentioned-max), minus risky.
+        var maxN = defaultMax;
+        if (mentioned.Count > 0) maxN = Math.Max(maxN, mentioned.Max());
+        var result = new List<string>();
+        for (int n = 1; n <= maxN; n++)
+        {
+            if (risky.Contains(n)) continue;
+            // For Ns above defaultMax that are mentioned but NOT proven risky, still
+            // include them so newer-than-default cleans flow through.
+            if (n > defaultMax && !mentioned.Contains(n)) continue;
+            result.Add($"CLEANSCHEMA{n}");
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Find every <c>#if not CLEANSCHEMA&lt;n&gt;</c> ... <c>#endif</c> block in <paramref name="src"/>
+    /// (matching only the requested <paramref name="n"/>) and report the declared field
+    /// names inside (e.g. <c>field(116; "IC Partner G/L Acc. No."; ...)</c>). Nested
+    /// preprocessor directives are tracked so the right <c>#endif</c> is matched.
+    /// </summary>
+    private static void ExtractCleanSchemaGuardedNames(string src, int n, Action<IEnumerable<string>> emit)
+    {
+        var openTok = $"#if not CLEANSCHEMA{n}";
+        int idx = 0;
+        while ((idx = src.IndexOf(openTok, idx, StringComparison.Ordinal)) >= 0)
+        {
+            int after = idx + openTok.Length;
+            // Reject CLEANSCHEMA<n><digit> false matches (e.g. CLEANSCHEMA2 vs CLEANSCHEMA25).
+            if (after < src.Length && char.IsDigit(src[after])) { idx = after; continue; }
+            // Ensure the line actually starts with "#if not CLEANSCHEMA<n>" (allow leading whitespace).
+            // Walk back to start of line to confirm.
+            int lineStart = src.LastIndexOf('\n', Math.Max(0, idx - 1)) + 1;
+            var prefix = src.Substring(lineStart, idx - lineStart);
+            if (prefix.Trim().Length != 0) { idx = after; continue; }
+
+            int endIdx = FindMatchingEndif(src, after);
+            if (endIdx < 0) { idx = after; continue; }
+            var block = src.Substring(after, endIdx - after);
+
+            // Field declarations: field(<id>; "<Name>"; <Type>...)
+            var rxField = new System.Text.RegularExpressions.Regex(
+                @"\bfield\s*\(\s*\d+\s*;\s*""([^""]+)""");
+            var names = rxField.Matches(block).Select(m => m.Groups[1].Value).ToList();
+            if (names.Count > 0) emit(names);
+
+            idx = endIdx;
+        }
+    }
+
+    /// <summary>
+    /// Starting at <paramref name="afterOpen"/> (just after a <c>#if</c> directive's body),
+    /// scan forward and return the index of the matching <c>#endif</c>. Tracks nested
+    /// <c>#if</c> / <c>#endif</c>. Returns <c>-1</c> if no match found.
+    /// </summary>
+    private static int FindMatchingEndif(string src, int afterOpen)
+    {
+        int depth = 1;
+        int i = afterOpen;
+        while (i < src.Length)
+        {
+            int ifIdx = src.IndexOf("#if", i, StringComparison.Ordinal);
+            int endIdx = src.IndexOf("#endif", i, StringComparison.Ordinal);
+            if (endIdx < 0) return -1;
+            if (ifIdx >= 0 && ifIdx < endIdx)
+            {
+                // Confirm it's a directive at line start.
+                int ls = src.LastIndexOf('\n', Math.Max(0, ifIdx - 1)) + 1;
+                if (src.Substring(ls, ifIdx - ls).Trim().Length == 0)
+                    depth++;
+                i = ifIdx + 3;
+                continue;
+            }
+            depth--;
+            if (depth == 0) return endIdx + "#endif".Length;
+            i = endIdx + "#endif".Length;
+        }
+        return -1;
+    }
 
     public static List<(string Name, string Code)>? TranspileMulti(
         List<string> alSources,
@@ -1140,7 +1282,19 @@ public static class AlTranspiler
         var syntaxTrees = new List<SyntaxTree>();
         bool hasErrors = false;
 
-        var parseOptions = new ParseOptions(runtimeVersion: null!, PreprocessorSymbols, DocumentationMode.None);
+        // Per-slice CLEANSCHEMA<N> auto-detection (issue #1521 final stretch).
+        // If defining a CLEANSCHEMA<N> guard would strip a declaration that another
+        // file in the slice references unguarded, drop N from the preprocessor set.
+        // For slices that don't mention CLEANSCHEMA at all, this returns the default.
+        var effectiveSymbols = ComputeCleanSchemaSymbols(alSources, defaultMax: 25);
+        if (!effectiveSymbols.SequenceEqual(PreprocessorSymbols))
+        {
+            var dropped = PreprocessorSymbols.Except(effectiveSymbols).ToList();
+            var added = effectiveSymbols.Except(PreprocessorSymbols).ToList();
+            if (dropped.Count > 0 || added.Count > 0)
+                Console.Error.WriteLine($"  CLEANSCHEMA per-slice: -[{string.Join(",", dropped)}] +[{string.Join(",", added)}]");
+        }
+        var parseOptions = new ParseOptions(runtimeVersion: null!, effectiveSymbols, DocumentationMode.None);
 
         var parsedResults = new (SyntaxTree tree, List<Diagnostic> diags)[alSources.Count];
         Parallel.For(0, alSources.Count, i =>
