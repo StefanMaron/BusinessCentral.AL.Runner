@@ -888,23 +888,22 @@ public static class DepExtractor
         //   var P: Page "Customer Card"; var R: Report "Sales Invoice"; etc.
         // Also catches "Enum "Sales Line Type"" field types via SubtypedDataTypeSyntax
         // (EnumDataTypeSyntax is handled separately below for clarity).
+        // AL keywords are case-insensitive, so compare with OrdinalIgnoreCase —
+        // BC Base Application uses both "Page" and "page" (lowercase) liberally.
         foreach (var subtyped in root.DescendantNodes().OfType<SubtypedDataTypeSyntax>())
         {
             var typeName = subtyped.TypeName.ToFullString().Trim();
             var name = UnquoteIdentifier(subtyped.Subtype?.ToFullString().Trim());
             if (string.IsNullOrEmpty(name)) continue;
 
-            switch (typeName)
-            {
-                case "Codeunit":  result.Codeunits.Add(name);  break;
-                case "Page":      result.Pages.Add(name);      break;
-                case "Report":    result.Reports.Add(name);    break;
-                case "Query":     result.Queries.Add(name);    break;
-                case "XmlPort":   result.XmlPorts.Add(name);   break;
-                case "Interface": result.Interfaces.Add(name); break;
-                // "Record" is covered by RecordTypeReferenceSyntax above.
-                // "Enum" is covered by EnumDataTypeSyntax below.
-            }
+            if (string.Equals(typeName, "Codeunit",  StringComparison.OrdinalIgnoreCase)) result.Codeunits.Add(name);
+            else if (string.Equals(typeName, "Page",      StringComparison.OrdinalIgnoreCase)) result.Pages.Add(name);
+            else if (string.Equals(typeName, "Report",    StringComparison.OrdinalIgnoreCase)) result.Reports.Add(name);
+            else if (string.Equals(typeName, "Query",     StringComparison.OrdinalIgnoreCase)) result.Queries.Add(name);
+            else if (string.Equals(typeName, "XmlPort",   StringComparison.OrdinalIgnoreCase)) result.XmlPorts.Add(name);
+            else if (string.Equals(typeName, "Interface", StringComparison.OrdinalIgnoreCase)) result.Interfaces.Add(name);
+            // "Record" is covered by RecordTypeReferenceSyntax above.
+            // "Enum" is covered by EnumDataTypeSyntax below.
         }
 
         // Report dataitem tables: dataitem(d; Customer) { dataitem(d2; "Cust. Ledger Entry") { ... } }
@@ -932,19 +931,22 @@ public static class DepExtractor
 
                 case "RunObject":
                     // action: RunObject = Page "Customer Card" / Report "..." / Codeunit "..." etc.
+                    // The object-type keyword is case-insensitive in AL ("page", "Page", "PAGE"
+                    // are all valid). BC Base Application uses both forms — see e.g.
+                    // JobProjectManagerRC.Page.al referencing `RunObject = page "FS Bookable
+                    // Resource List";` — so compare with OrdinalIgnoreCase.
                     if (prop.Value is QualifiedObjectReferencePropertyValueSyntax runObj)
                     {
                         var objType = runObj.ObjectType.ToFullString().Trim();
                         var objName = UnquoteIdentifier(runObj.ObjectNameOrId?.ToFullString().Trim());
                         if (!string.IsNullOrEmpty(objName))
-                            switch (objType)
-                            {
-                                case "Page":      result.Pages.Add(objName);      break;
-                                case "Report":    result.Reports.Add(objName);    break;
-                                case "Codeunit":  result.Codeunits.Add(objName);  break;
-                                case "Query":     result.Queries.Add(objName);    break;
-                                case "XmlPort":   result.XmlPorts.Add(objName);   break;
-                            }
+                        {
+                            if      (string.Equals(objType, "Page",     StringComparison.OrdinalIgnoreCase)) result.Pages.Add(objName);
+                            else if (string.Equals(objType, "Report",   StringComparison.OrdinalIgnoreCase)) result.Reports.Add(objName);
+                            else if (string.Equals(objType, "Codeunit", StringComparison.OrdinalIgnoreCase)) result.Codeunits.Add(objName);
+                            else if (string.Equals(objType, "Query",    StringComparison.OrdinalIgnoreCase)) result.Queries.Add(objName);
+                            else if (string.Equals(objType, "XmlPort",  StringComparison.OrdinalIgnoreCase)) result.XmlPorts.Add(objName);
+                        }
                     }
                     break;
 

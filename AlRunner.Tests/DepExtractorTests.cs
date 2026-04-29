@@ -1512,4 +1512,76 @@ public class DepExtractorTests
                 if (Directory.Exists(d)) Directory.Delete(d, true);
         }
     }
+
+    // RunObject's object-type keyword is case-insensitive in AL ("page", "Page",
+    // "PAGE" are all valid). The dep extractor previously used a case-sensitive
+    // string switch and silently dropped references written in lowercase — which
+    // BC Base Application uses extensively (e.g. JobProjectManagerRC.Page.al has
+    // `RunObject = page "FS Bookable Resource List"`). When such a file is
+    // pulled into the slice via the namespace-anchor path, no further trial-
+    // compile round runs, so the missed references never get a second chance.
+    //
+    // This test asserts directly on CollectExternalReferences so it pins the
+    // unit-level contract regardless of which BFS path pulled the source in.
+    [Fact]
+    public void CollectExternalReferences_RunObjectLowercaseKeyword_IsCollected()
+    {
+        var src = """
+            page 60810 Caller
+            {
+                PageType = Card;
+                actions
+                {
+                    area(processing)
+                    {
+                        action(GoLowerPage)    { RunObject = page "Lower Page Target"; }
+                        action(GoLowerReport)  { RunObject = report "Lower Report Target"; }
+                        action(GoLowerCu)      { RunObject = codeunit "Lower Cu Target"; }
+                        action(GoLowerQuery)   { RunObject = query "Lower Query Target"; }
+                        action(GoLowerXmlport) { RunObject = xmlport "Lower XmlPort Target"; }
+                    }
+                }
+            }
+            """;
+
+        var refs = DepExtractor.CollectExternalReferences(new[] { src });
+
+        Assert.Contains("Lower Page Target",    refs.Pages);
+        Assert.Contains("Lower Report Target",  refs.Reports);
+        Assert.Contains("Lower Cu Target",      refs.Codeunits);
+        Assert.Contains("Lower Query Target",   refs.Queries);
+        Assert.Contains("Lower XmlPort Target", refs.XmlPorts);
+    }
+
+    // Variable-declaration object-type keywords are also case-insensitive in
+    // AL: `var P: page "Foo"` and `var P: Page "Foo"` are both legal. The
+    // dep extractor's SubtypedDataTypeSyntax switch was previously case-
+    // sensitive too — guard the lowercase form.
+    [Fact]
+    public void CollectExternalReferences_VarDeclLowercaseKeyword_IsCollected()
+    {
+        var src = """
+            codeunit 60811 Caller
+            {
+                procedure Run()
+                var
+                    P: page "Var Page Target";
+                    R: report "Var Report Target";
+                    C: codeunit "Var Cu Target";
+                    Q: query "Var Query Target";
+                    X: xmlport "Var XmlPort Target";
+                begin
+                end;
+            }
+            """;
+
+        var refs = DepExtractor.CollectExternalReferences(new[] { src });
+
+        Assert.Contains("Var Page Target",    refs.Pages);
+        Assert.Contains("Var Report Target",  refs.Reports);
+        Assert.Contains("Var Cu Target",      refs.Codeunits);
+        Assert.Contains("Var Query Target",   refs.Queries);
+        Assert.Contains("Var XmlPort Target", refs.XmlPorts);
+    }
+
 }
