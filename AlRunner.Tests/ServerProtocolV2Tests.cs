@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Newtonsoft.Json.Schema;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -475,5 +476,54 @@ public class ServerProtocolV2Tests
         // dispatch failed.
         Assert.True(cancelledOnSummary || !ackNoop,
             $"Neither cancelled:true on summary nor noop:false on ack — cancel was not observed. summary={summary.GetRawText()} ack={ack.GetRawText()}");
+    }
+
+    /// <summary>
+    /// S-1: validate every emitted NDJSON line against the formal protocol-v2 schema.
+    /// Exercises as many schema branches as possible (test events, summary, ack, coverage,
+    /// capturedValues) by using the line-directives fixture with coverage:true and
+    /// captureValues:true.
+    ///
+    /// This test is the canonical canary for schema/emitter drift: if Server.cs emits a
+    /// field the schema doesn't permit, or omits a required field, the test catches it
+    /// with an actionable per-line error message.
+    /// </summary>
+    [Fact]
+    public async Task RunTests_AllEmittedLines_ValidateAgainstSchema()
+    {
+        var schemaPath = Path.Combine(RepoRoot, "protocol-v2.schema.json");
+        var schemaJson = await File.ReadAllTextAsync(schemaPath);
+        var schema = Newtonsoft.Json.Schema.JSchema.Parse(schemaJson);
+
+        await using var server = await CliServer.StartAsync();
+
+        // Use the line-directives fixture with coverage:true and captureValues:true to
+        // exercise as many schema branches as possible (test events, summary, coverage
+        // entries, capturedValues items).
+        var request = LineDirectivesRequest(new { coverage = true, captureValues = true });
+        var lines = await server.SendRequestStreamingAsync(request);
+
+        Assert.NotEmpty(lines);
+        var failures = new List<string>();
+        foreach (var line in lines)
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            Newtonsoft.Json.Linq.JToken token;
+            try
+            {
+                token = Newtonsoft.Json.Linq.JToken.Parse(line);
+            }
+            catch (Exception ex)
+            {
+                failures.Add($"Non-JSON line: {ex.Message}\nLine: {line}");
+                continue;
+            }
+            if (!token.IsValid(schema, out IList<string> errors))
+            {
+                failures.Add($"Schema rejected line:\n{line}\nErrors:\n  - {string.Join("\n  - ", errors)}");
+            }
+        }
+        Assert.True(failures.Count == 0,
+            $"Schema validation found {failures.Count} failure(s):\n\n{string.Join("\n\n", failures)}");
     }
 }
