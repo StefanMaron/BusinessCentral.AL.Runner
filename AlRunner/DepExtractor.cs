@@ -308,15 +308,32 @@ public static class DepExtractor
                 // syntactically broken AL (`""Foo"`), so drop it.
                 if (string.IsNullOrEmpty(objectName) || objectName.Contains('"')) continue;
 
-                var consumerApp = FindFirstConsumerApp(allExtracted, objectName);
-                if (string.IsNullOrEmpty(consumerApp)) continue;
+                // Strategy A for #1521: emit one stub per consumer namespace.
+                // BC name resolution for unqualified references searches the file's
+                // declared namespace + `using` namespaces — NOT the global root. So
+                // a single root-level stub is invisible to consumers that declared
+                // `namespace X;`. Emitting a copy of the stub inside each consumer
+                // namespace makes the unqualified reference resolve.
+                var consumerScopes = FindConsumerNamespaces(allExtracted, objectName);
+                if (consumerScopes.Count == 0)
+                {
+                    var fallbackApp = FindFirstConsumerApp(allExtracted, objectName);
+                    if (string.IsNullOrEmpty(fallbackApp)) continue;
+                    consumerScopes = new List<(string, string)> { (fallbackApp, "") };
+                }
 
-                int stubId = stubIdCounter++;
-                var stubSource = GenerateStub(typeName, objectName, stubId, allExtracted);
-                var safeName = MakeSafeName(objectName) + $"_{stubId}";
-                var stubKey = $"{consumerApp}/__GeneratedStubs__/{safeName}.al";
-                allExtracted[stubKey] = stubSource;
-                stubCount++;
+                foreach (var (consumerApp, ns) in consumerScopes)
+                {
+                    int stubId = stubIdCounter++;
+                    var stubBody = GenerateStub(typeName, objectName, stubId, allExtracted);
+                    var stubSource = string.IsNullOrEmpty(ns)
+                        ? stubBody
+                        : $"namespace {ns};\n{stubBody}";
+                    var safeName = MakeSafeName(objectName) + $"_{stubId}";
+                    var stubKey = $"{consumerApp}/__GeneratedStubs__/{safeName}.al";
+                    allExtracted[stubKey] = stubSource;
+                    stubCount++;
+                }
             }
 
             if (stubCount > 0)
@@ -710,6 +727,46 @@ public static class DepExtractor
             if (!string.IsNullOrEmpty(app)) return app;
         }
         return "";
+    }
+
+    /// <summary>
+    /// Find the distinct (app, namespace) pairs of every non-stub source file in
+    /// <paramref name="allExtracted"/> that references <paramref name="objectName"/>
+    /// as a quoted token (e.g. <c>"Sales Order Print Option"</c>). The namespace is
+    /// taken from the file's <c>namespace X;</c> declaration; files without one map
+    /// to the empty string (global root).
+    ///
+    /// Used by the auto-stub pass to emit one stub copy per consumer namespace —
+    /// see issue #1521 — because BC name resolution for unqualified references
+    /// searches the file's declared namespace + `using` namespaces but not the
+    /// global root, so a single root-level stub is invisible to namespace-aware
+    /// consumers.
+    /// </summary>
+    private static List<(string consumerApp, string ns)> FindConsumerNamespaces(
+        Dictionary<string, string> allExtracted, string objectName)
+    {
+        var result = new HashSet<(string, string)>();
+        var nsRegex = new System.Text.RegularExpressions.Regex(
+            @"^\s*namespace\s+([\w.]+)\s*[;{]",
+            System.Text.RegularExpressions.RegexOptions.Multiline);
+
+        var quotedToken = "\"" + objectName + "\"";
+        foreach (var (fileName, source) in allExtracted)
+        {
+            // Don't recurse on previously generated stubs.
+            if (fileName.Contains("__GeneratedStubs__", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (source.IndexOf(quotedToken, StringComparison.OrdinalIgnoreCase) < 0)
+                continue;
+
+            var app = GetAppOfFile(fileName);
+            if (string.IsNullOrEmpty(app)) continue;
+
+            var nsMatch = nsRegex.Match(source);
+            var ns = nsMatch.Success ? nsMatch.Groups[1].Value : "";
+            result.Add((app, ns));
+        }
+        return result.ToList();
     }
 
     /// <summary>
