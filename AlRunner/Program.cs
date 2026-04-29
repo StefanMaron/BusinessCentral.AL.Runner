@@ -3256,10 +3256,16 @@ public static class RoslynCompiler
             references,
             new Microsoft.CodeAnalysis.CSharp.CSharpCompilationOptions(
                 Microsoft.CodeAnalysis.OutputKind.DynamicallyLinkedLibrary)
-                .WithAllowUnsafe(true));
+                .WithAllowUnsafe(true)
+                .WithOptimizationLevel(Microsoft.CodeAnalysis.OptimizationLevel.Debug));
 
-        using var ms = new MemoryStream(512 * 1024);
-        var result = compilation.Emit(ms);
+        using var asmStream = new MemoryStream(512 * 1024);
+        using var pdbStream = new MemoryStream();
+        var result = compilation.Emit(
+            asmStream,
+            pdbStream,
+            options: new Microsoft.CodeAnalysis.Emit.EmitOptions(
+                debugInformationFormat: Microsoft.CodeAnalysis.Emit.DebugInformationFormat.PortablePdb));
 
         if (!result.Success)
         {
@@ -3280,12 +3286,16 @@ public static class RoslynCompiler
             return null;
         }
 
-        ms.Seek(0, SeekOrigin.Begin);
+        asmStream.Seek(0, SeekOrigin.Begin);
+        pdbStream.Seek(0, SeekOrigin.Begin);
         // Collectible ALC: the assembly (and its ALC) stays alive as long as any
         // reference to the Assembly or ALC exists (e.g., in CompilationCache).
         // Callers must call alc.Unload() when the assembly is no longer needed.
+        // Loading the PDB stream alongside ensures StackFrame.GetFileName/GetFileLineNumber
+        // resolve to filenames embedded in the portable PDB (.al paths when
+        // #line directives have been injected).
         var alc = new System.Runtime.Loader.AssemblyLoadContext($"TestRun_{Guid.NewGuid():N}", isCollectible: true);
-        var assembly = alc.LoadFromStream(ms);
+        var assembly = alc.LoadFromStream(asmStream, pdbStream);
         return new CompileResult(assembly, alc);
     }
 
