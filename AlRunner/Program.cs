@@ -1769,7 +1769,7 @@ public static class AlTranspiler
     /// App identity extracted from manifest, used for Compilation.Create parameters.
     /// This matters for InternalsVisibleTo resolution (publisher must match).
     /// </summary>
-    private record AppIdentity(string Name, string Publisher, Version Version, Guid AppId);
+    internal record AppIdentity(string Name, string Publisher, Version Version, Guid AppId);
 
     /// <summary>
     /// Build a NavAppManifest with target derived from the consumer's app.json (default
@@ -1987,7 +1987,7 @@ public static class AlTranspiler
     /// Extract app identity from the first input that has a manifest (app.json or NavxManifest.xml).
     /// Falls back to generic defaults for self-contained spikes.
     /// </summary>
-    private static AppIdentity ExtractAppIdentity(List<string>? inputPaths)
+    internal static AppIdentity ExtractAppIdentity(List<string>? inputPaths)
     {
         var defaults = new AppIdentity("AlRunnerApp", "AlRunner", new Version("1.0.0.0"), Guid.NewGuid());
         if (inputPaths == null || inputPaths.Count == 0) return defaults;
@@ -2007,7 +2007,15 @@ public static class AlTranspiler
                         var root = json.RootElement;
                         var name = root.TryGetProperty("name", out var n) ? n.GetString()! : defaults.Name;
                         var publisher = root.TryGetProperty("publisher", out var p) ? p.GetString()! : defaults.Publisher;
-                        var version = root.TryGetProperty("version", out var v) ? Version.Parse(v.GetString()!) : defaults.Version;
+                        // BC source repos use placeholders like "$(app_currentVersion)" that are
+                        // substituted at build time and are not parseable as System.Version. Fall
+                        // back to the default version rather than discarding the entire identity —
+                        // otherwise the runner mis-attributes Microsoft.* namespace declarations to
+                        // its own AlRunnerApp publisher and trips AL0275 (issue #1521).
+                        var version = root.TryGetProperty("version", out var v)
+                            && Version.TryParse(v.GetString(), out var parsedV)
+                            ? parsedV
+                            : defaults.Version;
                         var appId = root.TryGetProperty("id", out var id) ? Guid.Parse(id.GetString()!) : defaults.AppId;
                         return new AppIdentity(name, publisher, version, appId);
                     }

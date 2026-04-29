@@ -18,6 +18,70 @@ public static class DepCompiler
     private static readonly Version DefaultAppVersion = new(1, 0, 0, 0);
     private static bool _loggedVersionFallback;
 
+    /// <summary>
+    /// Re-emit an app.json string, replacing unparseable version-shaped values with
+    /// concrete defaults so downstream consumers (the BC compiler's NavAppManifest reader,
+    /// our own <see cref="AlTranspiler.ExtractAppIdentity"/>-style readers) do not fail.
+    /// Microsoft's BC source repos ship app.json files with build-time placeholders such
+    /// as <c>$(app_currentVersion)</c>, <c>$(app_platformVersion)</c>, and
+    /// <c>$(app_minimumVersion)</c> in the per-dependency <c>version</c> fields. When any
+    /// of these reach the compiler unsubstituted, BC's manifest reader throws and the
+    /// compilation falls back to a phantom "(Unknown)" extension that owns every
+    /// namespace declared by the slice — producing AL0275 ambiguous-reference errors.
+    ///
+    /// Top-level <c>version</c> placeholder is substituted with <c>1.0.0.0</c> (the
+    /// identity passed to <see cref="Microsoft.Dynamics.Nav.CodeAnalysis.Compilation.Create"/>
+    /// is supplied separately, so the slice's own version is informational only).
+    /// Top-level <c>platform</c>, <c>application</c>, and <c>dependencies</c> fields are
+    /// DROPPED entirely if any placeholder is present — this lets the runner's "no
+    /// explicit dependencies found, loading all .app packages as symbols" fallback
+    /// discover concrete versions from the package directory rather than feeding the BC
+    /// reference resolver synthetic versions that may not match any real binary.
+    /// </summary>
+    internal static string SanitizeManifestVersions(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        if (root.ValueKind != JsonValueKind.Object) return json;
+
+        bool IsUnparseable(JsonElement el)
+            => el.ValueKind == JsonValueKind.String
+               && !Version.TryParse(el.GetString() ?? string.Empty, out _);
+
+        bool dropPlatform = root.TryGetProperty("platform", out var pl) && IsUnparseable(pl);
+        bool dropApplication = root.TryGetProperty("application", out var ap) && IsUnparseable(ap);
+        bool dropDependencies = false;
+        if (root.TryGetProperty("dependencies", out var deps) && deps.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var dep in deps.EnumerateArray())
+            {
+                if (dep.ValueKind != JsonValueKind.Object) continue;
+                if (dep.TryGetProperty("version", out var dv) && IsUnparseable(dv))
+                { dropDependencies = true; break; }
+            }
+        }
+
+        var sb = new System.Text.StringBuilder("{");
+        bool first = true;
+        foreach (var p in root.EnumerateObject())
+        {
+            if (dropPlatform && p.Name.Equals("platform", StringComparison.OrdinalIgnoreCase)) continue;
+            if (dropApplication && p.Name.Equals("application", StringComparison.OrdinalIgnoreCase)) continue;
+            if (dropDependencies && p.Name.Equals("dependencies", StringComparison.OrdinalIgnoreCase)) continue;
+
+            if (!first) sb.Append(',');
+            first = false;
+            sb.Append(JsonSerializer.Serialize(p.Name)).Append(':');
+
+            if (p.Name.Equals("version", StringComparison.OrdinalIgnoreCase) && IsUnparseable(p.Value))
+                sb.Append(JsonSerializer.Serialize("1.0.0.0"));
+            else
+                sb.Append(p.Value.GetRawText());
+        }
+        sb.Append('}');
+        return sb.ToString();
+    }
+
     private record AppJsonIdentity(string Publisher, string Name, string VersionRaw, Version Version, Guid AppId);
 
     private static Version ParseVersionTolerant(string? raw, Version fallback)
@@ -740,6 +804,13 @@ public static class DepCompiler
                 "\"contextSensitiveHelpUrl\":\"https://learn.microsoft.com/en-us/dynamics365/business-central/\"," +
                 "\"helpBaseUrl\":\"https://learn.microsoft.com/en-us/dynamics365/business-central/\"}";
         }
+        // Sanitize version-shaped fields so BC's NavAppManifest reader does not throw on
+        // unsubstituted build placeholders ($(app_currentVersion), $(app_platformVersion),
+        // $(app_minimumVersion)) shipped in Microsoft's BC source repos. Without this the
+        // compiler falls back to a phantom "(Unknown)" extension that owns every namespace
+        // declared by the slice — producing AL0275 ambiguous-reference errors.
+        try { manifestJson = SanitizeManifestVersions(manifestJson); }
+        catch { /* leave manifestJson unchanged on any malformed JSON */ }
         File.WriteAllText(Path.Combine(sliceManifestDir, "app.json"), manifestJson);
         var inputPaths = new List<string> { sliceManifestDir };
 

@@ -485,7 +485,22 @@ public static class DepExtractor
                 var srcManifest = Path.Combine(depSource, appName, "app.json");
                 if (File.Exists(srcManifest))
                 {
-                    File.Copy(srcManifest, Path.Combine(appDir, "app.json"), overwrite: true);
+                    // Sanitize unparseable build placeholders (e.g. $(app_currentVersion))
+                    // when copying. Microsoft's BC source repos ship app.json with these
+                    // placeholders unsubstituted; if any reach the BC compiler's
+                    // NavAppManifest reader they trigger a parse exception and the AL files
+                    // get attributed to a phantom "(Unknown)" extension that collides with
+                    // the slice's namespace declarations (AL0275). See issue #1521.
+                    try
+                    {
+                        var raw = File.ReadAllText(srcManifest);
+                        var sanitized = DepCompiler.SanitizeManifestVersions(raw);
+                        File.WriteAllText(Path.Combine(appDir, "app.json"), sanitized);
+                    }
+                    catch
+                    {
+                        File.Copy(srcManifest, Path.Combine(appDir, "app.json"), overwrite: true);
+                    }
                     manifestsCopied++;
                     break;
                 }
