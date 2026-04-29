@@ -2,6 +2,10 @@ using System.Text.RegularExpressions;
 
 namespace AlRunner;
 
+/// <summary>
+/// Maps .NET exception stack traces to AL stack frames.
+/// Classifies each frame as user code, subtle runtime code, or de-emphasized infrastructure.
+/// </summary>
 public static class StackFrameMapper
 {
     // Matches "   at Namespace.Class.Method(args) in path/to/file.al:line 42"
@@ -14,6 +18,9 @@ public static class StackFrameMapper
         @"^\s*at\s+(?<method>[^\s][^()]*)(?:\([^)]*\))?\s*$",
         RegexOptions.Compiled | RegexOptions.Multiline);
 
+    /// <summary>
+    /// Parse all stack frames from an exception's stack trace into <see cref="AlStackFrame"/> records.
+    /// </summary>
     public static List<AlStackFrame> Walk(Exception ex)
     {
         var result = new List<AlStackFrame>();
@@ -61,6 +68,9 @@ public static class StackFrameMapper
         return result;
     }
 
+    /// <summary>
+    /// Return the first user-code frame in the list, which is the frame closest to the throw site.
+    /// </summary>
     public static AlStackFrame? FindDeepestUserFrame(IReadOnlyList<AlStackFrame> frames)
     {
         // .NET stack traces list the throw site first, then each caller out to the
@@ -74,22 +84,19 @@ public static class StackFrameMapper
         return null;
     }
 
+    /// <summary>
+    /// Classify a stack frame as Normal, Subtle, or Deemphasize based on file extension and method namespace.
+    /// </summary>
     public static FramePresentationHint ClassifyHint(string? file, string? methodName)
     {
         if (file != null && file.EndsWith(".al", StringComparison.OrdinalIgnoreCase))
             return FramePresentationHint.Normal;
 
-        if (methodName != null)
+        if (methodName != null
+            && (methodName.StartsWith("AlRunner.Runtime.", StringComparison.Ordinal)
+                || methodName.StartsWith("Microsoft.Dynamics.", StringComparison.Ordinal)))
         {
-            if (methodName.StartsWith("AlRunner.Runtime.", StringComparison.Ordinal)
-                || methodName.StartsWith("AlRunner.Runtime", StringComparison.Ordinal)
-                || methodName.Contains(".Mock", StringComparison.Ordinal)
-                || methodName.StartsWith("Mock", StringComparison.Ordinal)
-                || methodName.StartsWith("AlScope", StringComparison.Ordinal)
-                || methodName.StartsWith("Microsoft.Dynamics.", StringComparison.Ordinal))
-            {
-                return FramePresentationHint.Subtle;
-            }
+            return FramePresentationHint.Subtle;
         }
 
         return FramePresentationHint.Deemphasize;

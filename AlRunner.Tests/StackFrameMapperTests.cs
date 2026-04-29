@@ -116,6 +116,55 @@ public class StackFrameMapperTests
             StackFrameMapper.ClassifyHint(null, null));
     }
 
+    [Fact]
+    public void ClassifyHint_AlScopeRuntimeIsSubtle()
+    {
+        Assert.Equal(FramePresentationHint.Subtle,
+            StackFrameMapper.ClassifyHint("scope.cs", "AlRunner.Runtime.AlScope.Push"));
+    }
+
+    [Fact]
+    public void ClassifyHint_UserMethodNamedMock_IsNotSubtle()
+    {
+        // Regression: previous heuristics had a bare "Mock" prefix rule that would dim
+        // legitimate user code whose qualified name happened to start with "Mock".
+        var hint = StackFrameMapper.ClassifyHint("src/MockAccountTest.al", "Acme.MockAccountTest.Run");
+        Assert.Equal(FramePresentationHint.Normal, hint);
+    }
+
+    [Fact]
+    public void ClassifyHint_NullFileWithUserMethod_IsDeemphasize()
+    {
+        Assert.Equal(FramePresentationHint.Deemphasize,
+            StackFrameMapper.ClassifyHint(null, "MainApp.Foo.Bar"));
+    }
+
+    [Fact]
+    public void Walk_UppercaseAlExtensionIsUserCode()
+    {
+        var trace = "   at Foo.Bar() in src/Foo.AL:line 5\n";
+        var ex = MakeExceptionWithStackTrace(trace);
+        var frames = StackFrameMapper.Walk(ex);
+        Assert.Single(frames);
+        Assert.True(frames[0].IsUserCode);
+        Assert.Equal(FramePresentationHint.Normal, frames[0].Hint);
+    }
+
+    [Fact]
+    public void Walk_MultipleFramesPreserveOrder()
+    {
+        var trace =
+            "   at Foo.Bar() in src/A.al:line 1\n" +
+            "   at Foo.Baz() in src/B.al:line 2\n" +
+            "   at Foo.Qux() in src/C.al:line 3\n";
+        var ex = MakeExceptionWithStackTrace(trace);
+        var frames = StackFrameMapper.Walk(ex);
+        Assert.Equal(3, frames.Count);
+        Assert.Equal("src/A.al", frames[0].File);
+        Assert.Equal("src/B.al", frames[1].File);
+        Assert.Equal("src/C.al", frames[2].File);
+    }
+
     private static Exception MakeExceptionWithStackTrace(string trace)
         => new ExceptionWithFakeStackTrace(trace);
 
