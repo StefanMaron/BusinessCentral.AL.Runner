@@ -312,7 +312,7 @@ public static class DepExtractor
                 if (string.IsNullOrEmpty(consumerApp)) continue;
 
                 int stubId = stubIdCounter++;
-                var stubSource = GenerateStub(typeName, objectName, stubId);
+                var stubSource = GenerateStub(typeName, objectName, stubId, allExtracted);
                 var safeName = MakeSafeName(objectName) + $"_{stubId}";
                 var stubKey = $"{consumerApp}/__GeneratedStubs__/{safeName}.al";
                 allExtracted[stubKey] = stubSource;
@@ -728,6 +728,190 @@ public static class DepExtractor
             "Interface" => $"interface \"{objectName}\" {{ }}",
             _           => $"codeunit {id} \"{objectName}\" {{ }}",
         };
+
+    /// <summary>
+    /// Generates a stub enriched with members (procedures / fields) discovered by
+    /// scanning <paramref name="allExtracted"/> for variables typed as the missing
+    /// object and member-access patterns on those variables.
+    ///
+    /// For pages and codeunits, every <c>varName.MethodName(args)</c> call observed
+    /// becomes a forgiving <c>procedure MethodName(arg1: Variant; ...) begin end;</c>
+    /// declaration so AL0132 stops firing at the call site.
+    ///
+    /// For tables, every <c>varName."Field Name"</c> reference becomes a
+    /// <c>field(idN; "Field Name"; Variant) {}</c> declaration so AL0118 stops firing.
+    ///
+    /// This is the "auto-stub method/field modeling" half of issue #1521 final stretch.
+    /// </summary>
+    private static string GenerateStub(string typeName, string objectName, int id,
+        Dictionary<string, string> allExtracted)
+    {
+        if (typeName != "Page" && typeName != "Codeunit" && typeName != "Table")
+            return GenerateStub(typeName, objectName, id);
+
+        var members = DiscoverStubMembers(typeName, objectName, allExtracted);
+
+        if (typeName == "Page")
+        {
+            if (members.Methods.Count == 0) return GenerateStub(typeName, objectName, id);
+            var procs = string.Join(" ", members.Methods.Select(m => RenderProcedureStub(m)));
+            return $"page {id} \"{objectName}\" {{ {procs} }}";
+        }
+        if (typeName == "Codeunit")
+        {
+            if (members.Methods.Count == 0) return GenerateStub(typeName, objectName, id);
+            var procs = string.Join(" ", members.Methods.Select(m => RenderProcedureStub(m)));
+            return $"codeunit {id} \"{objectName}\" {{ {procs} }}";
+        }
+        // Table
+        var fieldDecls = new List<string> { "field(1; \"DummyKey\"; Code[20]) {}" };
+        int nextFieldId = 50000;
+        foreach (var f in members.Fields)
+        {
+            // Skip if it collides with the synthesized PK name.
+            if (string.Equals(f, "DummyKey", StringComparison.OrdinalIgnoreCase)) continue;
+            // BC's compiler accepts Variant on tables only as Blob+text — keep it broad
+            // by using Text[250]; that lets both <Rec>."X" reads/writes and FieldNo("X")
+            // resolve without coupling to the real type.
+            fieldDecls.Add($"field({nextFieldId++}; \"{f}\"; Text[250]) {{}}");
+        }
+        var fields = string.Join(" ", fieldDecls);
+        return $"table {id} \"{objectName}\" {{ fields {{ {fields} }} keys {{ key(PK; \"DummyKey\") {{}} }} }}";
+    }
+
+    /// <summary>
+    /// Render a forgiving procedure-stub for a discovered (name, arity) tuple. Any
+    /// signature with the right arity satisfies BC's overload resolution because
+    /// every parameter is typed <c>Variant</c>.
+    /// </summary>
+    private static string RenderProcedureStub((string Name, int Arity) m)
+    {
+        if (m.Arity == 0)
+            return $"procedure \"{m.Name}\"() begin end;";
+        var args = string.Join("; ", Enumerable.Range(1, m.Arity).Select(i => $"arg{i}: Variant"));
+        return $"procedure \"{m.Name}\"({args}) begin end;";
+    }
+
+    private record StubMembers(List<(string Name, int Arity)> Methods, List<string> Fields);
+
+    /// <summary>
+    /// Scan the slice for variables typed as <c>typeName "objectName"</c> and harvest
+    /// every member-access usage on those variables. Returns the distinct method calls
+    /// (with arity) and the distinct quoted-field references.
+    /// </summary>
+    private static StubMembers DiscoverStubMembers(string typeName, string objectName,
+        Dictionary<string, string> allExtracted)
+    {
+        var methods = new HashSet<(string Name, int Arity)>();
+        var fields = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Variable declaration patterns:
+        //   var Foo: Page "Power BI Element Addin Host";
+        //   Foo: Codeunit "X";
+        //   Foo: Record "Y";
+        var typeKw = typeName switch
+        {
+            "Page"     => "Page",
+            "Codeunit" => "Codeunit",
+            "Table"    => "Record", // tables are referenced as Record "X"
+            _          => typeName,
+        };
+
+        // Match (with optional whitespace) the declaration: identifier ":" typeKw "ObjectName"
+        // case-insensitive on the typeKw.
+        var declRx = new System.Text.RegularExpressions.Regex(
+            @"\b([A-Za-z_][A-Za-z0-9_]*)\s*:\s*" + typeKw + @"\s+""" +
+                System.Text.RegularExpressions.Regex.Escape(objectName) + @"""",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        foreach (var src in allExtracted.Values)
+        {
+            // Quick reject for files that don't reference the object.
+            if (!src.Contains(objectName, StringComparison.OrdinalIgnoreCase)) continue;
+            foreach (System.Text.RegularExpressions.Match dm in declRx.Matches(src))
+            {
+                var varName = dm.Groups[1].Value;
+                CollectMemberAccess(src, varName, methods, fields);
+            }
+        }
+
+        return new StubMembers(methods.ToList(), fields.ToList());
+    }
+
+    /// <summary>
+    /// Find every <c>varName.MemberToken</c> occurrence in <paramref name="src"/>.
+    /// If the member token is followed by <c>(</c>, count top-level commas inside
+    /// the parenthesis to derive arity and record (name, arity). Otherwise, treat
+    /// it as a quoted-field reference (only when the token itself is quoted).
+    /// </summary>
+    private static void CollectMemberAccess(string src, string varName,
+        HashSet<(string Name, int Arity)> methods, HashSet<string> fields)
+    {
+        // Match: varName.<member> where member is either an unquoted identifier
+        // or a quoted "Field Name". Followed optionally by an arg list.
+        var rx = new System.Text.RegularExpressions.Regex(
+            @"\b" + System.Text.RegularExpressions.Regex.Escape(varName) +
+            @"\s*\.\s*(?:""([^""]+)""|([A-Za-z_][A-Za-z0-9_]*))",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        foreach (System.Text.RegularExpressions.Match m in rx.Matches(src))
+        {
+            var quoted = m.Groups[1].Success ? m.Groups[1].Value : null;
+            var ident  = m.Groups[2].Success ? m.Groups[2].Value : null;
+            int after = m.Index + m.Length;
+            // Skip whitespace before optional '('
+            while (after < src.Length && char.IsWhiteSpace(src[after])) after++;
+            bool isCall = after < src.Length && src[after] == '(';
+
+            if (isCall)
+            {
+                int arity = CountTopLevelArgs(src, after);
+                var name = quoted ?? ident!;
+                methods.Add((name, arity));
+            }
+            else
+            {
+                // Treat quoted member as a field reference. Skip unquoted idents to
+                // avoid polluting tables with random accesses (e.g. property reads).
+                if (quoted != null) fields.Add(quoted);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Given <paramref name="src"/> and the index of an opening <c>(</c>, return the
+    /// number of top-level comma-separated args inside the matching <c>)</c>.
+    /// Handles nested parens and string literals. Returns 0 for an empty arg list.
+    /// </summary>
+    private static int CountTopLevelArgs(string src, int openIdx)
+    {
+        int i = openIdx + 1;
+        int depth = 1;
+        int commas = 0;
+        bool nonWs = false;
+        bool inSingle = false;
+        while (i < src.Length && depth > 0)
+        {
+            char c = src[i];
+            if (inSingle)
+            {
+                if (c == '\'') inSingle = false;
+                i++; continue;
+            }
+            switch (c)
+            {
+                case '\'': inSingle = true; nonWs = true; break;
+                case '(':  depth++; nonWs = true; break;
+                case ')':  depth--; if (depth == 0) goto done; nonWs = true; break;
+                case ',':  if (depth == 1) commas++; nonWs = true; break;
+                default:   if (!char.IsWhiteSpace(c)) nonWs = true; break;
+            }
+            i++;
+        }
+        done:
+        if (!nonWs) return 0;
+        return commas + 1;
+    }
 
     /// <summary>Strips all non-alphanumeric characters from a name to make it safe for a filename.</summary>
     private static string MakeSafeName(string name) =>

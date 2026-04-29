@@ -415,4 +415,86 @@ public class DepCompilerTests
         Assert.Contains("CLEANSCHEMA25", symbols);
     }
 
+    /// <summary>
+    /// Regression for the auto-stubbed-page-method-call gap: a consumer calls
+    /// <c>MyPage.SomeMethod(arg1, arg2)</c> on a page that exists only as an
+    /// auto-stub. The stub must include forgiving Variant-arg procedures so
+    /// AL0132 doesn't fire.
+    ///
+    /// Concrete BC 27.x example: PowerBIEmbeddedReportPart.Page.al calls
+    /// <c>PowerBIElementAddinHost.SetDisplayedElement(Rec)</c> on the auto-stubbed
+    /// "Power BI Element Addin Host" page.
+    /// </summary>
+    [Fact]
+    public void ExtractDeps_AutoStubPage_EmitsProceduresForObservedMethodCalls()
+    {
+        var rootDir = Path.Combine(Path.GetTempPath(), "al-runner-pagestub-" + Guid.NewGuid().ToString("N")[..8]);
+        var srcDir = Path.Combine(rootDir, "src");
+        var depDir = Path.Combine(rootDir, "dep", "FakeBaseApp");
+        var outputDirAfterExtract = Path.Combine(rootDir, "extracted");
+        try
+        {
+            Directory.CreateDirectory(srcDir);
+            Directory.CreateDirectory(depDir);
+
+            // Extension app — references a codeunit defined in the dep, which in
+            // turn references the missing page. This mirrors the real DWF flow:
+            // user app -> BaseApp -> Power BI Element Addin Host (missing).
+            File.WriteAllText(Path.Combine(srcDir, "app.json"), """
+            {
+              "id": "44444444-4444-4444-4444-444444444444",
+              "name": "ConsumerApp",
+              "publisher": "Test",
+              "version": "1.0.0.0"
+            }
+            """);
+            File.WriteAllText(Path.Combine(srcDir, "MyExt.al"), """
+            codeunit 50500 "MyExt"
+            {
+                procedure Run()
+                var
+                    DepC: Codeunit "DepCaller";
+                begin
+                    DepC.Trigger();
+                end;
+            }
+            """);
+
+            // Dep source — contains the consumer that calls into the missing page.
+            File.WriteAllText(Path.Combine(depDir, "DepCaller.al"), """
+            codeunit 60500 "DepCaller"
+            {
+                procedure Trigger()
+                var
+                    Host: Page "Mystery Host Page";
+                begin
+                    Host.SetDisplayedElement(1);
+                    Host.SetPowerBIFilter('foo');
+                end;
+            }
+            """);
+
+            int rc = AlRunner.DepExtractor.ExtractDeps(
+                srcDir,
+                new[] { Path.Combine(rootDir, "dep") },
+                outputDirAfterExtract,
+                new List<string>());
+            Assert.Equal(0, rc);
+
+            // The extractor must have generated a stub for the missing page that
+            // includes the two methods seen at the call site.
+            var stubFiles = Directory.EnumerateFiles(outputDirAfterExtract, "*MysteryHostPage*.al", SearchOption.AllDirectories).ToList();
+            Assert.NotEmpty(stubFiles);
+            var stubContent = File.ReadAllText(stubFiles[0]);
+            Assert.Contains("SetDisplayedElement", stubContent);
+            Assert.Contains("SetPowerBIFilter", stubContent);
+            // Procedures must accept a Variant arg so any call shape compiles.
+            Assert.Contains("Variant", stubContent);
+        }
+        finally
+        {
+            if (Directory.Exists(rootDir))
+                Directory.Delete(rootDir, true);
+        }
+    }
 }
