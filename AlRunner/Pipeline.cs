@@ -87,6 +87,17 @@ public class PipelineOptions
     /// runtests request. Defaults to <see cref="CancellationToken.None"/>.
     /// </summary>
     public CancellationToken CancellationToken { get; init; } = default;
+
+    /// <summary>
+    /// When true, always compute the per-statement source-span map and the
+    /// scope-to-object map even when neither <see cref="ShowCoverage"/> nor
+    /// <see cref="EmitLineDirectives"/> is set. The protocol-v2 server uses this
+    /// to populate <see cref="PipelineResult.SourceSpans"/> and
+    /// <see cref="PipelineResult.ScopeToObject"/> so a subsequent cache hit can
+    /// emit coverage data without re-running the rewrite/compilation pipeline.
+    /// Defaults to false.
+    /// </summary>
+    public bool AlwaysComputeSourceSpans { get; set; } = false;
 }
 
 public enum TestStatus { Pass, Fail, Error }
@@ -207,6 +218,23 @@ public class PipelineResult
     /// Primarily used by tests that drive <see cref="Executor.RunTests"/> directly.
     /// </summary>
     public System.Reflection.Assembly? CompiledAssembly { get; set; }
+
+    /// <summary>
+    /// Maps (scope class name, statement index) → 1-based AL source line number.
+    /// Populated when <see cref="PipelineOptions.AlwaysComputeSourceSpans"/>,
+    /// <see cref="PipelineOptions.ShowCoverage"/>, or
+    /// <see cref="PipelineOptions.EmitLineDirectives"/> is set. Null otherwise.
+    ///
+    /// The protocol-v2 server stashes this on a cache miss so that subsequent cache hits can
+    /// build a coverage report without recomputing source spans from generated C#.
+    /// </summary>
+    public Dictionary<(string Scope, int StmtIndex), int>? SourceSpans { get; set; }
+
+    /// <summary>
+    /// Maps scope class name (e.g. <c>Compute_Scope_42</c>) → AL object name (e.g. <c>Calc</c>).
+    /// Populated under the same conditions as <see cref="SourceSpans"/>. Null otherwise.
+    /// </summary>
+    public Dictionary<string, string>? ScopeToObject { get; set; }
 }
 
 public class AlRunnerPipeline
@@ -215,6 +243,7 @@ public class AlRunnerPipeline
     private RoslynCompiler.CompileResult? _compileResult;
     private List<(string Name, string Error)>? _rewriterErrors;
     private List<string>? _compilationErrors;
+    private Dictionary<(string Scope, int StmtIndex), int>? _sourceSpans;
     private List<string>? _generatedCSharpFiles;
     public RewriteCache? RewriteCache { get; set; }
     public SyntaxTreeCache? SyntaxTreeCache { get; set; }
@@ -320,7 +349,9 @@ public class AlRunnerPipeline
             RewriterErrors = _rewriterErrors,
             CompilationErrors = _compilationErrors,
             GeneratedCSharpFiles = _generatedCSharpFiles ?? new List<string>(),
-            CompiledAssembly = Runtime.MockCodeunitHandle.CurrentAssembly
+            CompiledAssembly = Runtime.MockCodeunitHandle.CurrentAssembly,
+            SourceSpans = _sourceSpans,
+            ScopeToObject = _scopeToObject
         };
     }
 
@@ -413,6 +444,8 @@ public class AlRunnerPipeline
     {
         // Reset per-run output state so a previous run's C# cannot leak into the next.
         _generatedCSharpFiles = options.EmitGeneratedCSharp ? new List<string>() : null;
+        _scopeToObject = null;
+        _sourceSpans = null;
 
         if (options.Verbose)
             Log.Verbose = true;
@@ -942,15 +975,25 @@ public class AlRunnerPipeline
                 Runtime.MessageCapture.Disable();
 
                 Dictionary<string, string>? scopeToObject = null;
-                if (options.IterationTracking || options.ShowCoverage)
+                if (options.IterationTracking || options.ShowCoverage || options.AlwaysComputeSourceSpans)
                     scopeToObject = CoverageReport.BuildScopeToObjectMap(generatedCSharpList!);
 
                 _scopeToObject = scopeToObject;
 
+                // Always-compute path: stash the source-span map on the pipeline result so
+                // protocol-v2 callers can serve coverage on a cache hit without re-running
+                // the rewrite/compile pipeline.
+                if (options.AlwaysComputeSourceSpans)
+                {
+                    _sourceSpans = CoverageReport.ParseSourceSpans(generatedCSharpList!);
+                }
+
                 if (options.ShowCoverage)
                 {
                     Executor.PrintCoverageReport();
-                    var sourceSpans = CoverageReport.ParseSourceSpans(generatedCSharpList!);
+                    // Reuse the always-computed map if present; otherwise compute now.
+                    var sourceSpans = _sourceSpans ?? CoverageReport.ParseSourceSpans(generatedCSharpList!);
+                    _sourceSpans = sourceSpans;
                     var (hitStmts, totalStmts) = Runtime.AlScope.GetCoverageSets();
                     CoverageReport.WriteCobertura("cobertura.xml", sourceSpans, hitStmts, totalStmts, scopeToObject!);
                     Log.Info("Coverage report: cobertura.xml");
@@ -962,6 +1005,16 @@ public class AlRunnerPipeline
             stderr.WriteLine("No test codeunits found (Subtype = Test). Source compiled successfully.");
             stderr.WriteLine("To run a specific codeunit\u0027s OnRun trigger, use: --run-codeunit <CodunitName>");
             exitCode = 1;
+            // Even without tests, populate the protocol-v2 maps when requested so a
+            // subsequent cache hit can report the same set without re-running.
+            if (options.IterationTracking || options.ShowCoverage || options.AlwaysComputeSourceSpans)
+            {
+                _scopeToObject = CoverageReport.BuildScopeToObjectMap(generatedCSharpList!);
+            }
+            if (options.AlwaysComputeSourceSpans)
+            {
+                _sourceSpans = CoverageReport.ParseSourceSpans(generatedCSharpList!);
+            }
         }
         Timer.EndStage("Test execution");
         Timer.Print();
