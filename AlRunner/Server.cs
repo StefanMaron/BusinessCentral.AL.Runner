@@ -82,7 +82,8 @@ public class AlRunnerServer
             // Cache hit — re-run tests on the cached assembly, returning the
             // compilation errors that were seen when the assembly was first compiled.
             Runtime.MockCodeunitHandle.CurrentAssembly = cacheHit.Value.Assembly;
-            var results = Executor.RunTests(cacheHit.Value.Assembly);
+            var results = Executor.RunTests(cacheHit.Value.Assembly,
+                filter: null, onTestComplete: null, cancellationToken: default);
             return SerializeServerResponse(results, Executor.ExitCode(results), cached: true,
                 compilationErrors: cacheHit.Value.CompilationErrors);
         }

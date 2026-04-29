@@ -119,12 +119,12 @@ public class TestResult
     public string? Message { get; init; }
     public string? StackTrace { get; init; }
     /// <summary>AL source line where the error occurred (null for passing tests).</summary>
-    public int? AlSourceLine { get; init; }
+    public int? AlSourceLine { get; set; }
     /// <summary>
     /// AL source column where the error occurred (1-based, null for passing
     /// tests or when the underlying source-span lacks column info).
     /// </summary>
-    public int? AlSourceColumn { get; init; }
+    public int? AlSourceColumn { get; set; }
     /// <summary>
     /// True when the error originates from AlRunner.Runtime mock code (a runner
     /// limitation or bug), not from user AL logic or a missing dependency injection.
@@ -135,6 +135,22 @@ public class TestResult
     /// tests by suite in JUnit XML output.
     /// </summary>
     public string? CodeunitName { get; init; }
+
+    /// <summary>AL source file (relative path, forward-slash) the failure originated in.
+    /// Resolved via StackFrameMapper.FindDeepestUserFrame on the throw stack.</summary>
+    public string? AlSourceFile { get; set; }
+
+    /// <summary>Structured stack frames extracted from the exception (T7 #line directives + T4 walker).</summary>
+    public List<AlStackFrame>? StackFrames { get; set; }
+
+    /// <summary>Error category for IDE UI variation (assertion vs runtime vs compile vs ...).</summary>
+    public AlErrorKind? ErrorKind { get; set; }
+
+    /// <summary>Per-test Message() output captured via AsyncLocal scope.</summary>
+    public List<string>? Messages { get; set; }
+
+    /// <summary>Per-test captured variable values via AsyncLocal scope.</summary>
+    public List<(string ScopeName, string ObjectName, string VariableName, string? Value, int StatementId)>? CapturedValues { get; set; }
 }
 
 public class CapturedValue
@@ -185,6 +201,13 @@ public class PipelineResult
     /// Each entry is the post-rewrite C# text for one AL object (e.g. one codeunit).
     /// </summary>
     public List<string> GeneratedCSharpFiles { get; set; } = new();
+
+    /// <summary>
+    /// The compiled <see cref="System.Reflection.Assembly"/> produced by the pipeline, if available.
+    /// Populated after a successful (or partially-successful) Roslyn compilation.
+    /// Primarily used by tests that drive <see cref="Executor.RunTests"/> directly.
+    /// </summary>
+    public System.Reflection.Assembly? CompiledAssembly { get; set; }
 }
 
 public class AlRunnerPipeline
@@ -297,7 +320,8 @@ public class AlRunnerPipeline
             LoadContext = _compileResult?.LoadContext,
             RewriterErrors = _rewriterErrors,
             CompilationErrors = _compilationErrors,
-            GeneratedCSharpFiles = _generatedCSharpFiles ?? new List<string>()
+            GeneratedCSharpFiles = _generatedCSharpFiles ?? new List<string>(),
+            CompiledAssembly = Runtime.MockCodeunitHandle.CurrentAssembly
         };
     }
 

@@ -17,8 +17,17 @@ public static class ValueCapture
 
     public static void Capture(string scopeName, string objectName, string variableName, object? value, int statementId)
     {
-        if (!_enabled) return;
-        _captures.Add((scopeName, objectName, variableName, value?.ToString(), statementId));
+        var entry = (scopeName, objectName, variableName, value?.ToString(), statementId);
+
+        // Per-test scope gets the capture for isolation.
+        var scope = TestExecutionScope.Current;
+        if (scope != null)
+            scope.CapturedValues.Add(entry);
+
+        // Global aggregate also gets the capture when capture mode is enabled,
+        // so the pipeline-level ValueCapture.GetCaptures() remains populated.
+        if (_enabled)
+            _captures.Add(entry);
     }
 
     public static List<(string ScopeName, string ObjectName, string VariableName, string? Value, int StatementId)> GetCaptures()
