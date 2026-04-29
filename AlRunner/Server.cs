@@ -415,6 +415,11 @@ public class AlRunnerServer
             var iterationTrackingRequested = request.IterationTracking == true;
             if (iterationTrackingRequested)
             {
+                // IterationTracker is a static singleton. The dispatch loop in RunAsync
+                // guarantees only one runtests request is in flight at a time (the
+                // side-channel only allows cancel during runtests), so Reset+Enable here
+                // can't clobber another request's data. If the runtests serialization
+                // invariant ever changes, this needs to move to a per-request scope.
                 Runtime.IterationTracker.Reset();
                 Runtime.IterationTracker.Enable();
             }

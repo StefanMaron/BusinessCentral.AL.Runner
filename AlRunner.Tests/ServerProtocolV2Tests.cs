@@ -582,11 +582,11 @@ public class ServerProtocolV2Tests
         var lines = await server.SendRequestStreamingAsync(IterationsRequest(iterationTracking: false));
         var (_, summary) = Split(lines);
 
-        if (summary.RootElement.TryGetProperty("iterations", out var prop))
+        var iterationsPresent = summary.RootElement.TryGetProperty("iterations", out var iterationsProp);
+        if (iterationsPresent)
         {
-            Assert.True(prop.ValueKind == JsonValueKind.Null,
-                $"iterations must be omitted or null when iterationTracking=false; got {prop.ValueKind}");
+            Assert.Equal(JsonValueKind.Null, iterationsProp.ValueKind);
         }
-        // Field omitted entirely is also valid.
+        // else: field omitted entirely, also valid (WhenWritingNull suppresses null fields)
     }
 }
