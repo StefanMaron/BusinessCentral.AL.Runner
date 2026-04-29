@@ -23,6 +23,8 @@ public class ServerProtocolV2Tests
     private static readonly string LineDirectivesTest = FixturePath("protocol-v2-line-directives", "test");
     private static readonly string PerTestIsolationSrc = FixturePath("protocol-v2-per-test-isolation", "src");
     private static readonly string PerTestIsolationTest = FixturePath("protocol-v2-per-test-isolation", "test");
+    private static readonly string BrokenSyntaxSrc = FixturePath("protocol-v2-broken-syntax", "src");
+    private static readonly string BrokenSyntaxTest = FixturePath("protocol-v2-broken-syntax", "test");
 
     /// <summary>Build a runTests request JSON for the line-directives fixture.</summary>
     private static string LineDirectivesRequest(object? extra = null)
@@ -322,5 +324,156 @@ public class ServerProtocolV2Tests
         Assert.Equal(2, doc.RootElement.GetProperty("protocolVersion").GetInt32());
         Assert.True(doc.RootElement.TryGetProperty("error", out var error));
         Assert.False(string.IsNullOrEmpty(error.GetString()));
+    }
+
+    /// <summary>
+    /// I-3: lock the test-event ordering contract. <see cref="Executor.RunTests"/> walks
+    /// reflection metadata (assembly.GetTypes() → type.GetNestedTypes()), which the Roslyn
+    /// transpiler emits in alphabetical-by-class-name order — so events arrive sorted by
+    /// test name. This is a stable contract: no parallelism, no run-to-run shuffling. A
+    /// future change that reorders the stream (e.g. introducing parallel test execution
+    /// without an explicit ordering pass) would break clients that build incremental UI
+    /// trees from the wire stream, so we lock the order at the protocol boundary.
+    ///
+    /// The line-directives fixture declares ComputeDoubles, FailingTest,
+    /// ConditionalBranchExercises in that source order; reflection sorts them as
+    /// ComputeDoubles, ConditionalBranchExercises, FailingTest.
+    /// </summary>
+    [Fact]
+    public async Task RunTests_TestEvents_AreEmittedInStableOrder()
+    {
+        await using var server = await CliServer.StartAsync();
+        var lines = await server.SendRequestStreamingAsync(LineDirectivesRequest());
+
+        var firstRun = lines
+            .Where(l => l.Contains("\"type\":\"test\""))
+            .Select(l => JsonDocument.Parse(l).RootElement.GetProperty("name").GetString())
+            .ToList();
+
+        // Three tests, all present, in a known fixed order.
+        Assert.Equal(
+            new[] { "ComputeDoubles", "ConditionalBranchExercises", "FailingTest" },
+            firstRun);
+
+        // Re-run on the same server (cache hit) and verify the order is identical —
+        // run-to-run shuffling would mean clients can't rely on the wire order.
+        var lines2 = await server.SendRequestStreamingAsync(LineDirectivesRequest());
+        var secondRun = lines2
+            .Where(l => l.Contains("\"type\":\"test\""))
+            .Select(l => JsonDocument.Parse(l).RootElement.GetProperty("name").GetString())
+            .ToList();
+        Assert.Equal(firstRun, secondRun);
+    }
+
+    /// <summary>
+    /// I-2: when compilation fails, the server must still emit exactly one summary line
+    /// (no test events) carrying a non-zero exitCode and protocolVersion 2. This locks
+    /// the assembly==null short-circuit in HandleRunTests and proves the wire-shape
+    /// contract for the compile-failure path.
+    /// </summary>
+    [Fact]
+    public async Task RunTests_CompilationFailure_EmitsSummaryWithExitCodeNonZero()
+    {
+        await using var server = await CliServer.StartAsync();
+        var request = JsonSerializer.Serialize(new
+        {
+            command = "runtests",
+            sourcePaths = new[] { BrokenSyntaxSrc, BrokenSyntaxTest }
+        });
+        var lines = await server.SendRequestStreamingAsync(request);
+
+        // Exactly zero test events.
+        var testEventCount = lines.Count(l => l.Contains("\"type\":\"test\""));
+        Assert.Equal(0, testEventCount);
+
+        // Exactly one summary line and it terminates the stream.
+        var summaryLines = lines.Where(l => l.Contains("\"type\":\"summary\"")).ToList();
+        Assert.Single(summaryLines);
+        Assert.Equal(summaryLines[0], lines[^1]);
+
+        var summary = JsonDocument.Parse(summaryLines[0]).RootElement;
+        Assert.Equal(2, summary.GetProperty("protocolVersion").GetInt32());
+        Assert.Equal(0, summary.GetProperty("total").GetInt32());
+        Assert.Equal(0, summary.GetProperty("passed").GetInt32());
+        Assert.Equal(0, summary.GetProperty("failed").GetInt32());
+        Assert.NotEqual(0, summary.GetProperty("exitCode").GetInt32());
+    }
+
+    /// <summary>
+    /// I-5: when the request sets cobertura:true the server must write cobertura.xml in
+    /// its working directory (the repo root). The file must be valid-looking XML
+    /// containing a &lt;coverage&gt; root.
+    /// </summary>
+    [Fact]
+    public async Task RunTests_CoberturaTrue_WritesCoberturaXml()
+    {
+        var coberturaPath = Path.Combine(CliServer.RepoRoot, "cobertura.xml");
+        if (File.Exists(coberturaPath)) File.Delete(coberturaPath);
+        try
+        {
+            await using var server = await CliServer.StartAsync();
+            var request = LineDirectivesRequest(new { cobertura = true });
+            var lines = await server.SendRequestStreamingAsync(request);
+
+            // Sanity: the request itself succeeded (we got a summary terminator).
+            var (_, summary) = Split(lines);
+            Assert.Equal(2, summary.RootElement.GetProperty("protocolVersion").GetInt32());
+
+            Assert.True(File.Exists(coberturaPath),
+                $"Expected cobertura.xml at {coberturaPath} after cobertura:true request.");
+
+            var xml = File.ReadAllText(coberturaPath);
+            // Strip a possible UTF-8 BOM before checking the prologue.
+            var trimmed = xml.TrimStart('﻿');
+            Assert.StartsWith("<?xml", trimmed);
+            Assert.Contains("<coverage", trimmed);
+        }
+        finally
+        {
+            if (File.Exists(coberturaPath)) File.Delete(coberturaPath);
+        }
+    }
+
+    /// <summary>
+    /// I-1: with the dispatch loop concurrency-aware, a cancel arriving on stdin while
+    /// runtests is still streaming must be honored — observable by either:
+    ///   - the summary carries cancelled:true (executor stopped between tests), OR
+    ///   - the cancel ack came back with noop:false (cts was active when the cancel
+    ///     was processed; the executor happened to finish before the next iteration
+    ///     could observe the token).
+    /// Both prove the side-channel dispatch worked. The race between "cancel signaled"
+    /// and "executor completed the last test" is real but doesn't matter for this
+    /// assertion — what we're locking is "cancel WAS processed during streaming."
+    /// </summary>
+    [Fact]
+    public async Task RunTests_CancelDuringRun_AckArrivesWhileStreaming()
+    {
+        await using var server = await CliServer.StartAsync();
+        // Use the line-directives fixture (3 tests). After the first test event we send
+        // cancel; with cooperative cancellation between tests this normally lands before
+        // tests 2-3 complete, but we accept either outcome.
+        var request = LineDirectivesRequest();
+        var (lines, ackLine) = await server.SendRequestAndCancelAfterFirstTestAsync(request);
+
+        Assert.NotNull(ackLine); // ack MUST arrive during streaming — proves concurrent dispatch.
+        var ack = JsonDocument.Parse(ackLine!).RootElement;
+        Assert.Equal("ack", ack.GetProperty("type").GetString());
+        Assert.Equal("cancel", ack.GetProperty("command").GetString());
+
+        // Find the summary line.
+        var summaryLine = lines.Last(l => l.Contains("\"type\":\"summary\""));
+        var summary = JsonDocument.Parse(summaryLine).RootElement;
+
+        var ackNoop = ack.GetProperty("noop").GetBoolean();
+        var cancelledOnSummary =
+            summary.TryGetProperty("cancelled", out var c) && c.GetBoolean();
+
+        // Either we caught the cancel before the next test ran (cancelled:true) OR the
+        // executor finished the last test concurrently with our cancel snapshot
+        // (noop:false on the ack). At least one must hold; otherwise the cancel was
+        // never observed by the runtests CTS, which would mean the side-channel
+        // dispatch failed.
+        Assert.True(cancelledOnSummary || !ackNoop,
+            $"Neither cancelled:true on summary nor noop:false on ack — cancel was not observed. summary={summary.GetRawText()} ack={ack.GetRawText()}");
     }
 }

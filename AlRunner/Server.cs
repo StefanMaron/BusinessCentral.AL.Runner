@@ -24,21 +24,33 @@ public class AlRunnerServer
     private readonly SyntaxTreeCache _syntaxTreeCache = new();
 
     /// <summary>
-    /// CancellationTokenSource for the currently-active <c>runtests</c> request.
-    /// Set at the start of <see cref="HandleRunTests"/> and cleared (after Dispose) in the
-    /// finally block that wraps it. Read by <see cref="HandleCancel"/>.
+    /// CancellationTokenSource for the currently-active <c>runtests</c> request. Set by
+    /// <see cref="HandleRunTests"/> on entry; cleared and disposed in its finally block.
     ///
-    /// Thread-safety note: the dispatch loop in <see cref="RunAsync"/> is sequential —
-    /// it reads one request line at a time and processes it to completion before reading
-    /// the next. There is therefore no actual concurrent execution between a
-    /// <c>runtests</c> handler and a <c>cancel</c> handler: by the time a cancel command
-    /// is dispatched, <c>HandleRunTests</c> has already returned and cleared this field.
-    /// No lock is needed; a simple null-or-snapshot read in <see cref="HandleCancel"/> is
-    /// sufficient. The field is not <c>volatile</c> because both reads and writes happen on
-    /// the same logical async continuation (same thread or, in the async case, on a
-    /// continuation that has a happens-before edge with the write).
+    /// While <see cref="HandleRunTests"/> runs, the dispatch loop in <see cref="RunAsync"/>
+    /// concurrently reads stdin for additional requests. A <c>cancel</c> arriving on that
+    /// side-channel calls <see cref="HandleCancel"/>, which snapshots this field
+    /// (<c>var cts = _activeRequestCts;</c>) and invokes <c>Cancel()</c>. Because dispose
+    /// is not synchronized with the cancel call, we tolerate
+    /// <see cref="ObjectDisposedException"/> — the request had finished already and the
+    /// cancel is treated as a noop.
+    ///
+    /// We use a plain reference here (not <c>volatile</c>/<c>Interlocked</c>) on the
+    /// assumption that the dispatch loop's read happens-after <see cref="HandleRunTests"/>
+    /// set the field on the same logical async continuation, and dispose-then-null happens
+    /// in finally. If the dispatch loop is ever moved to a fully-concurrent model where
+    /// independent threads write this field, switch to <c>Volatile.Read</c>/<c>Volatile.Write</c>.
     /// </summary>
     private CancellationTokenSource? _activeRequestCts;
+
+    /// <summary>
+    /// Serializes writes to the protocol stdout stream. The runtests handler writes test
+    /// events from a <see cref="Task.Run"/> worker while the dispatch loop in
+    /// <see cref="RunAsync"/> may concurrently write a cancel ack or a "command-not-allowed"
+    /// error in response to a side-channel request. Without this lock the two writers can
+    /// interleave bytes mid-line and corrupt the NDJSON contract.
+    /// </summary>
+    private readonly SemaphoreSlim _outputLock = new(1, 1);
 
     /// <summary>
     /// Shared serializer options used for every protocol-v2 line. <c>WhenWritingNull</c>
@@ -58,65 +70,174 @@ public class AlRunnerServer
         Kernel32Shim.EnsureRegistered();
 
         // Signal readiness
-        await output.WriteLineAsync("{\"ready\":true}");
-        await output.FlushAsync();
+        await WriteLineAsync(output, "{\"ready\":true}");
+
+        // Single-flight tracker for the in-flight stdin read. `TextReader.ReadLineAsync`
+        // is not safe to call concurrently on the same reader, so when the side-channel
+        // dispatch returns with a read still pending (because the runtests task finished
+        // first), we hand the pending task to the next iteration of the outer loop
+        // rather than starting a fresh read. `null` means "no read in flight".
+        Task<string?>? pendingRead = null;
 
         while (!ct.IsCancellationRequested)
         {
-            var line = await input.ReadLineAsync(ct);
+            var readTask = pendingRead ?? input.ReadLineAsync(ct).AsTask();
+            pendingRead = null;
+            var line = await readTask;
             if (line == null) break; // EOF — client disconnected
 
+            ServerRequest? request;
             try
             {
-                var request = JsonSerializer.Deserialize<ServerRequest>(line);
-                if (request == null)
-                {
-                    await output.WriteLineAsync(JsonSerializer.Serialize(new { error = "Invalid request" }));
-                    await output.FlushAsync();
-                    continue;
-                }
-
-                switch (request.Command?.ToLowerInvariant())
-                {
-                    case "runtests":
-                        // Protocol v2: streaming response. The handler writes its own lines.
-                        await HandleRunTests(request, refsTask, output);
-                        break;
-                    case "execute":
-                    {
-                        var response = HandleExecute(request, refsTask);
-                        await output.WriteLineAsync(response);
-                        await output.FlushAsync();
-                        break;
-                    }
-                    case "cancel":
-                    {
-                        var response = HandleCancel();
-                        await output.WriteLineAsync(response);
-                        await output.FlushAsync();
-                        break;
-                    }
-                    case "shutdown":
-                    {
-                        var response = HandleShutdown();
-                        await output.WriteLineAsync(response);
-                        await output.FlushAsync();
-                        return; // exit the dispatch loop
-                    }
-                    default:
-                    {
-                        var response = JsonSerializer.Serialize(new { error = $"Unknown command: {request.Command}" });
-                        await output.WriteLineAsync(response);
-                        await output.FlushAsync();
-                        break;
-                    }
-                }
+                request = JsonSerializer.Deserialize<ServerRequest>(line);
             }
             catch (Exception ex)
             {
-                await output.WriteLineAsync(JsonSerializer.Serialize(new { error = ex.Message }));
-                await output.FlushAsync();
+                await WriteLineAsync(output, JsonSerializer.Serialize(new { error = ex.Message }));
+                continue;
             }
+
+            if (request == null)
+            {
+                await WriteLineAsync(output, JsonSerializer.Serialize(new { error = "Invalid request" }));
+                continue;
+            }
+
+            var cmd = request.Command?.ToLowerInvariant();
+
+            if (cmd == "shutdown")
+            {
+                await WriteLineAsync(output, HandleShutdown());
+                return; // exit the dispatch loop
+            }
+
+            if (cmd == "runtests")
+            {
+                // Protocol v2: streaming response. While the handler runs, keep reading
+                // stdin so a `cancel` request can be dispatched inline without waiting
+                // for the run to finish. Other commands during a streaming run respond
+                // with an error (we only allow cancel as a side-channel).
+                var runtestsTask = HandleRunTests(request, refsTask, output);
+                pendingRead = await DispatchSideChannelAsync(input, output, runtestsTask, ct);
+                // Surface any handler-internal exception once draining is done; don't
+                // let it abort the dispatch loop — log and continue with the next request.
+                try { await runtestsTask; }
+                catch (Exception ex)
+                {
+                    await WriteLineAsync(output, JsonSerializer.Serialize(new { error = ex.Message }));
+                }
+                continue;
+            }
+
+            // Single-response commands
+            string response;
+            try
+            {
+                response = cmd switch
+                {
+                    "execute" => HandleExecute(request, refsTask),
+                    "cancel" => HandleCancel(),
+                    _ => JsonSerializer.Serialize(new { error = $"Unknown command: {request.Command}" }),
+                };
+            }
+            catch (Exception ex)
+            {
+                response = JsonSerializer.Serialize(new { error = ex.Message });
+            }
+            await WriteLineAsync(output, response);
+        }
+    }
+
+    /// <summary>
+    /// While a <c>runtests</c> request is streaming, keep reading stdin. Cancel requests
+    /// are honored inline; everything else is rejected so the client can't queue a second
+    /// long-running request behind the active one. EOF on stdin also signals cancel and
+    /// drains the active run before returning.
+    ///
+    /// Returns the in-flight read task (or null) so the outer dispatch loop can avoid
+    /// starting a second concurrent read on the same <paramref name="input"/> reader.
+    /// </summary>
+    private async Task<Task<string?>?> DispatchSideChannelAsync(TextReader input, TextWriter output, Task runtestsTask, CancellationToken ct)
+    {
+        while (!runtestsTask.IsCompleted)
+        {
+            // ReadLineAsync(CancellationToken) returns ValueTask<string?> in .NET 7+; .AsTask()
+            // lets us compose with Task.WhenAny. We pass the outer ct so the read aborts when
+            // the server itself is being torn down.
+            var readTask = input.ReadLineAsync(ct).AsTask();
+            var done = await Task.WhenAny(runtestsTask, readTask);
+            if (done == runtestsTask)
+            {
+                // The runtests handler completed before another stdin line arrived. Hand the
+                // still-pending read back to the outer loop instead of abandoning it — TextReader
+                // does not support concurrent reads, so the outer loop must reuse this task.
+                return readTask;
+            }
+
+            string? sideLine;
+            try
+            {
+                sideLine = await readTask;
+            }
+            catch (OperationCanceledException)
+            {
+                _activeRequestCts?.Cancel();
+                return null;
+            }
+
+            if (sideLine == null)
+            {
+                // EOF — client disconnected. Signal cancel and let the runtests handler
+                // drain to a summary; the outer loop will then break on its own next read.
+                try { _activeRequestCts?.Cancel(); }
+                catch (ObjectDisposedException) { /* race: handler already finished */ }
+                // Wrap the EOF in a completed task so the outer loop sees the same null and
+                // exits cleanly without trying to read stdin again.
+                return Task.FromResult<string?>(null);
+            }
+
+            ServerRequest? sideReq;
+            try
+            {
+                sideReq = JsonSerializer.Deserialize<ServerRequest>(sideLine);
+            }
+            catch (Exception ex)
+            {
+                await WriteLineAsync(output, JsonSerializer.Serialize(new { error = ex.Message }));
+                continue;
+            }
+
+            var sideCmd = sideReq?.Command?.ToLowerInvariant();
+            if (sideCmd == "cancel")
+            {
+                await WriteLineAsync(output, HandleCancel());
+            }
+            else
+            {
+                await WriteLineAsync(output, JsonSerializer.Serialize(new
+                {
+                    error = "Only 'cancel' is permitted while a runtests request is in flight."
+                }));
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Write a single NDJSON line to <paramref name="output"/>, holding the output lock so
+    /// the runtests streaming worker and the dispatch loop can't interleave bytes mid-line.
+    /// </summary>
+    private async Task WriteLineAsync(TextWriter output, string line)
+    {
+        await _outputLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await output.WriteLineAsync(line);
+            await output.FlushAsync();
+        }
+        finally
+        {
+            _outputLock.Release();
         }
     }
 
@@ -133,7 +254,7 @@ public class AlRunnerServer
         if (request.SourcePaths == null || request.SourcePaths.Length == 0)
         {
             // Schema-valid summary that signals an input-validation failure.
-            await output.WriteLineAsync(JsonSerializer.Serialize(new
+            await WriteLineAsync(output, JsonSerializer.Serialize(new
             {
                 type = "summary",
                 error = "sourcePaths is required",
@@ -144,7 +265,6 @@ public class AlRunnerServer
                 total = 0,
                 protocolVersion = 2,
             }, JsonOpts));
-            await output.FlushAsync();
             return;
         }
 
@@ -202,7 +322,10 @@ public class AlRunnerServer
                 var pipelineResult = pipeline.Run(options);
 
                 assembly = pipelineResult.Assembly ?? Runtime.MockCodeunitHandle.CurrentAssembly;
-                // Compilation errors (file-level exclusion was removed in #80; always empty now).
+                // compilationErrors path retained for future re-enablement; currently always
+                // empty per #80 (file-level exclusion was removed). Because the JSON field is
+                // suppressed when the dictionary is empty (WhenWritingNull + the count check
+                // below), the wire format stays clean — no `compilationErrors: {}` leakage.
                 compilationErrors = new Dictionary<string, List<string>>();
                 sourceSpans = pipelineResult.SourceSpans;
                 scopeToObject = pipelineResult.ScopeToObject;
@@ -212,7 +335,7 @@ public class AlRunnerServer
                 // client knows the request was processed but no tests ran.
                 if (assembly == null)
                 {
-                    await output.WriteLineAsync(JsonSerializer.Serialize(new
+                    await WriteLineAsync(output, JsonSerializer.Serialize(new
                     {
                         type = "summary",
                         exitCode = pipelineResult.ExitCode,
@@ -231,7 +354,6 @@ public class AlRunnerServer
                             : null,
                         protocolVersion = 2,
                     }, JsonOpts));
-                    await output.FlushAsync();
                     return;
                 }
 
@@ -267,11 +389,16 @@ public class AlRunnerServer
             var allResults = new List<TestResult>();
 
             // Streaming callback: emit one `{"type":"test"}` line per completed test.
-            // The dispatch loop is sequential, so no other handler is racing with us
-            // for `output`. Sync write keeps the callback's contract simple.
-            // The callback temporarily restores the real Console.Out so its line lands
-            // on the server's protocol stdout channel, then re-redirects so subsequent
-            // AL Message()/etc. calls stay captured.
+            // The runtests handler now runs the executor on a Task.Run worker so the
+            // dispatch loop can read stdin concurrently for cancel requests. That makes
+            // `output` a shared resource — the worker writes test events while the
+            // dispatch loop may write a cancel ack on the same stream. We serialize all
+            // writes through `_outputLock` (via WriteLineAsync) to keep NDJSON intact.
+            //
+            // Console.SetOut/SetError below are AppDomain-global; setting them here on
+            // the dispatch thread and restoring after the worker completes is safe
+            // because no other request runs on this server while runtests is in flight
+            // (the side-channel only allows `cancel`, which doesn't touch Console).
             var realConsoleOut = Console.Out;
             var realConsoleErr = Console.Error;
             var redirectedOut = new StringWriter();
@@ -283,10 +410,20 @@ public class AlRunnerServer
                 void OnTestComplete(TestResult t)
                 {
                     allResults.Add(t);
-                    // Write directly to the protocol writer; Console.Out is currently
-                    // redirected and so is unsafe to use here.
-                    output.WriteLine(SerializeTestEvent(t));
-                    output.Flush();
+                    // Write the protocol line under the output lock so we don't interleave
+                    // with a concurrent cancel-ack write from the dispatch loop. Console.Out
+                    // is currently redirected and is unsafe to use here.
+                    var payload = SerializeTestEvent(t);
+                    _outputLock.Wait();
+                    try
+                    {
+                        output.WriteLine(payload);
+                        output.Flush();
+                    }
+                    finally
+                    {
+                        _outputLock.Release();
+                    }
                 }
 
                 // Per-test isolation: the AL runtime captures Message() output via
@@ -294,12 +431,16 @@ public class AlRunnerServer
                 // opt-in). Message() also calls Console.WriteLine for legacy CLI
                 // consumers; we redirect Console.Out above so those legacy writes
                 // don't corrupt our NDJSON stream.
-                Executor.RunTests(
+                //
+                // Run the executor on the thread pool so the dispatch loop in RunAsync
+                // can keep awaiting stdin reads. Without this, the synchronous executor
+                // would block the dispatch task and make a mid-run cancel impossible.
+                await Task.Run(() => Executor.RunTests(
                     assembly!,
                     captureValues: request.CaptureValues == true,
                     filter: filter,
                     onTestComplete: OnTestComplete,
-                    cancellationToken: ct);
+                    cancellationToken: ct));
             }
             finally
             {
@@ -321,7 +462,7 @@ public class AlRunnerServer
                 CoverageReport.WriteCobertura("cobertura.xml", sourceSpans, hitStmts, totalStmts, scopeToObject);
             }
 
-            await output.WriteLineAsync(SerializeSummary(
+            await WriteLineAsync(output, SerializeSummary(
                 allResults,
                 Executor.ExitCode(allResults),
                 cached,
@@ -329,7 +470,6 @@ public class AlRunnerServer
                 compilationErrors,
                 coverage,
                 ct.IsCancellationRequested));
-            await output.FlushAsync();
         }
         finally
         {
@@ -342,11 +482,13 @@ public class AlRunnerServer
     /// Handle the <c>cancel</c> command. Signals the CancellationTokenSource that belongs
     /// to the currently-active <c>runtests</c> request, if any.
     ///
-    /// Because the dispatch loop is sequential, a cancel command can only arrive AFTER a
-    /// runtests request has fully completed (and its CTS has been disposed and nulled in
-    /// the finally block). The noop=true path is therefore the common case. The noop=false
-    /// path would only be reached if a future extension makes the loop non-sequential —
-    /// at that point this handler already does the right thing.
+    /// The dispatch loop in <see cref="RunAsync"/> is concurrency-aware while a
+    /// <c>runtests</c> handler streams: a cancel arriving on stdin is dispatched inline,
+    /// in parallel with the executor running on a thread-pool worker. That makes the
+    /// race between snapshot+Cancel here and the runtests finally-block disposing the
+    /// CTS real, which is why the <see cref="ObjectDisposedException"/> catch below is
+    /// reachable (and not just defensive). When the request had already finished by the
+    /// time we observe the field, treat the cancel as a noop.
     /// </summary>
     private string HandleCancel()
     {
