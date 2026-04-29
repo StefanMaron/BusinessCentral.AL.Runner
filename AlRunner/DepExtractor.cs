@@ -1028,6 +1028,18 @@ public static class DepExtractor
             }
         }
 
+        // Page-part references inside page/pageextension layouts:
+        //   part(Control1; "Target Page") { ... }
+        // Without this, AL0185 "Page 'X' is missing" fires whenever the part target is
+        // not independently reached by some other path. PagePartSyntax.PartName is an
+        // ObjectNameOrIdSyntax — its full text is the quoted target name (or numeric id).
+        foreach (var pagePart in root.DescendantNodes().OfType<PagePartSyntax>())
+        {
+            var name = UnquoteIdentifier(pagePart.PartName?.ToFullString().Trim());
+            if (!string.IsNullOrEmpty(name) && !name.All(char.IsDigit))
+                result.Pages.Add(name);
+        }
+
         // Extension object base references: `pageextension ... extends "X"` means the slice
         // must contain the base object "X" so the extension can compile against it.
         foreach (var extObj in root.DescendantNodes().OfType<ApplicationObjectExtensionSyntax>())

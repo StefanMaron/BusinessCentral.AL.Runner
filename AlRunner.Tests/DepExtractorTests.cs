@@ -1179,4 +1179,250 @@ public class DepExtractorTests
                 if (Directory.Exists(d)) Directory.Delete(d, true);
         }
     }
+
+    // -----------------------------------------------------------------------
+    // BFS — page part target names must be pulled in by ExtractObjectReferences
+    // (so AL0185 "Page 'X' is missing" never fires for page-part references).
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A dep page in the slice has <c>part(Control1; "PartTarget") { ... }</c> in its layout.
+    /// The BFS must record "PartTarget" as a referenced page so the part target file
+    /// is pulled into the slice.
+    /// </summary>
+    [Fact]
+    public void ExtractDeps_BFS_PullsInPagePartTarget()
+    {
+        var depDir = Path.Combine(Path.GetTempPath(), "al-bfs-pp-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir = Path.Combine(Path.GetTempPath(), "al-bfs-pp-out-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir = Path.Combine(Path.GetTempPath(), "al-bfs-pp-ext-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(depDir);
+            Directory.CreateDirectory(extDir);
+
+            File.WriteAllText(Path.Combine(depDir, "MainPage.al"), """
+                page 50500 "MainPage"
+                {
+                    PageType = Card;
+                    layout
+                    {
+                        area(content)
+                        {
+                            part(Control1; "PartTarget") { }
+                        }
+                    }
+                }
+                """);
+            File.WriteAllText(Path.Combine(depDir, "PartTarget.al"), """
+                page 50501 "PartTarget"
+                {
+                    PageType = ListPart;
+                }
+                """);
+
+            // Extension references MainPage; PartTarget is reached only via the page part.
+            File.WriteAllText(Path.Combine(extDir, "MyExt.al"), """
+                pageextension 50100 "MainPage Ext" extends "MainPage" { }
+                """);
+
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depDir }, outDir);
+
+            Assert.Equal(0, rc);
+            var files = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+            Assert.Contains(files, f =>
+            {
+                var c = File.ReadAllText(f);
+                return c.Contains("page ") && c.Contains("\"PartTarget\"");
+            });
+        }
+        finally
+        {
+            foreach (var d in new[] { depDir, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
+    /// <summary>
+    /// Negative direction: when no path in the slice reaches the page that hosts the
+    /// page part, the part target must NOT be pulled in.
+    /// </summary>
+    [Fact]
+    public void ExtractDeps_BFS_DoesNotPullPagePartTarget_WhenMainPageNotReached()
+    {
+        var depDir = Path.Combine(Path.GetTempPath(), "al-bfs-ppn-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir = Path.Combine(Path.GetTempPath(), "al-bfs-ppn-out-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir = Path.Combine(Path.GetTempPath(), "al-bfs-ppn-ext-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(depDir);
+            Directory.CreateDirectory(extDir);
+
+            File.WriteAllText(Path.Combine(depDir, "MainPage.al"), """
+                page 50500 "MainPage"
+                {
+                    PageType = Card;
+                    layout
+                    {
+                        area(content)
+                        {
+                            part(Control1; "PartTarget") { }
+                        }
+                    }
+                }
+                """);
+            File.WriteAllText(Path.Combine(depDir, "PartTarget.al"), """
+                page 50501 "PartTarget"
+                {
+                    PageType = ListPart;
+                }
+                """);
+            File.WriteAllText(Path.Combine(depDir, "OtherTable.al"),
+                "table 50500 \"Other Table\" { fields { field(1; \"No.\"; Code[20]) { } } }");
+
+            // Extension references "Other Table" only — neither MainPage nor PartTarget
+            // is reachable through the BFS frontier.
+            File.WriteAllText(Path.Combine(extDir, "MyExt.al"), """
+                codeunit 50010 "My Codeunit"
+                {
+                    procedure Run() var R: Record "Other Table"; begin R.FindFirst(); end;
+                }
+                """);
+
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depDir }, outDir);
+
+            Assert.Equal(0, rc);
+            var files = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+            Assert.DoesNotContain(files, f =>
+            {
+                var c = File.ReadAllText(f);
+                return c.Contains("page ") && c.Contains("\"PartTarget\"");
+            });
+            Assert.DoesNotContain(files, f =>
+            {
+                var c = File.ReadAllText(f);
+                return c.Contains("page ") && c.Contains("\"MainPage\"");
+            });
+        }
+        finally
+        {
+            foreach (var d in new[] { depDir, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
+    /// <summary>
+    /// Same as <see cref="ExtractDeps_BFS_PullsInPagePartTarget"/> but the page-part
+    /// reference is inside a <c>pageextension</c> body rather than a <c>page</c>.
+    /// </summary>
+    [Fact]
+    public void ExtractDeps_BFS_PullsInPageExtensionPartTarget()
+    {
+        var depDir = Path.Combine(Path.GetTempPath(), "al-bfs-pep-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir = Path.Combine(Path.GetTempPath(), "al-bfs-pep-out-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir = Path.Combine(Path.GetTempPath(), "al-bfs-pep-ext-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(depDir);
+            Directory.CreateDirectory(extDir);
+
+            File.WriteAllText(Path.Combine(depDir, "BasePage.al"), """
+                page 50600 "BasePage"
+                {
+                    PageType = Card;
+                }
+                """);
+            File.WriteAllText(Path.Combine(depDir, "BasePageExt.al"), """
+                pageextension 50601 "BasePage Ext" extends "BasePage"
+                {
+                    layout
+                    {
+                        addlast(content)
+                        {
+                            part(Control1; "PartTarget") { }
+                        }
+                    }
+                }
+                """);
+            File.WriteAllText(Path.Combine(depDir, "PartTarget.al"), """
+                page 50602 "PartTarget"
+                {
+                    PageType = ListPart;
+                }
+                """);
+
+            // Extension references BasePage — pulls in BasePageExt (same app/dir),
+            // which references PartTarget through its page-part layout.
+            File.WriteAllText(Path.Combine(extDir, "MyExt.al"), """
+                pageextension 50199 "BasePage Consumer" extends "BasePage" { }
+                """);
+
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depDir }, outDir);
+
+            Assert.Equal(0, rc);
+            var files = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+            Assert.Contains(files, f =>
+            {
+                var c = File.ReadAllText(f);
+                return c.Contains("page ") && c.Contains("\"PartTarget\"");
+            });
+        }
+        finally
+        {
+            foreach (var d in new[] { depDir, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
+    /// <summary>
+    /// Unit-level RED→GREEN proof for the BFS extractor: page-part target names
+    /// in a page layout must be recorded as Page references by
+    /// <see cref="DepExtractor.CollectExternalReferences"/>.
+    /// </summary>
+    [Fact]
+    public void CollectReferences_FindsPagePartTargetInPage()
+    {
+        const string source = """
+            page 50500 "MainPage"
+            {
+                PageType = Card;
+                layout
+                {
+                    area(content)
+                    {
+                        part(Control1; "PartTarget") { }
+                    }
+                }
+            }
+            """;
+
+        var refs = DepExtractor.CollectExternalReferences(new[] { source });
+
+        Assert.Contains("PartTarget", refs.Pages, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Same as <see cref="CollectReferences_FindsPagePartTargetInPage"/> but inside
+    /// a <c>pageextension</c> body.
+    /// </summary>
+    [Fact]
+    public void CollectReferences_FindsPagePartTargetInPageExtension()
+    {
+        const string source = """
+            pageextension 50601 "BasePage Ext" extends "BasePage"
+            {
+                layout
+                {
+                    addlast(content)
+                    {
+                        part(Control1; "PartTarget") { }
+                    }
+                }
+            }
+            """;
+
+        var refs = DepExtractor.CollectExternalReferences(new[] { source });
+
+        Assert.Contains("PartTarget", refs.Pages, StringComparer.OrdinalIgnoreCase);
+    }
 }
