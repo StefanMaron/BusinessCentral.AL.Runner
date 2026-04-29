@@ -37,7 +37,16 @@ public static class DepExtractor
     ///   or a path to a directory containing AL source files.
     /// </param>
     /// <param name="outputDir">Directory to write extracted AL files.</param>
-    public static int ExtractDeps(string extensionSrcDir, IEnumerable<string> depSources, string outputDir)
+    /// <param name="packagePaths">
+    ///   Optional symbol packages (.app files or directories containing .app files).
+    ///   When supplied, the packages are loaded during every trial-compile round so
+    ///   that platform tables and other objects declared via package DLLs or embedded
+    ///   AL source are not reported as missing. Objects still missing after all rounds
+    ///   are stub-generated; any that remain in the package-declared set (from
+    ///   SymbolReference.json) are additionally filtered to prevent AL0197 collisions.
+    /// </param>
+    public static int ExtractDeps(string extensionSrcDir, IEnumerable<string> depSources, string outputDir,
+        List<string>? packagePaths = null)
     {
         if (!Directory.Exists(extensionSrcDir))
         {
@@ -131,6 +140,12 @@ public static class DepExtractor
         //    This catches object references that static pattern-matching misses (page parts,
         //    platform tables, edge-case reference patterns). The index makes each resolution
         //    pass O(1); only the trial compile is expensive, and we run it at most ~5 times.
+        //    Resolve package paths once (ResolvePackagePaths may create isolated temp dirs
+        //    for individual .app file inputs; doing it once avoids accumulating temp dirs).
+        var resolvedPkgDirs = (packagePaths is { Count: > 0 })
+            ? AlTranspiler.ResolvePackagePaths(packagePaths, null)
+            : null;
+
         int fixupRound = 0;
         int fixupAdded;
         List<(string TypeName, string Name)> finalMissingObjects = [];
@@ -140,7 +155,7 @@ public static class DepExtractor
             fixupRound++;
             Console.Error.WriteLine($"Compiler fixup round {fixupRound}: trial-compiling {allExtracted.Count} file(s)...");
 
-            var missing = TrialCompileMissing(allExtracted.Values.ToList());
+            var missing = TrialCompileMissing(allExtracted.Values.ToList(), resolvedPkgDirs);
             if (missing.Count == 0) { Console.Error.WriteLine("  No missing objects — slice is complete."); break; }
 
             Console.Error.WriteLine($"  Compiler reports {missing.Count} missing object(s), resolving from index...");
@@ -191,6 +206,23 @@ public static class DepExtractor
         // Stub-generation pass: write blank-shell AL stubs for each truly-unresolvable
         // missing object. Without stubs, consumer locals bind at NavTypeKind.None and
         // crash EmitFieldInitializer in the BC emitter.
+        // First, exclude objects already declared by the symbol packages — generating stubs
+        // for those would cause AL0197 duplicate-declaration errors at compile-dep time.
+        if (finalMissingObjects.Count > 0 && packagePaths is { Count: > 0 })
+        {
+            var packageProvided = CollectPackageDeclaredObjects(packagePaths);
+            if (packageProvided.Count > 0)
+            {
+                var before = finalMissingObjects.Count;
+                finalMissingObjects = finalMissingObjects
+                    .Where(m => !packageProvided.Contains((m.TypeName, m.Name)))
+                    .ToList();
+                var excluded = before - finalMissingObjects.Count;
+                if (excluded > 0)
+                    Console.Error.WriteLine($"  Excluded {excluded} object(s) already declared by symbol packages.");
+            }
+        }
+
         if (finalMissingObjects.Count > 0)
         {
             var stubsSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -486,6 +518,86 @@ public static class DepExtractor
     /// <summary>Strips all non-alphanumeric characters from a name to make it safe for a filename.</summary>
     private static string MakeSafeName(string name) =>
         System.Text.RegularExpressions.Regex.Replace(name, @"[^A-Za-z0-9]", "");
+
+    /// <summary>
+    /// Reads SymbolReference.json from every .app file in the given package paths (files or directories)
+    /// and returns a set of (TypeName, ObjectName) pairs they declare. Used to exclude package-provided
+    /// objects from auto-stub generation so compile-dep does not see AL0197 duplicate-declaration errors.
+    /// </summary>
+    private static HashSet<(string TypeName, string Name)> CollectPackageDeclaredObjects(List<string> packagePaths)
+    {
+        var result = new HashSet<(string, string)>(
+            EqualityComparer<(string, string)>.Create(
+                (a, b) => string.Equals(a.Item1, b.Item1, StringComparison.OrdinalIgnoreCase)
+                       && string.Equals(a.Item2, b.Item2, StringComparison.OrdinalIgnoreCase),
+                x => StringComparer.OrdinalIgnoreCase.GetHashCode(x.Item1)
+                   ^ StringComparer.OrdinalIgnoreCase.GetHashCode(x.Item2)));
+
+        // Map from SymbolReference.json property name → AL type name
+        var sectionToType = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Tables"]    = "Table",
+            ["Pages"]     = "Page",
+            ["Codeunits"] = "Codeunit",
+            ["EnumTypes"] = "Enum",
+            ["Interfaces"] = "Interface",
+            ["Reports"]   = "Report",
+            ["Queries"]   = "Query",
+            ["XmlPorts"]  = "XmlPort",
+        };
+
+        var appFiles = new List<string>();
+        foreach (var p in packagePaths)
+        {
+            if (File.Exists(p) && p.EndsWith(".app", StringComparison.OrdinalIgnoreCase))
+                appFiles.Add(p);
+            else if (Directory.Exists(p))
+                appFiles.AddRange(Directory.GetFiles(p, "*.app", SearchOption.TopDirectoryOnly));
+        }
+
+        foreach (var appPath in appFiles)
+        {
+            try
+            {
+                var fileBytes = File.ReadAllBytes(appPath);
+                int zipOffset = 0;
+                if (fileBytes.Length >= 8
+                    && fileBytes[0] == (byte)'N' && fileBytes[1] == (byte)'A'
+                    && fileBytes[2] == (byte)'V' && fileBytes[3] == (byte)'X')
+                    zipOffset = (int)BitConverter.ToUInt32(fileBytes, 4);
+
+                using var zipStream = new MemoryStream(fileBytes, zipOffset, fileBytes.Length - zipOffset);
+                using var zip = new System.IO.Compression.ZipArchive(zipStream, System.IO.Compression.ZipArchiveMode.Read);
+
+                var symEntry = zip.GetEntry("SymbolReference.json");
+                if (symEntry == null) continue;
+
+                using var reader = new StreamReader(symEntry.Open(), System.Text.Encoding.UTF8);
+                var json = reader.ReadToEnd();
+                if (json.Length > 0 && json[0] == '\uFEFF') json = json[1..]; // strip BOM
+
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                foreach (var (section, typeName) in sectionToType)
+                {
+                    if (!root.TryGetProperty(section, out var arr) || arr.ValueKind != System.Text.Json.JsonValueKind.Array)
+                        continue;
+                    foreach (var item in arr.EnumerateArray())
+                    {
+                        if (item.TryGetProperty("Name", out var nameEl))
+                        {
+                            var name = nameEl.GetString();
+                            if (!string.IsNullOrEmpty(name))
+                                result.Add((typeName, name));
+                        }
+                    }
+                }
+            }
+            catch { /* ignore unreadable packages */ }
+        }
+
+        return result;
+    }
 
     private static void EnqueueTransitiveDeps(
         string source,
@@ -1031,7 +1143,14 @@ public static class DepExtractor
     /// pairs reported as missing by the BC compiler. DotNet misses are ignored — those
     /// are an architectural limit, not resolvable from source.
     /// </summary>
-    private static List<(string TypeName, string Name)> TrialCompileMissing(List<string> sources)
+    /// <param name="resolvedPkgDirs">
+    /// Already-resolved package directories (from <see cref="AlTranspiler.ResolvePackagePaths"/>).
+    /// When provided, the BC compiler loads these packages so that objects declared by
+    /// platform DLLs or embedded AL source inside the packages are not reported as missing.
+    /// </param>
+    private static List<(string TypeName, string Name)> TrialCompileMissing(
+        List<string> sources,
+        List<string>? resolvedPkgDirs = null)
     {
         if (sources.Count == 0) return [];
 
@@ -1040,11 +1159,13 @@ public static class DepExtractor
             .Select(s => StripDotNetProcedures(s, "").Source ?? s)
             .ToList();
 
+        var pkgArg = resolvedPkgDirs is { Count: > 0 } ? resolvedPkgDirs : null;
+
         // Capture stderr from the BC compiler.
         var savedErr = Console.Error;
         var capture = new System.IO.StringWriter();
         Console.SetError(capture);
-        try { AlTranspiler.TranspileMulti(stripped, null, null); }
+        try { AlTranspiler.TranspileMulti(stripped, pkgArg, null); }
         catch { }
         finally { Console.SetError(savedErr); }
 

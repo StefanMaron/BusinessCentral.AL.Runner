@@ -311,17 +311,31 @@ while (argIdx < args.Length)
             var edOutDir = Path.GetFullPath(args[argIdx]);
             argIdx++;
             var edApps = new List<string>();
-            while (argIdx < args.Length && !args[argIdx].StartsWith("-"))
+            var edPkgPaths = new List<string>();
+            while (argIdx < args.Length)
             {
-                edApps.Add(Path.GetFullPath(args[argIdx]));
-                argIdx++;
+                if (args[argIdx] == "--packages" && argIdx + 1 < args.Length)
+                {
+                    argIdx++;
+                    edPkgPaths.Add(Path.GetFullPath(args[argIdx]));
+                    argIdx++;
+                }
+                else if (!args[argIdx].StartsWith("-"))
+                {
+                    edApps.Add(Path.GetFullPath(args[argIdx]));
+                    argIdx++;
+                }
+                else
+                {
+                    argIdx++;
+                }
             }
             if (edApps.Count == 0)
             {
                 Console.Error.WriteLine("Error: --extract-deps requires at least one <app> path");
                 return 1;
             }
-            return AlRunner.DepExtractor.ExtractDeps(edSrcDir, edApps, edOutDir);
+            return AlRunner.DepExtractor.ExtractDeps(edSrcDir, edApps, edOutDir, edPkgPaths.Count > 0 ? edPkgPaths : null);
         }
         case "--compile-dep":
         {

@@ -858,6 +858,89 @@ public class DepExtractorTests
     }
 
     /// <summary>
+    /// When a missing object is declared in a symbol package passed via packagePaths,
+    /// no stub should be generated for it (regression guard for AL0197 collisions).
+    /// </summary>
+    [Fact]
+    public void ExtractDeps_DoesNotGenerateStubs_WhenObjectIsInPackage()
+    {
+        var depRoot  = Path.Combine(Path.GetTempPath(), "al-dep-pkgstub-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir   = Path.Combine(Path.GetTempPath(), "al-out-pkgstub-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir   = Path.Combine(Path.GetTempPath(), "al-ext-pkgstub-" + Guid.NewGuid().ToString("N")[..8]);
+        var pkgDir   = Path.Combine(Path.GetTempPath(), "al-pkg-pkgstub-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(depRoot, "AppA"));
+            Directory.CreateDirectory(extDir);
+            Directory.CreateDirectory(pkgDir);
+
+            // AppA codeunit references "External Page" which is NOT in any depRoot source.
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "AppACodeunit.al"), """
+                codeunit 60200 AppAExternalRef
+                {
+                    procedure DoSomething()
+                    var
+                        p: Page "External Page";
+                    begin
+                    end;
+                }
+                """);
+            File.WriteAllText(Path.Combine(extDir, "Consumer.al"), """
+                codeunit 60299 ConsumerExt
+                {
+                    procedure Run()
+                    begin
+                        Codeunit.Run(Codeunit::AppAExternalRef);
+                    end;
+                }
+                """);
+
+            // Create a synthetic .app package that declares "External Page" in its SymbolReference.json.
+            // Format: NAVX header (8 bytes) + ZIP containing SymbolReference.json.
+            var symRefJson = """
+                {
+                  "Id": "aaaabbbb-1111-2222-3333-ccccddddeeee",
+                  "Name": "TestPackage",
+                  "Publisher": "Test",
+                  "Version": "1.0.0.0",
+                  "Pages": [{"Id": 50001, "Name": "External Page"}]
+                }
+                """;
+            using var ms = new System.IO.MemoryStream();
+            using (var zip = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+            {
+                var entry = zip.CreateEntry("SymbolReference.json");
+                using var es = entry.Open();
+                var bytes = System.Text.Encoding.UTF8.GetBytes(symRefJson);
+                es.Write(bytes, 0, bytes.Length);
+            }
+            var zipBytes = ms.ToArray();
+            var appBytes = new byte[8 + zipBytes.Length];
+            appBytes[0] = (byte)'N'; appBytes[1] = (byte)'A'; appBytes[2] = (byte)'V'; appBytes[3] = (byte)'X';
+            System.BitConverter.GetBytes((uint)8).CopyTo(appBytes, 4);
+            zipBytes.CopyTo(appBytes, 8);
+            File.WriteAllBytes(Path.Combine(pkgDir, "TestPackage_1.0.0.0.app"), appBytes);
+
+            // Pass the package dir so ExtractDeps knows "External Page" is package-provided.
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depRoot }, outDir, new List<string> { pkgDir });
+
+            Assert.Equal(0, rc);
+
+            // Negative: no stub for "External Page" since it is declared by the package.
+            var stubFiles = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories)
+                .Where(f => f.Contains("__GeneratedStubs__", StringComparison.OrdinalIgnoreCase)
+                         && Path.GetFileName(f).StartsWith("ExternalPage", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            Assert.Empty(stubFiles);
+        }
+        finally
+        {
+            foreach (var d in new[] { depRoot, outDir, extDir, pkgDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
+    /// <summary>
     /// When a missing object IS resolvable from the dep index, no stub should be generated.
     /// </summary>
     [Fact]
