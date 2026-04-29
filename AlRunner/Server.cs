@@ -601,7 +601,14 @@ public class AlRunnerServer
             durationMs = t.DurationMs,
             message = t.Message,
             errorKind = t.ErrorKind?.ToString().ToLowerInvariant(),
-            alSourceFile = t.AlSourceFile,
+            // alSourceFile: prefer the deepest user frame's file (set on failing
+            // tests via StackFrameMapper). For passing tests no stack walk runs,
+            // so fall back to the test's owning codeunit file via SourceFileMapper.
+            // The IDE consumer (ALchemist) uses this field to scope inline
+            // capture-value decorations to the editor showing the test's code.
+            alSourceFile = t.AlSourceFile ?? (t.CodeunitName != null
+                ? SourceFileMapper.GetFile(t.CodeunitName)
+                : null),
             alSourceLine = t.AlSourceLine,
             alSourceColumn = t.AlSourceColumn,
             stackFrames = t.StackFrames?.Select(f => new
@@ -619,6 +626,11 @@ public class AlRunnerServer
                 {
                     scopeName = c.ScopeName,
                     objectName = c.ObjectName,
+                    // alSourceFile per capture — the AL file that owns this object.
+                    // ALchemist uses this to scope inline decorations to the
+                    // editor showing the captured assignment, even when the test
+                    // method lives in a different file (e.g. TestCU calls into CU1).
+                    alSourceFile = SourceFileMapper.GetFile(c.ObjectName),
                     variableName = c.VariableName,
                     value = c.Value,
                     statementId = c.StatementId,
