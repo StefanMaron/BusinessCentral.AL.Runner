@@ -556,9 +556,9 @@ public class AlRunnerPipeline
                     sourceFilePaths.Add(Path.GetFullPath(f));
                     groupSources.Add(src);
 
-                    var relativePath = Path.GetRelativePath(Directory.GetCurrentDirectory(), f);
+                    var absolutePath = Path.GetFullPath(f).Replace('\\', '/');
                     foreach (var objName in SourceFileMapper.ParseObjectDeclarations(src))
-                        SourceFileMapper.Register(objName, relativePath);
+                        SourceFileMapper.Register(objName, absolutePath);
                 }
                 var fullPath = Path.GetFullPath(path);
                 inputPaths.Add(fullPath);
@@ -573,9 +573,9 @@ public class AlRunnerPipeline
                 inputPaths.Add(fullPath);
                 inputGroups.Add((fullPath, new List<string> { src }));
 
-                var relativePath = Path.GetRelativePath(Directory.GetCurrentDirectory(), path);
+                var absolutePath = Path.GetFullPath(path).Replace('\\', '/');
                 foreach (var objName in SourceFileMapper.ParseObjectDeclarations(src))
-                    SourceFileMapper.Register(objName, relativePath);
+                    SourceFileMapper.Register(objName, absolutePath);
             }
             else
             {
