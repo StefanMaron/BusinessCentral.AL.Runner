@@ -88,6 +88,10 @@ public sealed class LineDirectiveInjector : CSharpSyntaxRewriter
         var directive = BuildDirectiveTrivia(CurrentScope, stmtIndex.Value);
         if (directive is null) return visited;
 
+        // Re-entry guard: skip if a #line directive is already present.
+        if (visited.GetLeadingTrivia().Any(t => t.IsDirective && t.GetStructure() is LineDirectiveTriviaSyntax))
+            return visited;
+
         return visited.WithLeadingTrivia(
             directive.Value.AddRange(visited.GetLeadingTrivia()));
     }
@@ -106,6 +110,10 @@ public sealed class LineDirectiveInjector : CSharpSyntaxRewriter
 
         var directive = BuildDirectiveTrivia(CurrentScope, stmtIndex.Value);
         if (directive is null) return visited;
+
+        // Re-entry guard: skip if a #line directive is already present.
+        if (visited.GetLeadingTrivia().Any(t => t.IsDirective && t.GetStructure() is LineDirectiveTriviaSyntax))
+            return visited;
 
         return visited.WithLeadingTrivia(
             directive.Value.AddRange(visited.GetLeadingTrivia()));
@@ -186,7 +194,7 @@ public sealed class LineDirectiveInjector : CSharpSyntaxRewriter
 
         // Use ParseLeadingTrivia: reliable across Roslyn versions and avoids
         // having to manually assemble the optional token set for LineDirectiveTrivia.
-        var directiveText = $"#line {pos.Line} \"{normalizedPath}\"\r\n";
+        var directiveText = $"#line {pos.Line} \"{normalizedPath}\"\n";
         return SyntaxFactory.ParseLeadingTrivia(directiveText);
     }
 }
