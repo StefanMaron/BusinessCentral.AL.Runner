@@ -63,10 +63,11 @@ public static class StackFrameMapper
 
     public static AlStackFrame? FindDeepestUserFrame(IReadOnlyList<AlStackFrame> frames)
     {
-        // Walk from the end of the list (outermost / entry-point frame) backwards.
-        // The last user-code frame in the list is the deepest entry point into user code
-        // (e.g. the test method that triggered the call chain).
-        for (var i = frames.Count - 1; i >= 0; i--)
+        // .NET stack traces list the throw site first, then each caller out to the
+        // entry point. The user frame *closest to the throw* is therefore the FIRST
+        // user-code frame in the list — that is the line ALchemist surfaces as the
+        // inline error decoration.
+        for (var i = 0; i < frames.Count; i++)
         {
             if (frames[i].IsUserCode) return frames[i];
         }

@@ -42,7 +42,7 @@ public class StackFrameMapperTests
     }
 
     [Fact]
-    public void FindDeepestUserFrame_ReturnsLastUserFrame()
+    public void FindDeepestUserFrame_ReturnsUserFrameClosestToThrow()
     {
         var trace =
             "   at AlRunner.Runtime.MockRecord.Insert() in mock.cs:line 5\n" +
@@ -53,8 +53,11 @@ public class StackFrameMapperTests
         var frames = StackFrameMapper.Walk(ex);
         var deepest = StackFrameMapper.FindDeepestUserFrame(frames);
         Assert.NotNull(deepest);
-        Assert.Equal("test/AlertEngineTest.al", deepest!.File);
-        Assert.Equal(17, deepest.Line);
+        // The user frame nearest the throw site (mock.cs:5) is AlertEngine.New at line 30,
+        // NOT the test-entry method at line 17. ALchemist surfaces this line as the inline
+        // error decoration so the user lands on the call that triggered the failure.
+        Assert.Equal("src/AlertEngine.Codeunit.al", deepest!.File);
+        Assert.Equal(30, deepest.Line);
     }
 
     [Fact]
