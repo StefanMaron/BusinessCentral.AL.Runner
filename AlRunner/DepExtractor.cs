@@ -1362,6 +1362,35 @@ public static class DepExtractor
             }
         }
 
+        // Quoted-identifier static-call/option-access references — the AL pattern
+        //   "Sales Order Print Option".FromInteger(123)
+        //   "Sales Order Print Option"::"Order Confirmation"
+        // is invisible to the OptionAccess switch above (which only matches bare
+        // keyword prefixes like Codeunit/Page/Enum) and to ordinary record-method
+        // dispatch. The LHS is parsed as an IdentifierName whose Identifier.Text
+        // begins and ends with a literal quote. Treat such names as enum
+        // references — in BC AL, only enums (and codeunits, but those are
+        // resolved through other paths) accept this dotted/coloned static syntax,
+        // and AL string literals use single quotes, so a quoted identifier here
+        // is unambiguously an object name. See DocumentPrint.Codeunit.al for the
+        // canonical Base App example.
+        foreach (var ma in root.DescendantNodes().OfType<MemberAccessExpressionSyntax>())
+        {
+            if (ma.Expression is not IdentifierNameSyntax idn) continue;
+            var raw = idn.Identifier.Text;
+            if (string.IsNullOrEmpty(raw) || raw.Length < 3 || raw[0] != '"') continue;
+            var name = UnquoteIdentifier(raw);
+            if (!string.IsNullOrEmpty(name)) result.Enums.Add(name!);
+        }
+        foreach (var optAccess in root.DescendantNodes().OfType<OptionAccessExpressionSyntax>())
+        {
+            if (optAccess.Expression is not IdentifierNameSyntax idn2) continue;
+            var raw = idn2.Identifier.Text;
+            if (string.IsNullOrEmpty(raw) || raw.Length < 3 || raw[0] != '"') continue;
+            var name = UnquoteIdentifier(raw);
+            if (!string.IsNullOrEmpty(name)) result.Enums.Add(name!);
+        }
+
         // Page-part references inside page/pageextension layouts:
         //   part(Control1; "Target Page") { ... }
         // Without this, AL0185 "Page 'X' is missing" fires whenever the part target is

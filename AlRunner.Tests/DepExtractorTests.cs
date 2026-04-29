@@ -104,6 +104,88 @@ public class DepExtractorTests
         Assert.Contains("Sales-Post", refs.Codeunits, StringComparer.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Quoted-identifier static-call references — the AL pattern
+    /// <c>"Enum Name".FromInteger(123)</c> parses as a MemberAccessExpression
+    /// where the LHS is an IdentifierName carrying a quoted text token.
+    /// Without explicit handling, this reference is invisible to the BFS,
+    /// so the enum is never pulled into the slice and AL0118 fires at compile
+    /// time. Concrete BC 27 example: DocumentPrint.Codeunit.al calls
+    /// <c>"Sales Order Print Option".FromInteger(...)</c> on an enum that lives
+    /// in a separate file.
+    /// </summary>
+    [Fact]
+    public void CollectExternalReferences_QuotedEnumStaticCall_IsCollectedAsEnum()
+    {
+        const string source = """
+            codeunit 99100 "X"
+            {
+                procedure F()
+                var x: Integer;
+                begin
+                    x := "My Enum".FromInteger(123);
+                end;
+            }
+            """;
+
+        var refs = DepExtractor.CollectExternalReferences(new[] { source });
+
+        Assert.Contains("My Enum", refs.Enums, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Companion: <c>"Enum Name"::"Member"</c> parses as OptionAccessExpression
+    /// with a quoted-identifier prefix. The existing OptionAccess switch only
+    /// recognises bare keyword prefixes (Codeunit, Page, …). When the prefix
+    /// itself is a quoted identifier, treat it as an enum reference.
+    /// </summary>
+    [Fact]
+    public void CollectExternalReferences_QuotedEnumOptionAccess_IsCollectedAsEnum()
+    {
+        const string source = """
+            codeunit 99101 "X"
+            {
+                procedure F()
+                begin
+                    if true then
+                        case 1 of
+                            1: exit;
+                        end;
+                    Foo("My Enum"::"Some Value");
+                end;
+                local procedure Foo(v: Variant) begin end;
+            }
+            """;
+
+        var refs = DepExtractor.CollectExternalReferences(new[] { source });
+
+        Assert.Contains("My Enum", refs.Enums, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Negative guard: a regular method call on a record variable
+    /// (<c>Cust.Insert()</c>) must NOT spuriously add "Cust" as an enum.
+    /// Only quoted-identifier LHSes count as object-name references.
+    /// </summary>
+    [Fact]
+    public void CollectExternalReferences_UnquotedMethodCall_DoesNotAddBogusEnum()
+    {
+        const string source = """
+            codeunit 99102 "X"
+            {
+                procedure F()
+                var Cust: Record Customer;
+                begin
+                    Cust.Insert();
+                end;
+            }
+            """;
+
+        var refs = DepExtractor.CollectExternalReferences(new[] { source });
+
+        Assert.DoesNotContain("Cust", refs.Enums, StringComparer.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void CollectReferences_FindsPageRefFromVariableDeclaration()
     {
