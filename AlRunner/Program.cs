@@ -1177,7 +1177,18 @@ public static class AlTranspiler
         }
 
         if (hasErrors)
+        {
+            var parseErrs = parsedResults.SelectMany(r => r.diags)
+                .Where(d => d.Severity == DiagnosticSeverity.Error)
+                .ToList();
+            var firstIds = parseErrs.Take(5)
+                .Select(d => $"{d.Id}: {d.GetMessage().Split('\n', 2)[0]}");
+            Console.Error.WriteLine(
+                $"  [TranspileMulti-NoOutput-A] parse errors blocked compile: " +
+                $"sources={alSources.Count} parseErrors={parseErrs.Count} " +
+                $"firstIds=[{string.Join(" | ", firstIds)}]");
             return null;
+        }
 
         // Extract app identity from input manifest (for correct InternalsVisibleTo resolution)
         var appIdentity = ExtractAppIdentity(inputPaths);
@@ -1621,6 +1632,10 @@ public static class AlTranspiler
                     Console.Error.WriteLine($"  {FormatAlDiagnostic(d, treeToPath)}");
                 if (genuineDuplicates.Count > 10)
                     Console.Error.WriteLine($"  ... and {genuineDuplicates.Count - 10} more");
+                Console.Error.WriteLine(
+                    $"  [TranspileMulti-NoOutput-B] genuine AL0197 duplicates blocked emit: " +
+                    $"genuineDuplicates={genuineDuplicates.Count} totalDeclErrors={declErrors.Count} " +
+                    $"syntaxTrees={syntaxTrees.Count}");
                 return null;
             }
         }
@@ -1630,6 +1645,7 @@ public static class AlTranspiler
 
         var outputter = new CSharpCaptureOutputter();
         EmitResult? emitResult = null;
+        var emitExceptions = new List<Exception>();
         try
         {
             emitResult = compilation.Emit(new EmitOptions(), outputter);
@@ -1647,6 +1663,7 @@ public static class AlTranspiler
                     foreach (var innerInner in innerAgg.Flatten().InnerExceptions)
                     {
                         failedMethods.Add(innerInner.Message);
+                        emitExceptions.Add(innerInner);
                         if (Log.Verbose)
                             Log.Info($"  emit exception: {innerInner}");
                     }
@@ -1654,6 +1671,7 @@ public static class AlTranspiler
                 else
                 {
                     failedMethods.Add(inner.Message);
+                    emitExceptions.Add(inner);
                     if (Log.Verbose)
                         Log.Info($"  emit exception: {inner}");
                 }
@@ -1668,11 +1686,51 @@ public static class AlTranspiler
         if (outputter.CapturedObjects.Count == 0)
         {
             Console.Error.WriteLine("AL transpilation: no C# code was generated.");
+            // [TranspileMulti-NoOutput-C] — root-cause counters for the silent-failure path.
+            // Surface decl/emit data unconditionally so callers don't need Verbose to debug.
+            var allDeclErrors = (compilation != null ? compilation.GetDeclarationDiagnostics() : Enumerable.Empty<Diagnostic>())
+                .Where(d => d.Severity == DiagnosticSeverity.Error)
+                .ToList();
+            int emitErrCount = 0, emitWarnCount = 0, emitInfoCount = 0;
+            List<Diagnostic> emitErrors = new();
             if (emitResult != null)
             {
-                Console.Error.WriteLine("Emit diagnostics:");
-                foreach (var d in emitResult.Diagnostics.Take(30))
+                foreach (var d in emitResult.Diagnostics)
+                {
+                    switch (d.Severity)
+                    {
+                        case DiagnosticSeverity.Error: emitErrCount++; emitErrors.Add(d); break;
+                        case DiagnosticSeverity.Warning: emitWarnCount++; break;
+                        case DiagnosticSeverity.Info: emitInfoCount++; break;
+                    }
+                }
+            }
+            Console.Error.WriteLine(
+                $"  [TranspileMulti-NoOutput-C] zero objects emitted: " +
+                $"compilation={(compilation != null ? "set" : "null")} " +
+                $"syntaxTrees={syntaxTrees.Count} " +
+                $"declErrors={allDeclErrors.Count} " +
+                $"emitExceptions={emitExceptions.Count} " +
+                $"emitDiag(err/warn/info)={emitErrCount}/{emitWarnCount}/{emitInfoCount}");
+            foreach (var d in allDeclErrors.Take(5))
+                Console.Error.WriteLine($"    decl[{d.Id}]: {d.GetMessage().Split('\n', 2)[0]}");
+            foreach (var ex in emitExceptions.Take(3))
+            {
+                var firstFrame = (ex.StackTrace ?? "").Split('\n', 2)[0].Trim();
+                Console.Error.WriteLine($"    emitEx[{ex.GetType().Name}]: {ex.Message} | {firstFrame}");
+            }
+            // Prioritize ERROR-severity emit diagnostics — warnings here drown them out.
+            if (emitErrors.Count > 0)
+            {
+                Console.Error.WriteLine($"Emit error diagnostics ({emitErrors.Count}):");
+                foreach (var d in emitErrors.Take(30))
                     Console.Error.WriteLine($"  {FormatAlDiagnostic(d, treeToPath)}");
+            }
+            else if (emitResult != null)
+            {
+                Console.Error.WriteLine("Emit diagnostics (no errors among them — first 10 by severity):");
+                foreach (var d in emitResult.Diagnostics.OrderByDescending(d => (int)d.Severity).Take(10))
+                    Console.Error.WriteLine($"  [{d.Severity}] {FormatAlDiagnostic(d, treeToPath)}");
             }
             return null;
         }

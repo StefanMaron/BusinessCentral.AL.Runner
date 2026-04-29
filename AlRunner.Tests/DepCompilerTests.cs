@@ -149,4 +149,64 @@ public class DepCompilerTests
                 Directory.Delete(rootDir, true);
         }
     }
+
+    /// <summary>
+    /// Regression for the silent-transpile-failure mode (DWF/Base Application 2026-04):
+    /// when TranspileMulti aborts before producing C# (parse errors, unresolved
+    /// declarations, etc.), CompileDepMultiApp must surface a uniquely-tagged
+    /// [TranspileMulti-NoOutput-X] line so downstream debugging can identify which
+    /// path fired without re-running under a debugger.
+    /// </summary>
+    [Fact]
+    public void CompileDepMultiApp_OnSilentFailure_PrintsRootCauseTag()
+    {
+        var rootDir = Path.Combine(Path.GetTempPath(), "al-runner-silentfail-" + Guid.NewGuid().ToString("N")[..8]);
+        var appDir = Path.Combine(rootDir, "Broken");
+        var outputDir = Path.Combine(rootDir, "out");
+        try
+        {
+            Directory.CreateDirectory(appDir);
+            Directory.CreateDirectory(outputDir);
+
+            File.WriteAllText(Path.Combine(appDir, "app.json"), """
+            {
+              "id": "ccccdddd-cccc-cccc-cccc-cccccccccccc",
+              "name": "Broken",
+              "publisher": "Test",
+              "version": "1.0.0.0"
+            }
+            """);
+
+            // Deliberately malformed AL — unterminated procedure body. Parses with errors,
+            // forcing TranspileMulti down the [TranspileMulti-NoOutput-A] (parse-error) path.
+            File.WriteAllText(Path.Combine(appDir, "Broken.al"),
+                "codeunit 99700 Broken { procedure P() begin this is not valid AL syntax @@@");
+
+            var origErr = Console.Error;
+            using var errCapture = new StringWriter();
+            Console.SetError(errCapture);
+            int result;
+            try
+            {
+                result = DepCompiler.CompileDepMultiApp(rootDir, outputDir, new List<string>());
+            }
+            finally
+            {
+                Console.SetError(origErr);
+            }
+
+            var stderr = errCapture.ToString();
+
+            Assert.NotEqual(0, result);
+            Assert.Contains("[TranspileMulti-NoOutput-", stderr);
+            // CompileDepMultiApp must also dump its own pre-call counters so the call
+            // site is identifiable even if the inner tag is missed.
+            Assert.Contains("[CompileDepMultiApp-NoOutput]", stderr);
+        }
+        finally
+        {
+            if (Directory.Exists(rootDir))
+                Directory.Delete(rootDir, true);
+        }
+    }
 }

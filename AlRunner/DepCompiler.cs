@@ -290,6 +290,11 @@ public static class DepCompiler
 
         if (csharpList == null || csharpList.Count == 0)
         {
+            Console.Error.WriteLine(
+                $"  [CompileDepMultiApp-NoOutput] (single-app) " +
+                $"compilable={compilableSources.Count}/{alSources.Count} " +
+                $"effectivePackages={(effectivePackages?.Count ?? 0)} " +
+                $"name={name}");
             Console.Error.WriteLine($"  AL transpilation produced no output for {name}");
             return 1;
         }
@@ -784,6 +789,12 @@ public static class DepCompiler
                 foreach (var line in diagText.Split('\n').Take(40))
                     Console.Error.WriteLine($"    {line.TrimEnd()}");
             }
+            Console.Error.WriteLine(
+                $"  [CompileDepMultiApp-NoOutput] (multi-app) " +
+                $"compilable={compilableSources.Count}/{alSources.Count} " +
+                $"effectivePackages={(effectivePackages?.Count ?? 0)} " +
+                $"extraRefs={(extraRefs?.Count ?? 0)} " +
+                $"dir={dirName}");
             Console.Error.WriteLine($"  AL transpilation produced no output");
             return 1;
         }
