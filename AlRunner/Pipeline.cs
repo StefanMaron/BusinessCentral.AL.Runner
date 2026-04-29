@@ -764,8 +764,10 @@ public class AlRunnerPipeline
                 // so we can run this unconditionally and avoid a separate code
                 // path for capture vs non-capture runs.
                 var injectedRoot = ValueCaptureInjector.Inject(tree.GetRoot(), name);
-                if (options.IterationTracking)
-                    injectedRoot = IterationInjector.Inject(injectedRoot);
+                // Iteration tracker calls are no-ops when Runtime.IterationTracker.Enabled is false.
+                // Inject unconditionally so cached assemblies serve both iterationTracking=true and
+                // =false requests without recompilation. Pattern mirrors ValueCaptureInjector above.
+                injectedRoot = IterationInjector.Inject(injectedRoot);
                 // Third pass (optional): inject #line directives so portable PDB maps
                 // IL sequence points back to .al file paths.
                 if (options.EmitLineDirectives && lineDirectiveSpans != null && lineDirectiveScopeMap != null)

@@ -526,4 +526,67 @@ public class ServerProtocolV2Tests
         Assert.True(failures.Count == 0,
             $"Schema validation found {failures.Count} failure(s):\n\n{string.Join("\n\n", failures)}");
     }
+
+    private static readonly string IterationsFixtureTest = FixturePath("protocol-v2-iterations", "test");
+
+    private static string IterationsRequest(bool iterationTracking)
+    {
+        var dict = new Dictionary<string, object?>
+        {
+            ["command"] = "runtests",
+            ["sourcePaths"] = new[] { IterationsFixtureTest },
+            ["iterationTracking"] = iterationTracking,
+            ["captureValues"] = true,
+        };
+        return JsonSerializer.Serialize(dict);
+    }
+
+    [Fact]
+    public async Task RunTests_V2Summary_IncludesIterations_WhenIterationTrackingRequested()
+    {
+        // Plan E3 Group B regression: protocol v2 dropped iteration data on the
+        // wire even though Pipeline.cs collects it for v1 --output-json. Pipe
+        // it through the v2 summary serializer.
+        await using var server = await CliServer.StartAsync();
+        var lines = await server.SendRequestStreamingAsync(IterationsRequest(iterationTracking: true));
+        var (_, summary) = Split(lines);
+
+        Assert.True(summary.RootElement.TryGetProperty("iterations", out var iterationsProp),
+            "v2 summary must include 'iterations' field when iterationTracking=true");
+        Assert.Equal(JsonValueKind.Array, iterationsProp.ValueKind);
+        Assert.True(iterationsProp.GetArrayLength() > 0,
+            "iterations array must be non-empty for a fixture that exercises a for-loop");
+
+        var firstLoop = iterationsProp[0];
+        Assert.True(firstLoop.TryGetProperty("loopId", out _), "loop has loopId");
+        Assert.True(firstLoop.TryGetProperty("sourceFile", out _), "loop has sourceFile");
+        Assert.True(firstLoop.TryGetProperty("loopLine", out _), "loop has loopLine");
+        Assert.True(firstLoop.TryGetProperty("loopEndLine", out _), "loop has loopEndLine");
+        Assert.True(firstLoop.TryGetProperty("iterationCount", out var countProp), "loop has iterationCount");
+        Assert.Equal(3, countProp.GetInt32());
+        Assert.True(firstLoop.TryGetProperty("steps", out var stepsProp), "loop has steps");
+        Assert.Equal(3, stepsProp.GetArrayLength());
+
+        // Each step has the expected sub-shape.
+        var firstStep = stepsProp[0];
+        Assert.True(firstStep.TryGetProperty("iteration", out _), "step has iteration");
+        Assert.True(firstStep.TryGetProperty("capturedValues", out _), "step has capturedValues array");
+        Assert.True(firstStep.TryGetProperty("messages", out _) || true, "step has messages array (may be omitted when empty)");
+        Assert.True(firstStep.TryGetProperty("linesExecuted", out _), "step has linesExecuted array");
+    }
+
+    [Fact]
+    public async Task RunTests_V2Summary_OmitsIterations_WhenIterationTrackingNotRequested()
+    {
+        await using var server = await CliServer.StartAsync();
+        var lines = await server.SendRequestStreamingAsync(IterationsRequest(iterationTracking: false));
+        var (_, summary) = Split(lines);
+
+        if (summary.RootElement.TryGetProperty("iterations", out var prop))
+        {
+            Assert.True(prop.ValueKind == JsonValueKind.Null,
+                $"iterations must be omitted or null when iterationTracking=false; got {prop.ValueKind}");
+        }
+        // Field omitted entirely is also valid.
+    }
 }

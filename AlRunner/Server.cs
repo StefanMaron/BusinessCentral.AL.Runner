@@ -401,10 +401,23 @@ public class AlRunnerServer
             // (the side-channel only allows `cancel`, which doesn't touch Console).
             var realConsoleOut = Console.Out;
             var realConsoleErr = Console.Error;
-            var redirectedOut = new StringWriter();
-            var redirectedErr = new StringWriter();
-            Console.SetOut(redirectedOut);
-            Console.SetError(redirectedErr);
+            Console.SetOut(TextWriter.Null);
+            Console.SetError(TextWriter.Null);
+
+            // Enable iteration tracking for the streaming Executor.RunTests call when
+            // requested. The compiler-side IterationInjector always injects tracker
+            // calls (see Pipeline.cs); these calls no-op when the tracker is disabled,
+            // so we Reset+Enable here to capture loop data fresh per request, then
+            // Disable in the finally below. Cache-miss runs already had Pipeline.Run
+            // execute its own pass of the tests, but we discard whatever was tracked
+            // there (we Reset before the streaming run) so the loops we report come
+            // from the same execution as the streaming test events.
+            var iterationTrackingRequested = request.IterationTracking == true;
+            if (iterationTrackingRequested)
+            {
+                Runtime.IterationTracker.Reset();
+                Runtime.IterationTracker.Enable();
+            }
             try
             {
                 void OnTestComplete(TestResult t)
@@ -446,6 +459,14 @@ public class AlRunnerServer
             {
                 Console.SetOut(realConsoleOut);
                 Console.SetError(realConsoleErr);
+                if (iterationTrackingRequested)
+                    Runtime.IterationTracker.Disable();
+            }
+
+            List<Runtime.IterationTracker.LoopRecord>? iterationLoops = null;
+            if (iterationTrackingRequested)
+            {
+                iterationLoops = Runtime.IterationTracker.GetLoops();
             }
 
             // Coverage emission (only when requested AND we have the source-span data).
@@ -469,6 +490,8 @@ public class AlRunnerServer
                 changedFiles,
                 compilationErrors,
                 coverage,
+                iterationLoops,
+                scopeToObject,
                 ct.IsCancellationRequested));
         }
         finally
@@ -651,6 +674,8 @@ public class AlRunnerServer
         List<string>? changedFiles,
         Dictionary<string, List<string>>? compilationErrors,
         List<FileCoverage>? coverage,
+        List<Runtime.IterationTracker.LoopRecord>? iterations,
+        Dictionary<string, string>? scopeToObject,
         bool cancelled)
     {
         return JsonSerializer.Serialize(new
@@ -673,6 +698,35 @@ public class AlRunnerServer
                 })
                 : null,
             coverage = (coverage != null && coverage.Count > 0) ? coverage : null,
+            iterations = (iterations != null && iterations.Count > 0)
+                ? iterations.Select(loop => new
+                {
+                    loopId = $"L{loop.LoopId}",
+                    sourceFile = scopeToObject != null
+                        ? SourceFileMapper.GetFileForScope(loop.ScopeName, scopeToObject)
+                        : null,
+                    loopLine = SourceLineMapper.GetAlLineFromStatement(loop.ScopeName, loop.SourceStartLine) ?? loop.SourceStartLine,
+                    loopEndLine = SourceLineMapper.GetAlLineFromStatement(loop.ScopeName, loop.SourceEndLine) ?? loop.SourceEndLine,
+                    parentLoopId = loop.ParentLoopId.HasValue ? $"L{loop.ParentLoopId}" : (string?)null,
+                    parentIteration = loop.ParentIteration,
+                    iterationCount = loop.IterationCount,
+                    steps = loop.Steps.Select(step => new
+                    {
+                        iteration = step.Iteration,
+                        capturedValues = step.CapturedValues.Select(cv => new
+                        {
+                            variableName = cv.VariableName,
+                            value = cv.Value,
+                        }),
+                        messages = step.Messages.Count > 0 ? step.Messages : null,
+                        linesExecuted = step.LinesExecuted
+                            .Select(id => SourceLineMapper.GetAlLineFromStatement(loop.ScopeName, id) ?? id)
+                            .Distinct()
+                            .OrderBy(l => l)
+                            .ToList(),
+                    }),
+                })
+                : null,
             protocolVersion = 2,
         }, JsonOpts);
     }
@@ -943,6 +997,10 @@ public class ServerRequest
     /// <summary>Protocol-v2: when true, also write a Cobertura XML coverage report.</summary>
     [JsonPropertyName("cobertura")]
     public bool? Cobertura { get; set; }
+
+    /// <summary>Protocol-v2: when true, capture per-loop iteration data and emit it on the summary.</summary>
+    [JsonPropertyName("iterationTracking")]
+    public bool? IterationTracking { get; set; }
 
     /// <summary>Optional negotiated protocol version (currently informational).</summary>
     [JsonPropertyName("protocolVersion")]
