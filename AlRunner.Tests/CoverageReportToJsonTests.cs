@@ -311,6 +311,54 @@ public class CoverageReportToJsonTests
     // 8. Deterministic ordering: files by path, lines by number within file
     // -----------------------------------------------------------------------
     [Fact]
+    public void ToJson_RecordsSerializeWithCamelCasePropertyNames()
+    {
+        SourceFileMapper.Register("T6_S_Cam", "src/Cam.al");
+        var sourceSpans = new Dictionary<(string Scope, int StmtIndex), int>
+        {
+            [("T6_S_Cam_Scope", 0)] = 5,
+        };
+        var hit = new HashSet<(string Type, int Id)> { ("T6_S_Cam_Scope", 0) };
+        var total = new HashSet<(string Type, int Id)> { ("T6_S_Cam_Scope", 0) };
+        var scopeToObject = new Dictionary<string, string> { ["T6_S_Cam_Scope"] = "T6_S_Cam" };
+
+        var result = CoverageReport.ToJson(sourceSpans, hit, total, scopeToObject);
+        var json = System.Text.Json.JsonSerializer.Serialize(result);
+
+        // Schema-mandated camelCase shape
+        Assert.Contains("\"file\":", json);
+        Assert.Contains("\"lines\":", json);
+        Assert.Contains("\"totalStatements\":", json);
+        Assert.Contains("\"hitStatements\":", json);
+        Assert.Contains("\"line\":", json);
+        Assert.Contains("\"hits\":", json);
+        // PascalCase MUST NOT appear (would happen with default options + no attributes)
+        Assert.DoesNotContain("\"File\":", json);
+        Assert.DoesNotContain("\"Lines\":", json);
+        Assert.DoesNotContain("\"TotalStatements\":", json);
+    }
+
+    [Fact]
+    public void ToJson_ScopeMappedButObjectNotRegistered_SkipsScope()
+    {
+        // scopeToObject has the scope; the AL object name is NOT in SourceFileMapper.
+        // GetFile returns null, scope is silently skipped.
+        var sourceSpans = new Dictionary<(string Scope, int StmtIndex), int>
+        {
+            [("T6_GhostScope", 0)] = 1,
+        };
+        var hit = new HashSet<(string Type, int Id)>();
+        var total = new HashSet<(string Type, int Id)> { ("T6_GhostScope", 0) };
+        var scopeToObject = new Dictionary<string, string>
+        {
+            ["T6_GhostScope"] = "T6_NonexistentObject",  // never registered
+        };
+
+        var result = CoverageReport.ToJson(sourceSpans, hit, total, scopeToObject);
+        Assert.Empty(result);
+    }
+
+    [Fact]
     public void ToJson_DeterministicOrdering_FilesByPathLinesByNumber()
     {
         SourceFileMapper.Register("T6_ObjZ", "src/zzz.al");
