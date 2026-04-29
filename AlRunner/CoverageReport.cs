@@ -224,4 +224,109 @@ public static class CoverageReport
         writer.WriteEndElement(); // packages
         writer.WriteEndElement(); // coverage
     }
+
+    /// <summary>
+    /// Build structured coverage data as a list of <see cref="FileCoverage"/> records,
+    /// one per AL source file that contains at least one executable statement.
+    ///
+    /// Mirrors the grouping logic of <see cref="WriteCobertura"/> but returns structured
+    /// data instead of writing XML. Key differences from Cobertura output:
+    /// <list type="bullet">
+    ///   <item>Hit counts per line are <b>summed</b> across all statements on that line
+    ///         (not clamped to max 1), preserving multi-statement detail for callers.</item>
+    ///   <item>Every reachable line (i.e., every line that maps to a totalStatement with
+    ///         a resolvable file) is included, even when its hit count is zero, so callers
+    ///         can tell which lines are executable but uncovered.</item>
+    ///   <item>Output is deterministic: files ordered by path, lines within each file
+    ///         ordered by line number.</item>
+    /// </list>
+    ///
+    /// Library and stub scopes (those with no entry in <paramref name="scopeToObject"/>
+    /// or whose mapped object has no registered file) are silently excluded.
+    /// </summary>
+    /// <param name="sourceSpans">Maps (scope class name, statement index) to 1-based AL line number.</param>
+    /// <param name="hitStatements">Set of (scope, stmtIdx) tuples that executed during the test run.</param>
+    /// <param name="totalStatements">Set of (scope, stmtIdx) tuples that are real executable statements.
+    /// Entries absent from this set (e.g. var-decls, blank-line spans) are skipped.</param>
+    /// <param name="scopeToObject">Scope class name → AL object name. Pass <c>null</c> when no
+    /// file-mapping information is available; in that case the result will always be empty.</param>
+    /// <returns>Sorted list of <see cref="FileCoverage"/> records.</returns>
+    public static List<FileCoverage> ToJson(
+        Dictionary<(string Scope, int StmtIndex), int> sourceSpans,
+        HashSet<(string Type, int Id)> hitStatements,
+        HashSet<(string Type, int Id)> totalStatements,
+        Dictionary<string, string>? scopeToObject = null)
+    {
+        // file → line → summed hit count
+        var fileLines = new Dictionary<string, Dictionary<int, int>>();
+        // file → (totalStmts, hitStmts)
+        var fileTotals = new Dictionary<string, (int Total, int Hit)>();
+
+        foreach (var ((scope, stmtIdx), line) in sourceSpans)
+        {
+            // Skip var-decls and other non-executable spans
+            if (!totalStatements.Contains((scope, stmtIdx)))
+                continue;
+
+            // Resolve file path via scopeToObject + SourceFileMapper
+            if (scopeToObject == null)
+                continue;
+            if (!scopeToObject.TryGetValue(scope, out var objectName))
+                continue;
+            var filePath = SourceFileMapper.GetFile(objectName);
+            if (filePath == null)
+                continue;
+
+            bool hit = hitStatements.Contains((scope, stmtIdx));
+
+            // Aggregate per-line hit counts (sum, not max-1)
+            if (!fileLines.TryGetValue(filePath, out var lines))
+            {
+                lines = new Dictionary<int, int>();
+                fileLines[filePath] = lines;
+            }
+            lines[line] = lines.GetValueOrDefault(line, 0) + (hit ? 1 : 0);
+
+            // Accumulate file-level totals
+            fileTotals.TryGetValue(filePath, out var totals);
+            fileTotals[filePath] = (totals.Total + 1, totals.Hit + (hit ? 1 : 0));
+        }
+
+        // Build sorted result
+        return fileLines
+            .OrderBy(kv => kv.Key, StringComparer.Ordinal)
+            .Select(kv =>
+            {
+                var (total, hitCount) = fileTotals[kv.Key];
+                var sortedLines = kv.Value
+                    .OrderBy(lv => lv.Key)
+                    .Select(lv => new LineCoverage(lv.Key, lv.Value))
+                    .ToList();
+                return new FileCoverage(kv.Key, sortedLines, total, hitCount);
+            })
+            .ToList();
+    }
 }
+
+/// <summary>
+/// Structured coverage data for a single AL source file.
+/// </summary>
+/// <param name="File">Relative path to the AL source file.</param>
+/// <param name="Lines">Per-line coverage entries, ordered by line number.
+/// Every executable line is included even if its hit count is zero.</param>
+/// <param name="TotalStatements">Number of executable statements in this file.</param>
+/// <param name="HitStatements">Number of those statements that were executed.</param>
+public record FileCoverage(
+    string File,
+    List<LineCoverage> Lines,
+    int TotalStatements,
+    int HitStatements
+);
+
+/// <summary>
+/// Hit count for a single AL source line.
+/// </summary>
+/// <param name="Line">1-based AL source line number.</param>
+/// <param name="Hits">Number of statements on this line that were executed during the run.
+/// Multiple statements on the same line sum their individual 0/1 hits.</param>
+public record LineCoverage(int Line, int Hits);
