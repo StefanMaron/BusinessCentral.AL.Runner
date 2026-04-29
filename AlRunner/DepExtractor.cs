@@ -1032,6 +1032,9 @@ public static class DepExtractor
                 case "report":   result.Reports.Add(name);   break;
                 case "query":    result.Queries.Add(name);   break;
                 case "xmlport":  result.XmlPorts.Add(name);  break;
+                // `DATABASE::"<Name>"` is the AL idiom for retrieving a table id
+                // at runtime — semantically a table reference.
+                case "database": result.Tables.Add(name);    break;
                 // `Enum::RegexOptions::IgnoreCase` parses as nested OptionAccess; the inner
                 // node has prefix "Enum" + name "RegexOptions" — pick that up so the enum
                 // gets pulled into the slice.

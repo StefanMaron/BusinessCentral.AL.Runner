@@ -1584,4 +1584,151 @@ public class DepExtractorTests
         Assert.Contains("Var XmlPort Target", refs.XmlPorts);
     }
 
+    // AL idiom for getting a runtime table id: DATABASE::"<Name>". The base BC
+    // compiler only flags this as AL0118 in the EMIT phase (not the
+    // declaration-resolution phase that the runner's fixup loop scans), so any
+    // missing target slips through extract-deps silently and surfaces only
+    // when compile-dep tries to emit. Treat DATABASE::X exactly like
+    // Page::X / Codeunit::X — collect the right-hand side as a Table reference.
+    [Fact]
+    public void CollectExternalReferences_DatabaseColonColonReference_IsCollectedAsTable()
+    {
+        var src = """
+            codeunit 60900 "Database ColonColon Caller"
+            {
+                procedure Run()
+                var
+                    Eval: Record "Data Classification Eval. Data";
+                begin
+                    Eval.SetTableFieldsToNormal(DATABASE::"My Quoted Table");
+                    Eval.SetTableFieldsToNormal(DATABASE::MyUnquotedTable);
+                end;
+            }
+            """;
+
+        var refs = DepExtractor.CollectExternalReferences(new[] { src });
+
+        Assert.Contains("My Quoted Table",  refs.Tables, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("MyUnquotedTable",  refs.Tables, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Integration-level proof: a dep codeunit body uses
+    /// <c>DATABASE::"PartTarget"</c>, the part-target table is a separate dep
+    /// file, and the extension only references the codeunit. The BFS must pull
+    /// the table file into the slice.
+    /// </summary>
+    [Fact]
+    public void ExtractDeps_BFS_PullsInDatabaseColonColonTarget()
+    {
+        var depDir = Path.Combine(Path.GetTempPath(), "al-bfs-db-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir = Path.Combine(Path.GetTempPath(), "al-bfs-db-out-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir = Path.Combine(Path.GetTempPath(), "al-bfs-db-ext-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(depDir);
+            Directory.CreateDirectory(extDir);
+
+            File.WriteAllText(Path.Combine(depDir, "Caller.al"), """
+                codeunit 50500 "Caller"
+                {
+                    procedure Run(): Integer
+                    begin
+                        exit(DATABASE::"PartTarget");
+                    end;
+                }
+                """);
+            File.WriteAllText(Path.Combine(depDir, "PartTarget.al"), """
+                table 50501 "PartTarget"
+                {
+                    fields { field(1; PK; Code[20]) { } }
+                    keys   { key(PK; PK) { Clustered = true; } }
+                }
+                """);
+
+            File.WriteAllText(Path.Combine(extDir, "MyExt.al"), """
+                codeunit 50100 "Caller Wrapper"
+                {
+                    procedure Wrap()
+                    var
+                        C: Codeunit "Caller";
+                    begin
+                        C.Run();
+                    end;
+                }
+                """);
+
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depDir }, outDir);
+
+            Assert.Equal(0, rc);
+            var files = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+            Assert.Contains(files, f =>
+            {
+                var c = File.ReadAllText(f);
+                return c.Contains("table ") && c.Contains("\"PartTarget\"");
+            });
+        }
+        finally
+        {
+            foreach (var d in new[] { depDir, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
+    /// <summary>
+    /// Negative direction for <see cref="ExtractDeps_BFS_PullsInDatabaseColonColonTarget"/>:
+    /// when the extension does NOT reference the codeunit holding the
+    /// <c>DATABASE::"PartTarget"</c>, the part-target table must NOT be
+    /// pulled into the slice.
+    /// </summary>
+    [Fact]
+    public void ExtractDeps_BFS_DoesNotPullDatabaseColonColonTarget_WhenCallerNotReached()
+    {
+        var depDir = Path.Combine(Path.GetTempPath(), "al-bfs-dbn-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir = Path.Combine(Path.GetTempPath(), "al-bfs-dbn-out-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir = Path.Combine(Path.GetTempPath(), "al-bfs-dbn-ext-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(depDir);
+            Directory.CreateDirectory(extDir);
+
+            File.WriteAllText(Path.Combine(depDir, "Caller.al"), """
+                codeunit 50500 "Caller"
+                {
+                    procedure Run(): Integer
+                    begin
+                        exit(DATABASE::"PartTarget");
+                    end;
+                }
+                """);
+            File.WriteAllText(Path.Combine(depDir, "PartTarget.al"), """
+                table 50501 "PartTarget"
+                {
+                    fields { field(1; PK; Code[20]) { } }
+                    keys   { key(PK; PK) { Clustered = true; } }
+                }
+                """);
+
+            // Extension references nothing in the dep dir.
+            File.WriteAllText(Path.Combine(extDir, "MyExt.al"), """
+                codeunit 50100 "Standalone" { procedure Noop() begin end; }
+                """);
+
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depDir }, outDir);
+
+            Assert.Equal(0, rc);
+            var files = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+            Assert.DoesNotContain(files, f =>
+            {
+                var c = File.ReadAllText(f);
+                return c.Contains("table ") && c.Contains("\"PartTarget\"");
+            });
+        }
+        finally
+        {
+            foreach (var d in new[] { depDir, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
 }
