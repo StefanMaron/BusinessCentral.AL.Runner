@@ -639,6 +639,128 @@ public class DepExtractorTests
         Assert.NotEqual(0, rc);
     }
 
+    /// <summary>
+    /// Cross-app enum extension whose host app is itself in the slice (because the
+    /// consumer references some other object from that app) MUST be pulled in.
+    /// Otherwise downstream code that uses the extended enum value fails to compile
+    /// (AL0132). Layout: AppA defines enum Color; AppB defines codeunit Painter that
+    /// uses Color::Red AND enumextension ColorExt extending Color with a Red value.
+    /// Consumer references Painter — both Painter and ColorExt should be in the slice.
+    /// </summary>
+    [Fact]
+    public void ExtractDeps_PullsCrossAppEnumExtension_WhenExtensionAppInSlice()
+    {
+        var depRoot = Path.Combine(Path.GetTempPath(), "al-dep-xenum-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir  = Path.Combine(Path.GetTempPath(), "al-out-xenum-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir  = Path.Combine(Path.GetTempPath(), "al-ext-xenum-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(depRoot, "AppA"));
+            Directory.CreateDirectory(Path.Combine(depRoot, "AppB"));
+            Directory.CreateDirectory(extDir);
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "Color.al"),
+                "enum 60050 Color { value(0; None) { } }");
+            File.WriteAllText(Path.Combine(depRoot, "AppB", "ColorExt.al"),
+                "enumextension 60051 ColorExt extends Color { value(1; Red) { } }");
+            File.WriteAllText(Path.Combine(depRoot, "AppB", "Painter.al"), """
+                codeunit 60052 Painter
+                {
+                    procedure Paint() var c: Enum Color; begin c := Enum::Color::Red; end;
+                }
+                """);
+            File.WriteAllText(Path.Combine(extDir, "MyExt.al"), """
+                codeunit 60099 "My Codeunit"
+                {
+                    procedure Run() begin Codeunit.Run(Codeunit::Painter); end;
+                }
+                """);
+
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depRoot }, outDir);
+
+            Assert.Equal(0, rc);
+            var files = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+            // Positive: cross-app codeunit pulled by direct ref.
+            Assert.Contains(files, f => File.ReadAllText(f).Contains("codeunit 60052 Painter"));
+            // Positive: base enum pulled by transitive ref from Painter.
+            Assert.Contains(files, f => File.ReadAllText(f).Contains("enum 60050 Color"));
+            // The fix: cross-app enumextension whose app is already in the slice IS pulled.
+            Assert.Contains(files, f => File.ReadAllText(f).Contains("enumextension 60051 ColorExt"));
+        }
+        finally
+        {
+            foreach (var d in new[] { depRoot, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
+    /// <summary>
+    /// Cross-app page extension whose host app is itself in the slice MUST be pulled in.
+    /// Otherwise event subscribers in the consumer app (or in dependent apps) referring
+    /// to a publisher declared inside the page extension fail with AL0280. Layout: AppA
+    /// defines page BasePage; AppB defines codeunit PageRunner that runs BasePage AND
+    /// pageextension BasePageExt with an action on the page. Consumer references
+    /// PageRunner — BasePage, PageRunner and BasePageExt all belong in the slice.
+    /// </summary>
+    [Fact]
+    public void ExtractDeps_PullsCrossAppPageExtension_WhenExtensionAppInSlice()
+    {
+        var depRoot = Path.Combine(Path.GetTempPath(), "al-dep-xpage-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir  = Path.Combine(Path.GetTempPath(), "al-out-xpage-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir  = Path.Combine(Path.GetTempPath(), "al-ext-xpage-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(depRoot, "AppA"));
+            Directory.CreateDirectory(Path.Combine(depRoot, "AppB"));
+            Directory.CreateDirectory(extDir);
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "BasePage.al"), """
+                page 60060 BasePage
+                {
+                    PageType = Card;
+                    layout { area(content) { } }
+                    actions { area(processing) { } }
+                }
+                """);
+            File.WriteAllText(Path.Combine(depRoot, "AppB", "BasePageExt.al"), """
+                pageextension 60061 BasePageExt extends BasePage
+                {
+                    actions
+                    {
+                        addfirst(processing)
+                        {
+                            action(MyAction) { trigger OnAction() begin end; }
+                        }
+                    }
+                }
+                """);
+            File.WriteAllText(Path.Combine(depRoot, "AppB", "PageRunner.al"), """
+                codeunit 60062 PageRunner
+                {
+                    procedure Run() begin Page.Run(Page::BasePage); end;
+                }
+                """);
+            File.WriteAllText(Path.Combine(extDir, "MyExt.al"), """
+                codeunit 60098 "My Codeunit"
+                {
+                    procedure Run() begin Codeunit.Run(Codeunit::PageRunner); end;
+                }
+                """);
+
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depRoot }, outDir);
+
+            Assert.Equal(0, rc);
+            var files = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+            Assert.Contains(files, f => File.ReadAllText(f).Contains("codeunit 60062 PageRunner"));
+            Assert.Contains(files, f => File.ReadAllText(f).Contains("page 60060 BasePage"));
+            // The fix: cross-app pageextension whose app is already in the slice IS pulled.
+            Assert.Contains(files, f => File.ReadAllText(f).Contains("pageextension 60061 BasePageExt"));
+        }
+        finally
+        {
+            foreach (var d in new[] { depRoot, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
     [Fact]
     public void ExtractDeps_NonExistentDepSource_ReturnsNonZero()
     {

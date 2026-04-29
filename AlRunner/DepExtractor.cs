@@ -113,6 +113,16 @@ public static class DepExtractor
             }
         } while (eventSubsAdded > 0);
 
+        // 5b. Cross-app extension fixup. The same-app filter inside ExpandSlice keeps
+        //     truly out-of-scope foreign extensions out, but it also drops legitimate
+        //     extensions whose host app is *itself* in the slice (because the consumer
+        //     references some other object from that app). Such extensions add values
+        //     and members the slice transitively uses — without them the slice fails
+        //     to compile (AL0132 missing enum value, AL0280 missing event publisher).
+        //     Iterate to fixpoint: pulling an extension may bring in transitive deps
+        //     that pull in new apps, which may unlock more extensions.
+        ExpandCrossAppExtensions(index, visited, pending, allExtracted);
+
         // 6. Compiler-driven fixup: trial-compile the current slice, parse missing symbols,
         //    look them up in the index, add to the slice, repeat.
         //    This catches object references that static pattern-matching misses (page parts,
@@ -163,6 +173,7 @@ public static class DepExtractor
                         }
                     }
                 } while (subsAdded2 > 0);
+                ExpandCrossAppExtensions(index, visited, pending, allExtracted);
                 Console.Error.WriteLine($"  Added {fixupAdded} object(s) from index ({allExtracted.Count} total).");
             }
             else
@@ -322,6 +333,53 @@ public static class DepExtractor
                 }
             }
         } while (anyWork);
+    }
+
+    /// <summary>
+    /// Pulls in extensions whose host app is itself part of the slice (i.e. has at
+    /// least one extracted file already) but whose base object lives in a different
+    /// app. The same-app guard inside <see cref="ExpandSlice"/> would otherwise drop
+    /// these, even though their host app is in scope and the consumer transitively
+    /// uses values/members the extension contributes.
+    /// </summary>
+    private static void ExpandCrossAppExtensions(
+        DepIndex index,
+        Dictionary<string, HashSet<string>> visited,
+        Dictionary<string, Queue<string>> pending,
+        Dictionary<string, string> allExtracted)
+    {
+        int added;
+        do
+        {
+            added = 0;
+            var appsInSlice = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var fn in allExtracted.Keys)
+            {
+                var app = GetAppOfFile(fn);
+                if (!string.IsNullOrEmpty(app)) appsInSlice.Add(app);
+            }
+            foreach (var typeName in AllTypes)
+            {
+                if (!index.Extensions.TryGetValue(typeName, out var exts)) continue;
+                if (!visited.TryGetValue(typeName, out var visitedNames)) continue;
+                foreach (var (baseName, extList) in exts)
+                {
+                    if (!visitedNames.Contains(baseName)) continue;
+                    foreach (var (fileName, source) in extList)
+                    {
+                        if (allExtracted.ContainsKey(fileName)) continue;
+                        var extApp = GetAppOfFile(fileName);
+                        if (extApp.Length == 0 || !appsInSlice.Contains(extApp)) continue;
+                        allExtracted[fileName] = source;
+                        Console.Error.WriteLine($"  + {fileName} (cross-app extension)");
+                        added++;
+                        EnqueueTransitiveDeps(source, visited, pending);
+                    }
+                }
+            }
+            if (added > 0)
+                ExpandSlice(pending, visited, index, allExtracted);
+        } while (added > 0);
     }
 
     /// <summary>
