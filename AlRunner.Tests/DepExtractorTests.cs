@@ -1731,4 +1731,132 @@ public class DepExtractorTests
         }
     }
 
+    // -----------------------------------------------------------------------
+    // BFS — unresolved DATABASE::"X" targets fall through to stub generation
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// When the BFS encounters a pending name (e.g. seeded from a DATABASE::"X" reference)
+    /// that has no definition in the dep-source index, ExpandSlice must NOT silently drop
+    /// it. It surfaces downstream as AL0118 "name does not exist" at compile-dep time
+    /// (TrialCompileMissing only matches AL0185 wording, so the fixup loop misses it).
+    /// Fix: route unresolved BFS targets into the same blank-shell stub generator that
+    /// the fixup loop's missing list feeds.
+    /// </summary>
+    [Fact]
+    public void ExtractDeps_BFS_GeneratesStubForUnresolvedDatabaseColonColonTarget()
+    {
+        var depRoot = Path.Combine(Path.GetTempPath(), "al-bfs-unres-dep-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir  = Path.Combine(Path.GetTempPath(), "al-bfs-unres-out-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir  = Path.Combine(Path.GetTempPath(), "al-bfs-unres-ext-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(depRoot, "AppA"));
+            Directory.CreateDirectory(extDir);
+
+            // AppA defines an anchor codeunit so the slice is non-empty
+            // (FindFirstConsumerApp needs at least one extracted file to attribute the stub to).
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "AppACodeunit.al"), """
+                codeunit 60100 AppACodeunit { }
+                """);
+
+            // Consumer references AppACodeunit (so AppA is pulled into the slice) and
+            // DATABASE::"NonexistentTable" — the latter has no source anywhere.
+            File.WriteAllText(Path.Combine(extDir, "Consumer.al"), """
+                codeunit 60199 Consumer
+                {
+                    procedure Run()
+                    var
+                        TableId: Integer;
+                    begin
+                        Codeunit.Run(Codeunit::AppACodeunit);
+                        TableId := DATABASE::"NonexistentTable";
+                    end;
+                }
+                """);
+
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depRoot }, outDir);
+
+            Assert.Equal(0, rc);
+
+            var allFiles = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+            var tableStub = allFiles.FirstOrDefault(f =>
+                Path.GetFileName(f).StartsWith("NonexistentTable", StringComparison.OrdinalIgnoreCase)
+                && f.Contains("__GeneratedStubs__", StringComparison.OrdinalIgnoreCase));
+            Assert.NotNull(tableStub);
+            var content = File.ReadAllText(tableStub!);
+            Assert.StartsWith("table ", content, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("\"NonexistentTable\"", content);
+            var idMatch = System.Text.RegularExpressions.Regex.Match(content, @"table\s+(\d+)");
+            Assert.True(idMatch.Success);
+            Assert.True(int.Parse(idMatch.Groups[1].Value) >= 1_999_900_000);
+        }
+        finally
+        {
+            foreach (var d in new[] { depRoot, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
+    /// <summary>
+    /// Negative variant: when DATABASE::"X" target IS resolvable from the dep-source index,
+    /// no stub must be generated — the real source is used.
+    /// </summary>
+    [Fact]
+    public void ExtractDeps_BFS_DoesNotStubResolvedDatabaseColonColonTarget()
+    {
+        var depRoot = Path.Combine(Path.GetTempPath(), "al-bfs-res-dep-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir  = Path.Combine(Path.GetTempPath(), "al-bfs-res-out-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir  = Path.Combine(Path.GetTempPath(), "al-bfs-res-ext-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(depRoot, "AppA"));
+            Directory.CreateDirectory(extDir);
+
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "AppACodeunit.al"), """
+                codeunit 60100 AppACodeunit { }
+                """);
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "NonexistentTable.al"), """
+                table 60101 "NonexistentTable"
+                {
+                    fields { field(1; "No."; Code[20]) { } }
+                    keys { key(PK; "No.") { } }
+                }
+                """);
+
+            File.WriteAllText(Path.Combine(extDir, "Consumer.al"), """
+                codeunit 60199 Consumer
+                {
+                    procedure Run()
+                    var
+                        TableId: Integer;
+                    begin
+                        Codeunit.Run(Codeunit::AppACodeunit);
+                        TableId := DATABASE::"NonexistentTable";
+                    end;
+                }
+                """);
+
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depRoot }, outDir);
+
+            Assert.Equal(0, rc);
+
+            // Negative: no stub for "NonexistentTable" (the real source is used).
+            var stubFiles = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories)
+                .Where(f => f.Contains("__GeneratedStubs__", StringComparison.OrdinalIgnoreCase)
+                         && Path.GetFileName(f).StartsWith("NonexistentTable", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            Assert.Empty(stubFiles);
+
+            // Positive: the real definition was extracted.
+            var realFiles = Directory.GetFiles(outDir, "NonexistentTable.al", SearchOption.AllDirectories);
+            Assert.NotEmpty(realFiles);
+        }
+        finally
+        {
+            foreach (var d in new[] { depRoot, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
 }

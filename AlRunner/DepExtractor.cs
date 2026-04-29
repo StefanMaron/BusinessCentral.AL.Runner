@@ -93,8 +93,24 @@ public static class DepExtractor
         var visited = AllTypes.ToDictionary(t => t, _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
         var allExtracted = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+        // Tracks BFS targets that have no definition in the dep-source index.
+        // Without this set, ExpandSlice silently dropped pending names whose target
+        // was external/add-on (e.g. DATABASE::"X" referencing a table whose source
+        // lives in an app not present in dep-sources). Such names slipped past
+        // extract-deps and surfaced at compile-dep time as AL0118 "the name does
+        // not exist in the current context" — which TrialCompileMissing's
+        // AL0185-only pattern does not capture, so the fixup loop missed them too.
+        // We feed unresolved targets into finalMissingObjects so the existing
+        // blank-shell stub generator emits stubs for them.
+        var unresolved = new HashSet<(string TypeName, string Name)>(
+            EqualityComparer<(string, string)>.Create(
+                (a, b) => string.Equals(a.Item1, b.Item1, StringComparison.OrdinalIgnoreCase)
+                       && string.Equals(a.Item2, b.Item2, StringComparison.OrdinalIgnoreCase),
+                x => StringComparer.OrdinalIgnoreCase.GetHashCode(x.Item1)
+                   ^ StringComparer.OrdinalIgnoreCase.GetHashCode(x.Item2)));
+
         SeedPending(refs, pending);
-        ExpandSlice(pending, visited, index, allExtracted);
+        ExpandSlice(pending, visited, index, allExtracted, unresolved);
 
         // 5. Add event subscribers targeting objects in the slice.
         //    Same-app rule: only pull subscribers whose host file lives in the same app
@@ -119,7 +135,7 @@ public static class DepExtractor
                         Console.Error.WriteLine($"  + {fileName} (event subscriber)");
                         eventSubsAdded++;
                         EnqueueTransitiveDeps(source, visited, pending);
-                        ExpandSlice(pending, visited, index, allExtracted);
+                        ExpandSlice(pending, visited, index, allExtracted, unresolved);
                     }
                 }
             }
@@ -133,7 +149,7 @@ public static class DepExtractor
         //     to compile (AL0132 missing enum value, AL0280 missing event publisher).
         //     Iterate to fixpoint: pulling an extension may bring in transitive deps
         //     that pull in new apps, which may unlock more extensions.
-        ExpandCrossAppExtensions(index, visited, pending, allExtracted);
+        ExpandCrossAppExtensions(index, visited, pending, allExtracted, unresolved);
 
         // 6. Compiler-driven fixup: trial-compile the current slice, parse missing symbols,
         //    look them up in the index, add to the slice, repeat.
@@ -168,7 +184,7 @@ public static class DepExtractor
 
             if (fixupAdded > 0)
             {
-                ExpandSlice(pending, visited, index, allExtracted);
+                ExpandSlice(pending, visited, index, allExtracted, unresolved);
                 // Re-run event subscriber scan for any newly added objects
                 int subsAdded2;
                 do {
@@ -187,12 +203,12 @@ public static class DepExtractor
                                 allExtracted[fn] = src;
                                 subsAdded2++;
                                 EnqueueTransitiveDeps(src, visited, pending);
-                                ExpandSlice(pending, visited, index, allExtracted);
+                                ExpandSlice(pending, visited, index, allExtracted, unresolved);
                             }
                         }
                     }
                 } while (subsAdded2 > 0);
-                ExpandCrossAppExtensions(index, visited, pending, allExtracted);
+                ExpandCrossAppExtensions(index, visited, pending, allExtracted, unresolved);
                 Console.Error.WriteLine($"  Added {fixupAdded} object(s) from index ({allExtracted.Count} total).");
             }
             else
@@ -202,6 +218,31 @@ public static class DepExtractor
                 break;
             }
         } while (fixupAdded > 0 && fixupRound < 10);
+
+        // Merge BFS-unresolved targets into finalMissingObjects so the stub
+        // generator emits blank shells for them. Dedup against names the
+        // trial-compile fixup may already have captured.
+        if (unresolved.Count > 0)
+        {
+            var alreadyCaptured = new HashSet<(string, string)>(
+                finalMissingObjects.Select(m => (m.TypeName, m.Name)),
+                EqualityComparer<(string, string)>.Create(
+                    (a, b) => string.Equals(a.Item1, b.Item1, StringComparison.OrdinalIgnoreCase)
+                           && string.Equals(a.Item2, b.Item2, StringComparison.OrdinalIgnoreCase),
+                    x => StringComparer.OrdinalIgnoreCase.GetHashCode(x.Item1)
+                       ^ StringComparer.OrdinalIgnoreCase.GetHashCode(x.Item2)));
+            int addedFromBfs = 0;
+            foreach (var item in unresolved)
+            {
+                if (alreadyCaptured.Add(item))
+                {
+                    finalMissingObjects.Add(item);
+                    addedFromBfs++;
+                }
+            }
+            if (addedFromBfs > 0)
+                Console.Error.WriteLine($"  + {addedFromBfs} BFS-unresolved object(s) queued for stub generation.");
+        }
 
         // Stub-generation pass: write blank-shell AL stubs for each truly-unresolvable
         // missing object. Without stubs, consumer locals bind at NavTypeKind.None and
@@ -232,6 +273,11 @@ public static class DepExtractor
             {
                 var dedupeKey = $"{typeName}|{objectName}";
                 if (!stubsSeen.Add(dedupeKey)) continue;
+
+                // Defensive: an object name that still contains a `"` is malformed
+                // (a parsing bug fed it through). Emitting a stub for it produces
+                // syntactically broken AL (`""Foo"`), so drop it.
+                if (string.IsNullOrEmpty(objectName) || objectName.Contains('"')) continue;
 
                 var consumerApp = FindFirstConsumerApp(allExtracted, objectName);
                 if (string.IsNullOrEmpty(consumerApp)) continue;
@@ -460,7 +506,8 @@ public static class DepExtractor
         Dictionary<string, Queue<string>> pending,
         Dictionary<string, HashSet<string>> visited,
         DepIndex index,
-        Dictionary<string, string> allExtracted)
+        Dictionary<string, string> allExtracted,
+        HashSet<(string TypeName, string Name)>? unresolved = null)
     {
         bool anyWork;
         do
@@ -479,9 +526,11 @@ public static class DepExtractor
                     // location after a CLEANSCHEMA migration). Pull every occurrence —
                     // the compiler with preprocessor symbols selects the active one.
                     var baseApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    bool foundDef = false;
                     if (index.Definitions.TryGetValue(typeName, out var defs) &&
                         defs.TryGetValue(name, out var defList))
                     {
+                        foundDef = true;
                         foreach (var (fileName, source) in defList)
                         {
                             baseApps.Add(GetAppOfFile(fileName));
@@ -508,6 +557,13 @@ public static class DepExtractor
                             EnqueueTransitiveDeps(source, visited, pending);
                         }
                     }
+
+                    // No base definition found in any dep app. Track for stub generation —
+                    // without a stub the consumer's reference will fail at compile-dep
+                    // time as AL0118 (which TrialCompileMissing's AL0185-only pattern
+                    // does not capture, so the fixup loop misses it).
+                    if (!foundDef && unresolved is not null)
+                        unresolved.Add((typeName, name));
                 }
             }
         } while (anyWork);
@@ -524,7 +580,8 @@ public static class DepExtractor
         DepIndex index,
         Dictionary<string, HashSet<string>> visited,
         Dictionary<string, Queue<string>> pending,
-        Dictionary<string, string> allExtracted)
+        Dictionary<string, string> allExtracted,
+        HashSet<(string TypeName, string Name)>? unresolved = null)
     {
         int added;
         do
@@ -556,7 +613,7 @@ public static class DepExtractor
                 }
             }
             if (added > 0)
-                ExpandSlice(pending, visited, index, allExtracted);
+                ExpandSlice(pending, visited, index, allExtracted, unresolved);
         } while (added > 0);
     }
 
@@ -622,7 +679,7 @@ public static class DepExtractor
             "Codeunit"  => $"codeunit {id} \"{objectName}\" {{ }}",
             "Enum"      => $"enum {id} \"{objectName}\" {{ value(0; Default) {{}} }}",
             "Report"    => $"report {id} \"{objectName}\" {{ }}",
-            "Query"     => $"query {id} \"{objectName}\" {{ elements {{ }} }}",
+            "Query"     => $"query {id} \"{objectName}\" {{ elements {{ dataitem(DummyDI; Integer) {{ column(DummyCol; Number) {{}} }} }} }}",
             "XmlPort"   => $"xmlport {id} \"{objectName}\" {{ schema {{ textelement(root) {{}} }} }}",
             "Interface" => $"interface \"{objectName}\" {{ }}",
             _           => $"codeunit {id} \"{objectName}\" {{ }}",
@@ -691,25 +748,47 @@ public static class DepExtractor
 
                 using var doc = System.Text.Json.JsonDocument.Parse(json);
                 var root = doc.RootElement;
-                foreach (var (section, typeName) in sectionToType)
-                {
-                    if (!root.TryGetProperty(section, out var arr) || arr.ValueKind != System.Text.Json.JsonValueKind.Array)
-                        continue;
-                    foreach (var item in arr.EnumerateArray())
-                    {
-                        if (item.TryGetProperty("Name", out var nameEl))
-                        {
-                            var name = nameEl.GetString();
-                            if (!string.IsNullOrEmpty(name))
-                                result.Add((typeName, name));
-                        }
-                    }
-                }
+                CollectFromElement(root, sectionToType, result);
             }
             catch { /* ignore unreadable packages */ }
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Walks both the top-level object arrays (Tables/Pages/...) and the nested
+    /// Namespaces tree of a SymbolReference.json element, adding every (TypeName, Name)
+    /// pair found. Platform packages such as System.app put all objects under
+    /// nested Namespaces; application packages typically use flat top-level arrays.
+    /// Both shapes are valid in BC SymbolReference.json.
+    /// </summary>
+    private static void CollectFromElement(
+        System.Text.Json.JsonElement element,
+        Dictionary<string, string> sectionToType,
+        HashSet<(string TypeName, string Name)> result)
+    {
+        foreach (var (section, typeName) in sectionToType)
+        {
+            if (!element.TryGetProperty(section, out var arr) || arr.ValueKind != System.Text.Json.JsonValueKind.Array)
+                continue;
+            foreach (var item in arr.EnumerateArray())
+            {
+                if (item.TryGetProperty("Name", out var nameEl))
+                {
+                    var name = nameEl.GetString();
+                    if (!string.IsNullOrEmpty(name))
+                        result.Add((typeName, name));
+                }
+            }
+        }
+
+        if (element.TryGetProperty("Namespaces", out var nsArr)
+            && nsArr.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var ns in nsArr.EnumerateArray())
+                CollectFromElement(ns, sectionToType, result);
+        }
     }
 
     private static void EnqueueTransitiveDeps(
@@ -959,10 +1038,7 @@ public static class DepExtractor
                         if (prop.Value is TableRelationPropertyValueSyntax tr)
                         {
                             var raw = tr.RelatedTableField?.ToFullString().Trim();
-                            // If it contains a dot it's Table.Field — take the left part
-                            var tableName = raw?.Contains('.') == true
-                                ? UnquoteIdentifier(raw[..raw.IndexOf('.')])
-                                : UnquoteIdentifier(raw);
+                            var tableName = UnquoteIdentifier(SplitTableFromTableField(raw));
                             if (!string.IsNullOrEmpty(tableName)) result.Tables.Add(tableName);
                         }
                         // Conditional/complex forms — pick up any qualified Table.Field refs
@@ -1809,6 +1885,22 @@ public static class DepExtractor
         if (obj is ObjectSyntax plain)
             return UnquoteIdentifier(plain.Name?.Identifier.ValueText);
         return null;
+    }
+
+    // For TableRelation = "Acc. Schedule"."No." or Customer."No." or Customer:
+    // returns the table portion (left of the dot that separates Table from Field).
+    // Quoted-identifier-aware: dots INSIDE "..." don't split.
+    private static string? SplitTableFromTableField(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return raw;
+        if (raw[0] == '"')
+        {
+            var closing = raw.IndexOf('"', 1);
+            if (closing < 0) return raw; // malformed — leave as-is
+            return raw[..(closing + 1)];
+        }
+        var dot = raw.IndexOf('.');
+        return dot >= 0 ? raw[..dot] : raw;
     }
 
     private static string? UnquoteIdentifier(string? raw)
