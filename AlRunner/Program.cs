@@ -3103,7 +3103,8 @@ public static class RoslynCompiler
     /// </summary>
     internal static CompileResult? Compile(List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)> namedTrees,
         List<Microsoft.CodeAnalysis.MetadataReference>? preloadedReferences = null,
-        IList<string>? errorSink = null)
+        IList<string>? errorSink = null,
+        bool emitPortablePdb = false)
     {
         // Assign deduplicated file paths to trees for readable Roslyn diagnostics
         var nameCount = new Dictionary<string, int>();
@@ -3123,7 +3124,7 @@ public static class RoslynCompiler
             return t.Tree.WithFilePath($"{baseName}.cs");
         }).ToList();
 
-        return CompileFromTrees(syntaxTrees, preloadedReferences, errorSink);
+        return CompileFromTrees(syntaxTrees, preloadedReferences, errorSink, emitPortablePdb);
     }
 
     /// <summary>
@@ -3246,7 +3247,8 @@ public static class RoslynCompiler
 
     internal static CompileResult? CompileFromTrees(List<Microsoft.CodeAnalysis.SyntaxTree> syntaxTrees,
         List<Microsoft.CodeAnalysis.MetadataReference>? preloadedReferences,
-        IList<string>? errorSink = null)
+        IList<string>? errorSink = null,
+        bool emitPortablePdb = false)
     {
         var references = preloadedReferences ?? LoadReferences();
 
@@ -3261,11 +3263,23 @@ public static class RoslynCompiler
 
         using var asmStream = new MemoryStream(512 * 1024);
         using var pdbStream = new MemoryStream();
-        var result = compilation.Emit(
-            asmStream,
-            pdbStream,
-            options: new Microsoft.CodeAnalysis.Emit.EmitOptions(
-                debugInformationFormat: Microsoft.CodeAnalysis.Emit.DebugInformationFormat.PortablePdb));
+        Microsoft.CodeAnalysis.Emit.EmitResult result;
+        if (emitPortablePdb)
+        {
+            // PDB requires every input tree to carry an Encoding. Auto-stub fallback
+            // trees parsed via CSharpSyntaxTree.ParseText without encoding would otherwise
+            // fail with CS8055. Callers requesting PDB emission must thread UTF-8 encoding
+            // through every ParseText/Create call producing a tree in syntaxTrees.
+            result = compilation.Emit(
+                asmStream,
+                pdbStream,
+                options: new Microsoft.CodeAnalysis.Emit.EmitOptions(
+                    debugInformationFormat: Microsoft.CodeAnalysis.Emit.DebugInformationFormat.PortablePdb));
+        }
+        else
+        {
+            result = compilation.Emit(asmStream);
+        }
 
         if (!result.Success)
         {
@@ -3287,15 +3301,23 @@ public static class RoslynCompiler
         }
 
         asmStream.Seek(0, SeekOrigin.Begin);
-        pdbStream.Seek(0, SeekOrigin.Begin);
         // Collectible ALC: the assembly (and its ALC) stays alive as long as any
         // reference to the Assembly or ALC exists (e.g., in CompilationCache).
         // Callers must call alc.Unload() when the assembly is no longer needed.
-        // Loading the PDB stream alongside ensures StackFrame.GetFileName/GetFileLineNumber
-        // resolve to filenames embedded in the portable PDB (.al paths when
-        // #line directives have been injected).
         var alc = new System.Runtime.Loader.AssemblyLoadContext($"TestRun_{Guid.NewGuid():N}", isCollectible: true);
-        var assembly = alc.LoadFromStream(asmStream, pdbStream);
+        Assembly assembly;
+        if (emitPortablePdb)
+        {
+            // Loading the PDB stream alongside ensures StackFrame.GetFileName/GetFileLineNumber
+            // resolve to filenames embedded in the portable PDB (.al paths when
+            // #line directives have been injected).
+            pdbStream.Seek(0, SeekOrigin.Begin);
+            assembly = alc.LoadFromStream(asmStream, pdbStream);
+        }
+        else
+        {
+            assembly = alc.LoadFromStream(asmStream);
+        }
         return new CompileResult(assembly, alc);
     }
 

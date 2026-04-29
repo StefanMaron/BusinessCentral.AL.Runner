@@ -388,6 +388,9 @@ public class AlRunnerPipeline
 
     private int RunCore(PipelineOptions options, TextWriter stdout, TextWriter stderr, List<TestResult> testResults)
     {
+        // Reset per-run output state so a previous run's C# cannot leak into the next.
+        _generatedCSharpFiles = options.EmitGeneratedCSharp ? new List<string>() : null;
+
         if (options.Verbose)
             Log.Verbose = true;
 
@@ -830,7 +833,7 @@ public class AlRunnerPipeline
         }
 
         var compilationErrorSink = new List<string>();
-        var compileResult = RoslynCompiler.Compile(rewrittenTreeList, preloadedRefs, compilationErrorSink);
+        var compileResult = RoslynCompiler.Compile(rewrittenTreeList, preloadedRefs, compilationErrorSink, emitPortablePdb: options.EmitLineDirectives);
         mapperTask.Wait();
         if (compileResult == null)
         {
