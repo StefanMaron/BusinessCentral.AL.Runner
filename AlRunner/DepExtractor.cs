@@ -248,6 +248,110 @@ public static class DepExtractor
                 Console.Error.WriteLine($"Generated {stubCount} stub(s) for missing platform objects.");
         }
 
+        // Namespace stub-generation pass:
+        //
+        // For every `using <ns>;` directive in the extracted slice that has no corresponding
+        // `namespace <ns>;` declaration, emit a blank-shell interface file so the BC compiler
+        // can resolve the namespace reference (AL0791).  The scan runs to a fixed point so that
+        // namespace declarations pulled in from the dep-source index also get their own `using`
+        // directives resolved.
+        {
+            var usingRegex = new System.Text.RegularExpressions.Regex(
+                @"^\s*using\s+([\w.]+)\s*;",
+                System.Text.RegularExpressions.RegexOptions.Multiline);
+            var nsStatementRegex = new System.Text.RegularExpressions.Regex(
+                @"^\s*namespace\s+([\w.]+)\s*[;{]",
+                System.Text.RegularExpressions.RegexOptions.Multiline);
+
+            // Reverse-lookup: namespace name → dep source file.
+            var nsDeclaredInDepSource = new Dictionary<string, (string FileName, string Source)>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (_, depFileName, depSource) in appSources)
+            {
+                foreach (System.Text.RegularExpressions.Match m in nsStatementRegex.Matches(depSource))
+                {
+                    var ns = m.Groups[1].Value;
+                    if (!nsDeclaredInDepSource.ContainsKey(ns))
+                        nsDeclaredInDepSource[ns] = (depFileName, depSource);
+                }
+            }
+
+            var nsStubsSeen      = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var nsScannedKeys    = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var nsPendingUsings  = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            var nsDeclared       = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            int nsStubCount      = 0;
+
+            // Scans any files in allExtracted not yet processed and generates namespace stubs.
+            // Returns true if any new stubs were emitted or new files were pulled in.
+            bool RunNamespaceScan()
+            {
+                bool changed = false;
+                foreach (var (fileName, source) in allExtracted.ToList()) // snapshot to allow mutation
+                {
+                    if (!nsScannedKeys.Add(fileName)) continue;
+                    changed = true;
+                    var app = GetAppOfFile(fileName);
+                    foreach (System.Text.RegularExpressions.Match m in usingRegex.Matches(source))
+                    {
+                        var ns = m.Groups[1].Value;
+                        if (!nsPendingUsings.TryGetValue(ns, out var set))
+                            nsPendingUsings[ns] = set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        if (!string.IsNullOrEmpty(app)) set.Add(app);
+                    }
+                    foreach (System.Text.RegularExpressions.Match m in nsStatementRegex.Matches(source))
+                        nsDeclared.Add(m.Groups[1].Value);
+                }
+
+                foreach (var (ns, appsUsing) in nsPendingUsings)
+                {
+                    if (nsDeclared.Contains(ns)) continue;
+
+                    if (nsDeclaredInDepSource.TryGetValue(ns, out var entry))
+                    {
+                        if (!allExtracted.ContainsKey(entry.FileName))
+                        {
+                            allExtracted[entry.FileName] = entry.Source;
+                            changed = true;
+                        }
+                        nsDeclared.Add(ns);
+                        continue;
+                    }
+
+                    if (!nsStubsSeen.Add(ns)) continue;
+
+                    var consumerApp = appsUsing.FirstOrDefault() ?? "";
+                    if (string.IsNullOrEmpty(consumerApp))
+                    {
+                        foreach (var fn in allExtracted.Keys)
+                        {
+                            consumerApp = GetAppOfFile(fn);
+                            if (!string.IsNullOrEmpty(consumerApp)) break;
+                        }
+                    }
+                    if (string.IsNullOrEmpty(consumerApp)) continue;
+
+                    var safeSuffix  = System.Text.RegularExpressions.Regex.Replace(ns, @"[^A-Za-z0-9]", "");
+                    var stubContent = $"namespace {ns};\ninterface \"__StubNamespaceAnchor_{safeSuffix}\" {{ }}\n";
+                    var stubKey     = $"{consumerApp}/__GeneratedStubs__/_namespaces/{safeSuffix}.al";
+                    if (allExtracted.TryAdd(stubKey, stubContent))
+                    {
+                        nsStubCount++;
+                        changed = true;
+                    }
+                }
+                return changed;
+            }
+
+            // Initial namespace scan to fixed point (handles cascading using deps).
+            bool nsProgress = true;
+            while (nsProgress) nsProgress = RunNamespaceScan();
+
+            if (nsStubCount > 0)
+                Console.Error.WriteLine($"Generated {nsStubCount} namespace stub(s) for unresolved using directives.");
+
+        }
+
+
         // 7. Write extracted files to output directory.
         //    DotNet-referencing procedures are replaced with Error() calls so the file
         //    compiles cleanly and fails loudly if ever reached at runtime.
@@ -921,6 +1025,21 @@ public static class DepExtractor
                 // node has prefix "Enum" + name "RegexOptions" — pick that up so the enum
                 // gets pulled into the slice.
                 case "enum":     result.Enums.Add(name);     break;
+            }
+        }
+
+        // Extension object base references: `pageextension ... extends "X"` means the slice
+        // must contain the base object "X" so the extension can compile against it.
+        foreach (var extObj in root.DescendantNodes().OfType<ApplicationObjectExtensionSyntax>())
+        {
+            var baseName = UnquoteIdentifier(extObj.BaseObject?.ToFullString().Trim());
+            if (string.IsNullOrEmpty(baseName)) continue;
+            switch (extObj.Kind)
+            {
+                case SyntaxKind.PageExtensionObject:   result.Pages.Add(baseName);    break;
+                case SyntaxKind.TableExtensionObject:  result.Tables.Add(baseName);   break;
+                case SyntaxKind.ReportExtensionObject: result.Reports.Add(baseName);  break;
+                case SyntaxKind.EnumExtensionType:     result.Enums.Add(baseName);    break;
             }
         }
     }

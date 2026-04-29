@@ -996,4 +996,187 @@ public class DepExtractorTests
                 if (Directory.Exists(d)) Directory.Delete(d, true);
         }
     }
+
+    /// <summary>
+    /// When an extracted file contains a <c>using</c> directive for a namespace that
+    /// no extracted file declares, ExtractDeps must auto-generate a blank-shell
+    /// namespace stub so the BC compiler can resolve the namespace reference.
+    /// </summary>
+    [Fact]
+    public void ExtractDeps_GeneratesNamespaceStub_WhenUsingDirectiveHasNoDeclaringFile()
+    {
+        var depRoot = Path.Combine(Path.GetTempPath(), "al-dep-nsgen-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir  = Path.Combine(Path.GetTempPath(), "al-out-nsgen-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir  = Path.Combine(Path.GetTempPath(), "al-ext-nsgen-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(depRoot, "AppA"));
+            Directory.CreateDirectory(extDir);
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "Consumer.al"), """
+                namespace AppA.Consumer;
+                using Some.Empty.Namespace;
+                codeunit 60100 Consumer { procedure Run() begin end; }
+                """);
+            File.WriteAllText(Path.Combine(extDir, "ExtConsumer.al"), """
+                codeunit 60199 ExtConsumer
+                {
+                    procedure Run() begin Codeunit.Run(Codeunit::Consumer); end;
+                }
+                """);
+
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depRoot }, outDir);
+
+            Assert.Equal(0, rc);
+
+            var allFiles = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+
+            // Positive: a namespace stub file is generated in the _namespaces sub-dir
+            var nsStub = allFiles.FirstOrDefault(f =>
+                f.Contains("__GeneratedStubs__", StringComparison.OrdinalIgnoreCase) &&
+                f.Contains("_namespaces", StringComparison.OrdinalIgnoreCase) &&
+                Path.GetFileName(f).StartsWith("SomeEmptyNamespace", StringComparison.OrdinalIgnoreCase));
+            Assert.NotNull(nsStub);
+
+            var content = File.ReadAllText(nsStub!);
+            Assert.StartsWith("namespace Some.Empty.Namespace;", content.TrimStart(), StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("interface \"__StubNamespaceAnchor_", content, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            foreach (var d in new[] { depRoot, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
+    /// <summary>
+    /// When every <c>using</c>-referenced namespace is already declared somewhere in the
+    /// extracted slice, no namespace stub file should be generated.
+    /// </summary>
+    [Fact]
+    public void ExtractDeps_DoesNotGenerateNamespaceStub_WhenNamespaceIsDeclared()
+    {
+        var depRoot = Path.Combine(Path.GetTempPath(), "al-dep-nsdecl-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir  = Path.Combine(Path.GetTempPath(), "al-out-nsdecl-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir  = Path.Combine(Path.GetTempPath(), "al-ext-nsdecl-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(depRoot, "AppA"));
+            Directory.CreateDirectory(extDir);
+            // Consumer.al uses the namespace...
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "Consumer.al"), """
+                namespace AppA.Consumer;
+                using Some.Empty.Namespace;
+                codeunit 60100 Consumer { procedure Run() begin end; }
+                """);
+            // ...and SomeNs.al declares it.
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "SomeNs.al"), """
+                namespace Some.Empty.Namespace;
+                codeunit 60101 NsAnchor { }
+                """);
+            File.WriteAllText(Path.Combine(extDir, "ExtConsumer.al"), """
+                codeunit 60199 ExtConsumer
+                {
+                    procedure Run() begin Codeunit.Run(Codeunit::Consumer); end;
+                }
+                """);
+
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depRoot }, outDir);
+
+            Assert.Equal(0, rc);
+
+            // Negative: no namespace stub for Some.Empty.Namespace since it is declared.
+            var allFiles = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+            var nsStubFiles = allFiles
+                .Where(f => f.Contains("__GeneratedStubs__", StringComparison.OrdinalIgnoreCase) &&
+                            f.Contains("_namespaces", StringComparison.OrdinalIgnoreCase) &&
+                            Path.GetFileName(f).StartsWith("SomeEmptyNamespace", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            Assert.Empty(nsStubFiles);
+        }
+        finally
+        {
+            foreach (var d in new[] { depRoot, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Fixup loop — page part references pull in namespace-prefixed dep pages
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A dep page with PageType = HeadlinePart and a namespace declaration is
+    /// not directly referenced by the extension, but IS referenced as a page part
+    /// in a dep page that IS pulled into the slice.  The fixup loop (TrialCompileMissing
+    /// + ExpandSlice) must detect the AL0185 and include the headline page.
+    /// </summary>
+    [Fact]
+    public void ExtractDeps_FixupLoop_PullsInPagePartReferencedByDepPage()
+    {
+        var depDir = Path.Combine(Path.GetTempPath(), "al-headline-dep-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir = Path.Combine(Path.GetTempPath(), "al-headline-out-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir = Path.Combine(Path.GetTempPath(), "al-headline-ext-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(depDir);
+            Directory.CreateDirectory(extDir);
+
+            // A dep table that the extension references directly.
+            File.WriteAllText(Path.Combine(depDir, "SalesHeader.al"), """
+                table 36 "Sales Header"
+                {
+                    fields { field(1; "No."; Code[20]) { } }
+                }
+                """);
+
+            // A dep role-center page that references the headline page as a part.
+            // This is what pulls in the headline page transitively.
+            File.WriteAllText(Path.Combine(depDir, "OrderProcessorRC.al"), """
+                namespace Microsoft.Sales.RoleCenters;
+                page 9006 "Order Processor Role Center"
+                {
+                    PageType = RoleCenter;
+                    layout
+                    {
+                        area(rolecenter)
+                        {
+                            part(Control1; "Headline RC Sales Order Processor") { }
+                        }
+                    }
+                }
+                """);
+
+            // The headline page itself — namespace-prefixed, not directly referenced.
+            File.WriteAllText(Path.Combine(depDir, "HeadlineRC.al"), """
+                namespace System.Visualization;
+                page 1441 "Headline RC Sales Order Processor"
+                {
+                    Caption = 'Headline';
+                    PageType = HeadlinePart;
+                    RefreshOnActivate = true;
+                }
+                """);
+
+            // Extension references the Sales Header table (pulling in OrderProcessorRC
+            // transitively via the fixup loop is what we want to test).
+            File.WriteAllText(Path.Combine(extDir, "MyExt.al"), """
+                pageextension 50100 "My Order RC Ext" extends "Order Processor Role Center"
+                {
+                }
+                """);
+
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depDir }, outDir);
+
+            Assert.Equal(0, rc);
+            var files = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+            Assert.True(
+                files.Any(f => File.ReadAllText(f).Contains("HeadlinePart")),
+                "HeadlineRC page (PageType=HeadlinePart) must be in the dep slice");
+        }
+        finally
+        {
+            foreach (var d in new[] { depDir, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
 }
