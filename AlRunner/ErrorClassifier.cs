@@ -4,6 +4,9 @@ namespace AlRunner;
 /// Execution-time signals about whether an exception was thrown inside a [Test] proc
 /// (vs. setup / [OnRun] before any test ran). Drives Setup-vs-Runtime classification.
 /// </summary>
+/// <remarks>
+/// Single-bool today; T8 will expand to carry per-test messages and capturedValues via AsyncLocal.
+/// </remarks>
 public record TestExecutionContext(bool InsideTestProc);
 
 /// <summary>
@@ -15,17 +18,16 @@ public static class ErrorClassifier
     /// <summary>
     /// Classify the exception. A null exception maps to <see cref="AlErrorKind.Unknown"/>.
     /// </summary>
-    public static AlErrorKind Classify(Exception ex, TestExecutionContext ctx)
+    public static AlErrorKind Classify(Exception? ex, TestExecutionContext ctx)
     {
         if (ex == null) return AlErrorKind.Unknown;
 
-        // Assertion: AlRunner.Runtime.MockAssert throws subclasses with "AssertException"
-        // or "AssertionException" in the type name. Match on suffix to avoid hard
-        // coupling to the runtime's exact type identity.
+        // Assertion: match on suffix so we don't hard-couple to the runtime's exact type
+        // identity. AlRunner.Runtime.AssertException ends with "AssertException";
+        // third-party runners may use "AssertionException".
         var typeName = ex.GetType().Name;
-        if (typeName.Contains("AssertException", StringComparison.Ordinal)
-            || typeName.Contains("AssertionException", StringComparison.Ordinal)
-            || typeName.Contains("MockAssert", StringComparison.Ordinal))
+        if (typeName.EndsWith("AssertException", StringComparison.Ordinal)
+            || typeName.EndsWith("AssertionException", StringComparison.Ordinal))
         {
             return AlErrorKind.Assertion;
         }
@@ -35,8 +37,8 @@ public static class ErrorClassifier
 
         // Compile: Roslyn pipeline wraps emit/compile errors in a custom exception.
         // Match on type-name suffix (same rationale as Assertion).
-        if (typeName.Contains("CompilationFailed", StringComparison.Ordinal)
-            || typeName.Contains("CompileError", StringComparison.Ordinal))
+        if (typeName.EndsWith("CompilationFailedException", StringComparison.Ordinal)
+            || typeName.EndsWith("CompileErrorException", StringComparison.Ordinal))
         {
             return AlErrorKind.Compile;
         }
