@@ -38,7 +38,10 @@
         "durationMs": { "type": "integer", "minimum": 0 },
         "message": { "type": "string" },
         "errorKind": { "$ref": "#/definitions/ErrorKind" },
-        "alSourceFile": { "type": "string" },
+        "alSourceFile": {
+          "type": "string",
+          "description": "Absolute path to the AL source file. Forward-slash separators on all platforms (cwd-independent wire format)."
+        },
         "alSourceLine": { "type": "integer", "minimum": 1 },
         "alSourceColumn": { "type": "integer", "minimum": 1 },
         "stackFrames": {
@@ -57,7 +60,10 @@
             "properties": {
               "scopeName": { "type": "string" },
               "objectName": { "type": "string" },
-              "alSourceFile": { "type": "string" },
+              "alSourceFile": {
+                "type": "string",
+                "description": "Absolute path to the AL source file. Forward-slash separators on all platforms (cwd-independent wire format)."
+              },
               "variableName": { "type": "string" },
               "value": {},
               "statementId": { "type": "integer" }
@@ -70,7 +76,10 @@
       "type": "object",
       "required": ["file", "lines", "totalStatements", "hitStatements"],
       "properties": {
-        "file": { "type": "string" },
+        "file": {
+          "type": "string",
+          "description": "Absolute path to the source file. Forward-slash separators on all platforms (cwd-independent wire format)."
+        },
         "lines": {
           "type": "array",
           "items": {
@@ -84,6 +93,74 @@
         },
         "totalStatements": { "type": "integer", "minimum": 0 },
         "hitStatements": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "IterationLoop": {
+      "type": "object",
+      "required": ["loopId", "sourceFile", "loopLine", "loopEndLine", "iterationCount", "steps"],
+      "properties": {
+        "loopId": {
+          "type": "string",
+          "description": "Stable identifier for this loop instance within the run (e.g. `L1`, `L2`)."
+        },
+        "sourceFile": {
+          "type": "string",
+          "description": "Absolute path to the AL file containing the loop. Forward-slash separators."
+        },
+        "loopLine": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "1-based line number of the loop's opening keyword (`for`, `while`, `repeat`)."
+        },
+        "loopEndLine": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "1-based line number of the loop's terminator (`end;` or `until ...`)."
+        },
+        "parentLoopId": {
+          "type": ["string", "null"],
+          "description": "When this loop is nested inside another, the loopId of the enclosing loop. Null at top level."
+        },
+        "parentIteration": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "description": "1-based iteration index of the parent loop at which this nested loop ran. Null at top level."
+        },
+        "iterationCount": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total iterations recorded for this loop instance."
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["iteration", "capturedValues", "linesExecuted"],
+            "properties": {
+              "iteration": { "type": "integer", "minimum": 1, "description": "1-based iteration number." },
+              "capturedValues": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["variableName", "value"],
+                  "properties": {
+                    "variableName": { "type": "string" },
+                    "value": { "type": "string" }
+                  }
+                }
+              },
+              "messages": {
+                "type": ["array", "null"],
+                "items": { "type": "string" },
+                "description": "Message() output collected during this iteration. Null/omitted when no messages were emitted."
+              },
+              "linesExecuted": {
+                "type": "array",
+                "items": { "type": "integer", "minimum": 1 }
+              }
+            }
+          }
+        }
       }
     },
     "Summary": {
@@ -119,6 +196,11 @@
           "type": "array",
           "items": { "$ref": "#/definitions/FileCoverage" }
         },
+        "iterations": {
+          "type": ["array", "null"],
+          "items": { "$ref": "#/definitions/IterationLoop" },
+          "description": "Per-loop iteration data. Populated when the runtests request set `iterationTracking: true`. Null/omitted otherwise."
+        },
         "protocolVersion": { "const": 2 }
       }
     },
@@ -139,12 +221,30 @@
         "completed": { "type": "integer", "minimum": 0 },
         "total": { "type": "integer", "minimum": 0 }
       }
+    },
+    "Ready": {
+      "type": "object",
+      "required": ["ready"],
+      "properties": {
+        "ready": { "const": true }
+      },
+      "description": "First line emitted by the server after startup. Signals that the server is ready to accept commands."
+    },
+    "ShutdownAck": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "const": "shutting down" }
+      },
+      "description": "Emitted by the server in response to a shutdown command, immediately before the process exits."
     }
   },
   "oneOf": [
+    { "$ref": "#/definitions/Ready" },
     { "$ref": "#/definitions/TestEvent" },
     { "$ref": "#/definitions/Summary" },
     { "$ref": "#/definitions/Ack" },
-    { "$ref": "#/definitions/Progress" }
+    { "$ref": "#/definitions/Progress" },
+    { "$ref": "#/definitions/ShutdownAck" }
   ]
 }
