@@ -244,6 +244,35 @@ public static class DepExtractor
                 Console.Error.WriteLine($"  + {addedFromBfs} BFS-unresolved object(s) queued for stub generation.");
         }
 
+        // Filter pure-numeric names (`Codeunit::25` syntax yields the literal "25" as
+        // a "name" — it is an object id, not an object name) and root namespace
+        // identifiers (e.g. "Microsoft", "Azure") that the BFS extractor mistakenly
+        // captured from namespace-qualified expressions like
+        // `Record Microsoft.X.Y."Some Table"`. Stubbing the namespace identifier as
+        // a top-level table named "Microsoft" causes AL0275 ambiguous-reference
+        // errors against the merged Microsoft namespace from real BC source.
+        if (finalMissingObjects.Count > 0)
+        {
+            var rootNamespaceIdents = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var nsRegex = new System.Text.RegularExpressions.Regex(
+                @"^\s*namespace\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+                System.Text.RegularExpressions.RegexOptions.Multiline);
+            foreach (var src in allExtracted.Values)
+                foreach (System.Text.RegularExpressions.Match m in nsRegex.Matches(src))
+                    rootNamespaceIdents.Add(m.Groups[1].Value);
+
+            var before = finalMissingObjects.Count;
+            finalMissingObjects = finalMissingObjects
+                .Where(m =>
+                    !string.IsNullOrEmpty(m.Name)
+                    && !m.Name.All(char.IsDigit)
+                    && !rootNamespaceIdents.Contains(m.Name))
+                .ToList();
+            var dropped = before - finalMissingObjects.Count;
+            if (dropped > 0)
+                Console.Error.WriteLine($"  Dropped {dropped} bogus stub target(s) (numeric ids or root namespace identifiers).");
+        }
+
         // Stub-generation pass: write blank-shell AL stubs for each truly-unresolvable
         // missing object. Without stubs, consumer locals bind at NavTypeKind.None and
         // crash EmitFieldInitializer in the BC emitter.

@@ -1115,12 +1115,18 @@ public static class AlTranspiler
     /// <param name="inputPaths">Input directories/file paths for auto-discovery of .alpackages (optional).</param>
     /// <summary>
     /// Preprocessor symbols defined when parsing AL sources. Issue #1525 will replace
-    /// this with proper CLI/app.json wiring; for now we hardcode CLEANSCHEMA1..CLEANSCHEMA27
+    /// this with proper CLI/app.json wiring; for now we hardcode CLEANSCHEMA1..CLEANSCHEMA25
     /// so obsolete-and-moved tables (e.g. \"Source Code Setup\" → Business Foundation) drop
     /// out of compilation instead of producing AL0797 errors on every reference.
+    ///
+    /// The range stops at 25 because CLEANSCHEMA26 in current BC 27.x strips Power BI
+    /// configuration tables that have unguarded consumers — defining it would auto-stub
+    /// those tables with empty shells, then trigger AL0132 missing-field errors at the
+    /// consumers (e.g. PowerBIEmbeddedReportPart.Page.al). CLEANSCHEMA27 is the current
+    /// in-development symbol for BC 27.x and similarly should not be defined.
     /// </summary>
     public static List<string> PreprocessorSymbols { get; } =
-        Enumerable.Range(1, 27).Select(n => $"CLEANSCHEMA{n}").ToList();
+        Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}").ToList();
 
     public static List<(string Name, string Code)>? TranspileMulti(
         List<string> alSources,
