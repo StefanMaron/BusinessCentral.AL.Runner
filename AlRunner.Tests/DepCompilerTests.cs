@@ -416,6 +416,152 @@ public class DepCompilerTests
     }
 
     /// <summary>
+    /// Inverse of the negative-guard case: an enum (or other top-level object) is
+    /// declared <em>only</em> inside <c>#if CLEANSCHEMA&lt;N&gt; ... #endif</c>, and
+    /// a consumer references it unguarded. To keep the declaration visible, the
+    /// auto-detector must include <c>CLEANSCHEMA&lt;N&gt;</c> in the symbol set.
+    ///
+    /// Concrete BC 27.x example: enum "Sales Order Print Option" is declared inside
+    /// <c>#if CLEANSCHEMA29</c> but DocumentPrint.Codeunit.al references it unguarded.
+    /// Without this, AL0118 fires for every reference site.
+    /// </summary>
+    [Fact]
+    public void ComputeCleanSchemaSymbols_AddsN_WhenPositiveGuardDeclarationHasUnguardedConsumer()
+    {
+        var enumSrc = """
+            #if CLEANSCHEMA29
+            enum 50200 "My Print Option"
+            {
+                Extensible = true;
+                value(0; "First") { Caption = 'First'; }
+                value(1; "Second") { Caption = 'Second'; }
+            }
+            #endif
+            """;
+        var consumerSrc = """
+            codeunit 50201 "Use Print"
+            {
+                procedure P()
+                var Opt: Enum "My Print Option";
+                begin
+                    Opt := "My Print Option"::First;
+                end;
+            }
+            """;
+
+        var symbols = AlTranspiler.ComputeCleanSchemaSymbols(
+            new[] { enumSrc, consumerSrc }, defaultMax: 25, scanMax: 50);
+
+        Assert.Contains("CLEANSCHEMA29", symbols);
+    }
+
+    /// <summary>
+    /// Conflict tradeoff: the SAME N appears as a negative guard hiding a field
+    /// (drop N → strip field) AND as a positive guard hiding a declaration with
+    /// unguarded consumers (add N → reveal declaration). Pick the side with the
+    /// majority of unguarded consumers; on a tie, prefer negative (drop N).
+    /// Here the negative-side has 1 consumer, positive-side has 3 — positive wins.
+    /// </summary>
+    [Fact]
+    public void ComputeCleanSchemaSymbols_PositiveWins_WhenMorePositiveConsumers()
+    {
+        var tableSrc = """
+            table 50100 "Conf Tab"
+            {
+                fields
+                {
+                    field(1; "PK"; Code[20]) { }
+            #if not CLEANSCHEMA29
+                    field(116; "Old Field"; Code[20]) { }
+            #endif
+                }
+                keys { key(PK; "PK") { Clustered = true; } }
+            }
+            """;
+        var oldConsumer = """
+            codeunit 50101 "Old Use"
+            {
+                procedure P()
+                var T: Record "Conf Tab";
+                begin
+                    T.SetFilter("Old Field", '<>''''');
+                end;
+            }
+            """;
+        var enumSrc = """
+            #if CLEANSCHEMA29
+            enum 50200 "New Enum" { value(0; "X") { } }
+            #endif
+            """;
+        var newConsumerA = """
+            codeunit 50202 "New Use A"
+            { procedure P() var E: Enum "New Enum"; begin E := "New Enum"::X; end; }
+            """;
+        var newConsumerB = """
+            codeunit 50203 "New Use B"
+            { procedure P() var E: Enum "New Enum"; begin E := "New Enum"::X; end; }
+            """;
+        var newConsumerC = """
+            codeunit 50204 "New Use C"
+            { procedure P() var E: Enum "New Enum"; begin E := "New Enum"::X; end; }
+            """;
+
+        var symbols = AlTranspiler.ComputeCleanSchemaSymbols(
+            new[] { tableSrc, oldConsumer, enumSrc, newConsumerA, newConsumerB, newConsumerC },
+            defaultMax: 25, scanMax: 50);
+
+        // Positive side has more consumers (3) than negative side (1) → add N.
+        Assert.Contains("CLEANSCHEMA29", symbols);
+    }
+
+    /// <summary>
+    /// Conflict tie-breaker: equal consumer counts on both sides (or negative
+    /// strictly more) prefer the negative side (drop N), preserving the
+    /// historical default behaviour.
+    /// </summary>
+    [Fact]
+    public void ComputeCleanSchemaSymbols_NegativeWins_OnTieOrMoreNegativeConsumers()
+    {
+        var tableSrc = """
+            table 50100 "Conf Tab"
+            {
+                fields
+                {
+                    field(1; "PK"; Code[20]) { }
+            #if not CLEANSCHEMA29
+                    field(116; "Old Field"; Code[20]) { }
+            #endif
+                }
+                keys { key(PK; "PK") { Clustered = true; } }
+            }
+            """;
+        var oldConsumerA = """
+            codeunit 50101 "Old Use A"
+            { procedure P() var T: Record "Conf Tab"; begin T.SetFilter("Old Field", ''); end; }
+            """;
+        var oldConsumerB = """
+            codeunit 50102 "Old Use B"
+            { procedure P() var T: Record "Conf Tab"; begin T.SetFilter("Old Field", ''); end; }
+            """;
+        var enumSrc = """
+            #if CLEANSCHEMA29
+            enum 50200 "New Enum" { value(0; "X") { } }
+            #endif
+            """;
+        var newConsumer = """
+            codeunit 50202 "New Use"
+            { procedure P() var E: Enum "New Enum"; begin E := "New Enum"::X; end; }
+            """;
+
+        var symbols = AlTranspiler.ComputeCleanSchemaSymbols(
+            new[] { tableSrc, oldConsumerA, oldConsumerB, enumSrc, newConsumer },
+            defaultMax: 25, scanMax: 50);
+
+        // Negative side has more consumers (2) than positive side (1) → drop N.
+        Assert.DoesNotContain("CLEANSCHEMA29", symbols);
+    }
+
+    /// <summary>
     /// Regression for the auto-stubbed-page-method-call gap: a consumer calls
     /// <c>MyPage.SomeMethod(arg1, arg2)</c> on a page that exists only as an
     /// auto-stub. The stub must include forgiving Variant-arg procedures so

@@ -1158,36 +1158,38 @@ public static class AlTranspiler
 
         // For each mentioned N, locate every #if not CLEANSCHEMA<N> ... #endif block,
         // collect declared field names inside it (paired with the source index that
-        // contains the declaration), then check for unguarded textual references in
-        // any *other* source file.
+        // contains the declaration), then count textual references in any *other*
+        // source file. Do the same for positive #if CLEANSCHEMA<N> ... #endif blocks
+        // (which can hide whole object declarations, e.g. enum/table/codeunit).
+        // When both sides have consumers, prefer the side with the larger count;
+        // on a tie, prefer the negative side (historical default).
         var risky = new HashSet<int>();
         foreach (var n in mentioned)
         {
-            // (declared-name, declaring-source-index) pairs
-            var declarations = new List<(string Name, int SrcIdx)>();
+            // (declared-name, declaring-source-index) pairs for each polarity.
+            var negDecls = new List<(string Name, int SrcIdx)>();
+            var posDecls = new List<(string Name, int SrcIdx)>();
             for (int i = 0; i < sources.Count; i++)
             {
-                ExtractCleanSchemaGuardedNames(sources[i], n, names =>
+                ExtractCleanSchemaGuardedNames(sources[i], n, negative: true, names =>
                 {
-                    foreach (var name in names) declarations.Add((name, i));
+                    foreach (var name in names) negDecls.Add((name, i));
+                });
+                ExtractCleanSchemaGuardedNames(sources[i], n, negative: false, names =>
+                {
+                    foreach (var name in names) posDecls.Add((name, i));
                 });
             }
-            if (declarations.Count == 0) continue;
+            if (negDecls.Count == 0 && posDecls.Count == 0) continue;
 
-            foreach (var (name, declIdx) in declarations)
-            {
-                var quoted = "\"" + name + "\"";
-                for (int i = 0; i < sources.Count; i++)
-                {
-                    if (i == declIdx) continue;
-                    if (sources[i].Contains(quoted, StringComparison.Ordinal))
-                    {
-                        risky.Add(n);
-                        break;
-                    }
-                }
-                if (risky.Contains(n)) break;
-            }
+            int negCount = CountUnguardedConsumers(sources, negDecls);
+            int posCount = CountUnguardedConsumers(sources, posDecls);
+
+            // Negative side wins on tie or strict majority — keeps the historical
+            // "drop N when stripping a field would break a consumer" behaviour and
+            // only flips to positive when its consumer count is strictly larger.
+            if (negCount > 0 && negCount >= posCount)
+                risky.Add(n);
         }
 
         // Build the final symbol set: 1..max(defaultMax, mentioned-max), minus risky.
@@ -1206,38 +1208,88 @@ public static class AlTranspiler
     }
 
     /// <summary>
-    /// Find every <c>#if not CLEANSCHEMA&lt;n&gt;</c> ... <c>#endif</c> block in <paramref name="src"/>
-    /// (matching only the requested <paramref name="n"/>) and report the declared field
-    /// names inside (e.g. <c>field(116; "IC Partner G/L Acc. No."; ...)</c>). Nested
-    /// preprocessor directives are tracked so the right <c>#endif</c> is matched.
+    /// Find every <c>#if [not] CLEANSCHEMA&lt;n&gt;</c> ... <c>#endif</c> block in
+    /// <paramref name="src"/> matching the requested polarity (<paramref name="negative"/>)
+    /// and report declared names inside (field names <c>field(N; "..." ...)</c> plus,
+    /// for positive blocks, top-level object names like <c>enum 50100 "..."</c>).
+    /// Nested preprocessor directives are tracked so the right <c>#endif</c> is matched.
     /// </summary>
-    private static void ExtractCleanSchemaGuardedNames(string src, int n, Action<IEnumerable<string>> emit)
+    private static void ExtractCleanSchemaGuardedNames(string src, int n, bool negative, Action<IEnumerable<string>> emit)
     {
-        var openTok = $"#if not CLEANSCHEMA{n}";
+        var openTok = negative ? $"#if not CLEANSCHEMA{n}" : $"#if CLEANSCHEMA{n}";
         int idx = 0;
         while ((idx = src.IndexOf(openTok, idx, StringComparison.Ordinal)) >= 0)
         {
             int after = idx + openTok.Length;
             // Reject CLEANSCHEMA<n><digit> false matches (e.g. CLEANSCHEMA2 vs CLEANSCHEMA25).
             if (after < src.Length && char.IsDigit(src[after])) { idx = after; continue; }
-            // Ensure the line actually starts with "#if not CLEANSCHEMA<n>" (allow leading whitespace).
-            // Walk back to start of line to confirm.
+            // Ensure the line actually starts with the directive (allow leading whitespace).
             int lineStart = src.LastIndexOf('\n', Math.Max(0, idx - 1)) + 1;
             var prefix = src.Substring(lineStart, idx - lineStart);
             if (prefix.Trim().Length != 0) { idx = after; continue; }
+
+            // For the positive form, distinguish "#if CLEANSCHEMA<n>" from
+            // "#if not CLEANSCHEMA<n>" — the positive token is a prefix-substring
+            // of the negative one when scanning for "#if CLEANSCHEMA<n>".
+            if (!negative)
+            {
+                // Re-check: the matched "#if CLEANSCHEMA<n>" shouldn't have been
+                // produced by skipping past "#if not " — guarantee by requiring
+                // the character before "CLEANSCHEMA" to be exactly one space.
+                int csIdx = idx + "#if ".Length;
+                if (csIdx >= src.Length || src.IndexOf("CLEANSCHEMA", csIdx, StringComparison.Ordinal) != csIdx)
+                {
+                    idx = after; continue;
+                }
+            }
 
             int endIdx = FindMatchingEndif(src, after);
             if (endIdx < 0) { idx = after; continue; }
             var block = src.Substring(after, endIdx - after);
 
+            var names = new List<string>();
             // Field declarations: field(<id>; "<Name>"; <Type>...)
             var rxField = new System.Text.RegularExpressions.Regex(
                 @"\bfield\s*\(\s*\d+\s*;\s*""([^""]+)""");
-            var names = rxField.Matches(block).Select(m => m.Groups[1].Value).ToList();
+            foreach (System.Text.RegularExpressions.Match m in rxField.Matches(block))
+                names.Add(m.Groups[1].Value);
+            // Top-level object declarations inside positive guards: enum/table/codeunit/page/...
+            // The object header has the shape "<keyword> <id> "<Name>"".
+            if (!negative)
+            {
+                var rxObj = new System.Text.RegularExpressions.Regex(
+                    @"\b(?:enum|enumextension|table|tableextension|codeunit|page|pageextension|report|reportextension|xmlport|query|interface|permissionset|permissionsetextension|profile|controladdin|dotnet|entitlement)\s+\d+\s+""([^""]+)""",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                foreach (System.Text.RegularExpressions.Match m in rxObj.Matches(block))
+                    names.Add(m.Groups[1].Value);
+            }
             if (names.Count > 0) emit(names);
 
             idx = endIdx;
         }
+    }
+
+    /// <summary>
+    /// For each (declared-name, declaring-source-index) pair, count source files
+    /// other than the declaring one that textually mention the quoted name.
+    /// Returns the total count across all declarations (a single consumer file
+    /// referencing two different declared names counts twice — that's a feature:
+    /// it weights the conflict by the breadth of impact).
+    /// </summary>
+    private static int CountUnguardedConsumers(List<string> sources, List<(string Name, int SrcIdx)> decls)
+    {
+        int total = 0;
+        foreach (var (name, declIdx) in decls)
+        {
+            var quoted = "\"" + name + "\"";
+            for (int i = 0; i < sources.Count; i++)
+            {
+                if (i == declIdx) continue;
+                if (sources[i].Contains(quoted, StringComparison.Ordinal))
+                    total++;
+            }
+        }
+        return total;
     }
 
     /// <summary>
