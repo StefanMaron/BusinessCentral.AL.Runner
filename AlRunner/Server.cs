@@ -174,7 +174,21 @@ public class AlRunnerServer
                 noop = true
             });
         }
-        cts.Cancel();
+        try
+        {
+            cts.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Race: the runtests handler's finally-block disposed the CTS between our
+            // snapshot and Cancel(). Treat as noop — the request already completed.
+            return JsonSerializer.Serialize(new
+            {
+                type = "ack",
+                command = "cancel",
+                noop = true
+            });
+        }
         return JsonSerializer.Serialize(new
         {
             type = "ack",

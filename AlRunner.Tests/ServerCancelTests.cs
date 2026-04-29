@@ -50,4 +50,18 @@ public class ServerCancelTests
         Assert.True(JsonDocument.Parse(cancelResponse).RootElement
             .GetProperty("noop").GetBoolean());
     }
+
+    [Fact]
+    public async Task Cancel_WithUnknownExtraFields_StillAcks()
+    {
+        // Forward-compat: future protocol versions may add fields to the cancel command.
+        // The server must tolerate unknown fields and still emit the ack shape.
+        await using var server = await CliServer.StartAsync();
+        var response = await server.SendAsync(
+            "{\"command\":\"cancel\",\"reason\":\"user clicked stop\",\"requestId\":42}");
+        var doc = JsonDocument.Parse(response);
+        Assert.Equal("ack", doc.RootElement.GetProperty("type").GetString());
+        Assert.Equal("cancel", doc.RootElement.GetProperty("command").GetString());
+        Assert.True(doc.RootElement.GetProperty("noop").GetBoolean());
+    }
 }
