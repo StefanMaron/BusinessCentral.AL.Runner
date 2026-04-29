@@ -39,7 +39,7 @@ public class SourceFilePathEmissionTests
         {
             var alFile = Path.Combine(projectDir.FullName, "CU1.al");
             File.WriteAllText(alFile, """
-                codeunit 50100 CU1
+                codeunit 59901 CU1
                 {
                     procedure DoIt(): Integer
                     begin
@@ -97,7 +97,7 @@ public class SourceFilePathEmissionTests
         {
             var srcFile = Path.Combine(projectDir.FullName, "CU2Src.al");
             File.WriteAllText(srcFile, """
-                codeunit 50101 CU2Src
+                codeunit 59902 CU2Src
                 {
                     procedure DoIt(): Integer
                     begin
@@ -108,7 +108,7 @@ public class SourceFilePathEmissionTests
 
             var testFile = Path.Combine(projectDir.FullName, "CU2Test.al");
             File.WriteAllText(testFile, """
-                codeunit 50901 CU2Test
+                codeunit 59903 CU2Test
                 {
                     Subtype = Test;
 
