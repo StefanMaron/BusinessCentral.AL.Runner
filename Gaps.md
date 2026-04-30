@@ -8,98 +8,104 @@ Add new gaps as they're identified. When fixed, move to a "Resolved" subsection 
 
 ## Confirmed
 
-### G1. `IterationTracker.FinalizeIteration` reads from global aggregates instead of per-test scope
-
-**Surface:** `Server.cs` v2 streaming path emits `iterations[].steps[].capturedValues = []` and `iterations[].steps[].messages = []` regardless of how many captures/messages actually fired during the iteration.
-
-**Why:** `AlRunner/Runtime/IterationTracker.cs:90` and `:131` snapshot from `ValueCapture.GetCaptures()` / `MessageCapture.GetMessages()`. Both are GLOBAL aggregates only populated when their respective `Enable()` was called — the legacy v1 `--output-json` path does this; the v2 streaming `Executor.RunTests` path does NOT. The v2 path writes to `TestExecutionScope.Current.CapturedValues` / `.Messages` only, so the global stays empty and the iteration delta is always `0..0`.
-
-**Evidence:** `docs/protocol-v2-samples/runtests-iterations.ndjson` after Plan E3 Group A — every step has `"capturedValues":[]`. Test event carries the captures at test scope; iteration steps are empty.
-
-**Downstream impact:** ALchemist's iteration-stepping flow updates the stepper indicator correctly but the inline captured-value text disappears (the data per-iteration is empty). User-visible blank lines in the editor when stepping.
-
-**Fix:** Read from `TestExecutionScope.Current.CapturedValues` / `.Messages` in `EnterIteration`'s snapshot and `FinalizeIteration`'s delta loop. Plan E4 Group A. Both captures and messages share the same architectural fix (parallel one-line changes plus a unit test that exercises both).
-
-**Test that catches the regression:** `AlRunner.Tests/IterationTrackerTests.cs::FinalizeIteration_ReadsCapturesFromActiveTestExecutionScope` (Plan E4 A1).
-
----
-
-## Suspected (need empirical verification)
-
 ### G2. Loop-variable captures emit only at test scope, not per iteration
+
+**Status:** Confirmed empirically (Plan E4 review + GapVerificationTests G2).
 
 **Surface:** For `for i := 1 to 10 do begin ... end`, the runner emits ONE capture for `i` at test scope (statementId 0, value `10` — last). Per-iteration values for `i` are not in `iterations[].steps[].capturedValues` (those only contain assignment targets like `j := i*2` → `j`).
 
-**Why suspected:** Confirmed by the v0.5.6 NDJSON sample for `Loop.Codeunit.al` — `i` appears once at scope `RunsLoop` (test scope) with value `3` (final value). No per-iteration `i` capture.
+**Evidence:** Plan E4 Group A's `RunTests_V2Summary_IncludesIterations_WhenIterationTrackingRequested` test was tightened during review to assert only `sum`, not `i`, after the implementer reproduced this empirically: the AL→C# rewriter instruments assignment targets (e.g., `sum` from `sum += i`) but NOT the loop counter `i` (managed by the runtime, not by a rewritten statement). The v0.5.6 NDJSON sample confirms: `i` appears once at scope `RunsLoop` (test scope) with value `3` (final value). No per-iteration `i` capture.
 
-**Downstream impact:** ALchemist's compact-form rendering (`i = 1 ‥ 10 (×10)`) requires multiple captures per `(statementId, variable)`. Loop variables get only one capture → render plain (`i = 10`). Less informative.
+**Empirical result (GapVerificationTests G2):** Test `G2_LoopVariableCapturedOnceAtTestScopeNotPerIteration` PASSES. Loop variable `i` is absent from all per-iteration steps; assignment target `sum` is present in each step; `i` appears exactly once in `TestExecutionScope.Current.CapturedValues` with final value "3". Current behavior pinned.
+
+**Downstream impact:** ALchemist's compact-form rendering (`i = 1 ‥ 10 (×10)`) requires multiple captures per `(statementId, variable)`. Loop variables get only one capture → render plain (`i = 10`). Less informative for the user.
 
 **Fix candidates:** Either inject a `ValueCapture.Capture` call for the loop variable at iteration boundary in `IterationInjector.Inject`, OR augment `step.CapturedValues` post-hoc with the loop-variable value sampled at `EnterIteration` time. Both runner-side.
 
-**Confidence:** Confirmed via NDJSON inspection. Reproducer is the existing iterations fixture.
+**Verification test:** `AlRunner.Tests/GapVerificationTests.cs::G2_LoopVariableCapturedOnceAtTestScopeNotPerIteration`
 
-### G3. Cancellation mid-iteration may leave the IterationTracker in an inconsistent state
+### G4. Nested loop capture attribution double-counts inner captures in outer steps
 
-**Surface:** When a v2 `cancel` request arrives mid-loop, the executor stops the test. If injected `ExitLoop` doesn't fire (e.g. unhandled exception bypasses the finally), `_loopStack` retains an active loop and the next test inherits it.
+**Status:** Confirmed empirically (GapVerificationTests G4).
 
-**Why suspected:** `IterationTracker.cs` line 8-12 comments claim "ExitLoop is called from a finally block, so always runs." Need to verify the IterationInjector emits `try { ... } finally { ExitLoop(loopId); }` and that the AL→C# rewriter preserves it through cancellation (`OperationCanceledException`).
+**Surface:** When a loop B runs inside loop A's iteration N, `FinalizeIteration` for outer iteration N reads all `TestExecutionScope.Current.CapturedValues` since outer iteration N started. That span includes every capture that occurred inside inner loop B, so those inner captures appear in BOTH the inner loop's step AND the outer loop's step N — double-counting.
 
-**Downstream impact:** Subsequent v2 requests may see stale loop entries, double-count iterations, or crash on `Peek()` of the wrong loop.
+**Root cause:** The snapshot+delta math in `IterationTracker.FinalizeIteration` uses a flat index range over `TestExecutionScope.Current.CapturedValues`. Nested loops produce overlapping index ranges: outer iteration N's range subsumes inner loop B's entire execution, so inner captures land in both the inner step (correct) and the outer step (wrong).
 
-**Fix candidates:** Add `IterationTracker.Reset()` at the top of every v2 `runtests` request. (Server.cs already does this at line 442 — verify.) Also verify `IterationInjector.Inject` wraps the loop body in try/finally.
+**Empirical result (GapVerificationTests G4):** Test `G4_NestedLoopCapturesAttributedToInnermost` PASSES by asserting the double-count: `"inner-j"` appears in both `innerLoop.Steps[0].CapturedValues` AND `outerLoop.Steps[0].CapturedValues`. Current behavior pinned; any future fix that removes the double-count will break this test (update test at that point).
 
-**Confidence:** Architectural inference. Need a test that cancels mid-loop and verifies tracker state for the NEXT request.
+**Downstream impact:** ALchemist's compact-form display would show inflated capture counts for outer-loop iterations when the test contains nested loops. Each outer iteration step includes every inner-loop variable capture from that outer iteration.
 
-### G4. Nested loop capture attribution may double-count
+**Fix candidates:** Stack-aware finalization: when finalizing outer iteration N, skip any captures that fall within a nested loop's finalized steps (track inner-loop captured ranges and exclude them from the outer delta). Alternatively, during `EnterIteration(inner)`, advance the outer loop's `ValueSnapshotBefore` so its next finalization starts after the inner loop's captures.
 
-**Surface:** When a loop B runs inside loop A's iteration N, captures inside B go into `TestExecutionScope.Current.CapturedValues`. After B's `ExitLoop` finalizes B's iterations. Then A's `EnterIteration(N+1)` snapshots — and FinalizeIteration's delta-loop captures EVERYTHING between A's `ValueSnapshotBefore` and the current scope count, including all of B's iteration captures.
+**Verification test:** `AlRunner.Tests/GapVerificationTests.cs::G4_NestedLoopCapturesAttributedToInnermost`
 
-**Why suspected:** The snapshot+delta math assumes a flat single-level loop. Nested loops produce overlapping snapshot ranges. Loop A's iteration N's `CapturedValues` may include captures that already appeared in loop B's iteration steps, double-counting them.
+### G8. Loop-variable casing in v2 wire format passes through declaration case verbatim
 
-**Downstream impact:** ALchemist's compact-form display would show inflated counts for outer-loop iterations of nested-loop variables.
+**Status:** Confirmed empirically (GapVerificationTests G8 + prior Plan E2.1 observation).
 
-**Fix candidates:** When EnterIteration of a nested loop fires, mark any captures that occur during that nested loop with the nested loopId so the outer-loop's delta loop can skip them. OR use a stack-aware finalization: only attribute captures to the innermost active loop's current iteration.
+**Surface:** AL identifiers are case-insensitive in source. The runner emits captures with the variable's DECLARATION case as written in the AL `var` block. If declaration and usage case differ (e.g., `myint: Integer` declared but `myInt` used), the emitted `variableName` matches the declaration spelling, not the usage spelling. ALchemist's `applyIterationView` does case-sensitive `Map.get(varName)` against the source-text spelling — this can cause missed lookups when cases differ.
 
-**Confidence:** Architectural inference. No nested-loop fixture exists yet to reproduce.
+**Evidence (prior):** Plan E2.1 debugging observed `"variableName":"myint"` for a var declared `myint: Integer` even though source code spelled it `myInt`.
 
-### G5. Zero-iteration loop (`for i := 1 to 0`) wire shape may be wrong
+**Empirical result (GapVerificationTests G8):** Test `G8_VariableNameCasingMatchesAlDeclaration` PASSES, confirming the runner emits declaration casing verbatim. For the iterations fixture (all-lowercase declarations), emitted names are all-lowercase. No normalisation is performed. Current behavior pinned.
 
-**Surface:** AL allows `for i := 1 to 0 do` which never executes the body. EnterLoop fires; EnterIteration never; ExitLoop fires; `IterationCount = 0`; `Steps = []`.
+**Downstream impact:** ALchemist consumers that do case-sensitive lookup on `variableName` may miss variables when AL source mixes case. Risk is low for all-lowercase or all-uppercase declarations (consistent with most AL style guides) but real for mixed-case identifiers.
 
-**Why suspected:** Simple boundary case — likely correct, but needs a regression test. ALchemist's `iterationStore.load` has `if (loop.iterationCount === 0)` guard so consumer side is safe. Open question: does AL.Runner emit such loops AT ALL in the v2 summary, or skip them?
+**Fix candidate:** Either (a) emit normalised lowercase from the runner, OR (b) ALchemist does case-insensitive lookup. Both are consumer-visible breaking changes if not coordinated. Recommend (b) as the less invasive change.
 
-**Confidence:** Need a fixture with a never-executed loop and a test asserting either non-emission or emission with `iterationCount: 0`.
+**Verification test:** `AlRunner.Tests/GapVerificationTests.cs::G8_VariableNameCasingMatchesAlDeclaration`
 
-### G6. Coverage emission on cache-hit may have stale `linesExecuted` per iteration
+---
 
-**Surface:** v2 server cache-hit path (`Server.cs:286-303`) restores `SourceFileMapper`/`SourceLineMapper` snapshots but doesn't reset `IterationTracker._loops`. Server.cs:442 does `IterationTracker.Reset()` before iteration tracking is enabled — but is this sufficient? Need to verify cache-hit doesn't leak iteration data from the previous request.
+## Verified Non-Issue
 
-**Why suspected:** Coverage state is tracked separately from iteration state. The Reset at 442 should be enough; document it.
+### G3. Cancellation mid-iteration and IterationTracker state
 
-**Confidence:** Need a test that runs requests A, B, A and asserts iteration data on the third (cache-hit) request matches the first.
+**Status:** Verified non-issue (GapVerificationTests G3).
 
-### G7. Schema vs. emission drift on edge cases
+**Original suspicion:** When a v2 `cancel` request arrives mid-loop, if `ExitLoop` doesn't fire (e.g. an unhandled exception bypasses the `finally`), `_loopStack` would retain a stale loop and the next test would inherit it.
 
-**Surface:** Plan E3 Group C found `["string","null"]` schema types where the runtime omits the field entirely (WhenWritingNull). Tightened in v0.5.6. Other places with similar drift may exist.
+**Empirical result (GapVerificationTests G3):** Test `G3_CancelMidIterationDoesNotLeaveStaleLoopStack` PASSES. Two defences are in place and both verified:
+1. `IterationInjector.Inject` wraps every loop in `try { ... } finally { ExitLoop(loopId); }` — `OperationCanceledException` propagates through `finally` in C#, so ExitLoop always fires.
+2. `Server.cs:442` calls `IterationTracker.Reset()` unconditionally before each runtests execution. Even in a hypothetical path that bypassed the finally, the next request starts clean.
 
-**Suspect candidates** (not yet audited):
-- `Summary.changedFiles` — null-when-cached emission, `["array","null"]` schema?
-- `Summary.compilationErrors` — empty-when-no-errors emission, `["array","null"]`?
-- `TestEvent.alSourceFile` — required-or-omitted? Documented as absolute fwd-slash, but is the field required when the test passes (no stack)?
+Even the worst-case simulation (no ExitLoop, stale `_loops` from request 1) produces a clean tracker after the next `Reset()`. No stale entries survive.
 
-**Fix candidate:** Capture an exhaustive sample (multiple test outcomes: pass, fail, error, cancel, cached, fresh, with/without coverage, with/without iteration tracking) and AJV-validate against the schema. Tighten any branch that doesn't fit reality.
+**Verification test:** `AlRunner.Tests/GapVerificationTests.cs::G3_CancelMidIterationDoesNotLeaveStaleLoopStack`
 
-**Confidence:** Architectural pattern that bit us once in v0.5.5 → v0.5.6. Worth a one-time exhaustive audit.
+### G5. Zero-iteration loop (`for i := 1 to 0`) wire shape
 
-### G8. Loop-variable casing in v2 wire format
+**Status:** Verified non-issue (GapVerificationTests G5).
 
-**Surface:** AL identifiers are case-insensitive in source. The runner emits captures with the variable's DECLARATION case (e.g., `j: Integer; j := i * 2;` → `variableName: "j"`). But AL.Runner may not normalize across uses — e.g., `myInt` declared lowercase in `var` block, used as `myInt` in source — what gets emitted? `myint` or `myInt`?
+**Original suspicion:** A loop that fires `EnterLoop`/`ExitLoop` but never `EnterIteration` might produce a malformed or missing `LoopRecord`.
 
-**Why suspected:** Earlier in Plan E2.1's debugging, we observed `"variableName":"myint"` (lowercase) for a CU1.al var declared `myint: Integer;` even though source code referenced `myInt`. ALchemist's `applyIterationView` does case-sensitive `Map.get(varName)` against the source-text spelling — could miss when cases differ.
+**Empirical result (GapVerificationTests G5):** Test `G5_ZeroIterationLoopProducesEmptySteps` PASSES. The runner emits a `LoopRecord` with `IterationCount=0` and `Steps=[]` — clean, schema-valid, and consistent with the ALchemist consumer guard `if (loop.iterationCount === 0)`. No malformed output. Boundary case is handled correctly.
 
-**Confidence:** Prior empirical observation but not pinned with a regression test. Risk of consumer-side missed lookups.
+**Verification test:** `AlRunner.Tests/GapVerificationTests.cs::G5_ZeroIterationLoopProducesEmptySteps`
 
-**Fix candidate:** Either (a) emit normalized casing (lowercase) from the runner, OR (b) ALchemist does case-insensitive lookup. Both are consumer-visible breaking changes if not coordinated.
+### G6. Cache-hit iteration data leakage across request sequence A → B → A
+
+**Status:** Verified non-issue (GapVerificationTests G6).
+
+**Original suspicion:** The v2 server cache-hit path restores `SourceFileMapper`/`SourceLineMapper` snapshots but might not reset `IterationTracker._loops`, causing stale data to leak from one request's iteration capture into the next.
+
+**Empirical result (GapVerificationTests G6):** Test `G6_RequestSequenceDoesNotLeakIterationData` PASSES. `IterationTracker.Reset()` at `Server.cs:442` is called before each runtests iteration-tracking pass, clearing `_loops`, `_loopStack`, `_nextLoopId`, and `_enabled`. The A → B → A sequence produces exactly 1 loop per request, each scoped to only that request's data. No cross-request contamination.
+
+**Verification test:** `AlRunner.Tests/GapVerificationTests.cs::G6_RequestSequenceDoesNotLeakIterationData`
+
+### G7. Schema vs. emission drift on edge fields
+
+**Status:** Verified non-issue (GapVerificationTests G7a/G7b/G7c).
+
+**Original suspicion:** Three edge-field emission patterns might drift from schema: `compilationErrors` on clean runs, `changedFiles` on cache hits, and `alSourceFile` on passing tests.
+
+**Empirical results:**
+- **G7a** (`compilationErrors` on clean run): PASSES. Field is absent (or null/empty) on a clean-compile run. Server.cs emits `compilationErrors` only when the map is non-empty. WhenWritingNull drops it. No drift.
+- **G7b** (`changedFiles` on cache hit): PASSES. Second identical request returns `cached:true` and `changedFiles` is absent. Server.cs line 715 sets `changedFiles = null` when `cached == true`. No drift.
+- **G7c** (`alSourceFile` on ALL test events): PASSES. Every test event (both passing and failing) carries a non-empty `alSourceFile` ending in `.al`. Server.cs line 655 falls back to `SourceFileMapper.GetFile(t.CodeunitName)` for passing tests that lack a stack walk. The v0.5.6 fix is confirmed in place and regression-pinned.
+
+**Verification tests:** `AlRunner.Tests/GapVerificationTests.cs::G7a_CleanRun_SummaryOmitsCompilationErrors`, `G7b_CacheHit_OmitsChangedFiles`, `G7c_AllTestEvents_HaveAlSourceFile`
 
 ---
 
@@ -125,11 +131,30 @@ Add new gaps as they're identified. When fixed, move to a "Resolved" subsection 
 **Resolved by:** Plan E3 Group B fixup (commit `7dfb2d2`).
 **Replacement:** `Reset()` now also clears `_enabled` so the contract is "return to known disabled ground state".
 
+### R5. `IterationTracker.FinalizeIteration` read from global aggregates instead of per-test scope
+
+**Resolved by:** Plan E4 Group A (commit `94253ea`, with comment fixup `988c575`).
+**Replacement:** `EnterIteration` snapshot and `FinalizeIteration` delta loop now read from `TestExecutionScope.Current.CapturedValues` and `.Messages` instead of `ValueCapture.GetCaptures()` / `MessageCapture.GetMessages()`. Both v1 (`--output-json`) and v2 (`--server`) paths share this code, so both are fixed.
+**Symptom that drove the discovery:** ALchemist's iteration stepper updated the `⟳ N/M` indicator but inline captured-value text disappeared — `step.capturedValues` was always `[]` so there was nothing to render.
+**Test that catches the regression:** `AlRunner.Tests/IterationTrackerTests.cs::FinalizeIteration_ReadsCapturesAndMessagesFromActiveTestExecutionScope` (Plan E4 A1).
+
+---
+
+## Verification Tests
+
+When a Suspected gap is investigated, the test that verifies its current state lives at `AlRunner.Tests/GapVerificationTests.cs`. Each test is named `G<N>_<short-description>` and either:
+
+- **PASSES** by asserting the suspected behavior (the gap is real and we accept it for now — the test pins current behavior so silent changes break the test), OR
+- **FAILS** if the gap turns out to NOT actually be present (the assertion was wrong; downgrade the gap to non-issue), OR
+- **PASSES** by asserting the GOOD behavior the runner already produces (the suspicion was wrong; downgrade the gap).
+
+Each test's assertion message references the Gap ID. The test file is the empirical companion to this document.
+
 ---
 
 ## How to use this file
 
 - When you find a new gap (architectural pattern, edge case, or schema/runtime drift), add an entry under **Suspected** with: surface, why, evidence/confidence, downstream impact, fix candidates.
-- When you reproduce empirically, promote to **Confirmed**.
-- When you fix, move to **Resolved** with the commit reference and a one-line note about the fix shape.
+- When you reproduce empirically, promote to **Confirmed** AND add a verification test at `AlRunner.Tests/GapVerificationTests.cs::G<N>_*` that pins the current behavior.
+- When you fix, move to **Resolved** with the commit reference and a one-line note about the fix shape. Update or replace the verification test with the regression test.
 - Cross-reference Plan documents in `../ALchemist/docs/superpowers/plans/` when relevant — this file is the runner-side companion to those plans.
