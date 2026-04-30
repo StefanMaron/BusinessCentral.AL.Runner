@@ -17,6 +17,11 @@ public static class MessageCapture
         if (scope != null)
             scope.Messages.Add(message);
 
+        // Plan E5 Group A: route to the innermost active loop's per-iteration
+        // accumulator. RecordMessage is a no-op when no loop is active or when
+        // IterationTracker is disabled, so this is safe to call unconditionally.
+        IterationTracker.RecordMessage(message);
+
         // Global aggregate also gets the message when capture mode is enabled,
         // so the pipeline-level MessageCapture.GetMessages() remains populated.
         if (_enabled)

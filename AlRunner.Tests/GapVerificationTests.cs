@@ -237,6 +237,57 @@ public class GapVerificationTests
     }
 
     // ------------------------------------------------------------------ //
+    // G4 (fixed) — Nested loop captures attributed to innermost only    //
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// Plan E5 Group A: the per-loop accumulator design ensures each
+    /// capture lands in EXACTLY ONE loop's iteration step (the innermost
+    /// active one). After the fix, an inner-loop capture must NOT
+    /// appear in the outer loop's step.
+    /// </summary>
+    [Fact]
+    public void G4_Fixed_NestedLoopCapturesAttributedToInnermostOnly()
+    {
+        // Plan E5 Group A: the per-loop accumulator design ensures each
+        // capture lands in EXACTLY ONE loop's iteration step (the innermost
+        // active one). After the fix, an inner-loop capture must NOT
+        // appear in the outer loop's step.
+        IterationTracker.Reset();
+        IterationTracker.Enable();
+        using var _ = AlRunner.TestExecutionScope.Begin("NestedTest");
+
+        // Outer iter 1
+        var outerId = IterationTracker.EnterLoop("outer", 1, 10);
+        IterationTracker.EnterIteration(outerId);
+        ValueCapture.Capture("outer", "Obj", "outer-i", 1, statementId: 0);
+
+        // Inner runs once inside outer iter 1
+        var innerId = IterationTracker.EnterLoop("inner", 5, 7);
+        IterationTracker.EnterIteration(innerId);
+        ValueCapture.Capture("inner", "Obj", "inner-j", 100, statementId: 0);
+        IterationTracker.ExitLoop(innerId);
+
+        IterationTracker.ExitLoop(outerId);
+
+        var loops = IterationTracker.GetLoops();
+        var outerLoop = loops.Single(l => l.ScopeName == "outer");
+        var innerLoop = loops.Single(l => l.ScopeName == "inner");
+
+        // Outer iter 1 must contain ONLY outer's captures, NOT inner-j.
+        var outerStep1 = outerLoop.Steps.Single();
+        Assert.Contains(outerStep1.CapturedValues, cv => cv.VariableName == "outer-i");
+        Assert.DoesNotContain(outerStep1.CapturedValues, cv => cv.VariableName == "inner-j");
+
+        // Inner iter 1 must contain ONLY inner's captures.
+        var innerStep1 = innerLoop.Steps.Single();
+        Assert.Contains(innerStep1.CapturedValues, cv => cv.VariableName == "inner-j");
+        Assert.DoesNotContain(innerStep1.CapturedValues, cv => cv.VariableName == "outer-i");
+
+        IterationTracker.Reset();
+    }
+
+    // ------------------------------------------------------------------ //
     // G5 — Zero-iteration loop wire shape                                //
     // ------------------------------------------------------------------ //
 
