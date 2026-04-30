@@ -12,21 +12,34 @@ namespace AlRunner;
 public sealed class IterationInjector : CSharpSyntaxRewriter
 {
     private string? _currentScopeClass;
+    private string? _currentObjectName;
     private int _nextLoopIdHint;
+    private readonly Dictionary<string, string>? _scopeToObject;
 
-    public static SyntaxNode Inject(SyntaxNode root)
+    private IterationInjector(Dictionary<string, string>? scopeToObject = null)
     {
-        var injector = new IterationInjector();
+        _scopeToObject = scopeToObject;
+    }
+
+    public static SyntaxNode Inject(SyntaxNode root, Dictionary<string, string>? scopeToObject = null)
+    {
+        var injector = new IterationInjector(scopeToObject);
         return injector.Visit(root);
     }
 
     public override SyntaxNode? VisitClassDeclaration(ClassDeclarationSyntax node)
     {
-        var previous = _currentScopeClass;
+        var previousScope = _currentScopeClass;
+        var previousObject = _currentObjectName;
         if (node.Identifier.Text.Contains("_Scope"))
+        {
             _currentScopeClass = node.Identifier.Text;
+            // Look up the AL object name from the scope class name using the mapping.
+            _scopeToObject?.TryGetValue(_currentScopeClass, out _currentObjectName);
+        }
         var result = base.VisitClassDeclaration(node);
-        _currentScopeClass = previous;
+        _currentScopeClass = previousScope;
+        _currentObjectName = previousObject;
         return result;
     }
 
@@ -119,10 +132,13 @@ public sealed class IterationInjector : CSharpSyntaxRewriter
         // for-statement's start. If loopVarName is null (while/do, or a
         // for whose condition doesn't follow the `this.<name> <= ...`
         // pattern), skip the injection — there's no loop variable to capture.
+        // Use _currentObjectName (from ScopeToObject mapping) as the ObjectName
+        // so Server.cs can map it to alSourceFile via SourceFileMapper.
         if (loopVarName != null)
         {
+            var objectName = _currentObjectName ?? _currentScopeClass ?? "";
             var captureLoopVar = SyntaxFactory.ParseStatement(
-                $"AlRunner.Runtime.ValueCapture.Capture(\"{_currentScopeClass}\", \"{_currentScopeClass}\", \"{loopVarName}\", (object?)this.{loopVarName}, 0);\n");
+                $"AlRunner.Runtime.ValueCapture.Capture(\"{_currentScopeClass}\", \"{objectName}\", \"{loopVarName}\", (object?)this.{loopVarName}, 0);\n");
             newStatements.Add(captureLoopVar);
         }
 

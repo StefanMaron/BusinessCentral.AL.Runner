@@ -718,15 +718,18 @@ public class AlRunnerPipeline
         var refsTask = Task.Run(() => RoslynCompiler.LoadReferences());
 
         // Pre-compute source-span and scope maps from the PRE-rewrite C# so the
-        // LineDirectiveInjector pass can run inside the parallel rewrite loop.
+        // LineDirectiveInjector and IterationInjector passes can run inside the parallel rewrite loop.
         // ParseSourceSpansWithColumns reads [SourceSpans(...)] attributes which are
         // present only in the BC-generated (pre-rewrite) text.
         IReadOnlyDictionary<(string Scope, int StmtIndex), (int Line, int Column)>? lineDirectiveSpans = null;
         IReadOnlyDictionary<string, string>? lineDirectiveScopeMap = null;
+        // Plan E5 Group B: always build scope-to-object map so IterationInjector can
+        // pass correct ObjectNames for loop variable captures (fixes alSourceFile lookup).
+        var scopeToObjectMap = CoverageReport.BuildScopeToObjectMap(generatedCSharpList);
         if (options.EmitLineDirectives)
         {
             lineDirectiveSpans = CoverageReport.ParseSourceSpansWithColumns(generatedCSharpList);
-            lineDirectiveScopeMap = CoverageReport.BuildScopeToObjectMap(generatedCSharpList);
+            lineDirectiveScopeMap = scopeToObjectMap;
         }
 
         var rewrittenTrees = new (string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)[generatedCSharpList.Count];
@@ -767,7 +770,9 @@ public class AlRunnerPipeline
                 // Iteration tracker calls are no-ops when Runtime.IterationTracker.Enabled is false.
                 // Inject unconditionally so cached assemblies serve both iterationTracking=true and
                 // =false requests without recompilation. Pattern mirrors ValueCaptureInjector above.
-                injectedRoot = IterationInjector.Inject(injectedRoot);
+                // Pass ScopeToObject mapping so loop variable captures carry the correct ObjectName
+                // for alSourceFile resolution at Server.cs (Plan E5 Group B G2 fix).
+                injectedRoot = IterationInjector.Inject(injectedRoot, scopeToObjectMap);
                 // Third pass (optional): inject #line directives so portable PDB maps
                 // IL sequence points back to .al file paths.
                 if (options.EmitLineDirectives && lineDirectiveSpans != null && lineDirectiveScopeMap != null)
