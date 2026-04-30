@@ -107,6 +107,59 @@ public class GapVerificationTests
     }
 
     // ------------------------------------------------------------------ //
+    // G2 (fixed) — Loop-variable captured per-iteration via injected     //
+    //              ValueCapture.Capture call after EnterIteration        //
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// Plan E5 Group B: IterationInjector now injects a
+    /// ValueCapture.Capture call for the loop variable after each
+    /// EnterIteration. Per-iteration captures should include the loop
+    /// variable's value at that iteration, not just the assignment
+    /// target.
+    /// </summary>
+    [Fact]
+    public void G2_Fixed_LoopVariableAppearsInPerIterationCaptures()
+    {
+        // Plan E5 Group B: IterationInjector now injects a
+        // ValueCapture.Capture call for the loop variable after each
+        // EnterIteration. Per-iteration captures should include the loop
+        // variable's value at that iteration, not just the assignment
+        // target.
+        IterationTracker.Reset();
+        IterationTracker.Enable();
+        using var _ = AlRunner.TestExecutionScope.Begin("LoopVarTest");
+
+        // Simulate what the injected code does at the C# level. (The
+        // actual end-to-end test is in ServerProtocolV2Tests; this
+        // unit test pins the IterationTracker contract.)
+        var loopId = IterationTracker.EnterLoop("scope", 1, 10);
+
+        IterationTracker.EnterIteration(loopId);
+        // Injected by IterationInjector: capture loop variable
+        ValueCapture.Capture("scope", "Obj", "i", 1, statementId: 0);
+        // Body's assignment target
+        ValueCapture.Capture("scope", "Obj", "sum", 1, statementId: 1);
+
+        IterationTracker.EnterIteration(loopId);
+        ValueCapture.Capture("scope", "Obj", "i", 2, statementId: 0);
+        ValueCapture.Capture("scope", "Obj", "sum", 3, statementId: 1);
+
+        IterationTracker.ExitLoop(loopId);
+
+        var loop = IterationTracker.GetLoops().Single();
+        Assert.Equal(2, loop.Steps.Count);
+
+        // Each step must contain BOTH `i` and `sum`.
+        Assert.Contains(loop.Steps[0].CapturedValues, cv => cv.VariableName == "i" && cv.Value == "1");
+        Assert.Contains(loop.Steps[0].CapturedValues, cv => cv.VariableName == "sum" && cv.Value == "1");
+        Assert.Contains(loop.Steps[1].CapturedValues, cv => cv.VariableName == "i" && cv.Value == "2");
+        Assert.Contains(loop.Steps[1].CapturedValues, cv => cv.VariableName == "sum" && cv.Value == "3");
+
+        IterationTracker.Reset();
+    }
+
+    // ------------------------------------------------------------------ //
     // G3 — Cancellation mid-iteration may leave tracker inconsistent     //
     // ------------------------------------------------------------------ //
 
