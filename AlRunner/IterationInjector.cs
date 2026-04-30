@@ -90,10 +90,7 @@ public sealed class IterationInjector : CSharpSyntaxRewriter
     private static bool IsPlumbingField(string name)
     {
         if (name.Length == 0) return true;
-        var c = name[0];
-        // BC emits β-prefixed fields for scope plumbing and γ-prefixed for
-        // return values; skip both to avoid noise.
-        if (c == 'β' || c == 'γ') return true;
+        if (PlumbingFieldFilter.IsPlumbingField(name)) return true;
         if (name.StartsWith("__", StringComparison.Ordinal)) return true;
         if (name == "_parent" || name == "me") return true;
         return false;
