@@ -8,53 +8,7 @@ Add new gaps as they're identified. When fixed, move to a "Resolved" subsection 
 
 ## Confirmed
 
-### G2. Loop-variable captures emit only at test scope, not per iteration
-
-**Status:** Confirmed empirically (Plan E4 review + GapVerificationTests G2).
-
-**Surface:** For `for i := 1 to 10 do begin ... end`, the runner emits ONE capture for `i` at test scope (statementId 0, value `10` — last). Per-iteration values for `i` are not in `iterations[].steps[].capturedValues` (those only contain assignment targets like `j := i*2` → `j`).
-
-**Evidence:** Plan E4 Group A's `RunTests_V2Summary_IncludesIterations_WhenIterationTrackingRequested` test was tightened during review to assert only `sum`, not `i`, after the implementer reproduced this empirically: the AL→C# rewriter instruments assignment targets (e.g., `sum` from `sum += i`) but NOT the loop counter `i` (managed by the runtime, not by a rewritten statement). The v0.5.6 NDJSON sample confirms: `i` appears once at scope `RunsLoop` (test scope) with value `3` (final value). No per-iteration `i` capture.
-
-**Empirical result (GapVerificationTests G2):** Test `G2_LoopVariableCapturedOnceAtTestScopeNotPerIteration` PASSES. Loop variable `i` is absent from all per-iteration steps; assignment target `sum` is present in each step; `i` appears exactly once in `TestExecutionScope.Current.CapturedValues` with final value "3". Current behavior pinned.
-
-**Downstream impact:** ALchemist's compact-form rendering (`i = 1 ‥ 10 (×10)`) requires multiple captures per `(statementId, variable)`. Loop variables get only one capture → render plain (`i = 10`). Less informative for the user.
-
-**Fix candidates:** Either inject a `ValueCapture.Capture` call for the loop variable at iteration boundary in `IterationInjector.Inject`, OR augment `step.CapturedValues` post-hoc with the loop-variable value sampled at `EnterIteration` time. Both runner-side.
-
-**Verification test:** `AlRunner.Tests/GapVerificationTests.cs::G2_LoopVariableCapturedOnceAtTestScopeNotPerIteration`
-
-### G4. Nested loop capture attribution double-counts inner captures in outer steps
-
-**Status:** Confirmed empirically (GapVerificationTests G4).
-
-**Surface:** When a loop B runs inside loop A's iteration N, `FinalizeIteration` for outer iteration N reads all `TestExecutionScope.Current.CapturedValues` since outer iteration N started. That span includes every capture that occurred inside inner loop B, so those inner captures appear in BOTH the inner loop's step AND the outer loop's step N — double-counting.
-
-**Root cause:** The snapshot+delta math in `IterationTracker.FinalizeIteration` uses a flat index range over `TestExecutionScope.Current.CapturedValues`. Nested loops produce overlapping index ranges: outer iteration N's range subsumes inner loop B's entire execution, so inner captures land in both the inner step (correct) and the outer step (wrong).
-
-**Empirical result (GapVerificationTests G4):** Test `G4_NestedLoopCapturesAttributedToInnermost` PASSES by asserting the double-count: `"inner-j"` appears in both `innerLoop.Steps[0].CapturedValues` AND `outerLoop.Steps[0].CapturedValues`. Current behavior pinned; any future fix that removes the double-count will break this test (update test at that point).
-
-**Downstream impact:** ALchemist's compact-form display would show inflated capture counts for outer-loop iterations when the test contains nested loops. Each outer iteration step includes every inner-loop variable capture from that outer iteration.
-
-**Fix candidates:** Stack-aware finalization: when finalizing outer iteration N, skip any captures that fall within a nested loop's finalized steps (track inner-loop captured ranges and exclude them from the outer delta). Alternatively, during `EnterIteration(inner)`, advance the outer loop's `ValueSnapshotBefore` so its next finalization starts after the inner loop's captures.
-
-**Verification test:** `AlRunner.Tests/GapVerificationTests.cs::G4_NestedLoopCapturesAttributedToInnermost`
-
-### G8. Loop-variable casing in v2 wire format passes through declaration case verbatim
-
-**Status:** Confirmed empirically (GapVerificationTests G8 + prior Plan E2.1 observation).
-
-**Surface:** AL identifiers are case-insensitive in source. The runner emits captures with the variable's DECLARATION case as written in the AL `var` block. If declaration and usage case differ (e.g., `myint: Integer` declared but `myInt` used), the emitted `variableName` matches the declaration spelling, not the usage spelling. ALchemist's `applyIterationView` does case-sensitive `Map.get(varName)` against the source-text spelling — this can cause missed lookups when cases differ.
-
-**Evidence (prior):** Plan E2.1 debugging observed `"variableName":"myint"` for a var declared `myint: Integer` even though source code spelled it `myInt`.
-
-**Empirical result (GapVerificationTests G8):** Test `G8_VariableNameCasingMatchesAlDeclaration` PASSES, confirming the runner emits declaration casing verbatim. For the iterations fixture (all-lowercase declarations), emitted names are all-lowercase. No normalisation is performed. Current behavior pinned.
-
-**Downstream impact:** ALchemist consumers that do case-sensitive lookup on `variableName` may miss variables when AL source mixes case. Risk is low for all-lowercase or all-uppercase declarations (consistent with most AL style guides) but real for mixed-case identifiers.
-
-**Fix candidate:** Either (a) emit normalised lowercase from the runner, OR (b) ALchemist does case-insensitive lookup. Both are consumer-visible breaking changes if not coordinated. Recommend (b) as the less invasive change.
-
-**Verification test:** `AlRunner.Tests/GapVerificationTests.cs::G8_VariableNameCasingMatchesAlDeclaration`
+_(none — all formerly-confirmed gaps have been resolved. See Resolved section below.)_
 
 ---
 
@@ -136,7 +90,25 @@ Even the worst-case simulation (no ExitLoop, stale `_loops` from request 1) prod
 **Resolved by:** Plan E4 Group A (commit `94253ea`, with comment fixup `988c575`).
 **Replacement:** `EnterIteration` snapshot and `FinalizeIteration` delta loop now read from `TestExecutionScope.Current.CapturedValues` and `.Messages` instead of `ValueCapture.GetCaptures()` / `MessageCapture.GetMessages()`. Both v1 (`--output-json`) and v2 (`--server`) paths share this code, so both are fixed.
 **Symptom that drove the discovery:** ALchemist's iteration stepper updated the `⟳ N/M` indicator but inline captured-value text disappeared — `step.capturedValues` was always `[]` so there was nothing to render.
-**Test that catches the regression:** `AlRunner.Tests/IterationTrackerTests.cs::FinalizeIteration_ReadsCapturesAndMessagesFromActiveTestExecutionScope` (Plan E4 A1).
+**Test that catches the regression:** `AlRunner.Tests/IterationTrackerTests.cs::FinalizeIteration_ReadsCapturesAndMessagesFromActiveTestExecutionScope` (Plan E4 A1). **Note:** Plan E5 Group A subsequently replaced the snapshot/delta math entirely with per-loop accumulators (see R7), so the specific code addressed by R5 no longer exists. The behavioral guarantee R5 established remains.
+
+### R6. G2 — Loop-variable per-iteration captures injected by IterationInjector
+
+**Resolved by:** Plan E5 Group B (commit `0e2f842`, with object-name follow-up `67ca347`).
+**Replacement:** `IterationInjector.WrapLoop` now extracts the loop variable from `ForStatementSyntax` (via `Declaration.Variables[0]` for inline-declared, or the `Condition`'s `MemberAccessExpression` LHS `this.<name>` for the BC transpiler's pre-loop-init form) and injects a `ValueCapture.Capture` call after `EnterIteration`. The follow-up commit `67ca347` threads the `ScopeToObject` mapping into the injector so captures carry the correct AL ObjectName for `alSourceFile` resolution downstream. The loop variable now flows through the same path as assignment targets and appears in each `step.CapturedValues`. ALchemist's compact-form rendering (`i = 1 ‥ 10 (×10)`) now works for loop variables.
+**Test that catches the regression:** `AlRunner.Tests/GapVerificationTests.cs::G2_Fixed_LoopVariableAppearsInPerIterationCaptures`.
+
+### R7. G4 — Per-loop accumulators eliminate nested-loop double-counting
+
+**Resolved by:** Plan E5 Group A (commit `ca19ba7`, with comment fixup `6779e53`).
+**Replacement:** `ActiveLoop` now carries `CurrentIterationCaptures` and `CurrentIterationMessages` lists. `ValueCapture.Capture` and `MessageCapture.Capture` push to the INNERMOST active loop's accumulator (one capture, one loop). `EnterIteration` clears the lists; `FinalizeIteration` reads them directly. The snapshot/delta math is gone — nested loops can no longer attribute inner captures to outer steps because each capture only ever lands in one loop's accumulator.
+**Test that catches the regression:** `AlRunner.Tests/GapVerificationTests.cs::G4_Fixed_NestedLoopCapturesAttributedToInnermostOnly`.
+
+### R8. G8 — Loop-variable casing mitigated consumer-side
+
+**Status:** Runner-side passthrough is intentional (variable names emitted with declaration case verbatim — no normalization). Consumer-side mitigation: ALchemist's `applyIterationView` and `applyInlineCapturedValues` build a lowercase-keyed shadow Map and lookup with the lowercase source-text spelling. Display still uses the runner's original case for the variable name.
+**Resolved (consumer-side) by:** ALchemist Plan E5 Group D (commit `6868811`).
+**Test that catches the regression:** `test/suite/decorationManager.perTest.test.ts::case-insensitive variable lookup ...` and `test/integration/iterationStepping.itest.ts::case-insensitive variable lookup during stepping (G8 fix)`. (See `../ALchemist/` for the actual test files.)
 
 ---
 
