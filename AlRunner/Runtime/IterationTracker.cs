@@ -87,8 +87,15 @@ public static class IterationTracker
 
         // Start new iteration
         active.CurrentIteration++;
-        active.ValueSnapshotBefore = ValueCapture.GetCaptures().Count;
-        active.MessageSnapshotBefore = MessageCapture.GetMessages().Count;
+        // Snapshot the per-test scope's captures and messages, NOT the
+        // global aggregates. The globals are only populated when
+        // ValueCapture.Enable / MessageCapture.Enable were called (the
+        // legacy v1 --output-json path); the v2 streaming
+        // Executor.RunTests path writes only to TestExecutionScope.Current.
+        // Read from the scope so per-iteration deltas work in both paths.
+        var snapScope = TestExecutionScope.Current;
+        active.ValueSnapshotBefore = snapScope?.CapturedValues.Count ?? 0;
+        active.MessageSnapshotBefore = snapScope?.Messages.Count ?? 0;
         active.CurrentIterationHits.Clear();
     }
 
@@ -118,22 +125,36 @@ public static class IterationTracker
     /// </summary>
     private static void FinalizeIteration(ActiveLoop active)
     {
-        // Captured values added during this iteration
-        var allValues = ValueCapture.GetCaptures();
+        // Captured values + messages added during this iteration come from
+        // the per-test scope (the scope is the v2 path's source of truth).
+        // The globals (ValueCapture.GetCaptures / MessageCapture.GetMessages)
+        // may also be populated for legacy v1 --output-json runs, but the
+        // scope is the intersection that always works.
+        var scope = TestExecutionScope.Current;
+
         var iterValues = new List<CapturedValueSnapshot>();
-        for (int i = active.ValueSnapshotBefore; i < allValues.Count; i++)
+        if (scope != null)
         {
-            var v = allValues[i];
-            iterValues.Add(new CapturedValueSnapshot { VariableName = v.VariableName, Value = v.Value ?? "" });
+            var allValues = scope.CapturedValues;
+            for (int i = active.ValueSnapshotBefore; i < allValues.Count; i++)
+            {
+                var v = allValues[i];
+                iterValues.Add(new CapturedValueSnapshot { VariableName = v.VariableName, Value = v.Value ?? "" });
+            }
         }
 
-        // Messages added during this iteration
-        var allMessages = MessageCapture.GetMessages();
         var iterMessages = new List<string>();
-        for (int i = active.MessageSnapshotBefore; i < allMessages.Count; i++)
-            iterMessages.Add(allMessages[i]);
+        if (scope != null)
+        {
+            var allMessages = scope.Messages;
+            for (int i = active.MessageSnapshotBefore; i < allMessages.Count; i++)
+            {
+                iterMessages.Add(allMessages[i]);
+            }
+        }
 
-        // Lines hit during this iteration
+        // Lines hit during this iteration (unchanged — RecordHit writes
+        // to active.CurrentIterationHits directly, no scope needed).
         var iterLines = active.CurrentIterationHits.Distinct().ToList();
 
         active.Record.Steps.Add(new IterationStep
