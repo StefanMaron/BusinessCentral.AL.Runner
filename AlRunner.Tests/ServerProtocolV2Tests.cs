@@ -567,30 +567,23 @@ public class ServerProtocolV2Tests
         Assert.True(firstLoop.TryGetProperty("steps", out var stepsProp), "loop has steps");
         Assert.Equal(3, stepsProp.GetArrayLength());
 
-        // Plan E4: per-iteration captures must populate now that
-        // FinalizeIteration reads from TestExecutionScope.Current.
-        //
-        // Note on what's asserted: only the loop-body assignment target
-        // (`sum` from `sum += i`) is captured per-iteration. The loop
-        // counter `i` is managed by the runtime, not a rewritten
-        // statement, so it appears at the outer test scope (with the
-        // final post-loop value) but NOT at each step. See Gaps.md G2
-        // for the architectural detail.
+        // Plan E5 Group B: IterationInjector now also captures the loop
+        // variable per iteration. Each step has both the loop variable
+        // (`i`) AND the assignment target (`sum`). Pre-Plan-E5 only `sum`
+        // was present — see Gaps.md G2 history.
         for (var i = 0; i < stepsProp.GetArrayLength(); i++)
         {
             var step = stepsProp[i];
             Assert.True(step.TryGetProperty("capturedValues", out var cvProp),
                 $"step[{i}] must include capturedValues");
-            Assert.True(cvProp.GetArrayLength() > 0,
-                $"step[{i}].capturedValues must be non-empty for `for i := 1 to 3 do sum += i;` (Plan E4 fix)");
+            Assert.True(cvProp.GetArrayLength() >= 2,
+                $"step[{i}].capturedValues must include both loop variable and assignment target (Plan E5 Group B fix)");
 
-            // For this fixture `sum += i` is in the loop body; the rewriter
-            // captures `sum` at the assignment statement. Verify at least one
-            // capture has variableName == "sum".
             var varNames = cvProp.EnumerateArray()
                 .Select(e => e.GetProperty("variableName").GetString())
                 .ToList();
             Assert.Contains("sum", varNames);
+            Assert.Contains("i", varNames);
         }
 
         // Each step has the expected sub-shape.
