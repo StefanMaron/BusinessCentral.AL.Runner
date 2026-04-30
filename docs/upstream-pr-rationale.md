@@ -1,8 +1,10 @@
 # AL.Runner Protocol v2 — Upstream PR Rationale
 
 **Branch:** `feat/alchemist-protocol-v1` (fork at SShadowS/BusinessCentral.AL.Runner)
-**Scope:** 20 commits, ~5300 lines, 255 tests pass, 6 pre-existing failures unchanged.
-**Audience:** upstream maintainers reviewing PRs split out of this branch.
+**Scope:** 40 commits, ~7600 lines, 270 tests pass, 6 pre-existing failures unchanged.
+**Audience:** upstream maintainers reviewing this PR.
+
+**Reading order:** the doc is in four layers. **Plan E1** (the bulk below) covers the foundational design — `#line` directives, NDJSON streaming, per-test isolation, the original 21 commits. **Plan E3 / E4 / E5** at the bottom are correctness work discovered during downstream consumer integration with ALchemist. Each later section addresses a specific bug class that the Plan E1 design exposed but did not break the protocol contract — they are refinements, not redirections. Companion `Gaps.md` (in the repo root) tracks the audit history of all confirmed/resolved/non-issue gaps with the verification tests that pin each.
 
 ---
 
@@ -90,8 +92,135 @@ From the Plan E1 final review:
 
 ---
 
-## Bottom-Line Defense
+## Bottom-Line Defense (Plan E1)
 
 Every change addresses a concrete shipped-product gap in ALchemist v0.4.0 that the AL.Runner protocol shape made unfixable downstream. The architectural choice (post-rewrite trivia injection rather than transpiler change) keeps us out of the BC compiler. The cache-singleton snapshot work and the AsyncLocal per-test isolation are correctness fixes that benefit any future server consumer, not just ALchemist.
 
 The fork-first development model meant we could iterate end-to-end against a real workload (Sentinel + ALchemist) before splitting into reviewable upstream PRs — surfacing real bugs (e.g. the per-capture `alSourceFile` gap) that a paper-only spec review would have missed.
+
+---
+
+## Plan E3 — Wire Format Hardening (commits `35e8f8a` → `f3c1c9e`, 7 commits)
+
+The Plan E1 design shipped functionally complete. End-to-end use against ALchemist + ALProject4 (a user's real BC project) surfaced three pre-Plan-E1-design wire-format issues:
+
+### 1. Source paths depended on the spawner's cwd
+
+**Symptom.** ALchemist's inline-capture filter dropped every capture even though the runner emitted captures with `alSourceFile` populated.
+
+**Root cause.** `Pipeline.cs:457,473` registered file paths via `Path.GetRelativePath(Directory.GetCurrentDirectory(), file)`. When ALchemist spawned the runner from VS Code's extension host, cwd was `C:\Users\<user>\AppData\Local\Programs\Microsoft VS Code\` — emitted paths walked up four levels: `../../../../Documents/AL/<project>/CU1.al`. ALchemist's `path.resolve(workspacePath, sourceFile)` then resolved to a non-existent location.
+
+**Fix.** `Path.GetFullPath(file).Replace('\\', '/')` — absolute, forward-slash, cwd-independent. Wire format becomes platform-stable.
+
+**Commit:** `35e8f8a fix(server): emit absolute paths in SourceFileMapper`. Test: `SourceFilePathEmissionTests` (4 tests, deliberately spawned from a foreign cwd).
+
+### 2. v2 summary dropped iteration data even though Pipeline collected it
+
+**Symptom.** ALchemist's iteration table panel and CodeLens stepper silently degraded to no-op. The CodeLens showed `⟳ N/M` correctly but stepping had no per-iteration data to render.
+
+**Root cause.** Pipeline.cs collected per-loop iteration data (Plan E1 v1 `--output-json` path emits it) but `Server.cs:SerializeSummary` never plumbed it through. The v2 summary's `iterations` field was missing entirely.
+
+**Fix.** Three coordinated changes in `45aeb4a feat(server): emit iterations in v2 summary`:
+1. Add `IterationTracking` to `ServerRequest` DTO.
+2. Always-inject `IterationInjector` calls (no longer gated on the request flag) — cached assemblies serve both `iterationTracking=true` and `=false` requests without recompilation. Mirrors the established `ValueCaptureInjector` always-inject pattern.
+3. Wrap the streaming `Executor.RunTests` with `Reset+Enable` / `Disable` of `IterationTracker` when `iterationTracking` requested. Collect `Runtime.IterationTracker.GetLoops()` after the run and emit on the v2 summary.
+
+Wire shape mirrors v1 `--output-json` `iterations[]` exactly so existing consumers don't need a translator. Field omitted (null) when not requested via `WhenWritingNull` serialization.
+
+**`Reset()` semantics tightened.** `7dfb2d2 refactor(server): tighten Reset semantics + concurrency comment + test` — Reset now also clears `_enabled`, returning the tracker to a known disabled ground state. Defensive correctness only (current call sites all `Enable` after `Reset`); makes the contract a true ground-state reset.
+
+### 3. Schema documented nullable types but runtime omits empty fields
+
+**Symptom.** Initial schema validation passed, but the documented type unions (`["array", "null"]` etc.) misled consumers about wire reality.
+
+**Root cause.** Server emits with `JsonOpts.DefaultIgnoreCondition = WhenWritingNull` — null/empty fields are **omitted** from the JSON entirely, never emitted as `"key": null`. The schema's nullable-union types described a wire shape the runtime never produces.
+
+**Fix.** `7b28ab4 docs(schema): document absolute paths and iterations in v2 summary` + `ed6e2ca docs(schema): tighten nullable types to match WhenWritingNull serialization`:
+- `coverage[].file` and `capturedValues[].alSourceFile` documented as absolute fwd-slash paths.
+- `IterationLoop` definition added to `Summary.iterations`.
+- `Ready` and `ShutdownAck` definitions added so AJV can validate real protocol output (`{"ready":true}` and `{"status":"shutting down"}` are real wire lines).
+- `parentLoopId`, `parentIteration`, `steps[].messages`, `Summary.iterations` tightened from `["X","null"]` to `"X"` with descriptions saying "field is omitted entirely when ..." instead of the contradictory "null at top level".
+
+Schema is now a true contract: any field listed is emitted; missing fields mean "omitted" not "null".
+
+**`docs/protocol-v2-samples/runtests-iterations.ndjson`** captures a real session for downstream cross-checking.
+
+### 4. Living gap inventory (`Gaps.md`)
+
+`f3c1c9e docs: add Gaps.md tracking known/suspected protocol-v2 gaps` — created an audit-trail document at the repo root. Each gap entry has a status (Confirmed / Suspected / Resolved), a surface description, downstream impact, fix candidates, and a verification-test reference. The doc is updated alongside this PR's commits to reflect each fix.
+
+---
+
+## Plan E4 — Per-Test Scope as Iteration Delta Source (commits `94253ea`, `988c575`, `9f23dce`)
+
+`Server.cs` v2 streaming path emitted `iterations[].steps[].capturedValues = []` and `iterations[].steps[].messages = []` regardless of how many captures/messages actually fired during the iteration. Stepper indicator updated correctly; inline values disappeared.
+
+**Root cause.** `IterationTracker.FinalizeIteration` snapshotted from `ValueCapture.GetCaptures()` and `MessageCapture.GetMessages()`. Both are GLOBAL aggregates only populated when their respective `Enable()` was called — the legacy v1 `--output-json` path does this; the v2 streaming `Executor.RunTests` path does NOT (per Plan E1's per-test isolation, captures go to `TestExecutionScope.Current` only). Global aggregate stayed empty → delta was always 0..0 → step.capturedValues/messages always empty.
+
+**Fix in `94253ea fix(iteration): read iteration delta from TestExecutionScope, not global`:** switch the snapshot source to `TestExecutionScope.Current.CapturedValues` / `.Messages`. Both v1 and v2 paths share this code, so both fix simultaneously.
+
+`988c575 docs(iteration): clarify scope-null assumption + align test comment` — explicit comment in `FinalizeIteration` documenting the scope-non-null assumption (guaranteed today by `Executor.RunTests` wrapping the test in `TestExecutionScope.Begin`).
+
+`9f23dce test(gaps): empirical verification tests for Gaps.md G2-G8` — created `AlRunner.Tests/GapVerificationTests.cs` with one `[Fact]` per Suspected gap. Empirically determined which suspicions were real vs non-issues. Findings documented in `Gaps.md`.
+
+---
+
+## Plan E5 — Per-Loop Accumulators + Loop-Variable Capture + Casing (commits `ca19ba7` → `ebd68a9`, 9 commits)
+
+Three Confirmed gaps from the Plan E4 verification audit:
+
+### G2 — Loop variable absent from per-iteration captures
+
+`for i := 1 to 10 do begin ... end` — runner emitted ONE capture for `i` at test scope (final value 10). Per-iteration `i` was never captured because the AL→C# rewriter only instruments assignment targets (`sum` from `sum += i`), not loop counters (managed by the runtime).
+
+**Fix in `0e2f842 feat(iteration): inject per-iteration loop-variable capture`:** `IterationInjector.Inject` now extracts the loop variable name from `ForStatementSyntax` and injects a `ValueCapture.Capture` call after `EnterIteration`. While and do-while loops have no inline-declared loop variable, so the injection is conditional.
+
+**AL→C# transpiler reality found during implementation:** the BC compiler does NOT emit `for (int i = ...; ...; ...)`. It emits `this.i = 1; for (; this.i <= @tmp0; )` — loop counter is a class field on the scope class, not a C# local; `Declaration` is null. Implementation extracts from `Condition` LHS (`MemberAccessExpression` of form `this.<name>`) with a `Declaration` fallback for forward-compat.
+
+**`67ca347 fix(iteration): use AL object name for loop-variable capture`** — follow-up: the original cut used `_currentScopeClass` for both `scopeName` and `objectName` arguments. That broke `alSourceFile` resolution downstream because `Server.cs:SerializeTestEvent` resolves via `SourceFileMapper.GetFile(c.ObjectName)` which is keyed by AL object name (`"LoopTest"`), not by scope class name (`"RunsLoop_Scope__1409475562"`). Thread `ScopeToObject` mapping into the injector.
+
+### G4 — Nested loop captures double-counted
+
+When loop B ran inside loop A's iteration N, `FinalizeIteration` for outer iteration N read all captures since outer iteration N started — that span included every capture inside inner loop B, so inner captures appeared in both the inner step AND the outer step.
+
+**Root cause.** Snapshot/delta math against a flat shared list (`TestExecutionScope.Current.CapturedValues`). Nested loops produce overlapping index ranges; outer iteration N's range subsumes inner loop B's entire execution.
+
+**Fix in `ca19ba7 fix(iteration): per-loop capture accumulators`:** replaced the snapshot/delta math with **per-loop accumulator lists**. Each `ActiveLoop` carries `CurrentIterationCaptures` and `CurrentIterationMessages`. `ValueCapture.Capture` and `MessageCapture.Capture` push to the INNERMOST active loop's accumulator (`_loopStack.Peek()`). `EnterIteration` clears the lists; `FinalizeIteration` copies them into the `IterationStep`. Each capture lands in exactly one loop's iteration step by construction. The snapshot/delta math is gone.
+
+This also supersedes Plan E4's `TestExecutionScope`-based reading: `FinalizeIteration` now reads directly from accumulators, not from the test scope. The Plan E4 contract (per-iteration captures populate) is preserved with a cleaner state machine.
+
+`6779e53 docs(iteration): tighten comments after Plan E5 Group A review` — comment polish.
+
+### G8 — Variable-name casing passes through declaration verbatim
+
+AL is case-insensitive for identifiers. The runner emits `variableName` with the AL `var` declaration's case (`myint` if declared `myint: Integer`). If source code uses a different case (`myInt`), consumer-side case-sensitive Map.get fails.
+
+**Decision:** consumer-side fix only. Per Gaps.md G8 entry's own recommendation, ALchemist does case-insensitive lookup; runner emits declaration case verbatim (no normalization). Both v1 and v2 producers preserve the runner's behavior unchanged. Resolved in ALchemist commit `6868811` (out of scope for this PR but referenced in `Gaps.md` R8).
+
+### Other Plan E5 commits
+
+- `5347678 refactor(injectors): extract IsPlumbingField to shared helper` — `ValueCaptureInjector` and `IterationInjector` had divergent copies of an `IsPlumbingField` helper (filters β/γ-prefixed transpiler-internal temps). Consolidated into `PlumbingFieldFilter`.
+- `e1cff13 test(gaps): retire obsolete G2/G4 verification tests` — the original `G2_*` and `G4_*` verification tests pinned the BAD behavior (loop variable absent, nested double-count). Plan E5 fixes both. The `*_Fixed` regression tests added during implementation are the new pins; the originals were retired.
+- `ebd68a9 docs(gaps): G2/G4/G8 moved to Resolved (Plan E5)` — Gaps.md sweep. The Confirmed section is now empty (all confirmed gaps resolved or mitigated). G3, G5, G6, G7 remain in the Verified Non-Issue section with their verification tests.
+
+---
+
+## Updated Architectural Invariants
+
+The Plan E1 invariants stand. Plan E3/E4/E5 add three more:
+
+5. **Wire format is cwd-independent.** All emitted paths are absolute, forward-slash. No spawn-time configuration affects the wire shape.
+6. **Per-loop capture accumulators.** Each capture lands in EXACTLY ONE iteration step (innermost active loop). No snapshot/delta math, no nested-loop attribution issues.
+7. **Schema is a true contract.** Fields listed in `protocol-v2.schema.json` are emitted; missing fields mean omitted (per `WhenWritingNull`), never `"key": null`. Sample NDJSON validates against the schema with AJV in CI.
+
+## Updated Bottom-Line Defense
+
+Plan E1 shipped a well-scoped foundational design. Plans E3–E5 surfaced and fixed three correctness gaps in the wire-format / iteration / capture pathways that paper-only review would have missed:
+
+- Cwd-dependent path emission (E3) only manifests when the runner is spawned from a wildly different cwd than the workspace — exactly what VS Code does.
+- Empty per-iteration captures (E4) only manifest in the v2 streaming path, not the legacy v1 `--output-json` path that integration tests exercised.
+- Nested-loop double-counting (E5/G4) only manifests with nested AL loops, which the existing v1 fixtures didn't include.
+
+The `Gaps.md` audit format — Suspected → Confirmed → Resolved/Verified non-issue — codifies the discovery + verification pattern so future audits have a starting point.
+
+The fork-first development model continued to pay off: Plans E3/E4/E5 each followed the same pattern (real consumer hits a symptom → trace to runner-side architectural cause → fix at the architectural level → verification test). All 270 passing tests are pinning current behavior; the 6 pre-existing failures (summary-line format-string related) are unchanged.
