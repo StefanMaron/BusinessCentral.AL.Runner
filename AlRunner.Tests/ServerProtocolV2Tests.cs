@@ -569,6 +569,13 @@ public class ServerProtocolV2Tests
 
         // Plan E4: per-iteration captures must populate now that
         // FinalizeIteration reads from TestExecutionScope.Current.
+        //
+        // Note on what's asserted: only the loop-body assignment target
+        // (`sum` from `sum += i`) is captured per-iteration. The loop
+        // counter `i` is managed by the runtime, not a rewritten
+        // statement, so it appears at the outer test scope (with the
+        // final post-loop value) but NOT at each step. See Gaps.md G2
+        // for the architectural detail.
         for (var i = 0; i < stepsProp.GetArrayLength(); i++)
         {
             var step = stepsProp[i];

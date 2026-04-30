@@ -126,10 +126,22 @@ public static class IterationTracker
     private static void FinalizeIteration(ActiveLoop active)
     {
         // Captured values + messages added during this iteration come from
-        // the per-test scope (the scope is the v2 path's source of truth).
-        // The globals (ValueCapture.GetCaptures / MessageCapture.GetMessages)
-        // may also be populated for legacy v1 --output-json runs, but the
-        // scope is the intersection that always works.
+        // the per-test scope. Both ValueCapture.Capture and
+        // MessageCapture.Capture write unconditionally to
+        // TestExecutionScope.Current (the dual-write contract — see
+        // ValueCapture.cs:5-13 and MessageCapture.cs); the global
+        // aggregates are additive when Enable() was called (legacy v1
+        // --output-json path) but the scope is always populated when a
+        // test is running.
+        //
+        // Assumption: scope is non-null in both EnterIteration (snapshot
+        // recorded) and FinalizeIteration (delta read). Today this holds
+        // because Executor.RunTests wraps the entire test invocation in
+        // a TestExecutionScope.Begin and ExitLoop fires from the
+        // injected `finally` inside that scope. If a future code path
+        // disposes the scope before ExitLoop runs, this branch becomes
+        // null-safe but emits an empty step — investigate that path
+        // rather than relying on the silent skip.
         var scope = TestExecutionScope.Current;
 
         var iterValues = new List<CapturedValueSnapshot>();
