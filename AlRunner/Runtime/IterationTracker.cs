@@ -36,6 +36,14 @@ public static class IterationTracker
     /// Called by ValueCapture.Capture to route the capture into the innermost
     /// active loop's current iteration accumulator. No-op when no loop is
     /// active or when iteration tracking is disabled. Plan E5 Group A.
+    ///
+    /// Callers guarantee EnterIteration always precedes any capture inside
+    /// the loop body — the IterationInjector wraps the loop body so
+    /// EnterIteration is the first instrumented call before any AL
+    /// statement that could fire a capture. If a future injector change
+    /// allows captures to fire between EnterLoop and the first
+    /// EnterIteration, those captures would land in the still-empty
+    /// accumulator before EnterIteration's Clear() runs and silently drop.
     /// </summary>
     public static void RecordCapture(string variableName, string? value)
     {
@@ -142,17 +150,15 @@ public static class IterationTracker
     }
 
     /// <summary>
-    /// Reads per-loop accumulators and records them as an IterationStep.
-    /// Plan E5 Group A: the accumulators were filled by ValueCapture/
-    /// MessageCapture's calls to RecordCapture/RecordMessage on the innermost
-    /// active loop only, so nested loops don't double-count.
+    /// Copy this iteration's accumulator into the loop's Steps list.
+    /// Plan E5 Group A: reads directly from per-loop CurrentIterationCaptures /
+    /// CurrentIterationMessages (filled by ValueCapture/MessageCapture's
+    /// RecordCapture/RecordMessage on the innermost active loop). No
+    /// snapshot/delta math against TestExecutionScope.Current — that
+    /// approach double-counted nested-loop captures.
     /// </summary>
     private static void FinalizeIteration(ActiveLoop active)
     {
-        // Plan E5 Group A: read directly from per-loop accumulators. The
-        // accumulators were filled by ValueCapture/MessageCapture's calls
-        // to RecordCapture/RecordMessage on the innermost active loop only,
-        // so nested loops no longer double-count.
         active.Record.Steps.Add(new IterationStep
         {
             Iteration = active.CurrentIteration,
