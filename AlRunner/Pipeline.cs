@@ -88,6 +88,13 @@ public class PipelineOptions
     /// so tests can inspect emitted <c>#line</c> directives without scraping stdout.
     /// </summary>
     public bool EmitGeneratedCSharp { get; set; } = false;
+
+    /// <summary>
+    /// Cancellation token forwarded into <see cref="Executor.RunTests"/> during the
+    /// test-execution step. Used by the server cancel command to abort an in-flight
+    /// runtests request. Defaults to <see cref="CancellationToken.None"/>.
+    /// </summary>
+    public CancellationToken CancellationToken { get; init; } = default;
 }
 
 public enum TestStatus { Pass, Fail, Error }
