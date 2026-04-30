@@ -32,6 +32,31 @@ public static class IterationTracker
         _loopStack.Peek().CurrentIterationHits.Add(stmtId);
     }
 
+    /// <summary>
+    /// Called by ValueCapture.Capture to route the capture into the innermost
+    /// active loop's current iteration accumulator. No-op when no loop is
+    /// active or when iteration tracking is disabled. Plan E5 Group A.
+    /// </summary>
+    public static void RecordCapture(string variableName, string? value)
+    {
+        if (!_enabled || _loopStack.Count == 0) return;
+        _loopStack.Peek().CurrentIterationCaptures.Add(new CapturedValueSnapshot
+        {
+            VariableName = variableName,
+            Value = value ?? "",
+        });
+    }
+
+    /// <summary>
+    /// Called by MessageCapture.Capture to route the message into the
+    /// innermost active loop's current iteration accumulator. Plan E5 Group A.
+    /// </summary>
+    public static void RecordMessage(string message)
+    {
+        if (!_enabled || _loopStack.Count == 0) return;
+        _loopStack.Peek().CurrentIterationMessages.Add(message);
+    }
+
     public static void Reset()
     {
         _enabled = false;
@@ -85,17 +110,14 @@ public static class IterationTracker
             FinalizeIteration(active);
         }
 
-        // Start new iteration
+        // Start new iteration. Plan E5 Group A: clear per-loop accumulators
+        // instead of snapshotting the global scope counts. Each capture/message
+        // that fires during this iteration is routed by ValueCapture.Capture /
+        // MessageCapture.Capture into THIS loop's accumulator (innermost active
+        // loop only), so the delta is implicit.
         active.CurrentIteration++;
-        // Snapshot the per-test scope's captures and messages, NOT the
-        // global aggregates. The globals are only populated when
-        // ValueCapture.Enable / MessageCapture.Enable were called (the
-        // legacy v1 --output-json path); the v2 streaming
-        // Executor.RunTests path writes only to TestExecutionScope.Current.
-        // Read from the scope so per-iteration deltas work in both paths.
-        var snapScope = TestExecutionScope.Current;
-        active.ValueSnapshotBefore = snapScope?.CapturedValues.Count ?? 0;
-        active.MessageSnapshotBefore = snapScope?.Messages.Count ?? 0;
+        active.CurrentIterationCaptures.Clear();
+        active.CurrentIterationMessages.Clear();
         active.CurrentIterationHits.Clear();
     }
 
@@ -120,61 +142,23 @@ public static class IterationTracker
     }
 
     /// <summary>
-    /// Captures the delta of values, messages, and hit lines since the
-    /// iteration started and records them as an IterationStep.
+    /// Reads per-loop accumulators and records them as an IterationStep.
+    /// Plan E5 Group A: the accumulators were filled by ValueCapture/
+    /// MessageCapture's calls to RecordCapture/RecordMessage on the innermost
+    /// active loop only, so nested loops don't double-count.
     /// </summary>
     private static void FinalizeIteration(ActiveLoop active)
     {
-        // Captured values + messages added during this iteration come from
-        // the per-test scope. Both ValueCapture.Capture and
-        // MessageCapture.Capture write unconditionally to
-        // TestExecutionScope.Current (the dual-write contract — see
-        // ValueCapture.cs:5-13 and MessageCapture.cs); the global
-        // aggregates are additive when Enable() was called (legacy v1
-        // --output-json path) but the scope is always populated when a
-        // test is running.
-        //
-        // Assumption: scope is non-null in both EnterIteration (snapshot
-        // recorded) and FinalizeIteration (delta read). Today this holds
-        // because Executor.RunTests wraps the entire test invocation in
-        // a TestExecutionScope.Begin and ExitLoop fires from the
-        // injected `finally` inside that scope. If a future code path
-        // disposes the scope before ExitLoop runs, this branch becomes
-        // null-safe but emits an empty step — investigate that path
-        // rather than relying on the silent skip.
-        var scope = TestExecutionScope.Current;
-
-        var iterValues = new List<CapturedValueSnapshot>();
-        if (scope != null)
-        {
-            var allValues = scope.CapturedValues;
-            for (int i = active.ValueSnapshotBefore; i < allValues.Count; i++)
-            {
-                var v = allValues[i];
-                iterValues.Add(new CapturedValueSnapshot { VariableName = v.VariableName, Value = v.Value ?? "" });
-            }
-        }
-
-        var iterMessages = new List<string>();
-        if (scope != null)
-        {
-            var allMessages = scope.Messages;
-            for (int i = active.MessageSnapshotBefore; i < allMessages.Count; i++)
-            {
-                iterMessages.Add(allMessages[i]);
-            }
-        }
-
-        // Lines hit during this iteration (unchanged — RecordHit writes
-        // to active.CurrentIterationHits directly, no scope needed).
-        var iterLines = active.CurrentIterationHits.Distinct().ToList();
-
+        // Plan E5 Group A: read directly from per-loop accumulators. The
+        // accumulators were filled by ValueCapture/MessageCapture's calls
+        // to RecordCapture/RecordMessage on the innermost active loop only,
+        // so nested loops no longer double-count.
         active.Record.Steps.Add(new IterationStep
         {
             Iteration = active.CurrentIteration,
-            CapturedValues = iterValues,
-            Messages = iterMessages,
-            LinesExecuted = iterLines,
+            CapturedValues = new List<CapturedValueSnapshot>(active.CurrentIterationCaptures),
+            Messages = new List<string>(active.CurrentIterationMessages),
+            LinesExecuted = active.CurrentIterationHits.Distinct().ToList(),
         });
     }
 
@@ -213,8 +197,12 @@ public static class IterationTracker
         public int LoopId { get; init; }
         public LoopRecord Record { get; init; } = null!;
         public int CurrentIteration { get; set; }
-        public int ValueSnapshotBefore { get; set; }
-        public int MessageSnapshotBefore { get; set; }
+        // Per-loop accumulators (Plan E5 Group A). Replaces the snapshot/delta
+        // math against the global TestExecutionScope.Current. Each capture
+        // lands in EXACTLY ONE loop's CurrentIterationCaptures (the innermost
+        // active loop), so nested loops don't double-count.
+        public List<CapturedValueSnapshot> CurrentIterationCaptures { get; } = new();
+        public List<string> CurrentIterationMessages { get; } = new();
         public List<int> CurrentIterationHits { get; } = new();
     }
 }
