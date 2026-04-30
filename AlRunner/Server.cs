@@ -335,25 +335,35 @@ public class AlRunnerServer
                 // client knows the request was processed but no tests ran.
                 if (assembly == null)
                 {
-                    await WriteLineAsync(output, JsonSerializer.Serialize(new
+                    // See main-path comment: clear the CTS BEFORE the summary write so a
+                    // cancel arriving immediately after the summary line gets noop=true.
+                    var earlyCts = System.Threading.Interlocked.Exchange(ref _activeRequestCts, null);
+                    try
                     {
-                        type = "summary",
-                        exitCode = pipelineResult.ExitCode,
-                        passed = 0,
-                        failed = 0,
-                        errors = 0,
-                        total = 0,
-                        cached = false,
-                        changedFiles = changedFiles?.Count > 0 ? changedFiles : null,
-                        compilationErrors = (compilationErrors != null && compilationErrors.Count > 0)
-                            ? compilationErrors.Select(kvp => new
-                            {
-                                file = Path.GetFileName(kvp.Key),
-                                errors = kvp.Value,
-                            })
-                            : null,
-                        protocolVersion = 2,
-                    }, JsonOpts));
+                        await WriteLineAsync(output, JsonSerializer.Serialize(new
+                        {
+                            type = "summary",
+                            exitCode = pipelineResult.ExitCode,
+                            passed = 0,
+                            failed = 0,
+                            errors = 0,
+                            total = 0,
+                            cached = false,
+                            changedFiles = changedFiles?.Count > 0 ? changedFiles : null,
+                            compilationErrors = (compilationErrors != null && compilationErrors.Count > 0)
+                                ? compilationErrors.Select(kvp => new
+                                {
+                                    file = Path.GetFileName(kvp.Key),
+                                    errors = kvp.Value,
+                                })
+                                : null,
+                            protocolVersion = 2,
+                        }, JsonOpts));
+                    }
+                    finally
+                    {
+                        earlyCts?.Dispose();
+                    }
                     return;
                 }
 
@@ -488,21 +498,37 @@ public class AlRunnerServer
                 CoverageReport.WriteCobertura("cobertura.xml", sourceSpans, hitStmts, totalStmts, scopeToObject);
             }
 
-            await WriteLineAsync(output, SerializeSummary(
-                allResults,
-                Executor.ExitCode(allResults),
-                cached,
-                changedFiles,
-                compilationErrors,
-                coverage,
-                iterationLoops,
-                scopeToObject,
-                ct.IsCancellationRequested));
+            // Clear the active CTS BEFORE writing the summary line. The test helper
+            // (and ALchemist) treats the summary as the end-of-stream marker and may
+            // send a side-channel `cancel` immediately after observing it. If the CTS
+            // is still pinned at that point, HandleCancel would return `noop:false`,
+            // contradicting the contract that cancel-after-completion is a noop.
+            // Cancel commands arriving during the run still find the CTS via the
+            // dispatch-loop side-channel path which sets it earlier.
+            var ctsToDispose = System.Threading.Interlocked.Exchange(ref _activeRequestCts, null);
+            try
+            {
+                await WriteLineAsync(output, SerializeSummary(
+                    allResults,
+                    Executor.ExitCode(allResults),
+                    cached,
+                    changedFiles,
+                    compilationErrors,
+                    coverage,
+                    iterationLoops,
+                    scopeToObject,
+                    ct.IsCancellationRequested));
+            }
+            finally
+            {
+                ctsToDispose?.Dispose();
+            }
         }
         finally
         {
-            _activeRequestCts?.Dispose();
-            _activeRequestCts = null;
+            // Defensive: dispose if an early-return path skipped the in-try cleanup.
+            var leftover = System.Threading.Interlocked.Exchange(ref _activeRequestCts, null);
+            leftover?.Dispose();
         }
     }
 
