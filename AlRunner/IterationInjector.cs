@@ -70,9 +70,25 @@ public sealed class IterationInjector : CSharpSyntaxRewriter
                  bin.Left is MemberAccessExpressionSyntax ma &&
                  ma.Expression is ThisExpressionSyntax)
         {
-            // Field-on-this form: `for (; this.i <= @tmp0;)` — the common case
-            // emitted by the BC AL→C# transpiler for AL `for i := ... to ... do`.
+            // Field-on-this form: `for (; this.i <= @tmp0;)` — for AL types where
+            // the BC transpiler emits a plain `<=` operator (rare; mostly seen in tests).
             var name = ma.Name.Identifier.ValueText;
+            if (!IsPlumbingField(name))
+                loopVarName = name;
+        }
+        else if (visited.Condition is InvocationExpressionSyntax inv &&
+                 inv.Expression is MemberAccessExpressionSyntax invMa &&
+                 (invMa.Name.Identifier.Text == "NavLte" || invMa.Name.Identifier.Text == "NavLt" ||
+                  invMa.Name.Identifier.Text == "NavGte" || invMa.Name.Identifier.Text == "NavGt") &&
+                 inv.ArgumentList.Arguments.Count >= 1 &&
+                 inv.ArgumentList.Arguments[0].Expression is MemberAccessExpressionSyntax argMa &&
+                 argMa.Expression is ThisExpressionSyntax)
+        {
+            // AlCompat.Nav{Lte,Lt,Gte,Gt}(this.i, @tmpN) form — what the BC transpiler
+            // emits for AL `for i := <expr> to|downto <expr> do`. The numeric comparison
+            // intrinsics carry NaN/null semantics so the transpiler routes through them
+            // instead of plain `<=` operators.
+            var name = argMa.Name.Identifier.ValueText;
             if (!IsPlumbingField(name))
                 loopVarName = name;
         }
