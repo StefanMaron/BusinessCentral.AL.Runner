@@ -8023,6 +8023,17 @@ System.Clear (Joker):
     - tests/bucket-1/codeunit-runtime/309-system-missing-overloads
   notes: BC emits v.Value.Clear() for Variant and the default-assignment pattern for other value types. Tested via Clear(Variant) in suite 309.
 
+System.Clear (Interface):
+  layer: runtime-api
+  category: System
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/341-interface-clear
+  notes: >
+    BC lowers Clear(IfaceVar) to IfaceVar.ClearReference() on the underlying MockInterfaceHandle.
+    Added ClearReference() to MockInterfaceHandle delegating to Clear() — matching the pattern
+    in MockCodeunitHandle, MockArray<T>, and MockTestPageHandle (issue #1565).
+
 System.Clear (SecretText):
   layer: runtime-api
   category: System

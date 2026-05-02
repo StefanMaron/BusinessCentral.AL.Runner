@@ -80,6 +80,18 @@ public class MockInterfaceHandle : ITreeObject, IALAssignable<MockInterfaceHandl
     }
 
     /// <summary>
+    /// BC lowers <c>Clear(IfaceVar)</c> to <c>IfaceVar.ClearReference()</c>.
+    /// Delegates to <see cref="Clear"/> to reset the implementation reference,
+    /// matching the pattern in <see cref="MockCodeunitHandle.ClearReference"/>,
+    /// <see cref="MockArray{T}.ClearReference"/>, and
+    /// <see cref="MockTestPageHandle.ClearReference"/>.
+    /// </summary>
+    public void ClearReference()
+    {
+        Clear();
+    }
+
+    /// <summary>
     /// Invoke a method on the interface implementation by member ID.
     /// Similar to MockCodeunitHandle.Invoke but via the interface dispatch pattern.
     /// In BC, InvokeInterfaceMethod dispatches through the codeunit's IsInterfaceMethod table.
