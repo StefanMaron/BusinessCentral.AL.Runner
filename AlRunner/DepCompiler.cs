@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Xml.Linq;
 using Microsoft.CodeAnalysis;
@@ -80,6 +81,105 @@ public static class DepCompiler
         }
         sb.Append('}');
         return sb.ToString();
+    }
+
+    // ------------------------------------------------------------------ //
+    // SHA-256 cache freshness helpers (issue #1517)
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// Compute a stable SHA-256 hash over the content of a single file.
+    /// Returns a lowercase 64-character hex string.
+    /// </summary>
+    internal static string ComputeFileHash(string filePath)
+    {
+        using var sha = SHA256.Create();
+        using var stream = File.OpenRead(filePath);
+        var hashBytes = sha.ComputeHash(stream);
+        return Convert.ToHexString(hashBytes).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Compute a stable SHA-256 hash over all files inside <paramref name="dir"/>
+    /// (sorted by relative path for determinism). Returns a lowercase 64-character hex string.
+    /// </summary>
+    internal static string ComputeDirectoryHash(string dir)
+    {
+        using var sha = SHA256.Create();
+        // Sort by relative path for deterministic ordering across file systems
+        var files = Directory.GetFiles(dir, "*", SearchOption.AllDirectories)
+            .Select(f => (RelPath: f.Substring(dir.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), FullPath: f))
+            .OrderBy(x => x.RelPath, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        // Feed each file's relative path + content into the running hash so that
+        // renames alone (same bytes, different name) also change the hash.
+        var buffer = new byte[81920];
+        foreach (var (relPath, fullPath) in files)
+        {
+            var pathBytes = System.Text.Encoding.UTF8.GetBytes(relPath + "\n");
+            sha.TransformBlock(pathBytes, 0, pathBytes.Length, null, 0);
+
+            using var fs = File.OpenRead(fullPath);
+            int read;
+            while ((read = fs.Read(buffer, 0, buffer.Length)) > 0)
+                sha.TransformBlock(buffer, 0, read, null, 0);
+        }
+        sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+        return Convert.ToHexString(sha.Hash!).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Path of the .sha256 sidecar for a given DLL path.
+    /// </summary>
+    private static string HashSidecarPath(string dllPath) => Path.ChangeExtension(dllPath, ".sha256");
+
+    /// <summary>
+    /// Returns <c>true</c> when <paramref name="dllPath"/> exists AND the stored hash
+    /// matches <paramref name="currentHash"/> — the cache is fresh and compilation can
+    /// be skipped. Logs the outcome to stderr.
+    /// </summary>
+    private static bool IsCacheFresh(string dllPath, string currentHash, string label)
+    {
+        if (!File.Exists(dllPath))
+            return false;
+
+        var sidecarPath = HashSidecarPath(dllPath);
+        if (!File.Exists(sidecarPath))
+        {
+            // DLL exists but no hash file — treat as stale (pre-#1517 build)
+            Console.Error.WriteLine($"Stale cache (missing .sha256): {Path.GetFileName(dllPath)} — recompiling");
+            try { File.Delete(dllPath); } catch { }
+            return false;
+        }
+
+        var storedHash = File.ReadAllText(sidecarPath).Trim();
+        if (string.Equals(storedHash, currentHash, StringComparison.OrdinalIgnoreCase))
+        {
+            Console.Error.WriteLine($"Cached: {label} (hash match)");
+            return true;
+        }
+
+        Console.Error.WriteLine($"Stale cache (hash changed): {Path.GetFileName(dllPath)} — recompiling");
+        try { File.Delete(dllPath); } catch { }
+        try { File.Delete(sidecarPath); } catch { }
+        return false;
+    }
+
+    /// <summary>
+    /// Write the hash sidecar next to the DLL after a successful compilation.
+    /// </summary>
+    private static void WriteHashSidecar(string dllPath, string hash)
+    {
+        var sidecarPath = HashSidecarPath(dllPath);
+        try
+        {
+            File.WriteAllText(sidecarPath, hash);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Warning: failed to write .sha256 sidecar {sidecarPath}: {ex.Message}");
+        }
     }
 
     private record AppJsonIdentity(string Publisher, string Name, string VersionRaw, Version Version, Guid AppId);
@@ -186,12 +286,11 @@ public static class DepCompiler
         var dllName = SanitizeName($"{publisher}_{name}_{version}.dll");
         var dllPath = Path.Combine(outputDir, dllName);
 
-        // 2. Cache check — skip if DLL already exists
-        if (File.Exists(dllPath))
-        {
-            Console.Error.WriteLine($"Cached: {dllName} (already exists in {outputDir})");
+        // 2. Cache check — skip if DLL exists AND the .app content hash matches.
+        // A stale DLL (same version string, changed .app bytes) is detected and evicted here.
+        var appHash = ComputeFileHash(appPath);
+        if (IsCacheFresh(dllPath, appHash, dllName))
             return 0;
-        }
 
         Console.Error.WriteLine($"Compiling dependency: {name} by {publisher} v{version}");
 
@@ -418,6 +517,7 @@ public static class DepCompiler
 
         Console.Error.WriteLine($"  Compiled: {dllName}");
         WriteDepSidecar(dllPath, publisher, name, version, appGuid);
+        WriteHashSidecar(dllPath, appHash);
         return 0;
     }
 
@@ -721,11 +821,11 @@ public static class DepCompiler
             : SanitizeName($"{dirName}.dll");
         var dllPath = Path.Combine(outputDir, dllName);
 
-        if (File.Exists(dllPath))
-        {
-            Console.Error.WriteLine($"Cached: {dllName}");
+        // Cache check — skip if DLL exists AND directory content hash matches.
+        // Detects source changes even when the version string is not bumped (issue #1517).
+        var dirHash = ComputeDirectoryHash(srcDir);
+        if (IsCacheFresh(dllPath, dirHash, dllName))
             return 0;
-        }
 
         var alFiles = Directory.GetFiles(srcDir, "*.al", SearchOption.AllDirectories);
         if (alFiles.Length == 0)
@@ -908,6 +1008,7 @@ public static class DepCompiler
         Console.Error.WriteLine($"  Compiled: {dllName}");
         if (appIdentity != null)
             WriteDepSidecar(dllPath, appIdentity.Publisher, appIdentity.Name, appIdentity.VersionRaw, appIdentity.AppId);
+        WriteHashSidecar(dllPath, dirHash);
         return 0;
     }
 
