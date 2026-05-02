@@ -1971,4 +1971,254 @@ public class DepExtractorTests
         }
     }
 
+    // -----------------------------------------------------------------------
+    // --packages <dir> as dep source for --extract-deps (issue #1522)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Helper: create a synthetic NAVX .app file whose ZIP contains SymbolReference.json
+    /// AND src/&lt;name&gt;.al so it can be used both as a symbol package and as a dep source.
+    /// </summary>
+    private static byte[] MakeSyntheticApp(string appId, string appName, string publisher, string version,
+        IReadOnlyList<(string Name, string Source)> alFiles,
+        string? symRefJson = null)
+    {
+        using var ms = new System.IO.MemoryStream();
+        using (var zip = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+        {
+            // SymbolReference.json (required for CollectPackageDeclaredObjects)
+            var symRef = symRefJson ?? $$$"""
+                {
+                  "Id": "{{{appId}}}",
+                  "Name": "{{{appName}}}",
+                  "Publisher": "{{{publisher}}}",
+                  "Version": "{{{version}}}"
+                }
+                """;
+            var symRefEntry = zip.CreateEntry("SymbolReference.json");
+            using (var es = symRefEntry.Open())
+            {
+                var bytes = System.Text.Encoding.UTF8.GetBytes(symRef);
+                es.Write(bytes, 0, bytes.Length);
+            }
+
+            // src/<name>.al entries (read by AppPackageReader.ExtractAlSources)
+            foreach (var (name, source) in alFiles)
+            {
+                var srcEntry = zip.CreateEntry($"src/{name}");
+                using var ses = srcEntry.Open();
+                var bytes = System.Text.Encoding.UTF8.GetBytes(source);
+                ses.Write(bytes, 0, bytes.Length);
+            }
+        }
+
+        var zipBytes = ms.ToArray();
+        var appBytes = new byte[8 + zipBytes.Length];
+        appBytes[0] = (byte)'N'; appBytes[1] = (byte)'A'; appBytes[2] = (byte)'V'; appBytes[3] = (byte)'X';
+        System.BitConverter.GetBytes((uint)8).CopyTo(appBytes, 4);
+        zipBytes.CopyTo(appBytes, 8);
+        return appBytes;
+    }
+
+    /// <summary>
+    /// ExtractDeps must accept a packages directory as a dep source — objects from .app files
+    /// in that directory should be indexed for BFS extraction. This proves the underlying
+    /// machinery works: passing the .app file path (discovered from the --packages dir by the
+    /// CLI) to depSources extracts the object correctly.
+    /// </summary>
+    [Fact]
+    public void ExtractDeps_AppFileFromPackagesDir_IsIndexedAsDepSource()
+    {
+        var pkgDir = Path.Combine(Path.GetTempPath(), "al-pkg-src-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir = Path.Combine(Path.GetTempPath(), "al-out-src-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir = Path.Combine(Path.GetTempPath(), "al-ext-src-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(pkgDir);
+            Directory.CreateDirectory(extDir);
+
+            // Create a synthetic .app with a Customer table inside src/
+            var appBytes = MakeSyntheticApp(
+                "12345678-1234-1234-1234-123456789012",
+                "MyDepApp",
+                "TestPublisher",
+                "1.0.0.0",
+                new[]
+                {
+                    ("Customer.al", "table 18 Customer { fields { field(1; \"No.\"; Code[20]) { } } }")
+                });
+            var appPath = Path.Combine(pkgDir, "TestPublisher_MyDepApp_1.0.0.0.app");
+            File.WriteAllBytes(appPath, appBytes);
+
+            // Extension references Customer
+            File.WriteAllText(Path.Combine(extDir, "MyExt.al"), """
+                codeunit 50010 "My Codeunit"
+                {
+                    procedure Run()
+                    var Cust: Record Customer;
+                    begin Cust.FindFirst(); end;
+                }
+                """);
+
+            // Simulate what the fixed CLI does: expand pkg dir to .app files, pass as depSources
+            var appFilesFromPkgDir = Directory.GetFiles(pkgDir, "*.app", SearchOption.TopDirectoryOnly);
+            int rc = DepExtractor.ExtractDeps(extDir, appFilesFromPkgDir, outDir);
+
+            Assert.Equal(0, rc);
+
+            // Positive: Customer table was extracted from the .app
+            var files = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+            Assert.Contains(files, f => File.ReadAllText(f).Contains("table 18 Customer"));
+
+            // Negative: no "Customer" stub generated (it was found in the .app)
+            var stubs = files.Where(f => f.Contains("__GeneratedStubs__", StringComparison.OrdinalIgnoreCase)
+                                      && Path.GetFileName(f).StartsWith("Customer", StringComparison.OrdinalIgnoreCase)).ToList();
+            Assert.Empty(stubs);
+        }
+        finally
+        {
+            foreach (var d in new[] { pkgDir, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
+    /// <summary>
+    /// The CLI must accept --extract-deps ./src ./out --packages &lt;dir&gt; without any explicit
+    /// .app paths. The .app files in the packages dir should be auto-discovered and used as
+    /// dep sources. This test fails before the Program.cs fix (currently returns exit code 1
+    /// with "requires at least one &lt;app&gt; path").
+    /// </summary>
+    [Fact]
+    public async Task ExtractDeps_Cli_PackagesDirWithNoExplicitApps_Succeeds()
+    {
+        var pkgDir = Path.Combine(Path.GetTempPath(), "al-cli-pkg-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir = Path.Combine(Path.GetTempPath(), "al-cli-out-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir = Path.Combine(Path.GetTempPath(), "al-cli-ext-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(pkgDir);
+            Directory.CreateDirectory(extDir);
+
+            // Create a synthetic .app with a Customer table inside src/
+            var appBytes = MakeSyntheticApp(
+                "aaaabbbb-cccc-dddd-eeee-ffffffffffff",
+                "CliPkgTest",
+                "Test",
+                "1.0.0.0",
+                new[]
+                {
+                    ("Customer.al", "table 18 Customer { fields { field(1; \"No.\"; Code[20]) { } } }")
+                });
+            File.WriteAllBytes(Path.Combine(pkgDir, "Test_CliPkgTest_1.0.0.0.app"), appBytes);
+
+            // Extension references Customer
+            File.WriteAllText(Path.Combine(extDir, "MyExt.al"), """
+                codeunit 50010 "My Codeunit"
+                {
+                    procedure Run()
+                    var Cust: Record Customer;
+                    begin Cust.FindFirst(); end;
+                }
+                """);
+
+            // This should succeed after the fix; currently fails with exit code 1
+            var result = await CliRunner.RunAsync(
+                $"--extract-deps \"{extDir}\" \"{outDir}\" --packages \"{pkgDir}\"",
+                timeoutMs: 60_000);
+
+            // Positive: CLI exits successfully
+            Assert.Equal(0, result.ExitCode);
+
+            // Positive: Customer table was extracted
+            var files = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+            Assert.Contains(files, f => File.ReadAllText(f).Contains("table 18 Customer"));
+        }
+        finally
+        {
+            foreach (var d in new[] { pkgDir, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
+    /// <summary>
+    /// Composability: explicit .app paths AND --packages &lt;dir&gt; must both work together.
+    /// Objects from both sources should be indexed and extractable.
+    /// </summary>
+    [Fact]
+    public async Task ExtractDeps_Cli_PackagesDirPlusExplicitApp_BothIndexed()
+    {
+        var pkgDir  = Path.Combine(Path.GetTempPath(), "al-cli-pkg2-" + Guid.NewGuid().ToString("N")[..8]);
+        var appDir  = Path.Combine(Path.GetTempPath(), "al-cli-app2-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir  = Path.Combine(Path.GetTempPath(), "al-cli-out2-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir  = Path.Combine(Path.GetTempPath(), "al-cli-ext2-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(pkgDir);
+            Directory.CreateDirectory(appDir);
+            Directory.CreateDirectory(extDir);
+
+            // Packages dir contains a Customer table
+            var pkgAppBytes = MakeSyntheticApp(
+                "11112222-3333-4444-5555-666677778888",
+                "PkgDirApp",
+                "Test",
+                "1.0.0.0",
+                new[]
+                {
+                    ("Customer.al", "table 18 Customer { fields { field(1; \"No.\"; Code[20]) { } } }")
+                });
+            File.WriteAllBytes(Path.Combine(pkgDir, "Test_PkgDirApp_1.0.0.0.app"), pkgAppBytes);
+
+            // Explicit .app contains a Sales Header table
+            var explicitAppBytes = MakeSyntheticApp(
+                "aaaabbbb-cccc-dddd-eeee-111122223333",
+                "ExplicitApp",
+                "Test",
+                "1.0.0.0",
+                new[]
+                {
+                    ("SalesHeader.al", "table 36 \"Sales Header\" { fields { field(1; \"No.\"; Code[20]) { } } }")
+                });
+            var explicitAppPath = Path.Combine(appDir, "Test_ExplicitApp_1.0.0.0.app");
+            File.WriteAllBytes(explicitAppPath, explicitAppBytes);
+
+            // Extension references both Customer and Sales Header
+            File.WriteAllText(Path.Combine(extDir, "MyExt.al"), """
+                codeunit 50011 "My Composite Codeunit"
+                {
+                    procedure Run()
+                    var
+                        Cust: Record Customer;
+                        SH: Record "Sales Header";
+                    begin
+                        Cust.FindFirst();
+                        SH.FindFirst();
+                    end;
+                }
+                """);
+
+            // CLI with both --packages <dir> and an explicit .app path
+            var result = await CliRunner.RunAsync(
+                $"--extract-deps \"{extDir}\" \"{outDir}\" --packages \"{pkgDir}\" \"{explicitAppPath}\"",
+                timeoutMs: 60_000);
+
+            // Positive: CLI exits successfully
+            Assert.Equal(0, result.ExitCode);
+
+            var files = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+
+            // Positive: Customer (from packages dir) was extracted
+            Assert.Contains(files, f => File.ReadAllText(f).Contains("table 18 Customer"));
+
+            // Positive: Sales Header (from explicit .app) was extracted
+            Assert.Contains(files, f => File.ReadAllText(f).Contains("table 36") &&
+                                        File.ReadAllText(f).Contains("Sales Header"));
+        }
+        finally
+        {
+            foreach (var d in new[] { pkgDir, appDir, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
 }

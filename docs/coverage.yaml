@@ -13576,3 +13576,23 @@ DepCompiler.ComputeDirectoryHash:
     Internal helper: stable SHA-256 over all files in a directory (sorted by
     relative path, filename included in hash input). Deterministic and change-sensitive.
     Test: ComputeAppHash_IsDeterministicAndChangeSensitive. Fixed in #1517.
+
+# ── extract-deps: --packages dir auto-discovery ──────────────────
+
+DepExtractor.PackagesDirAutoDiscovery:
+  layer: syntax
+  category: extract-deps
+  status: covered
+  tests:
+    - AlRunner.Tests/DepExtractorTests.cs
+  notes: >
+    --extract-deps accepts --packages <dir> to auto-discover all *.app files in a
+    directory and use them as dep sources (BFS indexing), in addition to their role
+    as symbol-resolution packages. This allows "al-runner --extract-deps ./src ./out
+    --packages .alpackages" without listing individual .app file paths. Multiple
+    --packages dirs and explicit .app paths are composable. Implemented by expanding
+    --packages dirs into .app file paths in the --extract-deps CLI case before calling
+    DepExtractor.ExtractDeps. Fixed in #1522.
+    Tests: ExtractDeps_AppFileFromPackagesDir_IsIndexedAsDepSource,
+    ExtractDeps_Cli_PackagesDirWithNoExplicitApps_Succeeds,
+    ExtractDeps_Cli_PackagesDirPlusExplicitApp_BothIndexed.
