@@ -1875,7 +1875,7 @@ public static class DepExtractor
         typeName.Equals("DotNet", StringComparison.OrdinalIgnoreCase)
         || typeName.Equals("ControlAddIn", StringComparison.OrdinalIgnoreCase);
 
-    private static (string? Source, int Stripped) StripDotNetProcedures(string source, string fileName)
+    internal static (string? Source, int Stripped) StripDotNetProcedures(string source, string fileName)
     {
         // Fast path: neither keyword anywhere, nothing to do.
         if (!source.Contains("DotNet", StringComparison.OrdinalIgnoreCase)
@@ -1886,6 +1886,23 @@ public static class DepExtractor
         {
             var tree = SyntaxTree.ParseObjectText(source);
             var root = tree.GetRoot();
+
+            // Pure assembly declaration check: if the file contains DotNet/ControlAddIn
+            // content but has NO callable BC objects (codeunit/table/page/etc.), it is
+            // a pure dotnet assembly declaration file (only declares .NET type mappings).
+            // Such files have no callable AL interface and must be skipped entirely.
+            // Return null so the caller (ExtractDeps) omits the file from the output.
+            //
+            // A pure dotnet block file parses as a CompilationUnitSyntax where every top-level
+            // object is a DotNetPackageSyntax (kind == DotNetPackage). These are NOT callable
+            // BC objects — they only declare .NET type aliases for use in AL code.
+            if (root is CompilationUnitSyntax compUnit && compUnit.Objects.Count > 0
+                && compUnit.Objects.All(o => o.Kind == SyntaxKind.DotNetPackage))
+            {
+                if (!string.IsNullOrEmpty(fileName))
+                    Console.Error.WriteLine($"  Skipping pure assembly declaration file: {fileName}");
+                return (null, 0);
+            }
 
             // Collect (start, end, replacement) for each DotNet-referencing procedure.
             var replacements = new List<(int Start, int End, string Text)>();

@@ -49,7 +49,19 @@ dotnet_declaration:
   layer: syntax
   category: object
   status: out-of-scope
-  notes: .NET interop — requires BC runtime; see 'No DotNet interop' in docs/limitations.md
+  notes: >
+    .NET interop — requires BC runtime; see 'No DotNet interop' in docs/limitations.md.
+    extract-deps automatically strips DotNet-referencing procedure bodies (replaced with Error()
+    calls) and skips pure dotnet-assembly declaration files so the extracted slice compiles
+    cleanly. Test coverage in AlRunner.Tests.DepExtractorTests:
+    StripDotNet_NoDotNetContent_ReturnsUnchanged,
+    StripDotNet_ProcedureWithDotNetLocalVar_BodyReplacedWithError,
+    StripDotNet_ProcedureWithDotNetReturnType_ReturnTypeReplacedWithText,
+    StripDotNet_ProcedureWithDotNetParameter_ParamReplacedWithVariant,
+    StripDotNet_GlobalDotNetVar_IsRemoved,
+    StripDotNet_PureAssemblyDeclaration_ReturnsNull,
+    StripDotNet_ErrorMessageContainsProcedureName,
+    ExtractDeps_DotNetProceduresStripped_InOutputDirectory. Closes #1524.
 
 entitlement_declaration:
   layer: syntax
