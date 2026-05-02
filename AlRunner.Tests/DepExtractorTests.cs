@@ -2221,4 +2221,286 @@ public class DepExtractorTests
         }
     }
 
+    // -----------------------------------------------------------------------
+    // StripDotNetProcedures — unit tests (issue #1524)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A codeunit with no DotNet references is returned unchanged, with 0 stripped.
+    /// </summary>
+    [Fact]
+    public void StripDotNet_NoDotNetContent_ReturnsUnchanged()
+    {
+        const string source = """
+            codeunit 99900 "MyCodeunit"
+            {
+                procedure Run()
+                begin
+                    Message('Hello');
+                end;
+            }
+            """;
+
+        var (result, stripped) = DepExtractor.StripDotNetProcedures(source, "test.al");
+
+        // Positive: result is the original source unchanged
+        Assert.Equal(source, result);
+        // Positive: nothing was stripped
+        Assert.Equal(0, stripped);
+    }
+
+    /// <summary>
+    /// A procedure that uses a DotNet-typed local variable has its body replaced with Error().
+    /// The Error message must contain the procedure name and mention DotNet interop.
+    /// </summary>
+    [Fact]
+    public void StripDotNet_ProcedureWithDotNetLocalVar_BodyReplacedWithError()
+    {
+        const string source = """
+            codeunit 99901 "DotNetUser"
+            {
+                procedure BuildXml(): Text
+                var
+                    XmlDoc: DotNet XmlDocument;
+                begin
+                    XmlDoc := XmlDoc.XmlDocument();
+                    exit(XmlDoc.OuterXml);
+                end;
+            }
+            """;
+
+        var (result, stripped) = DepExtractor.StripDotNetProcedures(source, "test.al");
+
+        Assert.NotNull(result);
+        // Positive: at least 1 replacement was made
+        Assert.True(stripped > 0, $"Expected stripped > 0, got {stripped}");
+        // Positive: the result contains Error() with the procedure name
+        Assert.Contains("Error(", result, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("BuildXml", result, StringComparison.OrdinalIgnoreCase);
+        // Positive: DotNet interop is mentioned in the error message
+        Assert.Contains("DotNet interop", result, StringComparison.OrdinalIgnoreCase);
+        // Negative: the original DotNet body code is NOT in the result
+        Assert.DoesNotContain("XmlDoc.XmlDocument()", result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A procedure that returns a DotNet type gets its return type replaced with Text.
+    /// </summary>
+    [Fact]
+    public void StripDotNet_ProcedureWithDotNetReturnType_ReturnTypeReplacedWithText()
+    {
+        const string source = """
+            codeunit 99902 "DotNetReturn"
+            {
+                procedure GetNode(): DotNet XmlNode
+                begin
+                end;
+            }
+            """;
+
+        var (result, stripped) = DepExtractor.StripDotNetProcedures(source, "test.al");
+
+        Assert.NotNull(result);
+        Assert.True(stripped > 0, $"Expected stripped > 0, got {stripped}");
+        // Positive: DotNet return type was replaced with Text
+        Assert.Contains(": Text", result, StringComparison.Ordinal);
+        // Negative: the DotNet return type is gone
+        Assert.DoesNotContain("DotNet XmlNode", result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A procedure that has a DotNet-typed parameter gets it replaced with Variant.
+    /// </summary>
+    [Fact]
+    public void StripDotNet_ProcedureWithDotNetParameter_ParamReplacedWithVariant()
+    {
+        const string source = """
+            codeunit 99903 "DotNetParam"
+            {
+                procedure Process(Node: DotNet XmlNode)
+                begin
+                end;
+            }
+            """;
+
+        var (result, stripped) = DepExtractor.StripDotNetProcedures(source, "test.al");
+
+        Assert.NotNull(result);
+        Assert.True(stripped > 0, $"Expected stripped > 0, got {stripped}");
+        // Positive: DotNet parameter type was replaced with Variant
+        Assert.Contains("Variant", result, StringComparison.Ordinal);
+        // Negative: the DotNet parameter type is gone
+        Assert.DoesNotContain("DotNet XmlNode", result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A codeunit-level global DotNet variable declaration is removed entirely.
+    /// Procedures that reference it via their body get their body replaced with Error().
+    /// </summary>
+    [Fact]
+    public void StripDotNet_GlobalDotNetVar_IsRemoved()
+    {
+        const string source = """
+            codeunit 99904 "GlobalDotNetVar"
+            {
+                var
+                    XmlDoc: DotNet XmlDocument;
+
+                procedure ReadXml(Path: Text): Text
+                begin
+                    exit(XmlDoc.OuterXml);
+                end;
+
+                procedure SetPath(Path: Text)
+                begin
+                    Message(Path);
+                end;
+            }
+            """;
+
+        var (result, stripped) = DepExtractor.StripDotNetProcedures(source, "test.al");
+
+        Assert.NotNull(result);
+        Assert.True(stripped > 0, $"Expected stripped > 0, got {stripped}");
+        // Positive: the global DotNet var declaration is removed
+        Assert.DoesNotContain("XmlDoc: DotNet", result, StringComparison.OrdinalIgnoreCase);
+        // Positive: the procedure that uses the DotNet var gets Error()
+        Assert.Contains("Error(", result, StringComparison.OrdinalIgnoreCase);
+        // Positive: the pure AL procedure (no DotNet) is preserved
+        Assert.Contains("Message(Path)", result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A pure dotnet assembly declaration file (no BC objects, only dotnet type mappings)
+    /// is detected and returns null — the file should be skipped entirely.
+    /// </summary>
+    [Fact]
+    public void StripDotNet_PureAssemblyDeclaration_ReturnsNull()
+    {
+        // A typical BC AL dotnet package declaration file — no codeunit/table/page objects
+        const string source = """
+            dotnet
+            {
+                assembly("mscorlib")
+                {
+                    Culture = 'neutral';
+                    PublicKeyToken = 'b77a5c561934e089';
+                    Version = '4.0.0.0';
+
+                    type("System.String"; "DotNet_String") { }
+                    type("System.Text.StringBuilder"; "DotNet_StringBuilder") { }
+                }
+            }
+            """;
+
+        var (result, stripped) = DepExtractor.StripDotNetProcedures(source, "DotNetDeclarations.al");
+
+        // Positive: null means "skip this file" — pure assembly files have no callable AL interface
+        Assert.Null(result);
+        // Positive: nothing was "stripped" (the whole file is skipped, not procedure-by-procedure)
+        Assert.Equal(0, stripped);
+    }
+
+    /// <summary>
+    /// The Error() message injected into a stripped procedure contains the exact procedure name.
+    /// This verifies the "fails loudly and names the procedure" acceptance criterion.
+    /// </summary>
+    [Fact]
+    public void StripDotNet_ErrorMessageContainsProcedureName()
+    {
+        const string source = """
+            codeunit 99905 "NamedProcCodeunit"
+            {
+                procedure ConvertToXmlDocument(Input: Text): DotNet XmlDocument
+                var
+                    Doc: DotNet XmlDocument;
+                begin
+                    exit(Doc);
+                end;
+            }
+            """;
+
+        var (result, _) = DepExtractor.StripDotNetProcedures(source, "test.al");
+
+        Assert.NotNull(result);
+        // Positive: the exact procedure name appears in the Error() call body
+        Assert.Contains("ConvertToXmlDocument", result, StringComparison.Ordinal);
+        // Positive: the error message uses AL single-quote string format
+        Assert.Contains("'AL Runner:", result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// End-to-end: ExtractDeps writes DotNet-stripped AL files to the output directory.
+    /// Procedures with DotNet references have their bodies replaced with Error();
+    /// pure AL procedures in the same codeunit are preserved.
+    /// </summary>
+    [Fact]
+    public void ExtractDeps_DotNetProceduresStripped_InOutputDirectory()
+    {
+        var depRoot = Path.Combine(Path.GetTempPath(), "al-dotnet-dep-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir  = Path.Combine(Path.GetTempPath(), "al-dotnet-out-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir  = Path.Combine(Path.GetTempPath(), "al-dotnet-ext-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(depRoot, "AppA"));
+            Directory.CreateDirectory(extDir);
+
+            // Dep: a codeunit with one DotNet procedure and one normal procedure
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "XmlHelper.al"), """
+                codeunit 60200 XmlHelper
+                {
+                    procedure ParseXml(Input: Text): DotNet XmlDocument
+                    var
+                        Doc: DotNet XmlDocument;
+                    begin
+                        exit(Doc);
+                    end;
+
+                    procedure GetVersion(): Text
+                    begin
+                        exit('1.0');
+                    end;
+                }
+                """);
+
+            // Extension references XmlHelper
+            File.WriteAllText(Path.Combine(extDir, "Consumer.al"), """
+                codeunit 60299 Consumer
+                {
+                    procedure Run()
+                    var
+                        Helper: Codeunit XmlHelper;
+                    begin
+                        Message(Helper.GetVersion());
+                    end;
+                }
+                """);
+
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depRoot }, outDir);
+            Assert.Equal(0, rc);
+
+            // Find the extracted XmlHelper file
+            var extractedFiles = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+            var xmlHelperFile = extractedFiles.FirstOrDefault(f =>
+                File.ReadAllText(f).Contains("XmlHelper", StringComparison.OrdinalIgnoreCase)
+                && !f.Contains("__GeneratedStubs__"));
+            Assert.NotNull(xmlHelperFile);
+
+            var content = File.ReadAllText(xmlHelperFile!);
+            // Positive: the DotNet procedure body was replaced with Error()
+            Assert.Contains("Error(", content, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("ParseXml", content, StringComparison.OrdinalIgnoreCase);
+            // Positive: the normal procedure is preserved unchanged
+            Assert.Contains("GetVersion", content, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("'1.0'", content, StringComparison.OrdinalIgnoreCase);
+            // Negative: the original DotNet body is gone
+            Assert.DoesNotContain("exit(Doc)", content, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            foreach (var d in new[] { depRoot, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
 }
