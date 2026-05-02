@@ -7316,6 +7316,15 @@ Report.RunRequestPage (Integer, Text):
     - tests/bucket-2/page-report/301-report-static-runrequestpage
   notes: MockReportHandle.StaticRunRequestPage(int, string) — returns empty string in standalone mode. Fixes #1377.
 
+Report.SaveAs (Integer, Text, ReportFormat, OutStream):
+  layer: runtime-api
+  category: Report
+  status: covered
+  tests:
+    - tests/bucket-2/page-report/90-report-static
+    - tests/bucket-2/page-report/314-report-saveas-bool
+  notes: NavReport.SaveAs → MockReportHandle.StaticSaveAs (4-arg). Returns bool (true) in standalone mode. Fixes #1526.
+
 Report.SaveAs (Integer, Text, ReportFormat, OutStream, RecordRef):
   layer: runtime-api
   category: Report
@@ -7323,7 +7332,8 @@ Report.SaveAs (Integer, Text, ReportFormat, OutStream, RecordRef):
   tests:
     - tests/bucket-2/page-report/90-report-static
     - tests/bucket-2/page-report/222-report-saveas-recordref
-  notes: (path-only, OutStream, OutStream+RecordRef); NavReport.SaveAs → MockReportHandle.StaticSaveAs (no-op). Fixes #1088.
+    - tests/bucket-2/page-report/314-report-saveas-bool
+  notes: (path-only, OutStream, OutStream+RecordRef); NavReport.SaveAs → MockReportHandle.StaticSaveAs (5-arg). Returns bool (true) in standalone mode. Fixes #1088, #1526.
 
 Report.SaveAsExcel (Integer, Text, Table):
   layer: runtime-api
@@ -7331,7 +7341,8 @@ Report.SaveAsExcel (Integer, Text, Table):
   status: covered
   tests:
     - tests/bucket-2/page-report/90-report-static
-  notes: NavReport.SaveAsExcel → MockReportHandle.StaticSaveAsExcel (no-op).
+    - tests/bucket-2/page-report/314-report-saveas-bool
+  notes: NavReport.SaveAsExcel → MockReportHandle.StaticSaveAsExcel. Returns bool (true) in standalone mode. Fixes #1526.
 
 Report.SaveAsHtml (Integer, Text, Table):
   layer: runtime-api
@@ -7339,7 +7350,8 @@ Report.SaveAsHtml (Integer, Text, Table):
   status: covered
   tests:
     - tests/bucket-2/page-report/90-report-static
-  notes: NavReport.SaveAsHtml → MockReportHandle.StaticSaveAsHtml (no-op).
+    - tests/bucket-2/page-report/314-report-saveas-bool
+  notes: NavReport.SaveAsHtml → MockReportHandle.StaticSaveAsHtml. Returns bool (true) in standalone mode. Fixes #1526.
 
 Report.SaveAsPdf (Integer, Text, Table):
   layer: runtime-api
@@ -7347,7 +7359,8 @@ Report.SaveAsPdf (Integer, Text, Table):
   status: covered
   tests:
     - tests/bucket-2/page-report/90-report-static
-  notes: NavReport.SaveAsPdf → MockReportHandle.StaticSaveAsPdf (no-op).
+    - tests/bucket-2/page-report/314-report-saveas-bool
+  notes: NavReport.SaveAsPdf → MockReportHandle.StaticSaveAsPdf. Returns bool (true) in standalone mode. Fixes #1526.
 
 Report.SaveAsWord (Integer, Text, Table):
   layer: runtime-api
@@ -7355,7 +7368,8 @@ Report.SaveAsWord (Integer, Text, Table):
   status: covered
   tests:
     - tests/bucket-2/page-report/90-report-static
-  notes: NavReport.SaveAsWord → MockReportHandle.StaticSaveAsWord (no-op).
+    - tests/bucket-2/page-report/314-report-saveas-bool
+  notes: NavReport.SaveAsWord → MockReportHandle.StaticSaveAsWord. Returns bool (true) in standalone mode. Fixes #1526.
 
 Report.SaveAsXml (Integer, Text, Table):
   layer: runtime-api
@@ -7363,7 +7377,8 @@ Report.SaveAsXml (Integer, Text, Table):
   status: covered
   tests:
     - tests/bucket-2/page-report/90-report-static
-  notes: NavReport.SaveAsXml → MockReportHandle.StaticSaveAsXml (no-op).
+    - tests/bucket-2/page-report/314-report-saveas-bool
+  notes: NavReport.SaveAsXml → MockReportHandle.StaticSaveAsXml. Returns bool (true) in standalone mode. Fixes #1526.
 
 Report.ValidateAndPrepareLayout (Integer, InStream, InStream, ReportLayoutType):
   layer: runtime-api
