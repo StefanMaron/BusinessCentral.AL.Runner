@@ -13537,13 +13537,14 @@ DepCompiler.CacheFreshness.AppFile:
   category: compile-dep
   status: covered
   tests:
-    - AlRunner.Tests/DepCompilerTests.CompileDep_WritesHashSidecar_AfterSuccessfulCompile
-    - AlRunner.Tests/DepCompilerTests.CompileDep_SkipsRecompile_WhenHashUnchanged
-    - AlRunner.Tests/DepCompilerTests.CompileDep_Recompiles_WhenAppContentChangesButVersionUnchanged
+    - AlRunner.Tests/DepCompilerTests.cs
   notes: >
     SHA-256 hash sidecar (.sha256) written next to each compiled DLL. On cache hit,
     the stored hash is compared against the current .app / directory hash. A mismatch
     (same version string, changed source) evicts the stale DLL and forces recompilation.
+    Tests: CompileDep_WritesHashSidecar_AfterSuccessfulCompile,
+    CompileDep_SkipsRecompile_WhenHashUnchanged,
+    CompileDep_Recompiles_WhenAppContentChangesButVersionUnchanged.
     Fixed in #1517.
 
 DepCompiler.CacheFreshness.DirectorySource:
@@ -13551,21 +13552,19 @@ DepCompiler.CacheFreshness.DirectorySource:
   category: compile-dep
   status: covered
   tests:
-    - AlRunner.Tests/DepCompilerTests.CompileDep_WritesHashSidecar_AfterSuccessfulCompile
-    - AlRunner.Tests/DepCompilerTests.CompileDep_SkipsRecompile_WhenHashUnchanged
-    - AlRunner.Tests/DepCompilerTests.CompileDep_Recompiles_WhenAppContentChangesButVersionUnchanged
+    - AlRunner.Tests/DepCompilerTests.cs
   notes: >
     Directory-based compilation (CompileDepFromDir) hashes all files under the source
     directory (sorted by relative path) to produce a deterministic fingerprint.
-    Fixed in #1517.
+    Same test methods as AppFile cache freshness. Fixed in #1517.
 
 DepCompiler.ComputeDirectoryHash:
   layer: syntax
   category: compile-dep
   status: covered
   tests:
-    - AlRunner.Tests/DepCompilerTests.ComputeAppHash_IsDeterministicAndChangeSensitive
+    - AlRunner.Tests/DepCompilerTests.cs
   notes: >
     Internal helper: stable SHA-256 over all files in a directory (sorted by
     relative path, filename included in hash input). Deterministic and change-sensitive.
-    Fixed in #1517.
+    Test: ComputeAppHash_IsDeterministicAndChangeSensitive. Fixed in #1517.
