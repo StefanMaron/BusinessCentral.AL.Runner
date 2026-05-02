@@ -1982,6 +1982,22 @@ public static class AlTranspiler
             if (failedMethods.Count > 10)
                 Log.Info($"  ... and {failedMethods.Count - 10} more");
         }
+        catch (Exception ex) when (ex is not OutOfMemoryException && ex is not StackOverflowException)
+        {
+            // Issue #1554: BC's compiler can throw bare non-aggregate exceptions
+            // (IndexOutOfRangeException, NullReferenceException, InvalidOperationException)
+            // from compilation.Emit for specific AL patterns like unresolved cross-app
+            // type references (NavTypeKind.None in EmitVariableFieldInitializer,
+            // BadExpression in EventSubscriberAttributeEmitter.EmitObjectId, etc.).
+            // Without this catch, these exceptions propagate uncaught and crash the
+            // compile-dep pipeline. Treat them the same as AggregateException: log,
+            // add to emitExceptions, and continue with whatever was captured.
+            emitExceptions.Add(ex);
+            Log.Info($"Partial transpilation: non-aggregate emit exception intercepted");
+            Log.Info($"  {ex.GetType().Name}: {ex.Message}");
+            if (Log.Verbose)
+                Log.Info($"  {ex.StackTrace?.Split('\n', 2)[0].Trim()}");
+        }
 
         if (outputter.CapturedObjects.Count == 0)
         {
