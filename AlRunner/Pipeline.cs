@@ -793,7 +793,7 @@ public class AlRunnerPipeline
 
         Executor.RegisterStatements(GetRewrittenStrings());
 
-        bool hasTests = alSources.Any(s => s.Contains("Subtype = Test"));
+        bool hasTests = alSources.Any(s => s.Contains("Subtype = Test", StringComparison.OrdinalIgnoreCase));
         bool explicitRunCodeunit = options.RunCodeunit != null;
         bool isInlineMode = options.InlineCode != null;
 
