@@ -349,9 +349,17 @@ public class MockCodeunitHandle
                 {
                     return candidate.Invoke(_codeunitInstance, convertedArgs);
                 }
-                catch (System.Reflection.TargetInvocationException) when (ci < sorted.Count - 1)
+                catch (Exception ex) when (ci < sorted.Count - 1
+                    && (ex is System.Reflection.TargetInvocationException
+                        || ex is ArgumentException))
                 {
-                    continue; // try next candidate
+                    // Defense-in-depth: if the top-scored candidate was still wrong (e.g. a
+                    // future scoring regression), fall through to the next candidate.
+                    // ArgumentException covers BC-reflection parameter-binding failures that are
+                    // thrown directly (not wrapped in TargetInvocationException) — see issue #1577.
+                    // The ci < sorted.Count - 1 guard ensures the LAST candidate's exception
+                    // surfaces to the caller rather than being silently swallowed.
+                    continue;
                 }
             }
         }
@@ -950,6 +958,17 @@ public class MockCodeunitHandle
     /// Used by both <see cref="MockCodeunitHandle"/> and <see cref="MockReportHandle"/>
     /// for overload resolution during reflection-based dispatch.
     /// Unwraps <see cref="MockVariant"/> to check the underlying value's type.
+    ///
+    /// Tiered scoring (issue #1577 — fixes multi-overload tie-breaking):
+    ///   +1000 exact type match (paramType == argType after MockVariant unwrap)
+    ///   +100  IsAssignableFrom (inherited / interface match)
+    ///   +10   HasKnownConversion: direct wrap (MockVariant, NavVariant, etc.)
+    ///   +5    ByRef&lt;T&gt; wrap (weaker than direct wrap — inner conversion can still fail)
+    ///   +5    object param (accepts anything but no type information)
+    ///   +0    no known conversion path — scored last, still tried as a candidate
+    ///
+    /// Crucially, Convert.ChangeType fallback is NOT counted as "known" — it is the
+    /// silent fallback that was causing NavDate→NavCode cast errors in issue #1577.
     /// </summary>
     internal static int ScoreMethodMatch(MethodInfo method, object[] args)
     {
@@ -960,21 +979,132 @@ public class MockCodeunitHandle
             var arg = args[i];
             if (arg == null) continue;
 
-            // Unwrap MockVariant to get the actual underlying value
-            if (arg is MockVariant mv && mv.Value != null)
-                arg = mv.Value;
+            // Unwrap MockVariant to get the actual underlying value for type comparison
+            var unwrappedArg = (arg is MockVariant mv && mv.Value != null) ? mv.Value : arg;
 
-            var argType = arg.GetType();
+            var argType = unwrappedArg.GetType();
             var paramType = parameters[i].ParameterType;
 
-            if (paramType.IsAssignableFrom(argType))
-                score += 10; // exact or inherited match
+            if (paramType == argType || paramType.IsAssignableFrom(argType))
+            {
+                // Tier 1 (+1000): exact type match or inherited match where arg already IS the param type.
+                // IsAssignableFrom covers both exact match and inheritance/interface — exact match
+                // is not separately scored because both give +1000, and that is sufficient for
+                // disambiguation (any case where one param is exact and another isn't will decide the winner).
+                score += 1000;
+            }
+            else if (paramType.IsAssignableFrom(arg.GetType()) && arg.GetType() != unwrappedArg.GetType())
+            {
+                // Tier 2 (+100): the original (pre-unwrap) arg IS assignable — e.g. MockVariant IS object.
+                // This is weaker than the unwrapped exact match (Tier 1).
+                score += 100;
+            }
+            else if (HasKnownConversion(arg.GetType(), argType, paramType))
+            {
+                // Tier 3 (+10): a type-safe known conversion exists (mirrors ConvertArgInternal).
+                // Does NOT include Convert.ChangeType which is the silent fallback causing cast errors.
+                score += 10;
+            }
+            else if (HasByRefKnownConversion(argType, paramType))
+            {
+                // Tier 3b (+5): ByRef<T> wrap — weaker than direct wrap because the inner
+                // conversion from argType to T can still fail if types are incompatible.
+                score += 5;
+            }
             else if (paramType == typeof(object))
-                score += 5; // object accepts anything
-            else
-                score += 1; // may be convertible
+            {
+                // Tier 4 (+5): object param accepts anything — same as ByRef wrap tier, scores
+                // below any candidate that has a proper type for this argument.
+                score += 5;
+            }
+            // else: +0 — no known conversion path. Candidate is still tried last.
         }
         return score;
+    }
+
+    /// <summary>
+    /// Returns true when there is a type-safe known conversion from <paramref name="rawArgType"/>
+    /// (the original, possibly-wrapped arg type) or <paramref name="unwrappedArgType"/>
+    /// (after MockVariant unwrap) to <paramref name="paramType"/>.
+    ///
+    /// Mirrors the positive branches of <see cref="ConvertArgInternal"/> as pure type checks.
+    /// Does NOT include the Convert.ChangeType fallback — that is the silent path that
+    /// causes cast errors (issue #1577) and must score 0 to keep it last in the order.
+    /// </summary>
+    private static bool HasKnownConversion(Type rawArgType, Type unwrappedArgType, Type paramType)
+    {
+        // NavScope parameters accept null — always convertible (we pass null).
+        if (paramType == typeof(NavScope) || paramType.IsSubclassOf(typeof(NavScope)))
+            return true;
+
+        // MockVariant wraps anything.
+        if (paramType == typeof(MockVariant))
+            return true;
+
+        // MockCodeunitHandle → MockInterfaceHandle (AL interface injection).
+        if (paramType == typeof(MockInterfaceHandle) && typeof(MockCodeunitHandle).IsAssignableFrom(rawArgType))
+            return true;
+
+        // int/decimal → Decimal18.
+        if (paramType.Name == "Decimal18" &&
+            (unwrappedArgType == typeof(int) || unwrappedArgType == typeof(decimal) ||
+             unwrappedArgType == typeof(long) || unwrappedArgType == typeof(double)))
+            return true;
+
+        // Any value → NavVariant (wrapper for any AL value).
+        if (paramType.Name == "NavVariant")
+            return true;
+
+        // string or NavOption → NavText.
+        if (paramType.Name == "NavText" &&
+            (unwrappedArgType == typeof(string) || typeof(NavOption).IsAssignableFrom(unwrappedArgType)))
+            return true;
+
+        // NavValue → string.
+        if (paramType == typeof(string) && typeof(NavValue).IsAssignableFrom(unwrappedArgType))
+            return true;
+
+        // NavValue → int or bool (via ToInt32 / ToBoolean).
+        if (typeof(NavValue).IsAssignableFrom(unwrappedArgType) &&
+            (paramType == typeof(int) || paramType == typeof(bool)))
+            return true;
+
+        // MockRecordHandle → string, numeric primitives, or bool.
+        if (typeof(MockRecordHandle).IsAssignableFrom(rawArgType))
+        {
+            if (paramType == typeof(string) || paramType == typeof(bool) ||
+                paramType == typeof(int) || paramType == typeof(long) ||
+                paramType == typeof(double) || paramType == typeof(float) ||
+                paramType == typeof(decimal) || paramType == typeof(short) ||
+                paramType == typeof(byte) || paramType == typeof(uint) ||
+                paramType == typeof(ulong))
+                return true;
+        }
+
+        // MockVariant (original arg, not unwrapped) → anything via unwrap-and-recurse.
+        if (rawArgType == typeof(MockVariant))
+            return true;
+
+        // ByRef<T> (arg) → non-ByRef target: unwrap the ByRef inner value.
+        if (rawArgType.IsGenericType
+            && rawArgType.GetGenericTypeDefinition() == typeof(ByRef<>)
+            && !paramType.IsGenericType)
+            return true;
+
+        return false;
+    }
+
+    /// <summary>
+    /// Returns true when the conversion path is ByRef&lt;T&gt; wrapping — the paramType is
+    /// <c>ByRef&lt;T&gt;</c> and the arg is not already a ByRef. Scored as a weaker tier
+    /// (+5) because the inner conversion from argType to T can still fail if types are
+    /// incompatible (e.g. NavDate→NavCode inside a ByRef&lt;NavCode&gt;).
+    /// </summary>
+    private static bool HasByRefKnownConversion(Type argType, Type paramType)
+    {
+        return paramType.IsGenericType
+            && paramType.GetGenericTypeDefinition() == typeof(ByRef<>)
+            && !argType.IsGenericType; // arg is not already a ByRef
     }
 
     internal static object? ConvertArg(object? arg, Type targetType) => ConvertArgInternal(arg, targetType);
