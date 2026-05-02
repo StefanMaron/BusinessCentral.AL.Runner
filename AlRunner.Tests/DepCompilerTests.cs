@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using AlRunner;
 using Xunit;
@@ -7,6 +8,216 @@ namespace AlRunner.Tests;
 [Collection("Pipeline")]
 public class DepCompilerTests
 {
+    // ------------------------------------------------------------------ //
+    // SHA-256 cache freshness tests (issue #1517)
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// After a successful compile-dep from a directory, a .sha256 sidecar
+    /// must be written next to the DLL containing the SHA-256 of the source
+    /// directory contents (sentinel file). The sidecar must be non-empty.
+    /// </summary>
+    [Fact]
+    public void CompileDep_WritesHashSidecar_AfterSuccessfulCompile()
+    {
+        var rootDir = Path.Combine(Path.GetTempPath(), "al-runner-sha256-write-" + Guid.NewGuid().ToString("N")[..8]);
+        var appDir = Path.Combine(rootDir, "AppSha");
+        var outputDir = Path.Combine(rootDir, "out");
+        try
+        {
+            Directory.CreateDirectory(appDir);
+            Directory.CreateDirectory(outputDir);
+
+            File.WriteAllText(Path.Combine(appDir, "app.json"), """
+            {
+              "id": "aaaabbbb-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+              "name": "AppSha",
+              "publisher": "Test",
+              "version": "1.0.0.0"
+            }
+            """);
+            File.WriteAllText(Path.Combine(appDir, "Code.al"),
+                "codeunit 99510 TrivialSha { procedure P() begin end; }");
+
+            var result = DepCompiler.CompileDepMultiApp(rootDir, outputDir, new List<string>());
+
+            Assert.Equal(0, result);
+
+            var dllPath = Path.Combine(outputDir, "Test_AppSha_1.0.0.0.dll");
+            Assert.True(File.Exists(dllPath), $"DLL must exist: {dllPath}");
+
+            var sha256Path = Path.ChangeExtension(dllPath, ".sha256");
+            Assert.True(File.Exists(sha256Path), $".sha256 sidecar must be written: {sha256Path}");
+
+            var hashContent = File.ReadAllText(sha256Path).Trim();
+            Assert.NotEmpty(hashContent);
+            // Must be a valid 64-character hex SHA-256 string
+            Assert.Equal(64, hashContent.Length);
+            Assert.Matches("^[0-9a-fA-F]{64}$", hashContent);
+        }
+        finally
+        {
+            if (Directory.Exists(rootDir)) Directory.Delete(rootDir, true);
+        }
+    }
+
+    /// <summary>
+    /// When the source app directory is unchanged (hash matches), re-running
+    /// compile-dep must skip recompilation and return 0 without touching the DLL.
+    /// </summary>
+    [Fact]
+    public void CompileDep_SkipsRecompile_WhenHashUnchanged()
+    {
+        var rootDir = Path.Combine(Path.GetTempPath(), "al-runner-sha256-skip-" + Guid.NewGuid().ToString("N")[..8]);
+        var appDir = Path.Combine(rootDir, "AppSha");
+        var outputDir = Path.Combine(rootDir, "out");
+        try
+        {
+            Directory.CreateDirectory(appDir);
+            Directory.CreateDirectory(outputDir);
+
+            File.WriteAllText(Path.Combine(appDir, "app.json"), """
+            {
+              "id": "ccccdddd-cccc-cccc-cccc-cccccccccccc",
+              "name": "AppSha2",
+              "publisher": "Test",
+              "version": "1.0.0.0"
+            }
+            """);
+            File.WriteAllText(Path.Combine(appDir, "Code.al"),
+                "codeunit 99511 TrivialSha2 { procedure P() begin end; }");
+
+            // First compile
+            var result1 = DepCompiler.CompileDepMultiApp(rootDir, outputDir, new List<string>());
+            Assert.Equal(0, result1);
+
+            var dllPath = Path.Combine(outputDir, "Test_AppSha2_1.0.0.0.dll");
+            var sha256Path = Path.ChangeExtension(dllPath, ".sha256");
+            Assert.True(File.Exists(dllPath));
+            Assert.True(File.Exists(sha256Path));
+
+            // Record timestamps to detect recompilation
+            var dllWriteTime = File.GetLastWriteTimeUtc(dllPath);
+
+            // Wait a moment to ensure file system timestamp resolution
+            System.Threading.Thread.Sleep(50);
+
+            // Second compile — same sources, no changes
+            var result2 = DepCompiler.CompileDepMultiApp(rootDir, outputDir, new List<string>());
+            Assert.Equal(0, result2);
+
+            // DLL must NOT have been rewritten (timestamp unchanged)
+            var dllWriteTime2 = File.GetLastWriteTimeUtc(dllPath);
+            Assert.Equal(dllWriteTime, dllWriteTime2);
+        }
+        finally
+        {
+            if (Directory.Exists(rootDir)) Directory.Delete(rootDir, true);
+        }
+    }
+
+    /// <summary>
+    /// When the source directory content changes but the version string stays the same
+    /// (the stale-cache scenario), compile-dep must detect the hash mismatch, delete
+    /// the stale DLL, and recompile — producing an updated DLL and updated .sha256.
+    /// </summary>
+    [Fact]
+    public void CompileDep_Recompiles_WhenAppContentChangesButVersionUnchanged()
+    {
+        var rootDir = Path.Combine(Path.GetTempPath(), "al-runner-sha256-stale-" + Guid.NewGuid().ToString("N")[..8]);
+        var appDir = Path.Combine(rootDir, "AppSha");
+        var outputDir = Path.Combine(rootDir, "out");
+        try
+        {
+            Directory.CreateDirectory(appDir);
+            Directory.CreateDirectory(outputDir);
+
+            const string appJson = """
+            {
+              "id": "eeeeffff-eeee-eeee-eeee-eeeeeeeeeeee",
+              "name": "AppSha3",
+              "publisher": "Test",
+              "version": "1.0.0.0"
+            }
+            """;
+            File.WriteAllText(Path.Combine(appDir, "app.json"), appJson);
+            // Initial AL content
+            File.WriteAllText(Path.Combine(appDir, "Code.al"),
+                "codeunit 99512 TrivialSha3 { procedure P() begin end; }");
+
+            // First compile
+            var result1 = DepCompiler.CompileDepMultiApp(rootDir, outputDir, new List<string>());
+            Assert.Equal(0, result1);
+
+            var dllPath = Path.Combine(outputDir, "Test_AppSha3_1.0.0.0.dll");
+            var sha256Path = Path.ChangeExtension(dllPath, ".sha256");
+            Assert.True(File.Exists(dllPath));
+            Assert.True(File.Exists(sha256Path));
+
+            var hashAfterFirstCompile = File.ReadAllText(sha256Path).Trim();
+            var dllWriteTime1 = File.GetLastWriteTimeUtc(dllPath);
+
+            // Wait to ensure file system timestamp resolution
+            System.Threading.Thread.Sleep(100);
+
+            // Change the AL source WITHOUT bumping the version — same app.json, new AL
+            File.WriteAllText(Path.Combine(appDir, "Code.al"),
+                "codeunit 99512 TrivialSha3 { procedure P() begin end; procedure Q() begin end; }");
+
+            // Second compile — version same, but content changed
+            var result2 = DepCompiler.CompileDepMultiApp(rootDir, outputDir, new List<string>());
+            Assert.Equal(0, result2);
+
+            Assert.True(File.Exists(dllPath), "DLL must still exist after recompile");
+            Assert.True(File.Exists(sha256Path), ".sha256 must still exist after recompile");
+
+            // Hash must have changed to reflect new content
+            var hashAfterSecondCompile = File.ReadAllText(sha256Path).Trim();
+            Assert.NotEqual(hashAfterFirstCompile, hashAfterSecondCompile);
+
+            // DLL must have been rewritten (new write time)
+            var dllWriteTime2 = File.GetLastWriteTimeUtc(dllPath);
+            Assert.True(dllWriteTime2 > dllWriteTime1,
+                $"DLL must be recompiled: first={dllWriteTime1:O}, second={dllWriteTime2:O}");
+        }
+        finally
+        {
+            if (Directory.Exists(rootDir)) Directory.Delete(rootDir, true);
+        }
+    }
+
+    /// <summary>
+    /// ComputeAppHash is deterministic: same bytes produce same hash,
+    /// different bytes produce different hash.
+    /// </summary>
+    [Fact]
+    public void ComputeAppHash_IsDeterministicAndChangeSensitive()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "al-runner-sha256-unit-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            var fileA = Path.Combine(tempDir, "a.dat");
+            var fileB = Path.Combine(tempDir, "b.dat");
+            File.WriteAllBytes(fileA, new byte[] { 1, 2, 3 });
+            File.WriteAllBytes(fileB, new byte[] { 4, 5, 6 });
+
+            var hash1 = DepCompiler.ComputeDirectoryHash(tempDir);
+            var hash2 = DepCompiler.ComputeDirectoryHash(tempDir);
+            Assert.Equal(hash1, hash2); // deterministic
+
+            // Change a file — hash must differ
+            File.WriteAllBytes(fileA, new byte[] { 9, 9, 9 });
+            var hash3 = DepCompiler.ComputeDirectoryHash(tempDir);
+            Assert.NotEqual(hash1, hash3);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+        }
+    }
+
+
     [Fact]
     public void CompileDepMultiApp_AppJsonPlaceholderVersion_UsesFallbackVersion()
     {
