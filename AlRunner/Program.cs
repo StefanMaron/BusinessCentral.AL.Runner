@@ -33,14 +33,17 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("  --packages <dir>      Add symbol references from .app files in directory");
     Console.Error.WriteLine("                        (auto-detected: .alpackages in/near source dirs when omitted)");
     Console.Error.WriteLine("  --dep-dlls <dir>      Load pre-compiled dependency DLLs for runtime execution");
-    Console.Error.WriteLine("  --compile-dep <app> <out-dir> [--packages <dir>]");
-    Console.Error.WriteLine("                        Compile a .app dependency to a rewritten DLL on disk");
-    Console.Error.WriteLine("  --extract-deps <src-dir> <out-dir> [<app1> ...] [--packages <dir>]");
+    Console.Error.WriteLine("  --compile-dep <app> <out-dir> [--packages <dir>] [--define <SYM>]...");
+    Console.Error.WriteLine("                        Compile a .app dependency to a rewritten DLL on disk.");
+    Console.Error.WriteLine("                        --define <SYM> adds a custom preprocessor symbol.");
+    Console.Error.WriteLine("                        preprocessorSymbols from app.json are auto-applied.");
+    Console.Error.WriteLine("  --extract-deps <src-dir> <out-dir> [<app1> ...] [--packages <dir>] [--define <SYM>]...");
     Console.Error.WriteLine("                        Extract the minimal reachable dependency slice from .app");
     Console.Error.WriteLine("                        artifacts for the extension source in <src-dir> and write");
     Console.Error.WriteLine("                        extracted AL files to <out-dir>.");
     Console.Error.WriteLine("                        --packages <dir> auto-discovers all *.app files in <dir>");
     Console.Error.WriteLine("                        and uses them as dep sources (composable with explicit paths).");
+    Console.Error.WriteLine("                        --define <SYM> adds a custom preprocessor symbol (repeatable).");
     Console.Error.WriteLine("  --stubs <dir>         Override dependency objects with stub AL files");
     Console.Error.WriteLine("  --init-events         Fire BC lifecycle integration events once at runner startup");
     Console.Error.WriteLine("                        (OnCompanyInitialize from CU 2/27, OnInstallAppPerCompany from CU 2)");
@@ -314,12 +317,19 @@ while (argIdx < args.Length)
             argIdx++;
             var edApps = new List<string>();
             var edPkgPaths = new List<string>();
+            var edDefines = new List<string>();
             while (argIdx < args.Length)
             {
                 if (args[argIdx] == "--packages" && argIdx + 1 < args.Length)
                 {
                     argIdx++;
                     edPkgPaths.Add(Path.GetFullPath(args[argIdx]));
+                    argIdx++;
+                }
+                else if (args[argIdx] == "--define" && argIdx + 1 < args.Length)
+                {
+                    argIdx++;
+                    edDefines.Add(args[argIdx]);
                     argIdx++;
                 }
                 else if (!args[argIdx].StartsWith("-"))
@@ -365,6 +375,7 @@ while (argIdx < args.Length)
             var cdOutDir = Path.GetFullPath(args[argIdx]);
             argIdx++;
             var cdPkgPaths = new List<string>();
+            var cdDefines = new List<string>();
             while (argIdx < args.Length)
             {
                 if (args[argIdx] == "--packages" && argIdx + 1 < args.Length)
@@ -373,12 +384,19 @@ while (argIdx < args.Length)
                     cdPkgPaths.Add(Path.GetFullPath(args[argIdx]));
                     argIdx++;
                 }
+                else if (args[argIdx] == "--define" && argIdx + 1 < args.Length)
+                {
+                    argIdx++;
+                    cdDefines.Add(args[argIdx]);
+                    argIdx++;
+                }
                 else
                 {
                     argIdx++;
                 }
             }
-            return AlRunner.DepCompiler.CompileDep(cdAppPath, cdOutDir, cdPkgPaths);
+            return AlRunner.DepCompiler.CompileDep(cdAppPath, cdOutDir, cdPkgPaths,
+                extraDefines: cdDefines.Count > 0 ? cdDefines : null);
         }
         case "--stubs":
             argIdx++;
@@ -1147,6 +1165,49 @@ public static class AlTranspiler
         Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}").ToList();
 
     /// <summary>
+    /// Returns CLEANSCHEMA1..N for the given runtime version (N = version.Major).
+    /// Used by compile-dep to auto-define the appropriate CLEANSCHEMA set when a
+    /// runtime version is declared in app.json (issue #1525).
+    /// </summary>
+    public static List<string> GetCleanSchemaSymbolsForRuntime(Version runtimeVersion)
+    {
+        var max = runtimeVersion?.Major ?? 0;
+        if (max <= 0) return new List<string>();
+        return Enumerable.Range(1, max).Select(n => $"CLEANSCHEMA{n}").ToList();
+    }
+
+    /// <summary>
+    /// Reads the <c>preprocessorSymbols</c> array from an <c>app.json</c> file in
+    /// <paramref name="appDir"/>. Returns an empty list when the file is absent,
+    /// unparseable, or the key is not present (issue #1525).
+    /// </summary>
+    public static List<string> ReadPreprocessorSymbolsFromAppJson(string appDir)
+    {
+        var appJsonPath = Path.Combine(appDir, "app.json");
+        if (!File.Exists(appJsonPath)) return new List<string>();
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(appJsonPath));
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("preprocessorSymbols", out var arr)
+                || arr.ValueKind != System.Text.Json.JsonValueKind.Array)
+                return new List<string>();
+            var result = new List<string>();
+            foreach (var el in arr.EnumerateArray())
+            {
+                var s = el.GetString();
+                if (!string.IsNullOrWhiteSpace(s))
+                    result.Add(s!);
+            }
+            return result;
+        }
+        catch
+        {
+            return new List<string>();
+        }
+    }
+
+    /// <summary>
     /// Compute a per-slice safe set of <c>CLEANSCHEMA&lt;N&gt;</c> preprocessor symbols.
     /// For each <c>N</c> mentioned in the slice, scan all <c>#if not CLEANSCHEMA&lt;N&gt;</c>
     /// blocks for the field/object names they declare. If any other file references one of
@@ -1346,7 +1407,8 @@ public static class AlTranspiler
         List<string>? inputPaths = null,
         SyntaxTreeCache? treeCache = null,
         List<string?>? sourceFilePaths = null,
-        IEnumerable<SymbolReferenceSpecification>? extraRefs = null)
+        IEnumerable<SymbolReferenceSpecification>? extraRefs = null,
+        IEnumerable<string>? extraDefines = null)
     {
         // Parse all sources into syntax trees
         var syntaxTrees = new List<SyntaxTree>();
@@ -1357,6 +1419,14 @@ public static class AlTranspiler
         // file in the slice references unguarded, drop N from the preprocessor set.
         // For slices that don't mention CLEANSCHEMA at all, this returns the default.
         var effectiveSymbols = ComputeCleanSchemaSymbols(alSources, defaultMax: 25);
+        // Merge in any caller-supplied extra defines (issue #1525: --define CLI flag and
+        // preprocessorSymbols from app.json).
+        if (extraDefines != null)
+        {
+            var extra = extraDefines.Where(s => !string.IsNullOrWhiteSpace(s) && !effectiveSymbols.Contains(s)).ToList();
+            if (extra.Count > 0)
+                effectiveSymbols = effectiveSymbols.Concat(extra).ToList();
+        }
         if (!effectiveSymbols.SequenceEqual(PreprocessorSymbols))
         {
             var dropped = PreprocessorSymbols.Except(effectiveSymbols).ToList();

@@ -262,15 +262,16 @@ public static class DepCompiler
     /// Compile a single .app dependency (or directory of AL source) to a .dll in <paramref name="outputDir"/>.
     /// Returns 0 on success, 1 on failure.
     /// </summary>
-    public static int CompileDep(string appPath, string outputDir, List<string> packagePaths)
+    public static int CompileDep(string appPath, string outputDir, List<string> packagePaths,
+        IEnumerable<string>? extraDefines = null)
     {
         // If appPath is a directory, compile AL source files directly
         if (Directory.Exists(appPath))
         {
             var appJsonPath = Path.Combine(appPath, "app.json");
             return File.Exists(appJsonPath)
-                ? CompileDepFromDir(appPath, outputDir, packagePaths)
-                : CompileDepMultiApp(appPath, outputDir, packagePaths);
+                ? CompileDepFromDir(appPath, outputDir, packagePaths, extraDefines: extraDefines)
+                : CompileDepMultiApp(appPath, outputDir, packagePaths, extraDefines: extraDefines);
         }
 
         if (!File.Exists(appPath))
@@ -394,7 +395,7 @@ public static class DepCompiler
         // files with unresolvable dependencies and retry until we get output.
         var compilableSources = new List<string>(alSources);
         var effectivePackages = allPackagePaths.Count > 0 ? allPackagePaths : null;
-        var csharpList = AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths);
+        var csharpList = AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths, extraDefines: extraDefines);
 
         if ((csharpList == null || csharpList.Count == 0) && compilableSources.Count > 0)
         {
@@ -412,7 +413,7 @@ public static class DepCompiler
                 Console.Error.WriteLine($"  Excluded {dotnetCount} file(s) using DotNet interop (unsupported in runner)");
 
                 // Retry without DotNet files
-                csharpList = AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths);
+                csharpList = AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths, extraDefines: extraDefines);
             }
         }
 
@@ -425,7 +426,7 @@ public static class DepCompiler
             var savedErr = Console.Error;
             var diagCapture = new System.IO.StringWriter();
             Console.SetError(diagCapture);
-            try { AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths); }
+            try { AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths, extraDefines: extraDefines); }
             finally { Console.SetError(savedErr); }
 
             var diagOutput = diagCapture.ToString();
@@ -524,7 +525,8 @@ public static class DepCompiler
     /// <summary>
     /// Compile multiple app directories (each containing app.json) under a root directory.
     /// </summary>
-    public static int CompileDepMultiApp(string rootDir, string outputDir, List<string> packagePaths)
+    public static int CompileDepMultiApp(string rootDir, string outputDir, List<string> packagePaths,
+        IEnumerable<string>? extraDefines = null)
     {
         if (!Directory.Exists(rootDir))
         {
@@ -539,10 +541,10 @@ public static class DepCompiler
             .Where(d => File.Exists(Path.Combine(d, "app.json")))
             .ToList();
         if (directChildAppDirs.Count > 0)
-            return CompileDepMultiApp(rootDir, directChildAppDirs, outputDir, packagePaths);
+            return CompileDepMultiApp(rootDir, directChildAppDirs, outputDir, packagePaths, extraDefines: extraDefines);
 
         // Fallback: single app at root, or no app.jsons anywhere.
-        return CompileDepFromDir(rootDir, outputDir, packagePaths);
+        return CompileDepFromDir(rootDir, outputDir, packagePaths, extraDefines: extraDefines);
     }
 
     /// <summary>
@@ -630,7 +632,8 @@ public static class DepCompiler
     /// topologically sort, and compile each app to its own DLL — accumulating prior
     /// outputs as <c>--packages</c> for later compiles. Mirrors BC's actual packaging.
     /// </summary>
-    private static int CompileDepMultiApp(string srcDir, List<string> appDirs, string outputDir, List<string> packagePaths)
+    private static int CompileDepMultiApp(string srcDir, List<string> appDirs, string outputDir, List<string> packagePaths,
+        IEnumerable<string>? extraDefines = null)
     {
         var apps = new List<AppInfo>();
         foreach (var dir in appDirs)
@@ -737,7 +740,7 @@ public static class DepCompiler
             var refs = CompiledAppRefs.Values.ToList();
             if (refs.Count > 0)
                 Console.Error.WriteLine($"  Chaining {refs.Count} prior ModuleInfo(s) into compile.");
-            var rc = CompileDepFromDir(app.Dir, outputDir, accumPackages, appIdentity: null, extraRefs: refs);
+            var rc = CompileDepFromDir(app.Dir, outputDir, accumPackages, appIdentity: null, extraRefs: refs, extraDefines: extraDefines);
             if (rc != 0)
             {
                 failed.Add(app.Name);
@@ -792,7 +795,7 @@ public static class DepCompiler
         return 0;
     }
 
-    private static int CompileDepFromDir(string srcDir, string outputDir, List<string> packagePaths, AppJsonIdentity? appIdentity = null, List<BcSrs>? extraRefs = null)
+    private static int CompileDepFromDir(string srcDir, string outputDir, List<string> packagePaths, AppJsonIdentity? appIdentity = null, List<BcSrs>? extraRefs = null, IEnumerable<string>? extraDefines = null)
     {
         Directory.CreateDirectory(outputDir);
 
@@ -806,7 +809,7 @@ public static class DepCompiler
             .Where(d => File.Exists(Path.Combine(d, "app.json")))
             .ToList();
         if (appDirs.Count > 0)
-            return CompileDepMultiApp(srcDir, appDirs, outputDir, packagePaths);
+            return CompileDepMultiApp(srcDir, appDirs, outputDir, packagePaths, extraDefines: extraDefines);
 
         var dirName = Path.GetFileName(srcDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
         if (appIdentity == null)
@@ -862,6 +865,36 @@ public static class DepCompiler
         var compilableSources = alSources;
         var compilableFilePaths = filePaths;
 
+        // Build effective extra defines (issue #1525):
+        // 1. CLI-supplied defines (extraDefines parameter).
+        // 2. preprocessorSymbols from app.json in srcDir.
+        // 3. CLEANSCHEMA1..N from app.json "runtime" version (mirrors BC compile-time behavior).
+        var allExtraDefines = new List<string>();
+        if (extraDefines != null)
+            allExtraDefines.AddRange(extraDefines);
+        var appJsonDefines = AlTranspiler.ReadPreprocessorSymbolsFromAppJson(srcDir);
+        foreach (var s in appJsonDefines)
+            if (!allExtraDefines.Contains(s, StringComparer.OrdinalIgnoreCase))
+                allExtraDefines.Add(s);
+        // Auto-define CLEANSCHEMA1..N based on app.json "runtime" major version.
+        var appJsonForRuntime = Path.Combine(srcDir, "app.json");
+        if (File.Exists(appJsonForRuntime))
+        {
+            try
+            {
+                using var rDoc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(appJsonForRuntime));
+                if (rDoc.RootElement.TryGetProperty("runtime", out var rProp)
+                    && Version.TryParse(rProp.GetString() ?? "", out var rVer))
+                {
+                    foreach (var cs in AlTranspiler.GetCleanSchemaSymbolsForRuntime(rVer))
+                        if (!allExtraDefines.Contains(cs, StringComparer.OrdinalIgnoreCase))
+                            allExtraDefines.Add(cs);
+                }
+            }
+            catch { /* ignore malformed app.json */ }
+        }
+        IEnumerable<string>? effectiveExtraDefines = allExtraDefines.Count > 0 ? allExtraDefines : null;
+
         // Use the app's real app.json if present (per-app DLL mode); otherwise synthesize
         // a stub one. Either way we inject contextSensitiveHelpUrl/helpBaseUrl so Microsoft
         // pages with `ContextSensitiveHelpPage` don't fail AL0543. Real identity preserves
@@ -914,7 +947,7 @@ public static class DepCompiler
         File.WriteAllText(Path.Combine(sliceManifestDir, "app.json"), manifestJson);
         var inputPaths = new List<string> { sliceManifestDir };
 
-        var csharpList = AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths, sourceFilePaths: compilableFilePaths, extraRefs: extraRefs);
+        var csharpList = AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths, sourceFilePaths: compilableFilePaths, extraRefs: extraRefs, extraDefines: effectiveExtraDefines);
 
         if ((csharpList == null || csharpList.Count == 0) && compilableSources.Count > 0)
         {
@@ -938,7 +971,7 @@ public static class DepCompiler
                 compilableSources = cleaned.Select(x => x.s).ToList();
                 compilableFilePaths = cleaned.Select(x => x.p).ToList();
                 Console.Error.WriteLine($"  Excluded {dotnetCount} file(s) with residual DotNet interop (unsupported in runner)");
-                csharpList = AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths, sourceFilePaths: compilableFilePaths, extraRefs: extraRefs);
+                csharpList = AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths, sourceFilePaths: compilableFilePaths, extraRefs: extraRefs, extraDefines: effectiveExtraDefines);
             }
         }
 
@@ -951,7 +984,7 @@ public static class DepCompiler
             Console.SetError(diagCapture);
             var prevVerbose = Log.Verbose;
             Log.Verbose = true;
-            try { AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths, sourceFilePaths: compilableFilePaths, extraRefs: extraRefs); }
+            try { AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths, sourceFilePaths: compilableFilePaths, extraRefs: extraRefs, extraDefines: effectiveExtraDefines); }
             finally { Console.SetError(savedErr); Log.Verbose = prevVerbose; }
             var diagText = diagCapture.ToString();
             if (!string.IsNullOrWhiteSpace(diagText))

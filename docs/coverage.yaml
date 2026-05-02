@@ -13608,3 +13608,65 @@ DepExtractor.PackagesDirAutoDiscovery:
     Tests: ExtractDeps_AppFileFromPackagesDir_IsIndexedAsDepSource,
     ExtractDeps_Cli_PackagesDirWithNoExplicitApps_Succeeds,
     ExtractDeps_Cli_PackagesDirPlusExplicitApp_BothIndexed.
+
+# ── compile-dep / extract-deps: --define and app.json preprocessorSymbols ──
+
+AlTranspiler.GetCleanSchemaSymbolsForRuntime:
+  layer: syntax
+  category: compile-dep
+  status: covered
+  tests:
+    - AlRunner.Tests/DepCompilerTests.cs
+  notes: >
+    Returns CLEANSCHEMA1..CLEANSCHEMA<N> for a given runtime Version where N is
+    Version.Major. Returns empty list when version is null or major == 0. Used by
+    CompileDepFromDir to auto-define the correct CLEANSCHEMA set when app.json
+    declares a "runtime" version (issue #1525).
+    Tests: GetCleanSchemaSymbolsForRuntime_ReturnsCorrectRange,
+    GetCleanSchemaSymbolsForRuntime_ZeroOrNull_ReturnsEmpty.
+
+AlTranspiler.ReadPreprocessorSymbolsFromAppJson:
+  layer: syntax
+  category: compile-dep
+  status: covered
+  tests:
+    - AlRunner.Tests/DepCompilerTests.cs
+  notes: >
+    Reads the preprocessorSymbols array from app.json in the given directory.
+    Returns empty list when file is absent, key is missing, or JSON is malformed.
+    Used by CompileDepFromDir to auto-apply symbols declared in the app manifest
+    (issue #1525).
+    Tests: ReadPreprocessorSymbolsFromAppJson_ReadsSymbolsFromValidFile,
+    ReadPreprocessorSymbolsFromAppJson_NoSymbolsOrMissingFile_ReturnsEmpty.
+
+AlTranspiler.TranspileMulti.extraDefines:
+  layer: syntax
+  category: compile-dep
+  status: covered
+  tests:
+    - AlRunner.Tests/DepCompilerTests.cs
+  notes: >
+    TranspileMulti accepts an optional extraDefines parameter (IEnumerable<string>).
+    Extra defines are merged with the CLEANSCHEMA set computed by
+    ComputeCleanSchemaSymbols before building the ParseOptions. Enables
+    compile-dep to pass custom preprocessor symbols through the full transpile
+    pipeline (issue #1525).
+    Tests: CompileDep_ExtraDefines_GatesCodeUnderSymbol.
+
+DepCompiler.CompileDep.extraDefines:
+  layer: syntax
+  category: compile-dep
+  status: covered
+  tests:
+    - AlRunner.Tests/DepCompilerTests.cs
+  notes: >
+    CompileDep, CompileDepMultiApp (public+private), and CompileDepFromDir all
+    accept an optional extraDefines parameter that is threaded through to
+    TranspileMulti. CompileDepFromDir additionally auto-reads preprocessorSymbols
+    from app.json and CLEANSCHEMA1..N from the "runtime" version declared in
+    app.json (issue #1525). CLI: --compile-dep and --extract-deps both accept
+    repeatable --define <SYM> flags.
+    Tests: CompileDep_AutoAppliesPreprocessorSymbolsFromAppJson,
+    CompileDep_ExtraDefines_GatesCodeUnderSymbol,
+    CompileDep_AutoAppliesCleanSchemaSymbolsFromRuntime,
+    CompileDep_WithoutSymbol_GatedBlockExcluded.
