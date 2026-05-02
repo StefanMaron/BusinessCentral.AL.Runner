@@ -659,6 +659,53 @@ StubGen.MultiOverloadEnumMerge:
     now MERGED — differing parameter positions are widened to Variant, which accepts both
     NavOption (Enum callers) and NavCode (Code callers) without a cast error.
 
+StubGen.MultiOverloadScoring:
+  layer: syntax
+  category: auto-stub
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/316-no-series-getnextno-overloads
+    - AlRunner.Tests/MockCodeunitHandleScoreTests.cs
+  notes: >
+    Regression #1577: when a codeunit has multiple same-arity overloads (e.g. No. Series
+    GetNextNo 1/2/3-arg), ScoreMethodMatch used flat +10/+5/+1 scoring that allowed six
+    2-param overloads to tie at 11. AreRelated(NavCode,NavCode) won by reflection enumeration
+    order and NavDate→NavCode cast failed. Fix: tiered scoring (+1000 exact, +100 assignable,
+    +10 known-conversion, +5 ByRef/object, +0 unknown) ensures GetNextNo(MockVariant,NavDate)
+    scores 1010 vs AreRelated(NavCode,NavCode) at 1000. Also broadened retry catch to include
+    ArgumentException (not just TargetInvocationException) for defense-in-depth.
+
+No.Series.GetNextNo (1-arg):
+  layer: runtime-api
+  category: auto-stub
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/316-no-series-getnextno-overloads
+  notes: >
+    Auto-stub returns type default (empty Code[20]). Dispatch verified via tiered
+    ScoreMethodMatch fix from issue #1577.
+
+No.Series.GetNextNo (2-arg):
+  layer: runtime-api
+  category: auto-stub
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/316-no-series-getnextno-overloads
+  notes: >
+    Auto-stub returns type default (empty Code[20]). This was the exact regression from
+    issue #1577: args (NavCode, NavDate) were dispatched to AreRelated(NavCode,NavCode)
+    causing ArgumentException: NavDate cannot be converted to NavCode.
+
+No.Series.GetNextNo (3-arg):
+  layer: runtime-api
+  category: auto-stub
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/316-no-series-getnextno-overloads
+  notes: >
+    Auto-stub returns type default (empty Code[20]). Dispatch verified via tiered
+    ScoreMethodMatch fix from issue #1577.
+
 var_attribute_item:
   layer: syntax
   category: variable
