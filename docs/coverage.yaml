@@ -13589,6 +13589,39 @@ DepCompiler.ComputeDirectoryHash:
     relative path, filename included in hash input). Deterministic and change-sensitive.
     Test: ComputeAppHash_IsDeterministicAndChangeSensitive. Fixed in #1517.
 
+# ── compile-dep: emit exception resilience ───────────────────────
+
+DepCompiler.EmitExceptionResilience:
+  layer: syntax
+  category: compile-dep
+  status: covered
+  tests:
+    - AlRunner.Tests/DepCompilerTests.cs
+  notes: >
+    When BC's compiler throws a bare non-AggregateException (IndexOutOfRangeException,
+    NullReferenceException) from compilation.Emit — caused by AL patterns like unresolved
+    cross-app type references (NavTypeKind.None in EmitVariableFieldInitializer,
+    BadExpression in EventSubscriberAttributeEmitter.EmitObjectId) — TranspileMulti now
+    catches it gracefully instead of crashing the pipeline.
+    Tests: TranspileMulti_DoesNotThrow_WhenAlHasUnresolvedVarTypeInLocalScope.
+    Fixed in #1554.
+
+DepCompiler.PartialSymbolsJsonOnEmitFailure:
+  layer: syntax
+  category: compile-dep
+  status: covered
+  tests:
+    - AlRunner.Tests/DepCompilerTests.cs
+  notes: >
+    When CompileDepFromDir fails (e.g. due to emit exceptions producing zero captured
+    objects) but AlTranspiler.LastCompilation is available (BC's semantic model is set
+    before the emit call), CompileDepMultiApp now writes a partial symbols.json from the
+    failed app's LastCompilation. This allows downstream apps in the same slice to resolve
+    cross-app type references even when the upstream DLL could not be produced — unblocking
+    the BF→Base App→Tests-TestLibraries cascade.
+    Tests: CompileDepMultiApp_WritesSymbolsJson_FromLastCompilation_WhenAppFailsAtEmit.
+    Fixed in #1554.
+
 # ── extract-deps: --packages dir auto-discovery ──────────────────
 
 DepExtractor.PackagesDirAutoDiscovery:

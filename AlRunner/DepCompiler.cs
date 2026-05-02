@@ -741,16 +741,56 @@ public static class DepCompiler
             if (refs.Count > 0)
                 Console.Error.WriteLine($"  Chaining {refs.Count} prior ModuleInfo(s) into compile.");
             var rc = CompileDepFromDir(app.Dir, outputDir, accumPackages, appIdentity: null, extraRefs: refs, extraDefines: extraDefines);
+
+            // Issue #1554: even when compile fails (rc != 0), AlTranspiler.LastCompilation
+            // is set before the BC emit call.  The semantic model holds all type declarations
+            // even though some (or all) methods failed to emit — NavTypeKind.None,
+            // BadExpression in EventSubscriberAttributeEmitter, etc. cause zero captured
+            // objects but do not invalidate the compilation's symbol table.
+            //
+            // Writing symbols.json + adding to CompiledAppRefs for the failed app allows
+            // downstream apps in the same slice to resolve cross-app type references even
+            // when the upstream DLL could not be produced.  This unblocks the
+            // BF → Base App → Tests-TestLibraries cascade that stalled at 3/7 apps.
+            var compFor = AlTranspiler.LastCompilation;
             if (rc != 0)
             {
                 failed.Add(app.Name);
                 Console.Error.WriteLine($"WARN: compile failed for {app.Name}; continuing with other apps");
+
+                // Try to capture partial symbol information for downstream chaining.
+                if (compFor != null)
+                {
+                    var moduleRef = TryGetModuleRef(compFor);
+                    if (moduleRef != null)
+                        CompiledAppRefs[app.Id] = moduleRef;
+
+                    try
+                    {
+                        var jsonName = SanitizeName($"{app.Publisher}_{app.Name}_{app.Version}.symbols.json");
+                        var jsonPath = Path.Combine(outputDir, jsonName);
+                        using (var fs = File.Create(jsonPath))
+                        {
+                            SymbolJsonWriter.WriteSymbolJson(compFor, fs);
+                            Console.Error.WriteLine($"  Partial symbols: {jsonName} ({fs.Length} bytes) — from failed compile");
+                        }
+
+                        // Sidecar deps so downstream JsonSymbolReferenceLoader can resolve identity.
+                        var depsName = SanitizeName($"{app.Publisher}_{app.Name}_{app.Version}.symbols.deps.json");
+                        var depsPath = Path.Combine(outputDir, depsName);
+                        var appVer = Version.TryParse(app.Version, out var av2) ? av2 : new Version(1, 0, 0, 0);
+                        DepsSidecarWriter.Write(depsPath, app.Publisher, app.Name, appVer, app.Id, app.DepSpecs);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"  WARN: partial symbols.json emission failed for {app.Name}: {ex.Message}");
+                    }
+                }
             }
             else
             {
                 // Capture the compiled app's module symbol for downstream chaining via the
                 // in-memory ISymbolReferenceLoader path.
-                var compFor = AlTranspiler.LastCompilation;
                 var moduleRef = compFor != null ? TryGetModuleRef(compFor) : null;
                 if (moduleRef != null)
                     CompiledAppRefs[app.Id] = moduleRef;

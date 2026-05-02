@@ -1094,4 +1094,159 @@ codeunit 1525004 ""PP Test No Symbol""
                 Directory.Delete(rootDir, true);
         }
     }
+
+    // ------------------------------------------------------------------ //
+    // Issue #1554: emit exceptions must not crash; LastCompilation must be
+    // available even when TranspileMulti returns null so CompileDepMultiApp
+    // can still write symbols.json for downstream cross-app resolution.
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// When AL has a local variable whose type cannot be resolved (which causes
+    /// NavTypeKind 'None' during BC's emit phase), TranspileMulti must NOT throw
+    /// a bare exception to the caller. It must return null (zero objects emitted)
+    /// while still having set AlTranspiler.LastCompilation — the semantic model
+    /// is still valid even when some methods fail to emit.
+    /// </summary>
+    [Fact]
+    public void TranspileMulti_DoesNotThrow_WhenAlHasUnresolvedVarTypeInLocalScope()
+    {
+        // AL that references a table that doesn't exist.  The BC compiler with
+        // continueBuildOnError will still try to emit, and the local-variable
+        // field initializer throws because the type resolves to NavTypeKind.None.
+        var alSource = """
+            codeunit 50097 "TestEmitException1554" {
+                procedure Work()
+                var
+                    r: Record "NoSuchTable1554ZZZ";
+                begin
+                end;
+            }
+            """;
+
+        List<(string Name, string Code)>? result = null;
+        Exception? thrownEx = null;
+        try
+        {
+            result = AlTranspiler.TranspileMulti(new List<string> { alSource });
+        }
+        catch (Exception ex)
+        {
+            thrownEx = ex;
+        }
+
+        // Must NOT propagate a bare exception to the caller.
+        Assert.Null(thrownEx);
+        // LastCompilation must be set — BC's semantic model exists even when emit fails.
+        Assert.NotNull(AlTranspiler.LastCompilation);
+    }
+
+    /// <summary>
+    /// When an app in a multi-app compile fails to produce a DLL (because BC's emit
+    /// phase threw exceptions leaving zero captured objects), CompileDepMultiApp must
+    /// still write a &lt;App&gt;.symbols.json from AlTranspiler.LastCompilation if
+    /// available. This unblocks downstream apps that reference the failed app's types
+    /// — they see the symbol declarations even though the runtime DLL is absent.
+    ///
+    /// Issue #1554: BF → Base App → Tests-TestLibraries chain was stalling at 3/7
+    /// because each downstream cascaded on the missing BF symbols.json.
+    /// </summary>
+    [Fact]
+    public void CompileDepMultiApp_WritesSymbolsJson_FromLastCompilation_WhenAppFailsAtEmit()
+    {
+        var rootDir = Path.Combine(Path.GetTempPath(), "al-runner-emit1554-" + Guid.NewGuid().ToString("N")[..8]);
+        var app1Dir = Path.Combine(rootDir, "App1FailedEmit");
+        var app2Dir = Path.Combine(rootDir, "App2Consumer");
+        var outputDir = Path.Combine(rootDir, "out");
+        try
+        {
+            Directory.CreateDirectory(app1Dir);
+            Directory.CreateDirectory(app2Dir);
+            Directory.CreateDirectory(outputDir);
+
+            var app1Id = "11111111-aaaa-aaaa-aaaa-111111111111";
+            var app2Id = "22222222-bbbb-bbbb-bbbb-222222222222";
+
+            // App1 declares a codeunit "HelperCU1554" but references a non-existent table
+            // in a local variable.  BC's semantic analysis succeeds (the codeunit declaration
+            // is known), but emit may fail for the method with the bad variable.
+            // LastCompilation is set before the emit call, so the codeunit declaration is
+            // available even if the DLL cannot be produced.
+            File.WriteAllText(Path.Combine(app1Dir, "app.json"), $$"""
+            {
+              "id": "{{app1Id}}",
+              "name": "App1FailedEmit",
+              "publisher": "Test",
+              "version": "1.0.0.0"
+            }
+            """);
+            File.WriteAllText(Path.Combine(app1Dir, "Helper.al"), """
+            codeunit 50085 "HelperCU1554"
+            {
+                procedure GetValue(): Integer
+                var r: Record "NoSuchTable1554ABC";
+                begin
+                    exit(42);
+                end;
+            }
+            """);
+
+            // App2 is a simple consumer that declares its own codeunit.
+            // It is topologically ordered after App1 because it lists App1 as a dep.
+            File.WriteAllText(Path.Combine(app2Dir, "app.json"), $$"""
+            {
+              "id": "{{app2Id}}",
+              "name": "App2Consumer",
+              "publisher": "Test",
+              "version": "1.0.0.0",
+              "dependencies": [
+                { "id": "{{app1Id}}", "name": "App1FailedEmit", "publisher": "Test", "version": "1.0.0.0" }
+              ]
+            }
+            """);
+            File.WriteAllText(Path.Combine(app2Dir, "Consumer.al"), """
+            codeunit 50086 "ConsumerCU1554"
+            {
+                procedure Run(): Integer
+                begin
+                    exit(1);
+                end;
+            }
+            """);
+
+            var origErr = Console.Error;
+            using var errCapture = new StringWriter();
+            Console.SetError(errCapture);
+            int result;
+            try
+            {
+                result = DepCompiler.CompileDepMultiApp(rootDir, outputDir, new List<string>());
+            }
+            finally
+            {
+                Console.SetError(origErr);
+            }
+
+            var stderr = errCapture.ToString();
+
+            // App1 is expected to fail (emit exception → zero objects → TranspileMulti null).
+            // App2 should still be attempted and may succeed.
+            // The key assertion: App1's symbols.json must be written from LastCompilation
+            // so that downstream apps (like App2) can resolve App1's types.
+            var app1SymbolsJson = Path.Combine(outputDir, "Test_App1FailedEmit_1.0.0.0.symbols.json");
+            Assert.True(File.Exists(app1SymbolsJson),
+                $"symbols.json must be written for App1 even when its DLL failed.\n" +
+                $"Output dir contents: {string.Join(", ", Directory.GetFiles(outputDir).Select(Path.GetFileName))}\n" +
+                $"Stderr:\n{stderr}");
+
+            // The symbols.json must contain App1's codeunit declaration
+            var symbolsContent = File.ReadAllText(app1SymbolsJson);
+            Assert.Contains("HelperCU1554", symbolsContent);
+        }
+        finally
+        {
+            if (Directory.Exists(rootDir))
+                Directory.Delete(rootDir, true);
+        }
+    }
 }
