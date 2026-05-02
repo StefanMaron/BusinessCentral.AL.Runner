@@ -1346,6 +1346,14 @@ navtest_attribute_discovery:
   tests:
     - tests/bucket-1/codeunit-runtime/312700-navtest-attribute-discovery
 
+subtype_casing_discovery:
+  layer: syntax
+  category: attribute
+  status: covered
+  notes: Test codeunit discovery gate at Pipeline.cs:796 uses StringComparison.OrdinalIgnoreCase so camelCase (SubType = Test) and all-lowercase (subtype = test) spellings are both recognized — issue #1520.
+  tests:
+    - tests/bucket-1/codeunit-runtime/312800-subtype-casing-discovery
+
 
 # ══════════════════════════════════════════════════════════════
 # Layer: runtime-api
