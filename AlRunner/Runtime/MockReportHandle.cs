@@ -499,31 +499,32 @@ public class MockReportHandle
 
     public static void StaticPrint(int reportId) { }
 
-    // Report.SaveAs* — no-ops (no real file I/O in standalone mode)
+    // Report.SaveAs* — AL allows these in a Boolean context (`if Report.SaveAs(...) then`).
+    // All static overloads return bool (true = success no-op) to match BC semantics — issue #1526.
     // BC emits NavReport.SaveAs*(DataError, int, string) — first arg is a DataError status object
-    public static void StaticSaveAs(int reportId, string format, string path) { }
+    public static bool StaticSaveAs(int reportId, string format, string path) => true;
 
     /// <summary>
     /// BC emits <c>MockReportHandle.StaticSaveAs(DataError, reportId, requestData, format, ByRef&lt;OutStream&gt;)</c>
-    /// for <c>Report.SaveAs(ReportId, RequestData, Format, OutStream)</c>. No-op in standalone mode.
+    /// for <c>Report.SaveAs(ReportId, RequestData, Format, OutStream)</c>. Returns true (no-op) in standalone mode.
     /// </summary>
-    public static void StaticSaveAs(object err, int reportId, string requestData, object format, MockOutStream outStream) { }
+    public static bool StaticSaveAs(object err, int reportId, string requestData, object format, MockOutStream outStream) => true;
 
     /// <summary>
     /// BC emits <c>MockReportHandle.StaticSaveAs(DataError, reportId, requestData, format, ByRef&lt;OutStream&gt;, RecordRef)</c>
-    /// for <c>Report.SaveAs(ReportId, RequestData, Format, OutStream, RecordRef)</c>. No-op in standalone mode.
+    /// for <c>Report.SaveAs(ReportId, RequestData, Format, OutStream, RecordRef)</c>. Returns true (no-op) in standalone mode.
     /// </summary>
-    public static void StaticSaveAs(object err, int reportId, string requestData, object format, MockOutStream outStream, MockRecordRef recordRef) { }
-    public static void StaticSaveAsPdf(int reportId, string path) { }
-    public static void StaticSaveAsPdf(object err, int reportId, string path) { }
-    public static void StaticSaveAsWord(int reportId, string path) { }
-    public static void StaticSaveAsWord(object err, int reportId, string path) { }
-    public static void StaticSaveAsExcel(int reportId, string path) { }
-    public static void StaticSaveAsExcel(object err, int reportId, string path) { }
-    public static void StaticSaveAsHtml(int reportId, string path) { }
-    public static void StaticSaveAsHtml(object err, int reportId, string path) { }
-    public static void StaticSaveAsXml(int reportId, string path) { }
-    public static void StaticSaveAsXml(object err, int reportId, string path) { }
+    public static bool StaticSaveAs(object err, int reportId, string requestData, object format, MockOutStream outStream, MockRecordRef recordRef) => true;
+    public static bool StaticSaveAsPdf(int reportId, string path) => true;
+    public static bool StaticSaveAsPdf(object err, int reportId, string path) => true;
+    public static bool StaticSaveAsWord(int reportId, string path) => true;
+    public static bool StaticSaveAsWord(object err, int reportId, string path) => true;
+    public static bool StaticSaveAsExcel(int reportId, string path) => true;
+    public static bool StaticSaveAsExcel(object err, int reportId, string path) => true;
+    public static bool StaticSaveAsHtml(int reportId, string path) => true;
+    public static bool StaticSaveAsHtml(object err, int reportId, string path) => true;
+    public static bool StaticSaveAsXml(int reportId, string path) => true;
+    public static bool StaticSaveAsXml(object err, int reportId, string path) => true;
 
     // Report.DefaultLayout / layout enum methods — return 0 (default enum ordinal)
     public static int StaticDefaultLayout(int reportId) => 0;
