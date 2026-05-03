@@ -1181,6 +1181,27 @@ public static class AlTranspiler
     }
 
     /// <summary>
+    /// Returns the maximum CLEANSCHEMA number that is active for a given BC major version.
+    ///
+    /// The BC convention is: CLEANSCHEMA-N guards code that was removed in BC version N.
+    /// Therefore CLEANSCHEMA-N is active starting with BC version N+1 (the cleanup already
+    /// happened). The symbol for the current BC version is "in-development" and must not
+    /// be activated during that version's release cycle.
+    ///
+    /// Fallback table (issue #1587):
+    ///   BC 26 → 25  (CLEANSCHEMA26 is in-development for BC 26)
+    ///   BC 27 → 26  (CLEANSCHEMA27 is in-development for BC 27)
+    ///   BC 28 → 27  (etc.)
+    ///
+    /// Returns 0 for bcMajor ≤ 1 (no CLEANSCHEMA symbols applicable).
+    /// </summary>
+    public static int GetCleanSchemaDefaultMaxForBCVersion(int bcMajor)
+    {
+        if (bcMajor <= 1) return 0;
+        return bcMajor - 1;
+    }
+
+    /// <summary>
     /// Reads the <c>preprocessorSymbols</c> array from an <c>app.json</c> file in
     /// <paramref name="appDir"/>. Returns an empty list when the file is absent,
     /// unparseable, or the key is not present (issue #1525).
@@ -1418,11 +1439,29 @@ public static class AlTranspiler
         var syntaxTrees = new List<SyntaxTree>();
         bool hasErrors = false;
 
-        // Per-slice CLEANSCHEMA<N> auto-detection (issue #1521 final stretch).
+        // Per-slice CLEANSCHEMA<N> auto-detection (issue #1521 final stretch, #1587).
         // If defining a CLEANSCHEMA<N> guard would strip a declaration that another
         // file in the slice references unguarded, drop N from the preprocessor set.
         // For slices that don't mention CLEANSCHEMA at all, this returns the default.
-        var effectiveSymbols = ComputeCleanSchemaSymbols(alSources, defaultMax: 25);
+        //
+        // Issue #1587: derive defaultMax from the max CLEANSCHEMA<N> in extraDefines
+        // (set by DepCompiler from app.json "application" BC version). This ensures
+        // per-slice analysis runs at the correct BC version and handles CLEANSCHEMA26+
+        // for BC 27.x apps rather than always capping at 25.
+        int csDefaultMax = 25;
+        if (extraDefines != null)
+        {
+            var rxCS = new System.Text.RegularExpressions.Regex(@"^CLEANSCHEMA(\d+)$",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            foreach (var d in extraDefines)
+            {
+                if (d == null) continue;
+                var m = rxCS.Match(d);
+                if (m.Success && int.TryParse(m.Groups[1].Value, out var n) && n > csDefaultMax)
+                    csDefaultMax = n;
+            }
+        }
+        var effectiveSymbols = ComputeCleanSchemaSymbols(alSources, defaultMax: csDefaultMax);
         // Merge in any caller-supplied extra defines (issue #1525: --define CLI flag and
         // preprocessorSymbols from app.json).
         if (extraDefines != null)

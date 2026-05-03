@@ -905,10 +905,13 @@ public static class DepCompiler
         var compilableSources = alSources;
         var compilableFilePaths = filePaths;
 
-        // Build effective extra defines (issue #1525):
+        // Build effective extra defines (issue #1525, #1587):
         // 1. CLI-supplied defines (extraDefines parameter).
-        // 2. preprocessorSymbols from app.json in srcDir.
-        // 3. CLEANSCHEMA1..N from app.json "runtime" version (mirrors BC compile-time behavior).
+        // 2. preprocessorSymbols from app.json in srcDir (preferred — Microsoft puts CLEANSCHEMA here).
+        // 3. CLEANSCHEMA1..N from app.json "application" BC version (issue #1587 fallback table).
+        //    CLEANSCHEMA-N is active for BC versions > N (the cleanup happened in version N).
+        //    So for BC 27: CLEANSCHEMA1..26 are active; CLEANSCHEMA27 is in-development.
+        // 4. CLEANSCHEMA1..N from app.json "runtime" version (legacy fallback, kept for compat).
         var allExtraDefines = new List<string>();
         if (extraDefines != null)
             allExtraDefines.AddRange(extraDefines);
@@ -916,17 +919,32 @@ public static class DepCompiler
         foreach (var s in appJsonDefines)
             if (!allExtraDefines.Contains(s, StringComparer.OrdinalIgnoreCase))
                 allExtraDefines.Add(s);
-        // Auto-define CLEANSCHEMA1..N based on app.json "runtime" major version.
-        var appJsonForRuntime = Path.Combine(srcDir, "app.json");
-        if (File.Exists(appJsonForRuntime))
+        // Auto-define CLEANSCHEMA1..N based on app.json "application" BC major version (issue #1587).
+        // This is the primary fallback: "application" maps directly to the BC product version.
+        var appJsonForCS = Path.Combine(srcDir, "app.json");
+        if (File.Exists(appJsonForCS))
         {
             try
             {
-                using var rDoc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(appJsonForRuntime));
-                if (rDoc.RootElement.TryGetProperty("runtime", out var rProp)
+                using var aDoc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(appJsonForCS));
+                // Try "application" field first (BC product version, e.g. "27.0.0.0").
+                int csMax = 0;
+                if (aDoc.RootElement.TryGetProperty("application", out var appProp)
+                    && Version.TryParse(appProp.GetString() ?? "", out var appVer)
+                    && appVer.Major > 0)
+                {
+                    csMax = AlTranspiler.GetCleanSchemaDefaultMaxForBCVersion(appVer.Major);
+                }
+                // Fall back to "runtime" major version for apps that only declare runtime
+                // (legacy behaviour preserved for apps without "application" field).
+                if (csMax <= 0 && aDoc.RootElement.TryGetProperty("runtime", out var rProp)
                     && Version.TryParse(rProp.GetString() ?? "", out var rVer))
                 {
-                    foreach (var cs in AlTranspiler.GetCleanSchemaSymbolsForRuntime(rVer))
+                    csMax = rVer.Major;
+                }
+                if (csMax > 0)
+                {
+                    foreach (var cs in Enumerable.Range(1, csMax).Select(n => $"CLEANSCHEMA{n}"))
                         if (!allExtraDefines.Contains(cs, StringComparer.OrdinalIgnoreCase))
                             allExtraDefines.Add(cs);
                 }

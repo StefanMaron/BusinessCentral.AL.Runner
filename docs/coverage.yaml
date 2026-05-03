@@ -13721,3 +13721,37 @@ DepCompiler.CompileDep.extraDefines:
     CompileDep_ExtraDefines_GatesCodeUnderSymbol,
     CompileDep_AutoAppliesCleanSchemaSymbolsFromRuntime,
     CompileDep_WithoutSymbol_GatedBlockExcluded.
+
+AlTranspiler.GetCleanSchemaDefaultMaxForBCVersion:
+  layer: syntax
+  category: compile-dep
+  status: covered
+  tests:
+    - AlRunner.Tests/DepCompilerTests.cs
+  notes: >
+    Returns bcMajor - 1 for bcMajor > 1, 0 otherwise. Implements the BC convention
+    that CLEANSCHEMA-N marks code removed in BC version N, so CLEANSCHEMA-N is active
+    starting with BC version N+1. Used as the defaultMax for ComputeCleanSchemaSymbols
+    when app.json declares an "application" BC version (issue #1587).
+    Per-version fallback table: BC 26 → 25, BC 27 → 26, BC 28 → 27.
+    Tests: GetCleanSchemaDefaultMaxForBCVersion_ReturnsBCMajorMinusOne,
+    GetCleanSchemaDefaultMaxForBCVersion_ZeroOrOne_ReturnsZero,
+    CleanSchemaTable_MatchesExpectedBCVersionMapping.
+
+DepCompiler.CompileDep.applicationVersionCleanSchema:
+  layer: syntax
+  category: compile-dep
+  status: covered
+  tests:
+    - AlRunner.Tests/DepCompilerTests.cs
+  notes: >
+    CompileDep reads the "application" field from app.json (BC product version, e.g.
+    "27.0.0.0") and uses GetCleanSchemaDefaultMaxForBCVersion to compute
+    CLEANSCHEMA1..N-1 for the effective preprocessor set. This is the primary fallback
+    for apps that don't declare preprocessorSymbols explicitly in app.json (issue #1587).
+    Falls back to "runtime" major version for legacy apps without "application" field.
+    TranspileMulti uses the max CLEANSCHEMA<N> from extraDefines as defaultMax for
+    ComputeCleanSchemaSymbols so per-slice analysis runs at the correct BC version.
+    Tests: CompileDep_BC27App_IncludesCleanSchema26_InEffectiveSet,
+    CompileDep_BC27App_ExcludesCleanSchema27,
+    CompileDep_BC26App_ExcludesCleanSchema26.

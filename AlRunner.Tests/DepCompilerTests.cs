@@ -1249,4 +1249,266 @@ codeunit 1525004 ""PP Test No Symbol""
                 Directory.Delete(rootDir, true);
         }
     }
+
+    // ------------------------------------------------------------------ //
+    // Issue #1587: CLEANSCHEMA symbols must derive from BC version
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// GetCleanSchemaDefaultMaxForBCVersion returns bcMajor - 1 for each
+    /// supported BC version. CLEANSCHEMA-N is active starting with BC version N+1
+    /// (the cleanup already happened in version N; the current version's symbol
+    /// is "in development" and must not be activated).
+    ///
+    /// Per-version fallback table: BC 26 → 25, BC 27 → 26, BC 28 → 27.
+    /// </summary>
+    [Fact]
+    public void GetCleanSchemaDefaultMaxForBCVersion_ReturnsBCMajorMinusOne()
+    {
+        // BC 26 → max = 25
+        Assert.Equal(25, AlTranspiler.GetCleanSchemaDefaultMaxForBCVersion(26));
+        // BC 27 → max = 26
+        Assert.Equal(26, AlTranspiler.GetCleanSchemaDefaultMaxForBCVersion(27));
+        // BC 28 → max = 27
+        Assert.Equal(27, AlTranspiler.GetCleanSchemaDefaultMaxForBCVersion(28));
+        // BC 30 → max = 29
+        Assert.Equal(29, AlTranspiler.GetCleanSchemaDefaultMaxForBCVersion(30));
+    }
+
+    /// <summary>
+    /// GetCleanSchemaDefaultMaxForBCVersion returns 0 for BC version 0 or 1
+    /// (no CLEANSCHEMA symbols applicable at the earliest versions).
+    /// </summary>
+    [Fact]
+    public void GetCleanSchemaDefaultMaxForBCVersion_ZeroOrOne_ReturnsZero()
+    {
+        Assert.Equal(0, AlTranspiler.GetCleanSchemaDefaultMaxForBCVersion(0));
+        Assert.Equal(0, AlTranspiler.GetCleanSchemaDefaultMaxForBCVersion(1));
+    }
+
+    /// <summary>
+    /// When app.json declares <c>"application": "27.0.0.0"</c>, CompileDep must
+    /// include CLEANSCHEMA26 in the effective preprocessor symbols (BC 27 → 1..26).
+    /// CLEANSCHEMA27 must NOT be included (current version's symbol is in-development).
+    ///
+    /// Verification strategy: an AL table whose field 116 is guarded by
+    /// <c>#if not CLEANSCHEMA26</c> (mirrors the real BC 27.x pattern). If CLEANSCHEMA26
+    /// is active, the field is stripped and a companion codeunit that references it
+    /// UNGUARDED would produce AL0132. So we prove the symbol is active by compiling a
+    /// standalone table that does NOT have an unguarded consumer — the compile must
+    /// succeed with zero AL0132 errors, and the stderr must report CLEANSCHEMA26 as
+    /// "added" (relative to the old defaultMax of 25).
+    /// </summary>
+    [Fact]
+    public void CompileDep_BC27App_IncludesCleanSchema26_InEffectiveSet()
+    {
+        // Table with a field guarded by #if not CLEANSCHEMA26 and a field guarded by
+        // #if not CLEANSCHEMA27. With BC 27 (CLEANSCHEMA26 active, CLEANSCHEMA27 not),
+        // field 116 must be stripped and field 117 must be present.
+        // We verify by compiling a codeunit that references field 117 (present on BC 27)
+        // and not field 116 (stripped on BC 27). The compile must succeed.
+        const string tableSource = """
+            table 1587010 "CS Test Tab"
+            {
+                fields
+                {
+                    field(1; "PK"; Code[20]) { }
+            #if not CLEANSCHEMA26
+                    field(116; "Old BC26 Field"; Code[20]) { }
+            #endif
+            #if not CLEANSCHEMA27
+                    field(117; "Old BC27 Field"; Code[20]) { }
+            #endif
+                }
+                keys { key(PK; "PK") { Clustered = true; } }
+            }
+            """;
+        // Consumer only references the BC27 field (which is present on BC 27 because
+        // CLEANSCHEMA27 is NOT active). This codeunit must compile cleanly on BC 27.
+        const string consumerSource = """
+            codeunit 1587011 "CS27 Consumer"
+            {
+                procedure Run()
+                var T: Record "CS Test Tab";
+                begin
+                    T.SetFilter("Old BC27 Field", '<>''''');
+                end;
+            }
+            """;
+        var dir = Path.Combine(Path.GetTempPath(), "al-cs26-bc27-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir = Path.Combine(dir, "out");
+        Directory.CreateDirectory(dir);
+        Directory.CreateDirectory(outDir);
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "Tab.al"), tableSource);
+            File.WriteAllText(Path.Combine(dir, "Consumer.al"), consumerSource);
+            // BC 27 app — application "27.0.0.0"
+            File.WriteAllText(Path.Combine(dir, "app.json"),
+                "{\"id\":\"" + Guid.NewGuid() + "\",\"name\":\"CS26Test\",\"publisher\":\"Test\"," +
+                "\"version\":\"1.0.0.0\",\"application\":\"27.0.0.0\"}");
+
+            var origErr = Console.Error;
+            using var errCapture = new StringWriter();
+            Console.SetError(errCapture);
+            int rc;
+            try { rc = DepCompiler.CompileDep(dir, outDir, new List<string>()); }
+            finally { Console.SetError(origErr); }
+
+            var stderr = errCapture.ToString();
+            // Compile must succeed (field 117 is present on BC 27)
+            Assert.Equal(0, rc);
+            Assert.NotEmpty(Directory.GetFiles(outDir, "*.dll"));
+            // Per-slice diagnostic must report CLEANSCHEMA26 in the active set (+CLEANSCHEMA26)
+            // because BC 27 has application "27.0.0.0" and CLEANSCHEMA26 is in 1..26.
+            Assert.Contains("CLEANSCHEMA26", stderr);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    /// <summary>
+    /// When app.json declares <c>"application": "27.0.0.0"</c>, CLEANSCHEMA27 must NOT
+    /// be in the effective set. Proven by gating a field behind <c>#if not CLEANSCHEMA27</c>
+    /// and having an unguarded consumer reference it: if CLEANSCHEMA27 were active, the
+    /// field would be stripped and the compile would produce AL0132 (field not found).
+    /// The compile must succeed — confirming CLEANSCHEMA27 was correctly excluded.
+    /// </summary>
+    [Fact]
+    public void CompileDep_BC27App_ExcludesCleanSchema27()
+    {
+        // Field 117 is guarded by #if not CLEANSCHEMA27. On BC 27, CLEANSCHEMA27 is
+        // NOT active → field stays. The consumer references it unguarded → compile succeeds
+        // only if CLEANSCHEMA27 was NOT activated.
+        const string tableSource = """
+            table 1587012 "CS27 Excl Tab"
+            {
+                fields
+                {
+                    field(1; "PK"; Code[20]) { }
+            #if not CLEANSCHEMA27
+                    field(117; "Field Needs CS27 Inactive"; Code[20]) { }
+            #endif
+                }
+                keys { key(PK; "PK") { Clustered = true; } }
+            }
+            """;
+        const string consumerSource = """
+            codeunit 1587013 "CS27 Excl Consumer"
+            {
+                procedure Run()
+                var T: Record "CS27 Excl Tab";
+                begin
+                    // References the field unguarded — compile fails with AL0132 if CLEANSCHEMA27 is active.
+                    T.SetFilter("Field Needs CS27 Inactive", '<>''''');
+                end;
+            }
+            """;
+        var dir = Path.Combine(Path.GetTempPath(), "al-cs27excl-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir = Path.Combine(dir, "out");
+        Directory.CreateDirectory(dir);
+        Directory.CreateDirectory(outDir);
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "Tab.al"), tableSource);
+            File.WriteAllText(Path.Combine(dir, "Consumer.al"), consumerSource);
+            // BC 27 app
+            File.WriteAllText(Path.Combine(dir, "app.json"),
+                "{\"id\":\"" + Guid.NewGuid() + "\",\"name\":\"CS27ExclTest\",\"publisher\":\"Test\"," +
+                "\"version\":\"1.0.0.0\",\"application\":\"27.0.0.0\"}");
+
+            var origErr = Console.Error;
+            using var errCapture = new StringWriter();
+            Console.SetError(errCapture);
+            int rc;
+            try { rc = DepCompiler.CompileDep(dir, outDir, new List<string>()); }
+            finally { Console.SetError(origErr); }
+
+            var stderr = errCapture.ToString();
+            // Must compile without AL0132 (field was preserved because CLEANSCHEMA27 was NOT active)
+            Assert.DoesNotContain("AL0132", stderr);
+            Assert.Equal(0, rc);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    /// <summary>
+    /// When app.json declares <c>"application": "26.0.0.0"</c>, CompileDep must
+    /// include CLEANSCHEMA25 but NOT CLEANSCHEMA26 (BC 26 → 1..25).
+    /// Proven using the same #if not CLEANSCHEMA26 table + unguarded consumer pattern:
+    /// if CLEANSCHEMA26 were active, the field would be stripped and AL0132 would fire.
+    /// </summary>
+    [Fact]
+    public void CompileDep_BC26App_ExcludesCleanSchema26()
+    {
+        const string tableSource = """
+            table 1587020 "BC26 Excl Tab"
+            {
+                fields
+                {
+                    field(1; "PK"; Code[20]) { }
+            #if not CLEANSCHEMA26
+                    field(116; "Field Needs CS26 Inactive"; Code[20]) { }
+            #endif
+                }
+                keys { key(PK; "PK") { Clustered = true; } }
+            }
+            """;
+        const string consumerSource = """
+            codeunit 1587021 "BC26 Excl Consumer"
+            {
+                procedure Run()
+                var T: Record "BC26 Excl Tab";
+                begin
+                    T.SetFilter("Field Needs CS26 Inactive", '<>''''');
+                end;
+            }
+            """;
+        var dir = Path.Combine(Path.GetTempPath(), "al-cs26excl-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir = Path.Combine(dir, "out");
+        Directory.CreateDirectory(dir);
+        Directory.CreateDirectory(outDir);
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "Tab.al"), tableSource);
+            File.WriteAllText(Path.Combine(dir, "Consumer.al"), consumerSource);
+            // BC 26 app — CLEANSCHEMA26 must NOT be in effective set
+            File.WriteAllText(Path.Combine(dir, "app.json"),
+                "{\"id\":\"" + Guid.NewGuid() + "\",\"name\":\"CS26ExclTest\",\"publisher\":\"Test\"," +
+                "\"version\":\"1.0.0.0\",\"application\":\"26.0.0.0\"}");
+
+            var origErr = Console.Error;
+            using var errCapture = new StringWriter();
+            Console.SetError(errCapture);
+            int rc;
+            try { rc = DepCompiler.CompileDep(dir, outDir, new List<string>()); }
+            finally { Console.SetError(origErr); }
+
+            var stderr = errCapture.ToString();
+            // Must compile without AL0132 (field preserved because CLEANSCHEMA26 was NOT active)
+            Assert.DoesNotContain("AL0132", stderr);
+            Assert.Equal(0, rc);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    /// <summary>
+    /// Per-BC-version fallback table is correct: for each known BC version,
+    /// the CLEANSCHEMA max is bcVersion.Major - 1 (CLEANSCHEMA-N is the "in-progress"
+    /// symbol for BC-N and must not be activated during that version's cycle).
+    ///
+    /// This test locks the table so changes are intentional and visible in code review.
+    /// </summary>
+    [Fact]
+    public void CleanSchemaTable_MatchesExpectedBCVersionMapping()
+    {
+        // Spot-check canonical BC versions from the issue's fallback table
+        Assert.Equal(25, AlTranspiler.GetCleanSchemaDefaultMaxForBCVersion(26));
+        Assert.Equal(26, AlTranspiler.GetCleanSchemaDefaultMaxForBCVersion(27));
+        Assert.Equal(27, AlTranspiler.GetCleanSchemaDefaultMaxForBCVersion(28));
+        Assert.Equal(28, AlTranspiler.GetCleanSchemaDefaultMaxForBCVersion(29));
+        Assert.Equal(29, AlTranspiler.GetCleanSchemaDefaultMaxForBCVersion(30));
+        // The relationship is always N-1 for any N > 1
+        for (int n = 2; n <= 35; n++)
+            Assert.Equal(n - 1, AlTranspiler.GetCleanSchemaDefaultMaxForBCVersion(n));
+    }
 }
