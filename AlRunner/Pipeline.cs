@@ -941,6 +941,25 @@ public class AlRunnerPipeline
             catch { }
         }
 
+        // Also collect AppIds from source-directory inputs (via app.json).
+        // Without this, a source-dir input whose compiled .app is in the package cache
+        // would be re-discovered as a transitive dependency and its AL extracted a second
+        // time, causing Roslyn CS0101 "already contains a definition" errors (#1566).
+        foreach (var group in inputGroups)
+        {
+            if (group.Path.EndsWith(".app", StringComparison.OrdinalIgnoreCase)) continue;
+            try
+            {
+                var appJsonPath = Path.Combine(group.Path, "app.json");
+                if (!File.Exists(appJsonPath)) continue;
+                var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(appJsonPath));
+                if (doc.RootElement.TryGetProperty("id", out var idProp) &&
+                    Guid.TryParse(idProp.GetString(), out var guid))
+                    inputAppGuids.Add(guid);
+            }
+            catch { }
+        }
+
         var toProcess = new Queue<Guid>();
         var discovered = new HashSet<Guid>(inputAppGuids);
 
@@ -1467,6 +1486,28 @@ public class AlRunnerPipeline
                 stderr.WriteLine("Error: no C# code generated from any input group");
                 return null;
             }
+
+            // Deduplicate: when multiple groups each compile the same AL object (e.g.
+            // shared runner stubs added by LoadAssertStubs, or a source-dir app that was
+            // also re-discovered from the package cache), keep only the first occurrence.
+            // Without this, Roslyn sees two syntax trees declaring the same class in the
+            // same namespace and reports CS0101 (#1566).
+            var seenClassKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var dedupePattern = new System.Text.RegularExpressions.Regex(
+                @"class\s+(Codeunit|Record|Page|Report|XmlPort|Query)(\d+)\b",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+            var deduped = new List<(string Name, string Code)>(generatedCSharpList.Count);
+            foreach (var item in generatedCSharpList)
+            {
+                // Use the primary class name (e.g. "Codeunit50105") as the deduplication key.
+                var m = dedupePattern.Match(item.Code);
+                var key = m.Success ? $"{m.Groups[1].Value}{m.Groups[2].Value}" : item.Name;
+                if (seenClassKeys.Add(key))
+                    deduped.Add(item);
+                else
+                    Log.Info($"  Deduplicating duplicate object '{item.Name}' (class {key}) from multi-group compilation");
+            }
+            generatedCSharpList = deduped;
         }
         else
         {
