@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Microsoft.Dynamics.Nav.CodeAnalysis;
 using Microsoft.Dynamics.Nav.CodeAnalysis.Symbols;
+using Microsoft.Dynamics.Nav.CodeAnalysis.Syntax;
 
 namespace AlRunner;
 
@@ -564,6 +565,15 @@ public class AlRunnerPipeline
                 stderr.WriteLine($"  {msg}");
             return 3;
         }
+
+        // Auto-inject stub usercontrol declarations + ControlAddin shims for pages that have
+        // CurrPage.<addinName>.<method>() calls but no matching usercontrol declaration.
+        // This handles dep-extracted pages whose usercontrols were stripped and pages that
+        // were provided as blank stubs.
+        InjectUserControlStubs(alSources, stubSources, stderr);
+        // Pad sourceFilePaths with nulls for any auto-stubs injected above
+        while (sourceFilePaths.Count < alSources.Count)
+            sourceFilePaths.Add(null);
 
         // Step 1: Transpile
         Timer.StartStage("AL transpilation");
@@ -2133,5 +2143,242 @@ public class AlRunnerPipeline
     /// </summary>
     private static bool IsCSharpPrimitiveMappedType(string typeName) => typeName is
         "Integer" or "BigInteger" or "Boolean" or "Char" or "Byte";
+
+    // -----------------------------------------------------------------------
+    // ControlAddin usercontrol auto-stub injection (issue #1588)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Scans all AL source files for pages that call <c>CurrPage.&lt;addinName&gt;.&lt;method&gt;()</c>
+    /// in their triggers but have no matching <c>usercontrol(&lt;addinName&gt;; ...)</c> declaration.
+    /// For each such missing usercontrol, injects a stub usercontrol declaration into the page
+    /// source and adds a no-op <c>controladdin</c> stub to <paramref name="alSources"/>.
+    ///
+    /// This handles dep-extracted pages whose usercontrols were stripped by
+    /// <see cref="DepExtractor.StripPageUserControls"/> and pages provided as blank stubs.
+    /// </summary>
+    private static void InjectUserControlStubs(
+        List<string> alSources,
+        List<string> stubSources,
+        TextWriter stderr)
+    {
+        // Step 1: Collect all existing controladdin names already declared in sources/stubs
+        // so we don't generate duplicates. Use regex since the BC SDK doesn't expose a
+        // typed ControlAddInSyntax — just match the top-level declaration pattern.
+        var existingAddins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var addinNamePattern = new Regex(@"^\s*controladdin\s+[""']?([^""'\s{]+)[""']?\s*\{",
+            RegexOptions.IgnoreCase | RegexOptions.Multiline);
+        var allSources = alSources.Concat(stubSources);
+        foreach (var src in allSources)
+        {
+            if (!src.Contains("controladdin", StringComparison.OrdinalIgnoreCase)) continue;
+            foreach (Match m in addinNamePattern.Matches(src))
+                existingAddins.Add(m.Groups[1].Value.Trim('"', '\''));
+        }
+
+        // Step 2: Scan all sources for pages and collect:
+        //   a) which page (by index) calls CurrPage.<addinName> in triggers
+        //   b) which usercontrols are already declared on each page
+        // Map: sourceIndex → { addinName → Set<methodName> }
+        var pageAddinCalls = new Dictionary<int, Dictionary<string, HashSet<string>>>();
+        // Map: sourceIndex → set of usercontrol local names already declared
+        var pageExistingControls = new Dictionary<int, HashSet<string>>();
+
+        for (int i = 0; i < alSources.Count; i++)
+        {
+            var src = alSources[i];
+            if (!src.Contains("page", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!src.Contains("CurrPage", StringComparison.OrdinalIgnoreCase)) continue;
+
+            try
+            {
+                var tree = SyntaxTree.ParseObjectText(src);
+                var root = tree.GetRoot();
+
+                // Only process Page objects (not pageextensions — AL0783 prevents
+                // pageextensions from accessing another extension's usercontrols)
+                var pages = root.DescendantNodes().OfType<PageSyntax>().ToList();
+                if (pages.Count == 0) continue;
+
+                // Collect existing usercontrol local names on this page
+                var existingControls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var uc in root.DescendantNodes().OfType<PageUserControlSyntax>())
+                {
+                    var ln = uc.Name?.Identifier.ValueText;
+                    if (!string.IsNullOrEmpty(ln)) existingControls.Add(ln);
+                }
+                if (existingControls.Count > 0)
+                    pageExistingControls[i] = existingControls;
+
+                // Scan all method/trigger bodies for CurrPage.<addinName>.<method> patterns
+                var addinCalls = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+                foreach (var ma in root.DescendantNodes().OfType<MemberAccessExpressionSyntax>())
+                {
+                    // Match: (CurrPage.<addinName>).<method>
+                    // i.e. the expression is itself a MemberAccess on CurrPage
+                    if (ma.Expression is not MemberAccessExpressionSyntax innerMa) continue;
+                    if (innerMa.Expression is not IdentifierNameSyntax currPageId) continue;
+                    if (!currPageId.Identifier.ValueText.Equals("CurrPage", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (innerMa.Name is not IdentifierNameSyntax addinNameNode) continue;
+                    if (ma.Name is not IdentifierNameSyntax methodNameNode) continue;
+
+                    var addinName = addinNameNode.Identifier.ValueText;
+                    var methodName = methodNameNode.Identifier.ValueText;
+
+                    // Skip if usercontrol is already declared on the page
+                    if (existingControls.Contains(addinName)) continue;
+
+                    if (!addinCalls.TryGetValue(addinName, out var methods))
+                    {
+                        methods = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        addinCalls[addinName] = methods;
+                    }
+                    methods.Add(methodName);
+                }
+
+                if (addinCalls.Count > 0)
+                    pageAddinCalls[i] = addinCalls;
+            }
+            catch { /* skip unparseable */ }
+        }
+
+        if (pageAddinCalls.Count == 0) return;
+
+        // Step 3: For each page with missing usercontrols, inject the usercontrol declaration
+        // and generate a stub ControlAddin.
+        var generatedAddins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (idx, addinCalls) in pageAddinCalls)
+        {
+            var src = alSources[idx];
+
+            foreach (var (addinName, methods) in addinCalls)
+            {
+                // Generate a unique stub controladdin name
+                var stubAddinName = $"AL Runner Stub {addinName}";
+
+                // Inject the usercontrol declaration into the page source.
+                // We insert a layout section just before the first trigger or before
+                // the closing brace of the page body.
+                src = InjectUserControlIntoPage(src, addinName, stubAddinName);
+
+                // Generate the stub ControlAddin if not already generated or declared
+                if (!existingAddins.Contains(stubAddinName) && !generatedAddins.Contains(stubAddinName))
+                {
+                    generatedAddins.Add(stubAddinName);
+                    var escapedName = stubAddinName.Replace("\"", "\\\"");
+                    var sb = new System.Text.StringBuilder();
+                    sb.AppendLine($"// Auto-generated stub ControlAddin for usercontrol '{addinName}' (issue #1588)");
+                    sb.AppendLine($"controladdin \"{escapedName}\"");
+                    sb.AppendLine("{");
+                    foreach (var method in methods.OrderBy(m => m))
+                    {
+                        sb.AppendLine($"    procedure {method}();");
+                    }
+                    sb.AppendLine("}");
+                    alSources.Add(sb.ToString());
+                    stderr.WriteLine($"Auto-stub: injected usercontrol '{addinName}' → ControlAddin '{stubAddinName}' (procedures: {string.Join(", ", methods.OrderBy(m => m))})");
+                }
+                else if (generatedAddins.Contains(stubAddinName))
+                {
+                    // Addin stub already generated for this name — find it and merge any
+                    // new methods from this page that weren't present when first generated.
+                    var escapedName = stubAddinName.Replace("\"", "\\\"");
+                    var marker = $"controladdin \"{escapedName}\"";
+                    for (int ai = 0; ai < alSources.Count; ai++)
+                    {
+                        if (!alSources[ai].Contains(marker, StringComparison.OrdinalIgnoreCase)) continue;
+                        var addinSrc = alSources[ai];
+                        foreach (var method in methods)
+                        {
+                            if (!addinSrc.Contains($"procedure {method}(", StringComparison.OrdinalIgnoreCase))
+                            {
+                                var closePos = addinSrc.LastIndexOf('}');
+                                if (closePos >= 0)
+                                    addinSrc = addinSrc[..closePos] + $"    procedure {method}();\n" + addinSrc[closePos..];
+                            }
+                        }
+                        alSources[ai] = addinSrc;
+                        break;
+                    }
+                }
+            }
+
+            alSources[idx] = src;
+        }
+    }
+
+    /// <summary>
+    /// Injects a <c>usercontrol(&lt;addinName&gt;; "&lt;stubAddinName&gt;")</c> declaration
+    /// into a page's layout section. If the page has no layout section, one is added.
+    /// Uses the BC AST to find the precise insertion point.
+    /// </summary>
+    private static string InjectUserControlIntoPage(string src, string addinName, string stubAddinName)
+    {
+        try
+        {
+            var tree = SyntaxTree.ParseObjectText(src);
+            var root = tree.GetRoot();
+            var page = root.DescendantNodes().OfType<PageSyntax>().FirstOrDefault();
+            if (page == null) return src;
+
+            // Find the layout section and check if there's a Content area
+            var layoutSection = page.DescendantNodes().OfType<PageLayoutSyntax>().FirstOrDefault();
+
+            if (layoutSection != null)
+            {
+                // Layout exists. Find a Content area if present.
+                var contentArea = layoutSection.DescendantNodes().OfType<PageAreaSyntax>()
+                    .FirstOrDefault(a => {
+                        // PageAreaSyntax has an area identifier we can get via its children
+                        var identifier = a.ChildNodes().OfType<IdentifierNameSyntax>().FirstOrDefault();
+                        return identifier?.Identifier.ValueText.Equals("Content", StringComparison.OrdinalIgnoreCase) == true;
+                    });
+
+                if (contentArea != null)
+                {
+                    // Inject the usercontrol inside the existing Content area, before its closing }
+                    var ucBlock = $"\n            usercontrol({addinName}; \"{stubAddinName}\")\n            {{\n            }}\n";
+                    int insertPos = contentArea.Span.End - 1;
+                    while (insertPos > 0 && src[insertPos] != '}') insertPos--;
+                    if (insertPos > 0)
+                        return src[..insertPos] + ucBlock + src[insertPos..];
+                }
+                else
+                {
+                    // Layout exists but no Content area. Add a Content area with the usercontrol.
+                    var areaBlock = $"\n        area(Content)\n        {{\n            usercontrol({addinName}; \"{stubAddinName}\")\n            {{\n            }}\n        }}\n";
+                    int insertPos = layoutSection.Span.End - 1;
+                    while (insertPos > 0 && src[insertPos] != '}') insertPos--;
+                    if (insertPos > 0)
+                        return src[..insertPos] + areaBlock + src[insertPos..];
+                }
+            }
+            else
+            {
+                // No layout section. Inject a complete layout block before the first trigger
+                // or just before the closing } of the page body.
+                var layoutBlock = $"\n    layout\n    {{\n        area(Content)\n        {{\n            usercontrol({addinName}; \"{stubAddinName}\")\n            {{\n            }}\n        }}\n    }}\n";
+
+                // Find the first trigger declaration in the page to insert before it
+                var firstTrigger = page.DescendantNodes().OfType<TriggerDeclarationSyntax>().FirstOrDefault();
+                if (firstTrigger != null)
+                {
+                    var insertPos = firstTrigger.Span.Start;
+                    // Walk backwards past any whitespace/newlines to get a clean insertion point
+                    while (insertPos > 0 && src[insertPos - 1] is ' ' or '\t') insertPos--;
+                    return src[..insertPos] + layoutBlock + "    " + src[insertPos..];
+                }
+
+                // No triggers found: inject just before the closing } of the page
+                int insertPos2 = page.Span.End - 1;
+                while (insertPos2 > 0 && src[insertPos2] != '}') insertPos2--;
+                if (insertPos2 > 0)
+                    return src[..insertPos2] + layoutBlock + src[insertPos2..];
+            }
+        }
+        catch { /* fall through to original source */ }
+        return src;
+    }
 
 }

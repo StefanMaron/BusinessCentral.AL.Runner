@@ -992,8 +992,26 @@ systempart_section:
 usercontrol_section:
   layer: syntax
   category: page
-  status: out-of-scope
-  notes: User controls require BC client rendering; see 'UI objects — out of scope' in docs/limitations.md
+  status: covered
+  notes: >
+    usercontrol declarations on pages compile successfully when a matching controladdin is declared.
+    When a page calls CurrPage.<addinName>.<method>() but has no usercontrol declaration (e.g. after
+    dep-extract stripping), the runner auto-injects a stub usercontrol and no-op controladdin so the
+    page compiles without AL0132 (issue #1588). Runtime addin calls are no-ops (no browser available).
+  tests:
+    - tests/bucket-2/page-report/314000-usercontrol-auto-stub
+
+usercontrol_auto_stub:
+  layer: pipeline
+  category: page
+  status: covered
+  notes: >
+    Pipeline.InjectUserControlStubs() scans page sources for CurrPage.<addinName>.<method>()
+    calls that have no matching usercontrol declaration. Injects a stub usercontrol into the page
+    layout and generates a no-op controladdin with the called procedures. Handles dep-extracted
+    pages whose usercontrols were stripped (issue #1588).
+  tests:
+    - tests/bucket-2/page-report/314000-usercontrol-auto-stub
 
 view_definition:
   layer: syntax
