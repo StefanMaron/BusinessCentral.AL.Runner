@@ -1002,7 +1002,7 @@ usercontrol_section:
     - tests/bucket-2/page-report/314000-usercontrol-auto-stub
 
 usercontrol_auto_stub:
-  layer: pipeline
+  layer: syntax
   category: page
   status: covered
   notes: >
