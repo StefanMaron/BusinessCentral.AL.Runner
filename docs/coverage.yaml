@@ -13791,3 +13791,22 @@ DepCompiler.CompileDep.applicationVersionCleanSchema:
     Tests: CompileDep_BC27App_IncludesCleanSchema26_InEffectiveSet,
     CompileDep_BC27App_ExcludesCleanSchema27,
     CompileDep_BC26App_ExcludesCleanSchema26.
+
+# ── extract-deps: enum auto-stub synthetic value ──────────────────────
+
+DepExtractor.EnumAutoStubSyntheticValue:
+  layer: syntax
+  category: extract-deps
+  status: covered
+  tests:
+    - AlRunner.Tests/DepExtractorTests.cs
+  notes: >
+    When extract-deps auto-stubs a base enum that is missing from dep sources
+    (e.g. a platform enum), the generated stub includes at least one
+    value(0; Default) { } declaration.  Without this synthetic value, the BC
+    compiler's EnumExtensionTypeMetadataEmitter.WriteEnumValue NREs when it
+    tries to walk BaseEnum.Values during the emit phase of compile-dep for a
+    slice that contains an enumextension of that base enum (issue #1590).
+    Implemented in DepExtractor.GenerateStub ("Enum" case).
+    Tests: ExtractDeps_EnumStub_IncludesAtLeastOneValue_WhenBaseEnumIsAutoStubbed,
+    ExtractDeps_ThenCompileDep_SucceedsWhenEnumExtensionBaseIsAutoStubbed.

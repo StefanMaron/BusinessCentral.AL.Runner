@@ -2503,4 +2503,163 @@ public class DepExtractorTests
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Issue #1590 — enum stub must include at least one value so that the
+    // BC compiler's EnumExtensionTypeMetadataEmitter.WriteEnumValue does not
+    // NRE when walking BaseEnum.Values on an empty stub.
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// When an enumextension in dep sources extends an enum that is not defined
+    /// anywhere in dep sources (platform/base-app enum), ExtractDeps must auto-
+    /// generate a stub for the base enum that includes at least one <c>value(...)</c>
+    /// declaration.  An empty enum stub causes the BC compiler to NRE in
+    /// <c>EnumExtensionTypeMetadataEmitter.WriteEnumValue</c> during compile-dep.
+    /// </summary>
+    [Fact]
+    public void ExtractDeps_EnumStub_IncludesAtLeastOneValue_WhenBaseEnumIsAutoStubbed()
+    {
+        var depRoot = Path.Combine(Path.GetTempPath(), "al-dep-enumstub-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir  = Path.Combine(Path.GetTempPath(), "al-out-enumstub-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir  = Path.Combine(Path.GetTempPath(), "al-ext-enumstub-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(depRoot, "AppA"));
+            Directory.CreateDirectory(extDir);
+
+            // Dep source: an enumextension whose base enum "Platform Status" is NOT
+            // defined anywhere in the dep sources (simulating a platform enum).
+            // ExtractDeps must auto-stub "Platform Status" with at least one value.
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "StatusExt.al"), """
+                enumextension 60200 "My Status Ext" extends "Platform Status"
+                {
+                    value(10; "Custom Value") { }
+                }
+                """);
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "Helper.al"), """
+                codeunit 60201 "Enum Stub Helper"
+                {
+                    procedure GetStatus(): Enum "Platform Status"
+                    var
+                        s: Enum "Platform Status";
+                    begin
+                        exit(s);
+                    end;
+                }
+                """);
+            File.WriteAllText(Path.Combine(extDir, "Consumer.al"), """
+                codeunit 60299 "Enum Stub Consumer"
+                {
+                    procedure Run()
+                    begin
+                        Codeunit.Run(Codeunit::"Enum Stub Helper");
+                    end;
+                }
+                """);
+
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depRoot }, outDir);
+            Assert.Equal(0, rc);
+
+            var allFiles = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+
+            // Locate the auto-generated stub for "Platform Status".
+            var enumStub = allFiles.FirstOrDefault(f =>
+                f.Contains("__GeneratedStubs__", StringComparison.OrdinalIgnoreCase)
+                && File.ReadAllText(f).Contains("Platform Status", StringComparison.OrdinalIgnoreCase));
+            Assert.NotNull(enumStub);
+
+            var stubContent = File.ReadAllText(enumStub!);
+
+            // The stub must start with 'enum' (not codeunit/table/etc.)
+            Assert.StartsWith("enum ", stubContent.TrimStart(), StringComparison.OrdinalIgnoreCase);
+
+            // CRITICAL: the stub must contain at least one value(...) declaration.
+            // Without it, the BC compiler's EnumExtensionTypeMetadataEmitter.WriteEnumValue
+            // NREs when walking BaseEnum.Values during the compile-dep emit phase.
+            Assert.Contains("value(", stubContent, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            foreach (var d in new[] { depRoot, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
+    /// <summary>
+    /// Full extract-then-compile-dep pipeline test: when the slice contains an
+    /// enumextension whose base enum is auto-stubbed, compile-dep must succeed
+    /// (exit code 0) without throwing NRE in the BC compiler emit phase.
+    /// Regression test for issue #1590.
+    /// </summary>
+    [Fact]
+    public void ExtractDeps_ThenCompileDep_SucceedsWhenEnumExtensionBaseIsAutoStubbed()
+    {
+        var depRoot  = Path.Combine(Path.GetTempPath(), "al-dep-enumcomp-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir   = Path.Combine(Path.GetTempPath(), "al-out-enumcomp-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir   = Path.Combine(Path.GetTempPath(), "al-ext-enumcomp-" + Guid.NewGuid().ToString("N")[..8]);
+        var compDir  = Path.Combine(Path.GetTempPath(), "al-dll-enumcomp-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(depRoot, "AppA"));
+            Directory.CreateDirectory(extDir);
+            Directory.CreateDirectory(compDir);
+
+            // Dep source: enumextension of a missing base enum, plus a codeunit that
+            // returns the enum type (so the enum is pulled into the compiled output).
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "app.json"), """
+            {
+              "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+              "name": "AppA",
+              "publisher": "TestPub",
+              "version": "1.0.0.0"
+            }
+            """);
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "StatusExt.al"), """
+                enumextension 60210 "My Status Ext" extends "Platform Status"
+                {
+                    value(10; "Custom Value") { }
+                }
+                """);
+            File.WriteAllText(Path.Combine(depRoot, "AppA", "Helper.al"), """
+                codeunit 60211 "Enum Compile Helper"
+                {
+                    procedure GetStatus(): Enum "Platform Status"
+                    var
+                        s: Enum "Platform Status";
+                    begin
+                        exit(s);
+                    end;
+                }
+                """);
+            File.WriteAllText(Path.Combine(extDir, "Consumer.al"), """
+                codeunit 60219 "Enum Compile Consumer"
+                {
+                    procedure Run()
+                    begin
+                        Codeunit.Run(Codeunit::"Enum Compile Helper");
+                    end;
+                }
+                """);
+
+            // Step 1: extract deps
+            int extractRc = DepExtractor.ExtractDeps(extDir, new[] { depRoot }, outDir);
+            Assert.Equal(0, extractRc);
+
+            // Step 2: compile-dep on the extracted slice — must not NRE or fail
+            // (BC compiler's EnumExtensionTypeMetadataEmitter.WriteEnumValue must not
+            // dereference a null BaseEnum.Values due to an empty enum stub).
+            int compileRc = DepCompiler.CompileDepMultiApp(outDir, compDir, new List<string>());
+            Assert.Equal(0, compileRc);
+
+            // Verify a DLL was produced
+            var dlls = Directory.GetFiles(compDir, "*.dll");
+            Assert.NotEmpty(dlls);
+        }
+        finally
+        {
+            foreach (var d in new[] { depRoot, outDir, extDir, compDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
 }
