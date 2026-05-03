@@ -13537,6 +13537,24 @@ DiagnosticSuppression.Case3.CrossExtensionExtensionObject:
     Same-extension dups are caught by DetectSameExtensionDuplicates pre-scan (exit 3).
     Non-extension types (Codeunit, Table, Page) are always forwarded. Audited in #1365.
 
+MultiGroupTranspile.SourceDirVsPackageCacheDedup:
+  layer: syntax
+  category: diagnostic-suppression
+  status: covered
+  tests:
+    - AlRunner.Tests/AutoDiscoverDuplicateTests.cs
+  notes: >
+    When a source-directory input (App A) is provided alongside a compiled .app input
+    (App B that depends on App A), AutoDiscoverDependencies used to re-extract App A's
+    AL from the package cache, causing two Roslyn syntax trees for the same class
+    (CS0101 "already contains a definition for 'CodeunitN'") — issue #1566.
+    Fix 1: AutoDiscoverDependencies reads app.json from source-directory inputs and
+    adds their AppIds to inputAppGuids so the package-cache copy is never re-added.
+    Fix 2: the multi-group Transpile path deduplicates generatedCSharpList by primary
+    class name after aggregating all group results, guarding against any remaining
+    duplicate (e.g. runner stubs compiled into multiple groups by LoadAssertStubs).
+    Tests: SourceDirPlusPackageCopy_AppBDotApp_NoDuplicateCS0101 (requires alc).
+
 CLIFlag.FailOnStub:
   layer: syntax
   category: runner-flag
