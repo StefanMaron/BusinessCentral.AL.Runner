@@ -13537,6 +13537,24 @@ DiagnosticSuppression.Case3.CrossExtensionExtensionObject:
     Same-extension dups are caught by DetectSameExtensionDuplicates pre-scan (exit 3).
     Non-extension types (Codeunit, Table, Page) are always forwarded. Audited in #1365.
 
+CLIFlag.FailOnStub:
+  layer: syntax
+  category: runner-flag
+  status: covered
+  tests:
+    - tests/bucket-1/codeunit-runtime/319-fail-on-stub
+    - AlRunner.Tests/FailOnStubTests.cs
+  notes: >
+    --fail-on-stub causes any call to a blank-shell auto-stub or a documented
+    runtime no-op (e.g. Commit()) to throw RunnerGapException instead of
+    silently returning a default value. This surfaces false-positive test
+    passes caused by stubs. Implemented in issue #1519:
+    PipelineOptions.FailOnStub → StubCallGuard.FailOnStub (ThreadStatic, propagated
+    to per-test background threads). Commit() redirected in RoslynRewriter from
+    EmptyStatement to StubCallGuard.CheckNoOp. Auto-stub codeunit calls guarded in
+    MockCodeunitHandle.Invoke and RunCodeunitCore via StubCallGuard.CheckStubById.
+    CurrPage.CancelBackgroundTask guarded in AlScope.cs MockCurrPage.
+
 DiagnosticSuppression.Backfill.SameExtProfileextDuplicate:
   layer: syntax
   category: diagnostic-suppression

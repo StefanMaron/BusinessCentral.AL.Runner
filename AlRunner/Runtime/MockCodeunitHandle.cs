@@ -226,7 +226,9 @@ public class MockCodeunitHandle
         // Track codeunit access for timeout diagnostics
         try { AccessedAutoStubs?.Add(_codeunitId); } catch { }
 
-
+        // Fail-on-stub: if --fail-on-stub is active and this codeunit is a blank shell,
+        // throw immediately instead of silently returning a default value.
+        StubCallGuard.CheckStubById(_codeunitId);
 
         var assembly = CurrentAssembly ?? Assembly.GetExecutingAssembly();
         var codeunitType = FindCodeunitType(assembly);
@@ -486,6 +488,9 @@ public class MockCodeunitHandle
 
     private static void RunCodeunitCore(int codeunitId, MockRecordHandle? record = null)
     {
+        // Fail-on-stub: if --fail-on-stub is active and this codeunit is a blank shell, throw.
+        StubCallGuard.CheckStubById(codeunitId, "OnRun");
+
         var handle = new MockCodeunitHandle(codeunitId);
         // Invoke the OnRun scope (member ID 0 or find OnRun explicitly)
         var assembly = CurrentAssembly ?? Assembly.GetExecutingAssembly();
