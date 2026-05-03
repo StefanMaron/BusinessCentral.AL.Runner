@@ -32,8 +32,42 @@ public static class IterationTracker
         _loopStack.Peek().CurrentIterationHits.Add(stmtId);
     }
 
+    /// <summary>
+    /// Called by ValueCapture.Capture to route the capture into the innermost
+    /// active loop's current iteration accumulator. No-op when no loop is
+    /// active or when iteration tracking is disabled. Plan E5 Group A.
+    ///
+    /// Callers guarantee EnterIteration always precedes any capture inside
+    /// the loop body — the IterationInjector wraps the loop body so
+    /// EnterIteration is the first instrumented call before any AL
+    /// statement that could fire a capture. If a future injector change
+    /// allows captures to fire between EnterLoop and the first
+    /// EnterIteration, those captures would land in the still-empty
+    /// accumulator before EnterIteration's Clear() runs and silently drop.
+    /// </summary>
+    public static void RecordCapture(string variableName, string? value)
+    {
+        if (!_enabled || _loopStack.Count == 0) return;
+        _loopStack.Peek().CurrentIterationCaptures.Add(new CapturedValueSnapshot
+        {
+            VariableName = variableName,
+            Value = value ?? "",
+        });
+    }
+
+    /// <summary>
+    /// Called by MessageCapture.Capture to route the message into the
+    /// innermost active loop's current iteration accumulator. Plan E5 Group A.
+    /// </summary>
+    public static void RecordMessage(string message)
+    {
+        if (!_enabled || _loopStack.Count == 0) return;
+        _loopStack.Peek().CurrentIterationMessages.Add(message);
+    }
+
     public static void Reset()
     {
+        _enabled = false;
         _loops.Clear();
         _loopStack.Clear();
         _nextLoopId = 0;
@@ -84,10 +118,14 @@ public static class IterationTracker
             FinalizeIteration(active);
         }
 
-        // Start new iteration
+        // Start new iteration. Plan E5 Group A: clear per-loop accumulators
+        // instead of snapshotting the global scope counts. Each capture/message
+        // that fires during this iteration is routed by ValueCapture.Capture /
+        // MessageCapture.Capture into THIS loop's accumulator (innermost active
+        // loop only), so the delta is implicit.
         active.CurrentIteration++;
-        active.ValueSnapshotBefore = ValueCapture.GetCaptures().Count;
-        active.MessageSnapshotBefore = MessageCapture.GetMessages().Count;
+        active.CurrentIterationCaptures.Clear();
+        active.CurrentIterationMessages.Clear();
         active.CurrentIterationHits.Clear();
     }
 
@@ -112,35 +150,21 @@ public static class IterationTracker
     }
 
     /// <summary>
-    /// Captures the delta of values, messages, and hit lines since the
-    /// iteration started and records them as an IterationStep.
+    /// Copy this iteration's accumulator into the loop's Steps list.
+    /// Plan E5 Group A: reads directly from per-loop CurrentIterationCaptures /
+    /// CurrentIterationMessages (filled by ValueCapture/MessageCapture's
+    /// RecordCapture/RecordMessage on the innermost active loop). No
+    /// snapshot/delta math against TestExecutionScope.Current — that
+    /// approach double-counted nested-loop captures.
     /// </summary>
     private static void FinalizeIteration(ActiveLoop active)
     {
-        // Captured values added during this iteration
-        var allValues = ValueCapture.GetCaptures();
-        var iterValues = new List<CapturedValueSnapshot>();
-        for (int i = active.ValueSnapshotBefore; i < allValues.Count; i++)
-        {
-            var v = allValues[i];
-            iterValues.Add(new CapturedValueSnapshot { VariableName = v.VariableName, Value = v.Value ?? "" });
-        }
-
-        // Messages added during this iteration
-        var allMessages = MessageCapture.GetMessages();
-        var iterMessages = new List<string>();
-        for (int i = active.MessageSnapshotBefore; i < allMessages.Count; i++)
-            iterMessages.Add(allMessages[i]);
-
-        // Lines hit during this iteration
-        var iterLines = active.CurrentIterationHits.Distinct().ToList();
-
         active.Record.Steps.Add(new IterationStep
         {
             Iteration = active.CurrentIteration,
-            CapturedValues = iterValues,
-            Messages = iterMessages,
-            LinesExecuted = iterLines,
+            CapturedValues = new List<CapturedValueSnapshot>(active.CurrentIterationCaptures),
+            Messages = new List<string>(active.CurrentIterationMessages),
+            LinesExecuted = active.CurrentIterationHits.Distinct().ToList(),
         });
     }
 
@@ -179,8 +203,12 @@ public static class IterationTracker
         public int LoopId { get; init; }
         public LoopRecord Record { get; init; } = null!;
         public int CurrentIteration { get; set; }
-        public int ValueSnapshotBefore { get; set; }
-        public int MessageSnapshotBefore { get; set; }
+        // Per-loop accumulators (Plan E5 Group A). Replaces the snapshot/delta
+        // math against the global TestExecutionScope.Current. Each capture
+        // lands in EXACTLY ONE loop's CurrentIterationCaptures (the innermost
+        // active loop), so nested loops don't double-count.
+        public List<CapturedValueSnapshot> CurrentIterationCaptures { get; } = new();
+        public List<string> CurrentIterationMessages { get; } = new();
         public List<int> CurrentIterationHits { get; } = new();
     }
 }
