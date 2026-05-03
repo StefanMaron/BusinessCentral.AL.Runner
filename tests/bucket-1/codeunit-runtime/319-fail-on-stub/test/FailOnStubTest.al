@@ -3,7 +3,7 @@
 // that stub calls and no-ops silently pass (existing behavior unchanged).
 // The complementary tests that verify --fail-on-stub CAUSES failures live in
 // AlRunner.Tests/FailOnStubTests.cs (C# pipeline tests).
-codeunit 1319002 "Fail On Stub Tests"
+codeunit 1321002 "Fail On Stub Tests"
 {
     Subtype = Test;
 
