@@ -13814,7 +13814,7 @@ DepExtractor.EnumAutoStubSyntheticValue:
 # ── Library Management gaps: BC-faithful error formats + ATL stub override ──
 
 Pipeline.LoadAssertStubs.SymbolOverlapDetection:
-  layer: pipeline
+  layer: syntax
   category: stubs
   status: covered
   tests:
@@ -13847,7 +13847,7 @@ Pipeline.LoadAssertStubs.SymbolOverlapDetection:
     Pipeline_PackagesProvideTestToolkit_ReturnsFalseWhenNoPackages.
 
 MockCodeunitHandle.InvokeAssert.RecordCountVariantUnwrap:
-  layer: runtime
+  layer: runtime-api
   category: assert-routing
   status: covered
   tests:
@@ -13864,7 +13864,7 @@ MockCodeunitHandle.InvokeAssert.RecordCountVariantUnwrap:
     Test: InvokeAssert_RecordCountWithMockVariantWrappedRecord_DispatchesToRecordCount.
 
 MockRecordHandle.ALTestFieldSafe.BcFaithfulErrorFormat:
-  layer: runtime
+  layer: runtime-api
   category: error-format
   status: covered
   tests:
@@ -13884,7 +13884,7 @@ MockRecordHandle.ALTestFieldSafe.BcFaithfulErrorFormat:
     ALTestFieldSafe_ValueMismatch_ErrorMessageContainsFieldCaption.
 
 MockRecordHandle.ALGet.BcFaithfulErrorFormat:
-  layer: runtime
+  layer: runtime-api
   category: error-format
   status: covered
   tests:
