@@ -6,6 +6,46 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.29] - 2026-05-04
+
+### Added
+- auto-inject stub usercontrol + ControlAddin for stripped dep pages
+- add --fail-on-stub flag to catch blank-shell stub and no-op test passes (issue #1519)
+- support custom preprocessor symbols in compile-dep/extract-deps
+- extract-deps --packages <dir> auto-discovers .app dep sources
+- extract-deps — reachability-based dependency slicing from .app artifacts
+
+### Fixed
+- ensure enum auto-stubs include a synthetic value to prevent NRE in EnumExtensionTypeMetadataEmitter — closes #1590
+- prevent CS0101 duplicate-class collision when source-dir input also exists in package cache
+- derive CLEANSCHEMA defaultMax from BC application version, not hardcoded 25
+- catch bare emit exceptions and write partial symbols.json on compile-dep failure
+- strip DotNet procedures and skip pure assembly files in extract-deps — closes #1524
+- evict stale dep DLL when .app content changes without version bump
+- Report.SaveAs*/SaveAsPdf*/etc. static stubs return bool not void
+- case-insensitive SubType = Test gate at Pipeline.cs:796 — closes #1520
+- add ClearReference() to MockInterfaceHandle — closes #1565
+- sharpen ScoreMethodMatch + broaden retry catch for auto-stub multi-overload dispatch (#1577)
+
+### Documentation
+- correct stale limitations — event subscribers and task scheduler both work
+
+### Changed
+- Handle codeunit generic args
+- Fix HttpClient error envelope
+- Fix Variant record Code conversion
+- Fix dep compiler placeholder versions
+- Handle NavIndirectValueToGenericType
+- Fix FieldRef.Validate overload ambiguity
+- Fix mock gaps in HTTP and list
+- Fix mock gaps from System Application
+- Fix void mocks in bool contexts
+- fix(MockFile): ALOpen/ALErase/ALCopy return bool to fix CS0023 in boolean contexts (issue #1530)
+- fix(MockFile): add 7-arg ALUpload overload to fix CS1501 (issue #1531)
+- fix(MockHttpClient): replace ALUseDefaultNetworkWindowsAuthentication property with method to fix CS1955 (issue #1532)
+- fix(MockHttpClient): add NavSecretText overloads for UseWindowsAuthentication and AddCertificate to fix CS1503 (issue #1533)
+- fix(rewriter): skip ToText()→AlCompat.Format() for 0-arg user-defined methods
+
 ## [1.0.28] - 2026-04-27
 
 ### Added
