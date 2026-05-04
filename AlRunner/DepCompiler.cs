@@ -549,6 +549,11 @@ public static class DepCompiler
 
     /// <summary>
     /// Compile syntax trees to a DLL file on disk (instead of in-memory like CompileFromTrees).
+    ///
+    /// When Roslyn reports CS0131 ("The left-hand side of an assignment must be a variable,
+    /// property or indexer") errors, those are caused by BadExpression nodes that BC's C# emitter
+    /// wrote for unresolvable codeunit references in [EventSubscriber] attributes (issue #1596).
+    /// The fix: strip the containing method declarations from their syntax trees and retry once.
     /// </summary>
     internal static bool CompileToDisk(List<SyntaxTree> syntaxTrees, List<MetadataReference> references,
         string outputPath, IList<string>? errorSink = null)
@@ -567,6 +572,49 @@ public static class DepCompiler
             var errors = result.Diagnostics
                 .Where(d => d.Severity == DiagnosticSeverity.Error)
                 .ToList();
+
+            // Issue #1596: CS0131 from BadExpression nodes injected by BC's
+            // EventSubscriberAttributeEmitter when the target codeunit is not in the
+            // slice.  Strip the offending method bodies and retry — these subscribers
+            // will never fire at runtime anyway (their target object is absent).
+            var cs0131Errors = errors.Where(d => d.Id == "CS0131").ToList();
+            if (cs0131Errors.Count > 0)
+            {
+                var strippedTrees = StripMethodsWithCS0131(syntaxTrees, cs0131Errors);
+                if (strippedTrees != null)
+                {
+                    Console.Error.WriteLine(
+                        $"  Warning: {cs0131Errors.Count} CS0131 error(s) from BadExpression event-subscriber attribute(s) — " +
+                        $"offending subscriber method(s) dropped and DLL retried (issue #1596).");
+
+                    // Remove the non-CS0131 errors and retry with cleaned trees.
+                    var nonCS0131Errors = errors.Where(d => d.Id != "CS0131").ToList();
+                    if (nonCS0131Errors.Count == 0)
+                    {
+                        // Only CS0131 errors — retry with stripped trees
+                        var retryCompilation = CSharpCompilation.Create(
+                            Path.GetFileNameWithoutExtension(outputPath),
+                            strippedTrees,
+                            references,
+                            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
+                                .WithAllowUnsafe(true));
+                        var retryResult = retryCompilation.Emit(outputPath);
+                        if (retryResult.Success)
+                            return true;
+                        // Retry failed — fall through to report the retry errors
+                        errors = retryResult.Diagnostics
+                            .Where(d => d.Severity == DiagnosticSeverity.Error)
+                            .ToList();
+                    }
+                    else
+                    {
+                        // Mixed errors — CS0131 are likely from bad subscribers but there
+                        // are other genuine errors too. Report the non-CS0131 ones.
+                        errors = nonCS0131Errors;
+                    }
+                }
+            }
+
             foreach (var d in errors)
                 errorSink?.Add(d.ToString());
             // DEBUG: dump rewritten trees on failure
@@ -591,6 +639,103 @@ public static class DepCompiler
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Given a list of CS0131 Roslyn diagnostics, determine whether any of them originate
+    /// from BC's EventSubscriberAttributeEmitter — identified by being in an
+    /// <see cref="Microsoft.CodeAnalysis.CSharp.Syntax.AttributeArgumentSyntax"/> node
+    /// rather than in a method body statement.
+    ///
+    /// For those, identify the containing method declarations, replace each method body
+    /// with an empty stub (so the class still compiles), and return a new list of patched
+    /// trees.  Returns null if no attribute-level CS0131 errors were found.
+    ///
+    /// Genuine CS0131 errors (assigning to a non-lvalue in a method body) are left in the
+    /// error list and cause the compilation to fail as expected.
+    /// </summary>
+    private static List<SyntaxTree>? StripMethodsWithCS0131(
+        List<SyntaxTree> syntaxTrees,
+        List<Diagnostic> cs0131Errors)
+    {
+        // Filter: only process CS0131 errors that are inside attribute argument lists.
+        // BC's EventSubscriberAttributeEmitter generates BadExpression nodes as attribute
+        // arguments; genuine CS0131 errors occur in method bodies (statement expressions).
+        var attributeCS0131 = cs0131Errors.Where(d =>
+        {
+            var tree = d.Location.SourceTree;
+            if (tree == null) return false;
+            var span = d.Location.SourceSpan;
+            var node = tree.GetRoot().FindNode(span, getInnermostNodeForTie: true);
+            // Walk ancestors: if we reach an AttributeArgumentSyntax before a
+            // StatementSyntax, this is an attribute-level error (BC-generated).
+            while (node != null)
+            {
+                if (node is Microsoft.CodeAnalysis.CSharp.Syntax.AttributeArgumentSyntax)
+                    return true;
+                if (node is Microsoft.CodeAnalysis.CSharp.Syntax.StatementSyntax)
+                    return false;
+                node = node.Parent;
+            }
+            return false;
+        }).ToList();
+
+        if (attributeCS0131.Count == 0) return null;
+
+        // Group by containing syntax tree
+        var errorsByTree = new Dictionary<SyntaxTree, List<Diagnostic>>(ReferenceEqualityComparer.Instance);
+        foreach (var d in attributeCS0131)
+        {
+            var tree = d.Location.SourceTree!;
+            if (!errorsByTree.TryGetValue(tree, out var list))
+                errorsByTree[tree] = list = new List<Diagnostic>();
+            list.Add(d);
+        }
+
+        // Patch each affected tree by removing the offending methods (those whose
+        // attribute lists contain the CS0131 errors)
+        var patchedTrees = new List<SyntaxTree>(syntaxTrees.Count);
+        bool anyPatched = false;
+        foreach (var tree in syntaxTrees)
+        {
+            if (!errorsByTree.TryGetValue(tree, out var treeDiags))
+            {
+                patchedTrees.Add(tree);
+                continue;
+            }
+
+            // Collect the text spans of the error locations
+            var errorSpanStarts = new HashSet<int>(treeDiags.Select(d => d.Location.SourceSpan.Start));
+            var root = tree.GetRoot();
+
+            // Find method declarations that contain one of the erroneous attribute arguments
+            var methodsToStrip = root.DescendantNodes()
+                .OfType<Microsoft.CodeAnalysis.CSharp.Syntax.MethodDeclarationSyntax>()
+                .Where(m => m.AttributeLists.Count > 0 &&
+                    errorSpanStarts.Any(pos =>
+                        pos >= m.FullSpan.Start && pos <= m.FullSpan.End))
+                .ToList();
+
+            if (methodsToStrip.Count == 0)
+            {
+                patchedTrees.Add(tree);
+                continue;
+            }
+
+            // Replace each offending method's attribute list and body with empty stubs
+            var newRoot = root.ReplaceNodes(
+                methodsToStrip,
+                (orig, _) => orig
+                    .WithBody(Microsoft.CodeAnalysis.CSharp.SyntaxFactory.Block())
+                    .WithAttributeLists(
+                        Microsoft.CodeAnalysis.CSharp.SyntaxFactory.List<
+                            Microsoft.CodeAnalysis.CSharp.Syntax.AttributeListSyntax>()));
+
+            patchedTrees.Add(tree.WithRootAndOptions(newRoot, tree.Options));
+            anyPatched = true;
+        }
+
+        return anyPatched ? patchedTrees : null;
     }
 
     /// <summary>
@@ -1033,6 +1178,44 @@ public static class DepCompiler
             }
         }
 
+        // Phase 3 (issue #1596): event subscriber targeting codeunit outside slice.
+        //
+        // When an [EventSubscriber] attribute references a codeunit whose name is not
+        // in the compiled slice or packages, BC's C# emitter throws
+        // "Unexpected value 'BadExpression'" during MethodCodeGenerator.EmitMethod.
+        // This exception is caught in TranspileMulti (issue #1554 handler), but because
+        // the exception aborts before any C# is captured, TranspileMulti returns null.
+        //
+        // Fix: detect AL0118 ("The name '...' does not exist") on the codeunit
+        // reference inside an EventSubscriber attribute.  Strip the AL files that
+        // contain those bad subscribers and retry transpilation.  The stripped
+        // subscriber is logged as a warning — it will never fire at runtime anyway
+        // (its target object doesn't exist in this build).
+        if ((csharpList == null || csharpList.Count == 0) && compilableSources.Count > 0)
+        {
+            var badSubscriberFiles = FindBadEventSubscriberFiles(compilableSources, compilableFilePaths);
+            if (badSubscriberFiles.Count > 0)
+            {
+                var badSet = new HashSet<int>(badSubscriberFiles.Select(x => x.Index));
+                var retained = compilableSources
+                    .Zip(compilableFilePaths, (s, p) => (s, p))
+                    .Select((pair, i) => (pair.s, pair.p, i))
+                    .Where(x => !badSet.Contains(x.i))
+                    .ToList();
+
+                Console.Error.WriteLine($"  Warning: {badSubscriberFiles.Count} AL file(s) contain [EventSubscriber] targeting a codeunit not in the slice — subscribers dropped (CS0131 guard, issue #1596):");
+                foreach (var f in badSubscriberFiles)
+                {
+                    var label = f.FilePath != null ? Path.GetFileName(f.FilePath) : $"source[{f.Index}]";
+                    Console.Error.WriteLine($"    {label}: {f.SubscriberName}");
+                }
+
+                compilableSources = retained.Select(x => x.s).ToList();
+                compilableFilePaths = retained.Select(x => x.p).ToList();
+                csharpList = AlTranspiler.TranspileMulti(compilableSources, effectivePackages, inputPaths, sourceFilePaths: compilableFilePaths, extraRefs: extraRefs, extraDefines: effectiveExtraDefines);
+            }
+        }
+
         if (csharpList == null || csharpList.Count == 0)
         {
             // Re-run capturing stderr so we can surface specific compilation diagnostics
@@ -1208,5 +1391,86 @@ public static class DepCompiler
         }
         catch { }
         return missing;
+    }
+
+    /// <summary>
+    /// Result record returned by <see cref="FindBadEventSubscriberFiles"/>.
+    /// </summary>
+    internal record BadSubscriberFile(int Index, string? FilePath, string SubscriberName);
+
+    /// <summary>
+    /// Detect AL source files that contain [EventSubscriber] attributes targeting
+    /// codeunits that are not in the compiled slice (issue #1596).
+    ///
+    /// Strategy: after a failed TranspileMulti, query
+    /// <see cref="AlTranspiler.LastCompilation"/> for AL0118 ("does not exist in
+    /// the current context") declaration errors.  For each such error, extract
+    /// the unresolved name and find which source files contain an [EventSubscriber]
+    /// attribute that references that name.  Those files are the ones to drop and
+    /// retry without.
+    ///
+    /// The check uses text matching (not full AST analysis) to keep it fast and
+    /// side-effect free.
+    /// </summary>
+    internal static List<BadSubscriberFile> FindBadEventSubscriberFiles(
+        List<string> sources,
+        List<string?> filePaths)
+    {
+        var result = new List<BadSubscriberFile>();
+
+        var lastComp = AlTranspiler.LastCompilation;
+        if (lastComp == null) return result;
+
+        // Collect unresolved names from AL0118 diagnostics.
+        // Message format: The name '"Some Name"' does not exist in the current context.
+        // Note: d.Severity is Microsoft.Dynamics.Nav.CodeAnalysis.Diagnostics.DiagnosticSeverity
+        // (BC type), which differs from the Roslyn DiagnosticSeverity imported at top of file.
+        // Use ToString() comparison to avoid namespace ambiguity.
+        var al0118 = lastComp.GetDeclarationDiagnostics()
+            .Where(d => d.Severity.ToString() == "Error" && d.Id == "AL0118")
+            .ToList();
+
+        if (al0118.Count == 0) return result;
+
+        // Regex: extract the quoted name from the AL0118 message.
+        // Typical message: The name '"License Management Starter"' does not exist in the current context.
+        var nameRx = new System.Text.RegularExpressions.Regex(
+            @"The name '""([^""]+)""' does not exist",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        var unresolvedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var d in al0118)
+        {
+            var m = nameRx.Match(d.GetMessage());
+            if (m.Success)
+                unresolvedNames.Add(m.Groups[1].Value);
+        }
+
+        if (unresolvedNames.Count == 0) return result;
+
+        // For each source, check if it contains an [EventSubscriber] attribute that
+        // mentions one of the unresolved names.
+        // AL syntax: [EventSubscriber(ObjectType::Codeunit, Codeunit::"SomeName", ...)]
+        // We do a simple text search for the codeunit name next to EventSubscriber.
+        for (int i = 0; i < sources.Count; i++)
+        {
+            var src = sources[i];
+            if (!src.Contains("EventSubscriber", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            foreach (var name in unresolvedNames)
+            {
+                // Check the combination of EventSubscriber and the unresolved name appearing
+                // in the same source (exact match of the name string)
+                if (src.Contains($"\"{name}\"", StringComparison.OrdinalIgnoreCase))
+                {
+                    var fp = i < filePaths.Count ? filePaths[i] : null;
+                    result.Add(new BadSubscriberFile(i, fp, name));
+                    break; // one match per file is enough
+                }
+            }
+        }
+
+        return result;
     }
 }

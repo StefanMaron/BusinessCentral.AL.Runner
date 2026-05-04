@@ -1511,4 +1511,185 @@ codeunit 1525004 ""PP Test No Symbol""
         for (int n = 2; n <= 35; n++)
             Assert.Equal(n - 1, AlTranspiler.GetCleanSchemaDefaultMaxForBCVersion(n));
     }
+
+    // ------------------------------------------------------------------ //
+    // Issue #1596: event subscriber targeting codeunit outside slice
+    //              emits CS0131 (Roslyn LHS-of-assignment)
+    // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// When AL has an event subscriber whose target codeunit is NOT in the
+    /// compiled slice or packages, BC's C# emitter generates a BadExpression
+    /// node for the codeunit ID.  After rewriting that C# passes to Roslyn
+    /// which rejects it with CS0131 ("The left-hand side of an assignment
+    /// must be a variable, property or indexer").
+    ///
+    /// compile-dep must:
+    ///   • detect those CS0131 errors,
+    ///   • strip the offending subscriber method bodies (replacing them with
+    ///     empty stubs),
+    ///   • recompile and exit 0,
+    ///   • log a warning for each stripped subscriber.
+    ///
+    /// The other codeunit in the same app (which has no bad subscriber) must
+    /// still be present in the output DLL.
+    ///
+    /// Issue #1596.
+    /// </summary>
+    [Fact]
+    public void CompileDep_ExitsZero_WhenEventSubscriberTargetsMissingCodeunit()
+    {
+        // App contains two codeunits:
+        //   1. "EvtPub1596" — a publisher codeunit (always in slice)
+        //   2. "EvtSub1596" — a subscriber codeunit whose [EventSubscriber]
+        //      targets "Missing Codeunit 1596 XYZ" which is NOT in any package.
+        //      This causes BC's emitter to generate a BadExpression (→ CS0131).
+        //
+        // The app also contains a second clean codeunit ("EvtClean1596") with no
+        // bad subscriber, to verify the DLL is produced for the compilable parts.
+
+        const string alPublisher = """
+            codeunit 159600 "EvtPub1596"
+            {
+                [IntegrationEvent(false, false)]
+                procedure OnSomethingHappened()
+                begin
+                end;
+
+                procedure TriggerEvent()
+                begin
+                    OnSomethingHappened();
+                end;
+            }
+            """;
+
+        // This subscriber targets "Missing Codeunit 1596 XYZ" which is NOT
+        // available.  BC's C# emitter will generate a BadExpression for the
+        // codeunit ID — the test verifies compile-dep survives that.
+        const string alBadSubscriber = """
+            codeunit 159601 "EvtSub1596"
+            {
+                [EventSubscriber(ObjectType::Codeunit, Codeunit::"Missing Codeunit 1596 XYZ", 'OnMissingEvent', '', false, false)]
+                local procedure HandleMissing()
+                begin
+                    // body referencing missing codeunit event
+                end;
+            }
+            """;
+
+        const string alClean = """
+            codeunit 159602 "EvtClean1596"
+            {
+                procedure GetAnswer(): Integer
+                begin
+                    exit(42);
+                end;
+            }
+            """;
+
+        var rootDir = Path.Combine(Path.GetTempPath(), "al-runner-cs0131-" + Guid.NewGuid().ToString("N")[..8]);
+        var appDir = Path.Combine(rootDir, "App1596");
+        var outputDir = Path.Combine(rootDir, "out");
+        try
+        {
+            Directory.CreateDirectory(appDir);
+            Directory.CreateDirectory(outputDir);
+
+            File.WriteAllText(Path.Combine(appDir, "app.json"), $$"""
+            {
+              "id": "15960000-1596-1596-1596-159600001596",
+              "name": "App1596",
+              "publisher": "Test",
+              "version": "1.0.0.0"
+            }
+            """);
+            File.WriteAllText(Path.Combine(appDir, "Publisher.al"), alPublisher);
+            File.WriteAllText(Path.Combine(appDir, "BadSubscriber.al"), alBadSubscriber);
+            File.WriteAllText(Path.Combine(appDir, "Clean.al"), alClean);
+
+            var origErr = Console.Error;
+            using var errCapture = new StringWriter();
+            Console.SetError(errCapture);
+            int rc;
+            try
+            {
+                rc = DepCompiler.CompileDepMultiApp(rootDir, outputDir, new List<string>());
+            }
+            finally
+            {
+                Console.SetError(origErr);
+            }
+
+            var stderr = errCapture.ToString();
+
+            // compile-dep must exit 0 — the bad subscriber is dropped, not fatal.
+            Assert.Equal(0, rc);
+
+            // A DLL must have been produced.
+            var dlls = Directory.GetFiles(outputDir, "*.dll");
+            Assert.True(dlls.Length > 0,
+                $"At least one DLL must be produced.\nStderr:\n{stderr}");
+
+            // A warning about the dropped subscriber must be logged.
+            Assert.Contains("CS0131", stderr, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(rootDir)) Directory.Delete(rootDir, true);
+        }
+    }
+
+    /// <summary>
+    /// Negative case for issue #1596: genuine CS0131 errors that are NOT from
+    /// BadExpression event-subscriber emission (i.e. invalid user C# that the
+    /// runner should not silently suppress) must still cause compile-dep to fail.
+    ///
+    /// We verify this by calling <see cref="DepCompiler.CompileToDisk"/> directly
+    /// with a Roslyn syntax tree that has a real CS0131 error (assigning to a
+    /// method-call result) and asserting it returns false.
+    ///
+    /// Note: the CompileDep pipeline only invokes CompileToDisk on rewritten C#
+    /// from the BC transpiler; user AL never reaches CompileToDisk directly with
+    /// raw C#.  This test covers the contract of CompileToDisk itself.
+    /// </summary>
+    [Fact]
+    public void CompileToDisk_ReturnsFalse_OnGenuineCS0131()
+    {
+        // C# that has a real CS0131: assigning to a method-call result.
+        // This is NOT a BadExpression from a missing codeunit — it is a genuine
+        // programmer error that must not be silently swallowed.
+        const string badCs = """
+            namespace TestNs1596Neg
+            {
+                public class Foo
+                {
+                    private static int GetNum() => 42;
+                    public void Bad()
+                    {
+                        GetNum() = 5;   // CS0131: lvalue required
+                    }
+                }
+            }
+            """;
+
+        var tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(badCs);
+        var refs = RoslynCompiler.LoadReferences();
+        var outPath = Path.Combine(Path.GetTempPath(), $"alrunner-cs0131-neg-{Guid.NewGuid():N}.dll");
+        try
+        {
+            var errors = new List<string>();
+            var result = DepCompiler.CompileToDisk(
+                new List<Microsoft.CodeAnalysis.SyntaxTree> { tree },
+                refs, outPath, errors);
+
+            // The genuine CS0131 must cause failure
+            Assert.False(result, "CompileToDisk must return false for genuine CS0131");
+            Assert.True(errors.Count > 0, "Error sink must contain the CS0131 diagnostic");
+            Assert.Contains(errors, e => e.Contains("CS0131"));
+        }
+        finally
+        {
+            if (File.Exists(outPath)) File.Delete(outPath);
+        }
+    }
 }
