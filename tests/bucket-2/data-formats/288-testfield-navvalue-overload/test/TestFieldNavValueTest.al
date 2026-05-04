@@ -56,7 +56,7 @@ codeunit 161001 "TFNav Test"
 
         // [THEN] An error is raised for the value mismatch
         asserterror Rec.TestField(Qty, Expected);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     // ------------------------------------------------------------------
@@ -104,7 +104,7 @@ codeunit 161001 "TFNav Test"
 
         // [THEN] An error is raised
         asserterror Rec.TestField(Name, Expected);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     // ------------------------------------------------------------------
@@ -152,7 +152,7 @@ codeunit 161001 "TFNav Test"
 
         // [THEN] An error is raised
         asserterror Rec.TestField(Amt, Expected);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     // ------------------------------------------------------------------
@@ -200,6 +200,6 @@ codeunit 161001 "TFNav Test"
 
         // [THEN] An error is raised
         asserterror Rec.TestField(Flag, Expected);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 }

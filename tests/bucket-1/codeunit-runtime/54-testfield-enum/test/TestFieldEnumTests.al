@@ -63,7 +63,7 @@ codeunit 56101 "TestField Enum Tests"
         asserterror Ord.TestField(Status, "TFE Status"::Closed);
 
         // [THEN] Error is raised (TestField failure message)
-        Assert.ExpectedError('TestField');
+        Assert.ExpectedError('must');
     end;
 
     [Test]
@@ -79,7 +79,7 @@ codeunit 56101 "TestField Enum Tests"
         asserterror Ord.TestField(Status, "TFE Status"::Draft);
 
         // [THEN] Error is raised
-        Assert.ExpectedError('TestField');
+        Assert.ExpectedError('must');
     end;
 
     // -----------------------------------------------------------------------
@@ -112,6 +112,6 @@ codeunit 56101 "TestField Enum Tests"
         asserterror Ord.TestField(Status);
 
         // [THEN] Error is raised since Status is at default value
-        Assert.ExpectedError('TestField');
+        Assert.ExpectedError('must');
     end;
 }

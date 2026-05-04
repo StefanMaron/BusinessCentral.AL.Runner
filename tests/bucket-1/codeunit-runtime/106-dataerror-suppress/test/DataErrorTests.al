@@ -143,7 +143,7 @@ codeunit 1059401 "DataError Suppress Tests"
         asserterror R.Modify();
 
         // [THEN] Should have thrown an error
-        Assert.ExpectedError('Record not found');
+        Assert.ExpectedError('does not exist');
     end;
 
     // -----------------------------------------------------------------------
@@ -174,7 +174,7 @@ codeunit 1059401 "DataError Suppress Tests"
         asserterror R.Get(999);
 
         // [THEN] Should have thrown an error
-        Assert.ExpectedError('not found');
+        Assert.ExpectedError('does not exist');
     end;
 
     // -----------------------------------------------------------------------

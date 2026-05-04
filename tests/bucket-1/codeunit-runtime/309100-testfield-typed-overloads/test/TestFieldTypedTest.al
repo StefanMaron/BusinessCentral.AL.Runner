@@ -60,7 +60,7 @@ codeunit 309101 "TFTO Test"
     begin
         Rec := MakeRec('D2', 0, 9.99, false, 0DT, '');
         asserterror Rec.TestField(Price, 1.00);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     [Test]
@@ -84,7 +84,7 @@ codeunit 309101 "TFTO Test"
         Rec := MakeRec('D4', 0, 7.50, false, 0DT, '');
         EI.Message := 'Price must be 7.50';
         asserterror Rec.TestField(Price, 2.00, EI);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     // -----------------------------------------------------------------------
@@ -114,7 +114,7 @@ codeunit 309101 "TFTO Test"
         Wrong := CreateDateTime(20230101D, 120000T);
         Rec := MakeRec('DT2', 0, 0, false, Stored, '');
         asserterror Rec.TestField("Posted At", Wrong);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     [Test]
@@ -144,7 +144,7 @@ codeunit 309101 "TFTO Test"
         Rec := MakeRec('DT4', 0, 0, false, Stored, '');
         EI.Message := 'PostedAt must match';
         asserterror Rec.TestField("Posted At", Wrong, EI);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     // -----------------------------------------------------------------------
@@ -168,7 +168,7 @@ codeunit 309101 "TFTO Test"
     begin
         Rec := MakeRec('B2', 0, 0, false, 0DT, '');
         asserterror Rec.TestField(Active, true);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     [Test]
@@ -192,7 +192,7 @@ codeunit 309101 "TFTO Test"
         Rec := MakeRec('B4', 0, 0, false, 0DT, '');
         EI.Message := 'Active must be true';
         asserterror Rec.TestField(Active, true, EI);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     // -----------------------------------------------------------------------
@@ -216,7 +216,7 @@ codeunit 309101 "TFTO Test"
     begin
         Rec := MakeRec('I2', 42, 0, false, 0DT, '');
         asserterror Rec.TestField(Qty, 99);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     [Test]
@@ -240,7 +240,7 @@ codeunit 309101 "TFTO Test"
         Rec := MakeRec('I4', 10, 0, false, 0DT, '');
         EI.Message := 'Qty must be 10';
         asserterror Rec.TestField(Qty, 5, EI);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     // -----------------------------------------------------------------------
@@ -264,7 +264,7 @@ codeunit 309101 "TFTO Test"
     begin
         Rec := MakeRec('C002', 0, 0, false, 0DT, '');
         asserterror Rec.TestField("No.", 'C999');
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     [Test]
@@ -288,7 +288,7 @@ codeunit 309101 "TFTO Test"
         Rec := MakeRec('C004', 0, 0, false, 0DT, '');
         EI.Message := 'No. must be C004';
         asserterror Rec.TestField("No.", 'C999', EI);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     // -----------------------------------------------------------------------
@@ -312,7 +312,7 @@ codeunit 309101 "TFTO Test"
     begin
         Rec := MakeRec('T2', 0, 0, false, 0DT, 'Widget');
         asserterror Rec.TestField(Name, 'Gadget');
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     [Test]
@@ -336,7 +336,7 @@ codeunit 309101 "TFTO Test"
         Rec := MakeRec('T4', 0, 0, false, 0DT, 'Alpha');
         EI.Message := 'Name must be Alpha';
         asserterror Rec.TestField(Name, 'Beta', EI);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     // -----------------------------------------------------------------------
@@ -364,6 +364,6 @@ codeunit 309101 "TFTO Test"
         Rec := MakeRec('E2', 0, 0, false, 0DT, '');
         EI.Message := 'Name must have a value';
         asserterror Rec.TestField(Name, EI);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 }

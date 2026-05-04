@@ -1035,64 +1035,105 @@ public class AlRunnerPipeline
             return;
         }
 
-        bool packagesHaveAssert = packagePaths.Any(p =>
-            Directory.Exists(p) &&
-            Directory.GetFiles(p, "*.app", SearchOption.AllDirectories)
-                .Any(f => Path.GetFileName(f).Contains("Assert", StringComparison.OrdinalIgnoreCase) ||
-                           Path.GetFileName(f).Contains("TestLibraries", StringComparison.OrdinalIgnoreCase)));
+        // Detect whether any package in scope ships Microsoft's Application Test
+        // Library (or any equivalent that declares Assert / Library Assert).
+        // Previously this used filename matching ("Assert" / "TestLibraries" in the
+        // .app filename) — but Microsoft ships ATL as
+        // "Microsoft_Application Test Library_*.app" which matches neither, so the
+        // detection silently missed it and our stubs were injected into the main
+        // AL compilation alongside ATL's symbols → AL0197 duplicates → blocked emit.
+        //
+        // Robust approach: read the NAVX manifest of each .app and check the package
+        // name. ATL's name is stable across BC versions ("Application Test Library").
+        // Also look for the user's own assert-providing apps (filename heuristic
+        // retained as a fallback to keep existing user setups working).
+        bool packagesHaveAssert = PackagesProvideTestToolkit(packagePaths)
+                                  || InputPathsHaveAssertPackage(inputPaths);
+
+        var stubsDir = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "stubs");
+        if (!Directory.Exists(stubsDir))
+            stubsDir = Path.Combine(AppContext.BaseDirectory, "stubs");
+        if (!Directory.Exists(stubsDir))
+            return;
 
         if (!packagesHaveAssert)
         {
-            foreach (var ip in inputPaths)
+            // No ATL package — load our built-in stubs into the main compilation so
+            // user AL referencing Assert/Library-Random/etc. resolves at compile time.
+            Log.Info("Loading Assert stubs (no Assert.app found in packages)");
+            foreach (var stubFile in Directory.GetFiles(stubsDir, "*.al", SearchOption.TopDirectoryOnly).OrderBy(f => f))
             {
-                var dir = Directory.Exists(ip) ? ip : Path.GetDirectoryName(ip);
-                while (dir != null)
-                {
-                    var alPkgs = Path.Combine(dir, ".alpackages");
-                    if (Directory.Exists(alPkgs) &&
-                        Directory.GetFiles(alPkgs, "*.app", SearchOption.AllDirectories)
-                            .Any(f => Path.GetFileName(f).Contains("Assert", StringComparison.OrdinalIgnoreCase)))
-                    {
-                        packagesHaveAssert = true;
-                        break;
-                    }
-                    var parent = Path.GetDirectoryName(dir);
-                    if (parent == dir) break;
-                    dir = parent;
-                }
-                if (packagesHaveAssert) break;
-            }
-        }
-
-        if (!packagesHaveAssert)
-        {
-            var stubsDir = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "stubs");
-            if (!Directory.Exists(stubsDir))
-                stubsDir = Path.Combine(AppContext.BaseDirectory, "stubs");
-            if (Directory.Exists(stubsDir))
-            {
-                Log.Info("Loading Assert stubs (no Assert.app found in packages)");
-                foreach (var stubFile in Directory.GetFiles(stubsDir, "*.al", SearchOption.TopDirectoryOnly).OrderBy(f => f))
-                {
-                    var src = File.ReadAllText(stubFile);
-                    alSources.Add(src);
-                    foreach (var group in inputGroups)
-                        group.Sources.Add(src);
-                }
+                var src = File.ReadAllText(stubFile);
+                alSources.Add(src);
+                foreach (var group in inputGroups)
+                    group.Sources.Add(src);
             }
         }
         else
         {
-            var stubsDir = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "stubs");
-            if (!Directory.Exists(stubsDir))
-                stubsDir = Path.Combine(AppContext.BaseDirectory, "stubs");
-            if (Directory.Exists(stubsDir))
-            {
-                foreach (var stubFile in Directory.GetFiles(stubsDir, "*.al", SearchOption.TopDirectoryOnly).OrderBy(f => f))
-                    assertStubSources.Add(File.ReadAllText(stubFile));
-            }
+            // ATL package is present and provides the symbols for AL compile.
+            // Compile our stubs separately so they emit their C# routing entry-points
+            // for runtime dispatch without colliding with ATL's symbols.
+            foreach (var stubFile in Directory.GetFiles(stubsDir, "*.al", SearchOption.TopDirectoryOnly).OrderBy(f => f))
+                assertStubSources.Add(File.ReadAllText(stubFile));
             Log.Info("Skipping Assert stubs for AL compilation (real Assert.app found in packages)");
         }
+    }
+
+    /// <summary>
+    /// Returns true if any package in the given paths is identified as a test-toolkit
+    /// provider (Microsoft's "Application Test Library" or a similarly-named equivalent).
+    /// Detection reads the NAVX manifest — robust against the package being shipped
+    /// under any filename (the filename heuristic missed
+    /// "Microsoft_Application Test Library_*.app").
+    /// </summary>
+    private static bool PackagesProvideTestToolkit(IEnumerable<string> packagePaths)
+    {
+        foreach (var p in packagePaths)
+        {
+            if (!Directory.Exists(p)) continue;
+            foreach (var appFile in Directory.GetFiles(p, "*.app", SearchOption.AllDirectories))
+            {
+                try
+                {
+                    var doc = AlTranspiler.LoadNavxManifest(appFile);
+                    if (doc == null) continue;
+                    System.Xml.Linq.XNamespace ns = "http://schemas.microsoft.com/navx/2015/manifest";
+                    var name = doc.Root?.Element(ns + "App")?.Attribute("Name")?.Value;
+                    if (name != null &&
+                        (name.Contains("Application Test Library", StringComparison.OrdinalIgnoreCase) ||
+                         name.Contains("Test Library", StringComparison.OrdinalIgnoreCase) ||
+                         name.Contains("Test Libraries", StringComparison.OrdinalIgnoreCase) ||
+                         name.Contains("Assert", StringComparison.OrdinalIgnoreCase)))
+                        return true;
+                }
+                catch { /* corrupt manifest — skip */ }
+            }
+            // Filename fallback for user-shipped assert apps that don't follow the name pattern
+            if (Directory.GetFiles(p, "*.app", SearchOption.AllDirectories)
+                .Any(f => Path.GetFileName(f).Contains("Assert", StringComparison.OrdinalIgnoreCase) ||
+                          Path.GetFileName(f).Contains("TestLibraries", StringComparison.OrdinalIgnoreCase)))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool InputPathsHaveAssertPackage(IEnumerable<string> inputPaths)
+    {
+        foreach (var ip in inputPaths)
+        {
+            var dir = Directory.Exists(ip) ? ip : Path.GetDirectoryName(ip);
+            while (dir != null)
+            {
+                var alPkgs = Path.Combine(dir, ".alpackages");
+                if (Directory.Exists(alPkgs) && PackagesProvideTestToolkit(new[] { alPkgs }))
+                    return true;
+                var parent = Path.GetDirectoryName(dir);
+                if (parent == dir) break;
+                dir = parent;
+            }
+        }
+        return false;
     }
 
     private static bool NeedsBuiltInTestStubs(List<string> alSources)

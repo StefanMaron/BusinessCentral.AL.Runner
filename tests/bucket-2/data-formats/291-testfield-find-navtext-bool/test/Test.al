@@ -60,7 +60,7 @@ codeunit 62102 "TFNvBl Test"
 
         // [THEN] An error is raised
         asserterror Src.VerifyFieldTextVar(Rec, ExpVal);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     // ========================================================================
@@ -107,7 +107,7 @@ codeunit 62102 "TFNvBl Test"
 
         // [THEN] An error is raised
         asserterror Src.VerifyFieldBoolVar(Rec, ExpBool);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     // ========================================================================
@@ -158,7 +158,7 @@ codeunit 62102 "TFNvBl Test"
 
         // [THEN] An error is raised
         asserterror Src.VerifyFieldTextVarEI(Rec, ExpVal, EI);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     // ========================================================================
@@ -209,7 +209,7 @@ codeunit 62102 "TFNvBl Test"
 
         // [THEN] An error is raised
         asserterror Src.VerifyFieldBoolVarEI(Rec, ExpBool, EI);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     // ========================================================================

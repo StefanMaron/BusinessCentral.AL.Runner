@@ -13810,3 +13810,76 @@ DepExtractor.EnumAutoStubSyntheticValue:
     Implemented in DepExtractor.GenerateStub ("Enum" case).
     Tests: ExtractDeps_EnumStub_IncludesAtLeastOneValue_WhenBaseEnumIsAutoStubbed,
     ExtractDeps_ThenCompileDep_SucceedsWhenEnumExtensionBaseIsAutoStubbed.
+
+# ── Library Management gaps: BC-faithful error formats + ATL stub override ──
+
+Pipeline.LoadAssertStubs.AtlPackageDetectionByManifest:
+  layer: pipeline
+  category: stubs
+  status: covered
+  tests:
+    - AlRunner.Tests/LibraryManagementGapTests.cs
+  notes: >
+    LoadAssertStubs detects Microsoft's "Application Test Library" by reading
+    the NAVX manifest's App Name (not by .app filename). The previous filename
+    heuristic ("Assert" or "TestLibraries" in the file name) missed Microsoft's
+    standard package name "Microsoft_Application Test Library_*.app", which
+    caused our built-in stubs to be loaded into the main AL compilation
+    alongside ATL's symbols → AL0197 duplicates → blocked emit. With manifest-
+    based detection, our stubs compile separately for runtime dispatch and ATL
+    provides the AL compile-time symbols, so the user can run tests with
+    ".alpackages" containing ATL out of the box (no rename workaround).
+    Test: Pipeline_LoadAssertStubs_DetectsAtlPackageByManifestName_NotByFilename.
+
+MockCodeunitHandle.InvokeAssert.RecordCountVariantUnwrap:
+  layer: runtime
+  category: assert-routing
+  status: covered
+  tests:
+    - AlRunner.Tests/LibraryManagementGapTests.cs
+  notes: >
+    InvokeAssert (case 2) unwraps MockVariant before type-sniffing so
+    Assert.RecordCount(Variant, Integer) routes to MockAssert.RecordCount
+    instead of falling through to the ExpectedMessage(Text, Text) default.
+    Required when the Assert codeunit comes from a referenced dep package
+    rather than our built-in stub: the AL→C# call site boxes the Variant
+    argument in MockVariant. Without this unwrap, every Assert.RecordCount
+    call surfaced as "Assert.ExpectedMessage failed. Expected substring:
+    <FilterView>, Actual: <Count>".
+    Test: InvokeAssert_RecordCountWithMockVariantWrappedRecord_DispatchesToRecordCount.
+
+MockRecordHandle.ALTestFieldSafe.BcFaithfulErrorFormat:
+  layer: runtime
+  category: error-format
+  status: covered
+  tests:
+    - AlRunner.Tests/LibraryManagementGapTests.cs
+    - AlRunner.Tests/TestFieldNavValueObjectOverloadTests.cs
+  notes: >
+    ALTestFieldSafe / TestFieldNativeType / ALTestField error messages now
+    use the BC-faithful format "<FieldCaption> must have a value in
+    <TableCaption>: <PK>" (or "must be equal to '<Expected>'" for value
+    mismatches), matching the format BC's TestField raises in production.
+    Real-world test suites assert ExpectedError on the field caption (e.g.
+    "Author Nos.") — the previous "TestField failed: field N in table M ..."
+    raw-id format failed those assertions. Implemented via FormatFieldError
+    (already used by ALFieldError).
+    Tests: ALTestFieldSafe_EmptyField_ErrorMessageContainsFieldCaption,
+    ALTestFieldSafe_EmptyField_ErrorMessageContainsTableCaption,
+    ALTestFieldSafe_ValueMismatch_ErrorMessageContainsFieldCaption.
+
+MockRecordHandle.ALGet.BcFaithfulErrorFormat:
+  layer: runtime
+  category: error-format
+  status: covered
+  tests:
+    - AlRunner.Tests/LibraryManagementGapTests.cs
+  notes: >
+    ALGet and ALGetBySystemId now raise "The <TableCaption> does not exist.
+    Identification fields and values: ..." matching BC's actual error format.
+    The previous "Record not found in table N for key (...)" used the raw
+    table id and the literal "not found" phrase, which mismatched real-world
+    suites that assert ExpectedError on the table caption ("Book Journal
+    Batch"). Modify on a missing record was updated to the same family
+    ("The <TableCaption> does not exist for Modify.") for consistency.
+    Test: ALGet_KeyNotFoundThrowError_ErrorMessageContainsTableCaption.

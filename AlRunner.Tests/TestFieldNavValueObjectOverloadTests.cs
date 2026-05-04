@@ -92,7 +92,8 @@ public class TestFieldNavValueObjectOverloadTests
         // [WHEN/THEN] Mismatch must throw with the expected error.
         object wrongValue = 1;
         var ex = Assert.Throws<Exception>(() => rec.ALTestFieldNavValueSafe(2, NavType.Integer, wrongValue));
-        Assert.Contains("expected '1' but was '99'", ex.Message);
+        // Error format follows BC's TestField pattern: "<FieldCaption> must be equal to '<Expected>' in <TableCaption>: <PK>".
+        Assert.Contains("must be equal to '1'", ex.Message);
     }
 
     [Fact]
@@ -107,6 +108,6 @@ public class TestFieldNavValueObjectOverloadTests
         // [WHEN/THEN] Mismatch must throw with the expected error.
         object wrongValue = "Gadget";
         var ex = Assert.Throws<Exception>(() => rec.ALTestFieldNavValueSafe(3, NavType.Text, wrongValue));
-        Assert.Contains("expected 'Gadget' but was 'Widget'", ex.Message);
+        Assert.Contains("must be equal to 'Gadget'", ex.Message);
     }
 }

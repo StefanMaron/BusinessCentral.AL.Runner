@@ -337,6 +337,6 @@ codeunit 56681 "RF Tests"
         FldRef := RecRef.Field(2);
         FldRef.Value := 'Ghost';
         asserterror RecRef.Modify();
-        Assert.ExpectedError('Record not found');
+        Assert.ExpectedError('does not exist');
     end;
 }
