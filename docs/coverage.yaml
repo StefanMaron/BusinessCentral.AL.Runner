@@ -13676,6 +13676,27 @@ DepCompiler.PartialSymbolsJsonOnEmitFailure:
     Tests: CompileDepMultiApp_WritesSymbolsJson_FromLastCompilation_WhenAppFailsAtEmit.
     Fixed in #1554.
 
+DepCompiler.BadExpressionEventSubscriberDrop:
+  layer: syntax
+  category: compile-dep
+  status: covered
+  tests:
+    - AlRunner.Tests/DepCompilerTests.cs
+  notes: >
+    When an [EventSubscriber] attribute references a codeunit that is NOT in the
+    compiled slice or packages, BC's EventSubscriberAttributeEmitter.EmitObjectId
+    throws "Unexpected value 'BadExpression'" during MethodCodeGenerator.EmitMethod.
+    TranspileMulti catches the exception but returns null (zero captured objects).
+    DepCompiler now detects this pattern (AL0118 declaration error + BadExpression
+    emit exception) via FindBadEventSubscriberFiles, removes the offending AL files,
+    and retries TranspileMulti — producing a valid DLL with a warning logged.
+    A secondary guard in CompileToDisk handles the alternate path where BC emits C#
+    with BadExpression attribute arguments that Roslyn rejects with CS0131 — those
+    are stripped at the method level (StripMethodsWithCS0131) and retried.
+    Tests: CompileDep_ExitsZero_WhenEventSubscriberTargetsMissingCodeunit,
+           CompileToDisk_ReturnsFalse_OnGenuineCS0131 (negative).
+    Fixed in #1596.
+
 # ── extract-deps: --packages dir auto-discovery ──────────────────
 
 DepExtractor.PackagesDirAutoDiscovery:
