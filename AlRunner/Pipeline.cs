@@ -2305,6 +2305,15 @@ public class AlRunnerPipeline
                     var ln = uc.Name?.Identifier.ValueText;
                     if (!string.IsNullOrEmpty(ln)) existingControls.Add(ln);
                 }
+                // Also exclude page parts — CurrPage.PartName.Page.Method() uses the same
+                // two-level access syntax as usercontrols, but must not trigger stub injection
+                // because the part is already declared. Without this guard, the runner injects
+                // a conflicting usercontrol(PartName; ...) and produces AL0155. (issue #1597)
+                foreach (var pp in root.DescendantNodes().OfType<PagePartSyntax>())
+                {
+                    var ln = pp.Name?.Identifier.ValueText;
+                    if (!string.IsNullOrEmpty(ln)) existingControls.Add(ln);
+                }
                 if (existingControls.Count > 0)
                     pageExistingControls[i] = existingControls;
 
