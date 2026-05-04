@@ -1013,6 +1013,20 @@ usercontrol_auto_stub:
   tests:
     - tests/bucket-2/page-report/314000-usercontrol-auto-stub
 
+pagepart_stub_injection_guard:
+  layer: syntax
+  category: page
+  status: covered
+  notes: >
+    Pipeline.InjectUserControlStubs() now also adds PagePartSyntax local names to the
+    existingControls guard set. CurrPage.PartName.Page.Method() access on a declared
+    part(PartName; ...) is syntactically identical at the two-level match point to a
+    usercontrol call, so without this guard the injector incorrectly injects a stub
+    usercontrol — producing AL0155 (duplicate member) or AL0132 (wrong return type).
+    Fixed in issue #1597.
+  tests:
+    - tests/bucket-2/page-report/314100-pagepart-currpage-stub
+
 view_definition:
   layer: syntax
   category: page
