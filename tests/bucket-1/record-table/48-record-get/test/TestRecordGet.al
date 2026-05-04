@@ -45,7 +45,7 @@ codeunit 55201 "Test Record Get"
     begin
         // Get on a key that was never inserted must throw
         asserterror Rec.Get('NONEXIST');
-        Assert.ExpectedError('not found');
+        Assert.ExpectedError('does not exist');
     end;
 
     [Test]
@@ -103,6 +103,6 @@ codeunit 55201 "Test Record Get"
         Rec: Record "Record Get Composite";
     begin
         asserterror Rec.Get('NOCOMP', 999);
-        Assert.ExpectedError('not found');
+        Assert.ExpectedError('does not exist');
     end;
 }

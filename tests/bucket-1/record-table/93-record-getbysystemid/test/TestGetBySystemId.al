@@ -38,6 +38,6 @@ codeunit 93002 "GBS GetBySystemId Tests"
         // [WHEN] GetBySystemId is called with a non-existent ID
         // [THEN] It should error because there is no matching record
         asserterror Rec.GetBySystemId(FakeId);
-        Assert.ExpectedError('Record not found');
+        Assert.ExpectedError('does not exist');
     end;
 }

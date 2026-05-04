@@ -73,7 +73,7 @@ codeunit 313601 "FrTf Typed Test"
         Rec := MakeRec(2, 'Item', 42, 0, false);
         FR := GetFieldRef(Rec, 3);
         asserterror FR.TestField(99);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     [Test]
@@ -101,7 +101,7 @@ codeunit 313601 "FrTf Typed Test"
         FR := GetFieldRef(Rec, 3);
         EI.Message := 'Qty must be 10';
         asserterror FR.TestField(5, EI);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     // ── FieldRef.TestField (Decimal) ─────────────────────────────────────────
@@ -127,7 +127,7 @@ codeunit 313601 "FrTf Typed Test"
         Rec := MakeRec(6, 'Item', 0, 9.99, false);
         FR := GetFieldRef(Rec, 4);
         asserterror FR.TestField(1.00);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     [Test]
@@ -155,7 +155,7 @@ codeunit 313601 "FrTf Typed Test"
         FR := GetFieldRef(Rec, 4);
         EI.Message := 'Price must be 7.50';
         asserterror FR.TestField(2.00, EI);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     // ── FieldRef.TestField (Boolean) ─────────────────────────────────────────
@@ -181,7 +181,7 @@ codeunit 313601 "FrTf Typed Test"
         Rec := MakeRec(10, 'Item', 0, 0, false);
         FR := GetFieldRef(Rec, 5);
         asserterror FR.TestField(true);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     [Test]
@@ -209,7 +209,7 @@ codeunit 313601 "FrTf Typed Test"
         FR := GetFieldRef(Rec, 5);
         EI.Message := 'Active must be true';
         asserterror FR.TestField(true, EI);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     // ── FieldRef.TestField (Text) ─────────────────────────────────────────────
@@ -235,7 +235,7 @@ codeunit 313601 "FrTf Typed Test"
         Rec := MakeRec(14, 'Widget', 0, 0, false);
         FR := GetFieldRef(Rec, 2);
         asserterror FR.TestField('Gadget');
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     [Test]
@@ -263,7 +263,7 @@ codeunit 313601 "FrTf Typed Test"
         FR := GetFieldRef(Rec, 2);
         EI.Message := 'Name must be Alpha';
         asserterror FR.TestField('Beta', EI);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     // ── FieldRef.TestField (Date) ─────────────────────────────────────────────
@@ -289,7 +289,7 @@ codeunit 313601 "FrTf Typed Test"
         Rec := MakeRec(18, '', 0, 0, false);
         FR := GetFieldRef(Rec, 6);
         asserterror FR.TestField(20230101D);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     [Test]
@@ -317,7 +317,7 @@ codeunit 313601 "FrTf Typed Test"
         FR := GetFieldRef(Rec, 6);
         EI.Message := 'PostedOn must match';
         asserterror FR.TestField(20230101D, EI);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     // ── FieldRef.TestField (DateTime) ────────────────────────────────────────
@@ -347,7 +347,7 @@ codeunit 313601 "FrTf Typed Test"
         Rec := MakeRec(22, '', 0, 0, false);
         FR := GetFieldRef(Rec, 7);
         asserterror FR.TestField(Wrong);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     [Test]
@@ -379,7 +379,7 @@ codeunit 313601 "FrTf Typed Test"
         FR := GetFieldRef(Rec, 7);
         EI.Message := 'PostedAt must match';
         asserterror FR.TestField(Wrong, EI);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     // ── FieldRef.TestField (Code) ─────────────────────────────────────────────
@@ -405,7 +405,7 @@ codeunit 313601 "FrTf Typed Test"
         Rec := MakeRec(26, '', 0, 0, false);
         FR := GetFieldRef(Rec, 8);
         asserterror FR.TestField('WRONG');
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     [Test]
@@ -433,7 +433,7 @@ codeunit 313601 "FrTf Typed Test"
         FR := GetFieldRef(Rec, 8);
         EI.Message := 'Code must match';
         asserterror FR.TestField('NOPE', EI);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     // ── FieldRef.TestField (ErrorInfo) — non-empty check with ErrorInfo ───────
@@ -463,6 +463,6 @@ codeunit 313601 "FrTf Typed Test"
         FR := GetFieldRef(Rec, 2);
         EI.Message := 'Name must have a value';
         asserterror FR.TestField(EI);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 }

@@ -578,8 +578,16 @@ public class MockCodeunitHandle
 
             case 2:
                 // IsTrue(bool, text), IsFalse(bool, text), ExpectedErrorCode(code, msg),
-                // RecordCount(record, count), ExpectedMessage(expected, actual)
-                if (args[0] is MockRecordHandle rec2 && args[1] is int count)
+                // RecordCount(record, count), ExpectedMessage(expected, actual).
+                //
+                // AL Variant parameters (Assert.RecordCount takes a Variant) arrive boxed
+                // in MockVariant when the call site goes through the BC-emitted Variant
+                // marshaller — particularly when the Assert codeunit comes from a dep
+                // package rather than our built-in stub. Unwrap before type-sniffing so
+                // RecordCount is not misrouted to the ExpectedMessage(Text, Text) fallback.
+                var rcArg0 = args[0] is MockVariant rcMv0 ? rcMv0.Value : args[0];
+                var rcArg1 = args[1] is MockVariant rcMv1 ? rcMv1.Value : args[1];
+                if (rcArg0 is MockRecordHandle rec2 && rcArg1 is int count)
                 {
                     MockAssert.RecordCount(rec2, count);
                     return null;

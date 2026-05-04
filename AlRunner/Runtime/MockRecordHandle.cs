@@ -881,7 +881,12 @@ public class MockRecordHandle : IConvertible
             }
         }
         if (errorLevel == DataError.ThrowError)
-            throw new Exception($"Record not found for Modify in table {_tableId}");
+        {
+            string tableName = TableFieldRegistry.GetTableCaption(_tableId)
+                               ?? TableFieldRegistry.GetTableName(_tableId)
+                               ?? $"table {_tableId}";
+            throw new Exception($"The {tableName} does not exist for Modify.");
+        }
         return false;
     }
 
@@ -964,7 +969,10 @@ public class MockRecordHandle : IConvertible
         if (errorLevel == DataError.ThrowError)
         {
             var keyStr = string.Join(", ", keyValues.Select(v => NavValueToString(v)));
-            throw new Exception($"Record not found in table {_tableId} for key ({keyStr})");
+            string tableName = TableFieldRegistry.GetTableCaption(_tableId)
+                               ?? TableFieldRegistry.GetTableName(_tableId)
+                               ?? $"table {_tableId}";
+            throw new Exception($"The {tableName} does not exist. Identification fields and values: {keyStr}");
         }
         return false;
     }
@@ -1007,7 +1015,12 @@ public class MockRecordHandle : IConvertible
         }
 
         if (errorLevel == DataError.ThrowError)
-            throw new Exception($"Record not found in table {_tableId} for SystemId '{systemId}'");
+        {
+            string tableName = TableFieldRegistry.GetTableCaption(_tableId)
+                               ?? TableFieldRegistry.GetTableName(_tableId)
+                               ?? $"table {_tableId}";
+            throw new Exception($"The {tableName} does not exist. Identification fields and values: SystemId='{systemId}'");
+        }
         return false;
     }
 
@@ -1666,7 +1679,7 @@ public class MockRecordHandle : IConvertible
         var actualStr = NavValueToString(actual);
         var defaultStr = NavValueToString(DefaultForType(expectedType));
         if (actualStr == defaultStr)
-            throw new Exception($"TestField failed: field {fieldNo} in table {_tableId} must have a value");
+            throw new Exception(FormatFieldError(fieldNo, "must have a value"));
     }
 
     /// <summary>
@@ -1678,7 +1691,7 @@ public class MockRecordHandle : IConvertible
         var actualStr = NavValueToString(actual);
         var expectedStr = NavValueToString(expectedValue);
         if (actualStr != expectedStr)
-            throw new Exception($"TestField failed: field {fieldNo} in table {_tableId} expected '{expectedStr}' but was '{actualStr}'");
+            throw new Exception(FormatFieldError(fieldNo, $"must be equal to '{expectedStr}'"));
     }
 
     /// <summary>
@@ -1725,7 +1738,7 @@ public class MockRecordHandle : IConvertible
         var actualStr = NavValueToString(actual);
         var expectedStr = expectedValue?.ToString() ?? "";
         if (actualStr != expectedStr)
-            throw new Exception($"TestField failed: field {fieldNo} in table {_tableId} expected '{expectedStr}' but was '{actualStr}'");
+            throw new Exception(FormatFieldError(fieldNo, $"must be equal to '{expectedStr}'"));
     }
 
     /// <summary>
@@ -1799,13 +1812,13 @@ public class MockRecordHandle : IConvertible
             // Field not set — treat as empty/default; fail only when expected is non-default
             var expectedStr = NavValueToString(expectedValue);
             if (!string.IsNullOrEmpty(expectedStr) && expectedStr != "0" && expectedStr != "False")
-                throw new Exception($"TestField failed: field {fieldNo} in table {_tableId} expected '{expectedStr}' but field has no value");
+                throw new Exception(FormatFieldError(fieldNo, $"must be equal to '{expectedStr}'"));
             return;
         }
         var actualStr   = NavValueToString(actual);
         var expectedStr2 = NavValueToString(expectedValue);
         if (actualStr != expectedStr2)
-            throw new Exception($"TestField failed: field {fieldNo} in table {_tableId} expected '{expectedStr2}' but was '{actualStr}'");
+            throw new Exception(FormatFieldError(fieldNo, $"must be equal to '{expectedStr2}'"));
     }
 
     /// <summary>
@@ -1852,7 +1865,7 @@ public class MockRecordHandle : IConvertible
         var actualStr = NavValueToString(actual);
         var defaultStr = NavValueToString(DefaultForType(expectedType));
         if (actualStr == defaultStr)
-            throw new Exception($"TestField failed: field {fieldNo} in table {_tableId} must have a value");
+            throw new Exception(FormatFieldError(fieldNo, "must have a value"));
     }
 
     /// <summary>

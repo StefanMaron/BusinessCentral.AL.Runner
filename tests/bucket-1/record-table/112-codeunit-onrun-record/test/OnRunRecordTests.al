@@ -58,7 +58,7 @@ codeunit 80900 "OnRun Record Tests"
         asserterror Codeunit.Run(Codeunit::"OnRun Processor", Rec);
 
         // [THEN] An error is raised (Modify on non-existing record)
-        Assert.ExpectedError('not found');
+        Assert.ExpectedError('does not exist');
     end;
 
     [Test]

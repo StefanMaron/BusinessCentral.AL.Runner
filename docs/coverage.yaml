@@ -13810,3 +13810,91 @@ DepExtractor.EnumAutoStubSyntheticValue:
     Implemented in DepExtractor.GenerateStub ("Enum" case).
     Tests: ExtractDeps_EnumStub_IncludesAtLeastOneValue_WhenBaseEnumIsAutoStubbed,
     ExtractDeps_ThenCompileDep_SucceedsWhenEnumExtensionBaseIsAutoStubbed.
+
+# ── Library Management gaps: BC-faithful error formats + ATL stub override ──
+
+Pipeline.LoadAssertStubs.SymbolOverlapDetection:
+  layer: syntax
+  category: stubs
+  status: covered
+  tests:
+    - AlRunner.Tests/LibraryManagementGapTests.cs
+  notes: >
+    LoadAssertStubs decides whether to inject our built-in test-toolkit stubs
+    into the main AL compilation by checking *symbol overlap*: it reads each
+    package's SymbolReference.json (via DepExtractor.CollectPackageDeclaredObjects)
+    and asks "does any package declare any of the codeunits our stubs declare?"
+    If yes, our stubs compile separately for runtime dispatch only; if no, they
+    join the main compilation so user AL referencing Assert/Library-Random/etc.
+    resolves at compile time.
+    Previous detection was string-pattern matching on filenames or manifest
+    names ("Assert", "TestLibraries", "Application Test Library", ...), which is
+    fragile against renames, localisation, third-party forks, and unrelated
+    packages that happen to contain those substrings. Symbol-overlap detection
+    is driven by the same data AL0197 cares about (object type + name), so it
+    is robust to all of those — if the package declares codeunit "Assert"
+    under any filename, name, or publisher, we route accordingly.
+    The list of names our stubs own lives in
+    Pipeline.BuiltInTestToolkitCodeunitNames and tracks the .al files in
+    AlRunner/stubs/ + the approved list in
+    .claude/rules/no-system-application-autostubs.md.
+    Tests: Pipeline_PackagesProvideTestToolkit_DetectsByCodeunitSymbolOverlap
+    (positive: synthetic .app declaring "Assert" under an unrelated manifest
+    name + filename is detected),
+    Pipeline_PackagesProvideTestToolkit_IgnoresPackagesWithoutOverlap
+    (negative: a package called "Test Library Helper" with no overlapping
+    codeunits is left alone — proves we are not falling back to filename),
+    Pipeline_PackagesProvideTestToolkit_ReturnsFalseWhenNoPackages.
+
+MockCodeunitHandle.InvokeAssert.RecordCountVariantUnwrap:
+  layer: runtime-api
+  category: assert-routing
+  status: covered
+  tests:
+    - AlRunner.Tests/LibraryManagementGapTests.cs
+  notes: >
+    InvokeAssert (case 2) unwraps MockVariant before type-sniffing so
+    Assert.RecordCount(Variant, Integer) routes to MockAssert.RecordCount
+    instead of falling through to the ExpectedMessage(Text, Text) default.
+    Required when the Assert codeunit comes from a referenced dep package
+    rather than our built-in stub: the AL→C# call site boxes the Variant
+    argument in MockVariant. Without this unwrap, every Assert.RecordCount
+    call surfaced as "Assert.ExpectedMessage failed. Expected substring:
+    <FilterView>, Actual: <Count>".
+    Test: InvokeAssert_RecordCountWithMockVariantWrappedRecord_DispatchesToRecordCount.
+
+MockRecordHandle.ALTestFieldSafe.BcFaithfulErrorFormat:
+  layer: runtime-api
+  category: error-format
+  status: covered
+  tests:
+    - AlRunner.Tests/LibraryManagementGapTests.cs
+    - AlRunner.Tests/TestFieldNavValueObjectOverloadTests.cs
+  notes: >
+    ALTestFieldSafe / TestFieldNativeType / ALTestField error messages now
+    use the BC-faithful format "<FieldCaption> must have a value in
+    <TableCaption>: <PK>" (or "must be equal to '<Expected>'" for value
+    mismatches), matching the format BC's TestField raises in production.
+    Real-world test suites assert ExpectedError on the field caption (e.g.
+    "Author Nos.") — the previous "TestField failed: field N in table M ..."
+    raw-id format failed those assertions. Implemented via FormatFieldError
+    (already used by ALFieldError).
+    Tests: ALTestFieldSafe_EmptyField_ErrorMessageContainsFieldCaption,
+    ALTestFieldSafe_EmptyField_ErrorMessageContainsTableCaption,
+    ALTestFieldSafe_ValueMismatch_ErrorMessageContainsFieldCaption.
+
+MockRecordHandle.ALGet.BcFaithfulErrorFormat:
+  layer: runtime-api
+  category: error-format
+  status: covered
+  tests:
+    - AlRunner.Tests/LibraryManagementGapTests.cs
+  notes: >
+    ALGet and ALGetBySystemId now raise "The <TableCaption> does not exist.
+    Identification fields and values: ..." matching BC's actual error format.
+    The previous "Record not found in table N for key (...)" used the raw
+    table id and the literal "not found" phrase, which mismatched real-world
+    suites that assert ExpectedError on the table caption ("Book Journal
+    Batch"). Modify on a missing record was updated to the same family
+    ("The <TableCaption> does not exist for Modify.") for consistency.
+    Test: ALGet_KeyNotFoundThrowError_ErrorMessageContainsTableCaption.

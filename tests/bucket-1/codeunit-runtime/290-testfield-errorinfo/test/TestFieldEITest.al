@@ -55,7 +55,7 @@ codeunit 166001 "TFEi Test"
 
         // [THEN] An error is raised
         asserterror Rec.TestField(Flag, true, EI);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     [Test]
@@ -95,7 +95,7 @@ codeunit 166001 "TFEi Test"
 
         // [THEN] An error is raised
         asserterror Rec.TestField(Name, 'Beta', EI);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     [Test]
@@ -135,7 +135,7 @@ codeunit 166001 "TFEi Test"
 
         // [THEN] An error is raised
         asserterror Rec.TestField(Qty, 99, EI);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     // -----------------------------------------------------------------------
@@ -178,7 +178,7 @@ codeunit 166001 "TFEi Test"
 
         // [THEN] An error is raised because Name is empty
         asserterror Rec.TestField(Name, EI);
-        Assert.ExpectedError('TestField failed');
+        Assert.ExpectedError('must');
     end;
 
     [Test]

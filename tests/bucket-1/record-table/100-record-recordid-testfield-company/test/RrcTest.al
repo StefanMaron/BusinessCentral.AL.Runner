@@ -91,7 +91,7 @@ codeunit 307802 "RRC Test"
     begin
         // TestField with mismatched expected value must raise an error.
         asserterror H.CheckMismatchValueThrows(Rec);
-        Assert.ExpectedError('expected');
+        Assert.ExpectedError('must be equal to');
     end;
 
     // ── CurrentCompany — external codeunit path ───────────────────────────────

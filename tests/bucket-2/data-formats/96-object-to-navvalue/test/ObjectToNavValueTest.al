@@ -117,7 +117,7 @@ codeunit 1260002 "Object NavValue Test"
         asserterror Helper.GetViaVariantKey(Rec, V);
 
         // Verify
-        Assert.ExpectedError('not found');
+        Assert.ExpectedError('does not exist');
     end;
 
     [Test]
