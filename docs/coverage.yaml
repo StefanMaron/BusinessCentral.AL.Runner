@@ -13813,23 +13813,38 @@ DepExtractor.EnumAutoStubSyntheticValue:
 
 # ── Library Management gaps: BC-faithful error formats + ATL stub override ──
 
-Pipeline.LoadAssertStubs.AtlPackageDetectionByManifest:
+Pipeline.LoadAssertStubs.SymbolOverlapDetection:
   layer: pipeline
   category: stubs
   status: covered
   tests:
     - AlRunner.Tests/LibraryManagementGapTests.cs
   notes: >
-    LoadAssertStubs detects Microsoft's "Application Test Library" by reading
-    the NAVX manifest's App Name (not by .app filename). The previous filename
-    heuristic ("Assert" or "TestLibraries" in the file name) missed Microsoft's
-    standard package name "Microsoft_Application Test Library_*.app", which
-    caused our built-in stubs to be loaded into the main AL compilation
-    alongside ATL's symbols → AL0197 duplicates → blocked emit. With manifest-
-    based detection, our stubs compile separately for runtime dispatch and ATL
-    provides the AL compile-time symbols, so the user can run tests with
-    ".alpackages" containing ATL out of the box (no rename workaround).
-    Test: Pipeline_LoadAssertStubs_DetectsAtlPackageByManifestName_NotByFilename.
+    LoadAssertStubs decides whether to inject our built-in test-toolkit stubs
+    into the main AL compilation by checking *symbol overlap*: it reads each
+    package's SymbolReference.json (via DepExtractor.CollectPackageDeclaredObjects)
+    and asks "does any package declare any of the codeunits our stubs declare?"
+    If yes, our stubs compile separately for runtime dispatch only; if no, they
+    join the main compilation so user AL referencing Assert/Library-Random/etc.
+    resolves at compile time.
+    Previous detection was string-pattern matching on filenames or manifest
+    names ("Assert", "TestLibraries", "Application Test Library", ...), which is
+    fragile against renames, localisation, third-party forks, and unrelated
+    packages that happen to contain those substrings. Symbol-overlap detection
+    is driven by the same data AL0197 cares about (object type + name), so it
+    is robust to all of those — if the package declares codeunit "Assert"
+    under any filename, name, or publisher, we route accordingly.
+    The list of names our stubs own lives in
+    Pipeline.BuiltInTestToolkitCodeunitNames and tracks the .al files in
+    AlRunner/stubs/ + the approved list in
+    .claude/rules/no-system-application-autostubs.md.
+    Tests: Pipeline_PackagesProvideTestToolkit_DetectsByCodeunitSymbolOverlap
+    (positive: synthetic .app declaring "Assert" under an unrelated manifest
+    name + filename is detected),
+    Pipeline_PackagesProvideTestToolkit_IgnoresPackagesWithoutOverlap
+    (negative: a package called "Test Library Helper" with no overlapping
+    codeunits is left alone — proves we are not falling back to filename),
+    Pipeline_PackagesProvideTestToolkit_ReturnsFalseWhenNoPackages.
 
 MockCodeunitHandle.InvokeAssert.RecordCountVariantUnwrap:
   layer: runtime

@@ -116,27 +116,119 @@ public class LibraryManagementGapTests
         Assert.Contains("Assert.RecordCount failed", ex.Message);
     }
 
-    // ── Gap 4: When the user's .alpackages ships Microsoft's "Application Test Library"
-    // (the standard ATL), Pipeline.LoadAssertStubs must detect it via the NAVX manifest
-    // name — not by filename, since Microsoft ships it as
-    // "Microsoft_Application Test Library_*.app" (no "Assert" or "TestLibraries" token).
-    // Without manifest-based detection, our built-in stubs were injected into the main
-    // compilation alongside ATL's symbols → AL0197 duplicates → blocked emit.
+    // ── Gap 4: When any package in scope declares a codeunit our built-in test-toolkit
+    // stubs also declare (Assert, Library - Random, Library - Test Initialize,
+    // Library - Utility, Library - Variable Storage, Any, AL Runner Config),
+    // Pipeline.LoadAssertStubs must detect it and compile our stubs separately to
+    // avoid AL0197 duplicates → blocked emit. Detection is symbol-driven (reads
+    // SymbolReference.json from each .app) — not filename, not manifest-name —
+    // so it is robust against package renames, localisation, and third-party forks.
+
     [Fact]
-    public void Pipeline_LoadAssertStubs_DetectsAtlPackageByManifestName_NotByFilename()
+    public void Pipeline_PackagesProvideTestToolkit_ReturnsFalseWhenNoPackages()
     {
-        // Smoke-test through the public CLI: a directory containing an .app whose
-        // *manifest* declares Name="Application Test Library" (regardless of filename)
-        // must be detected so the runner sidesteps AL0197 by compiling stubs separately.
-        // We rely on the integration coverage in the Library Management end-to-end run;
-        // the test below asserts the detection helper directly.
         var detector = typeof(AlRunner.AlRunnerPipeline).GetMethod(
             "PackagesProvideTestToolkit",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
         Assert.NotNull(detector);
-        // Empty directory list → false (negative branch).
         var result = (bool)detector!.Invoke(null, new object[] { System.Array.Empty<string>() })!;
         Assert.False(result);
+    }
+
+    [Fact]
+    public void Pipeline_PackagesProvideTestToolkit_DetectsByCodeunitSymbolOverlap()
+    {
+        // Build a synthetic .app whose SymbolReference.json declares codeunit "Assert".
+        // The package's filename and manifest Name are deliberately unrelated to
+        // "Assert" / "Test Library" / "TestLibraries" to prove detection is driven
+        // by the symbol table, not by string matching on names.
+        var tmpDir = Path.Combine(Path.GetTempPath(), "altr-stub-overlap-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(tmpDir);
+        try
+        {
+            var appPath = Path.Combine(tmpDir, "Acme_TotallyUnrelatedName_1.0.0.0.app");
+            BuildSyntheticApp(appPath, manifestName: "TotallyUnrelatedName", codeunitNames: new[] { "Assert" });
+
+            var detector = typeof(AlRunner.AlRunnerPipeline).GetMethod(
+                "PackagesProvideTestToolkit",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+            var result = (bool)detector!.Invoke(null, new object[] { new[] { tmpDir } })!;
+
+            Assert.True(result,
+                "PackagesProvideTestToolkit must detect a package that declares codeunit 'Assert' " +
+                "regardless of the package filename or manifest name (symbol-driven detection).");
+        }
+        finally
+        {
+            try { Directory.Delete(tmpDir, recursive: true); } catch { /* best-effort cleanup */ }
+        }
+    }
+
+    [Fact]
+    public void Pipeline_PackagesProvideTestToolkit_IgnoresPackagesWithoutOverlap()
+    {
+        // A package whose filename contains "Test Library" but declares NO codeunit
+        // our stubs declare must NOT trigger detection — proves we are not falling
+        // back to filename matching. (This is the inverse of the symbol-overlap test:
+        // a benign package that happens to be named "Test Library Helper" should
+        // be left alone.)
+        var tmpDir = Path.Combine(Path.GetTempPath(), "altr-stub-no-overlap-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(tmpDir);
+        try
+        {
+            var appPath = Path.Combine(tmpDir, "Acme_Test_Library_Helper_1.0.0.0.app");
+            BuildSyntheticApp(appPath, manifestName: "Test Library Helper", codeunitNames: new[] { "Some Other Codeunit" });
+
+            var detector = typeof(AlRunner.AlRunnerPipeline).GetMethod(
+                "PackagesProvideTestToolkit",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+            var result = (bool)detector!.Invoke(null, new object[] { new[] { tmpDir } })!;
+
+            Assert.False(result,
+                "A package without symbol overlap must not trigger detection, even if its name " +
+                "or filename happens to contain 'Test Library'.");
+        }
+        finally
+        {
+            try { Directory.Delete(tmpDir, recursive: true); } catch { /* best-effort cleanup */ }
+        }
+    }
+
+    /// <summary>
+    /// Writes a minimal NAVX-format .app file with a NavxManifest.xml and a
+    /// SymbolReference.json declaring the requested codeunits. Sufficient to exercise
+    /// DepExtractor.CollectPackageDeclaredObjects without depending on the full
+    /// BC compiler toolchain to produce a real app artifact.
+    /// </summary>
+    private static void BuildSyntheticApp(string appPath, string manifestName, string[] codeunitNames)
+    {
+        using var ms = new MemoryStream();
+        using (var zip = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+        {
+            var manifest = zip.CreateEntry("NavxManifest.xml");
+            using (var sw = new StreamWriter(manifest.Open()))
+            {
+                sw.Write($@"<?xml version=""1.0"" encoding=""utf-8""?>
+<Package xmlns=""http://schemas.microsoft.com/navx/2015/manifest"">
+  <App Id=""{Guid.NewGuid()}"" Name=""{manifestName}"" Publisher=""Acme"" Version=""1.0.0.0"" CompatibilityId=""0.0.0.0"" />
+</Package>");
+            }
+
+            var sym = zip.CreateEntry("SymbolReference.json");
+            using (var sw = new StreamWriter(sym.Open()))
+            {
+                var codeunitJson = string.Join(",", codeunitNames.Select(n => $"{{\"Id\":1,\"Name\":\"{n}\"}}"));
+                sw.Write($"{{\"Codeunits\":[{codeunitJson}]}}");
+            }
+        }
+        ms.Position = 0;
+        var zipBytes = ms.ToArray();
+
+        // Write NAVX header (magic "NAVX" + 4-byte little-endian zip offset = 8) followed by the zip payload.
+        using var fs = File.Create(appPath);
+        fs.Write(new byte[] { (byte)'N', (byte)'A', (byte)'V', (byte)'X' }, 0, 4);
+        fs.Write(BitConverter.GetBytes((uint)8), 0, 4);
+        fs.Write(zipBytes, 0, zipBytes.Length);
     }
 
     [Fact]

@@ -1081,40 +1081,56 @@ public class AlRunnerPipeline
     }
 
     /// <summary>
-    /// Returns true if any package in the given paths is identified as a test-toolkit
-    /// provider (Microsoft's "Application Test Library" or a similarly-named equivalent).
-    /// Detection reads the NAVX manifest — robust against the package being shipped
-    /// under any filename (the filename heuristic missed
-    /// "Microsoft_Application Test Library_*.app").
+    /// Names of the codeunits our built-in test-toolkit AL stubs declare. Any package
+    /// in scope that declares any of these is a stub-collision risk and triggers the
+    /// "compile stubs separately" path.
+    ///
+    /// Source of truth: the .al files in <c>AlRunner/stubs/</c>. This list must be
+    /// kept in sync with the stub files (and with the table in
+    /// <c>.claude/rules/no-system-application-autostubs.md</c>, which enumerates the
+    /// approved test-automation shipped stubs).
+    /// </summary>
+    private static readonly string[] BuiltInTestToolkitCodeunitNames =
+    {
+        "Assert",                       // 130 (LibraryAssert.al) and 131 alias (Assert.al)
+        "Library Assert",               // 130000 / 130002 alias used by some BC versions
+        "Library - Random",             // 130440
+        "Library - Test Initialize",    // 132250
+        "Library - Utility",            // 131003
+        "Library - Variable Storage",   // 131004
+        "Any",                          // 130500
+        "AL Runner Config",             // 131100 (runner-only)
+    };
+
+    /// <summary>
+    /// Returns true if any package in <paramref name="packagePaths"/> declares any
+    /// codeunit our built-in test-toolkit stubs also declare.
+    ///
+    /// Detection reads each package's <c>SymbolReference.json</c> (via
+    /// <see cref="DepExtractor.CollectPackageDeclaredObjects"/>) and checks for an
+    /// overlap on (TypeName, Name) pairs against
+    /// <see cref="BuiltInTestToolkitCodeunitNames"/>. This is symbol-driven rather
+    /// than name-pattern matching: it is unaffected by filename, package localisation,
+    /// renames, or third-party forks of the test toolkit. If a package declares
+    /// codeunit "Assert" — under any filename, any package name, any publisher —
+    /// it will collide with our stubs and we route accordingly.
     /// </summary>
     private static bool PackagesProvideTestToolkit(IEnumerable<string> packagePaths)
     {
+        var appFiles = new List<string>();
         foreach (var p in packagePaths)
         {
-            if (!Directory.Exists(p)) continue;
-            foreach (var appFile in Directory.GetFiles(p, "*.app", SearchOption.AllDirectories))
-            {
-                try
-                {
-                    var doc = AlTranspiler.LoadNavxManifest(appFile);
-                    if (doc == null) continue;
-                    System.Xml.Linq.XNamespace ns = "http://schemas.microsoft.com/navx/2015/manifest";
-                    var name = doc.Root?.Element(ns + "App")?.Attribute("Name")?.Value;
-                    if (name != null &&
-                        (name.Contains("Application Test Library", StringComparison.OrdinalIgnoreCase) ||
-                         name.Contains("Test Library", StringComparison.OrdinalIgnoreCase) ||
-                         name.Contains("Test Libraries", StringComparison.OrdinalIgnoreCase) ||
-                         name.Contains("Assert", StringComparison.OrdinalIgnoreCase)))
-                        return true;
-                }
-                catch { /* corrupt manifest — skip */ }
-            }
-            // Filename fallback for user-shipped assert apps that don't follow the name pattern
-            if (Directory.GetFiles(p, "*.app", SearchOption.AllDirectories)
-                .Any(f => Path.GetFileName(f).Contains("Assert", StringComparison.OrdinalIgnoreCase) ||
-                          Path.GetFileName(f).Contains("TestLibraries", StringComparison.OrdinalIgnoreCase)))
-                return true;
+            if (Directory.Exists(p))
+                appFiles.AddRange(Directory.GetFiles(p, "*.app", SearchOption.AllDirectories));
+            else if (File.Exists(p) && p.EndsWith(".app", StringComparison.OrdinalIgnoreCase))
+                appFiles.Add(p);
         }
+        if (appFiles.Count == 0) return false;
+
+        var declared = DepExtractor.CollectPackageDeclaredObjects(appFiles);
+        foreach (var name in BuiltInTestToolkitCodeunitNames)
+            if (declared.Contains(("Codeunit", name)))
+                return true;
         return false;
     }
 

@@ -922,7 +922,7 @@ public static class DepExtractor
     /// and returns a set of (TypeName, ObjectName) pairs they declare. Used to exclude package-provided
     /// objects from auto-stub generation so compile-dep does not see AL0197 duplicate-declaration errors.
     /// </summary>
-    private static HashSet<(string TypeName, string Name)> CollectPackageDeclaredObjects(List<string> packagePaths)
+    internal static HashSet<(string TypeName, string Name)> CollectPackageDeclaredObjects(List<string> packagePaths)
     {
         var result = new HashSet<(string, string)>(
             EqualityComparer<(string, string)>.Create(
