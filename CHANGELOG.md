@@ -6,6 +6,11 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.30] - 2026-05-04
+
+### Fixed
+- BC-faithful error formats + clean ATL stub override (Library Management gaps)
+
 ## [1.0.29] - 2026-05-04
 
 ### Added
