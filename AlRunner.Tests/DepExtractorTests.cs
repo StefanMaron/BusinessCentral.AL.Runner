@@ -2587,6 +2587,154 @@ public class DepExtractorTests
 
     /// <summary>
     /// Full extract-then-compile-dep pipeline test: when the slice contains an
+    // -----------------------------------------------------------------------
+    // Issue #1589: namespace-aware consumers cannot resolve root-namespace stubs
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// When the consumer file declares a namespace and has using directives, and it
+    /// references an unqualified enum name that must be auto-stubbed, the stub must
+    /// be emitted in a namespace that matches one of the consumer's using directives
+    /// so the BC compiler can resolve the unqualified reference.
+    ///
+    /// Strategy: inspect consumer files that reference the missing object; if all such
+    /// files import the same candidate namespace via using, emit the stub in that
+    /// namespace.  Regression test for issue #1589.
+    /// </summary>
+    [Fact]
+    public void ExtractDeps_EnumStub_EmittedInConsumerUsingNamespace_WhenNamespaceAwareConsumer()
+    {
+        var depRoot = Path.Combine(Path.GetTempPath(), "al-dep-ns1589-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir  = Path.Combine(Path.GetTempPath(), "al-out-ns1589-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir  = Path.Combine(Path.GetTempPath(), "al-ext-ns1589-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(depRoot, "DepApp"));
+            Directory.CreateDirectory(extDir);
+
+            // Dep source: a codeunit that references "Sales Order Print Option" enum.
+            // The enum is NOT defined anywhere (simulating a missing platform enum).
+            File.WriteAllText(Path.Combine(depRoot, "DepApp", "Printer.al"), """
+                codeunit 60300 "Sales Order Printer"
+                {
+                    procedure GetOption(): Enum "Sales Order Print Option"
+                    var
+                        Opt: Enum "Sales Order Print Option";
+                    begin
+                        exit(Opt);
+                    end;
+                }
+                """);
+
+            // Consumer: namespace-aware file that imports a specific namespace.
+            // The consumer directly uses the dep codeunit AND the missing enum.
+            // This simulates the real pattern: a namespaced AL file in
+            // namespace Microsoft.Foundation.Reporting references an unqualified
+            // "Sales Order Print Option" enum that lives in Microsoft.Sales.Document.
+            File.WriteAllText(Path.Combine(extDir, "Consumer.al"), """
+                namespace MyApp.Reporting;
+
+                using MySales.Document;
+
+                codeunit 60309 "Report Consumer"
+                {
+                    procedure Run()
+                    var
+                        Opt: Enum "Sales Order Print Option";
+                    begin
+                        Codeunit.Run(Codeunit::"Sales Order Printer");
+                    end;
+                }
+                """);
+
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depRoot }, outDir);
+            Assert.Equal(0, rc);
+
+            var allFiles = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+
+            // Locate the auto-generated stub for "Sales Order Print Option".
+            var enumStub = allFiles.FirstOrDefault(f =>
+                f.Contains("__GeneratedStubs__", StringComparison.OrdinalIgnoreCase)
+                && File.ReadAllText(f).Contains("Sales Order Print Option", StringComparison.OrdinalIgnoreCase));
+            Assert.NotNull(enumStub);
+
+            var stubContent = File.ReadAllText(enumStub!);
+
+            // The stub must be declared inside the namespace the consumer imports.
+            // Without this fix the stub is at global root and AL0118 fires.
+            Assert.Contains("namespace MySales.Document", stubContent, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            foreach (var d in new[] { depRoot, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
+    /// <summary>
+    /// When the consumer has NO using directives, the stub must NOT be wrapped in a namespace
+    /// — falling back to global root is the correct (and safe) behaviour.  This verifies
+    /// the negative path of the namespace-inference heuristic from issue #1589.
+    /// </summary>
+    [Fact]
+    public void ExtractDeps_EnumStub_StaysAtGlobalRoot_WhenConsumerHasNoUsingDirectives()
+    {
+        var depRoot = Path.Combine(Path.GetTempPath(), "al-dep-ns1589b-" + Guid.NewGuid().ToString("N")[..8]);
+        var outDir  = Path.Combine(Path.GetTempPath(), "al-out-ns1589b-" + Guid.NewGuid().ToString("N")[..8]);
+        var extDir  = Path.Combine(Path.GetTempPath(), "al-ext-ns1589b-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(depRoot, "DepApp"));
+            Directory.CreateDirectory(extDir);
+
+            File.WriteAllText(Path.Combine(depRoot, "DepApp", "Printer.al"), """
+                codeunit 60310 "Legacy Sales Printer"
+                {
+                    procedure GetOption(): Enum "Legacy Print Option"
+                    var
+                        Opt: Enum "Legacy Print Option";
+                    begin
+                        exit(Opt);
+                    end;
+                }
+                """);
+
+            // Consumer WITHOUT a namespace declaration and without any using directives.
+            // The stub must stay at global root — no namespace wrapping.
+            File.WriteAllText(Path.Combine(extDir, "LegacyConsumer.al"), """
+                codeunit 60319 "Legacy Consumer"
+                {
+                    procedure Run()
+                    var
+                        Opt: Enum "Legacy Print Option";
+                    begin
+                        Codeunit.Run(Codeunit::"Legacy Sales Printer");
+                    end;
+                }
+                """);
+
+            int rc = DepExtractor.ExtractDeps(extDir, new[] { depRoot }, outDir);
+            Assert.Equal(0, rc);
+
+            var allFiles = Directory.GetFiles(outDir, "*.al", SearchOption.AllDirectories);
+
+            var enumStub = allFiles.FirstOrDefault(f =>
+                f.Contains("__GeneratedStubs__", StringComparison.OrdinalIgnoreCase)
+                && File.ReadAllText(f).Contains("Legacy Print Option", StringComparison.OrdinalIgnoreCase));
+            Assert.NotNull(enumStub);
+
+            var stubContent = File.ReadAllText(enumStub!);
+
+            // No namespace wrapping expected for namespace-unaware consumers.
+            Assert.DoesNotContain("namespace ", stubContent, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            foreach (var d in new[] { depRoot, outDir, extDir })
+                if (Directory.Exists(d)) Directory.Delete(d, true);
+        }
+    }
+
     /// enumextension whose base enum is auto-stubbed, compile-dep must succeed
     /// (exit code 0) without throwing NRE in the BC compiler emit phase.
     /// Regression test for issue #1590.

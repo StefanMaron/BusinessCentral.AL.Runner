@@ -13846,6 +13846,30 @@ DepExtractor.EnumAutoStubSyntheticValue:
     Tests: ExtractDeps_EnumStub_IncludesAtLeastOneValue_WhenBaseEnumIsAutoStubbed,
     ExtractDeps_ThenCompileDep_SucceedsWhenEnumExtensionBaseIsAutoStubbed.
 
+DepExtractor.StubNamespaceInference:
+  layer: syntax
+  category: extract-deps
+  status: covered
+  tests:
+    - AlRunner.Tests/DepExtractorTests.cs
+  notes: >
+    When extract-deps auto-stubs a missing object (enum, table, codeunit, etc.)
+    and the consumer source files that reference that object are namespace-aware
+    (declare a namespace and have using directives), the stub is emitted inside
+    the namespace shared by all those consumers rather than at global root.
+    A global-root stub is invisible to namespace-declaring consumers because the
+    BC compiler only resolves unqualified names from the current namespace and
+    explicitly imported (using) namespaces — AL0118 fires at compile-dep time.
+    Strategy A (emit a copy in every consumer namespace) was rejected in PR #1521
+    due to AL0197 cascade errors; this implementation picks at most ONE namespace
+    (the intersection of all consumer using directives, longest wins on tie).
+    Falls back to global root when there is no shared using candidate or when
+    all candidates are already declared in the slice (avoiding AL0197).
+    Implemented in DepExtractor.InferStubNamespace + WrapWithNamespace.
+    Fixes issue #1589.
+    Tests: ExtractDeps_EnumStub_EmittedInConsumerUsingNamespace_WhenNamespaceAwareConsumer,
+    ExtractDeps_EnumStub_StaysAtGlobalRoot_WhenConsumerHasNoUsingDirectives.
+
 # ── Library Management gaps: BC-faithful error formats + ATL stub override ──
 
 Pipeline.LoadAssertStubs.SymbolOverlapDetection:
