@@ -921,6 +921,23 @@ fileuploadaction_declaration:
   tests:
     - tests/bucket-2/page-report/206-fileupload-action
 
+fileupload_brace_in_string_strip:
+  layer: syntax
+  category: page
+  status: covered
+  notes: >
+    Pipeline.StripPatternedBlock() and StripNamedBlock() used a naive brace-depth counter
+    that did not skip AL single-quoted string literals or line comments. A '}' inside a
+    property string like ToolTip = 'Upload } a document' caused the scanner to stop too
+    early, leaving the actual closing '}' of the fileupload block in the source. This
+    corrupted subsequent part(UnquotedName; "Page Name With Spaces") declarations,
+    producing AL0104/AL0124 parse errors ("The property 'X' cannot be used in this
+    context") at the quoted page-reference start position.
+    Fixed in issue #1600 by FindMatchingCloseBrace() which properly skips string literals
+    (handling escaped '' within strings) and // line comments.
+  tests:
+    - tests/bucket-2/page-report/314200-page-part-quoted-name
+
 grid_section:
   layer: syntax
   category: page
