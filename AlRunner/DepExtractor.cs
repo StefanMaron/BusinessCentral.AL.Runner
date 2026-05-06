@@ -313,6 +313,15 @@ public static class DepExtractor
 
                 int stubId = stubIdCounter++;
                 var stubSource = GenerateStub(typeName, objectName, stubId, allExtracted);
+
+                // Issue #1589: infer namespace from consumer using directives so that
+                // namespace-aware consumers can resolve the stub via their using imports.
+                // Also check extension source files (they are not in allExtracted but they
+                // are the primary consumers that trigger the missing-dep detection).
+                var stubNamespace = InferStubNamespace(objectName, allExtracted, sources);
+                if (stubNamespace != null)
+                    stubSource = WrapWithNamespace(stubSource, stubNamespace);
+
                 var safeName = MakeSafeName(objectName) + $"_{stubId}";
                 var stubKey = $"{consumerApp}/__GeneratedStubs__/{safeName}.al";
                 allExtracted[stubKey] = stubSource;
@@ -687,6 +696,99 @@ public static class DepExtractor
         int slash = fileName.IndexOfAny(new[] { '/', '\\' });
         return slash > 0 ? fileName[..slash] : "";
     }
+
+    // Reusable regex for extracting `using <ns>;` directives from AL source.
+    private static readonly System.Text.RegularExpressions.Regex UsingDirectiveRegex =
+        new(@"^\s*using\s+([\w.]+)\s*;",
+            System.Text.RegularExpressions.RegexOptions.Multiline |
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    // Reusable regex for extracting `namespace <ns>;` or `namespace <ns> {` declarations.
+    private static readonly System.Text.RegularExpressions.Regex NamespaceDeclarationRegex =
+        new(@"^\s*namespace\s+([\w.]+)\s*[;{]",
+            System.Text.RegularExpressions.RegexOptions.Multiline |
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Tries to infer a namespace for an auto-generated stub by looking at which files
+    /// reference <paramref name="objectName"/> and collecting the <c>using</c> directives
+    /// from those files.
+    ///
+    /// Searches both <paramref name="allExtracted"/> (dep-source slice) and
+    /// <paramref name="extensionSources"/> (the extension's own AL files, which are not
+    /// part of the extracted slice but are the primary consumers of the missing dep).
+    ///
+    /// If all referencing files share a single common <c>using</c> namespace that is not
+    /// already declared by another file in the slice (which would cause AL0197), that
+    /// namespace is returned. Otherwise returns <c>null</c> (stub stays at global root).
+    ///
+    /// This fixes issue #1589: namespace-aware consumers cannot resolve root-namespace stubs.
+    /// </summary>
+    private static string? InferStubNamespace(
+        string objectName,
+        Dictionary<string, string> allExtracted,
+        IEnumerable<string>? extensionSources = null)
+    {
+        // Collect all namespaces already declared in the slice (to avoid AL0197 collisions).
+        var alreadyDeclaredNamespaces = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (_, source) in allExtracted)
+        {
+            foreach (System.Text.RegularExpressions.Match m in NamespaceDeclarationRegex.Matches(source))
+                alreadyDeclaredNamespaces.Add(m.Groups[1].Value);
+        }
+
+        // For each file that references the object, collect its using namespaces.
+        // Only consider namespace-aware consumers (files that declare a namespace themselves).
+        HashSet<string>? candidateNamespaces = null;
+        bool anyNamespaceAwareConsumer = false;
+
+        // Build a combined stream of source texts to search: dep-slice + extension sources.
+        IEnumerable<string> allSources = allExtracted.Values;
+        if (extensionSources != null)
+            allSources = allSources.Concat(extensionSources);
+
+        foreach (var source in allSources)
+        {
+            if (!source.Contains(objectName, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            // Only consider namespace-aware consumers.
+            var hasNamespace = NamespaceDeclarationRegex.IsMatch(source);
+            if (!hasNamespace) continue;
+
+            anyNamespaceAwareConsumer = true;
+
+            var fileUsings = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (System.Text.RegularExpressions.Match m in UsingDirectiveRegex.Matches(source))
+                fileUsings.Add(m.Groups[1].Value);
+
+            if (candidateNamespaces == null)
+                candidateNamespaces = new HashSet<string>(fileUsings, StringComparer.OrdinalIgnoreCase);
+            else
+                candidateNamespaces.IntersectWith(fileUsings);
+        }
+
+        if (!anyNamespaceAwareConsumer || candidateNamespaces == null || candidateNamespaces.Count == 0)
+            return null;
+
+        // Remove namespaces already declared in the slice to avoid AL0197 duplicates.
+        candidateNamespaces.ExceptWith(alreadyDeclaredNamespaces);
+        if (candidateNamespaces.Count == 0)
+            return null;
+
+        // If exactly one candidate remains, use it.
+        // If multiple remain, pick the most specific one (longest namespace string)
+        // as a conservative heuristic — shorter namespaces are more likely to be broad
+        // Microsoft.* base namespaces that the stub shouldn't pollute.
+        return candidateNamespaces.OrderByDescending(ns => ns.Length).First();
+    }
+
+    /// <summary>
+    /// Prepend a <c>namespace <paramref name="ns"/>;</c> declaration to a stub AL source string.
+    /// The BC compiler requires the namespace to appear before any object declarations.
+    /// </summary>
+    private static string WrapWithNamespace(string stubSource, string ns) =>
+        $"namespace {ns};\n{stubSource}";
 
     /// <summary>
     /// Returns the app directory of the first file in <paramref name="allExtracted"/> whose
