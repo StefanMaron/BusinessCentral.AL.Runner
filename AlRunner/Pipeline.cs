@@ -1233,25 +1233,15 @@ public class AlRunnerPipeline
             if (openBrace < 0)
                 break;
 
-            // Brace-depth counting to find the matching closing brace.
-            int depth = 0;
-            int i = openBrace;
-            for (; i < source.Length; i++)
-            {
-                if (source[i] == '{')
-                    depth++;
-                else if (source[i] == '}')
-                {
-                    depth--;
-                    if (depth == 0)
-                        break;
-                }
-            }
-
-            if (i >= source.Length)
+            // Brace-depth counting respects AL single-quoted string literals and
+            // line comments so that a '}' inside e.g. ToolTip = 'Upload } a file'
+            // does not prematurely stop the scan and corrupt subsequent source.
+            // (issue #1600: fileupload block with '}' in ToolTip string)
+            int closeBrace = FindMatchingCloseBrace(source, openBrace);
+            if (closeBrace < 0)
                 break;
 
-            source = source.Substring(0, blockStart) + source.Substring(i + 1);
+            source = source.Substring(0, blockStart) + source.Substring(closeBrace + 1);
             // Don't advance searchIndex so we catch multiple consecutive blocks.
         }
 
@@ -1274,34 +1264,89 @@ public class AlRunnerPipeline
             if (openBrace < 0)
                 break;
 
-            // Simple brace-depth counting. Does not skip braces inside
-            // single-quoted AL string literals or comments, so a caption like
-            //   Caption = 'Some {brace} text'
-            // would confuse the counter. This is acceptable for `rendering`
-            // blocks which don't contain string literals with braces.
-            int depth = 0;
-            int i = openBrace;
-            for (; i < source.Length; i++)
-            {
-                if (source[i] == '{')
-                    depth++;
-                else if (source[i] == '}')
-                {
-                    depth--;
-                    if (depth == 0)
-                        break;
-                }
-            }
-
-            if (i >= source.Length)
+            // Brace-depth counting respects AL single-quoted string literals and
+            // line comments so that a '}' inside e.g. Caption = 'Some } text'
+            // does not prematurely stop the scan and corrupt subsequent source.
+            // (issue #1600: consistent fix for both StripPatternedBlock and StripNamedBlock)
+            int closeBrace = FindMatchingCloseBrace(source, openBrace);
+            if (closeBrace < 0)
                 break;
 
             var replacement = $"{blockName}{Environment.NewLine}{{{Environment.NewLine}}}";
-            source = source.Substring(0, blockStart) + replacement + source.Substring(i + 1);
+            source = source.Substring(0, blockStart) + replacement + source.Substring(closeBrace + 1);
             searchIndex = blockStart + replacement.Length;
         }
 
         return source;
+    }
+
+    /// <summary>
+    /// Given a source string and the index of an opening <c>'{'</c>, returns the index of
+    /// the matching closing <c>'}'</c> using brace-depth counting that correctly skips AL
+    /// single-quoted string literals (<c>'...'</c>) and line comments (<c>//...</c>).
+    ///
+    /// Braces inside string literals or comments do not affect the depth counter, so a
+    /// property value like <c>ToolTip = 'Upload } a file';</c> does not prematurely stop
+    /// the scan. Without this, <see cref="StripPatternedBlock"/> and
+    /// <see cref="StripNamedBlock"/> would corrupt the source after the stripped block,
+    /// producing AL0104/AL0124 parse errors at unrelated <c>part()</c> declarations.
+    /// (issue #1600)
+    ///
+    /// Returns -1 if no matching close brace is found before the end of the string.
+    /// </summary>
+    private static int FindMatchingCloseBrace(string source, int openBraceIndex)
+    {
+        int depth = 0;
+        int i = openBraceIndex;
+        while (i < source.Length)
+        {
+            char c = source[i];
+
+            // Skip single-quoted AL string literals ('...').
+            // AL represents a literal single-quote inside a string as '' (doubled).
+            if (c == '\'')
+            {
+                i++;
+                while (i < source.Length)
+                {
+                    if (source[i] == '\'')
+                    {
+                        // Doubled single-quote '' is an escaped quote inside the literal.
+                        if (i + 1 < source.Length && source[i + 1] == '\'')
+                            i += 2; // skip both quotes and stay inside the string
+                        else
+                        {
+                            i++; // skip the closing quote and exit the string
+                            break;
+                        }
+                    }
+                    else
+                        i++;
+                }
+                continue;
+            }
+
+            // Skip line comments (//...\n).
+            if (c == '/' && i + 1 < source.Length && source[i + 1] == '/')
+            {
+                i += 2;
+                while (i < source.Length && source[i] != '\n')
+                    i++;
+                continue;
+            }
+
+            if (c == '{')
+                depth++;
+            else if (c == '}')
+            {
+                depth--;
+                if (depth == 0)
+                    return i;
+            }
+
+            i++;
+        }
+        return -1; // unmatched open brace
     }
 
     // Regex to detect extension object declarations: captures type and name.
