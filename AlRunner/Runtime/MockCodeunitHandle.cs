@@ -814,6 +814,33 @@ public class MockCodeunitHandle
         if (methodName != null && methodName.Equals("GetCompanyId", StringComparison.OrdinalIgnoreCase))
             return new NavGuid(MockSession.GetCompanyId());
 
+        if (methodName != null && methodName.Equals("SetDateLocale", StringComparison.OrdinalIgnoreCase))
+        {
+            var code = args.Length >= 1 ? (args[0]?.ToString() ?? string.Empty) : string.Empty;
+            if (string.IsNullOrEmpty(code))
+                AlScope.DateLocale = null;
+            else
+            {
+                try { AlScope.DateLocale = System.Globalization.CultureInfo.GetCultureInfo(code); }
+                catch { AlScope.DateLocale = null; }
+            }
+            return null;
+        }
+        if (methodName != null && methodName.Equals("GetDateLocale", StringComparison.OrdinalIgnoreCase))
+        {
+            var locale = AlScope.DateLocale;
+            return new NavText(locale == null ? "" : locale.Name);
+        }
+        if (methodName != null && methodName.Equals("FormatDate", StringComparison.OrdinalIgnoreCase))
+        {
+            if (args.Length >= 1)
+            {
+                var d = args[0];
+                return new NavText(AlCompat.Format(d));
+            }
+            return new NavText("");
+        }
+
         // Fallback: 1 string arg = SetCompanyName, 0 args = GetCompanyName
         if (args.Length >= 1)
         {

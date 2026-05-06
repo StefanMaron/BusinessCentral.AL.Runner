@@ -79,6 +79,8 @@ if (args.Length == 0 || args.Any(a => a is "-h" or "--help"))
     Console.Error.WriteLine("  --strict              Fail on runner limitations (exit 1 instead of 2)");
     Console.Error.WriteLine("  --company-name <name> Default value returned by CompanyName() (empty string otherwise)");
     Console.Error.WriteLine("  --user-id <value>     Set the value returned by UserId() (default: TESTUSER)");
+    Console.Error.WriteLine("  --date-locale <code>  Set the BCP 47 culture code for Format(Date) default output");
+    Console.Error.WriteLine("                        (default: ISO-8601 yyyy-MM-dd; e.g. en-US → MM/dd/yyyy)");
     Console.Error.WriteLine("  -h, --help            Show this help");
     Console.Error.WriteLine();
     Console.Error.WriteLine("Examples:");
@@ -289,6 +291,13 @@ while (argIdx < args.Length)
             options.UserId = args[argIdx];
             argIdx++;
             break;
+        case "--date-locale":
+            argIdx++;
+            if (argIdx >= args.Length) { Console.Error.WriteLine("Error: --date-locale requires a BCP 47 culture code (e.g. en-US, de-DE)"); return 1; }
+            try { options.DateLocale = System.Globalization.CultureInfo.GetCultureInfo(args[argIdx]); }
+            catch { Console.Error.WriteLine($"Error: --date-locale '{args[argIdx]}' is not a recognized BCP 47 culture code"); return 1; }
+            argIdx++;
+            break;
         case "--init-events":
             options.InitEvents = true;
             argIdx++;
@@ -424,6 +433,17 @@ while (argIdx < args.Length)
             options.InputPaths.Add(args[argIdx]);
             argIdx++;
             break;
+    }
+}
+
+// Apply environment variable overrides (lower precedence than CLI flags)
+if (options.DateLocale == null)
+{
+    var envDateLocale = Environment.GetEnvironmentVariable("ALRUNNER_DATE_LOCALE");
+    if (!string.IsNullOrEmpty(envDateLocale))
+    {
+        try { options.DateLocale = System.Globalization.CultureInfo.GetCultureInfo(envDateLocale); }
+        catch { Console.Error.WriteLine($"Warning: ALRUNNER_DATE_LOCALE '{envDateLocale}' is not a recognized BCP 47 culture code; using default ISO-8601"); }
     }
 }
 
@@ -572,6 +592,11 @@ test executor that needs no BC service tier, Docker, SQL Server, or license.
   `codeunit 131100 "AL Runner Config"` → `SetCompanyName(Name: Text)`.
   Reset back to the CLI default between tests.
 - UserId() — configurable via `--user-id <value>` CLI flag (default: "TESTUSER")
+- Format(Date) default locale — configurable via `--date-locale <code>` CLI flag or
+  ALRUNNER_DATE_LOCALE environment variable (BCP 47 culture code, e.g. "en-US", "de-DE").
+  Default: ISO-8601 (yyyy-MM-dd / invariant). Set to match your BC container's session
+  locale so Format(Date) assertions are portable between al-runner and real BC.
+  Format(Date, 0, 9) always returns ISO-8601 regardless of this setting. (issue #1603)
 - System & Session utilities:
   - Session.LogMessage() — no-op (telemetry not available without service tier)
   - Session.ApplicationArea() — returns empty string

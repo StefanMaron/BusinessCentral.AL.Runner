@@ -61,4 +61,30 @@ codeunit 131100 "AL Runner Config"
     procedure GetCompanyId(): Guid
     begin
     end;
+
+    /// <summary>
+    /// Sets the BCP 47 culture code used by Format(Date) (no format number).
+    /// Default is '' (empty) which produces ISO-8601 (yyyy-MM-dd).
+    /// Set to a culture code such as 'en-US' or 'de-DE' to match your BC
+    /// container's session locale.
+    /// Equivalent to the --date-locale CLI flag / ALRUNNER_DATE_LOCALE env var.
+    /// </summary>
+    procedure SetDateLocale(CultureCode: Text)
+    begin
+    end;
+
+    /// <summary>
+    /// Returns the current date locale culture code ('' = ISO-8601 default).
+    /// </summary>
+    procedure GetDateLocale(): Text
+    begin
+    end;
+
+    /// <summary>
+    /// Formats a Date value using the configured date locale.
+    /// Equivalent to Format(d) but explicitly routed through the configured locale.
+    /// </summary>
+    procedure FormatDate(d: Date): Text
+    begin
+    end;
 }

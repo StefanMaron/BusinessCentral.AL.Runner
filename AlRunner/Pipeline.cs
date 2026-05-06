@@ -57,6 +57,14 @@ public class PipelineOptions
     public string? UserId { get; set; }
 
     /// <summary>
+    /// Culture used by <c>Format(Date)</c> (no format number or format number 0).
+    /// <c>null</c> = ISO-8601 (<c>yyyy-MM-dd</c>) — the historical runner default.
+    /// Set to e.g. <c>CultureInfo.GetCultureInfo("en-US")</c> to match a real BC
+    /// container's session locale so date assertions are portable. (issue #1603)
+    /// </summary>
+    public System.Globalization.CultureInfo? DateLocale { get; set; }
+
+    /// <summary>
     /// Controls when in-memory tables are reset between tests.
     /// Codeunit (default) — reset between test codeunits; within a codeunit all test
     /// methods share table state (BC's default TestIsolation::Codeunit behaviour).
@@ -371,6 +379,7 @@ public class AlRunnerPipeline
 
         // Apply configurable session properties
         Runtime.AlScope.UserId = options.UserId ?? "TESTUSER";
+        Runtime.AlScope.DateLocale = options.DateLocale;
         Runtime.StubCallGuard.FailOnStub = options.FailOnStub;
 
         var alSources = new List<string>();
