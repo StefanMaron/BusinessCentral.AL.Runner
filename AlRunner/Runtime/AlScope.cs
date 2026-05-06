@@ -1525,7 +1525,10 @@ public static class AlCompat
         {
             return FormatNavTime(value);
         }
-        // Handle NavDate — ToString() triggers NavDateFormatter which may require NavSession
+        // Handle NavDate — ToString() triggers NavDateFormatter which may require NavSession.
+        // BC's default Format(Date) uses the session locale (e.g. MM/dd/yyyy for en-US),
+        // NOT ISO-8601. The runner hard-codes en-US locale format so that date columns in
+        // report-dataset assertions match real BC container behaviour. (issue #1603)
         if (typeName == "NavDate")
         {
             try
@@ -1535,7 +1538,7 @@ public static class AlCompat
                 {
                     var inner = valProp.GetValue(value);
                     if (inner is DateTime dt)
-                        return dt.ToString("yyyy-MM-dd");
+                        return dt.ToString("MM/dd/yyyy");
                 }
             }
             catch { }
@@ -1613,7 +1616,8 @@ public static class AlCompat
                     {
                         var innerDate = dateProp.GetValue(value);
                         if (innerDate is DateTime dt2)
-                            return dt2.ToString("yyyy-MM-dd");
+                            // BC default Format(Date) = locale format; runner uses en-US (issue #1603)
+                            return dt2.ToString("MM/dd/yyyy");
                     }
                     return "";
                 }
@@ -1639,12 +1643,31 @@ public static class AlCompat
     }
 
     /// <summary>
-    /// Format with AL format number and length.
-    /// Used when AL code calls Format(value, formatNumber) or Format(value, formatNumber, formatLength)
+    /// Format with AL length and format number.
+    ///
+    /// BC AL <c>Format(Value, Length, FormatNumber)</c> is lowered by the compiler to
+    /// <c>NavFormatEvaluateHelper.Format(session, value, length, formatNumber)</c>.
+    /// After the rewriter strips the session argument the call arrives here as
+    /// <c>AlCompat.Format(value, length, formatNumber)</c>.
+    ///
+    /// Parameter names reflect what BC actually passes (not the legacy naming):
+    ///   <paramref name="length"/> — the Length argument (0 = unconstrained).
+    ///   <paramref name="formatNumber"/> — the BC format number.
+    ///
+    /// Supported format numbers for Date values (issue #1603):
+    ///   9 = XML Standard (ISO 8601) → <c>yyyy-MM-dd</c>
+    ///   0 (and all others) → delegate to <see cref="Format(object?)"/> (locale format).
     /// </summary>
-    public static string Format(object? value, int formatNumber, int formatLength = 0)
+    public static string Format(object? value, int length, int formatNumber = 0)
     {
-        // For now, ignore the format number/length and use default formatting
+        // Format number 9 = "XML Standard" in BC → ISO 8601 for Date values.
+        if (formatNumber == 9)
+        {
+            DateTime? dt9 = ExtractDateTime(value);
+            if (dt9.HasValue)
+                return dt9.Value.ToString("yyyy-MM-dd");
+        }
+        // All other format numbers: delegate to the default (locale) formatter.
         return Format(value);
     }
 
