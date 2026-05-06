@@ -247,6 +247,42 @@ public class AlScope : IDisposable, ITreeObject
     /// </summary>
     public static string UserId { get; set; } = "TESTUSER";
 
+    // ── Date locale ───────────────────────────────────────────────────────────
+    // BC's default Format(Date) uses the session culture (e.g. MM/dd/yyyy for en-US).
+    // The runner does not have a real BC session, so dates are formatted using the
+    // configured DateLocale culture.  The default is null (= ISO-8601 / yyyy-MM-dd),
+    // preserving the runner's historical invariant behaviour.  Set --date-locale <culture>
+    // (or ALRUNNER_DATE_LOCALE env var) to match a real BC container's session culture,
+    // e.g. "en-US" → 12/31/2026, "de-DE" → 31.12.2026. (issue #1603)
+    private static System.Globalization.CultureInfo? _dateLocale = null;
+
+    /// <summary>
+    /// Culture used by the default <c>Format(Date)</c> path.
+    /// <c>null</c> = ISO-8601 (<c>yyyy-MM-dd</c>) — the historical runner default.
+    /// Set to e.g. <c>CultureInfo.GetCultureInfo("en-US")</c> to match a real BC
+    /// container's session locale.
+    /// </summary>
+    public static System.Globalization.CultureInfo? DateLocale
+    {
+        get => _dateLocale;
+        set => _dateLocale = value;
+    }
+
+    /// <summary>
+    /// Format a NavDate value using the configured <see cref="DateLocale"/>.
+    /// When <see cref="DateLocale"/> is <c>null</c> (the default) the historical
+    /// ISO-8601 (<c>yyyy-MM-dd</c>) format is used.
+    /// </summary>
+    internal static string FormatNavDate(DateTime dt)
+    {
+        if (_dateLocale == null)
+            return dt.ToString("yyyy-MM-dd");
+        // Use the short date pattern from the configured culture.
+        // BC's session locale short-date pattern (e.g. MM/dd/yyyy for en-US,
+        // dd.MM.yyyy for de-DE) is returned by CultureInfo.DateTimeFormat.ShortDatePattern.
+        return dt.ToString(_dateLocale.DateTimeFormat.ShortDatePattern, _dateLocale);
+    }
+
     // NavMethodScope static fields/methods — the BC compiler can emit static
     // references to these on scope classes that inherit from AlScope.
     public static int ExitStatementNumber { get; set; }
@@ -1526,9 +1562,9 @@ public static class AlCompat
             return FormatNavTime(value);
         }
         // Handle NavDate — ToString() triggers NavDateFormatter which may require NavSession.
-        // BC's default Format(Date) uses the session locale (e.g. MM/dd/yyyy for en-US),
-        // NOT ISO-8601. The runner hard-codes en-US locale format so that date columns in
-        // report-dataset assertions match real BC container behaviour. (issue #1603)
+        // The runner formats dates using the configured session locale (see AlRunnerSession.DateLocale).
+        // Default is ISO-8601 (yyyy-MM-dd / invariant). Override with --date-locale <culture> or
+        // ALRUNNER_DATE_LOCALE env var to match a real BC container's locale. (issue #1603)
         if (typeName == "NavDate")
         {
             try
@@ -1538,7 +1574,7 @@ public static class AlCompat
                 {
                     var inner = valProp.GetValue(value);
                     if (inner is DateTime dt)
-                        return dt.ToString("MM/dd/yyyy");
+                        return AlScope.FormatNavDate(dt);
                 }
             }
             catch { }
@@ -1616,8 +1652,7 @@ public static class AlCompat
                     {
                         var innerDate = dateProp.GetValue(value);
                         if (innerDate is DateTime dt2)
-                            // BC default Format(Date) = locale format; runner uses en-US (issue #1603)
-                            return dt2.ToString("MM/dd/yyyy");
+                            return AlScope.FormatNavDate(dt2);
                     }
                     return "";
                 }

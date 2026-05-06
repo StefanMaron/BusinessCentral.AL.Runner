@@ -8347,10 +8347,12 @@ System.Format (Joker, Integer, Integer):
   tests:
     - tests/bucket-2/data-formats/320-format-date-default
   notes: >
-    1-arg AlCompat.Format (default/locale format); 3-arg Format(value, length, formatNumber)
-    where formatNumber 9 = XML Standard (ISO 8601) for Date → yyyy-MM-dd.
-    Default Format(Date) now produces BC locale format MM/dd/yyyy (en-US), matching real
-    BC container behaviour for report-dataset assertions. Fixes #1603.
+    1-arg AlCompat.Format (default format); 3-arg Format(value, length, formatNumber)
+    where formatNumber 9 = BC XML Standard (ISO-8601) → yyyy-MM-dd for Date.
+    Default Format(Date) uses the configurable date locale (AlScope.DateLocale, set via
+    --date-locale <culture> CLI flag or ALRUNNER_DATE_LOCALE env var, or
+    AlRunnerConfig.SetDateLocale() in AL tests). Default is null = ISO-8601 (historical
+    runner behaviour, unchanged). Locale path tested with en-US culture. Fixes #1603.
 
 System.Format (Joker, Integer, Text):
   layer: runtime-api
