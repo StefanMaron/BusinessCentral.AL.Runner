@@ -6,6 +6,14 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.31] - 2026-05-06
+
+### Fixed
+- skip AL string literals when counting braces in StripPatternedBlock/StripNamedBlock — closes #1600
+- emit auto-stubs in consumer using-namespace to resolve AL0118 for namespace-aware consumers
+- exclude PagePartSyntax names from usercontrol stub injection guard — closes #1597
+- drop event subscribers targeting missing codeunit to prevent CS0131 / BadExpression crash
+
 ## [1.0.30] - 2026-05-04
 
 ### Fixed
