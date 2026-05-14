@@ -34,6 +34,7 @@ public static class IterationTracker
 
     public static void Reset()
     {
+        _enabled = false;
         _loops.Clear();
         _loopStack.Clear();
         _nextLoopId = 0;
