@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/schemas/protocol-v2.json",
+  "title": "AL.Runner Server Protocol v2",
+  "description": "Newline-delimited JSON. A `runtests` request emits zero or more `test` lines, optional `progress` lines, then exactly one `summary` line. Each line is a separate JSON document.",
+  "definitions": {
+    "AlStackFrame": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string" },
+        "source": {
+          "type": "object",
+          "properties": {
+            "path": { "type": "string" },
+            "name": { "type": "string" }
+          }
+        },
+        "line": { "type": "integer", "minimum": 1 },
+        "column": { "type": "integer", "minimum": 1 },
+        "presentationHint": {
+          "type": "string",
+          "enum": ["normal", "subtle", "deemphasize", "label"]
+        }
+      }
+    },
+    "ErrorKind": {
+      "type": "string",
+      "enum": ["assertion", "runtime", "compile", "setup", "timeout", "unknown"]
+    },
+    "TestEvent": {
+      "type": "object",
+      "required": ["type", "name", "status"],
+      "properties": {
+        "type": { "const": "test" },
+        "name": { "type": "string" },
+        "status": { "enum": ["pass", "fail", "error"] },
+        "durationMs": { "type": "integer", "minimum": 0 },
+        "message": { "type": "string" },
+        "errorKind": { "$ref": "#/definitions/ErrorKind" },
+        "alSourceFile": { "type": "string" },
+        "alSourceLine": { "type": "integer", "minimum": 1 },
+        "alSourceColumn": { "type": "integer", "minimum": 1 },
+        "stackFrames": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/AlStackFrame" }
+        },
+        "stackTrace": { "type": "string" },
+        "messages": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "capturedValues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "scopeName": { "type": "string" },
+              "variableName": { "type": "string" },
+              "value": {},
+              "statementId": { "type": "integer" }
+            }
+          }
+        }
+      }
+    },
+    "FileCoverage": {
+      "type": "object",
+      "required": ["file", "lines", "totalStatements", "hitStatements"],
+      "properties": {
+        "file": { "type": "string" },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["line", "hits"],
+            "properties": {
+              "line": { "type": "integer", "minimum": 1 },
+              "hits": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "totalStatements": { "type": "integer", "minimum": 0 },
+        "hitStatements": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "Summary": {
+      "type": "object",
+      "required": ["type", "exitCode", "passed", "failed", "errors", "total", "protocolVersion"],
+      "properties": {
+        "type": { "const": "summary" },
+        "exitCode": { "type": "integer" },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "errors": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 0 },
+        "cached": { "type": "boolean" },
+        "cancelled": { "type": "boolean" },
+        "changedFiles": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "compilationErrors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "file": { "type": "string" },
+              "errors": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          }
+        },
+        "coverage": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/FileCoverage" }
+        },
+        "protocolVersion": { "const": 2 }
+      }
+    },
+    "Ack": {
+      "type": "object",
+      "required": ["type", "command"],
+      "properties": {
+        "type": { "const": "ack" },
+        "command": { "type": "string" },
+        "noop": { "type": "boolean" }
+      }
+    },
+    "Progress": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "progress" },
+        "completed": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/definitions/TestEvent" },
+    { "$ref": "#/definitions/Summary" },
+    { "$ref": "#/definitions/Ack" },
+    { "$ref": "#/definitions/Progress" }
+  ]
+}
