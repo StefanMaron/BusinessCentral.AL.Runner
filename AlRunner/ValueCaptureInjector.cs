@@ -148,10 +148,7 @@ public sealed class ValueCaptureInjector : CSharpSyntaxRewriter
     private static bool IsPlumbingField(string name)
     {
         if (name.Length == 0) return true;
-        // BC emits β-prefixed fields for scope plumbing and γ-prefixed for
-        // return values; skip both to avoid noise.
-        var c = name[0];
-        if (c == 'β' || c == 'γ' || c == '\u03b2' || c == '\u03b3') return true;
+        if (PlumbingFieldFilter.IsPlumbingField(name)) return true;
         if (name.StartsWith("__", StringComparison.Ordinal)) return true;
         if (name == "_parent" || name == "me") return true;
         return false;

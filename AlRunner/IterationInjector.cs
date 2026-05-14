@@ -12,21 +12,34 @@ namespace AlRunner;
 public sealed class IterationInjector : CSharpSyntaxRewriter
 {
     private string? _currentScopeClass;
+    private string? _currentObjectName;
     private int _nextLoopIdHint;
+    private readonly Dictionary<string, string>? _scopeToObject;
 
-    public static SyntaxNode Inject(SyntaxNode root)
+    private IterationInjector(Dictionary<string, string>? scopeToObject = null)
     {
-        var injector = new IterationInjector();
+        _scopeToObject = scopeToObject;
+    }
+
+    public static SyntaxNode Inject(SyntaxNode root, Dictionary<string, string>? scopeToObject = null)
+    {
+        var injector = new IterationInjector(scopeToObject);
         return injector.Visit(root);
     }
 
     public override SyntaxNode? VisitClassDeclaration(ClassDeclarationSyntax node)
     {
-        var previous = _currentScopeClass;
+        var previousScope = _currentScopeClass;
+        var previousObject = _currentObjectName;
         if (node.Identifier.Text.Contains("_Scope"))
+        {
             _currentScopeClass = node.Identifier.Text;
+            // Look up the AL object name from the scope class name using the mapping.
+            _scopeToObject?.TryGetValue(_currentScopeClass, out _currentObjectName);
+        }
         var result = base.VisitClassDeclaration(node);
-        _currentScopeClass = previous;
+        _currentScopeClass = previousScope;
+        _currentObjectName = previousObject;
         return result;
     }
 
@@ -35,24 +48,84 @@ public sealed class IterationInjector : CSharpSyntaxRewriter
         if (_currentScopeClass is null) return base.VisitForStatement(node);
         // Visit children first so nested loops are processed inside-out
         var visited = (ForStatementSyntax)base.VisitForStatement(node)!;
-        return WrapLoop(visited, visited.Statement);
+
+        // Plan E5 Group B (G2 fix): extract the loop variable name so we can
+        // inject a per-iteration capture call. The AL→C# rewriter emits
+        // `for i := <expr> to <expr> do` as:
+        //   this.i = 1;              ← initialisation before the loop
+        //   for (; this.i <= @tmp0;) ← no inline Declaration; variable lives on `this`
+        //
+        // So node.Declaration is null; instead we read the left-hand side of
+        // the condition expression: `this.<name> <= @tmp<N>` → name == "i".
+        // If the condition doesn't follow that pattern (while/do or some other
+        // for form), loopVarName stays null and no capture is injected.
+        string? loopVarName = null;
+        if (visited.Declaration is { Variables: { Count: > 0 } } decl)
+        {
+            // Inline-declaration form: `for (int i = ...; ...)` — keep for
+            // forward-compatibility even though the current rewriter never emits this.
+            loopVarName = decl.Variables[0].Identifier.Text;
+        }
+        else if (visited.Condition is BinaryExpressionSyntax bin &&
+                 bin.Left is MemberAccessExpressionSyntax ma &&
+                 ma.Expression is ThisExpressionSyntax)
+        {
+            // Field-on-this form: `for (; this.i <= @tmp0;)` — for AL types where
+            // the BC transpiler emits a plain `<=` operator (rare; mostly seen in tests).
+            var name = ma.Name.Identifier.ValueText;
+            if (!IsPlumbingField(name))
+                loopVarName = name;
+        }
+        else if (visited.Condition is InvocationExpressionSyntax inv &&
+                 inv.Expression is MemberAccessExpressionSyntax invMa &&
+                 (invMa.Name.Identifier.Text == "NavLte" || invMa.Name.Identifier.Text == "NavLt" ||
+                  invMa.Name.Identifier.Text == "NavGte" || invMa.Name.Identifier.Text == "NavGt") &&
+                 inv.ArgumentList.Arguments.Count >= 1 &&
+                 inv.ArgumentList.Arguments[0].Expression is MemberAccessExpressionSyntax argMa &&
+                 argMa.Expression is ThisExpressionSyntax)
+        {
+            // AlCompat.Nav{Lte,Lt,Gte,Gt}(this.i, @tmpN) form — what the BC transpiler
+            // emits for AL `for i := <expr> to|downto <expr> do`. The numeric comparison
+            // intrinsics carry NaN/null semantics so the transpiler routes through them
+            // instead of plain `<=` operators.
+            var name = argMa.Name.Identifier.ValueText;
+            if (!IsPlumbingField(name))
+                loopVarName = name;
+        }
+
+        return WrapLoop(visited, visited.Statement, loopVarName);
     }
 
     public override SyntaxNode? VisitWhileStatement(WhileStatementSyntax node)
     {
         if (_currentScopeClass is null) return base.VisitWhileStatement(node);
         var visited = (WhileStatementSyntax)base.VisitWhileStatement(node)!;
-        return WrapLoop(visited, visited.Statement);
+        // While loops don't have an inline-declared loop variable; pass null.
+        return WrapLoop(visited, visited.Statement, loopVarName: null);
     }
 
     public override SyntaxNode? VisitDoStatement(DoStatementSyntax node)
     {
         if (_currentScopeClass is null) return base.VisitDoStatement(node);
         var visited = (DoStatementSyntax)base.VisitDoStatement(node)!;
-        return WrapLoop(visited, visited.Statement);
+        // Do-while loops don't have an inline-declared loop variable; pass null.
+        return WrapLoop(visited, visited.Statement, loopVarName: null);
     }
 
-    private SyntaxNode WrapLoop(StatementSyntax loopNode, StatementSyntax body)
+    /// <summary>
+    /// Returns true for BC plumbing fields (β/γ-prefixed and double-underscore-prefixed)
+    /// that should not be captured. Mirrors the same logic in ValueCaptureInjector.
+    /// </summary>
+    private static bool IsPlumbingField(string name)
+    {
+        if (name.Length == 0) return true;
+        if (PlumbingFieldFilter.IsPlumbingField(name)) return true;
+        if (name.StartsWith("__", StringComparison.Ordinal)) return true;
+        if (name == "_parent" || name == "me") return true;
+        return false;
+    }
+
+    private SyntaxNode WrapLoop(StatementSyntax loopNode, StatementSyntax body, string? loopVarName)
     {
         var loopIdVar = $"__alr_loopId_{_nextLoopIdHint++}";
         var (startLine, endLine) = ExtractStmtHitRange(loopNode);
@@ -68,6 +141,23 @@ public sealed class IterationInjector : CSharpSyntaxRewriter
             $"AlRunner.Runtime.IterationTracker.EnterIteration({loopIdVar});\n");
 
         var newStatements = new List<StatementSyntax> { enterIter };
+
+        // Plan E5 Group B (G2 fix): inject a per-iteration capture for the
+        // loop variable so it appears in step.capturedValues alongside
+        // assignment targets. statementId 0 anchors the capture at the
+        // for-statement's start. If loopVarName is null (while/do, or a
+        // for whose condition doesn't follow the `this.<name> <= ...`
+        // pattern), skip the injection — there's no loop variable to capture.
+        // Use _currentObjectName (from ScopeToObject mapping) as the ObjectName
+        // so Server.cs can map it to alSourceFile via SourceFileMapper.
+        if (loopVarName != null)
+        {
+            var objectName = _currentObjectName ?? _currentScopeClass ?? "";
+            var captureLoopVar = SyntaxFactory.ParseStatement(
+                $"AlRunner.Runtime.ValueCapture.Capture(\"{_currentScopeClass}\", \"{objectName}\", \"{loopVarName}\", (object?)this.{loopVarName}, 0);\n");
+            newStatements.Add(captureLoopVar);
+        }
+
         newStatements.AddRange(bodyBlock.Statements);
         var newBody = SyntaxFactory.Block(newStatements);
 

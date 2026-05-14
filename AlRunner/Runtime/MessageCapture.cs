@@ -11,8 +11,21 @@ public static class MessageCapture
 
     public static void Capture(string message)
     {
-        if (!_enabled) return;
-        _messages.Add(message);
+        // Per-test scope gets the message for isolation (no _enabled guard — the scope
+        // is itself the opt-in mechanism so per-test isolation always works).
+        var scope = TestExecutionScope.Current;
+        if (scope != null)
+            scope.Messages.Add(message);
+
+        // Plan E5 Group A: route to the innermost active loop's per-iteration
+        // accumulator. RecordMessage is a no-op when no loop is active or when
+        // IterationTracker is disabled, so this is safe to call unconditionally.
+        IterationTracker.RecordMessage(message);
+
+        // Global aggregate also gets the message when capture mode is enabled,
+        // so the pipeline-level MessageCapture.GetMessages() remains populated.
+        if (_enabled)
+            _messages.Add(message);
     }
 
     public static List<string> GetMessages() => new(_messages);
