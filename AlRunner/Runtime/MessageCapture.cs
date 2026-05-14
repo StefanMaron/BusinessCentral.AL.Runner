@@ -11,8 +11,16 @@ public static class MessageCapture
 
     public static void Capture(string message)
     {
-        if (!_enabled) return;
-        _messages.Add(message);
+        // Per-test scope gets the message for isolation (no _enabled guard — the scope
+        // is itself the opt-in mechanism so per-test isolation always works).
+        var scope = TestExecutionScope.Current;
+        if (scope != null)
+            scope.Messages.Add(message);
+
+        // Global aggregate also gets the message when capture mode is enabled,
+        // so the pipeline-level MessageCapture.GetMessages() remains populated.
+        if (_enabled)
+            _messages.Add(message);
     }
 
     public static List<string> GetMessages() => new(_messages);

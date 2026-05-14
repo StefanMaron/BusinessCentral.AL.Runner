@@ -3103,7 +3103,8 @@ public static class RoslynCompiler
     /// </summary>
     internal static CompileResult? Compile(List<(string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)> namedTrees,
         List<Microsoft.CodeAnalysis.MetadataReference>? preloadedReferences = null,
-        IList<string>? errorSink = null)
+        IList<string>? errorSink = null,
+        bool emitPortablePdb = false)
     {
         // Assign deduplicated file paths to trees for readable Roslyn diagnostics
         var nameCount = new Dictionary<string, int>();
@@ -3123,7 +3124,7 @@ public static class RoslynCompiler
             return t.Tree.WithFilePath($"{baseName}.cs");
         }).ToList();
 
-        return CompileFromTrees(syntaxTrees, preloadedReferences, errorSink);
+        return CompileFromTrees(syntaxTrees, preloadedReferences, errorSink, emitPortablePdb);
     }
 
     /// <summary>
@@ -3246,7 +3247,8 @@ public static class RoslynCompiler
 
     internal static CompileResult? CompileFromTrees(List<Microsoft.CodeAnalysis.SyntaxTree> syntaxTrees,
         List<Microsoft.CodeAnalysis.MetadataReference>? preloadedReferences,
-        IList<string>? errorSink = null)
+        IList<string>? errorSink = null,
+        bool emitPortablePdb = false)
     {
         var references = preloadedReferences ?? LoadReferences();
 
@@ -3256,10 +3258,28 @@ public static class RoslynCompiler
             references,
             new Microsoft.CodeAnalysis.CSharp.CSharpCompilationOptions(
                 Microsoft.CodeAnalysis.OutputKind.DynamicallyLinkedLibrary)
-                .WithAllowUnsafe(true));
+                .WithAllowUnsafe(true)
+                .WithOptimizationLevel(Microsoft.CodeAnalysis.OptimizationLevel.Debug));
 
-        using var ms = new MemoryStream(512 * 1024);
-        var result = compilation.Emit(ms);
+        using var asmStream = new MemoryStream(512 * 1024);
+        using var pdbStream = new MemoryStream();
+        Microsoft.CodeAnalysis.Emit.EmitResult result;
+        if (emitPortablePdb)
+        {
+            // PDB requires every input tree to carry an Encoding. Auto-stub fallback
+            // trees parsed via CSharpSyntaxTree.ParseText without encoding would otherwise
+            // fail with CS8055. Callers requesting PDB emission must thread UTF-8 encoding
+            // through every ParseText/Create call producing a tree in syntaxTrees.
+            result = compilation.Emit(
+                asmStream,
+                pdbStream,
+                options: new Microsoft.CodeAnalysis.Emit.EmitOptions(
+                    debugInformationFormat: Microsoft.CodeAnalysis.Emit.DebugInformationFormat.PortablePdb));
+        }
+        else
+        {
+            result = compilation.Emit(asmStream);
+        }
 
         if (!result.Success)
         {
@@ -3280,12 +3300,24 @@ public static class RoslynCompiler
             return null;
         }
 
-        ms.Seek(0, SeekOrigin.Begin);
+        asmStream.Seek(0, SeekOrigin.Begin);
         // Collectible ALC: the assembly (and its ALC) stays alive as long as any
         // reference to the Assembly or ALC exists (e.g., in CompilationCache).
         // Callers must call alc.Unload() when the assembly is no longer needed.
         var alc = new System.Runtime.Loader.AssemblyLoadContext($"TestRun_{Guid.NewGuid():N}", isCollectible: true);
-        var assembly = alc.LoadFromStream(ms);
+        Assembly assembly;
+        if (emitPortablePdb)
+        {
+            // Loading the PDB stream alongside ensures StackFrame.GetFileName/GetFileLineNumber
+            // resolve to filenames embedded in the portable PDB (.al paths when
+            // #line directives have been injected).
+            pdbStream.Seek(0, SeekOrigin.Begin);
+            assembly = alc.LoadFromStream(asmStream, pdbStream);
+        }
+        else
+        {
+            assembly = alc.LoadFromStream(asmStream);
+        }
         return new CompileResult(assembly, alc);
     }
 
@@ -3443,7 +3475,16 @@ public static class Executor
         }
     }
 
-    public static List<AlRunner.TestResult> RunTests(Assembly assembly, bool captureValues = false, string? runProcedure = null, bool initEvents = false, AlRunner.TestIsolation testIsolation = AlRunner.TestIsolation.Codeunit, int testTimeoutSeconds = 0)
+    public static List<AlRunner.TestResult> RunTests(
+        Assembly assembly,
+        bool captureValues = false,
+        string? runProcedure = null,
+        bool initEvents = false,
+        AlRunner.TestIsolation testIsolation = AlRunner.TestIsolation.Codeunit,
+        int testTimeoutSeconds = 0,
+        AlRunner.TestFilter? filter = null,
+        Action<AlRunner.TestResult>? onTestComplete = null,
+        CancellationToken cancellationToken = default)
     {
         // Find test methods using [NavTest] attribute on the parent method,
         // then find the corresponding _Scope_ nested class.
@@ -3482,14 +3523,28 @@ public static class Executor
             }
         }
 
-        // Filter to a single procedure if requested
+        // Filter to a single procedure if requested (legacy runProcedure parameter)
         if (runProcedure != null)
         {
             testScopes = testScopes.Where(t =>
                 t.TestName.Equals(runProcedure, StringComparison.OrdinalIgnoreCase)).ToList();
         }
 
-        if (testScopes.Count == 0)
+        // Apply TestFilter (AND logic: both codeunit and proc must match if both are set)
+        if (filter != null)
+        {
+            testScopes = testScopes.Where(t =>
+            {
+                var codeunitNameForFilter = AlRunner.SourceFileMapper.GetObjectForClass(t.ParentType.Name);
+                if (filter.CodeunitNames != null && !filter.CodeunitNames.Contains(codeunitNameForFilter))
+                    return false;
+                if (filter.ProcNames != null && !filter.ProcNames.Contains(t.TestName))
+                    return false;
+                return true;
+            }).ToList();
+        }
+
+        if (testScopes.Count == 0 && filter == null)
         {
             var msg = runProcedure != null
                 ? $"Error: Procedure '{runProcedure}' not found in the generated code."
@@ -3527,6 +3582,9 @@ public static class Executor
 
         foreach (var (testName, scopeType, parentType) in testScopes)
         {
+            // Cooperative cancellation: stop before running the next test
+            if (cancellationToken.IsCancellationRequested) break;
+
             // Resolve the AL codeunit name for grouping in JUnit output
             var codeunitName = AlRunner.SourceFileMapper.GetObjectForClass(parentType.Name);
 
@@ -3601,6 +3659,9 @@ public static class Executor
             AlRunner.Runtime.MockLanguage.Reset();
             AlRunner.Runtime.EventSubscriberRegistry.ResetBindings();
 
+            AlRunner.TestResult result;
+            using (AlRunner.TestExecutionScope.Begin($"{codeunitName}.{testName}"))
+            {
             try
             {
                 // Create the parent codeunit instance (needed by scope constructor)
@@ -3673,13 +3734,17 @@ public static class Executor
                     BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
                 if (onRunMethod == null)
                 {
-                    results.Add(new AlRunner.TestResult
+                    result = new AlRunner.TestResult
                     {
                         Name = testName,
                         Status = AlRunner.TestStatus.Fail,
                         Message = $"OnRun() method not found on {scopeType.Name}",
-                        CodeunitName = codeunitName
-                    });
+                        CodeunitName = codeunitName,
+                        Messages = AlRunner.TestExecutionScope.Current?.Messages.ToList(),
+                        CapturedValues = AlRunner.TestExecutionScope.Current?.CapturedValues.ToList()
+                    };
+                    results.Add(result);
+                    onTestComplete?.Invoke(result);
                     continue;
                 }
 
@@ -3806,13 +3871,17 @@ public static class Executor
                 if (captureValues)
                     CaptureFieldValues(scope, scopeType, testName, AlRunner.SourceFileMapper.GetObjectForClass(parentType.Name));
 
-                results.Add(new AlRunner.TestResult
+                result = new AlRunner.TestResult
                 {
                     Name = testName,
                     Status = AlRunner.TestStatus.Pass,
                     DurationMs = sw.ElapsedMilliseconds,
-                    CodeunitName = codeunitName
-                });
+                    CodeunitName = codeunitName,
+                    Messages = AlRunner.TestExecutionScope.Current?.Messages.ToList(),
+                    CapturedValues = AlRunner.TestExecutionScope.Current?.CapturedValues.ToList()
+                };
+                results.Add(result);
+                onTestComplete?.Invoke(result);
             }
             catch (TargetInvocationException ex)
             {
@@ -3822,75 +3891,115 @@ public static class Executor
 
                 if (inner is NotSupportedException)
                 {
-                    results.Add(new AlRunner.TestResult
+                    var frames = AlRunner.StackFrameMapper.Walk(inner!);
+                    var deepest = AlRunner.StackFrameMapper.FindDeepestUserFrame(frames);
+                    result = new AlRunner.TestResult
                     {
                         Name = testName,
                         Status = AlRunner.TestStatus.Error,
                         Message = $"{inner!.GetType().Name}: {inner.Message}",
                         StackTrace = FormatStackFrames(inner),
-                        AlSourceLine = FindAlSourceLine(inner),
-                        AlSourceColumn = FindAlSourceColumn(inner),
-                        CodeunitName = codeunitName
-                    });
+                        AlSourceLine = deepest?.Line ?? FindAlSourceLine(inner),
+                        AlSourceColumn = deepest?.Column ?? FindAlSourceColumn(inner),
+                        CodeunitName = codeunitName,
+                        StackFrames = frames,
+                        AlSourceFile = deepest?.File,
+                        ErrorKind = AlRunner.ErrorClassifier.Classify(inner, new AlRunner.TestExecutionContext(InsideTestProc: true)),
+                        Messages = AlRunner.TestExecutionScope.Current?.Messages.ToList(),
+                        CapturedValues = AlRunner.TestExecutionScope.Current?.CapturedValues.ToList()
+                    };
                 }
                 else if (IsRunnerError(inner!) || IsLikelyRunnerLimitation(inner!))
                 {
-                    results.Add(new AlRunner.TestResult
+                    var frames = AlRunner.StackFrameMapper.Walk(inner!);
+                    var deepest = AlRunner.StackFrameMapper.FindDeepestUserFrame(frames);
+                    result = new AlRunner.TestResult
                     {
                         Name = testName,
                         Status = AlRunner.TestStatus.Error,
                         Message = $"{inner!.GetType().Name}: {inner.Message}",
                         StackTrace = FormatStackFrames(inner),
-                        AlSourceLine = FindAlSourceLine(inner),
-                        AlSourceColumn = FindAlSourceColumn(inner),
+                        AlSourceLine = deepest?.Line ?? FindAlSourceLine(inner),
+                        AlSourceColumn = deepest?.Column ?? FindAlSourceColumn(inner),
                         IsRunnerBug = true,
-                        CodeunitName = codeunitName
-                    });
+                        CodeunitName = codeunitName,
+                        StackFrames = frames,
+                        AlSourceFile = deepest?.File,
+                        ErrorKind = AlRunner.ErrorClassifier.Classify(inner, new AlRunner.TestExecutionContext(InsideTestProc: true)),
+                        Messages = AlRunner.TestExecutionScope.Current?.Messages.ToList(),
+                        CapturedValues = AlRunner.TestExecutionScope.Current?.CapturedValues.ToList()
+                    };
                 }
                 else
                 {
-                    results.Add(new AlRunner.TestResult
+                    var frames = AlRunner.StackFrameMapper.Walk(inner!);
+                    var deepest = AlRunner.StackFrameMapper.FindDeepestUserFrame(frames);
+                    result = new AlRunner.TestResult
                     {
                         Name = testName,
                         Status = AlRunner.TestStatus.Fail,
                         Message = inner!.Message,
                         StackTrace = FormatStackFrames(inner),
-                        AlSourceLine = FindAlSourceLine(inner),
-                        AlSourceColumn = FindAlSourceColumn(inner),
-                        CodeunitName = codeunitName
-                    });
+                        AlSourceLine = deepest?.Line ?? FindAlSourceLine(inner),
+                        AlSourceColumn = deepest?.Column ?? FindAlSourceColumn(inner),
+                        CodeunitName = codeunitName,
+                        StackFrames = frames,
+                        AlSourceFile = deepest?.File,
+                        ErrorKind = AlRunner.ErrorClassifier.Classify(inner, new AlRunner.TestExecutionContext(InsideTestProc: true)),
+                        Messages = AlRunner.TestExecutionScope.Current?.Messages.ToList(),
+                        CapturedValues = AlRunner.TestExecutionScope.Current?.CapturedValues.ToList()
+                    };
                 }
+                results.Add(result);
+                onTestComplete?.Invoke(result);
             }
             catch (Exception ex)
             {
                 if (IsRunnerError(ex) || IsLikelyRunnerLimitation(ex))
                 {
-                    results.Add(new AlRunner.TestResult
+                    var frames = AlRunner.StackFrameMapper.Walk(ex);
+                    var deepest = AlRunner.StackFrameMapper.FindDeepestUserFrame(frames);
+                    result = new AlRunner.TestResult
                     {
                         Name = testName,
                         Status = AlRunner.TestStatus.Error,
                         Message = $"{ex.GetType().Name}: {ex.Message}",
                         StackTrace = FormatStackFrames(ex),
-                        AlSourceLine = FindAlSourceLine(ex),
-                        AlSourceColumn = FindAlSourceColumn(ex),
+                        AlSourceLine = deepest?.Line ?? FindAlSourceLine(ex),
+                        AlSourceColumn = deepest?.Column ?? FindAlSourceColumn(ex),
                         IsRunnerBug = true,
-                        CodeunitName = codeunitName
-                    });
+                        CodeunitName = codeunitName,
+                        StackFrames = frames,
+                        AlSourceFile = deepest?.File,
+                        ErrorKind = AlRunner.ErrorClassifier.Classify(ex, new AlRunner.TestExecutionContext(InsideTestProc: true)),
+                        Messages = AlRunner.TestExecutionScope.Current?.Messages.ToList(),
+                        CapturedValues = AlRunner.TestExecutionScope.Current?.CapturedValues.ToList()
+                    };
                 }
                 else
                 {
-                    results.Add(new AlRunner.TestResult
+                    var frames = AlRunner.StackFrameMapper.Walk(ex);
+                    var deepest = AlRunner.StackFrameMapper.FindDeepestUserFrame(frames);
+                    result = new AlRunner.TestResult
                     {
                         Name = testName,
                         Status = AlRunner.TestStatus.Fail,
                         Message = ex.Message,
                         StackTrace = FormatStackFrames(ex),
-                        AlSourceLine = FindAlSourceLine(ex),
-                        AlSourceColumn = FindAlSourceColumn(ex),
-                        CodeunitName = codeunitName
-                    });
+                        AlSourceLine = deepest?.Line ?? FindAlSourceLine(ex),
+                        AlSourceColumn = deepest?.Column ?? FindAlSourceColumn(ex),
+                        CodeunitName = codeunitName,
+                        StackFrames = frames,
+                        AlSourceFile = deepest?.File,
+                        ErrorKind = AlRunner.ErrorClassifier.Classify(ex, new AlRunner.TestExecutionContext(InsideTestProc: true)),
+                        Messages = AlRunner.TestExecutionScope.Current?.Messages.ToList(),
+                        CapturedValues = AlRunner.TestExecutionScope.Current?.CapturedValues.ToList()
+                    };
                 }
+                results.Add(result);
+                onTestComplete?.Invoke(result);
             }
+            } // end using TestExecutionScope
         }
 
         return results;

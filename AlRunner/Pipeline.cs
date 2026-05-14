@@ -74,6 +74,27 @@ public class PipelineOptions
     /// a Roslyn compilation gap.
     /// </summary>
     public Func<string, Microsoft.CodeAnalysis.SyntaxTree>? RewriterFactory { get; set; }
+
+    /// <summary>
+    /// When true, inject <c>#line N "src/Foo.al"</c> directives as leading trivia on each
+    /// AL-derived statement in the rewritten C#, so Roslyn's pdb maps IL sequence
+    /// points back to .al filenames. Required for native StackFrame.GetFileName/Line
+    /// to return AL paths in test failure traces.
+    /// </summary>
+    public bool EmitLineDirectives { get; set; } = false;
+
+    /// <summary>
+    /// When true, capture each rewritten C# file's text into PipelineResult.GeneratedCSharpFiles
+    /// so tests can inspect emitted <c>#line</c> directives without scraping stdout.
+    /// </summary>
+    public bool EmitGeneratedCSharp { get; set; } = false;
+
+    /// <summary>
+    /// Cancellation token forwarded into <see cref="Executor.RunTests"/> during the
+    /// test-execution step. Used by the server cancel command to abort an in-flight
+    /// runtests request. Defaults to <see cref="CancellationToken.None"/>.
+    /// </summary>
+    public CancellationToken CancellationToken { get; init; } = default;
 }
 
 public enum TestStatus { Pass, Fail, Error }
@@ -105,12 +126,12 @@ public class TestResult
     public string? Message { get; init; }
     public string? StackTrace { get; init; }
     /// <summary>AL source line where the error occurred (null for passing tests).</summary>
-    public int? AlSourceLine { get; init; }
+    public int? AlSourceLine { get; set; }
     /// <summary>
     /// AL source column where the error occurred (1-based, null for passing
     /// tests or when the underlying source-span lacks column info).
     /// </summary>
-    public int? AlSourceColumn { get; init; }
+    public int? AlSourceColumn { get; set; }
     /// <summary>
     /// True when the error originates from AlRunner.Runtime mock code (a runner
     /// limitation or bug), not from user AL logic or a missing dependency injection.
@@ -121,6 +142,22 @@ public class TestResult
     /// tests by suite in JUnit XML output.
     /// </summary>
     public string? CodeunitName { get; init; }
+
+    /// <summary>AL source file (relative path, forward-slash) the failure originated in.
+    /// Resolved via StackFrameMapper.FindDeepestUserFrame on the throw stack.</summary>
+    public string? AlSourceFile { get; set; }
+
+    /// <summary>Structured stack frames extracted from the exception (T7 #line directives + T4 walker).</summary>
+    public List<AlStackFrame>? StackFrames { get; set; }
+
+    /// <summary>Error category for IDE UI variation (assertion vs runtime vs compile vs ...).</summary>
+    public AlErrorKind? ErrorKind { get; set; }
+
+    /// <summary>Per-test Message() output captured via AsyncLocal scope.</summary>
+    public List<string>? Messages { get; set; }
+
+    /// <summary>Per-test captured variable values via AsyncLocal scope.</summary>
+    public List<(string ScopeName, string ObjectName, string VariableName, string? Value, int StatementId)>? CapturedValues { get; set; }
 }
 
 public class CapturedValue
@@ -165,6 +202,19 @@ public class PipelineResult
     /// Non-null only when compilation produced errors.
     /// </summary>
     public List<string>? CompilationErrors { get; init; }
+
+    /// <summary>
+    /// Populated only when <see cref="PipelineOptions.EmitGeneratedCSharp"/> is true.
+    /// Each entry is the post-rewrite C# text for one AL object (e.g. one codeunit).
+    /// </summary>
+    public List<string> GeneratedCSharpFiles { get; set; } = new();
+
+    /// <summary>
+    /// The compiled <see cref="System.Reflection.Assembly"/> produced by the pipeline, if available.
+    /// Populated after a successful (or partially-successful) Roslyn compilation.
+    /// Primarily used by tests that drive <see cref="Executor.RunTests"/> directly.
+    /// </summary>
+    public System.Reflection.Assembly? CompiledAssembly { get; set; }
 }
 
 public class AlRunnerPipeline
@@ -173,6 +223,7 @@ public class AlRunnerPipeline
     private RoslynCompiler.CompileResult? _compileResult;
     private List<(string Name, string Error)>? _rewriterErrors;
     private List<string>? _compilationErrors;
+    private List<string>? _generatedCSharpFiles;
     public RewriteCache? RewriteCache { get; set; }
     public SyntaxTreeCache? SyntaxTreeCache { get; set; }
 
@@ -275,7 +326,9 @@ public class AlRunnerPipeline
             Assembly = _compileResult?.Assembly,
             LoadContext = _compileResult?.LoadContext,
             RewriterErrors = _rewriterErrors,
-            CompilationErrors = _compilationErrors
+            CompilationErrors = _compilationErrors,
+            GeneratedCSharpFiles = _generatedCSharpFiles ?? new List<string>(),
+            CompiledAssembly = Runtime.MockCodeunitHandle.CurrentAssembly
         };
     }
 
@@ -366,6 +419,9 @@ public class AlRunnerPipeline
 
     private int RunCore(PipelineOptions options, TextWriter stdout, TextWriter stderr, List<TestResult> testResults)
     {
+        // Reset per-run output state so a previous run's C# cannot leak into the next.
+        _generatedCSharpFiles = options.EmitGeneratedCSharp ? new List<string>() : null;
+
         if (options.Verbose)
             Log.Verbose = true;
 
@@ -628,6 +684,18 @@ public class AlRunnerPipeline
         Timer.StartStage("Roslyn rewriting");
         var refsTask = Task.Run(() => RoslynCompiler.LoadReferences());
 
+        // Pre-compute source-span and scope maps from the PRE-rewrite C# so the
+        // LineDirectiveInjector pass can run inside the parallel rewrite loop.
+        // ParseSourceSpansWithColumns reads [SourceSpans(...)] attributes which are
+        // present only in the BC-generated (pre-rewrite) text.
+        IReadOnlyDictionary<(string Scope, int StmtIndex), (int Line, int Column)>? lineDirectiveSpans = null;
+        IReadOnlyDictionary<string, string>? lineDirectiveScopeMap = null;
+        if (options.EmitLineDirectives)
+        {
+            lineDirectiveSpans = CoverageReport.ParseSourceSpansWithColumns(generatedCSharpList);
+            lineDirectiveScopeMap = CoverageReport.BuildScopeToObjectMap(generatedCSharpList);
+        }
+
         var rewrittenTrees = new (string Name, Microsoft.CodeAnalysis.SyntaxTree Tree)[generatedCSharpList.Count];
         int rewriteHits = 0;
         var rewriteFailures = new System.Collections.Concurrent.ConcurrentBag<(string Name, string Error)>();
@@ -640,13 +708,17 @@ public class AlRunnerPipeline
         {
             var (name, code) = generatedCSharpList[i];
 
-            // Check rewrite cache — if C# output is unchanged, reuse prior tree
-            var cached = RewriteCache?.TryGet(name, code, options.IterationTracking);
-            if (cached != null)
+            // Check rewrite cache — if C# output is unchanged, reuse prior tree.
+            // Skip when EmitLineDirectives is on; cache key doesn't include that flag.
+            if (!options.EmitLineDirectives)
             {
-                rewrittenTrees[i] = (name, cached);
-                Interlocked.Increment(ref rewriteHits);
-                return;
+                var cached = RewriteCache?.TryGet(name, code, options.IterationTracking);
+                if (cached != null)
+                {
+                    rewrittenTrees[i] = (name, cached);
+                    Interlocked.Increment(ref rewriteHits);
+                    return;
+                }
             }
 
             try
@@ -661,11 +733,26 @@ public class AlRunnerPipeline
                 var injectedRoot = ValueCaptureInjector.Inject(tree.GetRoot(), name);
                 if (options.IterationTracking)
                     injectedRoot = IterationInjector.Inject(injectedRoot);
-                tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.Create((Microsoft.CodeAnalysis.CSharp.CSharpSyntaxNode)injectedRoot);
+                // Third pass (optional): inject #line directives so portable PDB maps
+                // IL sequence points back to .al file paths.
+                if (options.EmitLineDirectives && lineDirectiveSpans != null && lineDirectiveScopeMap != null)
+                {
+                    injectedRoot = LineDirectiveInjector.Inject(
+                        injectedRoot,
+                        lineDirectiveSpans,
+                        lineDirectiveScopeMap,
+                        SourceFileMapper.GetFile);
+                }
+                // Specify UTF-8 encoding so Roslyn can emit debug information (CS8055).
+                // Without an encoding on the tree Roslyn refuses to write PDB sequence
+                // points even at OptimizationLevel.Debug.
+                tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.Create(
+                    (Microsoft.CodeAnalysis.CSharp.CSharpSyntaxNode)injectedRoot,
+                    encoding: System.Text.Encoding.UTF8);
                 rewrittenTrees[i] = (name, tree);
 
-                // Store in cache for next run (skip when using an injected factory)
-                if (options.RewriterFactory == null)
+                // Store in cache for next run (skip when using an injected factory or line directives)
+                if (options.RewriterFactory == null && !options.EmitLineDirectives)
                     RewriteCache?.Store(name, code, tree, options.IterationTracking);
             }
             catch (Exception ex)
@@ -732,6 +819,14 @@ public class AlRunnerPipeline
                 stdout.WriteLine($"=== End {name} ===\n");
             }
         }
+
+        // Capture post-rewrite C# text for test inspection (EmitGeneratedCSharp flag).
+        // Populated here so tests can verify #line directives without scraping stdout.
+        if (options.EmitGeneratedCSharp)
+        {
+            _generatedCSharpFiles = GetRewrittenStrings().Select(t => t.Code).ToList();
+        }
+
         Timer.EndStage("Roslyn rewriting");
 
         // Auto-stub: scan the generated C# for ALL referenced object IDs that were
@@ -769,7 +864,7 @@ public class AlRunnerPipeline
         }
 
         var compilationErrorSink = new List<string>();
-        var compileResult = RoslynCompiler.Compile(rewrittenTreeList, preloadedRefs, compilationErrorSink);
+        var compileResult = RoslynCompiler.Compile(rewrittenTreeList, preloadedRefs, compilationErrorSink, emitPortablePdb: options.EmitLineDirectives);
         mapperTask.Wait();
         if (compileResult == null)
         {

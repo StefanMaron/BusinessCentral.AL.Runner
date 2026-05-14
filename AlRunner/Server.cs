@@ -17,6 +17,23 @@ public class AlRunnerServer
     private readonly RewriteCache _rewriteCache = new();
     private readonly SyntaxTreeCache _syntaxTreeCache = new();
 
+    /// <summary>
+    /// CancellationTokenSource for the currently-active <c>runtests</c> request.
+    /// Set at the start of <see cref="HandleRunTests"/> and cleared (after Dispose) in the
+    /// finally block that wraps it. Read by <see cref="HandleCancel"/>.
+    ///
+    /// Thread-safety note: the dispatch loop in <see cref="RunAsync"/> is sequential —
+    /// it reads one request line at a time and processes it to completion before reading
+    /// the next. There is therefore no actual concurrent execution between a
+    /// <c>runtests</c> handler and a <c>cancel</c> handler: by the time a cancel command
+    /// is dispatched, <c>HandleRunTests</c> has already returned and cleared this field.
+    /// No lock is needed; a simple null-or-snapshot read in <see cref="HandleCancel"/> is
+    /// sufficient. The field is not <c>volatile</c> because both reads and writes happen on
+    /// the same logical async continuation (same thread or, in the async case, on a
+    /// continuation that has a happens-before edge with the write).
+    /// </summary>
+    private CancellationTokenSource? _activeRequestCts;
+
     public async Task RunAsync(TextReader input, TextWriter output, CancellationToken ct = default)
     {
         // Pre-warm: load Roslyn references once
@@ -46,6 +63,7 @@ public class AlRunnerServer
                     {
                         "runtests" => HandleRunTests(request, refsTask),
                         "execute" => HandleExecute(request, refsTask),
+                        "cancel" => HandleCancel(),
                         "shutdown" => HandleShutdown(),
                         _ => JsonSerializer.Serialize(new { error = $"Unknown command: {request.Command}" })
                     };
@@ -73,48 +91,110 @@ public class AlRunnerServer
         if (request.SourcePaths == null || request.SourcePaths.Length == 0)
             return JsonSerializer.Serialize(new { error = "sourcePaths is required" });
 
-        // Fingerprint the request — also updates per-file hashes used for the diff.
-        var fingerprint = _cache.ComputeFingerprint(request.SourcePaths);
-        var cacheHit = _cache.TryGet(fingerprint);
-
-        if (cacheHit != null)
+        // Create a CTS for this request so a concurrent cancel command can abort it.
+        // See _activeRequestCts field documentation for the thread-safety analysis.
+        _activeRequestCts = new CancellationTokenSource();
+        try
         {
-            // Cache hit — re-run tests on the cached assembly, returning the
-            // compilation errors that were seen when the assembly was first compiled.
-            Runtime.MockCodeunitHandle.CurrentAssembly = cacheHit.Value.Assembly;
-            var results = Executor.RunTests(cacheHit.Value.Assembly);
-            return SerializeServerResponse(results, Executor.ExitCode(results), cached: true,
-                compilationErrors: cacheHit.Value.CompilationErrors);
+            var ct = _activeRequestCts.Token;
+
+            // Fingerprint the request — also updates per-file hashes used for the diff.
+            var fingerprint = _cache.ComputeFingerprint(request.SourcePaths);
+            var cacheHit = _cache.TryGet(fingerprint);
+
+            if (cacheHit != null)
+            {
+                // Cache hit — re-run tests on the cached assembly, returning the
+                // compilation errors that were seen when the assembly was first compiled.
+                Runtime.MockCodeunitHandle.CurrentAssembly = cacheHit.Value.Assembly;
+                // TODO(T10): forward request.Filter / onTestComplete once the protocol
+                // surface adds them. Currently the cached-assembly path runs all tests
+                // with no client-side filter. Cancellation is now wired via ct.
+                var results = Executor.RunTests(cacheHit.Value.Assembly,
+                    filter: null, onTestComplete: null, cancellationToken: ct);
+                return SerializeServerResponse(results, Executor.ExitCode(results), cached: true,
+                    compilationErrors: cacheHit.Value.CompilationErrors);
+            }
+
+            // Cache miss — diff BEFORE storing the new entry so the report
+            // reflects "what changed since the closest previous run".
+            var changedFiles = _cache.DiffAgainstClosest();
+
+            var options = new PipelineOptions { OutputJson = true, CancellationToken = ct };
+            options.InputPaths.AddRange(request.SourcePaths);
+            if (request.PackagePaths != null)
+                options.PackagePaths.AddRange(request.PackagePaths);
+            if (request.StubPaths != null)
+                options.StubPaths.AddRange(request.StubPaths);
+
+            var pipeline = new AlRunnerPipeline();
+            pipeline.RewriteCache = _rewriteCache;
+            pipeline.SyntaxTreeCache = _syntaxTreeCache;
+            var result = pipeline.Run(options);
+
+            // Compilation errors (file-level exclusion was removed in #80; always empty now).
+            var compilationErrors = new Dictionary<string, List<string>>();
+
+            // Cache the compiled assembly (with its compilation errors) if available.
+            if (result.ExitCode == 0 || result.Tests.Count > 0)
+            {
+                if (result.Assembly != null && result.LoadContext != null)
+                    _cache.Store(fingerprint, result.Assembly, result.LoadContext, compilationErrors);
+            }
+
+            return SerializeServerResponse(result.Tests, result.ExitCode, cached: false,
+                changedFiles: changedFiles, compilationErrors: compilationErrors);
         }
-
-        // Cache miss — diff BEFORE storing the new entry so the report
-        // reflects "what changed since the closest previous run".
-        var changedFiles = _cache.DiffAgainstClosest();
-
-        var options = new PipelineOptions { OutputJson = true };
-        options.InputPaths.AddRange(request.SourcePaths);
-        if (request.PackagePaths != null)
-            options.PackagePaths.AddRange(request.PackagePaths);
-        if (request.StubPaths != null)
-            options.StubPaths.AddRange(request.StubPaths);
-
-        var pipeline = new AlRunnerPipeline();
-        pipeline.RewriteCache = _rewriteCache;
-        pipeline.SyntaxTreeCache = _syntaxTreeCache;
-        var result = pipeline.Run(options);
-
-        // Compilation errors (file-level exclusion was removed in #80; always empty now).
-        var compilationErrors = new Dictionary<string, List<string>>();
-
-        // Cache the compiled assembly (with its compilation errors) if available.
-        if (result.ExitCode == 0 || result.Tests.Count > 0)
+        finally
         {
-            if (result.Assembly != null && result.LoadContext != null)
-                _cache.Store(fingerprint, result.Assembly, result.LoadContext, compilationErrors);
+            _activeRequestCts?.Dispose();
+            _activeRequestCts = null;
         }
+    }
 
-        return SerializeServerResponse(result.Tests, result.ExitCode, cached: false,
-            changedFiles: changedFiles, compilationErrors: compilationErrors);
+    /// <summary>
+    /// Handle the <c>cancel</c> command. Signals the CancellationTokenSource that belongs
+    /// to the currently-active <c>runtests</c> request, if any.
+    ///
+    /// Because the dispatch loop is sequential, a cancel command can only arrive AFTER a
+    /// runtests request has fully completed (and its CTS has been disposed and nulled in
+    /// the finally block). The noop=true path is therefore the common case. The noop=false
+    /// path would only be reached if a future T10 streaming extension makes the loop
+    /// non-sequential — at that point this handler already does the right thing.
+    /// </summary>
+    private string HandleCancel()
+    {
+        var cts = _activeRequestCts;
+        if (cts == null || cts.IsCancellationRequested)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                type = "ack",
+                command = "cancel",
+                noop = true
+            });
+        }
+        try
+        {
+            cts.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Race: the runtests handler's finally-block disposed the CTS between our
+            // snapshot and Cancel(). Treat as noop — the request already completed.
+            return JsonSerializer.Serialize(new
+            {
+                type = "ack",
+                command = "cancel",
+                noop = true
+            });
+        }
+        return JsonSerializer.Serialize(new
+        {
+            type = "ack",
+            command = "cancel",
+            noop = false
+        });
     }
 
     private string HandleExecute(ServerRequest request, Task<List<Microsoft.CodeAnalysis.MetadataReference>> refsTask)
