@@ -149,33 +149,63 @@ static int DownloadServiceTier(string version, string outputDir)
         var name = Encoding.UTF8.GetString(cdData, pos + 46, nl).Replace('\\', '/');
         var lower = name.ToLowerInvariant();
         var bn = Path.GetFileName(lower);
+        // We need the FULL service-tier assembly closure, not just the Nav DLLs: the
+        // load-time Cecil rewrite of Ncl.dll re-serializes the whole module, and
+        // Mono.Cecil must resolve every type referenced by a constant (default
+        // parameter value) — including third-party assemblies such as
+        // Microsoft.Exchange.WebServices.NETStandard. A partial set aborts the cold
+        // first run with AssemblyResolutionException (exit 134). So take every *.dll
+        // directly under .../service/ EXCEPT the net-runtime assemblies the SDK already
+        // provides (System.* / Microsoft.Extensions.*), which would otherwise shadow
+        // the runner's net10 runtime. See tools/DownloadArtifacts notes + service-tier
+        // closure discussion in handoff_2026_05_27.
         if (lower.Contains("servicetier/") && lower.Contains("/service/") &&
-            (bn.StartsWith("microsoft.dynamics.nav.") || bn.StartsWith("microsoft.businesscentral.")) && bn.EndsWith(".dll") && cs > 0 &&
-            !lower.Split("/service/").Last().Contains('/'))
+            bn.EndsWith(".dll") && cs > 0 &&
+            !lower.Split("/service/").Last().Contains('/') &&
+            !bn.StartsWith("system.") && !bn.StartsWith("microsoft.extensions."))
             matching.Add((name, cm, cs, lo));
         pos += 46 + nl + el + cl;
     }
 
-    if (matching.Count == 0) { Console.Error.WriteLine("Error: no Nav DLLs found"); return 1; }
-    Console.Error.WriteLine($"Found {matching.Count} Nav DLLs");
+    if (matching.Count == 0) { Console.Error.WriteLine("Error: no service-tier DLLs found"); return 1; }
+    Console.Error.WriteLine($"Found {matching.Count} service-tier DLLs (full closure minus SDK-provided System.*/Microsoft.Extensions.*)");
 
+    // Download each entry's byte range individually. The matching DLLs are scattered
+    // through the artifact among files we don't want (a single first→last contiguous
+    // range would pull hundreds of MB of interstitial content), so a per-entry range
+    // request fetches only the ~290 MB closure we actually need.
     matching.Sort((a, b) => a.Offset.CompareTo(b.Offset));
-    long firstOffset = matching[0].Offset;
-    var last = matching[^1];
-    long rangeEnd = Math.Min(last.Offset + 30 + last.Name.Length + 512 + last.CompSize, totalSize - 1);
-    Console.Error.WriteLine($"Downloading {(rangeEnd - firstOffset) / 1048576} MB ({(int)((1.0 - (double)(rangeEnd - firstOffset) / totalSize) * 100)}% savings)...");
-    var data = DownloadRange(http, artifactUrl, firstOffset, rangeEnd);
-
+    long totalBytes = 0;
     int extracted = 0;
     foreach (var (name, method, compSize, offset) in matching)
     {
-        int p = (int)(offset - firstOffset);
-        if (p < 0 || p + 30 > data.Length || data[p] != 0x50 || data[p + 1] != 0x4b || data[p + 2] != 0x03 || data[p + 3] != 0x04)
+        // Local file header (30 bytes) + filename + extra field, then compressed data.
+        // The extra field length in the local header can differ from the central
+        // directory's, so over-fetch a generous header margin and parse the real
+        // lengths from the downloaded local header.
+        long headerMargin = 30 + name.Length + 4096;
+        long entryEnd = Math.Min(offset + headerMargin + compSize, totalSize - 1);
+        var data = DownloadRange(http, artifactUrl, offset, entryEnd);
+
+        if (data.Length < 30 || data[0] != 0x50 || data[1] != 0x4b || data[2] != 0x03 || data[3] != 0x04)
+        {
+            Console.Error.WriteLine($"  WARNING: bad local header for {Path.GetFileName(name)} — skipping");
             continue;
-        int nl2 = BitConverter.ToUInt16(data, p + 26);
-        int el2 = BitConverter.ToUInt16(data, p + 28);
-        int ds = p + 30 + nl2 + el2;
-        if (ds + compSize > data.Length) continue;
+        }
+        int nl2 = BitConverter.ToUInt16(data, 26);
+        int el2 = BitConverter.ToUInt16(data, 28);
+        int ds = 30 + nl2 + el2;
+        if (ds + compSize > data.Length)
+        {
+            // Extra field larger than our margin (rare) — re-fetch with exact bounds.
+            entryEnd = Math.Min(offset + ds + compSize, totalSize - 1);
+            data = DownloadRange(http, artifactUrl, offset, entryEnd);
+            if (ds + compSize > data.Length)
+            {
+                Console.Error.WriteLine($"  WARNING: truncated data for {Path.GetFileName(name)} — skipping");
+                continue;
+            }
+        }
 
         byte[] fileData;
         if (method == 0)
@@ -194,10 +224,13 @@ static int DownloadServiceTier(string version, string outputDir)
         else continue;
 
         File.WriteAllBytes(Path.Combine(outputDir, Path.GetFileName(name)), fileData);
+        totalBytes += fileData.Length;
         extracted++;
+        if (extracted % 50 == 0)
+            Console.Error.WriteLine($"  …{extracted}/{matching.Count} extracted ({totalBytes / 1048576} MB)");
     }
 
-    Console.Error.WriteLine($"Downloaded {extracted} DLLs to {outputDir}");
+    Console.Error.WriteLine($"Downloaded {extracted} DLLs ({totalBytes / 1048576} MB) to {outputDir}");
     return extracted > 0 ? 0 : 1;
 }
 
