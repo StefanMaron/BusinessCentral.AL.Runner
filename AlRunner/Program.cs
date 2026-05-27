@@ -1252,6 +1252,17 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
     // symbols.json sidecars. Keep out of the compile-time .app scanner (AL1023)
     // but use for runtime resolution + symbols.json handoff. See Main.
     workspaceDirsOut.Add(wsDir);
+    // Point the symbol loader at the SAME package caches the rest of the run uses,
+    // not BcCompiler's ResolveSymbolDirs() fallback. The pre-pass runs before the
+    // per-bundle SetResolvedDeps, so without this the loader falls back to
+    // ResolveSymbolDirs(), whose dir set can miss Base Application in CI's artifact
+    // layout → a source-dep tableextension target table is unresolved (AL0247) and the
+    // emit crashes. Empty dep list (no all-packages fallback — that hangs the corpus);
+    // each dep's own manifest deps are added as specs in EmitDepSymbols.ReadDependencyRefs.
+    // Reset by the per-bundle SetResolvedDeps in the main loop below.
+    BcCompiler.SetResolvedDeps(
+        Array.Empty<(AlRunnerV2.AppManifest Manifest, string AppPath)>(), packageCacheDirs);
+
     int emitted = 0;
     foreach (var dir in sorted)
     {
