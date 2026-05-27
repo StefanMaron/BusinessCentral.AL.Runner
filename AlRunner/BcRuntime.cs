@@ -33,7 +33,6 @@ public static partial class BcRuntime
 
     // NavApplicationObjectBase ctor replacement fields.
     private static FieldInfo? _fAoSession;             // NavApplicationObjectBase.session
-    private static FieldInfo? _fAoObjectId;            // NavApplicationObjectBase.objectId  (if needed)
     private static FieldInfo? _fAoOrigGroupId;         // NavApplicationObjectBase.originalAppGroupId
     private static FieldInfo? _fAoRuntimeGroupId;      // NavApplicationObjectBase.runtimeAppGroupId
     private static FieldInfo? _fNavComplexValueTree;   // NavComplexValue.tree (distinct from TreeObject.tree)
@@ -66,6 +65,16 @@ public static partial class BcRuntime
 
     public static void SetCurrentBundleInfo(Guid appId, string name, string publisher, string version)
         => _currentBundleInfo = (appId, name, publisher, version);
+
+    /// <summary>
+    /// Register an assembly with the current bundle's app info so AlCallStackCapture
+    /// can decorate AL call stack frames from that assembly.
+    /// </summary>
+    public static void RegisterTestAssemblyInfo(System.Reflection.Assembly asm)
+    {
+        var (_, name, publisher, version) = _currentBundleInfo;
+        AlRunnerV2.Infrastructure.AlCallStackCapture.RegisterAssemblyInfo(asm, name, publisher, version);
+    }
 
     public static (Guid AppId, string Name, string Publisher, string Version) GetCurrentModuleAppInfo()
         => _currentBundleInfo;
@@ -252,6 +261,12 @@ public static partial class BcRuntime
         Console.Error.WriteLine(ready);
         Console.Error.Flush();
         try { System.IO.File.AppendAllText("/tmp/al-runner-startup.log", ready + "\n"); } catch { }
+
+        // Wire FirstChanceException-based AL call-stack capture now that patches are live
+        // and _skeletonSession is initialised. This must happen after all hooks so that
+        // NavException type lookup succeeds and CurrentMethodScope reflection is valid.
+        if (_skeletonSession != null)
+            AlRunnerV2.Infrastructure.AlCallStackCapture.Initialize(_skeletonSession);
     }
 
     /// <summary>

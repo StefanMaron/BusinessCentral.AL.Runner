@@ -52,6 +52,8 @@ public sealed class DependencyLoader
             {
                 _cache[m.AppId] = asm;
                 _byName[asm.GetName().Name ?? ""] = asm;
+                // Register app metadata so AlCallStackCapture can decorate frames.
+                AlCallStackCapture.RegisterAssemblyInfo(asm, m.Name, m.Publisher, m.Version.ToString());
                 list.Add(asm);
             }
         }
