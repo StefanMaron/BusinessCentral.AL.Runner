@@ -299,9 +299,10 @@ namespace AlRunnerV2Shim
         public static long ALSqlRowsRead => 0L;
         public static long ALSqlStatementsExecuted => 0L;
 
-        // ALSystemErrorHandling — GetLastErrorCallStack uses NavCurrentThread.Session which is
-        // null in our skeleton run.  Return empty string (no error occurred, no callstack).
-        public static string ALGetLastErrorCallStack => string.Empty;
+        // ALSystemErrorHandling — GetLastErrorCallStack: return the AL call stack captured by
+        // AlCallStackCapture (FCE-based), falling back to empty when no error has been raised.
+        public static string ALGetLastErrorCallStack =>
+            global::AlRunnerV2.Infrastructure.AlCallStackCapture.GetCaptured() ?? string.Empty;
 
         // ───────────────────────────────────────────────────────────────────────
         // NavSession.Sleep — in-scope (§3.9). Inline execution model: a Sleep

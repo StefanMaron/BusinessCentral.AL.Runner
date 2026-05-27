@@ -74,6 +74,11 @@ public static partial class BcRuntime
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static string ALSystemErrorHandling_get_ALGetLastErrorCallStack()
     {
+        // Prefer the AL call stack captured by AlCallStackCapture (FCE-based, accurate frames).
+        var captured = AlRunnerV2.Infrastructure.AlCallStackCapture.GetCaptured();
+        if (!string.IsNullOrEmpty(captured)) return captured;
+
+        // Fallback: try the native NavSession.GetLastErrorCallstack method.
         if (_skeletonSession == null) return string.Empty;
         if (_mSessGetLastErrorCallstack == null)
             _mSessGetLastErrorCallstack = _skeletonSession.GetType().GetMethod("GetLastErrorCallstack",

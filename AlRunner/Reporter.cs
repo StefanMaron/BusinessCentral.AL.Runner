@@ -95,7 +95,13 @@ public static class Reporter
                 {
                     if (!string.IsNullOrEmpty(t.Message))
                         w.WriteLine($"      {t.Message}");
-                    if (!string.IsNullOrEmpty(t.FullException))
+                    if (!string.IsNullOrEmpty(t.AlCallStack))
+                    {
+                        // Show the AL call stack (BC service-tier format), not the C# trace.
+                        foreach (var frame in t.AlCallStack.Split('\n'))
+                            w.WriteLine($"      {frame.TrimEnd('\r')}");
+                    }
+                    else if (!string.IsNullOrEmpty(t.FullException))
                     {
                         foreach (var line in FilteredStack(t.FullException, max: 8))
                             w.WriteLine($"      {line}");

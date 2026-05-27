@@ -509,6 +509,7 @@ foreach (var bundle in bundles)
             {
                 var asm = Assembly.Load(assemblyBytes);
                 BcRuntime.SetTestAssembly(asm);
+                BcRuntime.RegisterTestAssemblyInfo(asm);
                 BcRuntime.OosHooksActive = true;
                 tests = executor.Run(asm);
             }
@@ -582,6 +583,7 @@ foreach (var bundle in bundles)
             {
                 var asm = Assembly.Load(compile.AssemblyBytes!);
                 BcRuntime.SetTestAssembly(asm);
+                BcRuntime.RegisterTestAssemblyInfo(asm);
                 BcRuntime.OosHooksActive = true;
                 tests = executor.Run(asm);
             }

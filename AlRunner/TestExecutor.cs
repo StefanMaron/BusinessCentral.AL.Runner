@@ -20,7 +20,8 @@ public enum TestOutcome { Pass, Fail, Error }
 public enum TestIsolation { Codeunit, Test, Disabled }
 
 public sealed record TestResult(string Codeunit, string Method, TestOutcome Outcome,
-                                string? Message, string? FullException, TimeSpan Duration);
+                                string? Message, string? FullException, TimeSpan Duration,
+                                string? AlCallStack = null);
 
 public sealed class TestExecutor
 {
@@ -134,6 +135,8 @@ public sealed class TestExecutor
         // reset (if any) happens at codeunit boundaries instead.
         if (Isolation == TestIsolation.Test)
             AlRunnerV2.Patches.RecordPatches.ResetPerTestState();
+        // Clear any AL call stack captured from a previous test on this thread.
+        AlRunnerV2.Infrastructure.AlCallStackCapture.Clear();
         try
         {
             var args = m.GetParameters().Length == 0 ? Array.Empty<object>() : null;
@@ -146,16 +149,18 @@ public sealed class TestExecutor
         catch (TargetInvocationException tex)
         {
             var inner = Unwrap(tex);
+            var alStack = AlRunnerV2.Infrastructure.AlCallStackCapture.GetCaptured();
             // BC's Assert.* throws specific exception types for test failures.
             // We can't classify Pass/Fail vs Error perfectly without knowing all of them,
             // so for now: any thrown exception is Fail.
             return new TestResult(codeunit, m.Name, TestOutcome.Fail,
-                $"{inner.GetType().Name}: {inner.Message}", inner.ToString(), sw.Elapsed);
+                $"{inner.GetType().Name}: {inner.Message}", inner.ToString(), sw.Elapsed, alStack);
         }
         catch (Exception ex)
         {
+            var alStack = AlRunnerV2.Infrastructure.AlCallStackCapture.GetCaptured();
             return new TestResult(codeunit, m.Name, TestOutcome.Error,
-                ex.Message, ex.ToString(), sw.Elapsed);
+                ex.Message, ex.ToString(), sw.Elapsed, alStack);
         }
     }
 

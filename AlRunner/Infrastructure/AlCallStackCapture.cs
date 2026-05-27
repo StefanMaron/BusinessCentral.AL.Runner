@@ -1,0 +1,349 @@
+// AlCallStackCapture — captures the AL call stack at the moment an AL exception is thrown
+// (before the CLR unwinds NavMethodScope frames) and formats it in the BC service-tier format:
+//   "ObjectName"(ObjectType N).MethodName[(Trigger)] line L - AppName by Publisher version V
+//
+// Capture strategy: AppDomain.FirstChanceException fires BEFORE any catch/finally blocks
+// run, so NavMethodScope frames are still live on the scope chain at that point.
+// We filter to NavException subclasses (which carry AL semantic errors) and record
+// operations exceptions; NullReferenceException etc. from the runner itself are left for
+// the C# stack-trace fallback.
+using System.Reflection;
+using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
+using System.Text;
+using Microsoft.Dynamics.Nav.Runtime;
+
+namespace AlRunnerV2.Infrastructure;
+
+public static class AlCallStackCapture
+{
+    /// <summary>The most recently captured AL call stack string, per-thread.</summary>
+    [ThreadStatic]
+    private static string? _captured;
+
+    /// <summary>True on a thread while a test is executing; controls FCE capture.</summary>
+    [ThreadStatic]
+    private static bool _captureEnabled;
+
+    /// <summary>Per-assembly app metadata (name, publisher, version).</summary>
+    private static readonly Dictionary<Assembly, (string Name, string Publisher, string Version)>
+        _assemblyInfo = new();
+    private static readonly object _lock = new();
+
+    // ─── Cached reflection handles ────────────────────────────────────────────
+
+    private static bool _reflInit;
+    private static object? _knownSession;               // NavSession, set by Initialize()
+    private static FieldInfo?    _fSessCurrentScopeField; // NavSession.<CurrentMethodScope>k__BackingField
+    private static PropertyInfo? _piStackTrace;         // NavMethodScope.StackTrace
+    private static PropertyInfo? _piApplicationObject;  // NavMethodScope.ApplicationObject
+    private static PropertyInfo? _piObjectName;         // NavApplicationObjectBase.ObjectName
+    private static PropertyInfo? _piScopeName;          // NavMethodScope.ScopeName
+    private static PropertyInfo? _piStatementNumber;    // NavMethodScope.StatementNumber
+    private static FieldInfo?   _fiMsFlags;             // NavMethodScope.flags field
+    private static Type?        _tMethodScopeFlags;     // MethodScopeFlags enum type
+    private static Type?        _tNavException;         // NavException base type
+
+    private static Type? _tSourceSpansAttr;
+    private static PropertyInfo? _piEncodedSpans;       // SourceSpansAttribute.EncodedSpans
+    private static Type? _tSignatureSpanAttr;
+    private static PropertyInfo? _piSigEncodedSpan;     // SignatureSpanAttribute.EncodedSpan
+
+    // ─── Public API ───────────────────────────────────────────────────────────
+
+    public static string? GetCaptured() => _captured;
+
+    /// <summary>
+    /// Call before each test to arm capture on this thread and clear any
+    /// previously captured stack.
+    /// </summary>
+    public static void Clear()
+    {
+        _captured = null;
+        _captureEnabled = true;
+    }
+
+    public static void RegisterAssemblyInfo(Assembly asm, string name, string publisher, string version)
+    {
+        lock (_lock) { _assemblyInfo[asm] = (name, publisher, version); }
+    }
+
+    /// <summary>
+    /// One-time setup: stash the skeleton session and wire the FirstChanceException
+    /// handler. Must be called after BC runtime patches are applied and the session
+    /// exists, but before any tests run.
+    /// </summary>
+    public static void Initialize(object skeletonSession)
+    {
+        _knownSession = skeletonSession;
+        EnsureReflInit(skeletonSession);
+        AppDomain.CurrentDomain.FirstChanceException += OnFirstChanceException;
+    }
+
+    // ─── FirstChanceException handler ────────────────────────────────────────
+
+    [HandleProcessCorruptedStateExceptions]
+    private static void OnFirstChanceException(object? sender, FirstChanceExceptionEventArgs e)
+    {
+        // Only capture on threads that are executing a test.
+        if (!_captureEnabled) return;
+
+        // Filter: only NavException subclasses carry AL-visible errors.
+        if (_tNavException == null || !_tNavException.IsInstanceOfType(e.Exception)) return;
+
+        // Guard against re-entrant FCE (can happen if reflection below throws).
+        _captureEnabled = false;
+        try
+        {
+            DoCapture();
+        }
+        catch
+        {
+            // Swallow: FCE handler must never throw.
+        }
+        finally
+        {
+            _captureEnabled = true;
+        }
+    }
+
+    private static void DoCapture()
+    {
+        if (_knownSession == null) return;
+
+        // CurrentMethodScope is JMP-hooked to return the skeleton root scope.
+        // We bypass the hook and read the backing field directly to get the
+        // real innermost scope that was active when the exception was thrown.
+        NavMethodScope? currentScope = null;
+        if (_fSessCurrentScopeField != null)
+        {
+            var raw = _fSessCurrentScopeField.GetValue(_knownSession);
+            currentScope = raw as NavMethodScope;
+        }
+        if (currentScope == null) return;
+
+        var stackTraceRaw = _piStackTrace?.GetValue(currentScope);
+        var stackTrace = stackTraceRaw as IEnumerable<NavMethodScope>;
+        if (stackTrace == null) return;
+
+        var sb = new StringBuilder();
+        bool first = true;
+        foreach (var scope in stackTrace)
+        {
+            var line = FormatFrame(scope);
+            if (line == null) continue;
+            if (!first) sb.AppendLine();
+            sb.Append(line);
+            first = false;
+        }
+        if (!first)
+            _captured = sb.ToString();
+    }
+
+    // ─── Private helpers ──────────────────────────────────────────────────────
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static string? FormatFrame(NavMethodScope scope)
+    {
+        try
+        {
+            // Application object (null for root / try scopes)
+            var appObj = _piApplicationObject?.GetValue(scope);
+            if (appObj == null) return null;
+
+            var objName    = _piObjectName?.GetValue(appObj) as string;
+            var methodName = _piScopeName?.GetValue(scope) as string ?? "?";
+            var stmtNo     = (int)(_piStatementNumber?.GetValue(scope) ?? 0);
+
+            // Extract object type and ID from the declaring class name (e.g. "Codeunit60021").
+            // EffectiveObjectId.ObjectNumber is not reliably populated in the runner (the ctor
+            // replacement cannot safely copy a value-type struct via reflection), so we parse
+            // the IL class name which is always present and correct.
+            (string objType, int objNumber) = ParseObjectTypeAndId(appObj.GetType());
+            if (objNumber == 0) return null;
+            if (objName == null) objName = objNumber.ToString();
+
+            bool isTrigger = GetIsTrigger(scope);
+            int lineNo = GetRelativeLine(scope.GetType(), stmtNo);
+
+            var (appName, publisher, version) = GetAppMeta(scope.GetType().Assembly);
+
+            // Format:  "ObjectName"(ObjectType N).MethodName[(Trigger)] line L - App by Pub version V
+            var sb = new StringBuilder();
+            AppendQuoted(sb, objName);
+            sb.Append('(').Append(objType).Append(' ').Append(objNumber).Append(").");
+            sb.Append(methodName);
+            if (isTrigger) sb.Append("(Trigger)");
+            if (lineNo >= 0)
+                sb.Append(" line ").Append(lineNo);
+            if (appName != null)
+                sb.Append(" - ").Append(appName).Append(" by ").Append(publisher).Append(" version ").Append(version);
+
+            return sb.ToString();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Parse the AL object type label and numeric ID from the runtime class name.
+    /// BC emits class names like <c>Codeunit60021</c>, <c>Table18</c>, <c>Page1</c>.
+    /// The scope class is nested inside the object class, so we walk up via
+    /// <see cref="Type.DeclaringType"/> when needed.
+    /// Returns ("CodeUnit"|"Page"|…, number) or ("?", 0) if unknown.
+    /// </summary>
+    private static (string, int) ParseObjectTypeAndId(Type type)
+    {
+        // Walk up to the outermost non-nested type (scope classes are nested).
+        var t = type;
+        while (t.DeclaringType != null) t = t.DeclaringType;
+
+        var name = t.Name;
+        // Mapping from IL class-name prefix → BC call-stack label.
+        // We try longest prefixes first so "Table" doesn't match "TableExtension".
+        (string prefix, string label)[] prefixMap =
+        [
+            ("NavCodeunit",   "CodeUnit"),   // generic codeunit base class
+            ("NavTestCodeunit","CodeUnit"),
+            ("Codeunit",      "CodeUnit"),
+            ("Table",         "Table"),
+            ("Page",          "Page"),
+            ("Report",        "Report"),
+            ("Query",         "Query"),
+            ("XmlPort",       "XmlPort"),
+            ("Enum",          "Enum"),
+        ];
+
+        foreach (var (prefix, label) in prefixMap)
+        {
+            if (name.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                var rest = name.Substring(prefix.Length);
+                // rest should be the numeric ID, possibly followed by "_v<n>" from versioned emit.
+                var numPart = new string(rest.TakeWhile(char.IsDigit).ToArray());
+                if (numPart.Length > 0 && int.TryParse(numPart, out int id) && id > 0)
+                    return (label, id);
+            }
+        }
+        return ("?", 0);
+    }
+
+    private static void AppendQuoted(StringBuilder sb, string name)
+    {
+        // BC always quotes object names in call-stack output.
+        sb.Append('"');
+        sb.Append(name.Replace("\"", "\"\""));
+        sb.Append('"');
+    }
+
+    private static bool GetIsTrigger(NavMethodScope scope)
+    {
+        if (_tMethodScopeFlags == null || _fiMsFlags == null) return false;
+        try
+        {
+            var flags = _fiMsFlags.GetValue(scope);
+            if (flags == null) return false;
+            // IsTrigger = 0x40 in MethodScopeFlags
+            var isTriggerField = _tMethodScopeFlags.GetField("IsTrigger");
+            if (isTriggerField == null) return false;
+            var trigVal = (int)(isTriggerField.GetRawConstantValue() ?? 0);
+            return (Convert.ToInt32(flags) & trigVal) != 0;
+        }
+        catch { return false; }
+    }
+
+    private static int GetRelativeLine(Type scopeType, int statementNumber)
+    {
+        if (_tSourceSpansAttr == null || _tSignatureSpanAttr == null) return -1;
+        try
+        {
+            var srcAttr  = scopeType.GetCustomAttribute(_tSourceSpansAttr);
+            var sigAttr  = scopeType.GetCustomAttribute(_tSignatureSpanAttr);
+            if (srcAttr == null || sigAttr == null) return -1;
+
+            var encodedSpans = _piEncodedSpans?.GetValue(srcAttr) as long[];
+            if (encodedSpans == null || encodedSpans.Length == 0) return -1;
+
+            // Clamp: IsAtExitStatement uses last span; statementNumber is 1-based
+            var idx = statementNumber == int.MaxValue
+                ? encodedSpans.Length - 1
+                : Math.Min(statementNumber, encodedSpans.Length - 1);
+            if (idx < 0) return -1;
+
+            var encodedSpan    = encodedSpans[idx];
+            var encodedSigSpan = (long)(_piSigEncodedSpan?.GetValue(sigAttr) ?? 0L);
+
+            // SourceSpan layout (StructLayout.Explicit, little-endian):
+            //   [0..1] = to.column, [2..3] = to.line, [4..5] = from.column, [6..7] = from.line
+            // As a long: from.line occupies bits 48-63.
+            ushort absLine = (ushort)((ulong)encodedSpan >> 48);
+            ushort sigLine = (ushort)((ulong)encodedSigSpan >> 48);
+
+            return (ushort)(absLine - sigLine);
+        }
+        catch { return -1; }
+    }
+
+    private static (string? Name, string? Publisher, string? Version) GetAppMeta(Assembly asm)
+    {
+        lock (_lock)
+        {
+            if (_assemblyInfo.TryGetValue(asm, out var info))
+                return (info.Name, info.Publisher, info.Version);
+        }
+        return (null, null, null);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void EnsureReflInit(object session)
+    {
+        if (_reflInit) return;
+        _reflInit = true;
+
+        var sessionType = session.GetType();
+        // The CurrentMethodScope property getter is JMP-hooked to return _skeletonRootScope.
+        // Read the backing field directly to bypass the hook and get the real current scope.
+        _fSessCurrentScopeField = sessionType.GetField("<CurrentMethodScope>k__BackingField",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+
+        var scopeType = typeof(NavMethodScope);
+        _piStackTrace = scopeType.GetProperty("StackTrace",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        _piApplicationObject = scopeType.GetProperty("ApplicationObject",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        _piScopeName = scopeType.GetProperty("ScopeName",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        _piStatementNumber = scopeType.GetProperty("StatementNumber",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        _fiMsFlags = scopeType.GetField("flags",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        _tMethodScopeFlags = _fiMsFlags?.FieldType;
+
+        // NavApplicationObjectBase
+        var appObjType = typeof(Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase);
+        _piObjectName = appObjType.GetProperty("ObjectName",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+        // SourceSpansAttribute / SignatureSpanAttribute live in Microsoft.Dynamics.Nav.Ncl.dll
+        var nclAsm = AppDomain.CurrentDomain.GetAssemblies()
+            .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
+        if (nclAsm != null)
+        {
+            _tSourceSpansAttr = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.SourceSpansAttribute");
+            _piEncodedSpans   = _tSourceSpansAttr?.GetProperty("EncodedSpans",
+                BindingFlags.Public | BindingFlags.Instance);
+
+            _tSignatureSpanAttr = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.SignatureSpanAttribute");
+            _piSigEncodedSpan   = _tSignatureSpanAttr?.GetProperty("EncodedSpan",
+                BindingFlags.Public | BindingFlags.Instance);
+        }
+
+        // NavException is in Microsoft.Dynamics.Nav.Types (not NCL).
+        // It is the common base of NavNCLDialogException, NavCSideDuplicateKeyException, etc.
+        var typesAsm = AppDomain.CurrentDomain.GetAssemblies()
+            .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Types");
+        _tNavException = typesAsm?.GetType("Microsoft.Dynamics.Nav.Types.NavException");
+    }
+}
