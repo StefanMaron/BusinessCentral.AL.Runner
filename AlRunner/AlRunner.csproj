@@ -38,6 +38,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>AlRunner.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="../README.md" Pack="true" PackagePath="/" />
     <None Include="../CHANGELOG.md" Pack="true" PackagePath="/" />
   </ItemGroup>
