@@ -96,24 +96,32 @@ jobs:
         with:
           ref: v${{ inputs.version }}
           submodules: true
+      # net8 runtime for tools/DownloadArtifacts; net10 to build+run the runner
+      # (BC 28.1 DLLs require System.Text.Json 10 → the runner targets net10.0).
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: |
+            8.0.x
+            10.0.x
 
       - name: Build (auto-downloads BC ${{ matrix.bc-version }} DLLs)
         run: |
           dotnet build AlRunner.slnx -p:_BCVersion=${{ matrix.bc-version }} -c Release
 
+      - name: Run unit tests (AlRunner.Tests)
+        run: |
+          dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c Release --no-build
+
       - name: Run al-language corpus
         run: |
-          dotnet run --no-build --project AlRunner -c Release -- \
+          dotnet run --no-build --project AlRunner -c Release --framework net10.0 -- \
             tests/al-language/tests/al-language \
             --out al-language-results.json
 
       - name: Run runner-extras (if present)
         if: ${{ hashFiles('tests/runner-extras/**/*.al') != '' }}
         run: |
-          dotnet run --no-build --project AlRunner -c Release -- \
+          dotnet run --no-build --project AlRunner -c Release --framework net10.0 -- \
             tests/runner-extras \
             --out runner-extras-results.json
 

@@ -25,6 +25,7 @@ al-language corpus + expectations cover their cases.
 Operating rules live in `.claude/rules/` and are auto-loaded. Task-specific reference is on-demand:
 
 - Pipeline / architecture / key files → skill `al-runner-architecture`
+- Fixing gaps by reusing BC's service tier / patching the runtime engine (proven: BC's compiler runs headless on Linux) → [`docs/service-tier-reuse.md`](docs/service-tier-reuse.md)
 - Writing AL tests, bucket layout, running the matrix → skill `al-runner-tests`
 - `--guide` flag, full agent workflow contract → skill `al-runner-workflow`
 - Triage new untriaged issues → sub-agent `triager` (Opus, runs once at the start of a cycle)

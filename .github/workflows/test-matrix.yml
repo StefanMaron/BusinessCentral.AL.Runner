@@ -25,19 +25,23 @@ jobs:
       - name: Resolve BC versions
         id: resolve
         run: |
+          # Each prefix in bc-versions.txt → one matrix entry {bc-version, required}.
+          # 28.1 is the REQUIRED gate (the version the runner is developed against);
+          # older versions are informational (continue-on-error) until verified.
           BC_PREFIXES=$(cat .github/bc-versions.txt | grep -v '^#' | tr '\n' ' ')
-          VERSIONS="[]"
+          ENTRIES="[]"
           for prefix in $BC_PREFIXES; do
             FULL=$(dotnet run --project tools/DownloadArtifacts -- resolve-version "$prefix" dummy 2>/dev/null || true)
             if [ -n "$FULL" ]; then
-              echo "  $prefix -> $FULL"
-              VERSIONS=$(echo "$VERSIONS" | python3 -c "import json,sys; v=json.load(sys.stdin); v.append('$FULL'); print(json.dumps(v))")
+              REQ=$([ "$prefix" = "28.1" ] && echo True || echo False)
+              echo "  $prefix -> $FULL (required=$REQ)"
+              ENTRIES=$(echo "$ENTRIES" | python3 -c "import json,sys; v=json.load(sys.stdin); v.append({'bc-version':'$FULL','required':$REQ}); print(json.dumps(v))")
             else
               echo "  $prefix -> FAILED (skipping)"
             fi
           done
-          echo "matrix={\"bc-version\":$VERSIONS}" >> "$GITHUB_OUTPUT"
-          echo "Matrix: $VERSIONS"
+          echo "matrix={\"target\":$ENTRIES}" >> "$GITHUB_OUTPUT"
+          echo "Matrix: $ENTRIES"
 
   test:
     needs: resolve-versions
@@ -45,21 +49,31 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.resolve-versions.outputs.matrix) }}
-    name: BC ${{ matrix.bc-version }}
+    name: BC ${{ matrix.target.bc-version }}${{ matrix.target.required && ' (required)' || '' }}
+    # Only the required leg (28.1) gates the pipeline; older versions are informational.
+    continue-on-error: ${{ !matrix.target.required }}
     env:
-      BC_VERSION: ${{ matrix.bc-version }}
+      BC_VERSION: ${{ matrix.target.bc-version }}
     steps:
       - uses: actions/checkout@v6
         with:
           submodules: true
 
+      # net8 runtime for tools/DownloadArtifacts; net10 to build+run the runner
+      # (BC 28.1 DLLs require System.Text.Json 10 → the runner targets net10.0).
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: |
+            8.0.x
+            10.0.x
 
-      - name: Build (auto-downloads BC ${{ matrix.bc-version }} DLLs)
+      - name: Build (auto-downloads BC ${{ matrix.target.bc-version }} DLLs)
         run: |
-          dotnet build AlRunner.slnx -p:_BCVersion=${{ matrix.bc-version }} -c Release
+          dotnet build AlRunner.slnx -p:_BCVersion=${{ matrix.target.bc-version }} -c Release
+
+      - name: Run unit tests (AlRunner.Tests)
+        run: |
+          dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c Release --no-build
 
       - name: Run al-language corpus
         id: al-language
@@ -68,7 +82,7 @@ jobs:
           # See docs/expectations.md for how OOS-by-design tests are declared.
           rc=0
           start=$SECONDS
-          dotnet run --no-build --project AlRunner -c Release -- \
+          dotnet run --no-build --project AlRunner -c Release --framework net10.0 -- \
               tests/al-language/tests/al-language \
               --out al-language-results.json || rc=$?
           elapsed=$(( SECONDS - start ))
@@ -81,7 +95,7 @@ jobs:
       - name: Run runner-extras (if present)
         if: ${{ hashFiles('tests/runner-extras/**/*.al') != '' }}
         run: |
-          dotnet run --no-build --project AlRunner -c Release -- \
+          dotnet run --no-build --project AlRunner -c Release --framework net10.0 -- \
               tests/runner-extras \
               --out runner-extras-results.json
 
@@ -89,7 +103,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: results-${{ matrix.bc-version }}
+          name: results-${{ matrix.target.bc-version }}
           path: |
             al-language-results.json
             runner-extras-results.json
@@ -106,9 +120,12 @@ jobs:
         with:
           submodules: recursive
 
+      # net8 runtime for tools/DownloadArtifacts; net10 to build+run the runner.
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: |
+            8.0.x
+            10.0.x
 
       - name: Clear cold-cache Cecil rewrite cache
         run: rm -rf ~/.cache/al-runner/ncl-cecil/
@@ -140,14 +157,16 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Check all matrix jobs succeeded
+      - name: Check required jobs succeeded
         run: |
+          # `test.result` is success when all non-continue-on-error legs pass —
+          # i.e. the required 28.1 leg. Older (informational) legs may fail freely.
           if [ "${{ needs.test.result }}" != "success" ]; then
-            echo "One or more BC version test jobs failed (result: ${{ needs.test.result }})"
+            echo "Required BC version (28.1) test leg failed (result: ${{ needs.test.result }})"
             exit 1
           fi
           if [ "${{ needs.smoke.result }}" != "success" ]; then
             echo "Smoke job failed (result: ${{ needs.smoke.result }})"
             exit 1
           fi
-          echo "All BC versions passed, including smoke."
+          echo "Required BC version (28.1) + smoke passed."
