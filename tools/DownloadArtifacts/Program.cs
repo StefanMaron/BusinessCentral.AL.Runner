@@ -134,7 +134,24 @@ static int DownloadServiceTier(string version, string outputDir)
         cdStart = 0;
     }
 
-    var matching = new List<(string Name, int Method, long CompSize, long Offset)>();
+    // Collect every *.dll anywhere under a ServiceTier .../Service/ path, then keep one
+    // copy per file name preferring the shallowest path (the server runtime's own copy in
+    // .../Service/ over a tooling copy in .../Service/Admin|Management/). We need this FULL
+    // closure — not just the top-level Nav DLLs — for TWO reasons:
+    //   1. The load-time Cecil rewrite of Ncl.dll re-serializes the whole module, so
+    //      Mono.Cecil must resolve every type referenced by a constant (default parameter
+    //      value), including third-party assemblies like Microsoft.Exchange.WebServices.NETStandard.
+    //   2. At runtime the Default-ALC Resolving handler (DependencyLoader) loads BC
+    //      dependencies from this dir by simple name. It is fallback-only (fires only when
+    //      default resolution fails), so it never shadows the net10 BCL — but it MUST be
+    //      able to find version-pinned assemblies the net10 SDK does not carry, e.g.
+    //      Microsoft.Extensions.Logging.Abstractions v8.0.0.0 (BcRuntime.ApplyAllPatches
+    //      binds to it). Those runtime assemblies live only under Service/Admin|Management/,
+    //      not the top level, which is why subdirectories must be included.
+    // A partial set fails the cold first run — either exit 134 (Cecil) or a runtime
+    // FileNotFoundException. The fallback-only resolver makes the full closure safe.
+    // See handoff_2026_05_27_cold_ci_artifact_closure.
+    var byName = new Dictionary<string, (string Name, int Method, long CompSize, long Offset, int Depth)>();
     int pos = cdStart;
     for (int i = 0; i < entryCount && pos + 46 <= cdData.Length; i++)
     {
@@ -149,26 +166,22 @@ static int DownloadServiceTier(string version, string outputDir)
         var name = Encoding.UTF8.GetString(cdData, pos + 46, nl).Replace('\\', '/');
         var lower = name.ToLowerInvariant();
         var bn = Path.GetFileName(lower);
-        // We need the FULL service-tier assembly closure, not just the Nav DLLs: the
-        // load-time Cecil rewrite of Ncl.dll re-serializes the whole module, and
-        // Mono.Cecil must resolve every type referenced by a constant (default
-        // parameter value) — including third-party assemblies such as
-        // Microsoft.Exchange.WebServices.NETStandard. A partial set aborts the cold
-        // first run with AssemblyResolutionException (exit 134). So take every *.dll
-        // directly under .../service/ EXCEPT the net-runtime assemblies the SDK already
-        // provides (System.* / Microsoft.Extensions.*), which would otherwise shadow
-        // the runner's net10 runtime. See tools/DownloadArtifacts notes + service-tier
-        // closure discussion in handoff_2026_05_27.
         if (lower.Contains("servicetier/") && lower.Contains("/service/") &&
-            bn.EndsWith(".dll") && cs > 0 &&
-            !lower.Split("/service/").Last().Contains('/') &&
-            !bn.StartsWith("system.") && !bn.StartsWith("microsoft.extensions."))
-            matching.Add((name, cm, cs, lo));
+            bn.EndsWith(".dll") && cs > 0)
+        {
+            int depth = lower.Split("/service/").Last().Count(ch => ch == '/');
+            if (!byName.TryGetValue(bn, out var existing) || depth < existing.Depth)
+                byName[bn] = (name, cm, cs, lo, depth);
+        }
         pos += 46 + nl + el + cl;
     }
 
+    var matching = byName.Values
+        .Select(v => (v.Name, v.Method, v.CompSize, v.Offset))
+        .ToList();
+
     if (matching.Count == 0) { Console.Error.WriteLine("Error: no service-tier DLLs found"); return 1; }
-    Console.Error.WriteLine($"Found {matching.Count} service-tier DLLs (full closure minus SDK-provided System.*/Microsoft.Extensions.*)");
+    Console.Error.WriteLine($"Found {matching.Count} service-tier DLLs (full /service/ closure, deduped by name)");
 
     // Download each entry's byte range individually. The matching DLLs are scattered
     // through the artifact among files we don't want (a single first→last contiguous
