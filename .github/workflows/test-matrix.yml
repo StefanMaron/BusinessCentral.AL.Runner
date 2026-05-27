@@ -147,7 +147,13 @@ jobs:
       - name: Run cold-cache binary smoke test
         run: |
           set +e
-          ./AlRunner/bin/Release/${{ matrix.tfm }}/al-runner --strict --quiet tests/al-language > smoke.log 2>&1
+          # Point at the canonical corpus app (a real bundle with a proper app.json +
+          # dependency closure), NOT the submodule ROOT — the root sweeps multiple apps
+          # and fixtures into one malformed bundle with no Base Application reference, so
+          # any cross-app tableextension there fails to resolve (AL0185/AL0247) and aborts
+          # the whole emit. The crash-gate purpose (cold Cecil rewrite + emit + run) is
+          # fully exercised by the canonical app. --strict tolerated codes are 0|1|2 below.
+          ./AlRunner/bin/Release/${{ matrix.tfm }}/al-runner --strict --quiet tests/al-language/tests/al-language > smoke.log 2>&1
           rc=$?
           cat smoke.log
           case "$rc" in
