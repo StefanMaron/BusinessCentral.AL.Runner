@@ -661,19 +661,6 @@ public sealed class BcCompiler
         {
             compilation = compilation.WithReferenceLoader(refLoader);
             if (specs.Length > 0) compilation = compilation.AddReferences(specs);
-
-            // Reference THIS dep's own declared dependencies (from its app.json), not the
-            // parent bundle's. BuildSiblingSourceDeps runs this pre-pass BEFORE the parent's
-            // SetResolvedDeps, so `specs` (derived from _resolvedDeps) is empty here. Without
-            // the dep's own deps as symbol references, a source dep that extends a Base App
-            // object (e.g. a tableextension on "Item Journal Batch") cannot resolve its
-            // target → AL0247 → BC's SerializableSymbolModelConverter NREs → empty module.
-            // We resolve only the EXPLICIT manifest deps via refLoader (already built over the
-            // package-cache dirs) — never the all-packages fallback scan, which hangs the corpus.
-            var depRefs = ReadDependencyRefs(
-                dirs.Select(d => Path.Combine(d, "app.json")).FirstOrDefault(File.Exists), appId);
-            if (depRefs is { Length: > 0 })
-                compilation = compilation.AddReferences(depRefs);
         }
         compilation = compilation.WithDotNetResolverFactory(GetOrCreateDotNetFactory());
 
@@ -691,45 +678,6 @@ public sealed class BcCompiler
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(symbolsJsonPath))!);
         using var fs = new FileStream(symbolsJsonPath, FileMode.Create, FileAccess.Write, FileShare.None);
         SymbolJsonWriter.WriteSymbolJson(compilation, fs);
-    }
-
-    /// <summary>
-    /// Read <c>dependencies</c> from an app.json and return one
-    /// <see cref="NavCA.SymbolReferenceSpecification"/> per entry, so a source-dependency's
-    /// own manifest deps are referenced when emitting its symbols. Excludes a self-reference
-    /// matching <paramref name="selfAppId"/>. Null when absent.
-    /// </summary>
-    private static NavCA.SymbolReferenceSpecification[]? ReadDependencyRefs(string? appJsonPath, Guid selfAppId)
-    {
-        if (appJsonPath == null || !File.Exists(appJsonPath)) return null;
-        try
-        {
-            using var json = System.Text.Json.JsonDocument.Parse(File.ReadAllText(appJsonPath));
-            if (!json.RootElement.TryGetProperty("dependencies", out var deps)
-                || deps.ValueKind != System.Text.Json.JsonValueKind.Array)
-                return null;
-            var refs = new List<NavCA.SymbolReferenceSpecification>();
-            foreach (var e in deps.EnumerateArray())
-            {
-                if (e.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
-                var name = e.TryGetProperty("name", out var n) && n.ValueKind == System.Text.Json.JsonValueKind.String ? n.GetString() : null;
-                if (string.IsNullOrEmpty(name)) continue;
-                var pub = e.TryGetProperty("publisher", out var p) && p.ValueKind == System.Text.Json.JsonValueKind.String ? p.GetString() ?? "" : "";
-                Guid appId = Guid.Empty;
-                if ((e.TryGetProperty("id", out var idEl) || e.TryGetProperty("appId", out idEl))
-                    && idEl.ValueKind == System.Text.Json.JsonValueKind.String
-                    && Guid.TryParse(idEl.GetString(), out var gid))
-                    appId = gid;
-                if (appId != Guid.Empty && appId == selfAppId) continue; // never self-reference
-                var ver = e.TryGetProperty("version", out var vEl) && vEl.ValueKind == System.Text.Json.JsonValueKind.String
-                    && Version.TryParse(vEl.GetString(), out var v) ? v : new Version(0, 0, 0, 0);
-                refs.Add(new NavCA.SymbolReferenceSpecification(
-                    publisher: pub, name: name!, version: ver,
-                    exact: false, appId: appId == Guid.Empty ? (Guid?)null : appId));
-            }
-            return refs.Count > 0 ? refs.ToArray() : null;
-        }
-        catch { return null; }
     }
 
     /// <summary>

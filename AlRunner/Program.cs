@@ -1252,17 +1252,6 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
     // symbols.json sidecars. Keep out of the compile-time .app scanner (AL1023)
     // but use for runtime resolution + symbols.json handoff. See Main.
     workspaceDirsOut.Add(wsDir);
-    // Point the symbol loader at the SAME package caches the rest of the run uses,
-    // not BcCompiler's ResolveSymbolDirs() fallback. The pre-pass runs before the
-    // per-bundle SetResolvedDeps, so without this the loader falls back to
-    // ResolveSymbolDirs(), whose dir set can miss Base Application in CI's artifact
-    // layout → a source-dep tableextension target table is unresolved (AL0247) and the
-    // emit crashes. Empty dep list (no all-packages fallback — that hangs the corpus);
-    // each dep's own manifest deps are added as specs in EmitDepSymbols.ReadDependencyRefs.
-    // Reset by the per-bundle SetResolvedDeps in the main loop below.
-    BcCompiler.SetResolvedDeps(
-        Array.Empty<(AlRunnerV2.AppManifest Manifest, string AppPath)>(), packageCacheDirs);
-
     int emitted = 0;
     foreach (var dir in sorted)
     {
@@ -1293,14 +1282,21 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
         // runtime-loadable but invisible to the compiler (AL0185). BcCompiler's
         // GetSharedReferences chains a JsonSymbolReferenceLoader over the workspace
         // dir to pick these up. Revived from main's DepCompiler / SymbolJson.
-        // NOTE: do NOT enable the all-packages SetPackageCacheFallback here. This path runs
-        // on EVERY run (incl. the single-bundle corpus, for its internalsVisibleTo fixture)
-        // with the DEFAULT package caches (bcartifacts: 100+ apps incl. ~25 language packs +
-        // a 98MB BaseApp). The fallback's all-.app manifest scan over those hangs the corpus
-        // (>450s vs ~15s). The fixture compiles fine with the loader-only context
-        // (ResolveSymbolDirs gives BaseApp), so empty specs suffice here. The RS-style
-        // multi-bundle ISV path uses RunLayeredPrePass (small --package-cache dirs) where the
-        // fallback IS affordable.
+        // Resolve THIS dep's own dependency closure (declared + implicit Application/System
+        // roots from its app.json) transitively, then hand it to BcCompiler — exactly like
+        // RunLayeredPrePass and the main per-bundle compile. Without this, a source dep that
+        // extends a Base App object (e.g. a tableextension on "Item Journal Batch") cannot
+        // resolve its target → AL0247 → BC's converter NREs → crash. The resolver produces
+        // CONCRETE resolved manifests (real version + path), so the spec matches on CI where
+        // the artifact layout differs from local; a hand-built placeholder spec does not.
+        // NOT the all-packages SetPackageCacheFallback (it scans every .app in the caches —
+        // 100+ apps on a default corpus run — and hangs the corpus >450s); Resolve pulls only
+        // the Application closure (BaseApp / System App / Business Foundation, ≈5 apps).
+        // ScopeCurrentAppIdentity sets _currentAppId so GetSharedReferences excludes the dep
+        // from its own specs (self-ref guard). Reset by the per-bundle SetResolvedDeps below.
+        var depResolver = new DependencyResolver(packageCacheDirs);
+        var resolvedDepDeps = depResolver.Resolve(sid.Dependencies);
+        BcCompiler.SetResolvedDeps(resolvedDepDeps, packageCacheDirs);
         var symBase = Path.Combine(wsDir, $"{Sanitize(sid.Publisher)}_{Sanitize(sid.Name)}_{sid.Version.ToString().Replace('.', '_')}");
         try
         {
