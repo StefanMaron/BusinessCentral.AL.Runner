@@ -52,6 +52,14 @@ public static class FlowFieldPatches
 
     private static FieldInfo? _fTtdpPrimaryKeySortingFields;   // also held in RecordPatches but private
     private static MethodInfo? _mTtdpFilter;                   // Filter(int,FiltersAndMarks,MutableRecordBuffer,SortingFieldList,bool)
+    private static MethodInfo? _mTtdpTryGetValue;              // TryGetValue(NavRecordId, out TempTableRecordBuffer)
+
+    // Blob CalcFields helpers
+    private static PropertyInfo? _pNclMetaFieldFieldNclType;   // NCLMetaField.FieldNclType
+    private static object? _nclTypeNavBlob;                    // NavNclType.NavBlob
+    private static MethodInfo? _mMutableBufferGetChangedFieldValue; // MutableRecordBuffer.GetChangedFieldValue(int)
+    private static MethodInfo? _mMutableBufferGetOriginalValue;     // MutableRecordBuffer.GetOriginalValue(int)
+    private static MethodInfo? _mMutableBufferGetRecordId;          // MutableRecordBuffer.GetRecordId()
 
     private static Type? _tNCLMetaField;
     private static Type? _tNCLMetaFilter;
@@ -149,12 +157,29 @@ public static class FlowFieldPatches
             BindingFlags.NonPublic | BindingFlags.Static);
         _emptyFm = _fEmptyFiltersAndMarks?.GetValue(null);
 
-        // TempTableDataProvider.Filter + primaryKeySortingFields
+        // TempTableDataProvider.Filter + primaryKeySortingFields + TryGetValue (for blob CalcFields)
         var tTtdp = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.TempTableDataProvider");
         _fTtdpPrimaryKeySortingFields = tTtdp?.GetField("primaryKeySortingFields",
             BindingFlags.NonPublic | BindingFlags.Instance);
         _mTtdpFilter = tTtdp?.GetMethods(BindingFlags.NonPublic | BindingFlags.Instance)
             .FirstOrDefault(m => m.Name == "Filter" && m.GetParameters().Length == 5);
+        _mTtdpTryGetValue = tTtdp?.GetMethods(BindingFlags.NonPublic | BindingFlags.Instance)
+            .FirstOrDefault(m => m.Name == "TryGetValue" && m.GetParameters().Length == 2
+                && m.GetParameters()[0].ParameterType.Name == "NavRecordId");
+
+        // Blob CalcFields: FieldNclType, NavNclType.NavBlob, MutableRecordBuffer helpers
+        _pNclMetaFieldFieldNclType = _tNCLMetaField.GetProperty("FieldNclType",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        var tNavNclType = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.NavNclType");
+        if (tNavNclType != null)
+            _nclTypeNavBlob = Enum.Parse(tNavNclType, "NavBlob");
+        var tMutableBuffer = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.MutableRecordBuffer");
+        _mMutableBufferGetChangedFieldValue = tMutableBuffer?.GetMethod("GetChangedFieldValue",
+            BindingFlags.Public | BindingFlags.Instance);
+        _mMutableBufferGetOriginalValue = tMutableBuffer?.GetMethod("GetOriginalValue",
+            BindingFlags.Public | BindingFlags.Instance);
+        _mMutableBufferGetRecordId = tMutableBuffer?.GetMethod("GetRecordId",
+            BindingFlags.Public | BindingFlags.Instance);
 
         // NCLMetaField properties
         _pNclMetaFieldFieldClass = _tNCLMetaField.GetProperty("FieldClass",
@@ -287,6 +312,16 @@ public static class FlowFieldPatches
                 if (fieldObj == null) continue;
                 var fieldClass = _pNclMetaFieldFieldClass!.GetValue(fieldObj);
                 int dbgCol = -1; try { dbgCol = (int)_pNclMetaFieldColumnIndex!.GetValue(fieldObj)!; } catch { }
+
+                // Handle BLOB fields: copy stored content from TempTableDataProvider into mutableRecordBuffer
+                if (_pNclMetaFieldFieldNclType != null && _nclTypeNavBlob != null
+                    && Equals(_pNclMetaFieldFieldNclType.GetValue(fieldObj), _nclTypeNavBlob))
+                {
+                    if (dbgCol >= 0)
+                        LoadBlobField(self, parentBuffer, bufferIndexer, dbgCol);
+                    continue;
+                }
+
                 if (!Equals(fieldClass, _fcFlowField)) continue;
 
                 var formula = _pNclMetaFieldCalculationFormula!.GetValue(fieldObj);
@@ -483,6 +518,57 @@ public static class FlowFieldPatches
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
+
+    // Called by RecordImpl_CalcFieldsAsync_3 when a BLOB field is in the CalcFields list.
+    // Mirrors RecordImplementation.CalcFieldsAsync blob branch:
+    //   GetWriteableBlobOnFieldAndEnsureInMutablePartOfBuffer + GetBlobContentAsync
+    // but goes directly to the TempTableDataProvider primaryTree to avoid the
+    // transactional-cache layer that isn't needed for temp tables.
+    private static void LoadBlobField(object self, object parentBuffer, PropertyInfo bufferIndexer, int fieldIdx)
+    {
+        try
+        {
+            // Step 1: ensure a writable NavBLOB is in changedValues (mirrors GetWriteableBlobOnField...)
+            var navBLOB = _mMutableBufferGetChangedFieldValue?.Invoke(parentBuffer, new object[] { fieldIdx }) as NavBLOB;
+            if (navBLOB == null)
+            {
+                var original = _mMutableBufferGetOriginalValue?.Invoke(parentBuffer, new object[] { fieldIdx }) as NavBLOB;
+                navBLOB = original != null ? new NavBLOB(original.ALLength) : NavBLOB.Default();
+                bufferIndexer.SetValue(parentBuffer, navBLOB, new object[] { fieldIdx });
+            }
+
+            // Step 2: get the TempTableDataProvider for the current record's table
+            var dataAccess = _fRecImplDataAccess?.GetValue(self);
+            var dataProvider = dataAccess != null ? _pDataAccessDataProvider?.GetValue(dataAccess) : null;
+            if (dataProvider == null || _mTtdpTryGetValue == null || _mMutableBufferGetRecordId == null) return;
+
+            // Step 3: look up the stored TempTableRecordBuffer by primary key
+            var recordId = _mMutableBufferGetRecordId.Invoke(parentBuffer, null);
+            var tryGetArgs = new object?[] { recordId, null };
+            if (_mTtdpTryGetValue.Invoke(dataProvider, tryGetArgs) is not true) return;
+
+            var storedBuffer = tryGetArgs[1];
+            if (storedBuffer == null) return;
+
+            // Step 4: copy blob data from stored buffer into the writable NavBLOB
+            var storedIndexer = storedBuffer.GetType().GetProperty("Item",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                null, typeof(NavValue), new[] { typeof(int) }, null);
+            var storedBLOB = storedIndexer?.GetValue(storedBuffer, new object[] { fieldIdx }) as NavBLOB;
+            if (storedBLOB == null || storedBLOB.IsZeroOrEmpty) return;
+
+            navBLOB.AssignFromStream(storedBLOB.GetStream());
+        }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            Console.Error.WriteLine($"[FlowFieldPatches] LoadBlobField({fieldIdx}) inner ex: {tie.InnerException.GetType().Name}: {tie.InnerException.Message}");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[FlowFieldPatches] LoadBlobField({fieldIdx}) ex: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
 
     private static NCLMetaTable? ResolveTableById(int tableId)
     {
