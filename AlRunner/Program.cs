@@ -246,7 +246,18 @@ foreach (var bundle in bundles)
             try
             {
                 var roots = ReadDependencies(appJsonPath);
-                var resolver = new DependencyResolver(packageCacheDirs);
+                // Include the bundle's own .alpackages in the resolver search dirs. They
+                // carry the committed Microsoft platform symbol closure (Base Application /
+                // System Application / …) as real .app files. On CI, packageCacheDirs is
+                // empty (artifacts live elsewhere), so a Base App table that the app (or a
+                // tableextension it ships) references is ONLY resolvable from here. Resolving
+                // it produces the COMPILE spec; LoadAll skips Microsoft platform apps so their
+                // runtime still comes from the service-tier DLLs, not a .app source-compile.
+                var bundlePkgDirs = Directory
+                    .EnumerateDirectories(bucketRoot, ".alpackages", SearchOption.AllDirectories)
+                    .ToList();
+                var resolverDirs = bundlePkgDirs.Concat(packageCacheDirs).Distinct().ToList();
+                var resolver = new DependencyResolver(resolverDirs);
                 var ordered = resolver.Resolve(roots);
                 Console.WriteLine($"  [{rel}] resolved {ordered.Count} dep(s)");
                 // Compiler sees only non-workspace dirs in its .app scanner; the
@@ -254,7 +265,11 @@ foreach (var bundle in bundles)
                 // sources via SetExtraSymbolDirs (called AFTER SetResolvedDeps,
                 // which resets _extraSymbolDirs). Runtime resolution above used the
                 // full packageCacheDirs (incl. workspace) so dep code still loads.
-                BcCompiler.SetResolvedDeps(ordered, compilerPackageDirs);
+                // Include the bundle .alpackages (real .apps w/ SymbolReference.json — safe
+                // for the .app scanner) so the loader can resolve the Microsoft platform
+                // specs (Base App etc.) on CI, where compilerPackageDirs is otherwise empty.
+                var compilerDirs = bundlePkgDirs.Concat(compilerPackageDirs).Distinct().ToList();
+                BcCompiler.SetResolvedDeps(ordered, compilerDirs);
                 if (layeredWorkspaceDirs.Count > 0)
                     BcCompiler.SetExtraSymbolDirs(layeredWorkspaceDirs);
                 var loaded = depLoader.LoadAll(ordered, bucketRoot);
@@ -1252,6 +1267,18 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
     // symbols.json sidecars. Keep out of the compile-time .app scanner (AL1023)
     // but use for runtime resolution + symbols.json handoff. See Main.
     workspaceDirsOut.Add(wsDir);
+    // The dependent bundles' own `.alpackages` carry the Microsoft platform symbol
+    // closure (Base Application / System Application / Business Foundation / …) as real
+    // .app files committed alongside the corpus. On CI, packageCacheDirs is EMPTY
+    // (artifacts live in the symbols/service-tier dirs, not bcartifacts.cache), so the
+    // Base App a source-dep tableextension extends is ONLY resolvable from here. Index
+    // these for the source-dep dependency resolution + symbol loader below.
+    var bundleAlpackagesDirs = bundles
+        .Where(Directory.Exists)
+        .SelectMany(b => Directory.EnumerateDirectories(b, ".alpackages", SearchOption.AllDirectories))
+        .Distinct()
+        .ToList();
+    var resolveDirs = bundleAlpackagesDirs.Concat(packageCacheDirs).Distinct().ToList();
     int emitted = 0;
     foreach (var dir in sorted)
     {
@@ -1282,21 +1309,20 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
         // runtime-loadable but invisible to the compiler (AL0185). BcCompiler's
         // GetSharedReferences chains a JsonSymbolReferenceLoader over the workspace
         // dir to pick these up. Revived from main's DepCompiler / SymbolJson.
-        // Resolve THIS dep's own dependency closure (declared + implicit Application/System
-        // roots from its app.json) transitively, then hand it to BcCompiler — exactly like
-        // RunLayeredPrePass and the main per-bundle compile. Without this, a source dep that
-        // extends a Base App object (e.g. a tableextension on "Item Journal Batch") cannot
-        // resolve its target → AL0247 → BC's converter NREs → crash. The resolver produces
-        // CONCRETE resolved manifests (real version + path), so the spec matches on CI where
-        // the artifact layout differs from local; a hand-built placeholder spec does not.
-        // NOT the all-packages SetPackageCacheFallback (it scans every .app in the caches —
-        // 100+ apps on a default corpus run — and hangs the corpus >450s); Resolve pulls only
-        // the Application closure (BaseApp / System App / Business Foundation, ≈5 apps).
+        // Resolve THIS dep's own dependency closure (declared + transitive) against the
+        // dependent bundles' .alpackages + packageCacheDirs, then hand it to BcCompiler —
+        // exactly like RunLayeredPrePass and the main per-bundle compile. Without this, a
+        // source dep that extends a Base App object (e.g. a tableextension on "Item Journal
+        // Batch") cannot resolve its target → AL0247 → BC's converter NREs → crash. The
+        // resolver produces CONCRETE resolved manifests (real version + path) from the
+        // .alpackages closure, which is present on CI where packageCacheDirs is empty.
+        // NOT the all-packages SetPackageCacheFallback (scans every .app, hangs the corpus);
+        // Resolve pulls only this dep's declared closure (BaseApp / System App / …).
         // ScopeCurrentAppIdentity sets _currentAppId so GetSharedReferences excludes the dep
         // from its own specs (self-ref guard). Reset by the per-bundle SetResolvedDeps below.
-        var depResolver = new DependencyResolver(packageCacheDirs);
+        var depResolver = new DependencyResolver(resolveDirs);
         var resolvedDepDeps = depResolver.Resolve(sid.Dependencies);
-        BcCompiler.SetResolvedDeps(resolvedDepDeps, packageCacheDirs);
+        BcCompiler.SetResolvedDeps(resolvedDepDeps, resolveDirs);
         var symBase = Path.Combine(wsDir, $"{Sanitize(sid.Publisher)}_{Sanitize(sid.Name)}_{sid.Version.ToString().Replace('.', '_')}");
         try
         {
@@ -1493,7 +1519,16 @@ static IEnumerable<DependencyRef> ReadDependencies(string appJsonPath)
             Guid id = Guid.Empty;
             if (!string.IsNullOrEmpty(idStr)) Guid.TryParse(idStr, out id);
             if (!Version.TryParse(ver, out var v)) v = new Version(0, 0, 0, 0);
-            yield return new DependencyRef(id, name, pub, v);
+            // Microsoft platform apps (Base Application / System Application / Business
+            // Foundation / Application / System) are provided by the precompiled
+            // service-tier DLLs at runtime and by the bundle's .alpackages symbols at
+            // compile time — never loaded from a resolved .app. Some corpus/ISV manifests
+            // list them EXPLICITLY (others rely on the implicit application/platform roots).
+            // Mark the explicit ones Optional so resolution skips them when they aren't a
+            // findable .app (e.g. on CI, where packageCacheDirs is empty) instead of failing
+            // the whole bundle — matching how the implicit roots below are already Optional.
+            bool isMsPlatform = AlRunnerV2.DependencyResolver.IsMicrosoftPlatformApp(name, pub);
+            yield return new DependencyRef(id, name, pub, v, Optional: isMsPlatform);
         }
     }
 
@@ -1516,6 +1551,7 @@ static IEnumerable<DependencyRef> ReadDependencies(string appJsonPath)
         }
     }
 }
+
 
 // Collect this single suite's src/test/app* dirs for emit. Per-suite isolation
 // avoids the cross-suite object-id collisions that silently zeroed-out bundled emit.

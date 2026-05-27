@@ -51,6 +51,16 @@ public sealed class DependencyResolver
         return result;
     }
 
+    // Microsoft platform apps the runner provides via precompiled service-tier DLLs +
+    // bundle .alpackages symbols, never by loading a resolved .app — so a missing .app is
+    // expected and non-fatal. Kept in sync with Program.IsMicrosoftPlatformApp.
+    internal static bool IsMicrosoftPlatformApp(string name, string publisher)
+    {
+        if (!string.Equals(publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) return false;
+        return name is "Base Application" or "System Application" or "Business Foundation"
+            or "Application" or "System";
+    }
+
     private void Visit(
         DependencyRef dep,
         Dictionary<Guid, byte> state,
@@ -59,10 +69,16 @@ public sealed class DependencyResolver
     {
         if (!TryFind(dep, out var found, out var nearMissVersions))
         {
-            if (dep.Optional)
+            if (dep.Optional || IsMicrosoftPlatformApp(dep.Name, dep.Publisher))
             {
+                // Microsoft platform apps (Base Application / System Application / …) are
+                // provided by the precompiled service-tier DLLs at runtime and the bundle
+                // .alpackages symbols at compile time — never loaded from a resolved .app.
+                // So a missing .app for them is expected (e.g. CI, where packageCacheDirs is
+                // empty); skip rather than fail, including when reached transitively via a
+                // dependent's manifest (this branch also fires for non-Optional manifest deps).
                 Console.Error.WriteLine(
-                    $"  [deps] optional dependency not found in cache, skipping: " +
+                    $"  [deps] dependency not found in cache, skipping: " +
                     $"{dep.Publisher}/{dep.Name}");
                 return;
             }

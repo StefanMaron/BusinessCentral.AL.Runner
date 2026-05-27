@@ -42,6 +42,16 @@ public sealed class DependencyLoader
         var list = new List<Assembly>();
         foreach (var (m, path) in ordered)
         {
+            // A SYMBOL-ONLY Microsoft platform app (Base Application / System Application /
+            // …) carries no runtime DLL — it's resolved only to produce COMPILE specs (e.g.
+            // so a tableextension's Base App target resolves). Trying to load it would
+            // source-compile its huge AL and crash (System Application → EMIT-ZERO). Its
+            // runtime comes from the precompiled service-tier DLLs instead. Skip ONLY the
+            // symbol-only case: an R2R .app (bcartifacts) DOES carry the DLLs (Record types
+            // the tests instantiate, e.g. Record233 / Item Journal Batch) and must load.
+            if (DependencyResolver.IsMicrosoftPlatformApp(m.Name, m.Publisher)
+                && !AppLoader.IsR2R(path))
+                continue;
             if (_cache.TryGetValue(m.AppId, out var existing))
             {
                 list.Add(existing);
