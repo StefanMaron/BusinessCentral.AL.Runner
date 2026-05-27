@@ -7,6 +7,10 @@
 //
 //   DownloadArtifacts al-compiler <tool-version> <output-dir>
 //     Downloads the AL compiler NuGet package and extracts the needed DLLs (~57 MB).
+//
+//   DownloadArtifacts platform-apps <bc-version> <output-dir>
+//     Downloads Microsoft platform .app files (Base/System/Business Foundation/Application)
+//     from the BC w1 sandbox artifact via HTTP range requests.
 
 using System.IO.Compression;
 using System.Net.Http.Headers;
@@ -16,6 +20,7 @@ if (args.Length < 2)
 {
     Console.Error.WriteLine("Usage: DownloadArtifacts service-tier <bc-version> <output-dir>");
     Console.Error.WriteLine("       DownloadArtifacts al-compiler <tool-version> <output-dir>");
+    Console.Error.WriteLine("       DownloadArtifacts platform-apps <bc-version> <output-dir>");
     Console.Error.WriteLine("       DownloadArtifacts resolve-version <bc-prefix>");
     return 1;
 }
@@ -28,6 +33,7 @@ return mode switch
 {
     "service-tier" => DownloadServiceTier(version, outputDir),
     "al-compiler" => DownloadAlCompiler(version, outputDir),
+    "platform-apps" => DownloadPlatformApps(version, outputDir),
     "resolve-version" => ResolveVersion(version),
     _ => Error($"Unknown mode: {mode}")
 };
@@ -244,6 +250,151 @@ static int DownloadServiceTier(string version, string outputDir)
     }
 
     Console.Error.WriteLine($"Downloaded {extracted} DLLs ({totalBytes / 1048576} MB) to {outputDir}");
+    return extracted > 0 ? 0 : 1;
+}
+
+// ---------------------------------------------------------------------------
+// Platform Apps: download Microsoft .app files via HTTP range requests
+// ---------------------------------------------------------------------------
+static int DownloadPlatformApps(string version, string outputDir)
+{
+    // The platform apps (Base Application, System Application, etc.) live in the /w1 artifact.
+    var artifactUrl = $"https://bcartifacts-exdbf9fwegejdqak.b02.azurefd.net/sandbox/{version}/w1";
+    Directory.CreateDirectory(outputDir);
+
+    using var handler = new HttpClientHandler();
+    using var http = new HttpClient(handler);
+    http.Timeout = TimeSpan.FromMinutes(10);
+
+    Console.Error.WriteLine($"Resolving artifact size for BC {version} (w1)...");
+    var headReq = new HttpRequestMessage(HttpMethod.Head, artifactUrl);
+    var headResp = http.Send(headReq);
+    headResp.EnsureSuccessStatusCode();
+    var totalSize = headResp.Content.Headers.ContentLength ?? 0;
+    headResp.Dispose();
+    if (totalSize == 0) { Console.Error.WriteLine("Error: unknown size"); return 1; }
+    Console.Error.WriteLine($"w1 artifact: {totalSize / 1048576} MB");
+
+    Console.Error.WriteLine("Downloading ZIP directory...");
+    var tail = DownloadRange(http, artifactUrl, totalSize - 65536, totalSize - 1);
+
+    int eocdPos = -1;
+    for (int i = tail.Length - 22; i >= 0; i--)
+        if (tail[i] == 0x50 && tail[i + 1] == 0x4b && tail[i + 2] == 0x05 && tail[i + 3] == 0x06)
+        { eocdPos = i; break; }
+    if (eocdPos < 0) { Console.Error.WriteLine("Error: EOCD not found"); return 1; }
+
+    int entryCount = BitConverter.ToUInt16(tail, eocdPos + 10);
+    uint cdOffset = BitConverter.ToUInt32(tail, eocdPos + 16);
+
+    byte[] cdData; int cdStart;
+    long cdInTail = tail.Length - (totalSize - cdOffset);
+    if (cdInTail >= 0) { cdData = tail; cdStart = (int)cdInTail; }
+    else
+    {
+        Console.Error.WriteLine("Downloading central directory...");
+        cdData = DownloadRange(http, artifactUrl, cdOffset, totalSize - 1);
+        cdStart = 0;
+    }
+
+    // Basename prefixes for the platform apps we care about.
+    var wantedPrefixes = new[]
+    {
+        "microsoft_base application_",
+        "microsoft_system application_",
+        "microsoft_business foundation_",
+        "microsoft_application_",
+    };
+
+    var matching = new List<(string Name, int Method, long CompSize, long Offset)>();
+    int pos = cdStart;
+    for (int i = 0; i < entryCount && pos + 46 <= cdData.Length; i++)
+    {
+        if (cdData[pos] != 0x50 || cdData[pos + 1] != 0x4b || cdData[pos + 2] != 0x01 || cdData[pos + 3] != 0x02) break;
+        int cm = BitConverter.ToUInt16(cdData, pos + 10);
+        uint cs = BitConverter.ToUInt32(cdData, pos + 20);
+        int nl = BitConverter.ToUInt16(cdData, pos + 28);
+        int el = BitConverter.ToUInt16(cdData, pos + 30);
+        int cl = BitConverter.ToUInt16(cdData, pos + 32);
+        uint lo = BitConverter.ToUInt32(cdData, pos + 42);
+        if (pos + 46 + nl > cdData.Length) break;
+        var name = Encoding.UTF8.GetString(cdData, pos + 46, nl).Replace('\\', '/');
+        var lower = name.ToLowerInvariant();
+        var bn = Path.GetFileName(lower);
+        if (lower.StartsWith("extensions/") && lower.EndsWith(".app") && cs > 0)
+        {
+            if (Array.Exists(wantedPrefixes, p => bn.StartsWith(p)))
+                matching.Add((name, cm, cs, lo));
+        }
+        pos += 46 + nl + el + cl;
+    }
+
+    if (matching.Count == 0) { Console.Error.WriteLine("Error: no platform .app files found"); return 1; }
+    Console.Error.WriteLine($"Found {matching.Count} platform app(s):");
+    foreach (var (name, _, compSize, _) in matching)
+        Console.Error.WriteLine($"  {Path.GetFileName(name)}  ({compSize / 1048576} MB compressed)");
+
+    matching.Sort((a, b) => a.Offset.CompareTo(b.Offset));
+    long totalBytes = 0;
+    int extracted = 0;
+    foreach (var (name, method, compSize, offset) in matching)
+    {
+        var basename = Path.GetFileName(name);
+        Console.Error.WriteLine($"  Downloading {basename}...");
+
+        // Local file header (30 bytes) + filename + extra field, then compressed data.
+        // Over-fetch a generous header margin and parse the real lengths from the local header.
+        long headerMargin = 30 + name.Length + 4096;
+        long entryEnd = Math.Min(offset + headerMargin + compSize, totalSize - 1);
+        var data = DownloadRange(http, artifactUrl, offset, entryEnd);
+
+        if (data.Length < 30 || data[0] != 0x50 || data[1] != 0x4b || data[2] != 0x03 || data[3] != 0x04)
+        {
+            Console.Error.WriteLine($"  WARNING: bad local header for {basename} — skipping");
+            continue;
+        }
+        int nl2 = BitConverter.ToUInt16(data, 26);
+        int el2 = BitConverter.ToUInt16(data, 28);
+        int ds = 30 + nl2 + el2;
+        if (ds + compSize > data.Length)
+        {
+            // Extra field larger than our margin — re-fetch with exact bounds.
+            entryEnd = Math.Min(offset + ds + compSize, totalSize - 1);
+            data = DownloadRange(http, artifactUrl, offset, entryEnd);
+            if (ds + compSize > data.Length)
+            {
+                Console.Error.WriteLine($"  WARNING: truncated data for {basename} — skipping");
+                continue;
+            }
+        }
+
+        byte[] fileData;
+        if (method == 0)
+        {
+            fileData = new byte[compSize];
+            Array.Copy(data, ds, fileData, 0, (int)compSize);
+        }
+        else if (method == 8)
+        {
+            using var cs2 = new MemoryStream(data, ds, (int)compSize);
+            using var df = new DeflateStream(cs2, CompressionMode.Decompress);
+            using var o = new MemoryStream();
+            df.CopyTo(o);
+            fileData = o.ToArray();
+        }
+        else
+        {
+            Console.Error.WriteLine($"  WARNING: unsupported compression method {method} for {basename} — skipping");
+            continue;
+        }
+
+        File.WriteAllBytes(Path.Combine(outputDir, basename), fileData);
+        totalBytes += fileData.Length;
+        extracted++;
+        Console.Error.WriteLine($"  Written {basename} ({fileData.Length / 1048576} MB)");
+    }
+
+    Console.Error.WriteLine($"Downloaded {extracted} app(s) ({totalBytes / 1048576} MB total) to {outputDir}");
     return extracted > 0 ? 0 : 1;
 }
 

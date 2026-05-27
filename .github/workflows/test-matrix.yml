@@ -71,6 +71,17 @@ jobs:
         run: |
           dotnet build AlRunner.slnx -p:_BCVersion=${{ matrix.target.bc-version }} -c Release
 
+      - name: Download R2R platform apps (Base/System Application, …)
+        run: |
+          # The corpus ships a SYMBOL-ONLY Base Application in its .alpackages, which is
+          # enough to COMPILE but carries no runtime DLL — so cross-app tableextension tests
+          # that instantiate a Base App record (e.g. Item Journal Batch / Record233) fail at
+          # runtime ("no loaded type Record233"). Fetch the R2R platform apps (with DLLs) at
+          # this BC version into a package cache so DependencyLoader can load the real types.
+          # They're a higher version than the .alpackages symbols, so the resolver prefers them.
+          dotnet run --project tools/DownloadArtifacts -- \
+            platform-apps ${{ matrix.target.bc-version }} "$HOME/.al-runner/platform-apps"
+
       - name: Run unit tests (AlRunner.Tests)
         run: |
           dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c Release --no-build
@@ -91,6 +102,7 @@ jobs:
           start=$SECONDS
           dotnet run --no-build --project AlRunner -c Release --framework net10.0 -- \
               tests/al-language/tests/al-language \
+              --package-cache "$HOME/.al-runner/platform-apps" \
               --strict \
               --out al-language-results.json || rc=$?
           elapsed=$(( SECONDS - start ))
