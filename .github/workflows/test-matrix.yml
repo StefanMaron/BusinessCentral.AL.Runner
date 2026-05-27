@@ -80,23 +80,34 @@ jobs:
         run: |
           # The canonical corpus lives in the tests/al-language submodule.
           # See docs/expectations.md for how OOS-by-design tests are declared.
+          #
+          # --strict makes the runner exit non-zero when ANY test fails (1), a bucket
+          # fails to execute (2), or a bucket fails to compile (3). The pipeline must
+          # NOT report green while corpus tests fail — known runtime gaps included.
+          # So this leg stays red until every corpus test passes (or its failure is
+          # declared OOS-by-design in tests/expectations/, which reclassifies it to a
+          # pass). Crash codes (134/139) also surface here as a non-zero exit → red.
           rc=0
           start=$SECONDS
           dotnet run --no-build --project AlRunner -c Release --framework net10.0 -- \
               tests/al-language/tests/al-language \
+              --strict \
               --out al-language-results.json || rc=$?
           elapsed=$(( SECONDS - start ))
+          echo "elapsed=${elapsed}s" >> "$GITHUB_OUTPUT"
           if [ "$rc" -ne 0 ]; then
-            echo "::error::al-language run exited with code $rc"
+            echo "::error::al-language run failed (exit $rc: 1=test failure, 2=exec fail, 3=compile fail, 134/139=crash)"
             exit "$rc"
           fi
-          echo "elapsed=${elapsed}s" >> "$GITHUB_OUTPUT"
 
       - name: Run runner-extras (if present)
-        if: ${{ hashFiles('tests/runner-extras/**/*.al') != '' }}
+        # always() so a failed (red) corpus leg above doesn't skip this — runner-extras
+        # is an independent gate. --strict so any runner-extra failure also fails the leg.
+        if: ${{ always() && hashFiles('tests/runner-extras/**/*.al') != '' }}
         run: |
           dotnet run --no-build --project AlRunner -c Release --framework net10.0 -- \
               tests/runner-extras \
+              --strict \
               --out runner-extras-results.json
 
       - name: Upload result artifacts
