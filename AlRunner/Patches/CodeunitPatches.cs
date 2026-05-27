@@ -31,6 +31,65 @@ public static partial class BcRuntime
         Microsoft.Dynamics.Nav.Types.DataError errorLevel,
         Microsoft.Dynamics.Nav.Runtime.NavRecord? record)
     {
+        InvokeOnRun(self, record);
+        return new System.Threading.Tasks.ValueTask<bool>(true);
+    }
+
+    /// <summary>
+    /// Replacement for NavCodeunit.RunCodeunit(DataError, int, NavRecord).
+    /// Builds a NavCodeunitHandle from the current session, resolves the concrete target via
+    /// NavCodeunitHandle_CreateTarget, then invokes OnRun directly (same OnRun dispatch as
+    /// NavCodeunit_DoRunAsync) without touching the runtime's inlined DoRunAsync body.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool NavCodeunit_RunCodeunit(
+        Microsoft.Dynamics.Nav.Types.DataError errorLevel,
+        int objectId,
+        Microsoft.Dynamics.Nav.Runtime.NavRecord? record)
+    {
+        bool trap = errorLevel == Microsoft.Dynamics.Nav.Types.DataError.TrapError;
+        try
+        {
+            var handle = CreateCodeunitHandle(objectId);
+            var target = NavCodeunitHandle_CreateTarget(handle);
+            InvokeOnRun(target, record);
+            return true;
+        }
+        catch when (trap)
+        {
+            // TrapError contract for Codeunit.Run(...): swallow and return false.
+            return false;
+        }
+    }
+
+    private static Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle CreateCodeunitHandle(int objectId)
+    {
+        var handleType = typeof(Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle);
+        var navCurrentThreadType = typeof(Microsoft.Dynamics.Nav.Runtime.NavCurrentThread);
+        var sessionProp = navCurrentThreadType.GetProperty("Session",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        var session = sessionProp?.GetValue(null) ?? _skeletonSession!;
+        if (session == null)
+            throw new InvalidOperationException("NavCurrentThread.Session is null and skeleton session is unavailable.");
+
+        var ctor = handleType.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .FirstOrDefault(c =>
+            {
+                var ps = c.GetParameters();
+                return ps.Length == 2 &&
+                    ps[0].ParameterType.IsAssignableFrom(session.GetType()) &&
+                    ps[1].ParameterType == typeof(int);
+            });
+        if (ctor == null)
+            throw new InvalidOperationException("NavCodeunitHandle(NavSession, int) constructor not found.");
+
+        return (Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle)ctor.Invoke(new[] { session, (object)objectId });
+    }
+
+    private static void InvokeOnRun(
+        Microsoft.Dynamics.Nav.Runtime.NavCodeunit self,
+        Microsoft.Dynamics.Nav.Runtime.NavRecord? record)
+    {
         try
         {
             var onRun = self.GetType().GetMethod("OnRun",
@@ -44,12 +103,10 @@ public static partial class BcRuntime
                     BindingFlags.NonPublic | BindingFlags.Instance, null, Type.EmptyTypes, null);
                 onRun0?.Invoke(self, null);
             }
-            return new System.Threading.Tasks.ValueTask<bool>(true);
         }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(tie.InnerException);
-            return default; // unreachable
         }
     }
 

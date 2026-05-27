@@ -2450,6 +2450,21 @@ public static partial class BcRuntime
                 BindingFlags.NonPublic | BindingFlags.Instance);
             if (doRunAsync != null)
                 Hook(doRunAsync, nameof(NavCodeunit_DoRunAsync), "NavCodeunit.DoRunAsync");
+
+            var runCodeunit = navCodeunitType2
+                .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.FlattenHierarchy)
+                .FirstOrDefault(m =>
+                {
+                    if (m.Name != "RunCodeunit" || !m.IsStatic || m.ReturnType != typeof(bool))
+                        return false;
+                    var ps = m.GetParameters();
+                    return ps.Length == 3
+                        && ps[0].ParameterType == typeof(Microsoft.Dynamics.Nav.Types.DataError)
+                        && ps[1].ParameterType == typeof(int)
+                        && ps[2].ParameterType == typeof(Microsoft.Dynamics.Nav.Runtime.NavRecord);
+                });
+            if (runCodeunit != null)
+                Hook(runCodeunit, nameof(NavCodeunit_RunCodeunit), "NavCodeunit.RunCodeunit");
         }
 
         // NavMethodScope.ProcessException(Exception) — when an NRE occurs in OnRun(), the real
