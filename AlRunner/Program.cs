@@ -1256,6 +1256,14 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
     foreach (var dir in sorted)
     {
         if (!sourceApps.TryGetValue(dir, out var sid)) continue;
+        // Register the source-dep's AL dir for runtime metadata parsing, so its
+        // tableextensions on Base App tables (e.g. a cross-app tableextension adding a
+        // field to "Item Journal Batch") get merged into the base table's NCLMetaTable.
+        // Without this, runtime field lookup throws "extension field N not found in
+        // NCLMetaTable". This runs before RecordPatches.Register(), so the dir is parsed
+        // by ParseAllSources during Register (not immediately). Compile-time visibility is
+        // handled separately by the symbols.json emit below.
+        AlRunnerV2.Patches.RecordPatches.AddSourceDir(dir);
         var appFileName = $"{Sanitize(sid.Publisher)}_{Sanitize(sid.Name)}_{sid.Version.ToString().Replace('.', '_')}.app";
         var outPath = Path.Combine(wsDir, appFileName);
         try
