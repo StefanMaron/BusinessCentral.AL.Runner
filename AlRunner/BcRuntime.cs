@@ -1734,7 +1734,7 @@ public static partial class BcRuntime
             var truncAsync = dataProviderType.GetMethod("TruncateAsync",
                 BindingFlags.Public | BindingFlags.Instance);
             if (truncAsync != null && truncAsync.GetParameters().Length == 4)
-                Hook(truncAsync, nameof(ReturnValueTask5), "DataProvider.TruncateAsync");
+                Hook(truncAsync, nameof(DataProvider_TruncateAsync), "DataProvider.TruncateAsync");
         }
 
         if (alDbType != null)

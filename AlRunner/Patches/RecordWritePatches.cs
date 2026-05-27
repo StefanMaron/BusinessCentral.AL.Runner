@@ -749,6 +749,9 @@ public static partial class BcRuntime
     {
         try
         {
+            if (self.IsTemporary || IsMetaTableTemporary(self.MetaTable))
+                return;
+
             int tableId = self.MetaTable.TableId;
             if (_aiFieldIds.TryGetValue(tableId, out int aiFieldNo)
                 && self.MetaTable.TryGetFieldByNo(aiFieldNo, out var aiField))
@@ -764,6 +767,22 @@ public static partial class BcRuntime
             }
         }
         catch { /* don't block insert if AI counter assignment fails */ }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool IsMetaTableTemporary(Microsoft.Dynamics.Nav.Runtime.NCLMetaTable metaTable)
+    {
+        try
+        {
+            var tableTypeObj = metaTable.GetType()
+                .GetProperty("TableType", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                ?.GetValue(metaTable);
+            return string.Equals(tableTypeObj?.ToString(), "Temporary", StringComparison.Ordinal);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     // ── System fields (2000000001-2000000004) stamping helpers ──────────────────────
@@ -868,6 +887,9 @@ public static partial class BcRuntime
     {
         try
         {
+            if (self.IsTemporary || IsMetaTableTemporary(self.MetaTable))
+                goto InvokeRealBody;
+
             int tableId = self.MetaTable.TableId;
             if (_aiFieldIds.TryGetValue(tableId, out int aiFieldNo)
                 && self.MetaTable.TryGetFieldByNo(aiFieldNo, out var aiField))
@@ -884,6 +906,7 @@ public static partial class BcRuntime
         }
         catch { /* don't block insert if AI counter assignment fails */ }
 
+    InvokeRealBody:
         try
         {
             var result = _mNavRecordALInsertAsync3!.Invoke(self,

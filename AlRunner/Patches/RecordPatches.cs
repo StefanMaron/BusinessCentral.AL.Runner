@@ -792,7 +792,9 @@ public static partial class RecordPatches
 
     /// <summary>
     /// Replacement for DataAccessSource.GetDataAccessForTable(NCLMetaTable, bool).
-    /// Ignores the isTemporary flag — always routes to TempTableDataProvider (in-memory).
+    /// Uses one shared in-memory provider per (DataAccessSource,table) for regular tables,
+    /// but returns a fresh provider for temporary records so each temp variable has an
+    /// isolated buffer unless explicitly shared by BC semantics.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     /// <summary>
@@ -823,10 +825,11 @@ public static partial class RecordPatches
     {
         try
         {
-            // Per-(DataAccessSource, tableId) cache so Insert+Find on the same logical table
-            // share storage. BC normally has ONE TenantDataAccess per source for all Normal
-            // tables; we use one DataAccess per table since each gets its own
-            // TempTableDataProvider, but the SAME one across Record-variable instances.
+            if (isTemporary)
+                return _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+
+            // Per-(DataAccessSource, tableId) cache so Insert+Find on the same regular table
+            // share storage.
             var perTable = _dataAccessByTable.GetValue(self,
                 static _ => new ConcurrentDictionary<int, object>());
             var tableId = table.TableId;

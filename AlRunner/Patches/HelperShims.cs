@@ -16,6 +16,8 @@ namespace AlRunnerV2;
 
 public static partial class BcRuntime
 {
+    private static FieldInfo? _fTruncateTtdpTable;
+
     [MethodImpl(MethodImplOptions.NoInlining)] public static void NoOp_0Args() { }
     [MethodImpl(MethodImplOptions.NoInlining)] public static void NoOp_OneArg(object? a) { }
     [MethodImpl(MethodImplOptions.NoInlining)] public static void NoOp2(object? a, object? b) { }
@@ -82,6 +84,62 @@ public static partial class BcRuntime
     [MethodImpl(MethodImplOptions.NoInlining)] public static System.Threading.Tasks.ValueTask ReturnValueTask3(object? a, object? b, object? c) => default;
     [MethodImpl(MethodImplOptions.NoInlining)] public static System.Threading.Tasks.ValueTask ReturnValueTask4(object? a, object? b, object? c, object? d) => default;
     [MethodImpl(MethodImplOptions.NoInlining)] public static System.Threading.Tasks.ValueTask ReturnValueTask5(object? a, object? b, object? c, object? d, object? e) => default;
+
+    /// <summary>
+    /// Replacement for DataProvider.TruncateAsync used by Record.TRUNCATE.
+    /// Clears in-memory TempTableDataProvider rows and resets runner AutoIncrement
+    /// counters when resetIdentity=true.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static System.Threading.Tasks.ValueTask DataProvider_TruncateAsync(
+        object? self,
+        int companyNameToken,
+        Microsoft.Dynamics.Nav.Runtime.NCLMetaTable metaTable,
+        object? filtersAndMarks,
+        bool resetIdentity)
+    {
+        if (self == null)
+            return default;
+
+        var providerType = self.GetType();
+        if (providerType.Name.Contains("TempTableDataProvider", StringComparison.Ordinal))
+        {
+            // Clear backing row tree(s).
+            for (var t = providerType; t != null; t = t.BaseType)
+            {
+                foreach (var f in t.GetFields(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                {
+                    if (!f.Name.Contains("tree", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    var value = f.GetValue(self);
+                    if (value == null)
+                        continue;
+                    var clear = value.GetType().GetMethod("Clear",
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                        null, Type.EmptyTypes, null);
+                    clear?.Invoke(value, null);
+                }
+            }
+        }
+
+        if (resetIdentity)
+        {
+            var tableId = metaTable.TableId;
+            if (tableId != 0)
+                _aiCounters.TryRemove(tableId, out _);
+            else
+            {
+                // Fallback if metadata table ID is unexpectedly unset.
+                _fTruncateTtdpTable ??= providerType.GetField("table", BindingFlags.NonPublic | BindingFlags.Instance);
+                var table = _fTruncateTtdpTable?.GetValue(self);
+                var idObj = table?.GetType().GetProperty("TableId", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(table);
+                if (idObj is int fallbackId)
+                    _aiCounters.TryRemove(fallbackId, out _);
+            }
+        }
+
+        return default;
+    }
 
     [MethodImpl(MethodImplOptions.NoInlining)] public static object? ReturnNull_OneArg(object a) => null;
     [MethodImpl(MethodImplOptions.NoInlining)] public static int ReturnZero_OneArg(object? a) => 0;

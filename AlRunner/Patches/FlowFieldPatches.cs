@@ -333,7 +333,18 @@ public static class FlowFieldPatches
                 if (Equals(calcMethod, _cmNone)) continue;
 
                 // Source field/table from formula
-                var srcFieldMeta = _pCalcFormulaSourceField!.GetValue(formula); // NCLMetaField (may be null for Count/Exist)
+                object? srcFieldMeta;
+                try
+                {
+                    srcFieldMeta = _pCalcFormulaSourceField!.GetValue(formula); // NCLMetaField (may be null for Count/Exist)
+                }
+                catch
+                {
+                    // On uninserted records the runtime can fail resolving formula metadata
+                    // through app-group lookup; BC result is still a default FlowField value.
+                    WriteEmptyFlowFieldValue(parentBuffer, bufferIndexer, fieldObj, dbgCol);
+                    continue;
+                }
                 int srcFieldColumn = -1;
                 NCLMetaTable? srcTable = null;
                 if (srcFieldMeta != null)
@@ -377,6 +388,7 @@ public static class FlowFieldPatches
                         int pCol = (int)_pNclMetaFieldColumnIndex!.GetValue(fVal)!;
                         filterPairs.Add((sCol, pCol));
                     }
+
                 }
 
                 // Pre-read parent values for each filter
@@ -518,6 +530,24 @@ public static class FlowFieldPatches
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
+
+    private static void WriteEmptyFlowFieldValue(object parentBuffer, PropertyInfo bufferIndexer, object fieldObj, int columnIndex)
+    {
+        if (columnIndex < 0)
+            return;
+        try
+        {
+            var emptyValue = fieldObj.GetType().GetProperty("EmptyValue",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                ?.GetValue(fieldObj) as NavValue;
+            if (emptyValue != null)
+                bufferIndexer.SetValue(parentBuffer, emptyValue, new object[] { columnIndex });
+        }
+        catch
+        {
+            // Best effort only; caller continues with default buffer state.
+        }
+    }
 
     // Called by RecordImpl_CalcFieldsAsync_3 when a BLOB field is in the CalcFields list.
     // Mirrors RecordImplementation.CalcFieldsAsync blob branch:

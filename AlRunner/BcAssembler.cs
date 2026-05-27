@@ -530,16 +530,16 @@ namespace AlRunnerV2Shim
             return ALSplit(t, sep);
         }
 
-        // ALMaxStrLen: v27 returns Int32.MaxValue for unlimited Text; v28+ returns 0.
-        // NavDefinedLengthMetadata already stores 0 for unlimited and N for Text[N].
+        // ALMaxStrLen: unlimited Text/Code returns Int32.MaxValue; bounded returns the
+        // declared length. NavDefinedLengthMetadata stores 0 for unlimited and N for Text[N].
         public static int ALMaxStrLen(Microsoft.Dynamics.Nav.Runtime.NavText text)
-            => text.NavDefinedLengthMetadata;
+            => text.NavDefinedLengthMetadata == 0 ? int.MaxValue : text.NavDefinedLengthMetadata;
 
         public static int ALMaxStrLen(Microsoft.Dynamics.Nav.Runtime.NavCode text)
-            => text.NavDefinedLengthMetadata;
+            => text.NavDefinedLengthMetadata == 0 ? int.MaxValue : text.NavDefinedLengthMetadata;
 
         public static int ALMaxStrLen(string text)
-            => 0; // unlimited Text passed as raw string
+            => int.MaxValue; // unlimited Text passed as raw string
 
         // NavApp.GetCurrentModuleInfo — returns module info from the loaded bundle's app.json.
         public static void ALNavApp_GetCurrentModuleInfo(

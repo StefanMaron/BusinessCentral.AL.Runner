@@ -104,7 +104,7 @@ public static partial class RecordPatches
 
             // Build MetaTable via named-parameter ctor.  The public ctor takes many
             // named params with defaults; we resolve by name and fall back to defaults.
-            var defaultMetaTable = CallMetaTableCtor(tableId, parsed.TableName, fields, allKeys.ToArray());
+            var defaultMetaTable = CallMetaTableCtor(tableId, parsed.TableName, fields, allKeys.ToArray(), parsed.IsTableTypeTemporary);
             if (defaultMetaTable == null) return null;
 
             // NavAppGroup.BaseGroup
@@ -181,7 +181,7 @@ public static partial class RecordPatches
         }
     }
 
-    private static object? CallMetaTableCtor(int id, string name, object[] fields, object[] allKeys)
+    private static object? CallMetaTableCtor(int id, string name, object[] fields, object[] allKeys, bool isTableTypeTemporary)
     {
         if (_tMetaTable == null) return null;
         var ctor = _tMetaTable.GetConstructors()
@@ -205,6 +205,14 @@ public static partial class RecordPatches
             if (p.Name == "keys")
             {
                 args[i] = MakeImmutableArray(_tMetaKey!, allKeys);
+                continue;
+            }
+            if (p.Name == "tableType" && p.ParameterType.IsEnum)
+            {
+                var enumName = isTableTypeTemporary ? "Temporary" : "Normal";
+                args[i] = Enum.TryParse(p.ParameterType, enumName, ignoreCase: true, out var tableType)
+                    ? tableType
+                    : (p.HasDefaultValue ? p.DefaultValue : Activator.CreateInstance(p.ParameterType));
                 continue;
             }
             if (p.Name == "fieldsById")
