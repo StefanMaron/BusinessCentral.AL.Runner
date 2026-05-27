@@ -177,7 +177,7 @@ Console.WriteLine($"al-runner v2 — running {bundles.Count} bundle(s)");
 }
 
 var packageCacheDirs = packageCacheArgs.Count > 0
-    ? packageCacheArgs.Where(Directory.Exists).ToList()
+    ? ExpandPackageCacheDirs(packageCacheArgs).ToList()
     : DefaultPackageCacheDirs().ToList();
 Console.WriteLine($"  package caches: {packageCacheDirs.Count} dir(s)");
 
@@ -807,7 +807,7 @@ static int RunPrecompile(string[] subArgs)
     var manifest = AppLoader.ReadManifest(input);
     if (manifest == null) { Console.Error.WriteLine($"Failed to read manifest from {input}"); return 2; }
 
-    var packageCacheDirs = caches.Count > 0 ? caches : DefaultPackageCacheDirs().ToList();
+    var packageCacheDirs = caches.Count > 0 ? ExpandPackageCacheDirs(caches).ToList() : DefaultPackageCacheDirs().ToList();
 
     // Apply BC patches before any BC type is touched (BcCompiler uses BC types).
     BcRuntime.EnsureApplied();
@@ -1334,6 +1334,60 @@ static List<string> TopologicalSort(
 
     foreach (var p in implPaths) Visit(p);
     return result;
+}
+
+// Expands user-provided --package-cache dirs: returns each dir that exists, plus
+// any bcartifacts platform/Applications and platform/ModernDev dirs auto-discovered
+// from the same artifact version root. Deduplicates so the same dir isn't listed
+// twice if the user already passed it explicitly.
+// This ensures that even when only the ISV .alpackages and w1/Extensions are passed,
+// the higher-version platform test packages (e.g. Tests-TestLibraries v28.1 in
+// platform/Applications/BaseApp/Test) are visible to the version-aware resolver.
+static IEnumerable<string> ExpandPackageCacheDirs(IEnumerable<string> userDirs)
+{
+    var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    foreach (var dir in userDirs)
+    {
+        if (!Directory.Exists(dir)) continue;
+        if (seen.Add(dir)) yield return dir;
+        foreach (var extra in BcArtifactTestDirs(dir))
+            if (seen.Add(extra)) yield return extra;
+    }
+}
+
+// Auto-discovers bcartifacts platform dirs from an explicit --package-cache path.
+// Gated to paths inside ~/.bcartifacts.cache/ so corpus runs and non-bcartifacts
+// cache dirs are unaffected. Walks up from the given dir to find the artifact
+// version root (the child of sandbox/<version>/ that has a platform/ subdirectory)
+// and yields platform/Applications and platform/ModernDev if they exist.
+static IEnumerable<string> BcArtifactTestDirs(string cacheDir)
+{
+    var home = Environment.GetEnvironmentVariable("HOME");
+    if (string.IsNullOrEmpty(home)) yield break;
+
+    var bcRoot = Path.GetFullPath(Path.Combine(home, ".bcartifacts.cache"));
+    var full = Path.GetFullPath(cacheDir);
+
+    // Only auto-expand dirs that are inside the bcartifacts cache root.
+    if (!full.StartsWith(bcRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+        && !string.Equals(full, bcRoot, StringComparison.OrdinalIgnoreCase))
+        yield break;
+
+    // Walk up from cacheDir toward bcRoot, stopping at the first dir that has
+    // a platform/ subdirectory — that is the artifact version root.
+    var dir = full;
+    while (dir.Length > bcRoot.Length)
+    {
+        var platApps = Path.Combine(dir, "platform", "Applications");
+        if (Directory.Exists(platApps))
+        {
+            yield return platApps;
+            yield break;
+        }
+        var parent = Path.GetDirectoryName(dir);
+        if (parent == null || parent == dir) yield break;
+        dir = parent;
+    }
 }
 
 // Default cache: the latest BC artifact version under ~/.bcartifacts.cache/sandbox/

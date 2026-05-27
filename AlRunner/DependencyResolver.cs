@@ -2,23 +2,29 @@
 // a set of package-cache dirs into a topologically-sorted list of (manifest, appPath).
 //
 // Indexes every `.app` under the cache dirs by AppId (with (Name, Publisher)
-// as a fallback for declarations missing a GUID). Recursively expands declared
-// deps via NavxManifest.xml's <Dependencies>. Detects cycles via colour-marker
-// DFS. Output order = post-order DFS = topological order (deps before dependents).
+// as a fallback for declarations missing a GUID). All candidate versions are kept
+// per AppId / (Name, Publisher). TryFind selects the highest-version candidate whose
+// version satisfies the declared minimum (BC dep semantics: version is a minimum).
+// If candidates exist but none satisfies the minimum the error message names the
+// available versions so the failure is obviously a version-mismatch problem.
+//
+// Recursively expands declared deps via NavxManifest.xml's <Dependencies>. Detects
+// cycles via colour-marker DFS. Output order = post-order DFS = topological order
+// (deps before dependents).
 //
 // Throws on unresolved references with the requested name + version + the cache
 // dirs that were searched, so the failure mode is obviously a missing-package
 // problem and not a runner bug.
-using System.Collections.Concurrent;
 
 namespace AlRunnerV2;
 
 public sealed class DependencyResolver
 {
     private readonly IReadOnlyList<string> _cacheDirs;
-    private readonly Dictionary<Guid, (AppManifest Manifest, string Path)> _byId = new();
-    private readonly Dictionary<(string Name, string Publisher), (AppManifest Manifest, string Path)> _byNamePub
-        = new(NamePublisherComparer.Instance);
+    // All candidates per AppId — kept so the highest satisfying version can be chosen.
+    private readonly Dictionary<Guid, List<(AppManifest Manifest, string Path)>> _byId = new();
+    private readonly Dictionary<(string Name, string Publisher), List<(AppManifest Manifest, string Path)>>
+        _byNamePub = new(NamePublisherComparer.Instance);
     private bool _indexed;
 
     public DependencyResolver(IReadOnlyList<string> cacheDirs)
@@ -51,7 +57,7 @@ public sealed class DependencyResolver
         List<(AppManifest, string)> output,
         Stack<string> stack)
     {
-        if (!TryFind(dep, out var found))
+        if (!TryFind(dep, out var found, out var nearMissVersions))
         {
             if (dep.Optional)
             {
@@ -60,9 +66,12 @@ public sealed class DependencyResolver
                     $"{dep.Publisher}/{dep.Name}");
                 return;
             }
+            var detail = nearMissVersions != null
+                ? $"(found same-named package at {nearMissVersions} — all below minimum v{dep.Version})"
+                : $"(id={dep.AppId})";
             throw new InvalidOperationException(
                 $"Dependency not found: {dep.Publisher}/{dep.Name} v{dep.Version} " +
-                $"(id={dep.AppId}). Searched: {string.Join(", ", _cacheDirs)}. " +
+                $"{detail}. Searched: {string.Join(", ", _cacheDirs)}. " +
                 $"Stack: {string.Join(" -> ", stack.Reverse())}");
         }
 
@@ -85,12 +94,62 @@ public sealed class DependencyResolver
         output.Add((found.Manifest, found.Path));
     }
 
-    private bool TryFind(DependencyRef dep, out (AppManifest Manifest, string Path) found)
+    /// <summary>
+    /// Find the best candidate for <paramref name="dep"/>, selecting the highest version
+    /// that satisfies the declared minimum (BC minimum-version semantics).
+    /// </summary>
+    /// <param name="nearMissVersions">
+    /// Set when candidates exist but none satisfies the minimum version; contains a
+    /// human-readable summary of the available-but-too-low versions.
+    /// </param>
+    private bool TryFind(DependencyRef dep,
+        out (AppManifest Manifest, string Path) found,
+        out string? nearMissVersions)
     {
-        if (dep.AppId != Guid.Empty && _byId.TryGetValue(dep.AppId, out found))
+        nearMissVersions = null;
+
+        // AppId lookup is authoritative when present. If candidates exist for this AppId
+        // but none satisfies the minimum, we must NOT silently fall through to the
+        // name+publisher index — that could silently pick a completely different package.
+        if (dep.AppId != Guid.Empty && _byId.TryGetValue(dep.AppId, out var byIdCandidates))
+            return SelectBestVersion(dep, byIdCandidates, out found, out nearMissVersions);
+
+        // Name+Publisher fallback: used when AppId is empty, or when the AppId is not
+        // in the index at all (nearMissVersions stays null in that path).
+        if (_byNamePub.TryGetValue((dep.Name, dep.Publisher), out var byNameCandidates))
+            return SelectBestVersion(dep, byNameCandidates, out found, out nearMissVersions);
+
+        found = default;
+        return false;
+    }
+
+    private static bool SelectBestVersion(
+        DependencyRef dep,
+        List<(AppManifest Manifest, string Path)> candidates,
+        out (AppManifest Manifest, string Path) found,
+        out string? nearMissVersions)
+    {
+        nearMissVersions = null;
+        (AppManifest Manifest, string Path) best = default;
+
+        foreach (var c in candidates)
+        {
+            if (c.Manifest.Version >= dep.Version)
+            {
+                if (best.Manifest == null || c.Manifest.Version > best.Manifest.Version)
+                    best = c;
+            }
+        }
+
+        if (best.Manifest != null)
+        {
+            found = best;
             return true;
-        if (_byNamePub.TryGetValue((dep.Name, dep.Publisher), out found))
-            return true;
+        }
+
+        // Candidates exist but all are below the required minimum.
+        nearMissVersions = string.Join(", ",
+            candidates.OrderByDescending(c => c.Manifest.Version).Select(c => $"v{c.Manifest.Version}"));
         found = default;
         return false;
     }
@@ -105,10 +164,15 @@ public sealed class DependencyResolver
             {
                 var m = AppLoader.ReadManifest(file);
                 if (m == null) continue;
-                // First-wins for identical AppIds (multiple cache dirs may overlap).
-                if (!_byId.ContainsKey(m.AppId)) _byId[m.AppId] = (m, file);
+                // Collect ALL candidates per AppId so version-aware selection can choose the best.
+                if (!_byId.TryGetValue(m.AppId, out var idList))
+                    _byId[m.AppId] = idList = new List<(AppManifest, string)>();
+                idList.Add((m, file));
+
                 var key = (m.Name, m.Publisher);
-                if (!_byNamePub.ContainsKey(key)) _byNamePub[key] = (m, file);
+                if (!_byNamePub.TryGetValue(key, out var npList))
+                    _byNamePub[key] = npList = new List<(AppManifest, string)>();
+                npList.Add((m, file));
             }
         }
         _indexed = true;

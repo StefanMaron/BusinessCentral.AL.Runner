@@ -275,29 +275,6 @@ public static class AppLoader
 
     // ── internals ────────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Extracts the raw <c>SymbolReference.json</c> bytes from the package at
-    /// <paramref name="appPath"/>. Returns null if the file is not a simple (non-R2R)
-    /// symbol-only package or if the entry is missing.
-    /// </summary>
-    public static byte[]? ExtractSymbolReferenceBytes(string appPath)
-    {
-        try
-        {
-            var bytes = File.ReadAllBytes(appPath);
-            var offset = NavxZipOffset(bytes);
-            using var ms = new MemoryStream(bytes, offset, bytes.Length - offset, writable: false);
-            using var zip = new ZipArchive(ms, ZipArchiveMode.Read);
-            var entry = zip.GetEntry("SymbolReference.json");
-            if (entry == null) return null;
-            using var es = entry.Open();
-            var buf = new MemoryStream();
-            es.CopyTo(buf);
-            return buf.ToArray();
-        }
-        catch { return null; }
-    }
-
     private static ZipArchive OpenAppZip(string appPath)
     {
         var bytes = File.ReadAllBytes(appPath);

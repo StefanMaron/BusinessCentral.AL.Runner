@@ -4,15 +4,11 @@
 //   1. ApplyPolyfillRedirects — string substitutions routing AL-compiler-emitted
 //      references for APIs that don't exist on the real service-tier DLLs to
 //      small in-process polyfill shims (defined inline as PolyfillSource).
-//   2. ApplyStaleFunctionIdPatches — replaces stale BC function-ID integer
-//      literals registered by StaleSymbolUpgrader with current IDs, fixing
-//      stale .app symbol packages in ISV .alpackages dirs.
-//   3. CallSiteArgWrap — fixes the residual call-site ByRef gap BC's emitter
+//   2. CallSiteArgWrap — fixes the residual call-site ByRef gap BC's emitter
 //      doesn't cover (e.g. `dict.ALGet(K, fieldOfHandleT)` → wraps the field arg
 //      as `new ByRef<T>(() => expr, v => expr = v)`). BC's emitter handles
 //      parameter-declaration ByRef wraps natively at codeanalysis.cs:342854 —
 //      no syntax rewriter needed for those.
-using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using AlRunnerV2.Rewriters;
@@ -56,7 +52,7 @@ public sealed class BcAssembler
             foreach (var s in sourceList) File.WriteAllText($"/tmp/gen_{s.Name}.cs", s.Code);
         var trees = sourceList
             .Select(s => CSharpSyntaxTree.ParseText(
-                ApplyStaleFunctionIdPatches(ApplyPolyfillRedirects(s.Code)), path: s.Name + ".cs"))
+                ApplyPolyfillRedirects(s.Code), path: s.Name + ".cs"))
             .ToList();
         // Inject helpers for runtime-API mismatches between alc-emit and the
         // service-tier DLLs. PolyfillRedirects above route callers here.
@@ -236,26 +232,6 @@ public sealed class BcAssembler
     {
         foreach (var (from, to) in _polyfillRedirects)
             code = code.Replace(from, to);
-        return code;
-    }
-
-    // Replace stale BC function-ID integer literals with their current-version
-    // equivalents. The BC compiler bakes the function ID from the symbol reference
-    // into `.Target.Invoke(<id>, ...)` calls in the emitted C#. When the symbol
-    // package is stale (e.g. v17.0 in an ISV .alpackages dir), those IDs differ
-    // from what the BC 28.1 runtime dispatch switch expects.
-    internal static string ApplyStaleFunctionIdPatches(string code)
-    {
-        var staleIds = AlRunnerV2.Infrastructure.StaleSymbolUpgrader.StaleToCurrentIds;
-        if (staleIds.Count == 0) return code;
-        foreach (var (staleId, currentId) in staleIds)
-        {
-            // Match the stale ID as a whole token: not preceded or followed by a digit.
-            // For negative IDs (e.g. -1033141710) the minus sign is part of the string
-            // and is never preceded by a digit in well-formed C# numeric literals.
-            var pattern = @"(?<!\d)" + Regex.Escape(staleId.ToString()) + @"(?!\d)";
-            code = Regex.Replace(code, pattern, currentId.ToString());
-        }
         return code;
     }
 

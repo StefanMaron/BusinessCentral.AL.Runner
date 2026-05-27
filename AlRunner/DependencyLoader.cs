@@ -139,9 +139,6 @@ public sealed class DependencyLoader
         {
             // Symbol-only package (no runtime code in this .app — normal for Microsoft
             // platform apps that are provided via service-tier DLLs loaded elsewhere).
-            // Register stale→current function ID mappings so the post-compile patcher
-            // can fix the compiled assembly before it is loaded.
-            StaleSymbolUpgrader.TryRegisterIds(appPath, m);
             Console.Error.WriteLine(
                 $"[deps] NOTE: {m.Publisher}_{m.Name} v{m.Version} is symbol-only " +
                 $"(no runtime code in package); relying on service-tier/already-loaded assembly");
