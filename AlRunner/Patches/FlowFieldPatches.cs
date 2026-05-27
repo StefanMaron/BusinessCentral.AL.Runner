@@ -75,6 +75,8 @@ public static class FlowFieldPatches
     private static PropertyInfo? _pCalcFormulaFilters;
     private static PropertyInfo? _pCalcFormulaSourceField;
     private static PropertyInfo? _pCalcFormulaNegateResult;
+    private static PropertyInfo? _pCalcFormulaTableId;
+    private static PropertyInfo? _pCalcFormulaFieldId;
     private static PropertyInfo? _pFilterSourceField;          // NCLMetaFilter.SourceField
     private static PropertyInfo? _pFilterFieldValueField;      // NCLMetaFilterField.ValueField (returns INavFieldMetadata)
     private static FieldInfo? _fCalcFormulaEmpty;              // NCLMetaCalculationFormula.EmptyFormula
@@ -196,6 +198,8 @@ public static class FlowFieldPatches
         _pCalcFormulaFilters = _tNCLMetaCalcFormula.GetProperty("Filters");
         _pCalcFormulaSourceField = _tNCLMetaCalcFormula.GetProperty("SourceField");
         _pCalcFormulaNegateResult = _tNCLMetaCalcFormula.GetProperty("NegateResult");
+        _pCalcFormulaTableId = _tNCLMetaCalcFormula.GetProperty("TableId");
+        _pCalcFormulaFieldId = _tNCLMetaCalcFormula.GetProperty("FieldId");
         _fCalcFormulaEmpty = _tNCLMetaCalcFormula.GetField("EmptyFormula",
             BindingFlags.Public | BindingFlags.Static);
 
@@ -332,32 +336,34 @@ public static class FlowFieldPatches
                 var calcMethod = _pCalcFormulaCalculationMethod!.GetValue(formula);
                 if (Equals(calcMethod, _cmNone)) continue;
 
-                // Source field/table from formula
-                object? srcFieldMeta;
-                try
-                {
-                    srcFieldMeta = _pCalcFormulaSourceField!.GetValue(formula); // NCLMetaField (may be null for Count/Exist)
-                }
-                catch
-                {
-                    // On uninserted records the runtime can fail resolving formula metadata
-                    // through app-group lookup; BC result is still a default FlowField value.
-                    WriteEmptyFlowFieldValue(parentBuffer, bufferIndexer, fieldObj, dbgCol);
-                    continue;
-                }
+                // Source field/table from formula IDs (avoid SourceField resolution path, which can fail
+                // on the skeleton app-group metadata lookup even for inserted records).
+                NCLMetaField? srcFieldMeta = null;
                 int srcFieldColumn = -1;
                 NCLMetaTable? srcTable = null;
-                if (srcFieldMeta != null)
-                {
-                    srcFieldColumn = (int)_pNclMetaFieldColumnIndex!.GetValue(srcFieldMeta)!;
-                    srcTable = _pNclMetaFieldParent!.GetValue(srcFieldMeta) as NCLMetaTable;
-                }
-                else
-                {
-                    // Count/Exist: derive source table from formula.TableId via metadata service
-                    var tableId = (int)(_tNCLMetaCalcFormula!.GetProperty("TableId")!.GetValue(formula) ?? 0);
+
+                var tableIdObj = _pCalcFormulaTableId?.GetValue(formula);
+                var fieldIdObj = _pCalcFormulaFieldId?.GetValue(formula);
+                int tableId = tableIdObj is int tid ? tid : 0;
+                int fieldId = fieldIdObj is int fid ? fid : 0;
+
+                if (tableId != 0)
                     srcTable = ResolveTableById(tableId);
+
+                if (srcTable != null && fieldId != 0)
+                {
+                    try
+                    {
+                        srcFieldMeta = srcTable.GetFieldByNo(fieldId, trapError: true);
+                    }
+                    catch
+                    {
+                        srcFieldMeta = null;
+                    }
                 }
+                if (srcFieldMeta != null)
+                    srcFieldColumn = srcFieldMeta.ColumnIndex;
+
                 // Source TempTableDataProvider — call our replacement directly, NOT via reflection
                 // (MethodInfo.Invoke bypasses JmpHook and gets the original empty-store impl).
                 if (srcTable == null) continue;
@@ -374,19 +380,34 @@ public static class FlowFieldPatches
 
                 // Resolve filters: list of (sourceFieldColumnIndex, parentFieldColumnIndex)
                 var filters = _pCalcFormulaFilters!.GetValue(formula) as IEnumerable;
-                var filterPairs = new List<(int srcCol, int parentCol)>();
+                var filterPairs = new List<(int srcCol, int parentCol, NCLMetaField srcField, NCLMetaField parentField)>();
                 if (filters != null)
                 {
                     foreach (var fObj in filters)
                     {
                         if (fObj == null) continue;
-                        if (!_tNCLMetaFilterField!.IsInstanceOfType(fObj)) continue;
-                        var fSrc = _pFilterSourceField!.GetValue(fObj);
-                        var fVal = _pFilterFieldValueField!.GetValue(fObj);
+                        if ((_tNCLMetaFilter != null && !_tNCLMetaFilter.IsInstanceOfType(fObj))
+                            && (_tNCLMetaFilterField != null && !_tNCLMetaFilterField.IsInstanceOfType(fObj)))
+                            continue;
+
+                        object? fSrc = null;
+                        object? fVal = null;
+                        try
+                        {
+                            fSrc = _pFilterSourceField?.GetValue(fObj);
+                            fVal = _pFilterFieldValueField?.GetValue(fObj);
+                        }
+                        catch
+                        {
+                            continue;
+                        }
                         if (fSrc == null || fVal == null) continue;
-                        int sCol = (int)_pNclMetaFieldColumnIndex!.GetValue(fSrc)!;
-                        int pCol = (int)_pNclMetaFieldColumnIndex!.GetValue(fVal)!;
-                        filterPairs.Add((sCol, pCol));
+                        if (fSrc is not NCLMetaField srcFilterField || fVal is not NCLMetaField parentFilterField)
+                            continue;
+
+                        int sCol = srcFilterField.ColumnIndex;
+                        int pCol = parentFilterField.ColumnIndex;
+                        filterPairs.Add((sCol, pCol, srcFilterField, parentFilterField));
                     }
 
                 }
@@ -394,16 +415,22 @@ public static class FlowFieldPatches
                 // Pre-read parent values for each filter
                 var parentFilterValues = new NavValue?[filterPairs.Count];
                 for (int i = 0; i < filterPairs.Count; i++)
-                    parentFilterValues[i] = bufferIndexer.GetValue(parentBuffer, new object[] { filterPairs[i].parentCol }) as NavValue;
+                    parentFilterValues[i] = ReadBufferFieldValue(parentBuffer, bufferIndexer, filterPairs[i].parentCol, filterPairs[i].parentField);
 
-                // Enumerate source rows directly from primaryTree — it IS IEnumerable<TempTableRecordBuffer>.
-                // (Avoid TempTableDataProvider.Filter — its result enumerable behaves oddly when invoked
-                //  via reflection from outside Ncl assembly; iterating the AvlTree directly is robust.)
+                // Enumerate source rows via TempTableDataProvider.Filter to mirror the runner's
+                // CalcNumeric path (company-scoped, key-ordered, current in-memory rows).
                 IEnumerable? rows = null;
                 try
                 {
-                    var fPrimaryTree = srcTtdp.GetType().GetField("primaryTree", BindingFlags.NonPublic | BindingFlags.Instance);
-                    rows = fPrimaryTree?.GetValue(srcTtdp) as IEnumerable;
+                    var sortingFields = _fTtdpPrimaryKeySortingFields?.GetValue(srcTtdp);
+                    rows = _mTtdpFilter?.Invoke(srcTtdp, new object?[]
+                    {
+                        companyToken,
+                        _emptyFm,
+                        null,
+                        sortingFields,
+                        false
+                    }) as IEnumerable;
                 }
                 catch { }
                 if (rows == null)
@@ -432,7 +459,7 @@ public static class FlowFieldPatches
                     bool pass = true;
                     for (int i = 0; i < filterPairs.Count; i++)
                     {
-                        var rowVal = rowIndexer.GetValue(row, new object[] { filterPairs[i].srcCol }) as NavValue;
+                        var rowVal = ReadBufferFieldValue(row, rowIndexer, filterPairs[i].srcCol, filterPairs[i].srcField);
                         if (!NavValuesEqual(rowVal, parentFilterValues[i])) { pass = false; break; }
                     }
                     if (!pass) continue;
@@ -448,7 +475,7 @@ public static class FlowFieldPatches
                     if (srcFieldColumn >= 0 && (Equals(calcMethod, _cmSum) || Equals(calcMethod, _cmAverage)
                         || Equals(calcMethod, _cmMin) || Equals(calcMethod, _cmMax) || Equals(calcMethod, _cmLookup)))
                     {
-                        var srcVal = rowIndexer.GetValue(row, new object[] { srcFieldColumn }) as NavValue;
+                        var srcVal = ReadBufferFieldValue(row, rowIndexer, srcFieldColumn, srcFieldMeta);
                         if (srcVal == null) continue;
                         if (Equals(calcMethod, _cmSum) || Equals(calcMethod, _cmAverage))
                         {
@@ -484,7 +511,7 @@ public static class FlowFieldPatches
                 else if (Equals(calcMethod, _cmSum))
                 {
                     var v = negate ? -sum : sum;
-                    result = NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, v);
+                    result = NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, CoerceSumResult(v));
                 }
                 else if (Equals(calcMethod, _cmAverage))
                 {
@@ -642,5 +669,54 @@ public static class FlowFieldPatches
         {
             return string.Compare(a.ToString(), b.ToString(), StringComparison.OrdinalIgnoreCase);
         }
+    }
+
+    private static NavValue? ReadBufferFieldValue(object buffer, PropertyInfo bufferIndexer, int columnIndex, NCLMetaField? fieldMeta)
+    {
+        try
+        {
+            var changed = _mMutableBufferGetChangedFieldValue?.Invoke(buffer, new object[] { columnIndex }) as NavValue;
+            if (changed != null) return changed;
+        }
+        catch
+        {
+            // Best-effort fallback to original/indexer reads below.
+        }
+
+        try
+        {
+            var original = _mMutableBufferGetOriginalValue?.Invoke(buffer, new object[] { columnIndex }) as NavValue;
+            if (original != null) return original;
+        }
+        catch
+        {
+            // Best-effort fallback to indexer read below.
+        }
+
+        try
+        {
+            var raw = bufferIndexer.GetValue(buffer, new object[] { columnIndex });
+            if (raw is NavValue navValue)
+                return navValue;
+            if (raw != null && fieldMeta != null)
+                return NavValue.CreateNavValueFromObject(fieldMeta, raw);
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static object CoerceSumResult(decimal value)
+    {
+        if (decimal.Truncate(value) == value)
+        {
+            if (value >= int.MinValue && value <= int.MaxValue)
+                return (int)value;
+            if (value >= long.MinValue && value <= long.MaxValue)
+                return (long)value;
+        }
+        return value;
     }
 }
