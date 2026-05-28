@@ -6,6 +6,7 @@
 // Replacement constructs a SharedRecordRef using a process-wide skeleton
 // TreeSharedObjectContainer parented to RootTreeStub, and stashes it via
 // Tree.SetReferenceTarget so subsequent gets see the cached value.
+using System.Collections;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 
@@ -212,18 +213,35 @@ public static partial class BcRuntime
 
     // NavStringValue.CompareTo(NavStringValue) — real impl reaches NavCurrentThread.Session.Culture
     // which is null on the skeleton. Fall back to ordinal comparison via the public Value property.
-    private static PropertyInfo? _pNavStringValue_Value;
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static int NavStringValue_CompareTo(object self, object? other)
     {
         if (other == null) return 1;
         if (ReferenceEquals(other, self)) return 0;
-        if (_pNavStringValue_Value == null)
-            _pNavStringValue_Value = self.GetType().GetProperty("Value",
-                BindingFlags.Public | BindingFlags.Instance);
-        var sv = _pNavStringValue_Value!.GetValue(self) as string ?? "";
-        var ov = _pNavStringValue_Value!.GetValue(other) as string ?? "";
+        var sv = GetNavStringValue(self);
+        var ov = GetNavStringValue(other);
         return string.Compare(sv, ov, StringComparison.Ordinal);
+    }
+
+    private static string GetNavStringValue(object value)
+    {
+        var prop = value.GetType().GetProperty("Value", BindingFlags.Public | BindingFlags.Instance);
+        return prop?.GetValue(value) as string ?? "";
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool BitArrayHelpers_Equals(BitArray? left, BitArray? right)
+    {
+        if (ReferenceEquals(left, right)) return true;
+        if (left == null || right == null || left.Length != right.Length) return false;
+
+        for (var i = 0; i < left.Length; i++)
+        {
+            if (left[i] != right[i])
+                return false;
+        }
+
+        return true;
     }
 
     // NavStream.get_Target — same shape as NavRecordRef. Construct SharedNavStream parented

@@ -2172,6 +2172,17 @@ public static partial class BcRuntime
                     "NavStringValue.CompareTo(NavStringValue)");
         }
 
+        // BitArrayHelpers.Equals uses the removed System.Collections.BitArray.m_array
+        // private field on current .NET. Replace it with public indexer-based comparison.
+        var bitArrayHelpersType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.Utility.BitArrayHelpers");
+        if (bitArrayHelpersType != null)
+        {
+            var equals = bitArrayHelpersType.GetMethod("Equals",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            if (equals != null)
+                Hook(equals, nameof(BitArrayHelpers_Equals), "BitArrayHelpers.Equals(BitArray,BitArray)");
+        }
+
         // NavHttpRequestMessage.get_Target — same shape as NavRecordRef. Construct
         // SharedNavHttpRequestMessage parented to skeleton container.
         var navHttpReqType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavHttpRequestMessage");
