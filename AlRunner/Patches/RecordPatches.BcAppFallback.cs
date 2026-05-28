@@ -7,21 +7,24 @@
 // because BuildNCLMetaTable only consults _parsedTables, populated from the
 // test suite's own src/ directory. The compiled Record{N} : NavRecord type IS
 // loaded (Tier 2 R2R), but it doesn't carry table-shape attributes — field
-// metadata in BC compiled apps lives as AL source inside the .app NAVX zip.
+// metadata in BC compiled apps lives in SymbolReference.json inside the .app
+// NAVX zip (with AL source as a fallback for packages without symbols).
 //
 // Per .claude/rules/precompiled-dll-respect.md the fix is upstream from the
 // AL business logic: when a table id is missing from _parsedTables, walk the
 // list of dependency .app files (registered by Program.cs after dep load),
-// extract the matching `*.Table.al` source via AppLoader.ExtractAl, run it
-// through the existing TryParseTableFile, and the rest of BuildNCLMetaTable
-// proceeds unchanged.
+// read the matching table metadata from SymbolReference.json. If a package has
+// no symbols, fall back to extracting the matching `*.Table.al` source via
+// AppLoader.ExtractAl and feeding it through the existing parser.
 //
-// Performance: index built lazily on first miss by scanning each .app's
-// AL sources for `table <id>` declarations. The result (tableId → appPath)
-// is cached so subsequent misses are O(1). Negative misses are also cached
-// so a non-existent table doesn't re-scan every .app on every Init().
+// Performance: symbol index built lazily on first miss by reading each .app's
+// SymbolReference.json (recursive namespaces). AL source extraction is only
+// used as a fallback. Negative misses are cached so a non-existent table
+// doesn't re-scan every .app on every Init().
 
 using System.Reflection;
+using System.IO.Compression;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace AlRunnerV2.Patches;
@@ -36,8 +39,9 @@ public static partial class RecordPatches
     // re-read its source on demand.
     private static string? _systemAppTempPath;
 
-    // Lazy index: tableId → (appPath, alSource). Built on first miss.
+    // Lazy fallback index: tableId → (appPath, alSource). Built only when symbols miss.
     private static Dictionary<int, (string AppPath, string Source)>? _bcTableIndex;
+    private static Dictionary<int, (string AppPath, ParsedTable Table)>? _bcSymbolTableIndex;
     private static readonly object _bcTableIndexLock = new();
 
     // Negative cache: tableIds we've already tried and not found.
@@ -59,6 +63,7 @@ public static partial class RecordPatches
                 AlRunnerV2.AlEnumMetadataRegistry.RegisterFromAppPath(appPath);
                 // Invalidate the index so newly-added .app gets picked up on next miss.
                 _bcTableIndex = null;
+                _bcSymbolTableIndex = null;
             }
         }
     }
@@ -74,6 +79,14 @@ public static partial class RecordPatches
         lock (_bcTableIndexLock)
         {
             if (_bcMissCache.Contains(tableId)) return false;
+            EnsureBcSymbolTableIndex();
+            if (_bcSymbolTableIndex != null && _bcSymbolTableIndex.TryGetValue(tableId, out var symbolEntry))
+            {
+                _parsedTables[tableId] = symbolEntry.Table;
+                Console.Error.WriteLine($"[RecordPatches] BcAppFallback: parsed table {tableId} from symbols {Path.GetFileName(symbolEntry.AppPath)}");
+                return true;
+            }
+
             EnsureBcTableIndex();
             if (_bcTableIndex == null || !_bcTableIndex.TryGetValue(tableId, out var entry))
             {
@@ -155,30 +168,43 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// Walk every (tableId, source) the BC .app index discovered and feed the source
-    /// through TryParseTableFile so its tables land in _parsedTables. Idempotent —
-    /// already-parsed table ids are skipped, and TryParseTableFile is safe to call
-    /// repeatedly on the same text.
+    /// Walk every table the BC .app indexes discovered and materialise it in
+    /// _parsedTables. Symbols are preferred; AL source is only a fallback.
     /// </summary>
     internal static void EagerParseAllBcAppTables()
     {
         lock (_bcTableIndexLock)
         {
-            EnsureBcTableIndex();
-            if (_bcTableIndex == null) return;
             int parsedNow = 0;
-            var alreadySeenSources = new HashSet<string>(ReferenceEqualityComparer.Instance);
-            foreach (var (id, entry) in _bcTableIndex)
+            EnsureBcSymbolTableIndex();
+            if (_bcSymbolTableIndex != null)
             {
-                if (_parsedTables.ContainsKey(id)) continue;
-                // Same Source string may map from many ids when one .al holds multiple
-                // tables — skip duplicates so we don't re-parse identical text.
-                if (!alreadySeenSources.Add(entry.Source)) continue;
-                TryParseTableFile(entry.Source);
-                if (_parsedTables.ContainsKey(id)) parsedNow++;
+                foreach (var (id, entry) in _bcSymbolTableIndex)
+                {
+                    if (_parsedTables.ContainsKey(id)) continue;
+                    _parsedTables[id] = entry.Table;
+                    parsedNow++;
+                }
             }
+
+            if (_bcSymbolTableIndex == null || _bcSymbolTableIndex.Count == 0)
+            {
+                EnsureBcTableIndex();
+                if (_bcTableIndex != null)
+                {
+                    var alreadySeenSources = new HashSet<string>(ReferenceEqualityComparer.Instance);
+                    foreach (var (id, entry) in _bcTableIndex)
+                    {
+                        if (_parsedTables.ContainsKey(id)) continue;
+                        if (!alreadySeenSources.Add(entry.Source)) continue;
+                        TryParseTableFile(entry.Source);
+                        if (_parsedTables.ContainsKey(id)) parsedNow++;
+                    }
+                }
+            }
+
             if (parsedNow > 0)
-                Console.Error.WriteLine($"[RecordPatches] BcAppFallback: eager-parsed {parsedNow} BC .app table(s) into _parsedTables");
+                Console.Error.WriteLine($"[RecordPatches] BcAppFallback: eager-parsed {parsedNow} BC table(s) into _parsedTables");
         }
     }
 
@@ -195,21 +221,214 @@ public static partial class RecordPatches
                 Console.Error.WriteLine($"[RecordPatches] BcAppFallback: ExtractAl failed for {Path.GetFileName(appPath)}: {ex.Message}");
                 continue;
             }
-            foreach (var (name, source) in sources)
+            foreach (var (_, source) in sources)
             {
-                // Cheap pre-filter — skip files that don't contain the keyword `table`.
                 if (source.IndexOf("table", StringComparison.OrdinalIgnoreCase) < 0) continue;
                 foreach (Match m in _rxAnyTableId.Matches(source))
                 {
-                    if (!int.TryParse(m.Groups[1].Value, out int id)) continue;
-                    // First definition wins — Base App should always trump System App
-                    // ordering by virtue of being scanned in dep-resolution order.
-                    if (!idx.ContainsKey(id))
+                    if (int.TryParse(m.Groups[1].Value, out int id) && !idx.ContainsKey(id))
                         idx[id] = (appPath, source);
                 }
             }
         }
         _bcTableIndex = idx;
-        Console.Error.WriteLine($"[RecordPatches] BcAppFallback: indexed {idx.Count} table id(s) across {_bcAppPaths.Count} BC .app file(s)");
+        if (idx.Count > 0)
+            Console.Error.WriteLine($"[RecordPatches] BcAppFallback: indexed {idx.Count} AL-source table id(s) across {_bcAppPaths.Count} BC .app file(s)");
+    }
+
+    private static void EnsureBcSymbolTableIndex()
+    {
+        if (_bcSymbolTableIndex != null) return;
+        var idx = new Dictionary<int, (string, ParsedTable)>();
+        foreach (var appPath in _bcAppPaths)
+        {
+            try
+            {
+                foreach (var json in ReadSymbolReferences(appPath))
+                {
+                    using var doc = JsonDocument.Parse(json);
+                    VisitSymbolTables(doc.RootElement, appPath, idx);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[RecordPatches] BcAppFallback: SymbolReference read failed for {Path.GetFileName(appPath)}: {ex.Message}");
+            }
+        }
+        _bcSymbolTableIndex = idx;
+        if (idx.Count > 0)
+            Console.Error.WriteLine($"[RecordPatches] BcAppFallback: indexed {idx.Count} symbol table id(s) across {_bcAppPaths.Count} BC .app file(s)");
+    }
+
+    private static void VisitSymbolTables(JsonElement container, string appPath, Dictionary<int, (string, ParsedTable)> idx)
+    {
+        if (container.TryGetProperty("Tables", out var tables) && tables.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var table in tables.EnumerateArray())
+            {
+                var parsed = TryParseTableSymbol(table);
+                if (parsed != null && !idx.ContainsKey(parsed.TableId))
+                    idx[parsed.TableId] = (appPath, parsed);
+            }
+        }
+        if (container.TryGetProperty("Namespaces", out var namespaces) && namespaces.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var ns in namespaces.EnumerateArray())
+                VisitSymbolTables(ns, appPath, idx);
+        }
+    }
+
+    private static ParsedTable? TryParseTableSymbol(JsonElement table)
+    {
+        if (!table.TryGetProperty("Id", out var idProp) || !idProp.TryGetInt32(out var tableId))
+            return null;
+        var tableName = table.TryGetProperty("Name", out var nameProp)
+            ? nameProp.GetString() ?? $"Table{tableId}"
+            : $"Table{tableId}";
+
+        var fields = new List<ParsedField>();
+        if (table.TryGetProperty("Fields", out var fieldsJson) && fieldsJson.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var field in fieldsJson.EnumerateArray())
+            {
+                if (!field.TryGetProperty("Id", out var fidProp) || !fidProp.TryGetInt32(out var fieldId))
+                    continue;
+                var fieldName = field.TryGetProperty("Name", out var fnameProp)
+                    ? fnameProp.GetString() ?? $"Field{fieldId}"
+                    : $"Field{fieldId}";
+                var typeName = SymbolTypeName(field.TryGetProperty("TypeDefinition", out var td) ? td : default);
+                var props = SymbolProperties(field);
+                var isFlowField = props.TryGetValue("FieldClass", out var fieldClass)
+                    && string.Equals(fieldClass, "FlowField", StringComparison.OrdinalIgnoreCase);
+                ParsedCalcFormula? calcFormula = null;
+                if (isFlowField && props.TryGetValue("CalcFormula", out var calcFormulaText))
+                    calcFormula = TryParseCalcFormula($"CalcFormula = {calcFormulaText};");
+                props.TryGetValue("OptionMembers", out var optionMembers);
+                props.TryGetValue("InitValue", out var initValue);
+                var isAutoIncrement = props.TryGetValue("AutoIncrement", out var autoIncrement)
+                    && (autoIncrement == "1" || autoIncrement.Equals("true", StringComparison.OrdinalIgnoreCase));
+                fields.Add(new ParsedField(fieldId, fieldName, typeName, SymbolTypeLength(typeName), isFlowField, calcFormula,
+                    optionMembers, initValue, isAutoIncrement));
+            }
+        }
+
+        var pkFieldIds = new List<int>();
+        var secondaryKeys = new List<ParsedKey>();
+        if (table.TryGetProperty("Keys", out var keysJson) && keysJson.ValueKind == JsonValueKind.Array)
+        {
+            var first = true;
+            foreach (var key in keysJson.EnumerateArray())
+            {
+                var keyName = key.TryGetProperty("Name", out var keyNameProp)
+                    ? keyNameProp.GetString() ?? "Key"
+                    : "Key";
+                var ids = new List<int>();
+                if (key.TryGetProperty("FieldNames", out var fieldNames) && fieldNames.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var fieldNameJson in fieldNames.EnumerateArray())
+                    {
+                        var fieldName = fieldNameJson.GetString();
+                        var field = fields.FirstOrDefault(f =>
+                            string.Equals(f.FieldName, fieldName, StringComparison.OrdinalIgnoreCase));
+                        if (field != null) ids.Add(field.FieldId);
+                    }
+                }
+                if (first)
+                {
+                    pkFieldIds.AddRange(ids);
+                    first = false;
+                }
+                else if (ids.Count > 0)
+                {
+                    secondaryKeys.Add(new ParsedKey(keyName, ids));
+                }
+            }
+        }
+        if (pkFieldIds.Count == 0 && fields.Count > 0)
+            pkFieldIds.Add(fields[0].FieldId);
+
+        var tableProps = SymbolProperties(table);
+        var isTemporary = tableProps.TryGetValue("TableType", out var tableType)
+            && string.Equals(tableType, "Temporary", StringComparison.OrdinalIgnoreCase);
+        return new ParsedTable(tableId, tableName, fields, pkFieldIds, secondaryKeys, isTemporary);
+    }
+
+    private static Dictionary<string, string> SymbolProperties(JsonElement element)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!element.TryGetProperty("Properties", out var props) || props.ValueKind != JsonValueKind.Array)
+            return result;
+        foreach (var prop in props.EnumerateArray())
+        {
+            if (!prop.TryGetProperty("Name", out var nameProp)) continue;
+            var name = nameProp.GetString();
+            if (string.IsNullOrEmpty(name)) continue;
+            if (prop.TryGetProperty("Value", out var valueProp))
+                result[name] = valueProp.GetString() ?? string.Empty;
+        }
+        return result;
+    }
+
+    private static string SymbolTypeName(JsonElement typeDefinition)
+    {
+        if (typeDefinition.ValueKind != JsonValueKind.Object)
+            return "Text";
+        var name = typeDefinition.TryGetProperty("Name", out var nameProp)
+            ? nameProp.GetString() ?? "Text"
+            : "Text";
+        if (string.Equals(name, "Enum", StringComparison.OrdinalIgnoreCase)
+            && typeDefinition.TryGetProperty("Subtype", out var subtype)
+            && subtype.ValueKind == JsonValueKind.Object
+            && subtype.TryGetProperty("Name", out var enumNameProp))
+            return $"Enum \"{enumNameProp.GetString() ?? string.Empty}\"";
+        return name;
+    }
+
+    private static int SymbolTypeLength(string typeName)
+    {
+        var m = Regex.Match(typeName, @"\[(\d+)\]");
+        return m.Success && int.TryParse(m.Groups[1].Value, out var length) ? length : 0;
+    }
+
+    private static IEnumerable<string> ReadSymbolReferences(string appPath)
+    {
+        var bytes = File.ReadAllBytes(appPath);
+        foreach (var json in ReadSymbolReferencesFromBytes(bytes))
+            yield return json;
+    }
+
+    private static IEnumerable<string> ReadSymbolReferencesFromBytes(byte[] bytes)
+    {
+        using var zip = OpenZipFromNavx(bytes);
+        var symbol = zip.Entries.FirstOrDefault(e =>
+            e.FullName.Equals("SymbolReference.json", StringComparison.OrdinalIgnoreCase));
+        if (symbol != null)
+        {
+            using var s = symbol.Open();
+            using var reader = new StreamReader(s);
+            yield return reader.ReadToEnd();
+        }
+
+        var nested = zip.Entries.FirstOrDefault(e =>
+            e.FullName.EndsWith(".app", StringComparison.OrdinalIgnoreCase) && !e.FullName.Contains('/'));
+        if (nested != null)
+        {
+            using var ns = nested.Open();
+            using var ms = new MemoryStream();
+            ns.CopyTo(ms);
+            foreach (var json in ReadSymbolReferencesFromBytes(ms.ToArray()))
+                yield return json;
+        }
+    }
+
+    private static ZipArchive OpenZipFromNavx(byte[] bytes)
+    {
+        var offset = bytes.Length >= 8
+            && bytes[0] == (byte)'N' && bytes[1] == (byte)'A'
+            && bytes[2] == (byte)'V' && bytes[3] == (byte)'X'
+                ? (int)BitConverter.ToUInt32(bytes, 4)
+                : 0;
+        var ms = new MemoryStream(bytes, offset, bytes.Length - offset, writable: false);
+        return new ZipArchive(ms, ZipArchiveMode.Read);
     }
 }
