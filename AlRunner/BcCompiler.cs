@@ -306,6 +306,17 @@ public sealed class BcCompiler
                 if (_cachedJsonLoaders.Count > 0)
                     _refLoader = new CompositeSymbolReferenceLoader(
                         _cachedJsonLoaders.Cast<NavCA.ISymbolReferenceLoader>().Append(_refLoader).ToList());
+
+                // Pre-warm the loader's internal package caches SEQUENTIALLY before the
+                // compiler's parallel reference-loading runs. BC's ReferenceManager fans
+                // GetDependencies out across ThreadPool workers; concurrent first-reads of
+                // the same R2R .app race inside NavAppPackageReader.CreateEmbeddedReader and
+                // wedge in an unbounded Stream.CopyTo (intermittent compile hang on bundles
+                // that pull MS test-library deps — proven gone when the process is pinned to
+                // one CPU). Warming every reachable spec here makes that later parallel phase
+                // hit warm caches instead of racing on cold file reads. Best-effort: any
+                // failure just leaves the cold-read path to the compiler as before.
+                WarmReferenceLoader(_refLoader, _resolvedDeps);
             }
 
             // ── Specs (cheap) — recompute each call with _currentAppId exclusion ──
@@ -405,6 +416,42 @@ public sealed class BcCompiler
             _refSpecs = specs; // keep for any legacy callers that read _refSpecs directly
             return (_refLoader, specs);
         }
+    }
+
+    /// <summary>
+    /// Sequentially walk every reachable dependency spec through the loader once, so its
+    /// internal package caches are warm before the compiler's parallel reference loading.
+    /// Defeats the NavAppPackageReader.CreateEmbeddedReader CopyTo race on bundles that
+    /// pull R2R MS test-library deps. Best-effort: swallows all failures (the compiler then
+    /// just re-reads cold, exactly as before this warm existed).
+    /// </summary>
+    private static void WarmReferenceLoader(
+        NavCA.ISymbolReferenceLoader loader,
+        IReadOnlyList<(AppManifest Manifest, string AppPath)>? resolvedDeps)
+    {
+        if (loader == null || resolvedDeps == null || resolvedDeps.Count == 0) return;
+        try
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var queue = new Queue<NavCA.SymbolReferenceSpecification>();
+            foreach (var d in resolvedDeps)
+                queue.Enqueue(new NavCA.SymbolReferenceSpecification(
+                    publisher: d.Manifest.Publisher, name: d.Manifest.Name, version: d.Manifest.Version,
+                    exact: false, appId: d.Manifest.AppId, isPropagated: false,
+                    alternateIds: ImmutableArray<Guid>.Empty));
+
+            while (queue.Count > 0)
+            {
+                var spec = queue.Dequeue();
+                if (!seen.Add($"{spec.Publisher}|{spec.Name}|{spec.Version}")) continue;
+                IEnumerable<NavCA.SymbolReferenceSpecification>? deps = null;
+                try { deps = loader.GetDependencies(spec, new List<NavCA.Diagnostics.Diagnostic>()); }
+                catch { /* best-effort warm */ }
+                if (deps == null) continue;
+                foreach (var dep in deps) queue.Enqueue(dep);
+            }
+        }
+        catch { /* best-effort warm — never block compilation */ }
     }
 
     public BcEmitOutput Emit(IEnumerable<string> alFolders, string moduleName)
