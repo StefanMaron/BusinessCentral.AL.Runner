@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 63;
+    private const int CACHE_VERSION = 66;
 
     private static readonly Dictionary<byte, System.Reflection.Emit.OpCode> SingleByteOpCodes = typeof(System.Reflection.Emit.OpCodes)
         .GetFields(BindingFlags.Public | BindingFlags.Static)
@@ -3199,6 +3199,141 @@ public static class NclCecilRewrite
                     body.MaxStackSize = 0;
                     Console.Error.WriteLine("[Cecil] Rewrote NavSession.TestReportLanguagePermission → ret (no license model in runner)");
                 }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // STARTUP-CRITICAL hooks — JmpHook→Cecil migration (Batch 1).
+        //
+        // These are installed by BcRuntime.ApplyAllPatches via JmpHook today. Under
+        // AL_RUNNER_NO_JMPHOOK=1 the JMPs are no-ops, so the real (Windows-only /
+        // service-tier) bodies run and crash at startup. Cecil-rewriting the bodies
+        // makes them work runtime-agnostically and coexists idempotently with the
+        // JmpHook (both redirect to the same BcRuntime helper / same no-op shape).
+        // See .claude/rules/precompiled-dll-respect.md — Ncl.dll is runtime engine.
+        // ─────────────────────────────────────────────────────────────────────
+        {
+            var nclMod = asm.MainModule;
+
+            // 1) NavEnvironment..cctor — neutralise ONLY the Linux-fatal line.
+            //    The real cctor's sole non-portable instruction is
+            //      call WindowsIdentity::GetCurrent()   →  stsfld serviceAccount
+            //    which throws PlatformNotSupportedException on Linux. Every other
+            //    instruction (ManualResetGate, Guid.NewGuid, HashSets, the
+            //    StandardServiceTopology backing-field init, …) is portable.
+            //
+            //    We do NOT replace the whole body with a BcRuntime helper call:
+            //    doing so deadlocks/spins in normal (JmpHook-on) mode because the
+            //    helper re-enters type initialisation (Activator.CreateInstance of
+            //    StandardServiceTopology) while the CLR holds NavEnvironment's class-
+            //    init lock and the JmpHook simultaneously JITs/redirects the cctor —
+            //    a recursive-cctor busy spin (safepoint-free, dotnet-stack hangs).
+            //
+            //    Instead, surgically replace `call WindowsIdentity::GetCurrent()` with
+            //    `ldnull` (same stack effect: 0 args in → 1 ref out), so the cctor runs
+            //    fully NATIVELY and just stores serviceAccount=null. The serviceAccount
+            //    field is never read directly — get_ServiceAccount is fully replaced
+            //    below (2a) to return a synthetic SecurityIdentifier. The JmpHook
+            //    NavEnvironmentCctorReplacement remains installed and idempotent.
+            //    Token-safe: replaces one call's *use* of an existing memberRef with a
+            //    no-operand ldnull; adds no new typeRef/memberRef.
+            {
+                var cctor = FindNclMethod(nclMod,
+                    "Microsoft.Dynamics.Nav.Runtime.NavEnvironment", ".cctor", 0);
+                var il = cctor.Body.GetILProcessor();
+                var getCurrentCalls = cctor.Body.Instructions
+                    .Where(i => (i.OpCode == OpCodes.Call || i.OpCode == OpCodes.Callvirt)
+                        && i.Operand is MethodReference mr
+                        && mr.DeclaringType.FullName == "System.Security.Principal.WindowsIdentity"
+                        && mr.Name == "GetCurrent"
+                        && mr.Parameters.Count == 0)
+                    .ToList();
+                if (getCurrentCalls.Count != 1)
+                    throw new InvalidOperationException(
+                        $"[Cecil] expected exactly 1 WindowsIdentity.GetCurrent() in NavEnvironment..cctor, found {getCurrentCalls.Count} — Ncl shape changed; do not commit");
+                il.Replace(getCurrentCalls[0], il.Create(OpCodes.Ldnull));
+                Console.Error.WriteLine("[Cecil] Neutralised WindowsIdentity.GetCurrent() in NavEnvironment..cctor → ldnull (serviceAccount=null; portable cctor)");
+            }
+
+            // 2a) NavEnvironment.get_ServiceAccount → BcRuntime.GetServiceAccountReplacement().
+            //     Helper returns object?; the property returns SecurityIdentifier, so cast.
+            {
+                var getSvcAcct = FindNclMethod(nclMod,
+                    "Microsoft.Dynamics.Nav.Runtime.NavEnvironment", "get_ServiceAccount", 0);
+                var helperMi = typeof(AlRunnerV2.BcRuntime).GetMethod(
+                    nameof(AlRunnerV2.BcRuntime.GetServiceAccountReplacement),
+                    BindingFlags.Public | BindingFlags.Static)!;
+                var helperRef = nclMod.ImportReference(helperMi);
+                var body = getSvcAcct.Body;
+                body.Instructions.Clear();
+                body.Variables.Clear();
+                body.ExceptionHandlers.Clear();
+                var il = body.GetILProcessor();
+                il.Append(il.Create(OpCodes.Call, helperRef));
+                il.Append(il.Create(OpCodes.Castclass, getSvcAcct.ReturnType));
+                il.Append(il.Create(OpCodes.Ret));
+                body.MaxStackSize = 1;
+                Console.Error.WriteLine("[Cecil] Replaced NavEnvironment.get_ServiceAccount → BcRuntime.GetServiceAccountReplacement (cast SecurityIdentifier)");
+            }
+
+            // 2b) NavEnvironment.get_ServiceAccountName → BcRuntime.GetServiceAccountNameReplacement().
+            //     Both return string — direct forward.
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, "Microsoft.Dynamics.Nav.Runtime.NavEnvironment", "get_ServiceAccountName", 0),
+                nameof(AlRunnerV2.BcRuntime.GetServiceAccountNameReplacement));
+
+            // 3) NavEnvironment.EmitServerStartupTraceEvents(NavDiagnostics, ServerUserSettings) → void no-op.
+            //    Only the static 2-arg overload exists; it emits server-startup telemetry
+            //    (no AL semantic effect). JmpHook routes it to NoOp2; the equivalent Cecil
+            //    body simply returns, leaving the unused args as ignored slots.
+            ReplaceBodyConst(
+                FindNclMethod(nclMod, "Microsoft.Dynamics.Nav.Runtime.NavEnvironment", "EmitServerStartupTraceEvents", 2),
+                ConstResult.Void);
+
+            // NOTE: ExecutionListener..cctor is deliberately NOT migrated in this batch.
+            // It is not startup-critical — the runner boots fine under NO_JMPHOOK=1
+            // without it (the real cctor's first-invoke is tolerable on the boot path).
+            // A Cecil rewrite of it (body → BcRuntime.ExecutionListenerCctorReplacement,
+            // which leaves Instance null) makes normal-mode test execution SPIN: the
+            // ALFunctionTimingExecutionListener path reached during AL method execution
+            // hangs (60s watchdog timeout) when the Cecil-rewritten cctor coexists with
+            // the JmpHook. Left to the existing JmpHook (normal mode) + a future batch
+            // that models Instance faithfully. Bisected: it is the sole regressor here.
+
+            // 5) NavOpenTelemetryLogger construction — its ctor opens an OpenTelemetry
+            //    pipeline (Geneva ETW exporter) that throws on Linux. The ctor lives in
+            //    Types.dll, which the Cecil pass does NOT rewrite. Instead we neutralise
+            //    the SOLE construction call-site, which is inside NavEnvironment..ctor (an
+            //    Ncl method): `newobj NavOpenTelemetryLogger(Verbosity, Dictionary, String)`
+            //    immediately followed by `call NavDiagnostics.set_OpenTelemetryLogger(...)`.
+            //    Replace the newobj with `pop;pop;pop;ldnull` so the 3 ctor args are
+            //    discarded and null is assigned — exactly what the JmpHook path produces
+            //    (BcRuntime sets NavDiagnostics.OpenTelemetryLogger = null after ctor; every
+            //    trace call routes through the `?.` null-conditional and skips telemetry).
+            //    Token-safe: removes a memberRef *use*, adds no new typeRef/memberRef.
+            {
+                var envCtor = FindNclMethod(nclMod,
+                    "Microsoft.Dynamics.Nav.Runtime.NavEnvironment", ".ctor", 1);
+                var il = envCtor.Body.GetILProcessor();
+                var newobjs = envCtor.Body.Instructions
+                    .Where(i => i.OpCode == OpCodes.Newobj
+                        && i.Operand is MethodReference mr
+                        && mr.DeclaringType.FullName == "Microsoft.Dynamics.Nav.Diagnostic.NavOpenTelemetryLogger"
+                        && mr.Name == ".ctor")
+                    .ToList();
+                if (newobjs.Count != 1)
+                    throw new InvalidOperationException(
+                        $"[Cecil] expected exactly 1 NavOpenTelemetryLogger newobj in NavEnvironment..ctor, found {newobjs.Count} — Ncl shape changed; do not commit");
+                var newobj = newobjs[0];
+                int ctorArgs = ((MethodReference)newobj.Operand).Parameters.Count; // 3
+                // Replace newobj in-place with ldnull (top result), then insert (ctorArgs)
+                // pops BEFORE the ldnull so the pushed args are discarded first, leaving the
+                // stack as it was minus the args, plus null for set_OpenTelemetryLogger to consume.
+                var ldnull = il.Create(OpCodes.Ldnull);
+                il.Replace(newobj, ldnull);
+                for (int i = 0; i < ctorArgs; i++)
+                    il.InsertBefore(ldnull, il.Create(OpCodes.Pop));
+                Console.Error.WriteLine($"[Cecil] Neutralised NavOpenTelemetryLogger construction in NavEnvironment..ctor → pop x{ctorArgs}; ldnull (no Types.dll edit)");
             }
         }
 
