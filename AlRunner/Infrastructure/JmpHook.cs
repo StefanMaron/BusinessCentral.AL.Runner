@@ -47,6 +47,16 @@ internal static class JmpHook
     {
         LastAttempt = name;
         if (_disabled) { if (_trace) TraceLine($"[JmpHook] SKIP (disabled) {name}"); return; }
+        // Cecil-owned skip: a method migrated to a Cecil IL rewrite must be owned by
+        // EXACTLY ONE mechanism. Installing a JmpHook on top of the Cecil body recreates
+        // the coexistence double-dispatch spin. The registry lives in NclCecilRewrite and
+        // is compiled in, so it is populated in this (possibly re-exec'd) process even
+        // though RewriteNcl does not re-run here.
+        if (NclCecilRewrite.CecilOwned.Contains(NclCecilRewrite.Key(original)))
+        {
+            TraceLine($"[JmpHook] SKIP (Cecil owns) {name}");
+            return;
+        }
         if (_trace) TraceLine($"[JmpHook] APPLY BEGIN {name}");
         RuntimeHelpers.PrepareMethod(original.MethodHandle);
         RuntimeHelpers.PrepareMethod(replacement.MethodHandle);

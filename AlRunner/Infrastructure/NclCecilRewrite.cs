@@ -18,7 +18,72 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 72;
+    private const int CACHE_VERSION = 74;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
+    //
+    // Each Ncl method migrated to a Cecil IL rewrite is listed here by its
+    // canonical key. JmpHook.Apply consults this set and SKIPS any method whose
+    // key is present, so a migrated method is owned by EXACTLY ONE mechanism
+    // (Cecil) — eliminating the JmpHook+Cecil COEXISTENCE that caused the
+    // safepoint-free 100%-CPU spin when the replacement re-enters AL execution.
+    //
+    // Design A (hardcoded): the set is compiled in, so it is available in every
+    // process — including the re-exec'd warm-cache child where RewriteNcl does NOT
+    // re-run. Drift (a key listed but the method not actually Cecil-rewritten →
+    // the method ends up unpatched) is caught by the corpus gate, because that
+    // method's tests will fail.
+    //
+    // MAINTENANCE RULE: add a key here in the SAME commit that adds the Cecil
+    // rewrite for that method. Use the exact MS type FullName + method Name +
+    // param count, matching what Key(MethodDefinition)/Key(MethodBase) produce.
+    // ─────────────────────────────────────────────────────────────────────────
+    public static readonly HashSet<string> CecilOwned = new()
+    {
+        // NavMethodScope cluster (migrated in Batch 2; registering now so their
+        // JmpHooks — if any still install — become no-ops under the registry).
+        "Microsoft.Dynamics.Nav.Runtime.NavMethodScope::.ctor/3",
+        "Microsoft.Dynamics.Nav.Runtime.NavMethodScope::Dispose/1",
+        "Microsoft.Dynamics.Nav.Runtime.NavMethodScope::AssertError/1",
+        "Microsoft.Dynamics.Nav.Runtime.NavMethodScope::ProcessException/1",
+        "Microsoft.Dynamics.Nav.Runtime.ALMethodScope::AssignScopeId/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavMethodScope::ThrowStackOverflow/1",
+        // ALFunctionTimingExecutionListener (Batch 2).
+        "Microsoft.Dynamics.Nav.Runtime.ALFunctionTimingExecutionListener::EnsureRegistered/0",
+        "Microsoft.Dynamics.Nav.Runtime.ALFunctionTimingExecutionListener::Start/1",
+        "Microsoft.Dynamics.Nav.Runtime.ALFunctionTimingExecutionListener::Exit/1",
+        // CreateTarget family (Batch 3 — the coexistence-killer). The 0-arg
+        // protected-override CreateTarget() on each handle type.
+        "Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle::CreateTarget/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavRecordHandle::CreateTarget/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavTestPageHandle::CreateTarget/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavFormHandle::CreateTarget/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavReportHandle::CreateTarget/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavQueryHandle::CreateTarget/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavXmlPortHandle::CreateTarget/0",
+    };
+
+    /// <summary>
+    /// Canonical per-method key from a Cecil <see cref="MethodDefinition"/>:
+    /// <c>DeclaringType.FullName + "::" + Name + "/" + paramCount</c>, with Cecil's
+    /// nested-type separator '/' normalized to '+' so it matches the reflection form.
+    /// </summary>
+    public static string Key(MethodDefinition m)
+        => NormalizeTypeName(m.DeclaringType.FullName) + "::" + m.Name + "/" + m.Parameters.Count;
+
+    /// <summary>
+    /// Canonical per-method key from a reflection <see cref="MethodBase"/>. Reflection
+    /// already uses '+' for nested types, so normalization is a no-op here but kept
+    /// symmetric with the Cecil form.
+    /// </summary>
+    public static string Key(MethodBase m)
+        => NormalizeTypeName(m.DeclaringType?.FullName ?? "") + "::" + m.Name + "/" + m.GetParameters().Length;
+
+    // Cecil uses '/' between an outer type and a nested type; reflection uses '+'.
+    // Our targets are all top-level so neither separator appears, but normalize
+    // anyway so the two Key() overloads are guaranteed to agree.
+    private static string NormalizeTypeName(string fullName) => fullName.Replace('/', '+');
 
     private static readonly Dictionary<byte, System.Reflection.Emit.OpCode> SingleByteOpCodes = typeof(System.Reflection.Emit.OpCodes)
         .GetFields(BindingFlags.Public | BindingFlags.Static)
@@ -3382,20 +3447,20 @@ public static class NclCecilRewrite
                 FindNclMethod(nclMod, MsType, "Dispose", 1),
                 nameof(AlRunnerV2.BcRuntime.NavMethodScope_Dispose));
 
-            // NOTE — NavMethodScope.AssertError(Action) and NavMethodScope.ProcessException(Exception)
-            // are DELIBERATELY NOT migrated to Cecil in this batch. Their JmpHook→helper redirect
-            // is the only safe form: Cecil-rewriting either body (so it calls the same BcRuntime
-            // helper) regresses NORMAL mode — Codeunit60190.Codeunit_ErrorPropagation_ThroughProcedures
-            // (and every other error-propagation / asserterror-nesting test) drops into a
-            // safepoint-free 100%-CPU spin (60s watchdog timeout). Bisected: enabling either the
-            // AssertError or the ProcessException Cecil rewrite (with all other members enabled or
-            // not) reproduces the hang in isolation; with both skipped the test passes in 121ms.
-            // The spin is in JIT/R2R-reachable code (1 thread pegged at 99% R, empty wchan), the
-            // same hard-to-symbolize class documented in MEMORY (dotnet-stack hangs on it). Root-
-            // causing it needs perf/gdb-on-core, out of scope for this loop. Left JmpHook'd; the
-            // normal-mode gate is sacred. Consequence: `asserterror`-based tests still fail under
-            // AL_RUNNER_NO_JMPHOOK=1 — those two hooks are classified un-migratable until the spin
-            // is understood. See REPORT.
+            // NavMethodScope.AssertError(Action) and NavMethodScope.ProcessException(Exception)
+            // — migrated to Cecil in Batch 3. Batch 2 left these JmpHook'd because their Cecil
+            // form drove NORMAL mode into a safepoint-free 100%-CPU spin. That spin was COEXISTENCE
+            // (JmpHook + Cecil both active on a re-entrant replacement); the Cecil-owned skip
+            // registry removes coexistence, so the Cecil form is now safe. The helpers are on the
+            // BcRuntime partial (MethodScopePatches.cs); both keys are registered in CecilOwned.
+            // AssertError(Action): void, `this`→object widening + Action ref param, no box.
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, MsType, "AssertError", 1),
+                nameof(AlRunnerV2.BcRuntime.NavMethodScope_AssertError));
+            // ProcessException(Exception): bool return, `this`→object? widening + Exception? param.
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, MsType, "ProcessException", 1),
+                nameof(AlRunnerV2.BcRuntime.NavMethodScope_ProcessException));
 
             // 3) ALMethodScope.AssignScopeId() → BcRuntime.ALMethodScope_AssignScopeId(object) (no-op).
             ReplaceBodyWithHelper(nclMod,
@@ -3444,22 +3509,77 @@ public static class NclCecilRewrite
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // NavCodeunitHandle.CreateTarget / NavRecordHandle.CreateTarget — NOT migrated
-        // (Cecil form regresses normal mode). Documented for the next batch.
+        // CreateTarget family — JmpHook→Cecil migration (Batch 3, the CRUX).
         //
-        // These are the dominant NO_JMPHOOK blocker (1383+ tests) — CreateTarget()
-        // chains through NCLMetadata.GetMetaApplicationObject → NavMetadataNotFoundException
-        // because the skeleton has no NCLMetadata; the JmpHook bypasses it by reflectively
-        // constructing the target object from the loaded test assembly. A straightforward
-        // Cecil `ldarg.0; call helper; ret` rewrite of NavCodeunitHandle.CreateTarget was
-        // implemented and REVERTED: it lifts NO_JMPHOOK from 0→137 pass but REGRESSES
-        // normal mode — Codeunit60183.Foreach_Dictionary_Keys_IteratesAll (and others)
-        // drop into a 60s-watchdog hang (same safepoint-free-spin signature as the
-        // AssertError/ProcessException coexistence hang). The helper reflectively invokes
-        // the codeunit/record ctor (re-entering AL execution); with the Cecil body AND the
-        // JmpHook both active on CreateTarget the re-entry spins. Un-migratable here until
-        // the spin is root-caused (perf/gdb-on-core) or a non-re-entrant surgical form is
-        // found. The normal-mode gate is sacred — left JmpHook'd. See REPORT.
+        // CreateTarget() chains through NCLMetadata.GetMetaApplicationObject →
+        // NavMetadataNotFoundException because the skeleton has no NCLMetadata; the
+        // helper bypasses it by reflectively constructing the target object from the
+        // loaded test assembly (re-entering AL execution).
+        //
+        // A Cecil `ldarg.0; call helper; ret` rewrite was previously REVERTED because
+        // it regressed normal mode into a 60s-watchdog safepoint-free spin: the helper
+        // re-enters AL execution, and with BOTH the Cecil body AND the JmpHook active on
+        // CreateTarget the re-entry double-dispatches and spins (COEXISTENCE).
+        //
+        // Batch 3 eliminates coexistence with the Cecil-owned skip registry (see
+        // CecilOwned at the top of this file + JmpHook.Apply): once a method's key is
+        // registered, its JmpHook install becomes a no-op, so the method is owned by
+        // EXACTLY ONE mechanism. With coexistence gone, the Cecil rewrite is safe in
+        // DEFAULT mode. The helpers live on the BcRuntime partial (CodeunitPatches.cs,
+        // XmlPortPatches.cs) and on RecordPatches.
+        //
+        // Helper return types are `object` for testpage/form/report/query/xmlport but
+        // the Ncl CreateTarget() overrides return the concrete Nav* type, so
+        // ReplaceBodyWithHelper emits a castclass to the declared return type.
+        // ─────────────────────────────────────────────────────────────────────
+        {
+            var nclMod = asm.MainModule;
+
+            // Helper: resolve the 0-arg, instance, protected-override CreateTarget()
+            // specifically (NavRecordHandle also has a 1-arg CreateTarget(NCLMetaTable)).
+            static MethodDefinition CreateTarget0(ModuleDefinition mod, string typeFullName)
+            {
+                var t = mod.GetType(typeFullName)
+                    ?? throw new InvalidOperationException(
+                        $"[Cecil] type {typeFullName} not found — Ncl shape changed; do not commit");
+                return t.Methods.FirstOrDefault(m =>
+                    m.Name == "CreateTarget" && m.HasThis && m.HasBody && m.Parameters.Count == 0)
+                    ?? throw new InvalidOperationException(
+                        $"[Cecil] {typeFullName}.CreateTarget() (0-arg instance) not found — Ncl shape changed; do not commit");
+            }
+
+            // 1) NavCodeunitHandle.CreateTarget() → BcRuntime.NavCodeunitHandle_CreateTarget(self).
+            //    Helper returns NavCodeunit, matching the override's return — no cast.
+            ReplaceBodyWithHelper(nclMod,
+                CreateTarget0(nclMod, "Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle"),
+                typeof(AlRunnerV2.BcRuntime).GetMethod(
+                    "NavCodeunitHandle_CreateTarget", BindingFlags.Public | BindingFlags.Static)!);
+
+            // 2) NavRecordHandle.CreateTarget() → RecordPatches.NavRecordHandle_CreateTarget(self).
+            //    Helper lives on RecordPatches (NOT BcRuntime); returns NavRecord — no cast.
+            ReplaceBodyWithHelper(nclMod,
+                CreateTarget0(nclMod, "Microsoft.Dynamics.Nav.Runtime.NavRecordHandle"),
+                typeof(AlRunnerV2.Patches.RecordPatches).GetMethod(
+                    "NavRecordHandle_CreateTarget", BindingFlags.Public | BindingFlags.Static)!);
+
+            // 3-7) TestPage / Form / Report / Query / XmlPort CreateTarget() →
+            //       BcRuntime.Nav{X}Handle_CreateTarget(object) ; helper returns object,
+            //       so castclass to the concrete Nav* return type.
+            foreach (var (typeFull, helperName) in new[]
+            {
+                ("Microsoft.Dynamics.Nav.Runtime.NavTestPageHandle", "NavTestPageHandle_CreateTarget"),
+                ("Microsoft.Dynamics.Nav.Runtime.NavFormHandle",     "NavFormHandle_CreateTarget"),
+                ("Microsoft.Dynamics.Nav.Runtime.NavReportHandle",   "NavReportHandle_CreateTarget"),
+                ("Microsoft.Dynamics.Nav.Runtime.NavQueryHandle",    "NavQueryHandle_CreateTarget"),
+                ("Microsoft.Dynamics.Nav.Runtime.NavXmlPortHandle",  "NavXmlPortHandle_CreateTarget"),
+            })
+            {
+                ReplaceBodyWithHelper(nclMod,
+                    CreateTarget0(nclMod, typeFull),
+                    typeof(AlRunnerV2.BcRuntime).GetMethod(
+                        helperName, BindingFlags.Public | BindingFlags.Static)!);
+            }
+        }
 
         var outStream = new MemoryStream();
         asm.Write(outStream);
@@ -3522,6 +3642,17 @@ public static class NclCecilRewrite
             bcRuntimeHelperName, BindingFlags.Public | BindingFlags.Static)
             ?? throw new InvalidOperationException(
                 $"[Cecil] BcRuntime.{bcRuntimeHelperName} not found");
+        ReplaceBodyWithHelper(module, target, helperMi);
+    }
+
+    /// <summary>
+    /// Overload accepting a helper on ANY class (not just BcRuntime) — e.g. the
+    /// CreateTarget helpers that live on CodeunitPatches / RecordPatches / XmlPortPatches.
+    /// Same forwarding + per-arg boxing semantics as the name-based overload.
+    /// </summary>
+    private static void ReplaceBodyWithHelper(
+        ModuleDefinition module, MethodDefinition target, MethodInfo helperMi)
+    {
         var helperRef = module.ImportReference(helperMi);
         var helperParams = helperMi.GetParameters();
         // Total IL arg slots: declared params + 1 for `this` on an instance method.
@@ -3563,9 +3694,29 @@ public static class NclCecilRewrite
                 il.Append(il.Create(OpCodes.Box, targetParamType));
         }
         il.Append(il.Create(OpCodes.Call, helperRef));
+
+        // Return-type adaptation: the helper may return a less-derived reference type
+        // than the target's declared return (e.g. helper returns `object`, target's
+        // CreateTarget() returns `NavTestPage`). The IL `ret` requires the stack value
+        // to be assignable to the declared return type, so emit a `castclass` to the
+        // target return type when the helper return is a wider/different reference type.
+        // (For an exact-match or covariant-already-derived helper return, no cast is
+        // needed; for value-type returns we leave as-is — none of our targets do that.)
+        var targetRet = target.ReturnType;
+        var helperRetType = helperMi.ReturnType;
+        bool needsCast =
+            targetRet.FullName != "System.Void"
+            && !targetRet.IsValueType
+            && helperRetType != typeof(void)
+            && !helperRetType.IsValueType
+            && targetRet.FullName != NormalizeTypeName(helperRetType.FullName ?? "");
+        if (needsCast)
+            il.Append(il.Create(OpCodes.Castclass, targetRet));
+
         il.Append(il.Create(OpCodes.Ret));
         body.MaxStackSize = Math.Max(1, argCount);
-        Console.Error.WriteLine($"[Cecil] Replaced {target.FullName} → BcRuntime.{bcRuntimeHelperName}");
+        Console.Error.WriteLine($"[Cecil] Replaced {target.FullName} → {helperMi.DeclaringType?.Name}.{helperMi.Name}"
+            + (needsCast ? $" (castclass {targetRet.Name})" : ""));
     }
 
     /// <summary>
