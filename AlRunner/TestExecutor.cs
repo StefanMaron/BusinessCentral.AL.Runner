@@ -4,6 +4,7 @@
 // [NavTest] attribute (via NCLAttribute system). We discover by attribute name to
 // avoid coupling to specific BC types.
 using System.Reflection;
+using System.Runtime.ExceptionServices;
 
 namespace AlRunnerV2;
 
@@ -162,19 +163,15 @@ public sealed class TestExecutor
                 return new TestResult(codeunit, m.Name, TestOutcome.Error,
                     $"unsupported test signature ({m.GetParameters().Length} params)", null, sw.Elapsed);
             var timeout = TestTimeout();
-            var invokeTask = Task.Run(() => m.Invoke(instance, args));
-            bool completed;
-            try { completed = invokeTask.Wait(timeout); }
-            catch (AggregateException) { completed = true; }
-            if (!completed)
+            var invokeResult = InvokeWithTimeout(() => m.Invoke(instance, args), timeout);
+            if (!invokeResult.Completed)
             {
                 PerfTrace.Log($"TestExecutor.RunOne TIMEOUT {codeunit}.{m.Name} {sw.ElapsedMilliseconds}ms");
                 var alStack = AlRunnerV2.Infrastructure.AlCallStackCapture.CaptureCurrent();
                 return new TestResult(codeunit, m.Name, TestOutcome.Error,
                     $"TIMEOUT after {(int)timeout.TotalSeconds}s", null, sw.Elapsed, alStack);
             }
-            if (invokeTask.IsFaulted)
-                invokeTask.GetAwaiter().GetResult();
+            invokeResult.Exception?.Throw();
             PerfTrace.Log($"TestExecutor.RunOne PASS {codeunit}.{m.Name} {sw.ElapsedMilliseconds}ms");
             return new TestResult(codeunit, m.Name, TestOutcome.Pass, null, null, sw.Elapsed);
         }
@@ -204,6 +201,22 @@ public sealed class TestExecutor
             && seconds > 0)
             return TimeSpan.FromSeconds(seconds);
         return TimeSpan.FromSeconds(DefaultTestTimeoutSeconds);
+    }
+
+    private static (bool Completed, ExceptionDispatchInfo? Exception) InvokeWithTimeout(Action action, TimeSpan timeout)
+    {
+        ExceptionDispatchInfo? exception = null;
+        var thread = new Thread(() =>
+        {
+            try { action(); }
+            catch (Exception ex) { exception = ExceptionDispatchInfo.Capture(ex); }
+        })
+        {
+            IsBackground = true,
+            Name = "al-runner-test"
+        };
+        thread.Start();
+        return thread.Join(timeout) ? (true, exception) : (false, null);
     }
 
     private static bool IsTimeout(TestResult result)
