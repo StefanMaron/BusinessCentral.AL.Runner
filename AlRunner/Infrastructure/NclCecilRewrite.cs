@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 74;
+    private const int CACHE_VERSION = 75;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -62,6 +62,9 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.NavReportHandle::CreateTarget/0",
         "Microsoft.Dynamics.Nav.Runtime.NavQueryHandle::CreateTarget/0",
         "Microsoft.Dynamics.Nav.Runtime.NavXmlPortHandle::CreateTarget/0",
+        // NavApplicationObjectBase..ctor keystone (Batch 4) — the 3-arg
+        // (ITreeObject, ApplicationObjectId, NCLStaticMetadata) ctor.
+        "Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase::.ctor/3",
     };
 
     /// <summary>
@@ -3579,6 +3582,43 @@ public static class NclCecilRewrite
                     typeof(AlRunnerV2.BcRuntime).GetMethod(
                         helperName, BindingFlags.Public | BindingFlags.Static)!);
             }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // NavApplicationObjectBase..ctor — JmpHook→Cecil migration (Batch 4 keystone).
+        //
+        // Every AL codeunit/page/report/Record inherits NavApplicationObjectBase. Its
+        // real ctor does `session = base.Tree.Session` (null on our skeleton tree) and
+        // `NavCurrentThread.ResolveAppGroup(session)` (NREs). Under NO_JMPHOOK=1 the
+        // unpatched ctor leaves session null, so NavRecord..ctor throws
+        // ArgumentNullException("A NavRecord must have a parent session ...") — the
+        // single dominant Cecil-only failure (≈1371 corpus tests).
+        //
+        // The helper (ApplicationObjectBasePatches.NavApplicationObjectBaseCtorReplacement)
+        // rebuilds the tree via TreeHandler.CreateTreeHandler + FieldPokes the skeleton
+        // session, deliberately NOT chaining to the base TreeObject ctor (it sets the tree
+        // field directly) — identical reasoning to the NavMethodScope ctor migration above.
+        // So `body → ldarg.0..3; call helper; ret` exactly matches the JmpHook semantics.
+        //
+        // Match the SAME ctor the JmpHook selects: param0 = ITreeObject, param1 =
+        // ApplicationObjectId (3 declared params; helper has 4 = self + 3). All params are
+        // reference types, so no boxing. Token-safe: imports only our own helper methodRef.
+        // ─────────────────────────────────────────────────────────────────────
+        {
+            var nclMod = asm.MainModule;
+            const string AoType = "Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase";
+            var aoTypeDef = nclMod.GetType(AoType)
+                ?? throw new InvalidOperationException(
+                    $"[Cecil] type {AoType} not found — Ncl shape changed; do not commit");
+            var aoCtor = aoTypeDef.Methods.FirstOrDefault(m =>
+                m.IsConstructor && m.HasBody && m.Parameters.Count == 3
+                && m.Parameters[0].ParameterType.Name == "ITreeObject"
+                && m.Parameters[1].ParameterType.Name == "ApplicationObjectId")
+                ?? throw new InvalidOperationException(
+                    $"[Cecil] NavApplicationObjectBase 3-arg ctor (ITreeObject,ApplicationObjectId,NCLStaticMetadata) not found — Ncl shape changed; do not commit");
+            ReplaceBodyWithHelper(nclMod, aoCtor,
+                typeof(AlRunnerV2.BcRuntime).GetMethod(
+                    "NavApplicationObjectBaseCtorReplacement", BindingFlags.Public | BindingFlags.Static)!);
         }
 
         var outStream = new MemoryStream();
