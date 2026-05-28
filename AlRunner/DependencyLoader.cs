@@ -14,6 +14,8 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.Loader;
+using System.Security.Cryptography;
+using System.Text;
 using AlRunnerV2.Infrastructure;
 
 namespace AlRunnerV2;
@@ -42,16 +44,17 @@ public sealed class DependencyLoader
         var list = new List<Assembly>();
         foreach (var (m, path) in ordered)
         {
-            // A SYMBOL-ONLY Microsoft platform app (Base Application / System Application /
-            // …) carries no runtime DLL — it's resolved only to produce COMPILE specs (e.g.
-            // so a tableextension's Base App target resolves). Trying to load it would
-            // source-compile its huge AL and crash (System Application → EMIT-ZERO). Its
-            // runtime comes from the precompiled service-tier DLLs instead. Skip ONLY the
-            // symbol-only case: an R2R .app (bcartifacts) DOES carry the DLLs (Record types
-            // the tests instantiate, e.g. Record233 / Item Journal Batch) and must load.
-            if (DependencyResolver.IsMicrosoftPlatformApp(m.Name, m.Publisher)
+            // A source-only Microsoft app carries compile-time symbols, not a runtime DLL.
+            // Upfront source-compiling large test-toolkit packages is both slow and can hang;
+            // runtime codeunits are resolved lazily from extracted service-tier DLLs by
+            // CodeunitPatches.FindCodeunitType (or safely no-op for known test-toolkit ranges).
+            // R2R Microsoft apps still must load, because they carry the actual runtime chunks.
+            if (string.Equals(m.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)
                 && !AppLoader.IsR2R(path))
+            {
+                Console.Error.WriteLine($"[deps] load skip Microsoft source-only symbols: {m.Publisher}_{m.Name} v{m.Version}");
                 continue;
+            }
             if (_cache.TryGetValue(m.AppId, out var existing))
             {
                 list.Add(existing);
@@ -157,6 +160,26 @@ public sealed class DependencyLoader
             return null;
         }
 
+        var cacheKey = ComputeSourceDependencyCacheKey(m, appPath);
+        var cacheDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".cache", "al-runner", "compiled-deps");
+        var cachedDll = Path.Combine(cacheDir, cacheKey + ".dll");
+        if (File.Exists(cachedDll))
+        {
+            try
+            {
+                var cachedBytes = File.ReadAllBytes(cachedDll);
+                Console.Error.WriteLine(
+                    $"[deps] source-cache HIT: {m.Name} v{m.Version} key={cacheKey[..12]} ({cachedBytes.Length} bytes)");
+                return Assembly.Load(cachedBytes);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[deps] source-cache read/load failed for {m.Name}: {ex.Message}; rebuilding");
+            }
+        }
+
         var tempDir = Path.Combine(Path.GetTempPath(),
             "al-runner-deps", SanitizeFileName($"{m.Publisher}_{m.Name}_{m.Version}"));
         Directory.CreateDirectory(tempDir);
@@ -215,6 +238,17 @@ public sealed class DependencyLoader
         Console.Error.WriteLine(
             $"[deps] compiled-on-the-fly: {m.Name} v{m.Version} ({sw.ElapsedMilliseconds}ms). " +
             $"For faster CI, run --precompile to snapshot.");
+        try
+        {
+            Directory.CreateDirectory(cacheDir);
+            File.WriteAllBytes(cachedDll, compile.AssemblyBytes!);
+            Console.Error.WriteLine(
+                $"[deps] source-cache WROTE: {m.Name} v{m.Version} key={cacheKey[..12]} ({compile.AssemblyBytes!.Length} bytes)");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[deps] source-cache write failed for {m.Name}: {ex.Message}");
+        }
         try { return Assembly.Load(compile.AssemblyBytes!); }
         catch (Exception ex)
         {
@@ -223,6 +257,32 @@ public sealed class DependencyLoader
             Console.Error.WriteLine($"[dep-load-fail] {m.Publisher}_{m.Name} v{m.Version}: LOAD-FAIL — {detail}");
             throw new DependencyLoadException(m.Publisher, m.Name, m.Version.ToString(), "LOAD-FAIL", detail, ex);
         }
+    }
+
+    private static string ComputeSourceDependencyCacheKey(AppManifest manifest, string appPath)
+    {
+        using var sha = SHA256.Create();
+        using var ms = new MemoryStream();
+        void WriteLine(string s)
+        {
+            var bytes = Encoding.UTF8.GetBytes(s + "\n");
+            ms.Write(bytes, 0, bytes.Length);
+        }
+
+        WriteLine("schema:v1");
+        var runnerLoc = typeof(BcAssembler).Assembly.Location;
+        if (!string.IsNullOrEmpty(runnerLoc) && File.Exists(runnerLoc))
+            WriteLine($"runner:{File.GetLastWriteTimeUtc(runnerLoc).Ticks}:{new FileInfo(runnerLoc).Length}");
+        else
+            WriteLine("runner:unknown");
+        WriteLine($"app:{manifest.AppId}:{manifest.Publisher}:{manifest.Name}:{manifest.Version}");
+        foreach (var dep in manifest.Dependencies.OrderBy(d => $"{d.Publisher}/{d.Name}/{d.Version}/{d.AppId}", StringComparer.OrdinalIgnoreCase))
+            WriteLine($"dep:{dep.AppId}:{dep.Publisher}:{dep.Name}:{dep.Version}");
+        using (var fs = File.OpenRead(appPath))
+            WriteLine($"app-bytes:{Convert.ToHexString(sha.ComputeHash(fs))}");
+
+        ms.Position = 0;
+        return Convert.ToHexString(sha.ComputeHash(ms)).ToLowerInvariant();
     }
 
     // Cheap source scan for "codeunit <id> ..." declarations → "Codeunit<id>" type names,

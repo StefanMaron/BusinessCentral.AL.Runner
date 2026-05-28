@@ -77,13 +77,15 @@ var packageCacheArgs = new List<string>();
 // path; kept for one cycle for diagnostic comparisons. `--bundled` accepted as
 // a no-op alias for backwards compatibility — will be removed.
 bool bundledMode = true;
-// Spike B keystone: AL-output cache. When set, the bundled-mode pipeline writes
+// Spike B keystone: AL-output cache. By default, bundled-mode writes
 // its emitted DLL to <cacheDir>/<key>.dll and on a subsequent invocation
 // short-circuits Emit+Compile by loading that DLL directly. The key is a hash
 // of (all .al source files contributing to the bundle, the resolved-deps list,
 // the runner assembly mtime). See `precompiled-dll-respect.md` —
 // "Our AL output is meant to be cacheable".
-string? alCacheDir = null;
+string? alCacheDir = Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+    ".cache", "al-runner", "al-out");
 // Test isolation mode — default matches BC's "Test Runner - Isol. Codeunit" (130450).
 var isolation = AlRunnerV2.TestIsolation.Codeunit;
 // --strict: exit with non-zero code if any test fails or a bucket fails to compile/execute.
@@ -102,6 +104,7 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--per-suite") { bundledMode = false; continue; }
     if (args[i] == "--bundled") { bundledMode = true; continue; }
     if (args[i] == "--cache" && i + 1 < args.Length) { alCacheDir = args[++i]; continue; }
+    if (args[i] == "--no-cache") { alCacheDir = null; continue; }
     if (args[i] == "--verbose") { AlRunnerV2.Log.Verbose = true; continue; }
     if (args[i] == "--show-pass") { showPass = true; continue; }   // no-op (default in v2); kept for v1 back-compat
     if (args[i] == "--failures-only" || args[i] == "--quiet") { showPass = false; continue; }
@@ -274,6 +277,12 @@ foreach (var bundle in bundles)
                     BcCompiler.SetExtraSymbolDirs(layeredWorkspaceDirs);
                 var loaded = depLoader.LoadAll(ordered, bucketRoot);
                 Console.WriteLine($"  [{rel}] loaded {loaded.Count} dep assembl(ies)");
+                // Source-only dependency loading compiles those dependencies through
+                // BcCompiler too, which updates the process-wide reference state. Restore
+                // this bundle's dependency symbols before emitting the bundle itself.
+                BcCompiler.SetResolvedDeps(ordered, compilerDirs);
+                if (layeredWorkspaceDirs.Count > 0)
+                    BcCompiler.SetExtraSymbolDirs(layeredWorkspaceDirs);
                 // Register dep .app paths with RecordPatches so the NCLMetaTable
                 // populator can fall back to the AL source shipped inside the .app
                 // (NAVX zip) for tables defined in compiled BC dependencies — the
@@ -718,10 +727,11 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("  --package-cache PATH    Extra directory to scan for .app dependencies");
     w.WriteLine("                          (repeatable). Default scan: ~/.bcartifacts.cache,");
     w.WriteLine("                          ~/.local/share/al-runner/artifacts, and bundle .alpackages/.");
-    w.WriteLine("  --cache DIR             AL-output cache directory. When set, the compiled test");
-    w.WriteLine("                          DLL is written here and re-used on subsequent runs if");
-    w.WriteLine("                          inputs are unchanged (key = hash of .al sources, resolved");
-    w.WriteLine("                          deps, runner mtime).");
+    w.WriteLine("  --cache DIR             AL-output cache directory. Default:");
+    w.WriteLine("                          ~/.cache/al-runner/al-out. Compiled test DLLs are");
+    w.WriteLine("                          re-used on subsequent runs if inputs are unchanged");
+    w.WriteLine("                          (key = hash of .al sources, resolved deps, runner mtime).");
+    w.WriteLine("  --no-cache              Disable the AL-output cache for this run.");
     w.WriteLine("  --per-suite             Legacy per-Compilation path. Default is bundled mode");
     w.WriteLine("                          (5-7x faster, parity-verified).");
     w.WriteLine("  --bundled               No-op alias for the default bundled mode (deprecated).");
@@ -1236,16 +1246,32 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
     }
     if (sourceApps.Count == 0) return packageCacheDirs;
 
-    // 3. Match needed deps to sibling source apps (by AppId, else Name+Publisher).
+    var existingPackageDirs = bundleRoots
+        .SelectMany(root => Directory.EnumerateDirectories(root, ".alpackages", SearchOption.AllDirectories))
+        .Concat(packageCacheDirs)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    // 3. Match needed deps to sibling source apps (by AppId, else Name+Publisher), but
+    // only when the dependency is not already available as an .app. Real projects often
+    // keep a packaged copy under .alpackages; that package has authoritative symbols
+    // (including tableextension field merging) while the sibling source is only needed
+    // as a fallback when no package exists.
     var toBuild = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     foreach (var dep in neededDeps)
+    {
+        var packageAvailable = IsDependencyPackageAvailable(dep, existingPackageDirs);
         foreach (var (dir, sid) in sourceApps)
         {
             bool match = (dep.AppId != Guid.Empty && dep.AppId == sid.AppId) ||
                 (string.Equals(dep.Name, sid.Name, StringComparison.OrdinalIgnoreCase) &&
                  string.Equals(dep.Publisher, sid.Publisher, StringComparison.OrdinalIgnoreCase));
-            if (match) toBuild.Add(dir);
+            if (!match) continue;
+            AlRunnerV2.Patches.RecordPatches.AddSourceDir(dir);
+            if (!packageAvailable)
+                toBuild.Add(dir);
         }
+    }
     if (toBuild.Count == 0) return packageCacheDirs;
 
     static string Sanitize(string s)
@@ -1256,12 +1282,13 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
         return sb.ToString();
     }
 
-    // 4. Topo-sort (deps before dependents) + compile to a fresh workspace dir, prepend.
+    // 4. Topo-sort (deps before dependents) + compile to a deterministic workspace dir, prepend.
     var sorted = TopologicalSort(toBuild.ToList(), sourceApps);
+    var workspaceKey = ComputeSourceWorkspaceKey(sorted, sourceApps);
     var wsDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         ".cache", "al-runner", "workspace-deps",
-        Guid.NewGuid().ToString("N")[..12]);
+        workspaceKey[..12]);
     Directory.CreateDirectory(wsDir);
     // Synthetic-workspace dir: source-only .apps (no SymbolReference.json) +
     // symbols.json sidecars. Keep out of the compile-time .app scanner (AL1023)
@@ -1293,15 +1320,18 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
         AlRunnerV2.Patches.RecordPatches.AddSourceDir(dir);
         var appFileName = $"{Sanitize(sid.Publisher)}_{Sanitize(sid.Name)}_{sid.Version.ToString().Replace('.', '_')}.app";
         var outPath = Path.Combine(wsDir, appFileName);
-        try
+        if (!File.Exists(outPath))
         {
-            AlRunnerV2.Infrastructure.InProcessAppPackager.EmitAppPackageToFile(dir, sid, outPath);
-        }
-        catch (Exception ex)
-        {
-            // Loud failure per repo rule — never silently continue.
-            throw new InvalidOperationException(
-                $"[source-dep] Failed to emit source dependency '{sid.Name}' from {dir}: {ex.Message}", ex);
+            try
+            {
+                AlRunnerV2.Infrastructure.InProcessAppPackager.EmitAppPackageToFile(dir, sid, outPath);
+            }
+            catch (Exception ex)
+            {
+                // Loud failure per repo rule — never silently continue.
+                throw new InvalidOperationException(
+                    $"[source-dep] Failed to emit source dependency '{sid.Name}' from {dir}: {ex.Message}", ex);
+            }
         }
         // Compile-visible half: emit the dep's AL symbols (*.symbols.json) + deps
         // sidecar so the DEPENDENT app can COMPILE against it. The synthetic .app
@@ -1324,29 +1354,95 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
         var resolvedDepDeps = depResolver.Resolve(sid.Dependencies);
         BcCompiler.SetResolvedDeps(resolvedDepDeps, resolveDirs);
         var symBase = Path.Combine(wsDir, $"{Sanitize(sid.Publisher)}_{Sanitize(sid.Name)}_{sid.Version.ToString().Replace('.', '_')}");
-        try
+        var symbolsPath = symBase + ".symbols.json";
+        var depsPath = symBase + ".symbols.deps.json";
+        if (!File.Exists(symbolsPath) || !File.Exists(depsPath))
         {
-            using (BcCompiler.ScopeCurrentAppIdentity(sid.AppId, sid.Publisher, sid.Version))
-                new BcCompiler().EmitDepSymbols(new[] { dir }, sid.Name, sid.AppId, sid.Publisher, sid.Version, symBase + ".symbols.json");
-            DepsSidecarWriter.Write(
-                symBase + ".symbols.deps.json", sid.Publisher, sid.Name, sid.Version, sid.AppId,
-                sid.Dependencies.Where(d => !d.Optional)
-                    .Select(d => new DepsSidecarWriter.DepEntry(d.Publisher, d.Name, d.Version, d.AppId)));
-        }
-        catch (Exception ex)
-        {
-            throw new InvalidOperationException(
-                $"[source-dep] Failed to emit symbols for '{sid.Name}' from {dir}: {ex.Message}", ex);
+            try
+            {
+                using (BcCompiler.ScopeCurrentAppIdentity(sid.AppId, sid.Publisher, sid.Version))
+                    new BcCompiler().EmitDepSymbols(new[] { dir }, sid.Name, sid.AppId, sid.Publisher, sid.Version, symbolsPath);
+                DepsSidecarWriter.Write(
+                    depsPath, sid.Publisher, sid.Name, sid.Version, sid.AppId,
+                    sid.Dependencies.Where(d => !d.Optional)
+                        .Select(d => new DepsSidecarWriter.DepEntry(d.Publisher, d.Name, d.Version, d.AppId)));
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"[source-dep] Failed to emit symbols for '{sid.Name}' from {dir}: {ex.Message}", ex);
+            }
         }
 
         var info = new FileInfo(outPath);
-        Console.WriteLine($"[source-dep] compiled {sid.Name} {sid.Version} → {appFileName} (+symbols, {info.Length} bytes)");
+        Console.WriteLine($"[source-dep] ready {sid.Name} {sid.Version} → {appFileName} (+symbols, {info.Length} bytes)");
         emitted++;
     }
     if (emitted == 0) return packageCacheDirs;
     var extended = new List<string> { wsDir };
     extended.AddRange(packageCacheDirs);
     return extended;
+}
+
+static bool IsDependencyPackageAvailable(DependencyRef dep, IReadOnlyList<string> packageDirs)
+{
+    foreach (var dir in packageDirs)
+    {
+        if (!Directory.Exists(dir)) continue;
+        foreach (var file in Directory.EnumerateFiles(dir, "*.app", SearchOption.AllDirectories))
+        {
+            var manifest = AlRunnerV2.AppLoader.ReadManifest(file);
+            if (manifest == null || manifest.Version < dep.Version)
+                continue;
+            var idMatches = dep.AppId != Guid.Empty && dep.AppId == manifest.AppId;
+            var nameMatches = string.Equals(dep.Name, manifest.Name, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(dep.Publisher, manifest.Publisher, StringComparison.OrdinalIgnoreCase);
+            if (idMatches || nameMatches)
+                return true;
+        }
+    }
+
+    return false;
+}
+
+static string ComputeSourceWorkspaceKey(
+    IReadOnlyList<string> sortedDirs,
+    IReadOnlyDictionary<string, AlRunnerV2.Infrastructure.BundleIdentity> sourceApps)
+{
+    using var sha = System.Security.Cryptography.SHA256.Create();
+    using var ms = new MemoryStream();
+    void WriteLine(string s)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(s + "\n");
+        ms.Write(bytes, 0, bytes.Length);
+    }
+
+    WriteLine("schema:v1");
+    var runnerLoc = typeof(AlRunnerV2.BcAssembler).Assembly.Location;
+    if (!string.IsNullOrEmpty(runnerLoc) && File.Exists(runnerLoc))
+        WriteLine($"runner:{File.GetLastWriteTimeUtc(runnerLoc).Ticks}:{new FileInfo(runnerLoc).Length}");
+    else
+        WriteLine("runner:unknown");
+
+    foreach (var dir in sortedDirs.OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
+    {
+        if (!sourceApps.TryGetValue(dir, out var id)) continue;
+        WriteLine($"app:{id.AppId}:{id.Publisher}:{id.Name}:{id.Version}");
+        foreach (var dep in id.Dependencies.OrderBy(d => $"{d.Publisher}/{d.Name}/{d.Version}/{d.AppId}", StringComparer.OrdinalIgnoreCase))
+            WriteLine($"dep:{dep.AppId}:{dep.Publisher}:{dep.Name}:{dep.Version}");
+        var files = Directory.EnumerateFiles(dir, "*.al", SearchOption.AllDirectories)
+            .Append(Path.Combine(dir, "app.json"))
+            .Where(File.Exists)
+            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase);
+        foreach (var file in files)
+        {
+            using var fs = File.OpenRead(file);
+            WriteLine($"file:{Path.GetRelativePath(dir, file)}:{Convert.ToHexString(sha.ComputeHash(fs))}");
+        }
+    }
+
+    ms.Position = 0;
+    return Convert.ToHexString(sha.ComputeHash(ms)).ToLowerInvariant();
 }
 
 static List<string> TopologicalSort(
