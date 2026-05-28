@@ -1120,13 +1120,10 @@ public static partial class BcRuntime
                 Hook(setTables, nameof(NoOp3), "NavDataTransfer.SetTables");
 
             // The AL `DataTransfer.{AddFieldValue,AddConstantValue,AddSourceFilter,AddJoin,
-            // CopyFields,CopyRows,Clear}` builtins compile to the *internal* counterparts on
-            // NavDataTransfer. BC raises "DataTransfer is only usable during upgrade and
-            // installation code." for the finalize methods (CopyFields, CopyRows, Clear).
-            // The setup helpers (SetTables/AddFieldValue/AddConstantValue/AddSourceFilter/
-            // AddJoin) succeed silently so AL code that builds a DataTransfer then
-            // `asserterror`s the finalize call matches BC behavior in both runtimes.
+            // CopyFields,CopyRows,Clear}` builtins are not usable outside upgrade/install code.
+            // Throw a BC exception so AL `asserterror` observes the same contract.
             var thrownNames = new System.Collections.Generic.HashSet<string> {
+                "AddFieldValue", "AddConstantValue", "AddSourceFilter", "AddJoin",
                 "CopyFields", "CopyRows", "Clear"
             };
             var hookNames = new System.Collections.Generic.List<string>(

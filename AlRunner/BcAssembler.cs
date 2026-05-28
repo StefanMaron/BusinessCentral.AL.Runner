@@ -71,6 +71,7 @@ public sealed class BcAssembler
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,
                 allowUnsafe: true,
                 concurrentBuild: false,
+                checkOverflow: true,
                 optimizationLevel: OptimizationLevel.Release));
 
         using var ms = new MemoryStream();
@@ -223,6 +224,8 @@ public sealed class BcAssembler
         // Database.LockTimeout get/set calls reach NavTenant.Database even though the corpus only
         // needs the API to be callable. Redirect property access to a runner-local value.
         ("ALDatabase.ALLockTimeout", "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALDatabase_ALLockTimeout"),
+        ("ALDatabase.ALGetDefaultTableConnection(", "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALGetDefaultTableConnection("),
+        ("ALDatabase.ALRegisterTableConnection(", "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALRegisterTableConnection("),
         // ALSystemString.ALCopyStr — throws "outside of the permitted range" when fromPos < 1.
         ("ALSystemString.ALCopyStr(",      "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALCopyStr("),
         // ALSystemString.ALIncStr — returns "" for non-numeric strings.
@@ -587,6 +590,24 @@ namespace AlRunnerV2Shim
 
         public static bool ALDatabase_ALLockTimeout { get; set; }
         public static int ALDatabase_ALLockTimeoutDuration { get; set; }
+
+        public static string ALGetDefaultTableConnection(Microsoft.Dynamics.Nav.Types.TableConnectionType type)
+            => string.Empty;
+
+        public static void ALRegisterTableConnection(
+            Microsoft.Dynamics.Nav.Types.CompilationTarget target,
+            Microsoft.Dynamics.Nav.Types.TableConnectionType type,
+            string name,
+            string connectionString)
+            => throw new global::System.InvalidOperationException(
+                ""You do not have permission to register table connections in the in-process runner."");
+
+        public static void ALRegisterTableConnection(
+            Microsoft.Dynamics.Nav.Types.TableConnectionType type,
+            string name,
+            string connectionString)
+            => throw new global::System.InvalidOperationException(
+                ""You do not have permission to register table connections in the in-process runner."");
 
         // ─── Text function polyfills ──────────────────────────────────────────────────
 
