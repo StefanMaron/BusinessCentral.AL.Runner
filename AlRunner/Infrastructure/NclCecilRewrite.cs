@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 69;
+    private const int CACHE_VERSION = 70;
 
     private static readonly Dictionary<byte, System.Reflection.Emit.OpCode> SingleByteOpCodes = typeof(System.Reflection.Emit.OpCodes)
         .GetFields(BindingFlags.Public | BindingFlags.Static)
@@ -3414,6 +3414,32 @@ public static class NclCecilRewrite
                     throw new InvalidOperationException(
                         $"[Cecil] NavMethodScope.ThrowStackOverflow returns {tso.ReturnType.FullName}, expected void — Ncl shape changed; do not commit");
                 ReplaceBodyConst(tso, ConstResult.Void);
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // ALFunctionTimingExecutionListener cluster — JmpHook→Cecil (Batch 2).
+        //
+        // Telemetry/diagnostic-only listener reached during AL method execution via
+        // NavMethodScope.Run(). Under NO_JMPHOOK=1 it NREs (Start dereferences
+        // methodScope.Session.ExtensionMetrics, null on our minimal scopes), which is
+        // the dominant failure (1667 tests) after the NavMethodScope ctor unblock. All
+        // three methods are void statics the JmpHook already no-ops in normal mode
+        // (BcRuntime.cs:404/415/420) with no AL-semantic effect — the Cecil equivalent
+        // is an identical void return. NOTE: this is the listener's Start/Exit/
+        // EnsureRegistered, NOT its ..cctor — the cctor is the one Batch 1 found to spin
+        // when Cecil-rewritten and is left alone.
+        // ─────────────────────────────────────────────────────────────────────
+        {
+            var nclMod = asm.MainModule;
+            const string ListenerType = "Microsoft.Dynamics.Nav.Runtime.ALFunctionTimingExecutionListener";
+            foreach (var (name, pc) in new[] { ("EnsureRegistered", 0), ("Start", 1), ("Exit", 1) })
+            {
+                var m = FindNclMethod(nclMod, ListenerType, name, pc);
+                if (m.ReturnType.FullName != "System.Void")
+                    throw new InvalidOperationException(
+                        $"[Cecil] {ListenerType}.{name} returns {m.ReturnType.FullName}, expected void — Ncl shape changed; do not commit");
+                ReplaceBodyConst(m, ConstResult.Void);
             }
         }
 
