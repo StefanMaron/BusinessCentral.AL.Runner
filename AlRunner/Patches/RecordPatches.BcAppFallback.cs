@@ -23,8 +23,6 @@
 // doesn't re-scan every .app on every Init().
 
 using System.Reflection;
-using System.IO.Compression;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace AlRunnerV2.Patches;
@@ -60,7 +58,12 @@ public static partial class RecordPatches
             if (!_bcAppPaths.Contains(appPath, StringComparer.OrdinalIgnoreCase))
             {
                 _bcAppPaths.Add(appPath);
-                AlRunnerV2.AlEnumMetadataRegistry.RegisterFromAppPath(appPath);
+                foreach (var enumSymbol in BcAppSymbolCache.Get(appPath).Enums)
+                    AlRunnerV2.AlEnumMetadataRegistry.Register(
+                        enumSymbol.Id,
+                        enumSymbol.Name,
+                        enumSymbol.Options.ToArray(),
+                        enumSymbol.Indexes.ToArray());
                 // Invalidate the index so newly-added .app gets picked up on next miss.
                 _bcTableIndex = null;
                 _bcSymbolTableIndex = null;
@@ -150,9 +153,18 @@ public static partial class RecordPatches
             }
 
             using var stream = (Stream)mGetStream.Invoke(null, null)!;
-            var tempPath = Path.Combine(Path.GetTempPath(), $"al-runner-systemapp-{Guid.NewGuid():N}.app");
-            using (var fs = File.Create(tempPath))
+            var asmInfo = !string.IsNullOrEmpty(asm.Location) && File.Exists(asm.Location)
+                ? new FileInfo(asm.Location)
+                : null;
+            var suffix = asmInfo != null
+                ? $"{asmInfo.Length:x}-{asmInfo.LastWriteTimeUtc.Ticks:x}"
+                : Guid.NewGuid().ToString("N");
+            var tempPath = Path.Combine(Path.GetTempPath(), $"al-runner-systemapp-{suffix}.app");
+            if (!File.Exists(tempPath))
+            {
+                using var fs = File.Create(tempPath);
                 stream.CopyTo(fs);
+            }
 
             _systemAppTempPath = tempPath;
             AddBcAppPath(tempPath);
@@ -244,11 +256,9 @@ public static partial class RecordPatches
         {
             try
             {
-                foreach (var json in ReadSymbolReferences(appPath))
-                {
-                    using var doc = JsonDocument.Parse(json);
-                    VisitSymbolTables(doc.RootElement, appPath, idx);
-                }
+                foreach (var table in BcAppSymbolCache.Get(appPath).Tables)
+                    if (!idx.ContainsKey(table.TableId))
+                        idx[table.TableId] = (appPath, table);
             }
             catch (Exception ex)
             {
@@ -258,177 +268,5 @@ public static partial class RecordPatches
         _bcSymbolTableIndex = idx;
         if (idx.Count > 0)
             Console.Error.WriteLine($"[RecordPatches] BcAppFallback: indexed {idx.Count} symbol table id(s) across {_bcAppPaths.Count} BC .app file(s)");
-    }
-
-    private static void VisitSymbolTables(JsonElement container, string appPath, Dictionary<int, (string, ParsedTable)> idx)
-    {
-        if (container.TryGetProperty("Tables", out var tables) && tables.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var table in tables.EnumerateArray())
-            {
-                var parsed = TryParseTableSymbol(table);
-                if (parsed != null && !idx.ContainsKey(parsed.TableId))
-                    idx[parsed.TableId] = (appPath, parsed);
-            }
-        }
-        if (container.TryGetProperty("Namespaces", out var namespaces) && namespaces.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var ns in namespaces.EnumerateArray())
-                VisitSymbolTables(ns, appPath, idx);
-        }
-    }
-
-    private static ParsedTable? TryParseTableSymbol(JsonElement table)
-    {
-        if (!table.TryGetProperty("Id", out var idProp) || !idProp.TryGetInt32(out var tableId))
-            return null;
-        var tableName = table.TryGetProperty("Name", out var nameProp)
-            ? nameProp.GetString() ?? $"Table{tableId}"
-            : $"Table{tableId}";
-
-        var fields = new List<ParsedField>();
-        if (table.TryGetProperty("Fields", out var fieldsJson) && fieldsJson.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var field in fieldsJson.EnumerateArray())
-            {
-                if (!field.TryGetProperty("Id", out var fidProp) || !fidProp.TryGetInt32(out var fieldId))
-                    continue;
-                var fieldName = field.TryGetProperty("Name", out var fnameProp)
-                    ? fnameProp.GetString() ?? $"Field{fieldId}"
-                    : $"Field{fieldId}";
-                var typeName = SymbolTypeName(field.TryGetProperty("TypeDefinition", out var td) ? td : default);
-                var props = SymbolProperties(field);
-                var isFlowField = props.TryGetValue("FieldClass", out var fieldClass)
-                    && string.Equals(fieldClass, "FlowField", StringComparison.OrdinalIgnoreCase);
-                ParsedCalcFormula? calcFormula = null;
-                if (isFlowField && props.TryGetValue("CalcFormula", out var calcFormulaText))
-                    calcFormula = TryParseCalcFormula($"CalcFormula = {calcFormulaText};");
-                props.TryGetValue("OptionMembers", out var optionMembers);
-                props.TryGetValue("InitValue", out var initValue);
-                var isAutoIncrement = props.TryGetValue("AutoIncrement", out var autoIncrement)
-                    && (autoIncrement == "1" || autoIncrement.Equals("true", StringComparison.OrdinalIgnoreCase));
-                fields.Add(new ParsedField(fieldId, fieldName, typeName, SymbolTypeLength(typeName), isFlowField, calcFormula,
-                    optionMembers, initValue, isAutoIncrement));
-            }
-        }
-
-        var pkFieldIds = new List<int>();
-        var secondaryKeys = new List<ParsedKey>();
-        if (table.TryGetProperty("Keys", out var keysJson) && keysJson.ValueKind == JsonValueKind.Array)
-        {
-            var first = true;
-            foreach (var key in keysJson.EnumerateArray())
-            {
-                var keyName = key.TryGetProperty("Name", out var keyNameProp)
-                    ? keyNameProp.GetString() ?? "Key"
-                    : "Key";
-                var ids = new List<int>();
-                if (key.TryGetProperty("FieldNames", out var fieldNames) && fieldNames.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var fieldNameJson in fieldNames.EnumerateArray())
-                    {
-                        var fieldName = fieldNameJson.GetString();
-                        var field = fields.FirstOrDefault(f =>
-                            string.Equals(f.FieldName, fieldName, StringComparison.OrdinalIgnoreCase));
-                        if (field != null) ids.Add(field.FieldId);
-                    }
-                }
-                if (first)
-                {
-                    pkFieldIds.AddRange(ids);
-                    first = false;
-                }
-                else if (ids.Count > 0)
-                {
-                    secondaryKeys.Add(new ParsedKey(keyName, ids));
-                }
-            }
-        }
-        if (pkFieldIds.Count == 0 && fields.Count > 0)
-            pkFieldIds.Add(fields[0].FieldId);
-
-        var tableProps = SymbolProperties(table);
-        var isTemporary = tableProps.TryGetValue("TableType", out var tableType)
-            && string.Equals(tableType, "Temporary", StringComparison.OrdinalIgnoreCase);
-        return new ParsedTable(tableId, tableName, fields, pkFieldIds, secondaryKeys, isTemporary);
-    }
-
-    private static Dictionary<string, string> SymbolProperties(JsonElement element)
-    {
-        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        if (!element.TryGetProperty("Properties", out var props) || props.ValueKind != JsonValueKind.Array)
-            return result;
-        foreach (var prop in props.EnumerateArray())
-        {
-            if (!prop.TryGetProperty("Name", out var nameProp)) continue;
-            var name = nameProp.GetString();
-            if (string.IsNullOrEmpty(name)) continue;
-            if (prop.TryGetProperty("Value", out var valueProp))
-                result[name] = valueProp.GetString() ?? string.Empty;
-        }
-        return result;
-    }
-
-    private static string SymbolTypeName(JsonElement typeDefinition)
-    {
-        if (typeDefinition.ValueKind != JsonValueKind.Object)
-            return "Text";
-        var name = typeDefinition.TryGetProperty("Name", out var nameProp)
-            ? nameProp.GetString() ?? "Text"
-            : "Text";
-        if (string.Equals(name, "Enum", StringComparison.OrdinalIgnoreCase)
-            && typeDefinition.TryGetProperty("Subtype", out var subtype)
-            && subtype.ValueKind == JsonValueKind.Object
-            && subtype.TryGetProperty("Name", out var enumNameProp))
-            return $"Enum \"{enumNameProp.GetString() ?? string.Empty}\"";
-        return name;
-    }
-
-    private static int SymbolTypeLength(string typeName)
-    {
-        var m = Regex.Match(typeName, @"\[(\d+)\]");
-        return m.Success && int.TryParse(m.Groups[1].Value, out var length) ? length : 0;
-    }
-
-    private static IEnumerable<string> ReadSymbolReferences(string appPath)
-    {
-        var bytes = File.ReadAllBytes(appPath);
-        foreach (var json in ReadSymbolReferencesFromBytes(bytes))
-            yield return json;
-    }
-
-    private static IEnumerable<string> ReadSymbolReferencesFromBytes(byte[] bytes)
-    {
-        using var zip = OpenZipFromNavx(bytes);
-        var symbol = zip.Entries.FirstOrDefault(e =>
-            e.FullName.Equals("SymbolReference.json", StringComparison.OrdinalIgnoreCase));
-        if (symbol != null)
-        {
-            using var s = symbol.Open();
-            using var reader = new StreamReader(s);
-            yield return reader.ReadToEnd();
-        }
-
-        var nested = zip.Entries.FirstOrDefault(e =>
-            e.FullName.EndsWith(".app", StringComparison.OrdinalIgnoreCase) && !e.FullName.Contains('/'));
-        if (nested != null)
-        {
-            using var ns = nested.Open();
-            using var ms = new MemoryStream();
-            ns.CopyTo(ms);
-            foreach (var json in ReadSymbolReferencesFromBytes(ms.ToArray()))
-                yield return json;
-        }
-    }
-
-    private static ZipArchive OpenZipFromNavx(byte[] bytes)
-    {
-        var offset = bytes.Length >= 8
-            && bytes[0] == (byte)'N' && bytes[1] == (byte)'A'
-            && bytes[2] == (byte)'V' && bytes[3] == (byte)'X'
-                ? (int)BitConverter.ToUInt32(bytes, 4)
-                : 0;
-        var ms = new MemoryStream(bytes, offset, bytes.Length - offset, writable: false);
-        return new ZipArchive(ms, ZipArchiveMode.Read);
     }
 }

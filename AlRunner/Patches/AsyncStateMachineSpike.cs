@@ -22,13 +22,16 @@
 // (B) Generic via closed-instantiation enumeration:
 //   NavObjectDictionary`2.get_Target has ContainsGenericParameters=true on the
 //   open generic type — not directly hookable. After the test assembly is loaded,
-//   we scan all loaded assemblies for closed instantiations of NavObjectDictionary`2
-//   and hook each one's get_Target individually. Each closed instantiation is a
-//   non-generic type that JmpHook can patch normally.
+//   we scan the loaded test assembly for closed instantiations of
+//   NavObjectDictionary`2 and hook each one's get_Target individually. Set
+//   AL_RUNNER_SCAN_ALL_OBJDICT=1 to restore the broader all-AppDomain scan.
+//   Each closed instantiation is a non-generic type that JmpHook can patch normally.
 //
 // Both strategies use only JmpHook/mprotect — no Harmony, no MonoMod.
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading.Tasks;
 using AlRunnerV2.Infrastructure;
 
@@ -93,13 +96,12 @@ public static partial class BcRuntime
     private static Type? _navObjDictOpenGeneric;  // cached open generic typedef
 
     /// <summary>
-    /// Enumerates all closed instantiations of NavObjectDictionary`2 that are
-    /// currently loaded and hooks each one's get_Target to the Option-C
-    /// replacement (see NavObjectDictionary_get_Target below). Must be called
-    /// after the test assembly is loaded so the closed types the test DLL uses
-    /// are present in the AppDomain.
+    /// Enumerates closed instantiations of NavObjectDictionary`2 used by the
+    /// current test assembly and hooks each one's get_Target to the Option-C
+    /// replacement (see NavObjectDictionary_get_Target below). Set
+    /// AL_RUNNER_SCAN_ALL_OBJDICT=1 for the older all-AppDomain scan.
     /// </summary>
-    internal static void ApplyNavObjectDictionaryGetTargetHooks(Assembly navNcl)
+    internal static void ApplyNavObjectDictionaryGetTargetHooks(Assembly navNcl, Assembly? currentTestAssembly = null)
     {
         if (_navObjDictOpenGeneric == null)
         {
@@ -115,14 +117,29 @@ public static partial class BcRuntime
         var openGenericFqn = _navObjDictOpenGeneric.FullName!;
         int hookCount = 0;
         int skipCount = 0;
-        int errCount  = 0;
+        int errCount = 0;
+        var cachePath = NavObjectDictionaryHookCachePath(currentTestAssembly);
+        if (TryLoadNavObjectDictionaryHookCache(cachePath, out var cachedTypeNames))
+        {
+            foreach (var typeName in cachedTypeNames)
+            {
+                var t = Type.GetType(typeName, throwOnError: false);
+                if (t == null) { skipCount++; continue; }
+                if (TryHookNavObjectDictionaryType(t)) hookCount++;
+                else errCount++;
+            }
+            PerfTrace.Log($"ObjDict hook cache HIT types={cachedTypeNames.Count} hooked={hookCount} skipped={skipCount} errors={errCount}");
+            return;
+        }
 
         // Closed generic types are not surfaced via Assembly.GetTypes() — they only
         // exist when the JIT instantiates them. Discover them by scanning fields and
         // properties on all loaded types (including the test assembly emitted from AL)
         // for declared types that are closed NavObjectDictionary`2<K,V>.
         var closedTypes = new HashSet<Type>();
-        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        var scanSw = System.Diagnostics.Stopwatch.StartNew();
+        var assembliesToScan = ObjDictAssembliesToScan(currentTestAssembly).ToArray();
+        foreach (var asm in assembliesToScan)
         {
             Type[] types;
             try { types = asm.GetTypes(); }
@@ -152,41 +169,111 @@ public static partial class BcRuntime
                 catch { /* ignore type-load on unrelated types */ }
             }
         }
+        scanSw.Stop();
+        PerfTrace.Log($"ObjDict hook scan assemblies={assembliesToScan.Length} closedTypes={closedTypes.Count} {scanSw.ElapsedMilliseconds}ms");
 
         foreach (var t in closedTypes)
         {
-                // Closed NavObjectDictionary`2<K,V>
-                var getTarget = t.GetProperty("Target",
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                    ?.GetGetMethod(true);
-
-                if (getTarget == null) { skipCount++; continue; }
-                if (getTarget.ContainsGenericParameters) { skipCount++; continue; }
-
-                // Replacement: a single static method shared across all closed
-                // instantiations. The calling convention is: first arg = receiver
-                // (the NavObjectDictionary<K,V> instance as an object reference).
-                // Return type is compatible with SharedNavObjectDictionary<K,V>
-                // (reference type) — we return a real shared dict via reflection
-                // using the per-closed-type cached ctor.
-                try
-                {
-                    var repl = typeof(BcRuntime).GetMethod(nameof(NavObjectDictionary_get_Target),
-                        BindingFlags.Public | BindingFlags.Static)!;
-                    JmpHook.Apply(getTarget, repl,
-                        $"NavObjectDictionary`2<{string.Join(",", t.GetGenericArguments().Select(a => a.Name))}>.get_Target");
-                    hookCount++;
-                    Console.Error.WriteLine($"[ObjDict] Hooked: {t.FullName}.get_Target");
-                }
-                catch (Exception ex)
-                {
-                    Console.Error.WriteLine($"[ObjDict] Hook failed for {t.Name}: {ex.Message}");
-                    errCount++;
-                }
+            if (TryHookNavObjectDictionaryType(t)) hookCount++;
+            else errCount++;
         }
+        TryWriteNavObjectDictionaryHookCache(cachePath, closedTypes);
 
         Console.Error.WriteLine(
             $"[ObjDict] Scan complete: {hookCount} hooked, {skipCount} skipped, {errCount} errors");
+    }
+
+    private static bool TryHookNavObjectDictionaryType(Type t)
+    {
+        var getTarget = t.GetProperty("Target",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?.GetGetMethod(true);
+
+        if (getTarget == null || getTarget.ContainsGenericParameters)
+            return false;
+
+        try
+        {
+            var repl = typeof(BcRuntime).GetMethod(nameof(NavObjectDictionary_get_Target),
+                BindingFlags.Public | BindingFlags.Static)!;
+            JmpHook.Apply(getTarget, repl,
+                $"NavObjectDictionary`2<{string.Join(",", t.GetGenericArguments().Select(a => a.Name))}>.get_Target");
+            Console.Error.WriteLine($"[ObjDict] Hooked: {t.FullName}.get_Target");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[ObjDict] Hook failed for {t.Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static IEnumerable<Assembly> ObjDictAssembliesToScan(Assembly? currentTestAssembly)
+    {
+        if (Environment.GetEnvironmentVariable("AL_RUNNER_SCAN_ALL_OBJDICT") == "1")
+            return AppDomain.CurrentDomain.GetAssemblies();
+
+        var result = new List<Assembly>();
+        if (currentTestAssembly != null)
+            result.Add(currentTestAssembly);
+        return result;
+    }
+
+    private static string NavObjectDictionaryHookCachePath(Assembly? currentTestAssembly)
+    {
+        var sb = new StringBuilder("v1");
+        foreach (var asm in ObjDictAssembliesToScan(currentTestAssembly).OrderBy(a => a.FullName, StringComparer.Ordinal))
+        {
+            if (asm.IsDynamic) continue;
+            if (asm != currentTestAssembly && string.IsNullOrEmpty(asm.Location)) continue;
+            sb.Append('|').Append(asm.FullName);
+            try { sb.Append('@').Append(asm.ManifestModule.ModuleVersionId); }
+            catch { }
+        }
+        if (currentTestAssembly != null)
+        {
+            sb.Append("|current=");
+            try { sb.Append(currentTestAssembly.ManifestModule.ModuleVersionId); }
+            catch { sb.Append(currentTestAssembly.FullName); }
+        }
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()))).ToLowerInvariant();
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".cache", "al-runner", "objdict-hooks", hash + ".txt");
+    }
+
+    private static bool TryLoadNavObjectDictionaryHookCache(string cachePath, out List<string> typeNames)
+    {
+        typeNames = new List<string>();
+        try
+        {
+            if (!File.Exists(cachePath)) return false;
+            typeNames = File.ReadAllLines(cachePath)
+                .Where(l => !string.IsNullOrWhiteSpace(l))
+                .ToList();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            PerfTrace.Log($"ObjDict hook cache read failed {Path.GetFileName(cachePath)}: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static void TryWriteNavObjectDictionaryHookCache(string cachePath, IEnumerable<Type> closedTypes)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
+            File.WriteAllLines(cachePath, closedTypes
+                .Select(t => t.AssemblyQualifiedName)
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .Order(StringComparer.Ordinal)!);
+        }
+        catch (Exception ex)
+        {
+            PerfTrace.Log($"ObjDict hook cache write failed {Path.GetFileName(cachePath)}: {ex.Message}");
+        }
     }
 
     /// <summary>

@@ -38,11 +38,16 @@ public sealed class TestExecutor
 
     public IReadOnlyList<TestResult> Run(Assembly assembly)
     {
+        var totalSw = System.Diagnostics.Stopwatch.StartNew();
         var results = new List<TestResult>();
         var ctorParam = typeof(Microsoft.Dynamics.Nav.Runtime.ITreeObject);
         var filter = NormaliseFilter(TestFilter);
+        var typeSw = System.Diagnostics.Stopwatch.StartNew();
+        var types = assembly.GetTypes();
+        typeSw.Stop();
+        PerfTrace.Log($"TestExecutor.GetTypes {types.Length} type(s) {typeSw.ElapsedMilliseconds}ms");
 
-        foreach (var t in assembly.GetTypes())
+        foreach (var t in types)
         {
             if (!IsTestCodeunit(t)) continue;
             if (filter != null && !CodeunitMatchesFilter(t, filter)) continue;
@@ -51,7 +56,10 @@ public sealed class TestExecutor
             // classes weren't in AppDomain when PopulateNclMetadataCache initially ran
             // EventSubscriberPatches.InjectAll. Re-run injection now (idempotent — each
             // subscriber MethodInfo is injected at most once).
+            var injectSw = System.Diagnostics.Stopwatch.StartNew();
             AlRunnerV2.Patches.EventSubscriberPatches.InjectAllUsingStoredLookup();
+            injectSw.Stop();
+            PerfTrace.Log($"EventSubscriber.InjectAllUsingStoredLookup {t.Name} {injectSw.ElapsedMilliseconds}ms");
 
             // Per-codeunit reset: BC's 130450 "Test Runner - Isol. Codeunit" wraps
             // the whole codeunit in one transaction, so tests inside share state but
@@ -76,6 +84,8 @@ public sealed class TestExecutor
                 results.Add(RunOne(t.Name, m, instance));
             }
         }
+        totalSw.Stop();
+        PerfTrace.Log($"TestExecutor total {results.Count} test(s) {totalSw.ElapsedMilliseconds}ms");
         return results;
     }
 

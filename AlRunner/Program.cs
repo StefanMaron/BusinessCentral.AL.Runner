@@ -193,6 +193,7 @@ DependencyLoader.EnsureResolverInstalled_Public();
 var t0 = System.Diagnostics.Stopwatch.StartNew();
 BcRuntime.EnsureApplied();
 Console.WriteLine($"BC runtime patches applied ({t0.ElapsedMilliseconds}ms)");
+AlRunnerV2.PerfTrace.Log($"BcRuntime.EnsureApplied {t0.ElapsedMilliseconds}ms");
 
 var emitter = new BcCompiler();
 var assembler = new BcAssembler();
@@ -531,11 +532,20 @@ foreach (var bundle in bundles)
             IReadOnlyList<TestResult> tests;
             try
             {
+                var loadSw = System.Diagnostics.Stopwatch.StartNew();
                 var asm = Assembly.Load(assemblyBytes);
+                loadSw.Stop();
+                AlRunnerV2.PerfTrace.Log($"test assembly load {rel} {loadSw.ElapsedMilliseconds}ms");
+                var registerSw = System.Diagnostics.Stopwatch.StartNew();
                 BcRuntime.SetTestAssembly(asm);
                 BcRuntime.RegisterTestAssemblyInfo(asm);
+                registerSw.Stop();
+                AlRunnerV2.PerfTrace.Log($"RegisterTestAssemblyInfo {rel} {registerSw.ElapsedMilliseconds}ms");
                 BcRuntime.OosHooksActive = true;
+                var execSw = System.Diagnostics.Stopwatch.StartNew();
                 tests = executor.Run(asm);
+                execSw.Stop();
+                AlRunnerV2.PerfTrace.Log($"TestExecutor.Run {rel} {execSw.ElapsedMilliseconds}ms");
             }
             catch (Exception ex)
             {

@@ -86,31 +86,39 @@ public static partial class BcRuntime
         if (_currentTestAssembly == asm) return;
         _currentTestAssembly = asm;
         _codeunitTypeCache.Clear();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         // (B) Spike: enumerate closed NavObjectDictionary`2 instantiations now that
         //     the test assembly is loaded and its closed generic types are in the AppDomain.
         var navNcl = AppDomain.CurrentDomain.GetAssemblies()
             .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
         if (navNcl != null)
-            ApplyNavObjectDictionaryGetTargetHooks(navNcl);
+            ApplyNavObjectDictionaryGetTargetHooks(navNcl, asm);
+        AlRunnerV2.PerfTrace.Log($"SetTestAssembly.ApplyNavObjectDictionaryGetTargetHooks {sw.ElapsedMilliseconds}ms");
         // Hook XmlPort{ID}.InitializeComponent() overrides in the test assembly.
         // The BC-generated InitializeComponent calls EndInitialization() which may be
         // inlined by the JIT into the caller — hooking EndInitialization() in NCL is
         // unreliable. Hooking the override directly (on the concrete XmlPort type in
         // the test assembly) is deterministic since the JIT hasn't seen this method yet.
+        sw.Restart();
         HookXmlPortInitializeComponents(asm);
+        AlRunnerV2.PerfTrace.Log($"SetTestAssembly.HookXmlPortInitializeComponents {sw.ElapsedMilliseconds}ms");
 
         // Field-level OnValidate/OnLookup wiring. NCLMetaField.EventTriggerDataValue
         // must point at the AL-emitted [FieldTriggerHandler] methods on the Record CLR
         // class. The NCLMetaTable was built during AddSourceDir (before AL emit), so
         // the Record CLR type didn't exist yet — we delay wiring to here, the first
         // point at which the AL-emitted Record types are loaded into the AppDomain.
+        sw.Restart();
         AlRunnerV2.Patches.RecordPatches.WireFieldTriggerHandlersAll();
+        AlRunnerV2.PerfTrace.Log($"SetTestAssembly.WireFieldTriggerHandlersAll {sw.ElapsedMilliseconds}ms");
 
         // Enum field-option metadata fix-up: the AlEnumMetadataRegistry is
         // populated only by BcCompiler.Emit, which runs after AddSourceDir.
         // The first BuildNCLMetaTable pass therefore misses enum-typed fields.
         // Re-apply now that the registry has the bucket's emitted enums.
+        sw.Restart();
         AlRunnerV2.Patches.RecordPatches.FixupEnumFieldOptionMetadataAll();
+        AlRunnerV2.PerfTrace.Log($"SetTestAssembly.FixupEnumFieldOptionMetadataAll {sw.ElapsedMilliseconds}ms");
     }
 
     private static void HookXmlPortInitializeComponents(Assembly asm)

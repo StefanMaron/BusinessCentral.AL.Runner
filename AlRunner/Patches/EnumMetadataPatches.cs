@@ -25,10 +25,9 @@
 //   NCLEnumMetadata override: 158980 / 158985 returns namesList / ordinalsList.
 //
 using System.Collections.Concurrent;
-using System.IO.Compression;
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using System.Text.Json;
+using AlRunnerV2.Patches;
 using NCLOptionMetadata = Microsoft.Dynamics.Nav.Runtime.NCLOptionMetadata;
 using NavList = Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavText>;
 using NavListInt = Microsoft.Dynamics.Nav.Runtime.NavList<int>;
@@ -66,8 +65,8 @@ public static class AlEnumMetadataRegistry
         if (string.IsNullOrEmpty(appPath) || !File.Exists(appPath)) return;
         try
         {
-            foreach (var symbolJson in ReadSymbolReferences(appPath))
-                RegisterFromSymbolReference(symbolJson);
+            foreach (var enumSymbol in BcAppSymbolCache.Get(appPath).Enums)
+                Register(enumSymbol.Id, enumSymbol.Name, enumSymbol.Options.ToArray(), enumSymbol.Indexes.ToArray());
         }
         catch (Exception ex)
         {
@@ -83,97 +82,6 @@ public static class AlEnumMetadataRegistry
         return _byId.Values.OrderBy(e => e.Id).ToList();
     }
 
-    private static void RegisterFromSymbolReference(string json)
-    {
-        using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
-        VisitSymbolContainer(root);
-        if (root.TryGetProperty("Namespaces", out var namespaces) && namespaces.ValueKind == JsonValueKind.Array)
-            foreach (var ns in namespaces.EnumerateArray())
-                VisitSymbolContainer(ns);
-    }
-
-    private static void VisitSymbolContainer(JsonElement container)
-    {
-        if (container.TryGetProperty("EnumTypes", out var enumTypes) && enumTypes.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var enumType in enumTypes.EnumerateArray())
-                RegisterEnumType(enumType);
-        }
-        if (container.TryGetProperty("Namespaces", out var namespaces) && namespaces.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var ns in namespaces.EnumerateArray())
-                VisitSymbolContainer(ns);
-        }
-    }
-
-    private static void RegisterEnumType(JsonElement enumType)
-    {
-        if (!enumType.TryGetProperty("Id", out var idProp) || !idProp.TryGetInt32(out var id))
-            return;
-        var name = enumType.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() ?? string.Empty : string.Empty;
-        if (!enumType.TryGetProperty("Values", out var values) || values.ValueKind != JsonValueKind.Array)
-            return;
-
-        var options = new List<string>();
-        var indexes = new List<int>();
-        var nextOrdinal = 0;
-        foreach (var value in values.EnumerateArray())
-        {
-            var optionName = value.TryGetProperty("Name", out var optionNameProp)
-                ? optionNameProp.GetString() ?? string.Empty
-                : string.Empty;
-            var ordinal = value.TryGetProperty("Ordinal", out var ordinalProp) && ordinalProp.TryGetInt32(out var explicitOrdinal)
-                ? explicitOrdinal
-                : nextOrdinal;
-            options.Add(optionName);
-            indexes.Add(ordinal);
-            nextOrdinal = ordinal + 1;
-        }
-        Register(id, name, options.ToArray(), indexes.ToArray());
-    }
-
-    private static IEnumerable<string> ReadSymbolReferences(string appPath)
-    {
-        var bytes = File.ReadAllBytes(appPath);
-        foreach (var json in ReadSymbolReferencesFromBytes(bytes))
-            yield return json;
-    }
-
-    private static IEnumerable<string> ReadSymbolReferencesFromBytes(byte[] bytes)
-    {
-        using var zip = OpenZipFromNavx(bytes);
-        var symbol = zip.Entries.FirstOrDefault(e =>
-            e.FullName.Equals("SymbolReference.json", StringComparison.OrdinalIgnoreCase));
-        if (symbol != null)
-        {
-            using var s = symbol.Open();
-            using var reader = new StreamReader(s);
-            yield return reader.ReadToEnd();
-        }
-
-        var nested = zip.Entries.FirstOrDefault(e =>
-            e.FullName.EndsWith(".app", StringComparison.OrdinalIgnoreCase) && !e.FullName.Contains('/'));
-        if (nested != null)
-        {
-            using var ns = nested.Open();
-            using var ms = new MemoryStream();
-            ns.CopyTo(ms);
-            foreach (var json in ReadSymbolReferencesFromBytes(ms.ToArray()))
-                yield return json;
-        }
-    }
-
-    private static ZipArchive OpenZipFromNavx(byte[] bytes)
-    {
-        var offset = bytes.Length >= 8
-            && bytes[0] == (byte)'N' && bytes[1] == (byte)'A'
-            && bytes[2] == (byte)'V' && bytes[3] == (byte)'X'
-                ? (int)BitConverter.ToUInt32(bytes, 4)
-                : 0;
-        var ms = new MemoryStream(bytes, offset, bytes.Length - offset, writable: false);
-        return new ZipArchive(ms, ZipArchiveMode.Read);
-    }
 }
 
 /// <summary>

@@ -266,7 +266,7 @@ public static partial class RecordPatches
         return null;
     }
 
-    private static ParsedCalcFormula? TryParseCalcFormula(string fieldBody)
+    internal static ParsedCalcFormula? TryParseCalcFormula(string fieldBody)
     {
         var m = RxCalcFormula.Match(fieldBody);
         if (!m.Success) return null;
