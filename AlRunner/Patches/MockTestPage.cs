@@ -8,6 +8,9 @@
 // calls NavTestPageBase.GetField / GetAction / GetDataItem make into them.
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using AlRunnerV2.Patches;
+using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
 using Microsoft.Dynamics.Nav.Types.Data;
 
@@ -29,11 +32,11 @@ internal class MockITestPage : ITestPage
     // ── ITestPage ──────────────────────────────────────────────────────────
 
     // IsOpened() = false so NavTestPageBase.Open() "already open" guard passes.
-    public bool IsOpened()  => false;
-    public void Close()     { }
+    public virtual bool IsOpened()  => false;
+    public virtual void Close()     { }
     public void Dispose()   { }
 
-    public ITestField GetField(int id)
+    public virtual ITestField GetField(int id)
     {
         if (!_fields.TryGetValue(id, out var f))
             _fields[id] = f = new MockITestField();
@@ -52,16 +55,16 @@ internal class MockITestPage : ITestPage
     public ITestFilter        GetDataItemFilter(string id)                              => this;
     public void               SetSelection(bool value)                                  { }
     public void               InsertEmptyRow(bool beforeCurrent)                        { }
-    public bool               MoveNext()                                                => false;
-    public bool               MovePrevious()                                            => false;
-    public bool               MoveFirst()                                               => false;
-    public bool               MoveLast()                                                => false;
+    public virtual bool       MoveNext()                                                => false;
+    public virtual bool       MovePrevious()                                            => false;
+    public virtual bool       MoveFirst()                                               => false;
+    public virtual bool       MoveLast()                                                => false;
     public string             GetValidationError(int index)                             => string.Empty;
-    public bool               FindRowFromTableFieldValues(int[] f, object[] v, bool fw) => false;
-    public bool               FindRowFromControlFieldValue(int fId, object v, bool fw)  => false;
-    public object?            GetBookmark()                                             => null;
-    public bool               GoToBookmark(object bookmark)                             => false;
-    public object[]           GetTableFieldValues(int[] fieldIds)                       => Array.Empty<object>();
+    public virtual bool       FindRowFromTableFieldValues(int[] f, object[] v, bool fw) => false;
+    public virtual bool       FindRowFromControlFieldValue(int fId, object v, bool fw)  => false;
+    public virtual object?    GetBookmark()                                             => null;
+    public virtual bool       GoToBookmark(object bookmark)                             => false;
+    public virtual object[]   GetTableFieldValues(int[] fieldIds)                       => Array.Empty<object>();
     public ITestAction        Edit()                                                    => new MockITestAction();
     public ITestAction        View()                                                    => new MockITestAction();
     public bool               Expand(bool doExpand)                                     => false;
@@ -78,9 +81,9 @@ internal class MockITestPage : ITestPage
 
     // ── ITestFilter (inherited via ITestPage) ─────────────────────────────
 
-    public void   SetFilter(int fieldId, string filterValue) => _filters[fieldId] = filterValue;
+    public virtual void SetFilter(int fieldId, string filterValue) => _filters[fieldId] = filterValue;
     public IEnumerable<NavFilter> GetFilter() => Array.Empty<NavFilter>();
-    public string GetFilter(int fieldId) => _filters.TryGetValue(fieldId, out var v) ? v : string.Empty;
+    public virtual string GetFilter(int fieldId) => _filters.TryGetValue(fieldId, out var v) ? v : string.Empty;
     public void   SetCurrentKeyFields(int[] fields) { _currentKeyFields = fields; }
     public int[]  GetCurrentKeyFields() => _currentKeyFields ?? Array.Empty<int>();
 
@@ -97,6 +100,149 @@ internal class MockITestPage : ITestPage
             if (_currentKeyFields == null || _currentKeyFields.Length == 0) return string.Empty;
             return string.Join(", ", _currentKeyFields);
         }
+    }
+}
+
+internal sealed class LiveNavTestPage : MockITestPage
+{
+    private readonly NavRecord _record;
+    private readonly IReadOnlyDictionary<int, int> _controlIdToFieldNo;
+    private readonly Dictionary<int, LiveNavTestField> _fields = new();
+
+    public LiveNavTestPage(NavRecord record, IReadOnlyDictionary<int, int> controlIdToFieldNo)
+    {
+        _record = record;
+        _controlIdToFieldNo = controlIdToFieldNo;
+    }
+
+    public override bool IsOpened() => false;
+    public override void Close() { }
+
+    public override ITestField GetField(int id)
+    {
+        var tableFieldNo = ToTableFieldNo(id);
+        if (!_fields.TryGetValue(tableFieldNo, out var field))
+            _fields[tableFieldNo] = field = new LiveNavTestField(_record, tableFieldNo);
+        return field;
+    }
+
+    public override bool MoveFirst() => _record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult();
+    public override bool MoveLast() => _record.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult();
+    public override bool MoveNext() => _record.ALNextAsync().GetAwaiter().GetResult() != 0;
+    public override bool MovePrevious() => _record.ALNextAsync(-1).GetAwaiter().GetResult() != 0;
+
+    public override object? GetBookmark() => _record.ALGetPosition();
+
+    public override bool GoToBookmark(object bookmark)
+    {
+        if (bookmark is not string position || string.IsNullOrEmpty(position)) return false;
+        _record.ALSetPosition(position);
+        return true;
+    }
+
+    public override object[] GetTableFieldValues(int[] fieldIds)
+        => fieldIds.Select(fieldNo => ReadClientObject(fieldNo) ?? string.Empty).ToArray();
+
+    public override bool FindRowFromControlFieldValue(int fieldId, object value, bool forward)
+        => FindRowFromTableFieldValues(new[] { ToTableFieldNo(fieldId) }, new[] { value }, forward);
+
+    public override bool FindRowFromTableFieldValues(int[] fieldNos, object[] values, bool forward)
+    {
+        if (fieldNos.Length != values.Length) return false;
+
+        var original = _record.ALGetPosition();
+        var hasCurrent = !string.IsNullOrEmpty(original);
+        var hasRow = hasCurrent || (forward ? MoveFirst() : MoveLast());
+
+        while (hasRow)
+        {
+            if (Matches(fieldNos, values)) return true;
+            hasRow = forward ? MoveNext() : MovePrevious();
+        }
+
+        if (hasCurrent) _record.ALSetPosition(original);
+        return false;
+    }
+
+    public override void SetFilter(int fieldId, string filterValue)
+        => _record.ALSetFilter(ToTableFieldNo(fieldId), filterValue);
+
+    public override string GetFilter(int fieldId)
+        => _record.ALGetFilter(ToTableFieldNo(fieldId));
+
+    private int ToTableFieldNo(int id)
+        => _controlIdToFieldNo.TryGetValue(id, out var fieldNo) ? fieldNo : id;
+
+    private bool Matches(int[] fieldNos, object[] values)
+    {
+        for (var i = 0; i < fieldNos.Length; i++)
+            if (!ValuesEqual(ReadClientObject(fieldNos[i]), Unwrap(values[i])))
+                return false;
+        return true;
+    }
+
+    private object? ReadClientObject(int fieldNo) => Unwrap(_record.GetFieldValue(fieldNo));
+
+    internal static object? Unwrap(object? value)
+        => value is NavValue navValue ? navValue.ClientObject : value;
+
+    private static bool ValuesEqual(object? left, object? right)
+    {
+        left = Unwrap(left);
+        right = Unwrap(right);
+        return Equals(left, right);
+    }
+}
+
+internal sealed class LiveNavTestField : ITestField
+{
+    private readonly NavRecord _record;
+    private readonly int _fieldNo;
+
+    public LiveNavTestField(NavRecord record, int fieldNo)
+    {
+        _record = record;
+        _fieldNo = fieldNo;
+    }
+
+    public string Value
+    {
+        get => Convert.ToString(ObjectValue, CultureInfo.InvariantCulture) ?? string.Empty;
+        set => _record.SetFieldValue(_fieldNo, ALCompiler.ToNavValue(value));
+    }
+
+    public string Name => Caption;
+    public string Caption => TryGetMetaFieldName() ?? $"Field {_fieldNo}";
+    public NavType FieldType => TryGetMetaFieldType() ?? NavType.Text;
+    public int ValidationErrorCount => 0;
+    public long LastUsedValidationErrorId => 0;
+    public long MaxValidationErrorId => 0;
+    public object? ObjectValue => LiveNavTestPage.Unwrap(_record.GetFieldValue(_fieldNo));
+    public int OptionCount => 0;
+    public bool Enabled => true;
+    public bool Editable => true;
+    public bool Visible => true;
+    public bool HideValue => false;
+    public bool ShowMandatory => false;
+
+    public string GetValidationError(int index) => string.Empty;
+    public void Activate() { }
+    public void Lookup() { }
+    public void Lookup(NavDataSet dataSet) { }
+    public void AssistEdit() { }
+    public void Drilldown() { }
+    public void Invoke() { }
+    public string ValueToString(object? value) => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+    public string GetOption(int index) => string.Empty;
+
+    private string? TryGetMetaFieldName()
+    {
+        return _record.MetaTable.TryGetFieldByNo(_fieldNo, out var field) ? field.FieldName : null;
+    }
+
+    private NavType? TryGetMetaFieldType()
+    {
+        return _record.MetaTable.TryGetFieldByNo(_fieldNo, out var field) ? field.FieldNavType : null;
     }
 }
 
@@ -146,6 +292,6 @@ internal sealed class MockITestAction : ITestAction
 /// </summary>
 internal sealed class MockITestPart : MockITestPage, ITestPart
 {
-    new public bool Enabled => true;
-    new public bool Visible => true;
+    public bool Enabled => true;
+    public bool Visible => true;
 }

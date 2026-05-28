@@ -24,7 +24,7 @@ public static partial class RecordPatches
     // through to the scan every time.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, Type> _recordTypeCache = new();
 
-    private static Type? FindRecordType(int id)
+    internal static Type? FindRecordType(int id)
     {
         if (_recordTypeCache.TryGetValue(id, out var cached)) return cached;
         var name = $"Record{id}";
@@ -44,6 +44,9 @@ public static partial class RecordPatches
         }
         return null;
     }
+
+    internal static NCLMetaTable? GetOrBuildNCLMetaTable(int tableId)
+        => (NCLMetaTable?)_metaTableCache.GetOrAdd(tableId, BuildNCLMetaTable);
 
     private static NCLMetaTable? BuildNCLMetaTable(int tableId)
     {

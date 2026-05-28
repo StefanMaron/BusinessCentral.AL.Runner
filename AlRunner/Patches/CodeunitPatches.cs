@@ -8,6 +8,8 @@
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using AlRunnerV2.Patches;
+using Microsoft.Dynamics.Nav.Runtime;
 
 namespace AlRunnerV2;
 
@@ -176,8 +178,94 @@ public static partial class BcRuntime
             throw new InvalidOperationException(
                 "NavTestPage has no 3-arg constructor — Ncl shape changed");
 
-        var mock = new MockITestPage();
-        return ctor.Invoke(new object[] { self, objId, mock });
+        var page = CreateTestPageClient(self, objId);
+        return ctor.Invoke(new object[] { self, objId, page });
+    }
+
+    private static Microsoft.Dynamics.Nav.Types.ITestPage CreateTestPageClient(object self, object objId)
+    {
+        var idProp = objId.GetType().GetProperty("ObjectNumber",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        var pageId = idProp?.GetValue(objId) is int value ? value : 0;
+        var tableId = RecordPatches.GetSourceTableIdForPage(pageId);
+        if (tableId == 0)
+            return new MockITestPage();
+
+        var metaTable = RecordPatches.GetOrBuildNCLMetaTable(tableId);
+        var recordType = RecordPatches.FindRecordType(tableId);
+        if (metaTable == null || recordType == null)
+        {
+            Console.Error.WriteLine($"[TestPage] Page {pageId}: source table {tableId} not ready; using navigation mock.");
+            return new MockITestPage();
+        }
+
+        var ctor = recordType.GetConstructors()
+            .FirstOrDefault(c => c.GetParameters().Length == 6);
+        if (ctor == null)
+        {
+            Console.Error.WriteLine($"[TestPage] Page {pageId}: Record{tableId} has no 6-arg constructor; using navigation mock.");
+            return new MockITestPage();
+        }
+
+        var record = (NavRecord)ctor.Invoke(new object?[]
+        {
+            self, metaTable, false, null, null, SecurityFiltering.Ignored
+        });
+        return new LiveNavTestPage(record, RecordPatches.GetPageControlFieldMap(pageId));
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static NCLMetaTable NavTestPageBase_GetMetaTable(object self)
+    {
+        var pageIdField = FindInstanceField(self.GetType(), "pageUnderTestId");
+        var objId = pageIdField?.GetValue(self);
+        var idProp = objId?.GetType().GetProperty("ObjectNumber",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        var pageId = idProp?.GetValue(objId) is int value ? value : 0;
+        var tableId = RecordPatches.GetSourceTableIdForPage(pageId);
+        if (tableId == 0)
+            throw new InvalidOperationException($"TestPage {pageId} has no parsed SourceTable.");
+
+        return RecordPatches.GetOrBuildNCLMetaTable(tableId)
+            ?? throw new InvalidOperationException($"TestPage {pageId} SourceTable {tableId} has no NCLMetaTable.");
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool NavTestPageBase_ALGoToRecord(
+        object self,
+        Microsoft.Dynamics.Nav.Types.DataError errorLevel,
+        NavRecord record)
+    {
+        var pageId = GetPageIdFromTestPage(self);
+        var tableId = RecordPatches.GetSourceTableIdForPage(pageId);
+        var pkFields = RecordPatches.GetPrimaryKeyFieldIdsForTable(tableId);
+        if (pkFields.Length == 0) return false;
+
+        var testPageField = FindInstanceField(self.GetType(), "testPage");
+        if (testPageField?.GetValue(self) is not Microsoft.Dynamics.Nav.Types.ITestPage testPage)
+            return false;
+
+        var values = pkFields.Select(fieldNo => (object)record.GetFieldValue(fieldNo)).ToArray();
+        return testPage.FindRowFromTableFieldValues(pkFields, values, forward: true);
+    }
+
+    private static int GetPageIdFromTestPage(object self)
+    {
+        var pageIdField = FindInstanceField(self.GetType(), "pageUnderTestId");
+        var objId = pageIdField?.GetValue(self);
+        var idProp = objId?.GetType().GetProperty("ObjectNumber",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        return idProp?.GetValue(objId) is int value ? value : 0;
+    }
+
+    private static FieldInfo? FindInstanceField(Type type, string name)
+    {
+        for (var t = type; t != null; t = t.BaseType)
+        {
+            var field = t.GetField(name, BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
+            if (field != null) return field;
+        }
+        return null;
     }
 
     // Cache: form ID → generated Form Type.

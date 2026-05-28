@@ -1233,6 +1233,20 @@ public static partial class BcRuntime
                 Hook(createTarget, nameof(NavTestPageHandle_CreateTarget), "NavTestPageHandle.CreateTarget");
         }
 
+        var testPageBaseType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavTestPageBase");
+        if (testPageBaseType != null)
+        {
+            var getMetaTable = testPageBaseType.GetMethod("GetMetaTable",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            if (getMetaTable != null)
+                Hook(getMetaTable, nameof(NavTestPageBase_GetMetaTable), "NavTestPageBase.GetMetaTable");
+
+            var goToRecord = testPageBaseType.GetMethod("ALGoToRecord",
+                BindingFlags.Public | BindingFlags.Instance);
+            if (goToRecord != null)
+                Hook(goToRecord, nameof(NavTestPageBase_ALGoToRecord), "NavTestPageBase.ALGoToRecord");
+        }
+
         // NavFormHandle.CreateTarget — same shape as NavCodeunitHandle: bypass the
         // NCLMetadata.GetMetaFormById lookup and construct Form{ID} from loaded assemblies.
         var formHandleType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavFormHandle");

@@ -8,6 +8,7 @@
 // which is a default struct on a hand-built skeleton; those getters aren't
 // reached by the metadata lookup path itself.
 using System.Text.RegularExpressions;
+using Microsoft.Dynamics.Nav.CodeAnalysis;
 
 namespace AlRunnerV2.Patches;
 
@@ -19,6 +20,14 @@ public static partial class RecordPatches
 
     private static readonly Regex RxPageExtension = new(
         @"\bpageextension\s+(\d+)\s+(?:""([^""]+)""|([A-Za-z_]\w*))\s+extends\s+(?:""([^""]+)""|([A-Za-z_]\w*))[^{]*?\{",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex RxPageSourceTable = new(
+        @"\bSourceTable\s*=\s*(?:""([^""]+)""|([A-Za-z_]\w*))\s*;",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex RxPageField = new(
+        @"\bfield\s*\(\s*(?:""([^""]+)""|([A-Za-z_]\w*))\s*;\s*Rec\.(?:""([^""]+)""|([A-Za-z_]\w*))",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private static void ParseAllPageSources()
@@ -38,7 +47,10 @@ public static partial class RecordPatches
         {
             if (!int.TryParse(m.Groups[1].Value, out int id)) continue;
             var name = m.Groups[2].Success ? m.Groups[2].Value : m.Groups[3].Value;
-            _parsedPages[id] = new ParsedPage(id, name, IsExtension: false);
+            var pageText = SliceObjectText(text, m.Index);
+            var sourceTableName = TryReadSourceTableName(pageText);
+            _parsedPages[id] = new ParsedPage(id, name, IsExtension: false,
+                sourceTableName, ParsePageFieldBindings(id, pageText));
         }
 
         // `pageextension N "Name" extends "Base"` — pageextensions
@@ -46,9 +58,82 @@ public static partial class RecordPatches
         {
             if (!int.TryParse(m.Groups[1].Value, out int id)) continue;
             var name = m.Groups[2].Success ? m.Groups[2].Value : m.Groups[3].Value;
-            _parsedPages[id] = new ParsedPage(id, name, IsExtension: true);
+            _parsedPages[id] = new ParsedPage(id, name, IsExtension: true,
+                SourceTableName: string.Empty, ControlIdToFieldName: new Dictionary<int, string>());
         }
     }
+
+    internal static int GetSourceTableIdForPage(int pageId)
+    {
+        if (!_parsedPages.TryGetValue(pageId, out var page) || string.IsNullOrWhiteSpace(page.SourceTableName))
+            return 0;
+
+        foreach (var table in _parsedTables.Values)
+            if (NamesEqual(table.TableName, page.SourceTableName))
+                return table.TableId;
+
+        return 0;
+    }
+
+    internal static IReadOnlyDictionary<int, int> GetPageControlFieldMap(int pageId)
+    {
+        if (!_parsedPages.TryGetValue(pageId, out var page) || string.IsNullOrWhiteSpace(page.SourceTableName))
+            return new Dictionary<int, int>();
+
+        var table = _parsedTables.Values.FirstOrDefault(t => NamesEqual(t.TableName, page.SourceTableName));
+        if (table == null) return new Dictionary<int, int>();
+
+        var result = new Dictionary<int, int>();
+        foreach (var kvp in page.ControlIdToFieldName)
+        {
+            var field = table.Fields.FirstOrDefault(f => NamesEqual(f.FieldName, kvp.Value));
+            if (field != null) result[kvp.Key] = field.FieldId;
+        }
+        return result;
+    }
+
+    internal static int[] GetPrimaryKeyFieldIdsForTable(int tableId)
+        => _parsedTables.TryGetValue(tableId, out var table)
+            ? table.PkFieldIds.ToArray()
+            : Array.Empty<int>();
+
+    private static string TryReadSourceTableName(string pageText)
+    {
+        var m = RxPageSourceTable.Match(pageText);
+        if (!m.Success) return string.Empty;
+        return m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value;
+    }
+
+    private static Dictionary<int, string> ParsePageFieldBindings(int pageId, string pageText)
+    {
+        var result = new Dictionary<int, string>();
+
+        foreach (Match m in RxPageField.Matches(pageText))
+        {
+            var controlName = m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value;
+            var fieldName = m.Groups[3].Success ? m.Groups[3].Value : m.Groups[4].Value;
+            result[IdSpace.GetMemberId(pageId, controlName)] = fieldName;
+        }
+
+        return result;
+    }
+
+    private static string SliceObjectText(string text, int start)
+    {
+        var nextObject = Regex.Match(text[(start + 1)..], @"\b(page|pageextension|table|tableextension|codeunit|report|xmlport|query)\s+\d+\b",
+            RegexOptions.IgnoreCase);
+        return nextObject.Success
+            ? text.Substring(start, nextObject.Index + 1)
+            : text[start..];
+    }
+
+    private static bool NamesEqual(string left, string right)
+        => string.Equals(left.Replace(" ", ""), right.Replace(" ", ""), StringComparison.OrdinalIgnoreCase);
 }
 
-internal record ParsedPage(int Id, string Name, bool IsExtension);
+internal record ParsedPage(
+    int Id,
+    string Name,
+    bool IsExtension,
+    string SourceTableName,
+    IReadOnlyDictionary<int, string> ControlIdToFieldName);
