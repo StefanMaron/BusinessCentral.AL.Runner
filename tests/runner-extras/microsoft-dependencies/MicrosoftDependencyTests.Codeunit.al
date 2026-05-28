@@ -81,4 +81,28 @@ codeunit 61001 "Microsoft Dependency Tests"
         Assert.IsTrue(not RecRef.FindFirst(), 'RecordRef.FindFirst must respect FieldRef.SetRange on dependency tables.');
     end;
 
+    [Test]
+    procedure BaseAppCodeunit_NoSeries_GetNextNo_Completes()
+    var
+        NoSeries: Record "No. Series";
+        NoSeriesLine: Record "No. Series Line";
+        NoSeriesCodeunit: Codeunit "No. Series";
+        NextNo: Code[20];
+    begin
+        NoSeries.Code := 'ALR-GUID';
+        NoSeries."Default Nos." := true;
+        NoSeries.Insert();
+
+        NoSeriesLine."Series Code" := NoSeries.Code;
+        NoSeriesLine."Line No." := 10000;
+        NoSeriesLine."Starting No." := 'ALG0000001';
+        NoSeriesLine."Ending No." := 'ALG9999999';
+        NoSeriesLine."Increment-by No." := 1;
+        NoSeriesLine.Insert(true);
+
+        NextNo := NoSeriesCodeunit.GetNextNo(NoSeries.Code);
+
+        Assert.IsTrue(NextNo <> '', 'No. Series codeunit should return a number.');
+    end;
+
 }

@@ -9,11 +9,11 @@ namespace AlRunnerV2.Patches;
 
 internal static class BcAppSymbolCache
 {
-    private const int CacheVersion = 1;
+    private const int CacheVersion = 2;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
 
     internal sealed record AppSymbols(List<ParsedTable> Tables, List<EnumSymbol> Enums);
-    internal sealed record EnumSymbol(int Id, string Name, List<string> Options, List<int> Indexes);
+    internal sealed record EnumSymbol(int Id, string Name, List<string> Options, List<int> Indexes, List<List<int>> Implementations);
 
     private sealed record CachePayload(long Length, long LastWriteUtcTicks, List<ParsedTable> Tables, List<EnumSymbol> Enums);
 
@@ -200,6 +200,7 @@ internal static class BcAppSymbolCache
 
         var options = new List<string>();
         var indexes = new List<int>();
+        var implementations = new List<List<int>>();
         var nextOrdinal = 0;
         foreach (var value in values.EnumerateArray())
         {
@@ -211,9 +212,20 @@ internal static class BcAppSymbolCache
                 : nextOrdinal;
             options.Add(optionName);
             indexes.Add(ordinal);
+            var implementationIds = new List<int>();
+            var props = SymbolProperties(value);
+            if (props.TryGetValue("Implementation", out var implementationText))
+            {
+                foreach (var part in implementationText.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    if (int.TryParse(part, out var implementationId))
+                        implementationIds.Add(implementationId);
+                }
+            }
+            implementations.Add(implementationIds);
             nextOrdinal = ordinal + 1;
         }
-        return new EnumSymbol(id, name, options, indexes);
+        return new EnumSymbol(id, name, options, indexes, implementations);
     }
 
     private static Dictionary<string, string> SymbolProperties(JsonElement element)

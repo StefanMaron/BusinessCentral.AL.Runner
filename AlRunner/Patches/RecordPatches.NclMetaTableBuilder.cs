@@ -821,7 +821,7 @@ public static partial class RecordPatches
                 if (!byName.TryGetValue(pair.Value, out var entry)) continue;
                 try
                 {
-                    var meta = new AlEnumOptionMetadata(entry.Name, entry.Id, entry.Options, entry.Indexes);
+                    var meta = new AlEnumOptionMetadata(entry.Name, entry.Id, entry.Options, entry.Indexes, entry.Implementations);
                     AlRunnerV2.Infrastructure.FieldPoke.SetInstance(_fNCLMetaFieldFieldOptionMetadata, nclField, meta);
                 }
                 catch (Exception ex)

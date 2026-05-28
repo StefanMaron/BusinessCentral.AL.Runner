@@ -1728,7 +1728,8 @@ static string ComputeAlCacheKey(
     //    unreachable garbage in <cacheDir>; the new key MISSes and rebuilds.
     //    v2: added <key>.enum-registry.json sidecar so cache HIT replays the
     //    AlEnumMetadataRegistry side-effects that emit would have set up.
-    WriteLine("schema:v2");
+    //    v3: enum sidecar includes interface implementation codeunit ids.
+    WriteLine("schema:v3");
 
     // 1. Runner assembly fingerprint — any rewriter / polyfill / patch change
     //    in the runner forces a cache miss.
@@ -1787,7 +1788,7 @@ static string? CommonDirectory(IReadOnlyList<string> files)
 
 // Sidecar: serialize AlEnumMetadataRegistry to <key>.enum-registry.json so
 // cache HIT can replay the side-effect that emit would have populated.
-// Schema (v2): { "enums": [ { "id": int, "name": string, "options": [string], "indexes": [int] }, ... ] }
+// Schema (v3): { "enums": [ { "id": int, "name": string, "options": [string], "indexes": [int], "implementations": [[int]] }, ... ] }
 static int SaveEnumRegistrySidecar(string path)
 {
     var entries = AlEnumMetadataRegistry.Snapshot();
@@ -1799,6 +1800,7 @@ static int SaveEnumRegistrySidecar(string path)
             name = e.Name,
             options = e.Options,
             indexes = e.Indexes,
+            implementations = e.Implementations,
         }).ToArray()
     };
     var json = System.Text.Json.JsonSerializer.Serialize(dto, new System.Text.Json.JsonSerializerOptions
@@ -1831,7 +1833,28 @@ static int LoadEnumRegistrySidecar(string path)
         var idxs = new int[idxEl.GetArrayLength()];
         int ii = 0;
         foreach (var x in idxEl.EnumerateArray()) idxs[ii++] = x.GetInt32();
-        AlEnumMetadataRegistry.Register(id, name, opts, idxs);
+        int[][] implementations = Array.Empty<int[]>();
+        if (e.TryGetProperty("implementations", out var implEl)
+            && implEl.ValueKind == System.Text.Json.JsonValueKind.Array
+            && implEl.GetArrayLength() == opts.Length)
+        {
+            implementations = new int[implEl.GetArrayLength()][];
+            int vi = 0;
+            foreach (var valueImplEl in implEl.EnumerateArray())
+            {
+                if (valueImplEl.ValueKind != System.Text.Json.JsonValueKind.Array)
+                {
+                    implementations = Array.Empty<int[]>();
+                    break;
+                }
+                var ids = new int[valueImplEl.GetArrayLength()];
+                int idi = 0;
+                foreach (var implId in valueImplEl.EnumerateArray())
+                    ids[idi++] = implId.GetInt32();
+                implementations[vi++] = ids;
+            }
+        }
+        AlEnumMetadataRegistry.Register(id, name, opts, idxs, implementations);
         count++;
     }
     return count;

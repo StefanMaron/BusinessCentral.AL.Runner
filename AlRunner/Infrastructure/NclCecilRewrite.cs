@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 62;
+    private const int CACHE_VERSION = 63;
 
     private static readonly Dictionary<byte, System.Reflection.Emit.OpCode> SingleByteOpCodes = typeof(System.Reflection.Emit.OpCodes)
         .GetFields(BindingFlags.Public | BindingFlags.Static)
@@ -111,6 +111,44 @@ public static class NclCecilRewrite
             {
                 Console.Error.WriteLine("[Cecil] WARN: NCLEnumMetadata.Create(int) not found — dependency enum metadata may NRE");
             }
+        }
+
+        // ALCompiler.ToInterface(ITreeObject, NavOption, int) relies on the
+        // internal NCLOptionMetadata.GetImplementationCodeunitId virtual. Our
+        // dependency enum metadata replacement cannot override that internal
+        // member from the runner assembly, so route the small dispatcher through
+        // a public helper that reads the same implementation ids from the symbol
+        // registry.
+        {
+            var alCompiler = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.ALCompiler");
+            if (alCompiler == null)
+                throw new InvalidOperationException("ALCompiler type not found — Ncl shape changed");
+            var toInterface = alCompiler.Methods.FirstOrDefault(m =>
+                m.Name == "ToInterface"
+                && m.IsStatic
+                && m.Parameters.Count == 3
+                && m.Parameters[0].ParameterType.FullName == "Microsoft.Dynamics.Nav.Runtime.ITreeObject"
+                && m.Parameters[1].ParameterType.FullName == "Microsoft.Dynamics.Nav.Runtime.NavOption"
+                && m.Parameters[2].ParameterType.FullName == "System.Int32"
+                && m.ReturnType.FullName == "Microsoft.Dynamics.Nav.Runtime.NavInterfaceHandle");
+            var helper = typeof(AlRunnerV2.BcRuntime).GetMethod(
+                nameof(AlRunnerV2.BcRuntime.ALCompiler_ToInterfaceFromOption),
+                BindingFlags.Public | BindingFlags.Static);
+            if (toInterface == null || helper == null)
+                throw new InvalidOperationException("ALCompiler.ToInterface(ITreeObject,NavOption,int) helper rewrite target not found — Ncl shape changed");
+            var helperRef = asm.MainModule.ImportReference(helper);
+            var body = toInterface.Body;
+            body.Instructions.Clear();
+            body.Variables.Clear();
+            body.ExceptionHandlers.Clear();
+            var il = body.GetILProcessor();
+            il.Append(il.Create(OpCodes.Ldarg_0));
+            il.Append(il.Create(OpCodes.Ldarg_1));
+            il.Append(il.Create(OpCodes.Ldarg_2));
+            il.Append(il.Create(OpCodes.Call, helperRef));
+            il.Append(il.Create(OpCodes.Ret));
+            body.MaxStackSize = 3;
+            Console.Error.WriteLine("[Cecil] Replaced ALCompiler.ToInterface(NavOption) → BcRuntime.ALCompiler_ToInterfaceFromOption");
         }
 
         // NavReport.SaveAsAsync → throw OOS (report-rendering is out-of-scope)

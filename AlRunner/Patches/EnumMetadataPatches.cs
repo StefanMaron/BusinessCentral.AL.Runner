@@ -29,9 +29,13 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using AlRunnerV2.Patches;
 using NCLOptionMetadata = Microsoft.Dynamics.Nav.Runtime.NCLOptionMetadata;
+using NavCodeunitHandle = Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle;
+using NavInterfaceHandle = Microsoft.Dynamics.Nav.Runtime.NavInterfaceHandle;
 using NavList = Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavText>;
 using NavListInt = Microsoft.Dynamics.Nav.Runtime.NavList<int>;
+using NavOption = Microsoft.Dynamics.Nav.Runtime.NavOption;
 using NavText = Microsoft.Dynamics.Nav.Runtime.NavText;
+using ITreeObject = Microsoft.Dynamics.Nav.Runtime.ITreeObject;
 
 namespace AlRunnerV2;
 
@@ -42,16 +46,19 @@ namespace AlRunnerV2;
 /// </summary>
 public static class AlEnumMetadataRegistry
 {
-    public sealed record Entry(int Id, string Name, string[] Options, int[] Indexes);
+    public sealed record Entry(int Id, string Name, string[] Options, int[] Indexes, int[][] Implementations);
 
     private static readonly ConcurrentDictionary<int, Entry> _byId = new();
 
     /// <summary>Last-writer-wins; bundle-wide enum-id collisions are quarantined upstream.</summary>
-    public static void Register(int id, string name, string[] options, int[] indexes)
+    public static void Register(int id, string name, string[] options, int[] indexes, int[][]? implementations = null)
     {
         if (options == null || indexes == null) return;
         if (options.Length != indexes.Length) return;
-        _byId[id] = new Entry(id, name ?? string.Empty, options, indexes);
+        implementations ??= Array.Empty<int[]>();
+        if (implementations.Length != options.Length)
+            implementations = Array.Empty<int[]>();
+        _byId[id] = new Entry(id, name ?? string.Empty, options, indexes, implementations);
     }
 
     public static bool TryGet(int id, out Entry entry) => _byId.TryGetValue(id, out entry!);
@@ -66,7 +73,12 @@ public static class AlEnumMetadataRegistry
         try
         {
             foreach (var enumSymbol in BcAppSymbolCache.Get(appPath).Enums)
-                Register(enumSymbol.Id, enumSymbol.Name, enumSymbol.Options.ToArray(), enumSymbol.Indexes.ToArray());
+                Register(
+                    enumSymbol.Id,
+                    enumSymbol.Name,
+                    enumSymbol.Options.ToArray(),
+                    enumSymbol.Indexes.ToArray(),
+                    enumSymbol.Implementations.Select(i => i.ToArray()).ToArray());
         }
         catch (Exception ex)
         {
@@ -94,15 +106,19 @@ internal sealed class AlEnumOptionMetadata : NCLOptionMetadata
     private readonly NavList _names;
     private readonly NavListInt _ordinals;
     private readonly int[] _ordinalValues;
+    private readonly int[][] _implementations;
     private readonly string _name;
     private readonly int _id;
 
-    public AlEnumOptionMetadata(string name, int id, string[] options, int[] indexes)
+    public AlEnumOptionMetadata(string name, int id, string[] options, int[] indexes, int[][]? implementations = null)
         : base(JoinOptions(options))
     {
         _name = name;
         _id = id;
         _ordinalValues = indexes;
+        _implementations = implementations != null && implementations.Length == options.Length
+            ? implementations
+            : Array.Empty<int[]>();
         _optionNames = options;
         _names = (NavList)NavListCtorOfNavText.Invoke(
             new object[] { options.Select(o => NavText.Create(o ?? string.Empty)).ToList(), /*asReadOnly*/ true });
@@ -180,6 +196,20 @@ internal sealed class AlEnumOptionMetadata : NCLOptionMetadata
 
     private readonly string[] _optionNames;
 
+    public int GetImplementationCodeunitIdPublic(int ordinalValue, int interfaceIndex)
+    {
+        if (interfaceIndex < 0 || _implementations.Length == 0)
+            return -1;
+        for (int i = 0; i < _ordinalValues.Length; i++)
+        {
+            if (_ordinalValues[i] != ordinalValue)
+                continue;
+            var implementations = _implementations[i];
+            return interfaceIndex < implementations.Length ? implementations[interfaceIndex] : -1;
+        }
+        return -1;
+    }
+
     // -- reflection cache for NavList<T> internal ctor --
     private static readonly ConstructorInfo NavListCtorOfNavText = ResolveNavListCtor<NavText>();
     private static readonly ConstructorInfo NavListCtorOfInt     = ResolveNavListCtor<int>();
@@ -231,7 +261,7 @@ public static partial class BcRuntime
         {
             try
             {
-                var meta = new AlEnumOptionMetadata(e.Name, e.Id, e.Options, e.Indexes);
+                var meta = new AlEnumOptionMetadata(e.Name, e.Id, e.Options, e.Indexes, e.Implementations);
                 return _alEnumCache.GetOrAdd(id, meta);
             }
             catch
@@ -242,5 +272,44 @@ public static partial class BcRuntime
             }
         }
         return NCLOptionMetadata.Default;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static NavInterfaceHandle ALCompiler_ToInterfaceFromOption(ITreeObject parentOfResult, NavOption optionValue, int interfaceIndex)
+    {
+        var implementationCodeunitId = optionValue.NavOptionMetadata is AlEnumOptionMetadata alMetadata
+            ? alMetadata.GetImplementationCodeunitIdPublic(optionValue.Value, interfaceIndex)
+            : TryGetImplementationCodeunitIdViaReflection(optionValue.NavOptionMetadata, optionValue.Value, interfaceIndex);
+        if (implementationCodeunitId < 0)
+            throw new InvalidOperationException(
+                $"Unable to cast enum '{optionValue.NavOptionMetadata.OptionString}' value '{optionValue}' to interface at index {interfaceIndex}.");
+
+        var handle = new NavCodeunitHandle(parentOfResult, implementationCodeunitId);
+        try
+        {
+            return new NavInterfaceHandle(parentOfResult, handle.Target);
+        }
+        finally
+        {
+            handle.Dispose();
+        }
+    }
+
+    private static readonly MethodInfo? GetImplementationCodeunitIdMethod = typeof(NCLOptionMetadata).GetMethod(
+        "GetImplementationCodeunitId",
+        BindingFlags.Instance | BindingFlags.NonPublic);
+
+    private static int TryGetImplementationCodeunitIdViaReflection(NCLOptionMetadata metadata, int ordinalValue, int interfaceIndex)
+    {
+        if (GetImplementationCodeunitIdMethod == null)
+            return -1;
+        try
+        {
+            return (int)(GetImplementationCodeunitIdMethod.Invoke(metadata, new object[] { ordinalValue, interfaceIndex }) ?? -1);
+        }
+        catch
+        {
+            return -1;
+        }
     }
 }
