@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 70;
+    private const int CACHE_VERSION = 72;
 
     private static readonly Dictionary<byte, System.Reflection.Emit.OpCode> SingleByteOpCodes = typeof(System.Reflection.Emit.OpCodes)
         .GetFields(BindingFlags.Public | BindingFlags.Static)
@@ -3442,6 +3442,24 @@ public static class NclCecilRewrite
                 ReplaceBodyConst(m, ConstResult.Void);
             }
         }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // NavCodeunitHandle.CreateTarget / NavRecordHandle.CreateTarget — NOT migrated
+        // (Cecil form regresses normal mode). Documented for the next batch.
+        //
+        // These are the dominant NO_JMPHOOK blocker (1383+ tests) — CreateTarget()
+        // chains through NCLMetadata.GetMetaApplicationObject → NavMetadataNotFoundException
+        // because the skeleton has no NCLMetadata; the JmpHook bypasses it by reflectively
+        // constructing the target object from the loaded test assembly. A straightforward
+        // Cecil `ldarg.0; call helper; ret` rewrite of NavCodeunitHandle.CreateTarget was
+        // implemented and REVERTED: it lifts NO_JMPHOOK from 0→137 pass but REGRESSES
+        // normal mode — Codeunit60183.Foreach_Dictionary_Keys_IteratesAll (and others)
+        // drop into a 60s-watchdog hang (same safepoint-free-spin signature as the
+        // AssertError/ProcessException coexistence hang). The helper reflectively invokes
+        // the codeunit/record ctor (re-entering AL execution); with the Cecil body AND the
+        // JmpHook both active on CreateTarget the re-entry spins. Un-migratable here until
+        // the spin is root-caused (perf/gdb-on-core) or a non-re-entrant surgical form is
+        // found. The normal-mode gate is sacred — left JmpHook'd. See REPORT.
 
         var outStream = new MemoryStream();
         asm.Write(outStream);
