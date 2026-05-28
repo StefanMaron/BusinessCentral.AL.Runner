@@ -3213,6 +3213,112 @@ public static class NclCecilRewrite
         return modifiedBytes;
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Reusable Cecil primitives (extracted for the JmpHook→Cecil migration).
+    //
+    // These promote idioms that were previously inlined throughout RewriteNcl into
+    // named helpers so each migrated hook is a one-liner. Behavior-preserving: they
+    // emit exactly the IL the inline blocks did (see RecordLink ReplaceWithStaticHelper
+    // at the precedent above, and the ALDatabase no-op / IsEventSubscribed const blocks).
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Locate a method by (typeFullName, name, optional paramCount) with a loud guard.
+    /// A null result means Ncl's shape changed and we must NOT commit a silently-inert
+    /// rewrite — so it throws rather than returning null.
+    /// </summary>
+    private static MethodDefinition FindNclMethod(
+        ModuleDefinition module, string typeFullName, string name, int? paramCount = null)
+    {
+        var type = module.GetType(typeFullName)
+            ?? throw new InvalidOperationException(
+                $"[Cecil] type {typeFullName} not found — Ncl shape changed; do not commit");
+        var m = type.Methods.FirstOrDefault(x =>
+            x.Name == name && (paramCount == null || x.Parameters.Count == paramCount) && x.HasBody);
+        return m ?? throw new InvalidOperationException(
+            $"[Cecil] method {typeFullName}.{name}"
+            + (paramCount == null ? "" : $"({paramCount})")
+            + " not found — Ncl shape changed; do not commit");
+    }
+
+    /// <summary>Same as FindNclMethod but returns null (no throw) when the type/method is absent.</summary>
+    private static MethodDefinition? TryFindNclMethod(
+        ModuleDefinition module, string typeFullName, string name, int? paramCount = null)
+    {
+        var type = module.GetType(typeFullName);
+        return type?.Methods.FirstOrDefault(x =>
+            x.Name == name && (paramCount == null || x.Parameters.Count == paramCount) && x.HasBody);
+    }
+
+    /// <summary>
+    /// Clear <paramref name="target"/>'s body and emit `ldarg.0..N; call BcRuntime.helper; ret`,
+    /// forwarding every IL argument (incl. `this` for instance methods) to the static helper.
+    /// The helper's return value (if any) is left on the stack as the method result.
+    /// Generalises the inline RecordLink ReplaceWithStaticHelper.
+    /// </summary>
+    private static void ReplaceBodyWithHelper(
+        ModuleDefinition module, MethodDefinition target, string bcRuntimeHelperName)
+    {
+        var helperMi = typeof(AlRunnerV2.BcRuntime).GetMethod(
+            bcRuntimeHelperName, BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                $"[Cecil] BcRuntime.{bcRuntimeHelperName} not found");
+        var helperRef = module.ImportReference(helperMi);
+        // Total IL arg slots: declared params + 1 for `this` on an instance method.
+        int argCount = target.Parameters.Count + (target.HasThis ? 1 : 0);
+        var body = target.Body;
+        body.Instructions.Clear();
+        body.Variables.Clear();
+        body.ExceptionHandlers.Clear();
+        var il = body.GetILProcessor();
+        for (int i = 0; i < argCount; i++)
+            il.Append(il.Create(OpCodes.Ldarg, i));
+        il.Append(il.Create(OpCodes.Call, helperRef));
+        il.Append(il.Create(OpCodes.Ret));
+        body.MaxStackSize = Math.Max(1, argCount);
+        Console.Error.WriteLine($"[Cecil] Replaced {target.FullName} → BcRuntime.{bcRuntimeHelperName}");
+    }
+
+    /// <summary>
+    /// Replace <paramref name="target"/>'s body with a constant/no-op return. For a void
+    /// method (incl. cctor) emits just `ret` — the unused args stay as ignored slots.
+    /// For a value return, emits the appropriate const push then `ret`.
+    /// Models the existing IsEventSubscribed / ALHasTableConnection / ALCommit-no-op blocks.
+    /// </summary>
+    private static void ReplaceBodyConst(MethodDefinition target, ConstResult result)
+    {
+        var body = target.Body;
+        body.Instructions.Clear();
+        body.Variables.Clear();
+        body.ExceptionHandlers.Clear();
+        var il = body.GetILProcessor();
+        switch (result)
+        {
+            case ConstResult.Void:
+                il.Append(il.Create(OpCodes.Ret));
+                body.MaxStackSize = 0;
+                break;
+            case ConstResult.True:
+                il.Append(il.Create(OpCodes.Ldc_I4_1));
+                il.Append(il.Create(OpCodes.Ret));
+                body.MaxStackSize = 1;
+                break;
+            case ConstResult.False:
+                il.Append(il.Create(OpCodes.Ldc_I4_0));
+                il.Append(il.Create(OpCodes.Ret));
+                body.MaxStackSize = 1;
+                break;
+            case ConstResult.Null:
+                il.Append(il.Create(OpCodes.Ldnull));
+                il.Append(il.Create(OpCodes.Ret));
+                body.MaxStackSize = 1;
+                break;
+        }
+        Console.Error.WriteLine($"[Cecil] Replaced {target.FullName} → const {result}");
+    }
+
+    private enum ConstResult { Void, True, False, Null }
+
     private static void ValidateRewrittenAssembly(byte[] bytes)
     {
         using var peReader = new PEReader(ImmutableArray.Create(bytes));
