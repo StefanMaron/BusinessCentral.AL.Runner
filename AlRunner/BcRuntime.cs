@@ -2155,6 +2155,39 @@ public static partial class BcRuntime
                 BindingFlags.NonPublic | BindingFlags.Instance)?.GetGetMethod(true);
             if (targetGetter != null)
                 Hook(targetGetter, nameof(NavRecordRef_get_Target), "NavRecordRef.get_Target");
+            var tCompilationTarget = AppDomain.CurrentDomain.GetAssemblies()
+                .First(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Types")
+                .GetType("Microsoft.Dynamics.Nav.Types.CompilationTarget");
+            if (tCompilationTarget != null)
+            {
+                var checkIsOpenAllowed = navRecordRefType.GetMethod("CheckIsOpenAllowed",
+                    BindingFlags.NonPublic | BindingFlags.Instance, null,
+                    new[] { tCompilationTarget, typeof(int) }, null);
+                if (checkIsOpenAllowed != null)
+                    Hook(checkIsOpenAllowed, nameof(NoOp3), "NavRecordRef.CheckIsOpenAllowed");
+                var isOpenAllowed = navRecordRefType.GetMethod("IsOpenAllowed",
+                    BindingFlags.NonPublic | BindingFlags.Instance, null,
+                    new[] { tCompilationTarget, typeof(int) }, null);
+                if (isOpenAllowed != null)
+                    Hook(isOpenAllowed, nameof(ReturnTrue_ThreeArgs), "NavRecordRef.IsOpenAllowed");
+            }
+            foreach (var open in navRecordRefType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                .Where(m => m.Name == "ALOpen"))
+            {
+                var ps = open.GetParameters();
+                string? repl = ps.Length switch
+                {
+                    1 when ps[0].ParameterType == typeof(int) => nameof(NavRecordRef_ALOpen_Int),
+                    2 when ps[0].ParameterType == typeof(int) && ps[1].ParameterType == typeof(bool) => nameof(NavRecordRef_ALOpen_IntBool),
+                    3 when ps[0].ParameterType == typeof(int) && ps[1].ParameterType == typeof(bool) && ps[2].ParameterType == typeof(string) => nameof(NavRecordRef_ALOpen_IntBoolCompany),
+                    2 when ps[1].ParameterType == typeof(int) => nameof(NavRecordRef_ALOpen_TargetInt),
+                    3 when ps[1].ParameterType == typeof(int) && ps[2].ParameterType == typeof(bool) => nameof(NavRecordRef_ALOpen_TargetIntBool),
+                    4 when ps[1].ParameterType == typeof(int) && ps[2].ParameterType == typeof(bool) && ps[3].ParameterType == typeof(string) => nameof(NavRecordRef_ALOpen_TargetIntBoolCompany),
+                    _ => null
+                };
+                if (repl != null)
+                    Hook(open, repl, $"NavRecordRef.ALOpen/{ps.Length}");
+            }
         }
 
         // NavStringValue.CompareTo(NavStringValue) — real impl uses NavCurrentThread.Session.Culture

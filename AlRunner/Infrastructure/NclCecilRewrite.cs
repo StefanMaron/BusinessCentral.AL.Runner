@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 59;
+    private const int CACHE_VERSION = 60;
 
     private static readonly Dictionary<byte, System.Reflection.Emit.OpCode> SingleByteOpCodes = typeof(System.Reflection.Emit.OpCodes)
         .GetFields(BindingFlags.Public | BindingFlags.Static)
@@ -76,6 +76,42 @@ public static class NclCecilRewrite
         if (rewroteCount == 0)
             throw new InvalidOperationException("IsEventSubscribed method not found");
         Console.Error.WriteLine($"[Cecil] Rewrote {rewroteCount} IsEventSubscribed overload(s) → return true");
+
+        // NCLEnumMetadata.Create(int) — precompiled Microsoft dependency DLLs call
+        // this directly (not through BcAssembler's emitted C# helper), and the real
+        // body reaches NavGlobal.MetadataProvider/SystemTenant which is null in the
+        // runner skeleton. Route it to the same registry-backed helper used by
+        // runner-compiled code so enum construction is stable for dependency code.
+        {
+            var enumMetadataType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NCLEnumMetadata");
+            var createById = enumMetadataType?.Methods.FirstOrDefault(m =>
+                m.Name == "Create"
+                && m.IsStatic
+                && m.Parameters.Count == 1
+                && m.Parameters[0].ParameterType.FullName == "System.Int32"
+                && m.ReturnType.FullName == "Microsoft.Dynamics.Nav.Runtime.NCLOptionMetadata");
+            var helper = typeof(AlRunnerV2.BcRuntime).GetMethod(
+                nameof(AlRunnerV2.BcRuntime.NCLEnumMetadata_CreateByIdAlAware),
+                BindingFlags.Public | BindingFlags.Static);
+            if (createById != null && helper != null)
+            {
+                var helperRef = asm.MainModule.ImportReference(helper);
+                var body = createById.Body;
+                body.Instructions.Clear();
+                body.Variables.Clear();
+                body.ExceptionHandlers.Clear();
+                var il = body.GetILProcessor();
+                il.Append(il.Create(OpCodes.Ldarg_0));
+                il.Append(il.Create(OpCodes.Call, helperRef));
+                il.Append(il.Create(OpCodes.Ret));
+                body.MaxStackSize = 1;
+                Console.Error.WriteLine("[Cecil] Replaced NCLEnumMetadata.Create(int) → BcRuntime.NCLEnumMetadata_CreateByIdAlAware");
+            }
+            else
+            {
+                Console.Error.WriteLine("[Cecil] WARN: NCLEnumMetadata.Create(int) not found — dependency enum metadata may NRE");
+            }
+        }
 
         // NavReport.SaveAsAsync → throw OOS (report-rendering is out-of-scope)
         var navReportType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavReport");
@@ -3394,6 +3430,7 @@ public static class NclCecilRewrite
             Console.Error.WriteLine($"[Cecil] Cecil cache HIT (key={shortKey})");
             File.Copy(cachePath, binNclPath, overwrite: true);
             Console.Error.WriteLine($"[Cecil] Copied cached Ncl to {binNclPath}");
+            PruneCacheFiles(cacheDir, cachePath, keepNewest: 8);
             return false;
         }
 
@@ -3415,6 +3452,7 @@ public static class NclCecilRewrite
         // below so the actual load always happens in a fresh process via cache HIT.)
         File.Copy(cachePath, binNclPath, overwrite: true);
         Console.Error.WriteLine($"[Cecil] Copied rewritten Ncl to {binNclPath} ({modifiedBytes.Length} bytes)");
+        PruneCacheFiles(cacheDir, cachePath, keepNewest: 8);
         return true;
     }
 
@@ -3427,6 +3465,30 @@ public static class NclCecilRewrite
         hash.AppendData(BitConverter.GetBytes(runnerMtimeTicks));
         hash.AppendData(BitConverter.GetBytes(CACHE_VERSION));
         return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+    }
+
+    private static void PruneCacheFiles(string cacheDir, string protectedPath, int keepNewest)
+    {
+        var protectedFullPath = Path.GetFullPath(protectedPath);
+        var stale = Directory.EnumerateFiles(cacheDir, "*.dll")
+            .Select(path => new FileInfo(path))
+            .OrderByDescending(file => file.LastWriteTimeUtc)
+            .Skip(keepNewest)
+            .Where(file => !string.Equals(file.FullName, protectedFullPath, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        foreach (var file in stale)
+        {
+            try { file.Delete(); }
+            catch (IOException ex)
+            {
+                Console.Error.WriteLine($"[Cecil] WARN: failed to prune stale cache file {file.Name}: {ex.Message}");
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                Console.Error.WriteLine($"[Cecil] WARN: failed to prune stale cache file {file.Name}: {ex.Message}");
+            }
+        }
     }
 
     public static void VerifyRewriteLanded()

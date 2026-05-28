@@ -147,6 +147,36 @@ public static partial class RecordPatches
         _mCreateFromMetaTable = _tNCLMetaTable.GetMethod("CreateFromMetaTable",
             BindingFlags.NonPublic | BindingFlags.Static)!;
 
+        var getMetaTableById = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetadata")?
+            .GetMethod("GetMetaTableById", BindingFlags.Public | BindingFlags.Instance,
+                null, new[] { typeof(int), typeof(bool), typeof(int) }, null);
+        if (getMetaTableById != null)
+        {
+            var repl = typeof(RecordPatches).GetMethod(nameof(NCLMetadata_GetMetaTableById),
+                BindingFlags.Public | BindingFlags.Static)!;
+            JmpHook.Apply(getMetaTableById, repl, "NCLMetadata.GetMetaTableById(int,bool,int)");
+        }
+        var objectTypeType = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.ObjectType")!;
+        var applicationObjectIdType = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.ApplicationObjectId")!;
+        var getMetaApplicationObjectByType = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetadata")?
+            .GetMethod("GetMetaApplicationObject", BindingFlags.Public | BindingFlags.Instance,
+                null, new[] { objectTypeType, typeof(int), typeof(bool), typeof(int) }, null);
+        if (getMetaApplicationObjectByType != null)
+        {
+            var repl = typeof(RecordPatches).GetMethod(nameof(NCLMetadata_GetMetaApplicationObjectByType),
+                BindingFlags.Public | BindingFlags.Static)!;
+            JmpHook.Apply(getMetaApplicationObjectByType, repl, "NCLMetadata.GetMetaApplicationObject(ObjectType,int,bool,int)");
+        }
+        var getMetaApplicationObjectById = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetadata")?
+            .GetMethod("GetMetaApplicationObject", BindingFlags.Public | BindingFlags.Instance,
+                null, new[] { applicationObjectIdType, typeof(bool), typeof(int) }, null);
+        if (getMetaApplicationObjectById != null)
+        {
+            var repl = typeof(RecordPatches).GetMethod(nameof(NCLMetadata_GetMetaApplicationObjectById),
+                BindingFlags.Public | BindingFlags.Static)!;
+            JmpHook.Apply(getMetaApplicationObjectById, repl, "NCLMetadata.GetMetaApplicationObject(ApplicationObjectId,bool,int)");
+        }
+
         // Hook NCLMetaTable.GetFieldByNo(int extensionObjectId, int fieldNo) to fall back
         // to TryGetFieldByNo when the extension object isn't registered in our skeleton.
         _mGetFieldByNoExt = _tNCLMetaTable.GetMethod("GetFieldByNo",

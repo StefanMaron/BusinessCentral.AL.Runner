@@ -9,6 +9,9 @@
 using System.Collections;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using AlRunnerV2.Patches;
+using Microsoft.Dynamics.Nav.Runtime;
+using Microsoft.Dynamics.Nav.Types;
 
 namespace AlRunnerV2;
 
@@ -60,6 +63,48 @@ public static partial class BcRuntime
         var srr = _ctorSharedRecordRef!.Invoke(new object?[] { _skeletonSharedObjectContainer });
         _mTreeSetReferenceTarget?.Invoke(tree, new object?[] { srr });
         return srr;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void NavRecordRef_ALOpen_Int(object self, int tableNo)
+        => OpenRecordRefById(self, tableNo, isTemporary: false);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void NavRecordRef_ALOpen_IntBool(object self, int tableNo, bool isTemporary)
+        => OpenRecordRefById(self, tableNo, isTemporary);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void NavRecordRef_ALOpen_IntBoolCompany(object self, int tableNo, bool isTemporary, string companyName)
+        => OpenRecordRefById(self, tableNo, isTemporary);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void NavRecordRef_ALOpen_TargetInt(object self, CompilationTarget compilationTarget, int tableNo)
+        => OpenRecordRefById(self, tableNo, isTemporary: false);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void NavRecordRef_ALOpen_TargetIntBool(object self, CompilationTarget compilationTarget, int tableNo, bool isTemporary)
+        => OpenRecordRefById(self, tableNo, isTemporary);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void NavRecordRef_ALOpen_TargetIntBoolCompany(object self, CompilationTarget compilationTarget, int tableNo, bool isTemporary, string companyName)
+        => OpenRecordRefById(self, tableNo, isTemporary);
+
+    private static void OpenRecordRefById(object self, int tableNo, bool isTemporary)
+    {
+        var metaTable = RecordPatches.EnsureTableInMetadataCache(tableNo)
+            ?? throw new InvalidOperationException($"RecordRef.Open: no NCLMetaTable for table {tableNo}");
+        var recordType = RecordPatches.FindRecordType(tableNo)
+            ?? throw new InvalidOperationException($"RecordRef.Open: no loaded type Record{tableNo} found");
+        var ctor = recordType.GetConstructors()
+            .FirstOrDefault(c => c.GetParameters().Length == 6)
+            ?? throw new InvalidOperationException($"Record{tableNo} has no 6-arg constructor");
+        var target = NavRecordRef_get_Target(self);
+        var record = (NavRecord)ctor.Invoke(new object?[]
+        {
+            target, metaTable, isTemporary, null, null, SecurityFiltering.Ignored
+        });
+        target.GetType().GetProperty("Record", BindingFlags.Public | BindingFlags.Instance)!
+            .SetValue(target, record);
     }
 
     // NavObjectList<T>.get_Target — same Option-C shape as NavRecordRef.get_Target.

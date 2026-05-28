@@ -23,6 +23,8 @@
 using System.Collections.Concurrent;
 using System.Reflection;
 using AlRunnerV2.Infrastructure;
+using Microsoft.Dynamics.Nav.Runtime;
+using Microsoft.Dynamics.Nav.Types;
 
 namespace AlRunnerV2.Patches;
 
@@ -89,6 +91,66 @@ public static partial class RecordPatches
         // R2R inlining in session 82e7fffc).
         AlRunnerV2.Patches.EventSubscriberPatches.InjectAll(
             id => _metaTableCache.TryGetValue(id, out var m) ? m : null);
+    }
+
+    public static NCLMetaTable NCLMetadata_GetMetaTableById(object self, int tableId, bool requireCompiled, int emitVersion)
+    {
+        var meta = EnsureTableInMetadataCache(tableId);
+        if (meta != null)
+            return meta;
+
+        throw new InvalidOperationException(
+            $"NCLMetadata.GetMetaTableById: no NCLMetaTable for table {tableId} (dependency source not parsed)");
+    }
+
+    public static object NCLMetadata_GetMetaApplicationObjectByType(
+        object self, ObjectType objectType, int objectId, bool requireCompiled, int emitVersion)
+    {
+        if (objectType == ObjectType.Table)
+        {
+            var meta = EnsureTableInMetadataCache(objectId);
+            if (meta != null)
+                return meta;
+        }
+
+        throw new InvalidOperationException(
+            $"NCLMetadata.GetMetaApplicationObject: no metadata for {objectType} {objectId}");
+    }
+
+    public static object NCLMetadata_GetMetaApplicationObjectById(
+        object self, ApplicationObjectId objectId, bool requireCompiled, int emitVersion)
+        => NCLMetadata_GetMetaApplicationObjectByType(
+            self, objectId.ObjectType, objectId.ObjectNumber, requireCompiled, emitVersion);
+
+    internal static NCLMetaTable? EnsureTableInMetadataCache(int tableId)
+    {
+        var meta = (NCLMetaTable?)_metaTableCache.GetOrAdd(tableId, BuildNCLMetaTable);
+        if (meta == null)
+            return null;
+
+        var skeleton = BcRuntime.SkeletonNCLMetadata;
+        if (skeleton == null)
+            return meta;
+
+        EnsureCachePopulatorReflection();
+        if (_fNCLMetadataCacheEntries == null || _mCreateWithBase == null)
+            return meta;
+
+        var arr = _fNCLMetadataCacheEntries.GetValue(skeleton) as Array;
+        const int objectTypeTable = 1;
+        if (arr == null || arr.Length <= objectTypeTable)
+            return meta;
+
+        var slotDict = arr.GetValue(objectTypeTable);
+        if (slotDict is not System.Collections.IDictionary dict || dict.Contains(tableId))
+            return meta;
+
+        if (_fNCLMetaAppObjMetadataLoaded != null)
+            FieldPoke.SetInstance(_fNCLMetaAppObjMetadataLoaded, meta, true);
+        var entry = _mCreateWithBase.Invoke(null, new object?[] { meta });
+        if (entry != null)
+            dict[tableId] = entry;
+        return meta;
     }
 
     /// <summary>

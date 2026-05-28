@@ -56,6 +56,7 @@ public static partial class RecordPatches
             if (!_bcAppPaths.Contains(appPath, StringComparer.OrdinalIgnoreCase))
             {
                 _bcAppPaths.Add(appPath);
+                AlRunnerV2.AlEnumMetadataRegistry.RegisterFromAppPath(appPath);
                 // Invalidate the index so newly-added .app gets picked up on next miss.
                 _bcTableIndex = null;
             }

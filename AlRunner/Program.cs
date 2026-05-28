@@ -1069,11 +1069,14 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
     // Topological sort of impl paths (deps before dependents).
     var sortedImpls = TopologicalSort(implPaths.ToList(), idByKey);
 
-    // Create a fresh per-run workspace cache dir.
+    // Create a deterministic workspace cache dir. The synthetic package contents
+    // are derived from the impl AL sources + dependencies, so a stable key lets
+    // repeated runs reuse the same handoff instead of leaking one folder per run.
+    var workspaceKey = ComputeSourceWorkspaceKey(sortedImpls, idByKey);
     var wsDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         ".cache", "al-runner", "workspace-deps",
-        Guid.NewGuid().ToString("N")[..12]);
+        workspaceKey[..12]);
     Directory.CreateDirectory(wsDir);
 
     // Extended packageCacheDirs = workspace dir first (wins over stale cached .app),
@@ -1094,6 +1097,11 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
         var safeVer = implId.Version.ToString().Replace('.', '_');
         var appFileName = $"{safePublisher}_{safeName}_{safeVer}.app";
         var outPath = Path.Combine(wsDir, appFileName);
+        var symBase = Path.Combine(wsDir, $"{safePublisher}_{safeName}_{safeVer}");
+        var symbolsPath = symBase + ".symbols.json";
+        var depsPath = symBase + ".symbols.deps.json";
+        var hadApp = File.Exists(outPath);
+        var hadSymbols = File.Exists(symbolsPath) && File.Exists(depsPath);
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
@@ -1114,38 +1122,40 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
         //     AppId == _currentAppId (set per bundle) and also skips the impl's own
         //     AppId from _resolvedDeps, so the impl's own symbols are invisible to
         //     its own compile.
-        var symBase = Path.Combine(wsDir, $"{safePublisher}_{safeName}_{safeVer}");
-        try
+        if (!hadSymbols)
         {
-            // Resolve the impl's OWN dependency closure (declared + the implicit
-            // Application/System roots from app.json) transitively, exactly like the
-            // main per-bundle compile does. This replaces the former all-.app
-            // SetPackageCacheFallback, which scanned EVERY package in the caches —
-            // 134 apps / 353MB in the RS Extensions dir → ~215s per impl. The
-            // Application closure pulls only BaseApp / System App / Business
-            // Foundation (≈5 apps), so the symbol compile is fast and identical in
-            // coverage (an app that uses BaseApp via namespace depends, implicitly,
-            // on Application — never on the whole marketplace).
-            // ScopeCurrentAppIdentity sets _currentAppId to the impl so
-            // GetSharedReferences excludes the impl from its own specs (self-ref guard).
-            var implResolver = new DependencyResolver(packageCacheDirs);
-            var implDeps = implResolver.Resolve(implId.Dependencies);
-            // Use the ORIGINAL package cache dirs (not extendedCaches which includes wsDir)
-            // for the symbol compile — wsDir has no valid .app yet at this point anyway.
-            BcCompiler.SetResolvedDeps(implDeps, packageCacheDirs);
-            using (BcCompiler.ScopeCurrentAppIdentity(implId.AppId, implId.Publisher, implId.Version))
-                new BcCompiler().EmitDepSymbols(new[] { implPath }, implId.Name, implId.AppId, implId.Publisher, implId.Version, symBase + ".symbols.json");
-            DepsSidecarWriter.Write(
-                symBase + ".symbols.deps.json", implId.Publisher, implId.Name, implId.Version, implId.AppId,
-                implId.Dependencies.Where(d => !d.Optional)
-                    .Select(d => new DepsSidecarWriter.DepEntry(d.Publisher, d.Name, d.Version, d.AppId)));
-        }
-        catch (Exception ex)
-        {
-            // Loud failure per repo rule — the dependent bundle cannot compile
-            // against this impl without its symbols, so don't continue silently.
-            throw new InvalidOperationException(
-                $"[layered] Failed to emit symbols for impl '{implId.Name}' from {implPath}: {ex.Message}", ex);
+            try
+            {
+                // Resolve the impl's OWN dependency closure (declared + the implicit
+                // Application/System roots from app.json) transitively, exactly like the
+                // main per-bundle compile does. This replaces the former all-.app
+                // SetPackageCacheFallback, which scanned EVERY package in the caches —
+                // 134 apps / 353MB in the RS Extensions dir → ~215s per impl. The
+                // Application closure pulls only BaseApp / System App / Business
+                // Foundation (≈5 apps), so the symbol compile is fast and identical in
+                // coverage (an app that uses BaseApp via namespace depends, implicitly,
+                // on Application — never on the whole marketplace).
+                // ScopeCurrentAppIdentity sets _currentAppId to the impl so
+                // GetSharedReferences excludes the impl from its own specs (self-ref guard).
+                var implResolver = new DependencyResolver(packageCacheDirs);
+                var implDeps = implResolver.Resolve(implId.Dependencies);
+                // Use the ORIGINAL package cache dirs (not extendedCaches which includes wsDir)
+                // for the symbol compile — wsDir has no valid .app yet at this point anyway.
+                BcCompiler.SetResolvedDeps(implDeps, packageCacheDirs);
+                using (BcCompiler.ScopeCurrentAppIdentity(implId.AppId, implId.Publisher, implId.Version))
+                    new BcCompiler().EmitDepSymbols(new[] { implPath }, implId.Name, implId.AppId, implId.Publisher, implId.Version, symbolsPath);
+                DepsSidecarWriter.Write(
+                    depsPath, implId.Publisher, implId.Name, implId.Version, implId.AppId,
+                    implId.Dependencies.Where(d => !d.Optional)
+                        .Select(d => new DepsSidecarWriter.DepEntry(d.Publisher, d.Name, d.Version, d.AppId)));
+            }
+            catch (Exception ex)
+            {
+                // Loud failure per repo rule — the dependent bundle cannot compile
+                // against this impl without its symbols, so don't continue silently.
+                throw new InvalidOperationException(
+                    $"[layered] Failed to emit symbols for impl '{implId.Name}' from {implPath}: {ex.Message}", ex);
+            }
         }
 
         // ── Step 2: emit the .app — runtime/identity package ONLY, NO embedded
@@ -1162,21 +1172,25 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
         // chained JsonSymbolReferenceLoader over the workspace dir — exactly the
         // mechanism BuildSiblingSourceDeps uses for the (green) corpus internalsVisibleTo
         // fixture. So we pass null here and let the sidecar carry the symbols.
-        try
+        if (!hadApp)
         {
-            AlRunnerV2.Infrastructure.InProcessAppPackager.EmitAppPackageToFile(
-                implPath, implId, outPath, symbolReferenceJson: null);
-        }
-        catch (Exception ex)
-        {
-            // Loud failure per repo rule — never silently continue.
-            throw new InvalidOperationException(
-                $"[layered] Failed to emit impl package '{implId.Name}' from {implPath}: {ex.Message}", ex);
+            try
+            {
+                AlRunnerV2.Infrastructure.InProcessAppPackager.EmitAppPackageToFile(
+                    implPath, implId, outPath, symbolReferenceJson: null);
+            }
+            catch (Exception ex)
+            {
+                // Loud failure per repo rule — never silently continue.
+                throw new InvalidOperationException(
+                    $"[layered] Failed to emit impl package '{implId.Name}' from {implPath}: {ex.Message}", ex);
+            }
         }
 
         sw.Stop();
         var info = new FileInfo(outPath);
-        Console.WriteLine($"[layered] emitted {implId.Name} {implId.Version} → {appFileName} (src .app + sidecar symbols, {info.Length} bytes, {sw.ElapsedMilliseconds}ms)");
+        var cacheVerb = hadApp && hadSymbols ? "cache HIT" : "WROTE";
+        Console.WriteLine($"[layered] {cacheVerb} {implId.Name} {implId.Version} → {appFileName} (src .app + sidecar symbols, {info.Length} bytes, {sw.ElapsedMilliseconds}ms)");
         emitted++;
     }
 
@@ -1320,7 +1334,8 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
         AlRunnerV2.Patches.RecordPatches.AddSourceDir(dir);
         var appFileName = $"{Sanitize(sid.Publisher)}_{Sanitize(sid.Name)}_{sid.Version.ToString().Replace('.', '_')}.app";
         var outPath = Path.Combine(wsDir, appFileName);
-        if (!File.Exists(outPath))
+        var hadApp = File.Exists(outPath);
+        if (!hadApp)
         {
             try
             {
@@ -1356,7 +1371,8 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
         var symBase = Path.Combine(wsDir, $"{Sanitize(sid.Publisher)}_{Sanitize(sid.Name)}_{sid.Version.ToString().Replace('.', '_')}");
         var symbolsPath = symBase + ".symbols.json";
         var depsPath = symBase + ".symbols.deps.json";
-        if (!File.Exists(symbolsPath) || !File.Exists(depsPath))
+        var hadSymbols = File.Exists(symbolsPath) && File.Exists(depsPath);
+        if (!hadSymbols)
         {
             try
             {
@@ -1375,7 +1391,8 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
         }
 
         var info = new FileInfo(outPath);
-        Console.WriteLine($"[source-dep] ready {sid.Name} {sid.Version} → {appFileName} (+symbols, {info.Length} bytes)");
+        var cacheVerb = hadApp && hadSymbols ? "cache HIT" : "WROTE";
+        Console.WriteLine($"[source-dep] {cacheVerb} {sid.Name} {sid.Version} → {appFileName} (+symbols, {info.Length} bytes)");
         emitted++;
     }
     if (emitted == 0) return packageCacheDirs;
@@ -1715,24 +1732,47 @@ static string ComputeAlCacheKey(
 
     foreach (var d in ordered) WriteLine($"dep:{d}");
 
-    // Enumerate every .al file in stable order, hash each.
+    // Enumerate every .al file in stable order, hash each. The key uses paths
+    // relative to the common source root, not absolute paths, so invoking the
+    // same bundle from a different current directory does not force a rebuild.
     var alFiles = alFolders
         .Where(Directory.Exists)
-        .SelectMany(d => Directory.EnumerateFiles(d, "*.al", SearchOption.AllDirectories))
+        .SelectMany(d => Directory.EnumerateFiles(Path.GetFullPath(d), "*.al", SearchOption.AllDirectories))
         .Distinct()
         .OrderBy(p => p, StringComparer.Ordinal)
         .ToList();
+    var commonRoot = CommonDirectory(alFiles);
     foreach (var f in alFiles)
     {
         byte[] hash;
         using (var fs = File.OpenRead(f))
             hash = sha.ComputeHash(fs);
-        WriteLine($"al:{f}:{Convert.ToHexString(hash)}");
+        var rel = commonRoot == null ? Path.GetFileName(f) : Path.GetRelativePath(commonRoot, f);
+        WriteLine($"al:{rel}:{Convert.ToHexString(hash)}");
     }
 
     ms.Position = 0;
     var keyBytes = sha.ComputeHash(ms);
     return Convert.ToHexString(keyBytes).ToLowerInvariant();
+}
+
+static string? CommonDirectory(IReadOnlyList<string> files)
+{
+    if (files.Count == 0) return null;
+    var common = Path.GetDirectoryName(Path.GetFullPath(files[0]));
+    if (common == null) return null;
+    foreach (var file in files.Skip(1))
+    {
+        var dir = Path.GetDirectoryName(Path.GetFullPath(file));
+        while (dir != null && common != null
+            && !dir.StartsWith(common + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(dir, common, StringComparison.OrdinalIgnoreCase))
+        {
+            common = Path.GetDirectoryName(common);
+        }
+        if (common == null) return null;
+    }
+    return common;
 }
 
 // Sidecar: serialize AlEnumMetadataRegistry to <key>.enum-registry.json so
