@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 66;
+    private const int CACHE_VERSION = 69;
 
     private static readonly Dictionary<byte, System.Reflection.Emit.OpCode> SingleByteOpCodes = typeof(System.Reflection.Emit.OpCodes)
         .GetFields(BindingFlags.Public | BindingFlags.Static)
@@ -3337,6 +3337,86 @@ public static class NclCecilRewrite
             }
         }
 
+        // ─────────────────────────────────────────────────────────────────────
+        // NavMethodScope cluster — JmpHook→Cecil migration (Batch 2).
+        //
+        // NavMethodScope is the per-AL-frame execution unit. Under NO_JMPHOOK=1 the
+        // real ctor (and its siblings) run against the skeleton session and NRE — the
+        // ctor's `parent` arg is null, throwing ArgumentNullException, which fails every
+        // corpus test. These replacements ALREADY exist as BcRuntime statics (installed
+        // by JmpHook today). We forward the bodies to them via Cecil, runtime-agnostically.
+        //
+        // The ctor replacement deliberately does NOT call base (it sets base fields via
+        // FieldPoke), so `body → call helper; ret` with no base ctor call is correct and
+        // matches the JmpHook semantics exactly. Coexists idempotently with the JmpHook.
+        // See AlRunner/Patches/MethodScopePatches.cs for the helper bodies.
+        // ─────────────────────────────────────────────────────────────────────
+        {
+            var nclMod = asm.MainModule;
+            const string MsType = "Microsoft.Dynamics.Nav.Runtime.NavMethodScope";
+            const string AlMsType = "Microsoft.Dynamics.Nav.Runtime.ALMethodScope";
+
+            // 1) NavMethodScope..ctor(NavApplicationObjectBase, MethodScopeFlags, bool)
+            //    → BcRuntime.NavMethodScopeCtorReplacement(self, applicationObject, object flags, bool).
+            //    The `flags` arg is the VALUE-TYPE MethodScopeFlags but the helper declares it as
+            //    `object` — ReplaceBodyWithHelper now emits `box MethodScopeFlags`. Match the
+            //    specific 3-arg ctor (param0 = NavApplicationObjectBase, param2 = bool) the same
+            //    way the JmpHook does, so we don't grab a different 3-arg ctor by paramCount alone.
+            {
+                var msTypeDef = nclMod.GetType(MsType)
+                    ?? throw new InvalidOperationException(
+                        $"[Cecil] type {MsType} not found — Ncl shape changed; do not commit");
+                var ctor3 = msTypeDef.Methods.FirstOrDefault(m =>
+                    m.IsConstructor && m.HasBody && m.Parameters.Count == 3
+                    && m.Parameters[0].ParameterType.FullName == "Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase"
+                    && m.Parameters[2].ParameterType.FullName == "System.Boolean")
+                    ?? throw new InvalidOperationException(
+                        $"[Cecil] NavMethodScope 3-arg ctor (NavApplicationObjectBase,MethodScopeFlags,bool) not found — Ncl shape changed; do not commit");
+                ReplaceBodyWithHelper(nclMod, ctor3, nameof(AlRunnerV2.BcRuntime.NavMethodScopeCtorReplacement));
+            }
+
+            // 2) NavMethodScope.Dispose(bool) → BcRuntime.NavMethodScope_Dispose(object, bool).
+            //    Paired recursion-counter balance with the ctor. `this` is a reference type;
+            //    `bool disposing` matches the helper's `bool` param exactly — no boxing.
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, MsType, "Dispose", 1),
+                nameof(AlRunnerV2.BcRuntime.NavMethodScope_Dispose));
+
+            // NOTE — NavMethodScope.AssertError(Action) and NavMethodScope.ProcessException(Exception)
+            // are DELIBERATELY NOT migrated to Cecil in this batch. Their JmpHook→helper redirect
+            // is the only safe form: Cecil-rewriting either body (so it calls the same BcRuntime
+            // helper) regresses NORMAL mode — Codeunit60190.Codeunit_ErrorPropagation_ThroughProcedures
+            // (and every other error-propagation / asserterror-nesting test) drops into a
+            // safepoint-free 100%-CPU spin (60s watchdog timeout). Bisected: enabling either the
+            // AssertError or the ProcessException Cecil rewrite (with all other members enabled or
+            // not) reproduces the hang in isolation; with both skipped the test passes in 121ms.
+            // The spin is in JIT/R2R-reachable code (1 thread pegged at 99% R, empty wchan), the
+            // same hard-to-symbolize class documented in MEMORY (dotnet-stack hangs on it). Root-
+            // causing it needs perf/gdb-on-core, out of scope for this loop. Left JmpHook'd; the
+            // normal-mode gate is sacred. Consequence: `asserterror`-based tests still fail under
+            // AL_RUNNER_NO_JMPHOOK=1 — those two hooks are classified un-migratable until the spin
+            // is understood. See REPORT.
+
+            // 3) ALMethodScope.AssignScopeId() → BcRuntime.ALMethodScope_AssignScopeId(object) (no-op).
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, AlMsType, "AssignScopeId", 0),
+                nameof(AlRunnerV2.BcRuntime.ALMethodScope_AssignScopeId));
+
+            // 4) NavMethodScope.ThrowStackOverflow — stack-depth check uses a non-NavMethodScope
+            //    sentinel and false-positives in the headless harness. JmpHook routes it to a
+            //    NoOp; the Cecil equivalent is a plain void return (ignored args). It may be
+            //    instance or static; ReplaceBodyConst(Void) emits `ret` either way.
+            {
+                var tso = TryFindNclMethod(nclMod, MsType, "ThrowStackOverflow")
+                    ?? throw new InvalidOperationException(
+                        "[Cecil] NavMethodScope.ThrowStackOverflow not found — Ncl shape changed; do not commit");
+                if (tso.ReturnType.FullName != "System.Void")
+                    throw new InvalidOperationException(
+                        $"[Cecil] NavMethodScope.ThrowStackOverflow returns {tso.ReturnType.FullName}, expected void — Ncl shape changed; do not commit");
+                ReplaceBodyConst(tso, ConstResult.Void);
+            }
+        }
+
         var outStream = new MemoryStream();
         asm.Write(outStream);
         var modifiedBytes = outStream.ToArray();
@@ -3399,6 +3479,7 @@ public static class NclCecilRewrite
             ?? throw new InvalidOperationException(
                 $"[Cecil] BcRuntime.{bcRuntimeHelperName} not found");
         var helperRef = module.ImportReference(helperMi);
+        var helperParams = helperMi.GetParameters();
         // Total IL arg slots: declared params + 1 for `this` on an instance method.
         int argCount = target.Parameters.Count + (target.HasThis ? 1 : 0);
         var body = target.Body;
@@ -3407,7 +3488,36 @@ public static class NclCecilRewrite
         body.ExceptionHandlers.Clear();
         var il = body.GetILProcessor();
         for (int i = 0; i < argCount; i++)
+        {
             il.Append(il.Create(OpCodes.Ldarg, i));
+
+            // Per-arg boxing: when the target's IL arg is a VALUE TYPE but the helper's
+            // corresponding parameter is a reference type (e.g. `object`), the raw `ldarg`
+            // leaves an unboxed value on the stack — invalid IL. Emit `box <valueType>`.
+            //
+            // The IL arg at index i maps to:
+            //   instance method: i==0 → `this` (always the declaring type, a reference type
+            //                    for NavMethodScope etc., so never boxed); i>=1 → param i-1.
+            //   static method:   i    → param i.
+            int paramIdx = target.HasThis ? i - 1 : i;
+            if (paramIdx < 0) continue; // `this` slot — declaring type is a reference type here.
+
+            var targetParamType = target.Parameters[paramIdx].ParameterType;
+            if (!targetParamType.IsValueType) continue; // already a reference — no box needed.
+
+            // Helper param type (System.Type). The helper is a STATIC method whose first
+            // parameter is the receiver (`self`) for an instance target — so the helper
+            // param for target IL-arg slot i is helperParams[i] (NOT helperParams[paramIdx]).
+            // i==0 (`this`) is handled above (paramIdx<0 → continue), so here i>=1 maps to
+            // helperParams[i] for an instance method, or helperParams[i] for a static method
+            // too — in both cases the helper param index equals the IL-arg slot index i.
+            // If it's NOT a value type (object / interface / class), the value-type arg must
+            // be boxed to satisfy the reference parameter.
+            var helperParamType = i < helperParams.Length ? helperParams[i].ParameterType : null;
+            bool helperWantsReference = helperParamType != null && !helperParamType.IsValueType;
+            if (helperWantsReference)
+                il.Append(il.Create(OpCodes.Box, targetParamType));
+        }
         il.Append(il.Create(OpCodes.Call, helperRef));
         il.Append(il.Create(OpCodes.Ret));
         body.MaxStackSize = Math.Max(1, argCount);
