@@ -217,6 +217,12 @@ public sealed class BcAssembler
         // false (not-found) for any other GUID, mirroring what real BC would return when an
         // unknown id is queried with errorLevel=DataError.Ignore.
         ("ALNavApp.ALGetModuleInfo(", "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALNavApp_GetModuleInfo("),
+        // NavApp.GetCallerModuleInfo has the same service-tier dependency as
+        // GetCurrentModuleInfo in this in-process runner.
+        ("ALNavApp.ALGetCallerModuleInfo(", "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALNavApp_GetCallerModuleInfo("),
+        // Database.LockTimeout get/set calls reach NavTenant.Database even though the corpus only
+        // needs the API to be callable. Redirect property access to a runner-local value.
+        ("ALDatabase.ALLockTimeout", "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALDatabase_ALLockTimeout"),
         // ALSystemString.ALCopyStr — throws "outside of the permitted range" when fromPos < 1.
         ("ALSystemString.ALCopyStr(",      "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALCopyStr("),
         // ALSystemString.ALIncStr — returns "" for non-numeric strings.
@@ -570,6 +576,17 @@ namespace AlRunnerV2Shim
                 appId, name, publisher, navVersion, navVersion, emptyDeps, appId);
             return true;
         }
+
+        public static bool ALNavApp_GetCallerModuleInfo(
+            Microsoft.Dynamics.Nav.Types.DataError errorLevel,
+            Microsoft.Dynamics.Nav.Runtime.ByRef<Microsoft.Dynamics.Nav.Runtime.NavModuleInfo> info)
+        {
+            ALNavApp_GetCurrentModuleInfo(errorLevel, info);
+            return true;
+        }
+
+        public static bool ALDatabase_ALLockTimeout { get; set; }
+        public static int ALDatabase_ALLockTimeoutDuration { get; set; }
 
         // ─── Text function polyfills ──────────────────────────────────────────────────
 
