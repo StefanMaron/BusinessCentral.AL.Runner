@@ -53,6 +53,14 @@ public static class AlCallStackCapture
 
     public static string? GetCaptured() => _captured;
 
+    public static string? CaptureCurrent()
+    {
+        _captured = null;
+        try { DoCapture(); }
+        catch { return null; }
+        return _captured;
+    }
+
     /// <summary>
     /// Call before each test to arm capture on this thread and clear any
     /// previously captured stack.

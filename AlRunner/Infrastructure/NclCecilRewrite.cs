@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 60;
+    private const int CACHE_VERSION = 62;
 
     private static readonly Dictionary<byte, System.Reflection.Emit.OpCode> SingleByteOpCodes = typeof(System.Reflection.Emit.OpCodes)
         .GetFields(BindingFlags.Public | BindingFlags.Static)
@@ -1574,6 +1574,46 @@ public static class NclCecilRewrite
             il.Append(il.Create(OpCodes.Ret));
             body.MaxStackSize = 4;
             Console.Error.WriteLine("[Cecil] Replaced RecordImplementation.CalcFieldsAsync(DataError,NCLMetaField[],bool) → FlowFieldPatches.RecordImpl_CalcFieldsAsync_3");
+        }
+
+        // ── RecordImplementation.InternalFindRecordWithoutCheckingValuesAsync ─────
+        // This async ValueTask method is reached heavily by precompiled MS test
+        // libraries (e.g. Library - Purchase.CreateVendor → FindPaymentMethod).
+        // The old JmpHook registration does not fire reliably under R2R, leaving
+        // the real body to wander into service-tier data/diagnostic plumbing and
+        // hang in headless real-world test runs. Rewrite the body to the same
+        // in-memory DataAccess.TryGetByPrimaryKeyAsync helper used by the hook.
+        {
+            var recImpl = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.RecordImplementation")
+                ?? throw new InvalidOperationException("RecordImplementation type not found");
+            var internalFind = recImpl.Methods.FirstOrDefault(m =>
+                m.Name == "InternalFindRecordWithoutCheckingValuesAsync"
+                && m.Parameters.Count == 4)
+                ?? throw new InvalidOperationException("RecordImplementation.InternalFindRecordWithoutCheckingValuesAsync not found");
+
+            var helperMi = typeof(AlRunnerV2.BcRuntime).GetMethod(
+                nameof(AlRunnerV2.BcRuntime.RecordImpl_InternalFindRecordWithoutCheckingValuesAsync),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("BcRuntime.RecordImpl_InternalFindRecordWithoutCheckingValuesAsync not found");
+            var helperRef = asm.MainModule.ImportReference(helperMi);
+
+            var asyncAttr = internalFind.CustomAttributes.FirstOrDefault(ca => ca.AttributeType.Name == "AsyncStateMachineAttribute");
+            if (asyncAttr != null) internalFind.CustomAttributes.Remove(asyncAttr);
+
+            var body = internalFind.Body;
+            body.Instructions.Clear();
+            body.Variables.Clear();
+            body.ExceptionHandlers.Clear();
+            var il = body.GetILProcessor();
+            il.Append(il.Create(OpCodes.Ldarg_0));
+            il.Append(il.Create(OpCodes.Ldarg_1));
+            il.Append(il.Create(OpCodes.Ldarg_2));
+            il.Append(il.Create(OpCodes.Ldarg_3));
+            il.Append(il.Create(OpCodes.Ldarg_S, internalFind.Parameters[3]));
+            il.Append(il.Create(OpCodes.Call, helperRef));
+            il.Append(il.Create(OpCodes.Ret));
+            body.MaxStackSize = 5;
+            Console.Error.WriteLine("[Cecil] Replaced RecordImplementation.InternalFindRecordWithoutCheckingValuesAsync → BcRuntime.RecordImpl_InternalFindRecordWithoutCheckingValuesAsync");
         }
 
         // ── DataAccessSource.GetDataAccessForTable(NCLMetaTable, bool) ──────────────

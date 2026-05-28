@@ -572,9 +572,9 @@ public static partial class BcRuntime
                 _fRecordImplementationMutableRecordBuffer?.SetValue(self, recBuffer);
             }
             if (found) return new System.Threading.Tasks.ValueTask<bool>(true);
-            // Not-found path: TrapError → false; ThrowError → throw.
-            if ((int)errorLevel == 1) return new System.Threading.Tasks.ValueTask<bool>(false);
-            throw new InvalidOperationException("Record not found (skeleton find).");
+            // Internal find reports presence only; public AL APIs decide whether a
+            // not-found result should become an AL error for their specific surface.
+            return new System.Threading.Tasks.ValueTask<bool>(false);
         }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {

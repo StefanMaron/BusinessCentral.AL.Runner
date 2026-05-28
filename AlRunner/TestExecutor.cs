@@ -25,6 +25,8 @@ public sealed record TestResult(string Codeunit, string Method, TestOutcome Outc
 
 public sealed class TestExecutor
 {
+    private const int DefaultTestTimeoutSeconds = 60;
+
     public TestIsolation Isolation { get; set; } = TestIsolation.Codeunit;
 
     /// <summary>
@@ -68,6 +70,7 @@ public sealed class TestExecutor
                 AlRunnerV2.Patches.RecordPatches.ResetPerTestState();
 
             object? instance;
+            PerfTrace.Log($"TestExecutor.Instantiate START {t.Name}");
             try { instance = InstantiateCodeunit(t); }
             catch (Exception ex)
             {
@@ -75,13 +78,17 @@ public sealed class TestExecutor
                     Unwrap(ex).Message, ex.ToString(), TimeSpan.Zero));
                 continue;
             }
+            PerfTrace.Log($"TestExecutor.Instantiate END {t.Name}");
             if (instance == null) continue;
 
             foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Instance))
             {
                 if (!IsTestMethod(m)) continue;
                 if (filter != null && !MethodMatchesFilter(t.Name, m.Name, filter)) continue;
-                results.Add(RunOne(t.Name, m, instance));
+                var result = RunOne(t.Name, m, instance);
+                results.Add(result);
+                if (IsTimeout(result))
+                    return results;
             }
         }
         totalSw.Stop();
@@ -141,6 +148,7 @@ public sealed class TestExecutor
     private TestResult RunOne(string codeunit, MethodInfo m, object instance)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
+        PerfTrace.Log($"TestExecutor.RunOne START {codeunit}.{m.Name}");
         // Per-test reset only when isolation == Test. For Codeunit / Disabled the
         // reset (if any) happens at codeunit boundaries instead.
         if (Isolation == TestIsolation.Test)
@@ -153,12 +161,27 @@ public sealed class TestExecutor
             if (args == null)
                 return new TestResult(codeunit, m.Name, TestOutcome.Error,
                     $"unsupported test signature ({m.GetParameters().Length} params)", null, sw.Elapsed);
-            m.Invoke(instance, args);
+            var timeout = TestTimeout();
+            var invokeTask = Task.Run(() => m.Invoke(instance, args));
+            bool completed;
+            try { completed = invokeTask.Wait(timeout); }
+            catch (AggregateException) { completed = true; }
+            if (!completed)
+            {
+                PerfTrace.Log($"TestExecutor.RunOne TIMEOUT {codeunit}.{m.Name} {sw.ElapsedMilliseconds}ms");
+                var alStack = AlRunnerV2.Infrastructure.AlCallStackCapture.CaptureCurrent();
+                return new TestResult(codeunit, m.Name, TestOutcome.Error,
+                    $"TIMEOUT after {(int)timeout.TotalSeconds}s", null, sw.Elapsed, alStack);
+            }
+            if (invokeTask.IsFaulted)
+                invokeTask.GetAwaiter().GetResult();
+            PerfTrace.Log($"TestExecutor.RunOne PASS {codeunit}.{m.Name} {sw.ElapsedMilliseconds}ms");
             return new TestResult(codeunit, m.Name, TestOutcome.Pass, null, null, sw.Elapsed);
         }
         catch (TargetInvocationException tex)
         {
             var inner = Unwrap(tex);
+            PerfTrace.Log($"TestExecutor.RunOne FAIL {codeunit}.{m.Name} {sw.ElapsedMilliseconds}ms {inner.GetType().Name}: {inner.Message}");
             var alStack = AlRunnerV2.Infrastructure.AlCallStackCapture.GetCaptured();
             // BC's Assert.* throws specific exception types for test failures.
             // We can't classify Pass/Fail vs Error perfectly without knowing all of them,
@@ -168,11 +191,25 @@ public sealed class TestExecutor
         }
         catch (Exception ex)
         {
+            PerfTrace.Log($"TestExecutor.RunOne ERROR {codeunit}.{m.Name} {sw.ElapsedMilliseconds}ms {ex.GetType().Name}: {ex.Message}");
             var alStack = AlRunnerV2.Infrastructure.AlCallStackCapture.GetCaptured();
             return new TestResult(codeunit, m.Name, TestOutcome.Error,
                 ex.Message, ex.ToString(), sw.Elapsed, alStack);
         }
     }
+
+    private static TimeSpan TestTimeout()
+    {
+        if (int.TryParse(Environment.GetEnvironmentVariable("AL_RUNNER_TEST_TIMEOUT_SEC"), out var seconds)
+            && seconds > 0)
+            return TimeSpan.FromSeconds(seconds);
+        return TimeSpan.FromSeconds(DefaultTestTimeoutSeconds);
+    }
+
+    private static bool IsTimeout(TestResult result)
+        => result.Outcome == TestOutcome.Error
+           && result.Message != null
+           && result.Message.StartsWith("TIMEOUT after ", StringComparison.Ordinal);
 
     private static Exception Unwrap(Exception ex)
     {
