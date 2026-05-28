@@ -88,6 +88,15 @@
   <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
     <PackageReference Include="System.Diagnostics.EventLog" Version="8.0.1" />
     <PackageReference Include="System.Configuration.ConfigurationManager" Version="8.0.1" />
+    <!-- BC28 is a .NET 8 product (Server.runtimeconfig.json tfm=net8.0) but ships a
+         net8-targeted build of System.Text.Json 10 in its Service dir, and its
+         Types.dll binds System.Text.Json, Version=10.0.0.0. The net8 shared
+         framework only provides STJ 8, so BC's bind fails unless we deploy STJ 10
+         app-local (registered in deps.json, which overrides the framework copy).
+         This is what lets us run BC28 on its real runtime instead of net10, where
+         BCL drift (e.g. BitArray m_array→_array/int[]→byte[]) breaks BC's
+         UnsafeAccessor/precode assumptions. -->
+    <PackageReference Include="System.Text.Json" Version="10.0.0" />
   </ItemGroup>
   <ItemGroup Condition="'$(TargetFramework)' == 'net9.0'">
     <PackageReference Include="System.Diagnostics.EventLog" Version="9.0.4" />

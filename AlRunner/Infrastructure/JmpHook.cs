@@ -37,9 +37,16 @@ internal static class JmpHook
         try { Console.Error.WriteLine(line); Console.Error.Flush(); } catch { }
     }
 
+    // DIAGNOSTIC: AL_RUNNER_NO_JMPHOOK=1 turns every JmpHook into a no-op so we can
+    // A/B whether a hang/regression comes from the JmpHook layer (runtime-native
+    // entry-point overwrite, runtime-version-sensitive) vs the Cecil IL-rewrite layer.
+    private static readonly bool _disabled =
+        Environment.GetEnvironmentVariable("AL_RUNNER_NO_JMPHOOK") == "1";
+
     public static void Apply(MethodBase original, MethodInfo replacement, string name)
     {
         LastAttempt = name;
+        if (_disabled) { if (_trace) TraceLine($"[JmpHook] SKIP (disabled) {name}"); return; }
         if (_trace) TraceLine($"[JmpHook] APPLY BEGIN {name}");
         RuntimeHelpers.PrepareMethod(original.MethodHandle);
         RuntimeHelpers.PrepareMethod(replacement.MethodHandle);
