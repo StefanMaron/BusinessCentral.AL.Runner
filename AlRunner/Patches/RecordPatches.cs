@@ -92,6 +92,13 @@ public static partial class RecordPatches
     // Parsed tableextension fields: base-table-name (lowercased) → list of extra fields.
     private static readonly Dictionary<string, List<ParsedField>> _parsedExtensionFields = new();
 
+    // Parsed tableextension object ids: base-table-name (lowercased) → tableextension object
+    // ids extending it, in AL declaration order (= the order BC registers them, which the
+    // trigger pipeline preserves). Used to instantiate the emitted TableExtension{id} CLR
+    // types and register them on each record (record-level triggers + field-validate handler
+    // dispatch). See RecordPatches.CreateObjectInstance.cs / WireFieldTriggerHandlers.
+    internal static readonly Dictionary<string, List<int>> _extensionIdsByBaseTable = new();
+
     // Set to true once Register() has been called.
     private static bool _registered;
 
@@ -110,6 +117,7 @@ public static partial class RecordPatches
         _recordTypeCache.Clear();
         _parsedTables.Clear();
         _parsedExtensionFields.Clear();
+        _extensionIdsByBaseTable.Clear();
         _parsedPages.Clear();
         _parsedReports.Clear();
         _parsedReportExtensions.Clear();
@@ -752,8 +760,15 @@ public static partial class RecordPatches
             throw new InvalidOperationException($"Record{id} has no 6-arg constructor");
 
         // Construct Record{ID}(parent, metaTable, isTemporary, sharedTable, companyName, securityFiltering)
-        return (NavRecord)ctor.Invoke(new object?[] { self, metaTable, isTemp, null, null,
+        var rec = (NavRecord)ctor.Invoke(new object?[] { self, metaTable, isTemp, null, null,
             SecurityFiltering.Ignored });
+
+        // Register any tableextensions on this (primary) record instance so the extension's
+        // record-level triggers and field-validate triggers dispatch. CreateObjectInstance
+        // handles the xRec/OldRecord and subtable instances; this is the path the test's own
+        // `Rec: Record "…"` variable comes through, which would otherwise have no extensions.
+        RegisterParsedTableExtensions(rec, id);
+        return rec;
     }
 
     /// <summary>

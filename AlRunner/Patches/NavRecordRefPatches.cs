@@ -103,6 +103,10 @@ public static partial class BcRuntime
         {
             target, metaTable, isTemporary, null, null, SecurityFiltering.Ignored
         });
+        // Register tableextensions so the record's extension triggers (incl. the field
+        // OnBefore/OnAfterValidate handlers fired through FieldRef.Validate) dispatch to a
+        // real extension instance instead of falling back to a cast of the base record.
+        RecordPatches.RegisterParsedTableExtensions(record, tableNo);
         // SharedRecordRef.Record is a non-public-accessor property on the headless
         // build, so include NonPublic in the lookup (Public-only returns null → NRE).
         var recordProp = target.GetType().GetProperty("Record",

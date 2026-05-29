@@ -248,6 +248,16 @@ public static partial class RecordPatches
                 _parsedExtensionFields[key] = fields;
             else
                 existing.AddRange(fields);
+
+            // Record the extension object id so its emitted TableExtension{extId} CLR type
+            // can be instantiated and registered on each record of the base table — this is
+            // what makes the extension's record-level triggers (OnInsert/OnModify/OnDelete/
+            // OnRename) and field-validate triggers fire. Preserve declaration order and
+            // de-dup (the same extension file is scanned from multiple source dirs).
+            if (!_extensionIdsByBaseTable.TryGetValue(key, out var extIds))
+                _extensionIdsByBaseTable[key] = extIds = new List<int>();
+            if (!extIds.Contains(extId))
+                extIds.Add(extId);
         }
     }
 

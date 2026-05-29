@@ -558,6 +558,9 @@ public static partial class RecordPatches
     private static FieldInfo? _fEventTriggerDataValueBacking;
     private static FieldInfo? _fValidateHandlerBacking;
     private static FieldInfo? _fLookupHandlerBacking;
+    private static PropertyInfo? _pOnBeforeValidateHandlers;
+    private static PropertyInfo? _pOnAfterValidateHandlers;
+    private static Type? _tFieldTriggerHandlerListClosed;
 
     private static void EnsureFieldTriggerReflection()
     {
@@ -577,7 +580,18 @@ public static partial class RecordPatches
                 BindingFlags.NonPublic | BindingFlags.Instance);
             _fLookupHandlerBacking = _tEventTriggerData.GetField("<LookupHandler>k__BackingField",
                 BindingFlags.NonPublic | BindingFlags.Instance);
+            // List<FieldTriggerHandler<NavApplicationObjectBase>> handler lists for the
+            // tableextension OnBeforeValidate / OnAfterValidate field triggers (NavRecord's
+            // ValidateFieldAsync runs beforeHandlers, then the base OnValidate, then afterHandlers).
+            _pOnBeforeValidateHandlers = _tEventTriggerData.GetProperty("OnBeforeValidateHandlers",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            _pOnAfterValidateHandlers = _tEventTriggerData.GetProperty("OnAfterValidateHandlers",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
         }
+        var navAobj = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase");
+        if (_tFieldTriggerHandler1 != null && navAobj != null)
+            _tFieldTriggerHandlerListClosed = typeof(List<>).MakeGenericType(
+                _tFieldTriggerHandler1.MakeGenericType(navAobj));
     }
 
     /// <summary>
@@ -687,11 +701,93 @@ public static partial class RecordPatches
                 }
                 AlRunnerV2.Infrastructure.FieldPoke.SetInstance(_fEventTriggerDataValueBacking, metaField, etd);
             }
+
+            WireExtensionValidateHandlers(built, tableId);
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[RecordPatches] WireFieldTriggerHandlers({tableId}) failed: {ex.GetType().Name}: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Wire the OnBeforeValidate / OnAfterValidate field triggers declared in a tableextension's
+    /// `modify(field) { trigger OnBeforeValidate(); trigger OnAfterValidate(); }` block into the
+    /// base table's NCLMetaField before/after handler lists. NavRecord.ValidateFieldAsync runs
+    /// those lists around the base field's OnValidate; each handler's HandlerType is the
+    /// TableExtension{id} CLR type so InvokeFieldTriggerHandler dispatches to the registered
+    /// extension instance (see RegisterParsedTableExtensions). Idempotent: rebuilds the lists
+    /// from scratch on every call (WireFieldTriggerHandlersAll may run on each bundle (re)load).
+    /// </summary>
+    private static void WireExtensionValidateHandlers(NCLMetaTable built, int tableId)
+    {
+        if (_pOnBeforeValidateHandlers == null || _pOnAfterValidateHandlers == null
+            || _tFieldTriggerHandlerListClosed == null || _fEventTriggerDataValueBacking == null
+            || _tEventTriggerData == null)
+            return;
+        if (!_parsedTables.TryGetValue(tableId, out var parsed)) return;
+        if (!_extensionIdsByBaseTable.TryGetValue(parsed.TableName.ToLowerInvariant(), out var extIds)
+            || extIds.Count == 0)
+            return;
+
+        // fieldNo → (before handlers, after handlers), preserving extension declaration order.
+        var beforeByField = new Dictionary<int, List<object>>();
+        var afterByField = new Dictionary<int, List<object>>();
+
+        foreach (var extId in extIds)
+        {
+            var extType = FindTableExtensionType(extId);
+            if (extType == null) continue;
+
+            foreach (var mi in extType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic
+                                                 | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+            {
+                var attrs = mi.GetCustomAttributes(_tFieldTriggerHandlerAttr!, inherit: false);
+                if (attrs.Length == 0) continue;
+                foreach (var a in attrs)
+                {
+                    var fieldNo = (int)_tFieldTriggerHandlerAttr!.GetProperty("FieldNo")!.GetValue(a)!;
+                    var ttObj = _tFieldTriggerHandlerAttr.GetProperty("TriggerType")!.GetValue(a)!;
+                    var ttName = Enum.GetName(_tFieldTriggerType!, ttObj);
+                    var target = ttName == "OnBeforeValidate" ? beforeByField
+                               : ttName == "OnAfterValidate" ? afterByField
+                               : null;
+                    if (target == null) continue;
+                    var handler = BuildFieldTriggerHandler(mi, extType);
+                    if (handler == null) continue;
+                    if (!target.TryGetValue(fieldNo, out var list))
+                        target[fieldNo] = list = new List<object>();
+                    list.Add(handler);
+                }
+            }
+        }
+
+        var fieldsToWire = new HashSet<int>(beforeByField.Keys);
+        fieldsToWire.UnionWith(afterByField.Keys);
+        foreach (var fieldNo in fieldsToWire)
+        {
+            NCLMetaField? metaField;
+            try { metaField = built.GetFieldByNo(fieldNo, /*trapError:*/ false); }
+            catch { continue; }
+            if (metaField == null) continue;
+
+            var etd = _fEventTriggerDataValueBacking.GetValue(metaField)
+                      ?? Activator.CreateInstance(_tEventTriggerData)!;
+            if (beforeByField.TryGetValue(fieldNo, out var before))
+                _pOnBeforeValidateHandlers.SetValue(etd, ToHandlerList(before));
+            if (afterByField.TryGetValue(fieldNo, out var after))
+                _pOnAfterValidateHandlers.SetValue(etd, ToHandlerList(after));
+            AlRunnerV2.Infrastructure.FieldPoke.SetInstance(_fEventTriggerDataValueBacking, metaField, etd);
+        }
+    }
+
+    // Box a List<object> of FieldTriggerHandler<NavApplicationObjectBase> into the strongly
+    // typed List<FieldTriggerHandler<NavApplicationObjectBase>> the EventTriggerData expects.
+    private static object ToHandlerList(List<object> handlers)
+    {
+        var list = (System.Collections.IList)Activator.CreateInstance(_tFieldTriggerHandlerListClosed!)!;
+        foreach (var h in handlers) list.Add(h);
+        return list;
     }
 
     private static Type? _tNavApplicationObjectBase;

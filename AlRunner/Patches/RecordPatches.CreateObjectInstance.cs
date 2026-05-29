@@ -27,6 +27,7 @@ using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using Microsoft.Dynamics.Nav.Runtime;
+using Microsoft.Dynamics.Nav.Runtime.Extensions;
 
 namespace AlRunnerV2.Patches;
 
@@ -73,7 +74,10 @@ public static partial class RecordPatches
         }
 
         if (rec != null)
+        {
             BindTableExtensions(metaTableSelf, rec);
+            RegisterParsedTableExtensions(rec, tableId);
+        }
         return rec;
     }
 
@@ -131,6 +135,83 @@ public static partial class RecordPatches
                     "CreateExtensionInstanceAndBindToParent(NavRecord) could not be resolved on " +
                     $"{ext.GetType().FullName} — table-extension fields on this record would be missing.");
             _mCreateExtensionInstanceAndBindToParent.Invoke(ext, new object?[] { rec });
+        }
+    }
+
+    // tableextension object id → emitted "TableExtension{id}" CLR type (subclass of
+    // NavRecordExtension). Cached HITS only, mirroring _recordTypeCache: a miss can become a
+    // hit once the test assembly loads, so misses fall through to the scan.
+    private static readonly ConcurrentDictionary<int, Type> _tableExtensionTypeCache = new();
+
+    internal static Type? FindTableExtensionType(int extId)
+    {
+        if (_tableExtensionTypeCache.TryGetValue(extId, out var cached)) return cached;
+        var name = $"TableExtension{extId}";
+        var preferred = BcRuntime.CurrentTestAssembly;
+        if (preferred != null)
+        {
+            var hit = FindTableExtensionTypeIn(preferred, name);
+            if (hit != null) { _tableExtensionTypeCache[extId] = hit; return hit; }
+        }
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            if (asm == preferred) continue;
+            var hit = FindTableExtensionTypeIn(asm, name);
+            if (hit != null) { _tableExtensionTypeCache[extId] = hit; return hit; }
+        }
+        return null;
+    }
+
+    private static Type? FindTableExtensionTypeIn(Assembly asm, string name)
+    {
+        try
+        {
+            return Array.Find(asm.GetTypes(),
+                x => x.Name == name && typeof(NavRecordExtension).IsAssignableFrom(x));
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// Instantiate each tableextension declared for <paramref name="tableId"/>'s base table and
+    /// register it on the record via NavRecord.RegisterTableExtension — populating
+    /// orderedTableExtensions, which is what NavRecord's Insert/Modify/Delete/Rename pipeline
+    /// (ext.OnBeforeInsert/OnInsert/OnAfterInsert …) and InvokeFieldTriggerHandler (which finds
+    /// the extension instance by handler.HandlerType) read.
+    ///
+    /// Our hand-built NCLMetaTable has an empty orderedExtensionObjects, so BC's own
+    /// NCLTableExtension.CreateExtensionInstanceAndBindToParent path (BindTableExtensions above)
+    /// never fires; this is the runner-side equivalent. Runtime-engine layer — allowed.
+    /// </summary>
+    internal static void RegisterParsedTableExtensions(NavRecord rec, int tableId)
+    {
+        if (tableId <= 0) return;
+        if (!_parsedTables.TryGetValue(tableId, out var parsed)) return;
+        if (!_extensionIdsByBaseTable.TryGetValue(parsed.TableName.ToLowerInvariant(), out var extIds)
+            || extIds.Count == 0)
+            return;
+
+        var already = rec.OrderedTableExtensions;
+        foreach (var extId in extIds)
+        {
+            var extType = FindTableExtensionType(extId);
+            if (extType == null) continue;
+            // Idempotent: a record instance must carry at most one extension of each type
+            // (double-registration would fire every extension trigger twice).
+            bool present = false;
+            for (int i = 0; i < already.Count; i++)
+                if (already[i].GetType() == extType) { present = true; break; }
+            if (present) continue;
+
+            // Emitted ctor: TableExtension{id}(ITreeObject parent) : base(parent, id, null).
+            var ctor = extType.GetConstructor(new[] { typeof(ITreeObject) });
+            if (ctor == null)
+                throw new InvalidOperationException(
+                    $"{extType.FullName} has no (ITreeObject) constructor — cannot register table extension " +
+                    $"for table {tableId}; its triggers would silently not fire.");
+            var ext = (NavRecordExtension?)ctor.Invoke(new object?[] { rec });
+            if (ext != null)
+                rec.RegisterTableExtension(ext);
         }
     }
 }
