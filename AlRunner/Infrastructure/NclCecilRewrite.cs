@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 75;
+    private const int CACHE_VERSION = 76;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -65,6 +65,25 @@ public static class NclCecilRewrite
         // NavApplicationObjectBase..ctor keystone (Batch 4) — the 3-arg
         // (ITreeObject, ApplicationObjectId, NCLStaticMetadata) ctor.
         "Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase::.ctor/3",
+        // NavDialog.ALStrMenu / ALConfirm (Batch 5 — in-memory shim; no re-entrancy).
+        // All overloads by param count. Migrated from NoInlining+JmpHook to body rewrite.
+        "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALStrMenu/2",
+        "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALStrMenu/3",
+        "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALStrMenu/4",
+        "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALStrMenu/5",
+        "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALConfirm/2",
+        "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALConfirm/3",
+        "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALConfirm/4",
+        "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALConfirm/5",
+        // NavMediaSet / NavMediaValueBase (Batch 5 — in-memory shim; no re-entrancy).
+        "Microsoft.Dynamics.Nav.Runtime.NavMediaSet::ALInsert/2",
+        "Microsoft.Dynamics.Nav.Runtime.NavMediaSet::ALRemove/2",
+        "Microsoft.Dynamics.Nav.Runtime.NavMediaSet::get_ALCount/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavMediaSet::ALItem/1",
+        "Microsoft.Dynamics.Nav.Runtime.NavMediaSet::ALImport/3",
+        "Microsoft.Dynamics.Nav.Runtime.NavMediaSet::ALImport/4",
+        "Microsoft.Dynamics.Nav.Runtime.NavMediaSet::ALExport/2",
+        "Microsoft.Dynamics.Nav.Runtime.NavMediaValueBase::get_ALMediaId/0",
     };
 
     /// <summary>
@@ -636,47 +655,184 @@ public static class NclCecilRewrite
         }
 
 
-        // NavMediaValueBase.get_ALMediaId → mark NoInlining so JmpHook can intercept the
-        // property getter at runtime (without NoInlining, the JIT inlines the trivial body
-        // `return Key.Value` into every call site, bypassing our entry-point hook).
-        var navMediaValueBaseType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavMediaValueBase");
-        if (navMediaValueBaseType != null)
+        // ── Batch 5: NavMediaValueBase.get_ALMediaId → Cecil body rewrite ────────────────
+        //
+        // Real body: `return Key.Value` — a trivial getter the JIT inlines into call sites,
+        // bypassing JmpHook. Previous approach: mark NoInlining so the precode patch lands.
+        // New approach: rewrite the body to call MediaSetPatches.NavMediaSet_get_ALMediaId(self),
+        // registered in CecilOwned so the JmpHook skips this method entirely.
+        // No re-entrancy: helper only touches an in-memory ConditionalWeakTable.
         {
-            var alMediaIdGetter = navMediaValueBaseType.Methods
-                .FirstOrDefault(m => m.Name == "get_ALMediaId");
-            if (alMediaIdGetter != null)
+            var navMediaValueBaseType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavMediaValueBase");
+            if (navMediaValueBaseType != null)
             {
-                alMediaIdGetter.ImplAttributes |= Mono.Cecil.MethodImplAttributes.NoInlining;
-                Console.Error.WriteLine($"[Cecil] Marked NavMediaValueBase.get_ALMediaId NoInlining");
+                var alMediaIdGetter = navMediaValueBaseType.Methods
+                    .FirstOrDefault(m => m.Name == "get_ALMediaId" && m.Parameters.Count == 0 && m.HasBody);
+                if (alMediaIdGetter != null)
+                {
+                    var helperMi = typeof(AlRunnerV2.Patches.MediaSetPatches).GetMethod(
+                        nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_get_ALMediaId),
+                        BindingFlags.Public | BindingFlags.Static)
+                        ?? throw new InvalidOperationException("[Cecil] MediaSetPatches.NavMediaSet_get_ALMediaId not found");
+                    ReplaceBodyWithHelper(asm.MainModule, alMediaIdGetter, helperMi);
+                }
+                else
+                {
+                    Console.Error.WriteLine("[Cecil] WARNING: get_ALMediaId not found on NavMediaValueBase");
+                }
             }
             else
             {
-                Console.Error.WriteLine($"[Cecil] WARNING: get_ALMediaId not found on NavMediaValueBase");
+                Console.Error.WriteLine("[Cecil] WARNING: NavMediaValueBase not found in Ncl");
             }
-        }
-        else
-        {
-            Console.Error.WriteLine($"[Cecil] WARNING: NavMediaValueBase not found in Ncl");
         }
 
-        // NavDialog.ALStrMenu* and ALConfirm* → mark NoInlining so JmpHooks can intercept
-        // them reliably. These are static non-virtual methods; R2R may inline them into
-        // caller IL, bypassing the JmpHook entry-point patch.
-        var navDialogCecilType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavDialog");
-        if (navDialogCecilType != null)
+        // ── Batch 5: NavMediaSet AL methods → Cecil body rewrites ────────────────────────
+        //
+        // Real bodies reach the BC service-tier database layer (NavMediaSetTable etc.) which
+        // NREs on the skeleton runtime. Previous approach: JmpHook. New approach: rewrite
+        // bodies to call MediaSetPatches helpers (in-memory ConditionalWeakTable store).
+        // Registered in CecilOwned so JmpHooks auto-skip. No re-entrancy.
         {
-            int navDialogMarked = 0;
-            foreach (var m in navDialogCecilType.Methods
-                .Where(m => m.Name == "ALStrMenu" || m.Name == "ALConfirm"))
+            var navMediaSetCecilType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavMediaSet");
+            if (navMediaSetCecilType != null)
             {
-                m.ImplAttributes |= Mono.Cecil.MethodImplAttributes.NoInlining;
-                navDialogMarked++;
+                var patchTypeMi = typeof(AlRunnerV2.Patches.MediaSetPatches);
+                int mediaSetRewrote = 0;
+
+                // ALInsert(DataError errorLevel, Guid mediaId) → bool
+                var mInsert = navMediaSetCecilType.Methods.FirstOrDefault(m =>
+                    m.Name == "ALInsert" && m.HasBody && m.Parameters.Count == 2);
+                if (mInsert != null)
+                {
+                    var h = patchTypeMi.GetMethod(nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_ALInsert), BindingFlags.Public | BindingFlags.Static)!;
+                    ReplaceBodyWithHelper(asm.MainModule, mInsert, h);
+                    mediaSetRewrote++;
+                }
+
+                // ALRemove(DataError errorLevel, Guid mediaId) → bool
+                var mRemove = navMediaSetCecilType.Methods.FirstOrDefault(m =>
+                    m.Name == "ALRemove" && m.HasBody && m.Parameters.Count == 2);
+                if (mRemove != null)
+                {
+                    var h = patchTypeMi.GetMethod(nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_ALRemove), BindingFlags.Public | BindingFlags.Static)!;
+                    ReplaceBodyWithHelper(asm.MainModule, mRemove, h);
+                    mediaSetRewrote++;
+                }
+
+                // get_ALCount() → int
+                var mCount = navMediaSetCecilType.Methods.FirstOrDefault(m =>
+                    m.Name == "get_ALCount" && m.HasBody && m.Parameters.Count == 0);
+                if (mCount != null)
+                {
+                    var h = patchTypeMi.GetMethod(nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_get_ALCount), BindingFlags.Public | BindingFlags.Static)!;
+                    ReplaceBodyWithHelper(asm.MainModule, mCount, h);
+                    mediaSetRewrote++;
+                }
+
+                // ALItem(int index) → Guid
+                var mItem = navMediaSetCecilType.Methods.FirstOrDefault(m =>
+                    m.Name == "ALItem" && m.HasBody && m.Parameters.Count == 1);
+                if (mItem != null)
+                {
+                    var h = patchTypeMi.GetMethod(nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_ALItem), BindingFlags.Public | BindingFlags.Static)!;
+                    ReplaceBodyWithHelper(asm.MainModule, mItem, h);
+                    mediaSetRewrote++;
+                }
+
+                // ALImport overloads — file-based (second param is string fileName)
+                foreach (var m in navMediaSetCecilType.Methods.Where(m2 => m2.Name == "ALImport" && m2.HasBody))
+                {
+                    var ps = m.Parameters;
+                    if (ps.Count < 3 || ps[1].ParameterType.FullName != "System.String") continue;
+                    var replName = ps.Count == 3
+                        ? nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_ALImport_File2)
+                        : nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_ALImport_File3);
+                    var h = patchTypeMi.GetMethod(replName, BindingFlags.Public | BindingFlags.Static);
+                    if (h != null) { ReplaceBodyWithHelper(asm.MainModule, m, h); mediaSetRewrote++; }
+                }
+
+                // ALExport(DataError, string fileBaseName) → int
+                var mExport = navMediaSetCecilType.Methods.FirstOrDefault(m =>
+                    m.Name == "ALExport" && m.HasBody && m.Parameters.Count == 2);
+                if (mExport != null)
+                {
+                    var h = patchTypeMi.GetMethod(nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_ALExport), BindingFlags.Public | BindingFlags.Static)!;
+                    ReplaceBodyWithHelper(asm.MainModule, mExport, h);
+                    mediaSetRewrote++;
+                }
+
+                Console.Error.WriteLine($"[Cecil] Batch 5: rewrote {mediaSetRewrote} NavMediaSet method(s) → MediaSetPatches helpers");
             }
-            Console.Error.WriteLine($"[Cecil] Marked {navDialogMarked} NavDialog.ALStrMenu/ALConfirm overloads NoInlining");
+            else
+            {
+                Console.Error.WriteLine("[Cecil] WARNING: NavMediaSet not found in Ncl — batch 5 MediaSet skipped");
+            }
         }
-        else
+
+        // ── Batch 5: NavDialog.ALStrMenu / ALConfirm → Cecil body rewrites ─────────────
+        //
+        // These static methods were previously: (a) marked NoInlining in Cecil to prevent
+        // R2R inlining into call sites, then (b) JmpHook'd to DialogPatches helpers.
+        // New approach: rewrite IL bodies directly — ALConfirm always returns false,
+        // ALStrMenu without a default-number param returns 0, ALStrMenu with a default-
+        // number param returns that param. No service-tier call, no re-entrancy.
+        // Registered in CecilOwned so JmpHooks auto-skip. Token-safe: uses only
+        // constants and ldarg — no new typeRef/memberRef imports.
         {
-            Console.Error.WriteLine("[Cecil] WARNING: NavDialog not found in Ncl");
+            var navDialogCecilType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavDialog");
+            if (navDialogCecilType != null)
+            {
+                int navDialogRewrote = 0;
+                foreach (var m in navDialogCecilType.Methods
+                    .Where(m => (m.Name == "ALStrMenu" || m.Name == "ALConfirm") && m.HasBody && m.IsStatic))
+                {
+                    var body = m.Body;
+                    body.Instructions.Clear();
+                    body.Variables.Clear();
+                    body.ExceptionHandlers.Clear();
+                    var il = body.GetILProcessor();
+
+                    if (m.Name == "ALConfirm")
+                    {
+                        // → return false
+                        il.Append(il.Create(OpCodes.Ldc_I4_0));
+                        il.Append(il.Create(OpCodes.Ret));
+                        body.MaxStackSize = 1;
+                    }
+                    else // ALStrMenu
+                    {
+                        // Find the Int32 defaultNumber param (if present).
+                        // IL-arg index = param index (static method, no `this`).
+                        int? defaultArgIdx = null;
+                        for (int i = 0; i < m.Parameters.Count; i++)
+                        {
+                            if (m.Parameters[i].ParameterType.FullName == "System.Int32")
+                            { defaultArgIdx = i; break; }
+                        }
+                        if (defaultArgIdx.HasValue)
+                        {
+                            // → return defaultNumber (load the int param by index)
+                            il.Append(il.Create(OpCodes.Ldarg, defaultArgIdx.Value));
+                            il.Append(il.Create(OpCodes.Ret));
+                            body.MaxStackSize = 1;
+                        }
+                        else
+                        {
+                            // No defaultNumber → return 0 (no selection)
+                            il.Append(il.Create(OpCodes.Ldc_I4_0));
+                            il.Append(il.Create(OpCodes.Ret));
+                            body.MaxStackSize = 1;
+                        }
+                    }
+                    navDialogRewrote++;
+                }
+                Console.Error.WriteLine($"[Cecil] Batch 5: rewrote {navDialogRewrote} NavDialog.ALStrMenu/ALConfirm overload(s) → inline const/arg body");
+            }
+            else
+            {
+                Console.Error.WriteLine("[Cecil] WARNING: NavDialog not found in Ncl — batch 5 dialog skipped");
+            }
         }
 
         // ── Universal codeunit-event subscriber dispatch ──────────────────────────────────
