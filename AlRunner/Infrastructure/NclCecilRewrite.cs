@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 84;
+    private const int CACHE_VERSION = 85;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -177,6 +177,11 @@ public static class NclCecilRewrite
         // (DataError,String,NavRecord) /3 is never hooked, so the by-arity key is safe.
         "Microsoft.Dynamics.Nav.Runtime.NavCodeunit::DoRunAsync/2",
         "Microsoft.Dynamics.Nav.Runtime.NavCodeunit::RunCodeunit/3",
+        // Truncate + security-filtering cluster (Batch 8).
+        "Microsoft.Dynamics.Nav.Runtime.NavRecord::ValidateTruncateSupport/1",
+        "Microsoft.Dynamics.Nav.Runtime.RecordImplementation::SetSecurityFiltering/1",
+        "Microsoft.Dynamics.Nav.Runtime.DataProvider::TruncateAsync/4",
+        "Microsoft.Dynamics.Nav.Runtime.PermissionManagement::SessionHasSuperOrSecurityPermissionsForUser/2",
     };
 
     /// <summary>
@@ -4216,6 +4221,26 @@ public static class NclCecilRewrite
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavCodeunit", "RunCodeunit", "DataError", "Int32", "NavRecord"),
                 H(typeof(AlRunnerV2.BcRuntime), "NavCodeunit_RunCodeunit"));
+
+            // ── Truncate + security-filtering cluster (Batch 8) ─────────────────
+            // ValidateTruncateSupport throws NavPermissionException on the skeleton
+            // (a security filter is set); SetSecurityFiltering / DataProvider.Truncate
+            // Async / SessionHasSuperOr… all sit on the same record/security R2R path.
+            // Migrate together so the path is single-mechanism.
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavRecord", "ValidateTruncateSupport", "NavRecord"),
+                H(helperShims, "NoOp_OneArg"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "RecordImplementation", "SetSecurityFiltering", "SecurityFiltering"),
+                H(helperShims, "NoOp2"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "DataProvider", "TruncateAsync",
+                         "Int32", "NCLMetaTable", "FiltersAndMarks", "Boolean"),
+                H(helperShims, "DataProvider_TruncateAsync"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "PermissionManagement", "SessionHasSuperOrSecurityPermissionsForUser",
+                         "NavSession", "Guid"),
+                H(helperShims, "ReturnTrue_TwoArgs"));
 
             // ── FlowField CalcFieldsAsync(2)/(3) — already Cecil-body-rewritten above
             //    (see ~line 1751). FlowFieldPatches.Register additionally JmpHook.Apply's
