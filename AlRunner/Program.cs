@@ -93,6 +93,12 @@ var isolation = AlRunnerV2.TestIsolation.Codeunit;
 bool strictExitCode = false;
 // --test PATTERN: substring filter applied to "Codeunit.Method" — case-insensitive.
 string? testFilter = null;
+// --watch: stay resident with warm dependency symbols; on every .al change re-emit the
+// bundle (warm, ~1.6s — see BcCompiler loader-signature reuse) and spawn a fresh child
+// `al-runner` that cache-HITS the freshly-emitted DLL and runs the tests. The parent never
+// loads a bundle assembly (it only emits), so there is no assembly-coexistence problem, and
+// the child re-parses sources fresh so edits to tables/codeunits are always picked up.
+bool watchMode = false;
 // --dump-csharp DIR: write the emitted C# (BC Compilation.Emit output, post-BcAssembler
 // polyfill injection) to disk for every bundle compile. Useful for debugging codegen.
 string? dumpCsharpDir = null;
@@ -105,6 +111,7 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--bundled") { bundledMode = true; continue; }
     if (args[i] == "--cache" && i + 1 < args.Length) { alCacheDir = args[++i]; continue; }
     if (args[i] == "--no-cache") { alCacheDir = null; continue; }
+    if (args[i] == "--watch") { watchMode = true; continue; }
     if (args[i] == "--verbose") { AlRunnerV2.Log.Verbose = true; continue; }
     if (args[i] == "--show-pass") { showPass = true; continue; }   // no-op (default in v2); kept for v1 back-compat
     if (args[i] == "--failures-only" || args[i] == "--quiet") { showPass = false; continue; }
@@ -137,8 +144,15 @@ for (int i = 0; i < args.Length; i++)
     }
     bundles.Add(args[i]);
 }
+if (watchMode && alCacheDir == null)
+{
+    Console.Error.WriteLine("--watch requires the AL-output cache (it is how the spawned run picks up the warm re-emit); remove --no-cache.");
+    return 2;
+}
 if (alCacheDir != null) Directory.CreateDirectory(alCacheDir);
-Console.WriteLine($"al-runner v2 — running {bundles.Count} bundle(s)");
+Console.WriteLine(watchMode
+    ? $"al-runner v2 — watch mode, {bundles.Count} bundle(s) (Ctrl+C to quit)"
+    : $"al-runner v2 — running {bundles.Count} bundle(s)");
 
 // Cecil-rewrite Ncl.dll IN-PLACE on the bin path BEFORE CoreCLR's TPA probe
 // resolves it. Must run BEFORE any reference to BcRuntime (whose field metadata
@@ -233,6 +247,11 @@ var compilerPackageDirs = packageCacheDirs
     .Where(d => !layeredWorkspaceDirs.Contains(d, StringComparer.OrdinalIgnoreCase))
     .ToList();
 
+// Watch loop: normal mode runs exactly one pass then breaks to the summary below.
+// Watch mode loops forever — each pass re-emits (warm) and spawns a child to run.
+while (true)
+{
+results.Clear();
 int i2 = 0;
 foreach (var bundle in bundles)
 {
@@ -526,7 +545,11 @@ foreach (var bundle in bundles)
             }
         }
 
-        if (assemblyBytes != null)
+        // In watch mode the parent ONLY emits to the cache (above); the actual test run
+        // happens in a fresh child process spawned after the loop, which cache-HITS this
+        // emit. The parent never loads a bundle assembly, so there is no .NET
+        // assembly-coexistence problem across re-emits.
+        if (!watchMode && assemblyBytes != null)
         {
             var rt = System.Diagnostics.Stopwatch.StartNew();
             IReadOnlyList<TestResult> tests;
@@ -639,12 +662,27 @@ foreach (var bundle in bundles)
         }
     }
 
-    Console.WriteLine($"  → {sP}P/{sF}F/{sE}E across {bundleTests.Count} tests, {bundleErrors.Count} suite errors ({(bundleEmit + bundleComp + bundleRun).TotalSeconds:F1}s)");
+    if (watchMode)
+        Console.WriteLine($"  [watch] re-emitted {rel} ({bundleEmit.TotalSeconds:F1}s) — running…");
+    else
+        Console.WriteLine($"  → {sP}P/{sF}F/{sE}E across {bundleTests.Count} tests, {bundleErrors.Count} suite errors ({(bundleEmit + bundleComp + bundleRun).TotalSeconds:F1}s)");
     if (bundleTests.Count == 0 && bundleErrors.Count > 0) bundleStage = BucketStage.CompileFailed;
     results.Add(new BucketResult(bundleAbs, bundleStage,
         bundleErrors, null, bundleTests,
         bundleEmit, bundleComp, bundleRun));
 }
+
+if (!watchMode)
+    break;   // normal mode: one pass, fall through to the summary below
+
+// ── Watch mode: run the freshly-emitted bundles in a clean child process, then
+// block until an .al source change and loop (re-emit warm + re-run). ──────────
+RunWatchChild(bundles, packageCacheArgs, testFilter, isolation);
+Console.WriteLine("[watch] waiting for AL source changes… (Ctrl+C to quit)");
+if (!WaitForSourceChange(bundles))
+    return 0;
+Console.WriteLine("[watch] change detected — re-emitting…");
+} // end while(true) watch loop
 
 Reporter.PrintPerTest(results, Console.Out, showPass);
 if (printClassification)
@@ -679,6 +717,90 @@ if (strictExitCode)
 return 0;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+// ── --watch helpers ───────────────────────────────────────────────────────────
+
+// Run the (already-emitted, cached) bundles in a fresh child al-runner process so the
+// run gets a clean assembly-load context every time. The child cache-HITS the parent's
+// warm re-emit, so it skips compilation entirely and only pays its own startup + run.
+static void RunWatchChild(
+    List<string> bundles,
+    List<string> packageCacheArgs,
+    string? testFilter,
+    AlRunnerV2.TestIsolation isolation)
+{
+    var psi = new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!)
+    {
+        UseShellExecute = false,
+    };
+    foreach (var b in bundles) psi.ArgumentList.Add(b);
+    foreach (var pc in packageCacheArgs) { psi.ArgumentList.Add("--package-cache"); psi.ArgumentList.Add(pc); }
+    if (!string.IsNullOrEmpty(testFilter)) { psi.ArgumentList.Add("--test"); psi.ArgumentList.Add(testFilter); }
+    psi.ArgumentList.Add("--isolation");
+    psi.ArgumentList.Add(isolation.ToString().ToLowerInvariant());
+    psi.Environment["AL_RUNNER_WATCH_CHILD"] = "1";
+    try
+    {
+        using var child = System.Diagnostics.Process.Start(psi);
+        child!.WaitForExit();
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[watch] child run failed: {ex.Message}");
+    }
+}
+
+// Block until an .al file changes under any watched bundle's bucket root. Returns true
+// on a change (loop again), false if there is nothing to watch.
+static bool WaitForSourceChange(List<string> bundles)
+{
+    var dirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    foreach (var b in bundles)
+    {
+        var abs = Path.GetFullPath(b);
+        var root = FindBucketRoot(abs) ?? abs;
+        if (Directory.Exists(root)) dirs.Add(root);
+    }
+    if (dirs.Count == 0)
+    {
+        Console.Error.WriteLine("[watch] no source directories to watch.");
+        return false;
+    }
+
+    using var signal = new System.Threading.ManualResetEventSlim(false);
+    void OnChanged(object _, FileSystemEventArgs e)
+    {
+        if (e.FullPath.EndsWith(".al", StringComparison.OrdinalIgnoreCase)) signal.Set();
+    }
+    void OnRenamed(object _, RenamedEventArgs e)
+    {
+        if (e.FullPath.EndsWith(".al", StringComparison.OrdinalIgnoreCase)) signal.Set();
+    }
+
+    var watchers = new List<FileSystemWatcher>();
+    foreach (var d in dirs)
+    {
+        var w = new FileSystemWatcher(d)
+        {
+            IncludeSubdirectories = true,
+            Filter = "*.al",
+            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
+            EnableRaisingEvents = true,
+        };
+        w.Changed += OnChanged; w.Created += OnChanged; w.Deleted += OnChanged; w.Renamed += OnRenamed;
+        watchers.Add(w);
+    }
+    try
+    {
+        signal.Wait();                       // block until the first .al change
+        System.Threading.Thread.Sleep(250);  // debounce: let a save storm settle
+        return true;
+    }
+    finally
+    {
+        foreach (var w in watchers) { w.EnableRaisingEvents = false; w.Dispose(); }
+    }
+}
 
 static void DumpCsharpSources(string dir, string moduleName, IReadOnlyList<EmittedSource> sources)
 {
@@ -742,6 +864,9 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                          re-used on subsequent runs if inputs are unchanged");
     w.WriteLine("                          (key = hash of .al sources, resolved deps, runner mtime).");
     w.WriteLine("  --no-cache              Disable the AL-output cache for this run.");
+    w.WriteLine("  --watch                 Stay resident with warm dependency symbols; on every");
+    w.WriteLine("                          .al change, re-emit the bundle (warm, fast) and run it");
+    w.WriteLine("                          in a fresh child process. Ctrl+C to quit.");
     w.WriteLine("  --per-suite             Legacy per-Compilation path. Default is bundled mode");
     w.WriteLine("                          (5-7x faster, parity-verified).");
     w.WriteLine("  --bundled               No-op alias for the default bundled mode (deprecated).");
