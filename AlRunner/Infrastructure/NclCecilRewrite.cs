@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 85;
+    private const int CACHE_VERSION = 86;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -182,6 +182,8 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.RecordImplementation::SetSecurityFiltering/1",
         "Microsoft.Dynamics.Nav.Runtime.DataProvider::TruncateAsync/4",
         "Microsoft.Dynamics.Nav.Runtime.PermissionManagement::SessionHasSuperOrSecurityPermissionsForUser/2",
+        // NavApplicationObjectBase.TryInvoke (Batch 8) — AL TryFunction entry.
+        "Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase::TryInvoke/2",
     };
 
     /// <summary>
@@ -4241,6 +4243,14 @@ public static class NclCecilRewrite
                 ByParams(Rt + "PermissionManagement", "SessionHasSuperOrSecurityPermissionsForUser",
                          "NavSession", "Guid"),
                 H(helperShims, "ReturnTrue_TwoArgs"));
+
+            // ── NavApplicationObjectBase.TryInvoke (Batch 8) — AL TryFunction ───
+            // Real body needs session.CurrentMethodScope, absent on the skeleton →
+            // NRE. Helper runs the Action and reports success/failure (AL TryFunction
+            // semantics). Same AL-invoke R2R path as the migrated CreateTarget family.
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavApplicationObjectBase", "TryInvoke", "NavSession", "Action"),
+                H(typeof(AlRunnerV2.BcRuntime), "NavApplicationObjectBase_TryInvoke"));
 
             // ── FlowField CalcFieldsAsync(2)/(3) — already Cecil-body-rewritten above
             //    (see ~line 1751). FlowFieldPatches.Register additionally JmpHook.Apply's
