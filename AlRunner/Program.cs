@@ -29,6 +29,22 @@ if (args[0] == "--version")
     return 0;
 }
 
+// ── --server mode: long-running JSON-RPC daemon over stdin/stdout (the VS Code
+// extension depends on this flag). The protocol requires stdout to carry ONLY the
+// newline-delimited JSON — so capture the real stdin/stdout now and redirect ALL
+// human-readable output (banners, [cache] lines, BC patch logs) to stderr, BEFORE
+// Log.Install and any Console.Write. This also survives the cold-start Cecil
+// re-exec: the child inherits these OS handles, so the protocol still flows.
+bool serverMode = args.Contains("--server");
+System.IO.TextReader? serverStdin = null;
+System.IO.TextWriter? serverStdout = null;
+if (serverMode)
+{
+    serverStdin = Console.In;
+    serverStdout = Console.Out;
+    Console.SetOut(Console.Error);
+}
+
 // Output filters must be installed BEFORE any other code prints to Console.
 // Reads AL_RUNNER_VERBOSE env var by default; --verbose flag overrides below.
 AlRunnerV2.Log.Install();
@@ -112,6 +128,7 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--cache" && i + 1 < args.Length) { alCacheDir = args[++i]; continue; }
     if (args[i] == "--no-cache") { alCacheDir = null; continue; }
     if (args[i] == "--watch") { watchMode = true; continue; }
+    if (args[i] == "--server") { continue; }  // handled above (serverMode); consume so it isn't "unknown"
     if (args[i] == "--verbose") { AlRunnerV2.Log.Verbose = true; continue; }
     if (args[i] == "--show-pass") { showPass = true; continue; }   // no-op (default in v2); kept for v1 back-compat
     if (args[i] == "--failures-only" || args[i] == "--quiet") { showPass = false; continue; }
@@ -149,10 +166,17 @@ if (watchMode && alCacheDir == null)
     Console.Error.WriteLine("--watch requires the AL-output cache (it is how the spawned run picks up the warm re-emit); remove --no-cache.");
     return 2;
 }
+if (serverMode && watchMode)
+{
+    Console.Error.WriteLine("--server and --watch are mutually exclusive (the server stays warm in-process; watch spawns a child per edit).");
+    return 2;
+}
 if (alCacheDir != null) Directory.CreateDirectory(alCacheDir);
-Console.WriteLine(watchMode
-    ? $"al-runner v2 — watch mode, {bundles.Count} bundle(s) (Ctrl+C to quit)"
-    : $"al-runner v2 — running {bundles.Count} bundle(s)");
+Console.WriteLine(serverMode
+    ? "al-runner v2 — server mode (JSON-RPC over stdin/stdout)"
+    : watchMode
+        ? $"al-runner v2 — watch mode, {bundles.Count} bundle(s) (Ctrl+C to quit)"
+        : $"al-runner v2 — running {bundles.Count} bundle(s)");
 
 // Cecil-rewrite Ncl.dll IN-PLACE on the bin path BEFORE CoreCLR's TPA probe
 // resolves it. Must run BEFORE any reference to BcRuntime (whose field metadata
@@ -246,6 +270,13 @@ packageCacheDirs = BuildSiblingSourceDeps(bundles, packageCacheDirs, layeredWork
 var compilerPackageDirs = packageCacheDirs
     .Where(d => !layeredWorkspaceDirs.Contains(d, StringComparer.OrdinalIgnoreCase))
     .ToList();
+
+// ── --server: stay resident. Warm state (BC patches + the dep symbol loader) is
+// now established; each request re-emits the requested bundle (warm) and runs it
+// in-process, resetting bundle-derived caches between requests so an edited
+// same-identity bundle is picked up. Never returns to the bundle loop below.
+if (serverMode)
+    return RunServerLoop(serverStdin!, serverStdout!);
 
 // Watch loop: normal mode runs exactly one pass then breaks to the summary below.
 // Watch mode loops forever — each pass re-emits (warm) and spawns a child to run.
@@ -716,7 +747,380 @@ if (strictExitCode)
 }
 return 0;
 
+// ── --server loop ──────────────────────────────────────────────────────────────
+// Non-static so it captures the warm pipeline objects (emitter/assembler/executor/
+// depLoader) and the resolved cache dirs established above. Reads newline-delimited
+// JSON requests from stdin, writes one JSON response line per request to stdout.
+// Protocol shape matches v1 (see ServerProtocol). Returns the process exit code.
+int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
+{
+    // Per-session memory of the last served request's .al file hashes, so a cache
+    // miss can report which files changed (v1 `changedFiles`).
+    Dictionary<string, string>? lastFileHashes = null;
+
+    // Readiness handshake — MUST be the first line on stdout.
+    output.WriteLine("{\"ready\":true}");
+    output.Flush();
+
+    string? line;
+    while ((line = input.ReadLine()) != null)
+    {
+        if (line.Length == 0) continue;
+        string response;
+        bool shuttingDown = false;
+        try
+        {
+            var req = AlRunnerV2.ServerProtocol.Parse(line);
+            switch (req?.Command?.ToLowerInvariant())
+            {
+                case null:
+                    response = AlRunnerV2.ServerProtocol.Error("Invalid request (missing 'command')");
+                    break;
+                case "runtests":
+                    response = HandleServerRunTests(req);
+                    break;
+                case "execute":
+                    response = HandleServerExecute(req);
+                    break;
+                case "shutdown":
+                    response = AlRunnerV2.ServerProtocol.Shutdown();
+                    shuttingDown = true;
+                    break;
+                default:
+                    response = AlRunnerV2.ServerProtocol.Error($"Unknown command: {req.Command}");
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            response = AlRunnerV2.ServerProtocol.Error(ex.Message);
+        }
+
+        output.WriteLine(response);
+        output.Flush();
+        if (shuttingDown) return 0;
+    }
+    // EOF — client disconnected.
+    return 0;
+
+    // ── runTests: re-emit + run the requested bundle in-process. ───────────────
+    string HandleServerRunTests(AlRunnerV2.ServerRequest req)
+    {
+        if (req.SourcePaths == null || req.SourcePaths.Length == 0)
+            return AlRunnerV2.ServerProtocol.Error("sourcePaths is required");
+
+        // v2 runs a single bundle per request; the extension passes one app root.
+        var bundleDir = req.SourcePaths[0];
+        if (!Directory.Exists(bundleDir))
+            return AlRunnerV2.ServerProtocol.Error($"bundle directory not found: {bundleDir}");
+
+        var run = RunBundleForServer(bundleDir, req.PackagePaths, asm => executor.Run(asm));
+
+        // changedFiles is only meaningful on a cache miss (a hit means nothing changed).
+        List<string>? changed = null;
+        if (!run.Cached)
+            changed = DiffServerFiles(lastFileHashes, run.FileHashes);
+        lastFileHashes = run.FileHashes;
+
+        return AlRunnerV2.ServerProtocol.RunTests(
+            run.Tests, run.ExitCode, run.Cached, changed, run.CompileErrors);
+    }
+
+    // ── execute: run the bundle's first OnRun-bearing codeunit (run-mode). v1 also
+    // accepted an inline `code` string; v2 has no inline-AL compile path yet, so
+    // that case fails LOUD (never a silent fake) per .claude/rules/loud-failures.md.
+    string HandleServerExecute(AlRunnerV2.ServerRequest req)
+    {
+        if (!string.IsNullOrWhiteSpace(req.Code))
+            return AlRunnerV2.ServerProtocol.Error(
+                "execute: inline AL 'code' is not yet supported in v2 — pass 'sourcePaths' "
+                + "to run the bundle's OnRun codeunit. See docs/server-mode.md.");
+        if (req.CaptureValues == true)
+            return AlRunnerV2.ServerProtocol.Error(
+                "execute: 'captureValues' is not yet supported in v2. See docs/server-mode.md.");
+        if (req.SourcePaths == null || req.SourcePaths.Length == 0)
+            return AlRunnerV2.ServerProtocol.Error("sourcePaths is required");
+        var bundleDir = req.SourcePaths[0];
+        if (!Directory.Exists(bundleDir))
+            return AlRunnerV2.ServerProtocol.Error($"bundle directory not found: {bundleDir}");
+
+        var run = RunBundleForServer(bundleDir, req.PackagePaths, RunFirstCodeunitOnRun);
+        lastFileHashes = run.FileHashes;
+        return AlRunnerV2.ServerProtocol.Execute(run.Tests, run.ExitCode, null, run.CompileErrors);
+    }
+
+    // Compile + run one bundle, resetting bundle-derived caches first so an edited
+    // same-identity bundle is picked up (server reload contract). Mirrors the
+    // bundled-mode path of the normal run loop for a single bundle. The run step
+    // (executor.Run for runTests, OnRun dispatch for execute) is supplied by the caller.
+    ServerRunResult RunBundleForServer(string bundleDir, string[]? requestPackagePaths,
+        Func<Assembly, IReadOnlyList<TestResult>> runStep)
+    {
+        // CRITICAL: drop the previous request's bundle-derived caches so a reloaded
+        // same-named bundle resolves the freshly-emitted Record/Codeunit types and
+        // starts with empty in-memory tables. See BcRuntime.ResetForNewBundleReload.
+        BcRuntime.ResetForNewBundleReload();
+
+        var bundleAbs = Path.GetFullPath(bundleDir);
+        var bucketRoot = FindBucketRoot(bundleAbs) ?? bundleAbs;
+
+        // Request package paths augment the server's default caches.
+        var effectivePkgDirs = (requestPackagePaths ?? Array.Empty<string>())
+            .Where(Directory.Exists)
+            .Concat(packageCacheDirs)
+            .Distinct()
+            .ToList();
+
+        IReadOnlyList<(AlRunnerV2.AppManifest Manifest, string AppPath)> ordered =
+            Array.Empty<(AlRunnerV2.AppManifest, string)>();
+        var appJsonPath = Path.Combine(bucketRoot, "app.json");
+        if (File.Exists(appJsonPath))
+        {
+            try
+            {
+                var roots = ReadDependencies(appJsonPath);
+                var bundlePkgDirs = Directory
+                    .EnumerateDirectories(bucketRoot, ".alpackages", SearchOption.AllDirectories)
+                    .ToList();
+                var resolverDirs = bundlePkgDirs.Concat(effectivePkgDirs).Distinct().ToList();
+                var resolver = new DependencyResolver(resolverDirs);
+                ordered = resolver.Resolve(roots);
+                BcCompiler.SetResolvedDeps(ordered, resolverDirs);
+                var loaded = depLoader.LoadAll(ordered, bucketRoot);
+                BcCompiler.SetResolvedDeps(ordered, resolverDirs);
+                foreach (var (_, appPath) in ordered)
+                    AlRunnerV2.Patches.RecordPatches.AddBcAppPath(appPath);
+                SetBundleInfoFromAppJson(appJsonPath);
+                var bundleId = AlRunnerV2.Infrastructure.InProcessAppPackager.ReadIdentity(appJsonPath);
+                if (bundleId != null)
+                    BcCompiler.SetCurrentAppIdentity(bundleId.AppId, bundleId.Publisher, bundleId.Version);
+                else
+                    BcCompiler.SetCurrentAppIdentity(null, null, null);
+            }
+            catch (AlRunnerV2.Infrastructure.DependencyLoadException ex)
+            {
+                return ServerRunResult.Failure(3, "<deps>", ex.Message, new());
+            }
+            catch (Exception ex)
+            {
+                return ServerRunResult.Failure(3, "<deps>", $"DEP-RESOLVE-FAIL: {ex.Message}", new());
+            }
+        }
+
+        var suites = EnumerateSuites(bundleAbs).ToList();
+        var allPaths = new List<string>();
+        foreach (var suite in suites)
+        {
+            var s = Path.Combine(suite, "src");
+            if (Directory.Exists(s)) AlRunnerV2.Patches.RecordPatches.AddSourceDir(s);
+            else if (!Directory.Exists(Path.Combine(suite, "test")))
+                AlRunnerV2.Patches.RecordPatches.AddSourceDir(suite);
+            allPaths.AddRange(CollectSuitePaths(suite, bucketRoot));
+        }
+        allPaths = allPaths.Distinct().ToList();
+        var fileHashes = ComputeServerFileHashes(allPaths);
+
+        if (allPaths.Count == 0)
+            return new ServerRunResult(Array.Empty<TestResult>(), 1, false, null, fileHashes);
+
+        var moduleName = $"V2_{Path.GetFileName(bundleAbs)}";
+
+        // AL-output cache: HIT short-circuits Emit+Compile, like the normal loop.
+        byte[]? assemblyBytes = null;
+        bool cached = false;
+        string? cacheKey = null, cachePath = null, sidecarPath = null;
+        if (alCacheDir != null)
+        {
+            cacheKey = ComputeAlCacheKey(allPaths, moduleName,
+                ordered: GetOrderedDepIds(bucketRoot, effectivePkgDirs));
+            cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
+            sidecarPath = Path.Combine(alCacheDir, cacheKey + ".enum-registry.json");
+            if (File.Exists(cachePath) && File.Exists(sidecarPath))
+            {
+                try
+                {
+                    var bytes = File.ReadAllBytes(cachePath);
+                    LoadEnumRegistrySidecar(sidecarPath);
+                    assemblyBytes = bytes;
+                    cached = true;
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"  [cache] hit replay failed: {ex.Message} — rebuilding");
+                    assemblyBytes = null;
+                    cached = false;
+                }
+            }
+        }
+
+        var compileErrors = new List<string>();
+        if (assemblyBytes == null)
+        {
+            IReadOnlyList<EmittedSource> sources;
+            IReadOnlyList<string> alDiagnostics;
+            try
+            {
+                var emitOutput = emitter.Emit(allPaths, moduleName);
+                sources = emitOutput.Sources;
+                alDiagnostics = emitOutput.Diagnostics;
+            }
+            catch (Exception ex)
+            {
+                return ServerRunResult.Failure(3, moduleName, $"EMIT-FAIL: {ex.Message.Split('\n')[0]}", fileHashes);
+            }
+            if (sources.Count == 0)
+            {
+                foreach (var d in alDiagnostics) compileErrors.Add(d);
+                if (compileErrors.Count == 0) compileErrors.Add("EMIT-ZERO: 0 sources emitted");
+                return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
+                    new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
+            }
+            var compile = assembler.Compile(moduleName, sources);
+            if (!compile.Success)
+            {
+                compileErrors.AddRange(compile.Errors);
+                compileErrors.AddRange(alDiagnostics);
+                return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
+                    new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
+            }
+            assemblyBytes = compile.AssemblyBytes;
+            if (cachePath != null && assemblyBytes != null)
+            {
+                try
+                {
+                    File.WriteAllBytes(cachePath, assemblyBytes);
+                    SaveEnumRegistrySidecar(sidecarPath!);
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"  [cache] write failed: {ex.Message}"); }
+            }
+        }
+
+        if (assemblyBytes == null)
+            return ServerRunResult.Failure(2, moduleName, "no assembly produced", fileHashes);
+
+        IReadOnlyList<TestResult> tests;
+        try
+        {
+            var asm = Assembly.Load(assemblyBytes);
+            BcRuntime.SetTestAssembly(asm);
+            BcRuntime.RegisterTestAssemblyInfo(asm);
+            BcRuntime.OosHooksActive = true;
+            tests = runStep(asm);
+        }
+        catch (Exception ex)
+        {
+            return ServerRunResult.Failure(2, moduleName, $"EXEC-FAIL: {ex.Message.Split('\n')[0]}", fileHashes);
+        }
+        finally
+        {
+            BcRuntime.OosHooksActive = false;
+        }
+
+        int exit = 0;
+        if (tests.Any(t => t.Outcome == TestOutcome.Fail || t.Outcome == TestOutcome.Error)) exit = 1;
+        return new ServerRunResult(tests, exit, cached, null, fileHashes);
+    }
+
+    // Run the bundle's OnRun-bearing codeunit (run-mode), mirroring CodeunitPatches'
+    // OnRun dispatch. Prefers a non-[Test] codeunit; returns one TestResult named
+    // "<Codeunit>.OnRun". An AL Error inside OnRun surfaces as a Fail (exitCode 1).
+    IReadOnlyList<TestResult> RunFirstCodeunitOnRun(Assembly asm)
+    {
+        var navCodeunit = typeof(Microsoft.Dynamics.Nav.Runtime.NavCodeunit);
+        Type? target = null;
+        foreach (var t in asm.GetTypes())
+        {
+            if (!t.Name.StartsWith("Codeunit", StringComparison.Ordinal)) continue;
+            if (!navCodeunit.IsAssignableFrom(t)) continue;
+            var onRun = t.GetMethod("OnRun",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance, null,
+                new[] { typeof(Microsoft.Dynamics.Nav.Runtime.INavRecordHandle) }, null)
+                ?? t.GetMethod("OnRun",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance, null,
+                    Type.EmptyTypes, null);
+            if (onRun == null) continue;
+            // Prefer a non-test codeunit; remember the first match and keep looking
+            // for a non-test one.
+            bool isTest = t.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+                .Any(m => m.GetCustomAttributes(false).Any(a => a.GetType().Name is "NavTestAttribute" or "TestAttribute"));
+            if (!isTest) { target = t; break; }
+            target ??= t;
+        }
+        if (target == null)
+            return new[] { new TestResult("<execute>", "OnRun", TestOutcome.Error,
+                "no codeunit with an OnRun trigger found in the bundle", null, TimeSpan.Zero) };
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        AlRunnerV2.Infrastructure.AlCallStackCapture.Clear();
+        try
+        {
+            var ctor = target.GetConstructors().FirstOrDefault(c =>
+                c.GetParameters().Length == 1 && c.GetParameters()[0].ParameterType.Name == "ITreeObject");
+            if (ctor == null)
+                return new[] { new TestResult(target.Name, "OnRun", TestOutcome.Error,
+                    "codeunit has no ITreeObject constructor", null, sw.Elapsed) };
+            var instance = ctor.Invoke(new object[] { BcRuntime.RootTreeStub! });
+            var onRun = target.GetMethod("OnRun",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance, null,
+                new[] { typeof(Microsoft.Dynamics.Nav.Runtime.INavRecordHandle) }, null);
+            if (onRun != null) onRun.Invoke(instance, new object?[] { null });
+            else target.GetMethod("OnRun",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance, null,
+                Type.EmptyTypes, null)!.Invoke(instance, null);
+            return new[] { new TestResult(target.Name, "OnRun", TestOutcome.Pass, null, null, sw.Elapsed) };
+        }
+        catch (System.Reflection.TargetInvocationException tex)
+        {
+            var inner = tex.InnerException ?? tex;
+            var alStack = AlRunnerV2.Infrastructure.AlCallStackCapture.GetCaptured(inner);
+            return new[] { new TestResult(target.Name, "OnRun", TestOutcome.Fail,
+                $"{inner.GetType().Name}: {inner.Message}", inner.ToString(), sw.Elapsed, alStack) };
+        }
+        catch (Exception ex)
+        {
+            return new[] { new TestResult(target.Name, "OnRun", TestOutcome.Error,
+                ex.Message, ex.ToString(), sw.Elapsed) };
+        }
+    }
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+// SHA-256 each .al file reachable from the given folders → path→hash map, for the
+// server's changedFiles diff.
+static Dictionary<string, string> ComputeServerFileHashes(IReadOnlyList<string> folders)
+{
+    var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    using var sha = System.Security.Cryptography.SHA256.Create();
+    foreach (var f in folders
+        .Where(Directory.Exists)
+        .SelectMany(d => Directory.EnumerateFiles(Path.GetFullPath(d), "*.al", SearchOption.AllDirectories))
+        .Distinct())
+    {
+        try
+        {
+            using var fs = File.OpenRead(f);
+            map[f] = Convert.ToHexString(sha.ComputeHash(fs));
+        }
+        catch { /* unreadable file — omit from the diff */ }
+    }
+    return map;
+}
+
+// Files added/removed/modified between the previously served request and this one.
+static List<string> DiffServerFiles(Dictionary<string, string>? prev, Dictionary<string, string> cur)
+{
+    if (prev == null)
+        return cur.Keys.Select(p => Path.GetFileName(p) ?? p).ToList();
+    var changed = new List<string>();
+    foreach (var kv in cur)
+        if (!prev.TryGetValue(kv.Key, out var h) || h != kv.Value)
+            changed.Add(Path.GetFileName(kv.Key) ?? kv.Key);
+    foreach (var kv in prev)
+        if (!cur.ContainsKey(kv.Key))
+            changed.Add(Path.GetFileName(kv.Key) ?? kv.Key);
+    return changed;
+}
 
 // ── --watch helpers ───────────────────────────────────────────────────────────
 
@@ -830,6 +1234,7 @@ static void PrintHelp(TextWriter w)
     w.WriteLine();
     w.WriteLine("USAGE");
     w.WriteLine("  al-runner [OPTIONS] <bundle-dir>...");
+    w.WriteLine("  al-runner --server [--package-cache PATH ...] [--cache DIR]");
     w.WriteLine("  al-runner --precompile <input.app> --out <output.dll> [--package-cache PATH ...]");
     w.WriteLine("  al-runner --version");
     w.WriteLine("  al-runner --help");
@@ -867,6 +1272,12 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("  --watch                 Stay resident with warm dependency symbols; on every");
     w.WriteLine("                          .al change, re-emit the bundle (warm, fast) and run it");
     w.WriteLine("                          in a fresh child process. Ctrl+C to quit.");
+    w.WriteLine("  --server                Long-running JSON-RPC daemon over stdin/stdout (warm");
+    w.WriteLine("                          deps + BC patches loaded once; ~19s->~4s per run). One");
+    w.WriteLine("                          JSON request/response per line. stdout carries ONLY the");
+    w.WriteLine("                          protocol; all logs go to stderr. Used by the VS Code");
+    w.WriteLine("                          extension. Commands: runTests, shutdown (execute: TODO).");
+    w.WriteLine("                          See docs/server-mode.md. Mutually exclusive with --watch.");
     w.WriteLine("  --per-suite             Legacy per-Compilation path. Default is bundled mode");
     w.WriteLine("                          (5-7x faster, parity-verified).");
     w.WriteLine("  --bundled               No-op alias for the default bundled mode (deprecated).");

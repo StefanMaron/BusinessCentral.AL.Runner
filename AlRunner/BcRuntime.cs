@@ -81,6 +81,33 @@ public static partial class BcRuntime
 
     // Set to the currently-loaded test assembly so CreateTarget looks up codeunit types there.
     private static Assembly? _currentTestAssembly;
+
+    /// <summary>
+    /// The bundle assembly currently being executed, or null before the first
+    /// <see cref="SetTestAssembly"/> / after <see cref="ResetForNewBundleReload"/>.
+    /// AL-output type finders (Record/Codeunit/Page/…) prefer this so a server
+    /// reload of the same-identity bundle resolves the freshly-emitted types
+    /// rather than same-named types still loaded from the previous assembly
+    /// (.NET cannot unload them).
+    /// </summary>
+    internal static Assembly? CurrentTestAssembly => _currentTestAssembly;
+
+    /// <summary>
+    /// True when <paramref name="asm"/> is a previous bundle assembly that is still
+    /// loaded after a server reload — same simple name as the current bundle
+    /// assembly (we re-emit under the identical module name) but a different
+    /// instance. AL-output scans that enumerate every loaded assembly (e.g. the
+    /// event-subscriber registry) must skip these so stale triggers/subscribers
+    /// don't double-register. Returns false in normal one-shot mode (no reload).
+    /// </summary>
+    internal static bool IsStaleBundleAssembly(Assembly asm)
+    {
+        var cur = _currentTestAssembly;
+        return cur != null
+            && !ReferenceEquals(asm, cur)
+            && asm.GetName().Name == cur.GetName().Name;
+    }
+
     public static void SetTestAssembly(Assembly asm)
     {
         if (_currentTestAssembly == asm) return;
@@ -119,6 +146,40 @@ public static partial class BcRuntime
         sw.Restart();
         AlRunnerV2.Patches.RecordPatches.FixupEnumFieldOptionMetadataAll();
         AlRunnerV2.PerfTrace.Log($"SetTestAssembly.FixupEnumFieldOptionMetadataAll {sw.ElapsedMilliseconds}ms");
+    }
+
+    /// <summary>
+    /// Drop every per-bundle, bundle-derived cache so the SAME process can load an
+    /// edited bundle of the same identity (server mode) without serving stale
+    /// record/codeunit CLR types, metadata, enum registrations, or in-memory rows.
+    /// Installed hooks and resolved runtime reflection handles are deliberately
+    /// preserved — only state derived from the loaded bundle is cleared. Call this
+    /// BEFORE re-registering source dirs + re-emitting + <see cref="SetTestAssembly"/>.
+    ///
+    /// Scope: code/logic edits (triggers, procedure/codeunit bodies) are picked up
+    /// fully. Field-/table-SHAPE edits keep BC's own skeleton NCLMetadata field set
+    /// until the server is restarted — we do not clear BC's shared
+    /// metadataCacheEntries, which also holds dependency BC-table metadata. See
+    /// docs/server-mode.md for the reload contract and this known limitation.
+    /// </summary>
+    public static void ResetForNewBundleReload()
+    {
+        _currentTestAssembly = null;
+        // AL-output type caches that live on this partial class (CodeunitPatches,
+        // XmlPortPatches). Their finders already prefer CurrentTestAssembly; the
+        // caches just need dropping so the rebuild re-resolves against the new asm.
+        _codeunitTypeCache.Clear();
+        _formTypeCache.Clear();
+        _reportTypeCache.Clear();
+        _queryTypeCache.Clear();
+        _xmlPortTypeCache.Clear();
+        _metaReportFallbackCache.Clear();
+        // Enum option metadata (this partial class) + the emit-time enum registry.
+        _alEnumCache.Clear();
+        AlEnumMetadataRegistry.Clear();
+        // Sibling patch classes with their own bundle-derived state.
+        AlRunnerV2.Patches.RecordPatches.ResetForReload();
+        AlRunnerV2.Patches.EventSubscriberPatches.ResetForReload();
     }
 
     private static void HookXmlPortInitializeComponents(Assembly asm)

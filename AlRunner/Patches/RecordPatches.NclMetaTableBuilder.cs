@@ -28,21 +28,33 @@ public static partial class RecordPatches
     {
         if (_recordTypeCache.TryGetValue(id, out var cached)) return cached;
         var name = $"Record{id}";
+        // Prefer the current test assembly: on a server reload of the same bundle
+        // a same-named Record<id> from the previous assembly is still loaded (.NET
+        // cannot unload it) and would otherwise win the scan, serving stale trigger
+        // / business-logic IL.
+        var preferred = BcRuntime.CurrentTestAssembly;
+        if (preferred != null)
+        {
+            var hit = FindRecordTypeIn(preferred, name);
+            if (hit != null) { _recordTypeCache[id] = hit; return hit; }
+        }
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
-            try
-            {
-                var t = Array.Find(asm.GetTypes(),
-                    x => x.Name == name && typeof(NavRecord).IsAssignableFrom(x));
-                if (t != null)
-                {
-                    _recordTypeCache[id] = t;
-                    return t;
-                }
-            }
-            catch { }
+            if (asm == preferred) continue;
+            var hit = FindRecordTypeIn(asm, name);
+            if (hit != null) { _recordTypeCache[id] = hit; return hit; }
         }
         return null;
+    }
+
+    private static Type? FindRecordTypeIn(System.Reflection.Assembly asm, string name)
+    {
+        try
+        {
+            return Array.Find(asm.GetTypes(),
+                x => x.Name == name && typeof(NavRecord).IsAssignableFrom(x));
+        }
+        catch { return null; }
     }
 
     internal static NCLMetaTable? GetOrBuildNCLMetaTable(int tableId)
@@ -590,7 +602,15 @@ public static partial class RecordPatches
     // Prewarm is O(M); subsequent FindRecordType calls become O(1) dictionary hits.
     private static void PrewarmRecordTypeCache()
     {
-        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        // TryAdd is first-wins, so visit the current test assembly first: on a
+        // server reload its freshly-emitted Record<id> types must win over the
+        // same-named types still loaded from the previous bundle assembly.
+        var preferred = BcRuntime.CurrentTestAssembly;
+        var loaded = AppDomain.CurrentDomain.GetAssemblies();
+        var ordered = preferred != null
+            ? new[] { preferred }.Concat(loaded.Where(a => a != preferred))
+            : (IEnumerable<System.Reflection.Assembly>)loaded;
+        foreach (var asm in ordered)
         {
             Type[] types;
             try { types = asm.GetTypes(); }

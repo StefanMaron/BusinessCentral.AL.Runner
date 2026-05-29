@@ -83,6 +83,14 @@ al-runner --out results.json ./my-bundle
 al-runner --verbose ./my-bundle
 ```
 
+### Server mode (warm daemon for editor integrations)
+
+```bash
+al-runner --server [--package-cache PATH ...] [--cache DIR]
+```
+
+A long-running JSON-RPC daemon over stdin/stdout. Dependencies and BC patches load once; each `runTests` request re-emits the bundle warm and runs it in-process (~19s→~4s). stdout carries only the newline-delimited JSON protocol; logs go to stderr. The VS Code extension uses this. Full protocol + the same-bundle reload contract: [docs/server-mode.md](docs/server-mode.md).
+
 ### Precompile a single `.app` to a DLL
 
 ```bash
@@ -107,6 +115,8 @@ dotnet run --project AlRunner -c Release -- tests/al-language/tests/al-language
 | `--package-cache PATH` | Extra `.app`-package cache directory. Repeatable. |
 | `--cache PATH` | Cache compiled AL output keyed on source + dep set + runner mtime. |
 | `--isolation codeunit\|test\|disabled` | Test isolation mode. Default `codeunit`. |
+| `--watch` | Stay resident; on every `.al` change re-emit warm and run in a fresh child process. |
+| `--server` | Long-running JSON-RPC daemon over stdin/stdout (warm deps → ~19s→~4s/run). See [docs/server-mode.md](docs/server-mode.md). |
 | `--per-suite` | Legacy per-suite compile mode (diagnostic). Default is bundled-per-bucket. |
 | `--bundled` | No-op alias for backwards compatibility. |
 | `--verbose` | Show internal `[Component]` diagnostic logs. Equivalent to `AL_RUNNER_VERBOSE=1`. |

@@ -214,6 +214,28 @@ public static class EventSubscriberPatches
             Console.Error.WriteLine($"[Subscribers] γeventScope seeded: seeded={seeded} missing={missing} total-keys={_byCodeunitKey.Count}");
     }
 
+    /// <summary>
+    /// Drop the subscriber registries and per-bundle codeunit-type cache so a server
+    /// reload of the same-identity bundle rebuilds them from the freshly-emitted
+    /// assembly instead of accumulating (or double-firing) the previous run's
+    /// subscribers. Resetting <c>_lastScannedCount</c> forces a full re-scan; the
+    /// stale previous bundle assembly is then skipped via
+    /// <see cref="BcRuntime.IsStaleBundleAssembly"/>. The installed injection hook
+    /// (<c>_registered</c>) and any reflection-failure latch are preserved.
+    /// </summary>
+    public static void ResetForReload()
+    {
+        lock (_lock)
+        {
+            _byKey.Clear();
+            _byCodeunitKey.Clear();
+            _codeunitTypeCache.Clear();
+            _injectedSubscriberMethods.Clear();
+            _seededScopeTypes.Clear();
+            _lastScannedCount = 0;
+        }
+    }
+
     private static Type? FindCodeunitClrType(int codeunitId)
     {
         if (_codeunitTypeCache.TryGetValue(codeunitId, out var cached)) return cached;
@@ -226,6 +248,8 @@ public static class EventSubscriberPatches
                 || n == "netstandard" || n == "mscorlib"
                 || n == "AlRunnerV2" || n == "Runner"
                 || n.StartsWith("Microsoft.CodeAnalysis")) continue;
+            // Skip a previous bundle assembly still loaded after a server reload.
+            if (BcRuntime.IsStaleBundleAssembly(asm)) continue;
             try { var t = asm.GetType("Microsoft.Dynamics.Nav.BusinessApplication." + name); if (t != null) { found = t; break; } }
             catch { }
         }
@@ -345,6 +369,10 @@ public static class EventSubscriberPatches
                     || name == "mscorlib" || name == "Microsoft.CodeAnalysis"
                     || name.StartsWith("Microsoft.CodeAnalysis.")
                     || name == "AlRunnerV2" || name == "Runner") continue;
+                // Skip a previous bundle assembly still loaded after a server reload —
+                // otherwise its [EventSubscriber] codeunits re-register alongside the
+                // new ones and events fire twice. No-op in normal one-shot mode.
+                if (BcRuntime.IsStaleBundleAssembly(asm)) continue;
                 Type[] types;
                 try { types = asm.GetTypes(); }
                 catch (ReflectionTypeLoadException ex) { types = ex.Types.Where(t => t != null).ToArray()!; }

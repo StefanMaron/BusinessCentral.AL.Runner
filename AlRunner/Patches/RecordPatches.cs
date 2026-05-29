@@ -95,6 +95,36 @@ public static partial class RecordPatches
     // Set to true once Register() has been called.
     private static bool _registered;
 
+    /// <summary>
+    /// Drop all per-bundle parsed/built table &amp; sub-object metadata, the record
+    /// CLR-type cache, the registered source dirs, and the in-memory row store so
+    /// the SAME process can re-load an edited bundle of the same identity (server
+    /// mode). Reflection handles and the installed hooks (<c>_registered</c>) are
+    /// preserved. Re-run <see cref="AddSourceDir"/> + emit + SetTestAssembly after.
+    /// See <see cref="BcRuntime.ResetForNewBundleReload"/> for the full reload
+    /// contract and the field-schema-edit limitation.
+    /// </summary>
+    public static void ResetForReload()
+    {
+        _metaTableCache.Clear();
+        _recordTypeCache.Clear();
+        _parsedTables.Clear();
+        _parsedExtensionFields.Clear();
+        _parsedPages.Clear();
+        _parsedReports.Clear();
+        _parsedReportExtensions.Clear();
+        _parsedQueries.Clear();
+        _parsedXmlPorts.Clear();
+        _metaFormCache.Clear();
+        _metaReportCache.Clear();
+        _metaQueryCache.Clear();
+        _metaXmlPortCache.Clear();
+        _sourceDirs.Clear();
+        // Drop the in-memory table rows so an edited re-run starts clean instead of
+        // seeing Inserts from the previous run (which would e.g. throw "already exists").
+        _dataAccessByTable.Clear();
+    }
+
     public static void AddSourceDir(string dir)
     {
         if (!Directory.Exists(dir)) return;
