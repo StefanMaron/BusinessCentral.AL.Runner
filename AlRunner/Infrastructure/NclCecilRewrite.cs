@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 87;
+    private const int CACHE_VERSION = 88;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -186,6 +186,9 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase::TryInvoke/2",
         // BitArrayHelpers.Equals (Batch 8) — static (BitArray,BitArray) overload.
         "Microsoft.Dynamics.Nav.Runtime.Utility.BitArrayHelpers::Equals/2",
+        // Event-binding metadata cluster (Batch 8).
+        "Microsoft.Dynamics.Nav.Runtime.NavCodeunit::get_MetaCodeunit/0",
+        "Microsoft.Dynamics.Nav.Runtime.NCLMetaCodeunit::get_IsEventManualBinding/0",
     };
 
     /// <summary>
@@ -4262,6 +4265,19 @@ public static class NclCecilRewrite
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "Utility.BitArrayHelpers", "Equals", "BitArray", "BitArray"),
                 H(typeof(AlRunnerV2.BcRuntime), "BitArrayHelpers_Equals"));
+
+            // ── Event-binding metadata cluster (Batch 8) ────────────────────────
+            // NavCodeunit.get_MetaCodeunit + NCLMetaCodeunit.get_IsEventManualBinding.
+            // The real getters traverse the metadata cache / dereference
+            // ApplicationObjectClrType (null on the skeleton) → NRE. Helpers build a
+            // skeleton NCLMetaCodeunit from the AL-emitted Codeunit{N} CLR type.
+            // Reached via Bind/UnbindSubscription. Migrate together (companion getters).
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavCodeunit", "get_MetaCodeunit", 0),
+                H(typeof(AlRunnerV2.BcRuntime), "NavCodeunit_get_MetaCodeunit"));
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NCLMetaCodeunit", "get_IsEventManualBinding", 0),
+                H(typeof(AlRunnerV2.BcRuntime), "NCLMetaCodeunit_get_IsEventManualBinding"));
 
             // ── FlowField CalcFieldsAsync(2)/(3) — already Cecil-body-rewritten above
             //    (see ~line 1751). FlowFieldPatches.Register additionally JmpHook.Apply's
