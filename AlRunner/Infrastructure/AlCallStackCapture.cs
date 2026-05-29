@@ -17,13 +17,20 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class AlCallStackCapture
 {
-    /// <summary>The most recently captured AL call stack string, per-thread.</summary>
-    [ThreadStatic]
-    private static string? _captured;
+    // NOTE: these are deliberately process-global, NOT [ThreadStatic]. BC's AL invoke
+    // (and the test runner's per-test timeout watchdog, TestExecutor.InvokeWithTimeout)
+    // execute the test body on a dedicated worker thread, while Clear() arms capture and
+    // GetCaptured() reads it on the test-executor thread. A [ThreadStatic] flag set on the
+    // executor thread is invisible to the worker thread that actually throws — so the FCE
+    // handler would never capture. Tests run strictly sequentially (Thread.Join blocks per
+    // test), and Thread.Start/Join provide the happens-before barriers, so a single global
+    // pair is correct and race-free across the executor/worker thread boundary.
 
-    /// <summary>True on a thread while a test is executing; controls FCE capture.</summary>
-    [ThreadStatic]
-    private static bool _captureEnabled;
+    /// <summary>The most recently captured AL call stack string (process-global).</summary>
+    private static volatile string? _captured;
+
+    /// <summary>True while a test is executing; controls FCE capture (process-global).</summary>
+    private static volatile bool _captureEnabled;
 
     /// <summary>Per-assembly app metadata (name, publisher, version).</summary>
     private static readonly Dictionary<Assembly, (string Name, string Publisher, string Version)>
@@ -93,7 +100,7 @@ public static class AlCallStackCapture
     [HandleProcessCorruptedStateExceptions]
     private static void OnFirstChanceException(object? sender, FirstChanceExceptionEventArgs e)
     {
-        // Only capture on threads that are executing a test.
+        // Only capture while a test is executing (armed by Clear()).
         if (!_captureEnabled) return;
 
         // Filter: only NavException subclasses carry AL-visible errors.
