@@ -59,13 +59,13 @@ jobs:
         with:
           submodules: true
 
-      # net8 runtime for tools/DownloadArtifacts; net10 to build+run the runner
-      # (BC 28.1 DLLs require System.Text.Json 10 → the runner targets net10.0).
+      # BC 28.1 is a .NET 8 product (Server.runtimeconfig.json tfm=net8.0); the runner
+      # targets net8.0 and runs it on its real runtime. (BC's Types.dll binds
+      # System.Text.Json 10, which the runner deploys app-local via deps.json — see
+      # AlRunner.csproj.) net8 SDK builds the runner and tools/DownloadArtifacts.
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: |
-            8.0.x
-            10.0.x
+          dotnet-version: '8.0.x'
 
       - name: Build (auto-downloads BC ${{ matrix.target.bc-version }} DLLs)
         run: |
@@ -100,7 +100,7 @@ jobs:
           # pass). Crash codes (134/139) also surface here as a non-zero exit → red.
           rc=0
           start=$SECONDS
-          dotnet run --no-build --project AlRunner -c Release --framework net10.0 -- \
+          dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
               tests/al-language/tests/al-language \
               --package-cache "$HOME/.al-runner/platform-apps" \
               --strict \
@@ -117,7 +117,7 @@ jobs:
         # is an independent gate. --strict so any runner-extra failure also fails the leg.
         if: ${{ always() && hashFiles('tests/runner-extras/**/*.al') != '' }}
         run: |
-          dotnet run --no-build --project AlRunner -c Release --framework net10.0 -- \
+          dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
               tests/runner-extras \
               --strict \
               --out runner-extras-results.json
@@ -137,18 +137,16 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        tfm: [net10.0]
+        tfm: [net8.0]
     steps:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
 
-      # net8 runtime for tools/DownloadArtifacts; net10 to build+run the runner.
+      # BC 28.1 runs on .NET 8; the runner targets net8.0. net8 SDK builds + runs it.
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: |
-            8.0.x
-            10.0.x
+          dotnet-version: '8.0.x'
 
       - name: Clear cold-cache Cecil rewrite cache
         run: rm -rf ~/.cache/al-runner/ncl-cecil/
