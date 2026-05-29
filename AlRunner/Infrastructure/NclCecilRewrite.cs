@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 86;
+    private const int CACHE_VERSION = 87;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -184,6 +184,8 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.PermissionManagement::SessionHasSuperOrSecurityPermissionsForUser/2",
         // NavApplicationObjectBase.TryInvoke (Batch 8) — AL TryFunction entry.
         "Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase::TryInvoke/2",
+        // BitArrayHelpers.Equals (Batch 8) — static (BitArray,BitArray) overload.
+        "Microsoft.Dynamics.Nav.Runtime.Utility.BitArrayHelpers::Equals/2",
     };
 
     /// <summary>
@@ -4251,6 +4253,15 @@ public static class NclCecilRewrite
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavApplicationObjectBase", "TryInvoke", "NavSession", "Action"),
                 H(typeof(AlRunnerV2.BcRuntime), "NavApplicationObjectBase_TryInvoke"));
+
+            // ── BitArrayHelpers.Equals (Batch 8) — .NET API drift ───────────────
+            // Real body calls GetIntArray which reads the removed private field
+            // System.Collections.BitArray.m_array → MissingFieldException on current
+            // .NET. Helper compares via the public indexer. (Reached from
+            // FieldLoadInfo.Equals on the SetBaseLoadFields path.)
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "Utility.BitArrayHelpers", "Equals", "BitArray", "BitArray"),
+                H(typeof(AlRunnerV2.BcRuntime), "BitArrayHelpers_Equals"));
 
             // ── FlowField CalcFieldsAsync(2)/(3) — already Cecil-body-rewritten above
             //    (see ~line 1751). FlowFieldPatches.Register additionally JmpHook.Apply's
