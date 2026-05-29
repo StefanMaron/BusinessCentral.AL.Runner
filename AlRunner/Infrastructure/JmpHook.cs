@@ -43,22 +43,24 @@ internal static class JmpHook
     // is migrating every hook to the runtime-agnostic Cecil IL-rewrite layer; ~102
     // methods are already Cecil-owned (and auto-skipped here regardless of runtime).
     //
-    // Until the last clusters are migrated, JmpHooks still add ~25 net10-only corpus
-    // passes. So the DEFAULT is runtime-conditional: JmpHooks ON only on net10 (where
-    // they work), OFF (Cecil-only) on every other runtime. This makes net8 run with no
-    // hangs/segfaults OUT OF THE BOX, costs net10 nothing, and is the safe behaviour for
-    // any future runtime bump (net11+ → Cecil-only automatically).
+    // DEFAULT: Cecil-only on EVERY runtime (JmpHooks OFF). The native-precode layer is
+    // the runtime-fragile one we are removing; the runtime-agnostic Cecil IL-rewrite layer
+    // is the end state. net8 (BC28's real runtime) and net10 both run Cecil-only identically
+    // with no hangs. The trade-off accepted by the maintainer: until the last ~25 hook
+    // clusters are migrated (TestPage architectural gap + state-dependent NREs), net10
+    // gives up ~25 corpus passes that the legacy JmpHook layer used to cover (1668→1643).
     //
-    // Overrides: AL_RUNNER_NO_JMPHOOK=1 forces OFF (Cecil-only, the eventual end state);
-    //            AL_RUNNER_ENABLE_JMPHOOK=1 forces ON (e.g. to A/B on a non-net10 runtime).
+    // Escape hatch (NOT the default): AL_RUNNER_ENABLE_JMPHOOK=1 re-enables the legacy
+    // JmpHook layer (only meaningful on net10 — it SEGFAULTS on net8), e.g. to recover
+    // those ~25 tests or to A/B while migrating the remaining clusters.
+    // AL_RUNNER_NO_JMPHOOK=1 is retained as an explicit synonym for the default (off).
     private static readonly bool _disabled = ComputeDisabled();
 
     private static bool ComputeDisabled()
     {
         if (Environment.GetEnvironmentVariable("AL_RUNNER_NO_JMPHOOK") == "1") return true;
         if (Environment.GetEnvironmentVariable("AL_RUNNER_ENABLE_JMPHOOK") == "1") return false;
-        // JmpHooks are only safe on the runtime their precode parser was tuned for (net10).
-        return Environment.Version.Major != 10;
+        return true; // Cecil-only everywhere — the JmpHook layer is removed from the default path.
     }
 
     public static void Apply(MethodBase original, MethodInfo replacement, string name)
