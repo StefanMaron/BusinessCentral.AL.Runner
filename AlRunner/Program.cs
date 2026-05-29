@@ -109,11 +109,13 @@ var isolation = AlRunnerV2.TestIsolation.Codeunit;
 bool strictExitCode = false;
 // --test PATTERN: substring filter applied to "Codeunit.Method" — case-insensitive.
 string? testFilter = null;
-// --watch: stay resident with warm dependency symbols; on every .al change re-emit the
-// bundle (warm, ~1.6s — see BcCompiler loader-signature reuse) and spawn a fresh child
-// `al-runner` that cache-HITS the freshly-emitted DLL and runs the tests. The parent never
-// loads a bundle assembly (it only emits), so there is no assembly-coexistence problem, and
-// the child re-parses sources fresh so edits to tables/codeunits are always picked up.
+// --watch: stay resident with warm dependencies and re-run IN-PROCESS on every .al
+// change. Each cycle resets the per-bundle caches (BcRuntime.ResetForNewBundleReload),
+// re-emits warm (~1.6s — BcCompiler loader-signature reuse keeps the ~40s dep symbol
+// load out of the loop) and runs in the same process. This replaced the original
+// child-process model (which re-paid ~14s of runtime dep-loading per save); the
+// same-bundle in-process reload is now safe because the type finders prefer the current
+// test assembly. Net: ~seconds per save instead of a cold re-run.
 bool watchMode = false;
 // --dump-csharp DIR: write the emitted C# (BC Compilation.Emit output, post-BcAssembler
 // polyfill injection) to disk for every bundle compile. Useful for debugging codegen.
@@ -161,14 +163,9 @@ for (int i = 0; i < args.Length; i++)
     }
     bundles.Add(args[i]);
 }
-if (watchMode && alCacheDir == null)
-{
-    Console.Error.WriteLine("--watch requires the AL-output cache (it is how the spawned run picks up the warm re-emit); remove --no-cache.");
-    return 2;
-}
 if (serverMode && watchMode)
 {
-    Console.Error.WriteLine("--server and --watch are mutually exclusive (the server stays warm in-process; watch spawns a child per edit).");
+    Console.Error.WriteLine("--server and --watch are mutually exclusive (both stay warm in-process; pick one).");
     return 2;
 }
 if (alCacheDir != null) Directory.CreateDirectory(alCacheDir);
@@ -289,6 +286,16 @@ foreach (var bundle in bundles)
     i2++;
     var bundleAbs = Path.GetFullPath(bundle);
     var rel = Path.GetRelativePath(Environment.CurrentDirectory, bundleAbs);
+
+    // Watch mode re-runs the SAME process across edits, so drop the previous
+    // iteration's bundle-derived caches (record/codeunit types, parsed schemas,
+    // in-memory rows, enum registry) before re-resolving + re-emitting. The
+    // expensive dependency symbol loader is keyed on the dep set (not the bundle
+    // source), so it stays warm — that is what makes a watch re-run fast. No-op
+    // on the first iteration (caches already empty). Normal one-shot mode never
+    // calls this, so its behaviour is unchanged.
+    if (watchMode)
+        BcRuntime.ResetForNewBundleReload();
 
     // ── per-bucket dep resolution ──────────────────────────────────────────
     var bucketRoot = FindBucketRoot(bundleAbs);
@@ -580,7 +587,13 @@ foreach (var bundle in bundles)
         // happens in a fresh child process spawned after the loop, which cache-HITS this
         // emit. The parent never loads a bundle assembly, so there is no .NET
         // assembly-coexistence problem across re-emits.
-        if (!watchMode && assemblyBytes != null)
+        // Run in-process for BOTH normal and watch mode. The same-bundle reload
+        // reset above + the test-assembly-preferring type finders make an
+        // in-process re-run of an edited same-id bundle safe (the gap that
+        // originally forced watch to spawn a child process is now closed), so
+        // watch keeps the deps warm and re-runs in ~seconds instead of re-paying
+        // a child process's startup + runtime dep load on every save.
+        if (assemblyBytes != null)
         {
             var rt = System.Diagnostics.Stopwatch.StartNew();
             IReadOnlyList<TestResult> tests;
@@ -706,13 +719,21 @@ foreach (var bundle in bundles)
 if (!watchMode)
     break;   // normal mode: one pass, fall through to the summary below
 
-// ── Watch mode: run the freshly-emitted bundles in a clean child process, then
-// block until an .al source change and loop (re-emit warm + re-run). ──────────
-RunWatchChild(bundles, packageCacheArgs, testFilter, isolation);
+// ── Watch mode: the bundles just ran IN-PROCESS above (deps stayed warm).
+// Print this iteration's results, then block until an .al source change and
+// loop (reset + re-emit warm + re-run, all in the same warm process). ─────────
+Reporter.PrintPerTest(results, Console.Out, showPass);
+Reporter.PrintSummary(results, Console.Out);
 Console.WriteLine("[watch] waiting for AL source changes… (Ctrl+C to quit)");
+// Flush before blocking: when stdout is a pipe/file (a TUI front-end, VS Code, or
+// a test harness) it is block-buffered, so the cycle's results + this marker would
+// otherwise sit unflushed for the entire idle wait. A TTY auto-flushes, but piped
+// consumers must see each cycle as it completes.
+Console.Out.Flush();
 if (!WaitForSourceChange(bundles))
     return 0;
-Console.WriteLine("[watch] change detected — re-emitting…");
+Console.WriteLine("[watch] change detected — re-running…");
+Console.Out.Flush();
 } // end while(true) watch loop
 
 Reporter.PrintPerTest(results, Console.Out, showPass);
@@ -1124,36 +1145,6 @@ static List<string> DiffServerFiles(Dictionary<string, string>? prev, Dictionary
 
 // ── --watch helpers ───────────────────────────────────────────────────────────
 
-// Run the (already-emitted, cached) bundles in a fresh child al-runner process so the
-// run gets a clean assembly-load context every time. The child cache-HITS the parent's
-// warm re-emit, so it skips compilation entirely and only pays its own startup + run.
-static void RunWatchChild(
-    List<string> bundles,
-    List<string> packageCacheArgs,
-    string? testFilter,
-    AlRunnerV2.TestIsolation isolation)
-{
-    var psi = new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!)
-    {
-        UseShellExecute = false,
-    };
-    foreach (var b in bundles) psi.ArgumentList.Add(b);
-    foreach (var pc in packageCacheArgs) { psi.ArgumentList.Add("--package-cache"); psi.ArgumentList.Add(pc); }
-    if (!string.IsNullOrEmpty(testFilter)) { psi.ArgumentList.Add("--test"); psi.ArgumentList.Add(testFilter); }
-    psi.ArgumentList.Add("--isolation");
-    psi.ArgumentList.Add(isolation.ToString().ToLowerInvariant());
-    psi.Environment["AL_RUNNER_WATCH_CHILD"] = "1";
-    try
-    {
-        using var child = System.Diagnostics.Process.Start(psi);
-        child!.WaitForExit();
-    }
-    catch (Exception ex)
-    {
-        Console.Error.WriteLine($"[watch] child run failed: {ex.Message}");
-    }
-}
-
 // Block until an .al file changes under any watched bundle's bucket root. Returns true
 // on a change (loop again), false if there is nothing to watch.
 static bool WaitForSourceChange(List<string> bundles)
@@ -1269,9 +1260,9 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                          re-used on subsequent runs if inputs are unchanged");
     w.WriteLine("                          (key = hash of .al sources, resolved deps, runner mtime).");
     w.WriteLine("  --no-cache              Disable the AL-output cache for this run.");
-    w.WriteLine("  --watch                 Stay resident with warm dependency symbols; on every");
-    w.WriteLine("                          .al change, re-emit the bundle (warm, fast) and run it");
-    w.WriteLine("                          in a fresh child process. Ctrl+C to quit.");
+    w.WriteLine("  --watch                 Stay resident with warm dependencies and re-run IN-PROCESS");
+    w.WriteLine("                          on every .al change (deps loaded once → ~seconds/save, not");
+    w.WriteLine("                          a cold re-run). Ctrl+C to quit.");
     w.WriteLine("  --server                Long-running JSON-RPC daemon over stdin/stdout (warm");
     w.WriteLine("                          deps + BC patches loaded once; ~19s->~4s per run). One");
     w.WriteLine("                          JSON request/response per line. stdout carries ONLY the");

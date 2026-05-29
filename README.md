@@ -115,7 +115,7 @@ dotnet run --project AlRunner -c Release -- tests/al-language/tests/al-language
 | `--package-cache PATH` | Extra `.app`-package cache directory. Repeatable. |
 | `--cache PATH` | Cache compiled AL output keyed on source + dep set + runner mtime. |
 | `--isolation codeunit\|test\|disabled` | Test isolation mode. Default `codeunit`. |
-| `--watch` | Stay resident; on every `.al` change re-emit warm and run in a fresh child process. |
+| `--watch` | Stay resident with warm dependencies; on every `.al` change reset + re-emit + run **in-process** (~seconds/save). |
 | `--server` | Long-running JSON-RPC daemon over stdin/stdout (warm deps → ~19s→~4s/run). See [docs/server-mode.md](docs/server-mode.md). |
 | `--per-suite` | Legacy per-suite compile mode (diagnostic). Default is bundled-per-bucket. |
 | `--bundled` | No-op alias for backwards compatibility. |
