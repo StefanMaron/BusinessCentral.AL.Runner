@@ -454,6 +454,9 @@ foreach (var bundle in bundles)
                 // case spike-a-baseapp's Currency-init scenario depends on.
                 foreach (var (_, appPath) in ordered)
                     AlRunnerV2.Patches.RecordPatches.AddBcAppPath(appPath);
+                // Register any prebuilt bundle-root .app (with SymbolReference.json) so the
+                // generic NCLMetaQuery builder can read this bundle's own query column ids.
+                AlRunnerV2.Patches.RecordPatches.RegisterBundleSymbolApps(bucketRoot);
                 // Populate BcRuntime with this bundle's identity for the
                 // NavApp.GetCurrentModuleInfo polyfill shim.
                 SetBundleInfoFromAppJson(appJsonPath);
@@ -1109,6 +1112,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 BcCompiler.SetResolvedDeps(ordered, resolverDirs);
                 foreach (var (_, appPath) in ordered)
                     AlRunnerV2.Patches.RecordPatches.AddBcAppPath(appPath);
+                AlRunnerV2.Patches.RecordPatches.RegisterBundleSymbolApps(bucketRoot);
                 SetBundleInfoFromAppJson(appJsonPath);
                 var bundleId = AlRunnerV2.Infrastructure.InProcessAppPackager.ReadIdentity(appJsonPath);
                 if (bundleId != null)

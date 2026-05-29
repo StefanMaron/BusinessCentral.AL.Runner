@@ -40,6 +40,8 @@ public static partial class RecordPatches
     // Lazy fallback index: tableId → (appPath, alSource). Built only when symbols miss.
     private static Dictionary<int, (string AppPath, string Source)>? _bcTableIndex;
     private static Dictionary<int, (string AppPath, ParsedTable Table)>? _bcSymbolTableIndex;
+    // Query symbol index: queryId → QuerySymbol, built from registered .app SymbolReference.json.
+    private static Dictionary<int, BcAppSymbolCache.QuerySymbol>? _bcSymbolQueryIndex;
     private static readonly object _bcTableIndexLock = new();
 
     // Negative cache: tableIds we've already tried and not found.
@@ -68,7 +70,34 @@ public static partial class RecordPatches
                 // Invalidate the index so newly-added .app gets picked up on next miss.
                 _bcTableIndex = null;
                 _bcSymbolTableIndex = null;
+                _bcSymbolQueryIndex = null;
             }
+        }
+    }
+
+    /// <summary>
+    /// Register any prebuilt `.app` files sitting in the bundle root (alongside the AL
+    /// source) that carry a SymbolReference.json, so the runner can read the bundle's OWN
+    /// query/table symbol metadata (e.g. corpus query 60022's BC-compiler-assigned column
+    /// ids, which the generic NCLMetaQuery builder needs verbatim). Source-only bundles
+    /// with no prebuilt .app simply have no query symbols available — queries then fall
+    /// back to the null-metaquery behaviour, not a fabricated definition. Recurses one
+    /// level so a bundle laid out as <root>/MainApps/* still finds its top-level .app.
+    /// </summary>
+    public static void RegisterBundleSymbolApps(string bundleRoot)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(bundleRoot) || !Directory.Exists(bundleRoot)) return;
+            foreach (var app in Directory.EnumerateFiles(bundleRoot, "*.app", SearchOption.TopDirectoryOnly))
+            {
+                try { if (AlRunnerV2.AppLoader.HasSymbolReference(app)) AddBcAppPath(app); }
+                catch { /* unreadable .app — skip */ }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[RecordPatches] BcAppFallback: RegisterBundleSymbolApps({bundleRoot}) failed: {ex.Message}");
         }
     }
 
@@ -247,6 +276,70 @@ public static partial class RecordPatches
         _bcTableIndex = idx;
         if (idx.Count > 0)
             Console.Error.WriteLine($"[RecordPatches] BcAppFallback: indexed {idx.Count} AL-source table id(s) across {_bcAppPaths.Count} BC .app file(s)");
+    }
+
+    /// <summary>
+    /// Look up a query's SymbolReference.json definition by id across all registered BC
+    /// .app dependencies (and any bundle .app registered as a query-symbol source).
+    /// Returns null when no registered .app carries that query — caller falls back to
+    /// the null-metaquery behaviour rather than fabricating one.
+    /// </summary>
+    internal static BcAppSymbolCache.QuerySymbol? TryGetQuerySymbol(int queryId)
+    {
+        lock (_bcTableIndexLock)
+        {
+            EnsureBcSymbolQueryIndex();
+            return _bcSymbolQueryIndex != null && _bcSymbolQueryIndex.TryGetValue(queryId, out var q) ? q : null;
+        }
+    }
+
+    private static void EnsureBcSymbolQueryIndex()
+    {
+        if (_bcSymbolQueryIndex != null) return;
+        var idx = new Dictionary<int, BcAppSymbolCache.QuerySymbol>();
+        foreach (var appPath in _bcAppPaths)
+        {
+            try
+            {
+                foreach (var q in BcAppSymbolCache.Get(appPath).Queries)
+                    if (!idx.ContainsKey(q.Id))
+                        idx[q.Id] = q;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[RecordPatches] BcAppFallback: query SymbolReference read failed for {Path.GetFileName(appPath)}: {ex.Message}");
+            }
+        }
+        _bcSymbolQueryIndex = idx;
+        if (idx.Count > 0)
+            Console.Error.WriteLine($"[RecordPatches] BcAppFallback: indexed {idx.Count} symbol query id(s) across {_bcAppPaths.Count} BC .app file(s)");
+    }
+
+    /// <summary>
+    /// Resolve a table NAME (as used in a query dataitem's RelatedTable) to its table id,
+    /// ensuring the table is also materialised in _parsedTables so its NCLMetaTable can be
+    /// built for query column field-name resolution. Returns -1 if unknown.
+    /// </summary>
+    internal static int ResolveTableIdByName(string tableName)
+    {
+        if (string.IsNullOrEmpty(tableName)) return -1;
+        // First check already-parsed tables (test-source tables + previously-faulted-in BC tables).
+        foreach (var t in _parsedTables.Values)
+            if (string.Equals(t.TableName, tableName, StringComparison.OrdinalIgnoreCase))
+                return t.TableId;
+        // Otherwise scan the BC symbol table index (BaseApp/SystemApp tables).
+        lock (_bcTableIndexLock)
+        {
+            EnsureBcSymbolTableIndex();
+            if (_bcSymbolTableIndex != null)
+                foreach (var (id, entry) in _bcSymbolTableIndex)
+                    if (string.Equals(entry.Table.TableName, tableName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _parsedTables.TryAdd(id, entry.Table); // make it available for metatable build
+                        return id;
+                    }
+        }
+        return -1;
     }
 
     private static void EnsureBcSymbolTableIndex()

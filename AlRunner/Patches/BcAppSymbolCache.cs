@@ -9,13 +9,31 @@ namespace AlRunnerV2.Patches;
 
 internal static class BcAppSymbolCache
 {
-    private const int CacheVersion = 2;
+    // v3: added Queries to the parsed payload (generic NCLMetaQuery builder).
+    private const int CacheVersion = 3;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
 
-    internal sealed record AppSymbols(List<ParsedTable> Tables, List<EnumSymbol> Enums);
+    internal sealed record AppSymbols(List<ParsedTable> Tables, List<EnumSymbol> Enums, List<QuerySymbol> Queries);
     internal sealed record EnumSymbol(int Id, string Name, List<string> Options, List<int> Indexes, List<List<int>> Implementations);
 
-    private sealed record CachePayload(long Length, long LastWriteUtcTicks, List<ParsedTable> Tables, List<EnumSymbol> Enums);
+    // Parsed query SymbolReference.json shape. A query is a tree of dataitems; the root
+    // dataitem(s) live under the query's "Elements", nested dataitems under "DataItems".
+    // Column/Filter Id is the BC-compiler-assigned column id baked into precompiled callers
+    // (NavQuery.ValidateExpectedType(columnId,...)/GetColumnValueSafe) — it MUST be used verbatim.
+    internal sealed record QuerySymbol(
+        int Id, string Name, string? QueryType, string? Caption, string? OrderBy,
+        int TopNumberOfRowsToReturn, List<QueryDataItemSymbol> DataItems);
+
+    internal sealed record QueryDataItemSymbol(
+        int Id, string Name, string RelatedTable, string? SqlJoinType, string? DataItemLink,
+        List<QueryColumnSymbol> Columns, List<QueryColumnSymbol> Filters,
+        List<QueryDataItemSymbol> DataItems);
+
+    // SourceColumn is the field NAME on RelatedTable; Id is the BC column id; Caption optional.
+    internal sealed record QueryColumnSymbol(int Id, string Name, string SourceColumn, string? Caption);
+
+    private sealed record CachePayload(long Length, long LastWriteUtcTicks,
+        List<ParsedTable> Tables, List<EnumSymbol> Enums, List<QuerySymbol> Queries);
 
     internal static AppSymbols Get(string appPath)
     {
@@ -29,14 +47,14 @@ internal static class BcAppSymbolCache
         var cached = TryRead(cachePath, info);
         if (cached != null)
         {
-            PerfTrace.Log($"bc-symbols HIT {Path.GetFileName(appPath)} tables={cached.Tables.Count} enums={cached.Enums.Count} {sw.ElapsedMilliseconds}ms");
+            PerfTrace.Log($"bc-symbols HIT {Path.GetFileName(appPath)} tables={cached.Tables.Count} enums={cached.Enums.Count} queries={cached.Queries.Count} {sw.ElapsedMilliseconds}ms");
             ProcessCache[key] = cached;
             return cached;
         }
 
         var parsed = Parse(appPath);
         TryWrite(cachePath, info, parsed);
-        PerfTrace.Log($"bc-symbols MISS {Path.GetFileName(appPath)} tables={parsed.Tables.Count} enums={parsed.Enums.Count} {sw.ElapsedMilliseconds}ms");
+        PerfTrace.Log($"bc-symbols MISS {Path.GetFileName(appPath)} tables={parsed.Tables.Count} enums={parsed.Enums.Count} queries={parsed.Queries.Count} {sw.ElapsedMilliseconds}ms");
         ProcessCache[key] = parsed;
         return parsed;
     }
@@ -51,7 +69,7 @@ internal static class BcAppSymbolCache
                 || payload.Length != appInfo.Length
                 || payload.LastWriteUtcTicks != appInfo.LastWriteTimeUtc.Ticks)
                 return null;
-            return new AppSymbols(payload.Tables, payload.Enums);
+            return new AppSymbols(payload.Tables, payload.Enums, payload.Queries ?? new List<QuerySymbol>());
         }
         catch (Exception ex)
         {
@@ -65,7 +83,7 @@ internal static class BcAppSymbolCache
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
-            var payload = new CachePayload(appInfo.Length, appInfo.LastWriteTimeUtc.Ticks, symbols.Tables, symbols.Enums);
+            var payload = new CachePayload(appInfo.Length, appInfo.LastWriteTimeUtc.Ticks, symbols.Tables, symbols.Enums, symbols.Queries);
             File.WriteAllText(cachePath, JsonSerializer.Serialize(payload));
         }
         catch (Exception ex)
@@ -78,15 +96,16 @@ internal static class BcAppSymbolCache
     {
         var tables = new Dictionary<int, ParsedTable>();
         var enums = new Dictionary<int, EnumSymbol>();
+        var queries = new Dictionary<int, QuerySymbol>();
         foreach (var json in ReadSymbolReferences(appPath))
         {
             using var doc = JsonDocument.Parse(json);
-            VisitSymbolContainer(doc.RootElement, tables, enums);
+            VisitSymbolContainer(doc.RootElement, tables, enums, queries);
         }
-        return new AppSymbols(tables.Values.ToList(), enums.Values.ToList());
+        return new AppSymbols(tables.Values.ToList(), enums.Values.ToList(), queries.Values.ToList());
     }
 
-    private static void VisitSymbolContainer(JsonElement container, Dictionary<int, ParsedTable> tables, Dictionary<int, EnumSymbol> enums)
+    private static void VisitSymbolContainer(JsonElement container, Dictionary<int, ParsedTable> tables, Dictionary<int, EnumSymbol> enums, Dictionary<int, QuerySymbol> queries)
     {
         if (container.TryGetProperty("Tables", out var tableArray) && tableArray.ValueKind == JsonValueKind.Array)
         {
@@ -108,11 +127,83 @@ internal static class BcAppSymbolCache
             }
         }
 
+        if (container.TryGetProperty("Queries", out var queryArray) && queryArray.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var q in queryArray.EnumerateArray())
+            {
+                var parsed = TryParseQuerySymbol(q);
+                if (parsed != null && !queries.ContainsKey(parsed.Id))
+                    queries[parsed.Id] = parsed;
+            }
+        }
+
         if (container.TryGetProperty("Namespaces", out var namespaces) && namespaces.ValueKind == JsonValueKind.Array)
         {
             foreach (var ns in namespaces.EnumerateArray())
-                VisitSymbolContainer(ns, tables, enums);
+                VisitSymbolContainer(ns, tables, enums, queries);
         }
+    }
+
+    private static QuerySymbol? TryParseQuerySymbol(JsonElement query)
+    {
+        if (!query.TryGetProperty("Id", out var idProp) || !idProp.TryGetInt32(out var queryId))
+            return null;
+        var name = query.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() ?? $"Query{queryId}" : $"Query{queryId}";
+        var props = SymbolProperties(query);
+        props.TryGetValue("QueryType", out var queryType);
+        props.TryGetValue("Caption", out var caption);
+        props.TryGetValue("OrderBy", out var orderBy);
+        int top = 0;
+        if (props.TryGetValue("TopNumberOfRows", out var topText) && int.TryParse(topText, out var t)) top = t;
+
+        // Root dataitems live under "Elements"; nested ones under "DataItems".
+        var dataItems = new List<QueryDataItemSymbol>();
+        if (query.TryGetProperty("Elements", out var elements) && elements.ValueKind == JsonValueKind.Array)
+            foreach (var el in elements.EnumerateArray())
+            {
+                var di = TryParseQueryDataItem(el);
+                if (di != null) dataItems.Add(di);
+            }
+        return new QuerySymbol(queryId, name, queryType, caption, orderBy, top, dataItems);
+    }
+
+    private static QueryDataItemSymbol? TryParseQueryDataItem(JsonElement el)
+    {
+        var name = el.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() ?? string.Empty : string.Empty;
+        var relatedTable = el.TryGetProperty("RelatedTable", out var rtProp) ? rtProp.GetString() ?? string.Empty : string.Empty;
+        int id = el.TryGetProperty("Id", out var idProp) && idProp.TryGetInt32(out var i) ? i : 0;
+        var props = SymbolProperties(el);
+        props.TryGetValue("SqlJoinType", out var sqlJoinType);
+        props.TryGetValue("DataItemLink", out var dataItemLink);
+
+        var columns = ParseQueryColumns(el, "Columns");
+        var filters = ParseQueryColumns(el, "Filters");
+
+        var nested = new List<QueryDataItemSymbol>();
+        if (el.TryGetProperty("DataItems", out var di) && di.ValueKind == JsonValueKind.Array)
+            foreach (var child in di.EnumerateArray())
+            {
+                var c = TryParseQueryDataItem(child);
+                if (c != null) nested.Add(c);
+            }
+        return new QueryDataItemSymbol(id, name, relatedTable, sqlJoinType, dataItemLink, columns, filters, nested);
+    }
+
+    private static List<QueryColumnSymbol> ParseQueryColumns(JsonElement dataItem, string arrayName)
+    {
+        var result = new List<QueryColumnSymbol>();
+        if (!dataItem.TryGetProperty(arrayName, out var arr) || arr.ValueKind != JsonValueKind.Array)
+            return result;
+        foreach (var col in arr.EnumerateArray())
+        {
+            int id = col.TryGetProperty("Id", out var idProp) && idProp.TryGetInt32(out var i) ? i : 0;
+            var name = col.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() ?? string.Empty : string.Empty;
+            var sourceColumn = col.TryGetProperty("SourceColumn", out var scProp) ? scProp.GetString() ?? string.Empty : string.Empty;
+            var props = SymbolProperties(col);
+            props.TryGetValue("Caption", out var caption);
+            result.Add(new QueryColumnSymbol(id, name, sourceColumn, caption));
+        }
+        return result;
     }
 
     private static ParsedTable? TryParseTableSymbol(JsonElement table)

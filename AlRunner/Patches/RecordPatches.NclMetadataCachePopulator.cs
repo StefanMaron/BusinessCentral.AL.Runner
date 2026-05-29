@@ -117,6 +117,18 @@ public static partial class RecordPatches
             if (meta != null)
                 return meta;
         }
+        else if (objectType == ObjectType.Query)
+        {
+            // Precompiled / BaseApp-internal queries reach the engine via
+            // NCLMetadata.GetMetaQueryById → GetMetaApplicationObject(ObjectType.Query, …),
+            // NOT through NavQueryHandle.CreateTarget. Build the real NCLMetaQuery lazily
+            // from SymbolReference.json (BuildRealNCLMetaQuery is cached). Returns null when
+            // it can't be built (no symbols / unresolved table) → the original
+            // NavNCLApplicationObjectNotFoundException surfaces rather than a fake.
+            var meta = EnsureQueryInMetadataCache(objectId);
+            if (meta != null)
+                return meta;
+        }
 
         throw new InvalidOperationException(
             $"NCLMetadata.GetMetaApplicationObject: no metadata for {objectType} {objectId}");
@@ -155,6 +167,42 @@ public static partial class RecordPatches
         var entry = _mCreateWithBase.Invoke(null, new object?[] { meta });
         if (entry != null)
             dict[tableId] = entry;
+        return meta;
+    }
+
+    // Cache of lazily-built precompiled-query NCLMetaQuery objects (BuildRealNCLMetaQuery is
+    // also cached, but this avoids re-resolving FindQueryType + the cache-entry insert).
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, object?> _lazyMetaQueryByGetById = new();
+
+    internal static object? EnsureQueryInMetadataCache(int queryId)
+    {
+        var meta = _lazyMetaQueryByGetById.GetOrAdd(queryId, id =>
+        {
+            var clrType = BcRuntime.FindQueryType(id);
+            return clrType == null ? null : BuildRealNCLMetaQuery(id, clrType);
+        });
+        if (meta == null) return null;
+
+        var skeleton = BcRuntime.SkeletonNCLMetadata;
+        if (skeleton == null) return meta;
+
+        EnsureCachePopulatorReflection();
+        if (_fNCLMetadataCacheEntries == null || _mCreateWithBase == null) return meta;
+
+        var arr = _fNCLMetadataCacheEntries.GetValue(skeleton) as Array;
+        const int objectTypeQuery = 9;
+        if (arr == null || arr.Length <= objectTypeQuery) return meta;
+        if (arr.GetValue(objectTypeQuery) is not System.Collections.IDictionary dict || dict.Contains(queryId))
+            return meta;
+
+        if (_fNCLMetaAppObjMetadataLoaded != null)
+            FieldPoke.SetInstance(_fNCLMetaAppObjMetadataLoaded, meta, true);
+        try
+        {
+            var entry = _mCreateWithBase.Invoke(null, new object?[] { meta });
+            if (entry != null) dict[queryId] = entry;
+        }
+        catch { /* cache insert is best-effort; meta is still returned */ }
         return meta;
     }
 

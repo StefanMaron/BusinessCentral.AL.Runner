@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 95;
+    private const int CACHE_VERSION = 96;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -99,6 +99,10 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.NavSession::get_SortingProperties/0",
         // DataAccessSource + TempTableDataProvider
         "Microsoft.Dynamics.Nav.Runtime.DataAccessSource::GetDataAccessForTable/2",
+        // GetDataAccessForQuery(NCLMetaQueryDefinition) — single-dataitem returns the one
+        // in-memory DataAccess; multi-dataitem (join) over EMPTY tables returns the root
+        // DataAccess (faithful no-rows), join WITH data throws RunnerOutOfScopeException.
+        "Microsoft.Dynamics.Nav.Runtime.DataAccessSource::GetDataAccessForQuery/1",
         "Microsoft.Dynamics.Nav.Runtime.TempTableDataProvider::.ctor/2",
         "Microsoft.Dynamics.Nav.Runtime.TempTableDataProvider::CalcNumeric/1",
         // Collation comparers
@@ -4103,6 +4107,13 @@ public static class NclCecilRewrite
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "DataAccessSource", "GetDataAccessForTable", "NCLMetaTable", "Boolean"),
                 H(recordPatches, "NavDataAccessSource_GetDataAccessForTable"));
+
+            // ── DataAccessSource.GetDataAccessForQuery(NCLMetaQueryDefinition) ──
+            // Multi-dataitem (join) query support: single source → original behaviour;
+            // empty-table join → root DataAccess (no rows); join with data → OOS throw.
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "DataAccessSource", "GetDataAccessForQuery", "NCLMetaQueryDefinition"),
+                H(recordPatches, "DataAccessSource_GetDataAccessForQuery"));
 
             // ── TempTableDataProvider ctor (NavSession,NCLMetaTable) + CalcNumeric ──
             {

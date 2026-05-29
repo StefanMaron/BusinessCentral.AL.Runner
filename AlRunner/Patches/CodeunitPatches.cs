@@ -613,7 +613,7 @@ public static partial class BcRuntime
             $"Query{id} has no recognized constructor. Available: {sigs}");
     }
 
-    private static Type? FindQueryType(int id)
+    internal static Type? FindQueryType(int id)
     {
         var navNcl = AppDomain.CurrentDomain.GetAssemblies()
             .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");

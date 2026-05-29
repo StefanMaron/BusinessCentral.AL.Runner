@@ -107,6 +107,146 @@ public static partial class RecordPatches
         return ProjectIfQuery(request, raw);
     }
 
+    private static MethodInfo? _mGetDataAccessForTable_Orig;
+    private static PropertyInfo? _pQueryDefIncludedTables;
+    private static PropertyInfo? _pDataAccessDataProvider;
+    private static PropertyInfo? _pNclMetaQueryQueryDefinition2;
+
+    /// <summary>
+    /// Replacement for DataAccessSource.GetDataAccessForQuery(NCLMetaQueryDefinition).
+    ///
+    /// Single-dataitem queries map to ONE in-memory DataAccess (the temp provider holding
+    /// the inserted rows) — return it (original behaviour). Multi-dataitem (join) queries
+    /// map each included table to its OWN temp DataAccess; the real engine throws
+    /// QueriesBetweenDataSourcesNotSupported because an in-memory cross-provider join is not
+    /// supported. The FAITHFUL result of a join over EMPTY tables is zero rows (BC's SQL
+    /// join produces no rows when either side is empty). So: if every included table is
+    /// empty, return the ROOT (driving) table's DataAccess — FindAsync then runs the query
+    /// over an empty driving table and the projection layer yields no rows (correct). If any
+    /// included table actually has rows, an in-memory join WOULD change the result, so we
+    /// throw RunnerOutOfScopeException rather than silently return wrong/unjoined data.
+    /// </summary>
+    public static object DataAccessSource_GetDataAccessForQuery(object self, object queryDefinition)
+    {
+        EnsureGetDataAccessForQueryReflection(self);
+
+        var includedTables = (System.Collections.IEnumerable)_pQueryDefIncludedTables!.GetValue(queryDefinition)!;
+        var tableList = includedTables.Cast<object>().ToList();
+
+        // Resolve each included table's DataAccess via the (already-hooked) per-table route.
+        var accesses = new List<object>();
+        foreach (var t in tableList)
+            accesses.Add(NavDataAccessSource_GetDataAccessForTable(self, (NCLMetaTable)t, false));
+
+        if (accesses.Count == 0)
+            return NavDataAccessSource_GetDataAccessForTable(self, null!, false); // shouldn't happen; let original-style path surface
+
+        // Single data source (single dataitem, or all tables already share one DataAccess) —
+        // original behaviour: return that single instance.
+        bool allSame = accesses.All(a => ReferenceEquals(a, accesses[0]));
+        if (allSame)
+            return accesses[0];
+
+        // Join across distinct in-memory data sources. Determine emptiness per table.
+        bool anyNonEmpty = tableList.Any(t => TableHasAnyRow(self, (NCLMetaTable)t));
+        if (!anyNonEmpty)
+        {
+            QLog($"GetDataAccessForQuery: {tableList.Count}-table join, all empty → returning root DataAccess (faithful no-rows)");
+            return accesses[0]; // root/driving table; empty → query yields no rows
+        }
+
+        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            "NavQuery (multi-dataitem join with data)",
+            "query-join-not-implemented — in-memory cross-table query joins are not yet supported; " +
+            "see docs/scope.md. (Empty-table joins are supported and return no rows.)");
+    }
+
+    private static void EnsureGetDataAccessForQueryReflection(object dataAccessSource)
+    {
+        if (_pQueryDefIncludedTables != null) return;
+        var nclAsm = dataAccessSource.GetType().Assembly;
+        const string rt = "Microsoft.Dynamics.Nav.Runtime.";
+        var tQueryDef = nclAsm.GetType(rt + "NCLMetaQueryDefinition")!;
+        _pQueryDefIncludedTables = tQueryDef.GetProperty("IncludedTables",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("NCLMetaQueryDefinition.IncludedTables not found");
+        var tDataAccess = nclAsm.GetType(rt + "DataAccess")!;
+        _pDataAccessDataProvider = tDataAccess.GetProperty("DataProvider",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+    }
+
+    // Does the in-memory temp provider behind <paramref name="table"/> hold any row?
+    // Uses the provider's own FindImplementation with a table-shaped (NOT query) request so
+    // no projection happens — we only need to know if a single row exists.
+    private static bool TableHasAnyRow(object dataAccessSource, NCLMetaTable table)
+    {
+        try
+        {
+            var dataAccess = NavDataAccessSource_GetDataAccessForTable(dataAccessSource, table, false);
+            var provider = _pDataAccessDataProvider!.GetValue(dataAccess);
+            if (provider == null) return false;
+            EnsureQueryProjectionReflection(provider);
+            var req = BuildTableFindAnyRequest(provider, table);
+            if (req == null) return true; // can't build probe → assume non-empty (safer: throw OOS, not fake)
+            var rows = (System.Collections.IEnumerable)_mTtdpFindImpl!.Invoke(provider, new[] { req })!;
+            foreach (var _ in rows) return true;
+            return false;
+        }
+        catch (Exception ex)
+        {
+            var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+            QLog($"TableHasAnyRow({table?.TableName}) probe failed: {inner.GetType().Name}: {inner.Message}\n{inner.StackTrace} → treating as non-empty");
+            return true; // never silently claim empty on uncertainty
+        }
+    }
+
+    private static ConstructorInfo? _ctorFindProviderRequestProbe;
+    private static object? BuildTableFindAnyRequest(object provider, NCLMetaTable table)
+    {
+        var nclAsm = provider.GetType().Assembly;
+        const string rt = "Microsoft.Dynamics.Nav.Runtime.";
+        var tFindReq = nclAsm.GetType(rt + "FindProviderRequest")!;
+        // Reuse the public FindProviderRequest ctor (the 13+-arg one used in QueryProjection).
+        _ctorFindProviderRequestProbe ??= tFindReq.GetConstructors()
+            .FirstOrDefault(c => c.GetParameters().Length >= 13
+                && c.GetParameters()[1].ParameterType.Name == "NCLMetaApplicationObject");
+        if (_ctorFindProviderRequestProbe == null) return null;
+
+        object? StaticMember(string typeName, string member)
+        {
+            var t = nclAsm.GetType(rt + typeName)!;
+            return t.GetField(member, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null)
+                ?? t.GetProperty(member, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null);
+        }
+        var emptyFam = StaticMember("FiltersAndMarks", "Empty");
+        var emptyTfd = StaticMember("TableFilterDictionary", "Empty");
+        var fieldListEmpty = StaticMember("FieldList", "Empty");
+        var ps = _ctorFindProviderRequestProbe.GetParameters();
+        var args = new object?[ps.Length];
+        for (int i = 0; i < ps.Length; i++)
+        {
+            args[i] = ps[i].Name switch
+            {
+                "companyToken" => 0,
+                "metaApplicationObject" => table,                 // table-shaped: no projection
+                "lockState" => Enum.ToObject(ps[i].ParameterType, 0),
+                "filtersAndMarks" => emptyFam,
+                "globalAndSecurityFilters" => emptyTfd,
+                "flowFieldSecurityFiltering" => ps[i].ParameterType.IsValueType ? Activator.CreateInstance(ps[i].ParameterType) : null,
+                "autoCalcFields" => null,
+                "sortingFields" => null,
+                "findType" => Enum.ToObject(_tFindTypeEnum!, FirstOnlyOrdinal()),
+                "topNumberOfRowsToReturn" => 1,
+                "skipNumberOfRows" => 0,
+                "fastNumberOfRowsToReturn" => 1,
+                "timeout" => null,
+                "fieldLoadInfo" => null,
+                _ => ps[i].HasDefaultValue ? ps[i].DefaultValue : (ps[i].ParameterType.IsValueType ? Activator.CreateInstance(ps[i].ParameterType) : null)
+            };
+        }
+        return _ctorFindProviderRequestProbe.Invoke(args);
+    }
+
     // ── Query filter translation (SetRange / SetFilter on a query column) ──────────
     // NavQuery.SetRange/SetFilter store a FilterFieldDictionary keyed by the
     // NCLMetaQueryColumn, with each FilterExpression bound to that column's

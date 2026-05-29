@@ -115,45 +115,225 @@ public static partial class RecordPatches
         }
     }
 
-    // SPIKE: hardcoded MetaQuery for corpus query 60022 "ALT Universal Query".
-    //   dataitem Universal (table 60000) columns EntryNo=fld1, IntegerValue=fld3, TextValue=fld6
-    //   OrderBy = ascending(EntryNo)
+    // Generic MetaQuery design builder, driven by the query's SymbolReference.json
+    // definition (parsed by BcAppSymbolCache, indexed by BcAppFallback). Works for both
+    // source-compiled queries (e.g. corpus 60022, symbols read from the bundle's own .app)
+    // and precompiled BaseApp/SystemApp queries (e.g. 777, symbols from the dep .app).
+    //
+    // Column/filter Ids come VERBATIM from symbols (they are the BC-compiler-assigned ids
+    // precompiled callers pass to NavQuery.ValidateExpectedType / GetColumnByNo). FieldNo is
+    // resolved from the (field NAME → field no) map of the dataitem's RelatedTable. The
+    // MetaQuery.DataItems list is FLAT (the join tree is reconstructed by the engine from
+    // each dataitem's DataItemLinkType + DataItemLinks); the root dataitem has
+    // DataItemLinkType=None and every nested dataitem carries its SqlJoinType + a
+    // DataItemLink. QueryColumnIndex is assigned 0-based across all result (non-filter)
+    // columns in dataitem order, matching what the projection layer expects.
     private static object? BuildMetaQueryDesign(int queryId)
     {
-        if (queryId != 60022) return null;  // spike scope
+        var sym = TryGetQuerySymbol(queryId);
+        if (sym == null) { QLog($"BuildMetaQueryDesign({queryId}): no SymbolReference query definition found in any registered .app"); return null; }
+
+        // Pre-resolve every dataitem's (name → tableNo) so DataItemLink source-field
+        // resolution works regardless of parent/child processing order.
+        _dataItemTableNoByName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var d in FlattenDataItems(sym.DataItems))
+        {
+            int tn = ResolveTableIdByName(d.RelatedTable);
+            if (tn >= 0) _dataItemTableNoByName[d.Name] = tn;
+        }
 
         var mq = Activator.CreateInstance(_tMetaQuery!)!;
-        SetProp(mq, "Id", 60022);
-        SetProp(mq, "Name", "ALT Universal Query");
+        SetProp(mq, "Id", sym.Id);
+        SetProp(mq, "Name", sym.Name);
         SetProp(mq, "ReadState", "ReadUncommitted");
-        SetProp(mq, "QueryType", "Normal");
-        SetProp(mq, "TopNumberOfRowsToReturn", 0);
+        SetProp(mq, "QueryType", string.IsNullOrEmpty(sym.QueryType) ? "Normal" : sym.QueryType!);
+        SetProp(mq, "TopNumberOfRowsToReturn", sym.TopNumberOfRowsToReturn);
+        if (!string.IsNullOrEmpty(sym.Caption)) TrySetProp(mq, "Caption", sym.Caption);
 
-        var di = Activator.CreateInstance(_tMetaQueryDataItem!)!;
-        SetProp(di, "DataItemName", "Universal");
-        SetProp(di, "TableNo", 60000);
-        SetProp(di, "Id", 1);
-        SetProp(di, "DataItemLinkType", "None");
-        SetProp(di, "Distinct", false);
+        // Flatten the dataitem tree (root first, then nested) into the flat DataItems list.
+        // resultColumnIndex is shared across all dataitems (filters do NOT consume a slot).
+        int resultColumnIndex = 0;
+        // (columnName/dataItemName → columnId) so OrderBy can map names → column ids.
+        var columnIdByName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
-        // Column Ids are the BC-compiler-assigned ids baked into callers (from
-        // SymbolReference.json) — they MUST match or GetColumnValueSafe/GetColumnByNo throws.
-        // Caption is the query column's configured Caption (the AL `Caption = '...'`),
-        // which NCLMetaQueryColumn.Caption returns when set (else it falls back to the
-        // source table field caption). ColumnCaption(col) reads this.
-        AddColumn(di, id: 1131353536, name: "EntryNo", fieldNo: 1, index: 0, caption: "Entry No.");
-        AddColumn(di, id: 1455042288, name: "IntegerValue", fieldNo: 3, index: 1, caption: "Integer Value");
-        AddColumn(di, id: 1432813677, name: "TextValue", fieldNo: 6, index: 2, caption: "Text Value");
+        bool isRoot = true;
+        foreach (var diSym in FlattenDataItems(sym.DataItems))
+        {
+            int tableNo = ResolveTableIdByName(diSym.RelatedTable);
+            if (tableNo < 0)
+            {
+                QLog($"BuildMetaQueryDesign({queryId}): cannot resolve table '{diSym.RelatedTable}' for dataitem '{diSym.Name}' — abandoning build");
+                return null;
+            }
+            var fieldNoByName = BuildFieldNameToNoMap(tableNo);
 
-        GetList(mq, "DataItems").Add(di);
+            var di = Activator.CreateInstance(_tMetaQueryDataItem!)!;
+            SetProp(di, "DataItemName", diSym.Name);
+            SetProp(di, "TableNo", tableNo);
+            SetProp(di, "Id", diSym.Id);
+            SetProp(di, "DataItemLinkType", isRoot ? "None" : MapSqlJoinType(diSym.SqlJoinType));
+            SetProp(di, "Distinct", false);
 
-        // OrderBy ascending on EntryNo (its real column id).
-        var ob = Activator.CreateInstance(_tMetaQueryOrderBy!)!;
-        SetProp(ob, "QueryColumnId", 1131353536);
-        SetProp(ob, "Sorting", "Ascending");
-        GetList(mq, "OrderBys").Add(ob);
+            // Result columns.
+            foreach (var col in diSym.Columns)
+            {
+                int fieldNo = ResolveFieldNo(fieldNoByName, col.SourceColumn);
+                if (fieldNo < 0)
+                {
+                    QLog($"BuildMetaQueryDesign({queryId}): field '{col.SourceColumn}' not found on table {tableNo} ('{diSym.RelatedTable}') — abandoning build");
+                    return null;
+                }
+                AddColumn(di, id: col.Id, name: col.Name, fieldNo: fieldNo, index: resultColumnIndex++, caption: col.Caption);
+                columnIdByName[col.Name] = col.Id;
+            }
+
+            // Filter-only columns (dataitem filter(...) elements). They carry a real BC
+            // column id and resolve to a source field, but FilterOnly=true and no result slot.
+            foreach (var filt in diSym.Filters)
+            {
+                int fieldNo = ResolveFieldNo(fieldNoByName, filt.SourceColumn);
+                if (fieldNo < 0)
+                {
+                    QLog($"BuildMetaQueryDesign({queryId}): filter field '{filt.SourceColumn}' not found on table {tableNo} — abandoning build");
+                    return null;
+                }
+                AddFilterColumn(di, id: filt.Id, name: filt.Name, fieldNo: fieldNo);
+                columnIdByName[filt.Name] = filt.Id;
+            }
+
+            // DataItemLink: "<thisField> = <SourceDataItem>.<sourceField>". The engine builds
+            // CreateFieldEqualsField(SourceDataItemName, SourceFieldNo, DestinationFieldNo):
+            //   DestinationFieldNo = field on THIS (child) table, SourceFieldNo = field on the
+            //   referenced (parent) dataitem's table.
+            if (!isRoot && !string.IsNullOrEmpty(diSym.DataItemLink))
+            {
+                var link = ParseDataItemLink(diSym.DataItemLink!, fieldNoByName);
+                if (link == null)
+                {
+                    QLog($"BuildMetaQueryDesign({queryId}): could not parse DataItemLink '{diSym.DataItemLink}' for '{diSym.Name}' — abandoning build");
+                    return null;
+                }
+                GetList(di, "DataItemLinks").Add(link);
+            }
+
+            GetList(mq, "DataItems").Add(di);
+            isRoot = false;
+        }
+
+        // OrderBy: SymbolReference carries "ascending(Col1,Col2)" / "descending(...)". Map
+        // each named column → its column id. Unknown columns are skipped (best-effort).
+        AddOrderBys(mq, sym.OrderBy, columnIdByName);
 
         return mq;
+    }
+
+    // Depth-first flatten: root dataitem(s) then their nested children, preserving order so
+    // the engine reconstructs the join tree (root=None, child join types follow).
+    private static IEnumerable<BcAppSymbolCache.QueryDataItemSymbol> FlattenDataItems(
+        IEnumerable<BcAppSymbolCache.QueryDataItemSymbol> items)
+    {
+        foreach (var di in items)
+        {
+            yield return di;
+            foreach (var child in FlattenDataItems(di.DataItems))
+                yield return child;
+        }
+    }
+
+    private static string MapSqlJoinType(string? sqlJoinType) => (sqlJoinType ?? "InnerJoin") switch
+    {
+        "InnerJoin" => "InnerJoin",
+        "LeftOuterJoin" => "LeftOuterJoin",
+        "RightOuterJoin" => "RightOuterJoin",
+        "FullOuterJoin" => "FullOuterJoin",
+        "CrossJoin" => "CrossJoin",
+        "CrossApply" => "CrossApply",
+        "OuterApply" => "OuterApply",
+        _ => "InnerJoin",
+    };
+
+    // Build a case-insensitive field-NAME → field-no map for a table from the parsed table
+    // shape (populated from AL source or the BC .app SymbolReference.json).
+    private static Dictionary<string, int> BuildFieldNameToNoMap(int tableNo)
+    {
+        var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        if (_parsedTables.TryGetValue(tableNo, out var pt))
+            foreach (var f in pt.Fields)
+                map[f.FieldName] = f.FieldId;
+        return map;
+    }
+
+    private static int ResolveFieldNo(Dictionary<string, int> fieldNoByName, string fieldName)
+        => fieldNoByName.TryGetValue(fieldName, out var no) ? no : -1;
+
+    // Parse `"<thisField>" = <SourceDataItem>."<sourceField>"` into a MetaQueryDataItemLink.
+    private static object? ParseDataItemLink(string link, Dictionary<string, int> thisFieldNoByName)
+    {
+        var eq = link.IndexOf('=');
+        if (eq < 0) return null;
+        var lhs = Unquote(link[..eq].Trim());
+        var rhs = link[(eq + 1)..].Trim();
+        var dot = rhs.IndexOf('.');
+        if (dot < 0) return null;
+        var sourceDataItem = rhs[..dot].Trim();
+        var sourceField = Unquote(rhs[(dot + 1)..].Trim());
+
+        int destFieldNo = ResolveFieldNo(thisFieldNoByName, lhs);
+        // Source field is on the referenced (parent) dataitem's table — resolve by following
+        // that table. We don't know its table no here without the parent dataitem, so resolve
+        // via the source data-item name → its RelatedTable from the query symbol map.
+        int srcFieldNo = ResolveSourceFieldNo(sourceDataItem, sourceField);
+        if (destFieldNo < 0 || srcFieldNo < 0) return null;
+
+        var dl = Activator.CreateInstance(_tMetaQueryDataItemLink!)!;
+        SetProp(dl, "SourceDataItemName", sourceDataItem);
+        SetProp(dl, "SourceFieldNo", srcFieldNo);
+        SetProp(dl, "DestinationFieldNo", destFieldNo);
+        return dl;
+    }
+
+    // The source dataitem of a link is keyed by name; we stash each dataitem's
+    // (name → tableNo) during the current build so the source field can be resolved.
+    [ThreadStatic] private static Dictionary<string, int>? _dataItemTableNoByName;
+
+    private static int ResolveSourceFieldNo(string sourceDataItemName, string sourceField)
+    {
+        if (_dataItemTableNoByName != null
+            && _dataItemTableNoByName.TryGetValue(sourceDataItemName, out var srcTableNo))
+        {
+            var map = BuildFieldNameToNoMap(srcTableNo);
+            return ResolveFieldNo(map, sourceField);
+        }
+        return -1;
+    }
+
+    private static string Unquote(string s)
+        => s.Length >= 2 && s[0] == '"' && s[^1] == '"' ? s[1..^1] : s;
+
+    private static void AddOrderBys(object mq, string? orderBy, Dictionary<string, int> columnIdByName)
+    {
+        if (string.IsNullOrWhiteSpace(orderBy)) return;
+        // Format: "ascending(Col1,Col2)" or "descending(Col)". May contain multiple groups.
+        var rx = new System.Text.RegularExpressions.Regex(
+            @"(ascending|descending)\s*\(([^)]*)\)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        foreach (System.Text.RegularExpressions.Match m in rx.Matches(orderBy))
+        {
+            var sorting = m.Groups[1].Value.StartsWith("desc", StringComparison.OrdinalIgnoreCase) ? "Descending" : "Ascending";
+            foreach (var raw in m.Groups[2].Value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var colName = Unquote(raw);
+                if (!columnIdByName.TryGetValue(colName, out var colId)) continue;
+                var ob = Activator.CreateInstance(_tMetaQueryOrderBy!)!;
+                SetProp(ob, "QueryColumnId", colId);
+                SetProp(ob, "Sorting", sorting);
+                GetList(mq, "OrderBys").Add(ob);
+            }
+        }
+    }
+
+    private static void TrySetProp(object obj, string name, object? value)
+    {
+        try { SetProp(obj, name, value); } catch { /* optional prop absent on this Types version */ }
     }
 
     private static MethodInfo? _mMultiLanguageParse;
@@ -181,6 +361,18 @@ public static partial class RecordPatches
             if (ml != null)
                 col.GetType().GetProperty("CaptionML", BindingFlags.Public | BindingFlags.Instance)?.SetValue(col, ml);
         }
+        GetList(dataItem, "QueryColumns").Add(col);
+    }
+
+    // A filter-only query column: carries a real BC column id + resolved source field, but
+    // FilterOnly=true and no result-slot QueryColumnIndex (it is never projected).
+    private static void AddFilterColumn(object dataItem, int id, string name, int fieldNo)
+    {
+        var col = Activator.CreateInstance(_tMetaQueryColumn!)!;
+        SetProp(col, "Id", id);
+        SetProp(col, "Name", name);
+        SetProp(col, "FieldNo", fieldNo);
+        SetProp(col, "FilterOnly", true);
         GetList(dataItem, "QueryColumns").Add(col);
     }
 }
