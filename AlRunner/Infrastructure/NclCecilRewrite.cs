@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 89;
+    private const int CACHE_VERSION = 90;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -129,6 +129,11 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.NCLMetaApplicationObject::get_ApplicationObjectConstructor/0",
         "Microsoft.Dynamics.Nav.Runtime.NCLMetaApplicationObject::Populate/0",
         "Microsoft.Dynamics.Nav.Runtime.NCLMetaApplicationObject::CompileAndLoadClrObject/0",
+        // NCLMetaTable.CreateObjectInstance — concrete-type-aware record construction so
+        // OldRecord (xRec) is the concrete Record{Id}, not a base NavRecord (see
+        // RecordPatches.CreateObjectInstance.cs). Sibling of the nulled-out
+        // ApplicationObjectConstructor above.
+        "Microsoft.Dynamics.Nav.Runtime.NCLMetaTable::CreateObjectInstance/5",
         // RecordImplementation path
         "Microsoft.Dynamics.Nav.Runtime.RecordImplementation::VerifyPermissions/2",
         "Microsoft.Dynamics.Nav.Runtime.RecordImplementation::InternalFindRecordWithoutCheckingValuesAsync/4",
@@ -4066,6 +4071,19 @@ public static class NclCecilRewrite
             ReplaceBodyConst(
                 FindNclMethod(nclMod, Rt + "NCLMetaApplicationObject", "CompileAndLoadClrObject", 0),
                 ConstResult.Void);
+
+            // ── NCLMetaTable.CreateObjectInstance (concrete-type-aware) ──────────
+            // With ApplicationObjectConstructor forced null above, the original
+            // CreateObjectInstance falls back to `new NavRecord(...)` (base type). For
+            // OldRecord (the xRec before-image of a concrete record) that base NavRecord
+            // then fails the compiled `xRec => (Record{Id})OldRecord` cast with
+            // InvalidCastException. The replacement builds the concrete Record{Id} CLR
+            // type (and binds table extensions), matching what the real constructor
+            // delegate would produce. See RecordPatches.CreateObjectInstance.cs.
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NCLMetaTable", "CreateObjectInstance",
+                         "ITreeObject", "Boolean", "NavRecord", "String", "SecurityFiltering"),
+                H(recordPatches, "NCLMetaTable_CreateObjectInstance"));
 
             // ── RecordImplementation path (perms / find / security / IsOpen) ─────
             ReplaceBodyWithHelper(nclMod,
