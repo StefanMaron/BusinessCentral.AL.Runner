@@ -768,6 +768,10 @@ public static partial class RecordPatches
         // handles the xRec/OldRecord and subtable instances; this is the path the test's own
         // `Rec: Record "…"` variable comes through, which would otherwise have no extensions.
         RegisterParsedTableExtensions(rec, id);
+        // Wire field-validate subscribers onto this table's (built+cached) metatable — see the
+        // matching call in NCLMetaTable_CreateObjectInstance for the rationale (lazy injection for
+        // on-demand-built tables an ISV subscribes to).
+        AlRunnerV2.Patches.EventSubscriberPatches.InjectValidateSubsForTable(id, metaTable);
         return rec;
     }
 

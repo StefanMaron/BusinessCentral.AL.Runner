@@ -89,6 +89,11 @@ public static partial class RecordPatches
         // CheckAndFireTriggerEventsAsync then dispatches them naturally during Insert/Modify/
         // Delete/Rename (no JmpHook on the dispatch path — that approach was killed by
         // R2R inlining in session 82e7fffc).
+        // Read-only TryGetValue: only inject onto tables already built. A validate subscriber
+        // on a not-yet-built table (e.g. an ISV on a precompiled BaseApp Purchase Header) is
+        // injected LAZILY instead — see EventSubscriberPatches.InjectValidateSubsForTable, called
+        // from BuildNCLMetaTable the moment that table's metatable is first built. Eagerly building
+        // those publisher tables here perturbs unrelated setup (No.-Series assignment), so don't.
         AlRunnerV2.Patches.EventSubscriberPatches.InjectAll(
             id => _metaTableCache.TryGetValue(id, out var m) ? m : null);
     }

@@ -381,58 +381,99 @@ public static class EventSubscriberPatches
                 NCLMetaTable? metaTable;
                 try { metaTable = getNclMetaTable(vs.Handle.PublisherId) as NCLMetaTable; }
                 catch { metaTable = null; }
-                if (metaTable == null) { skipped++; continue; } // publisher table not built yet — retry next pass
+                if (metaTable == null) { skipped++; continue; } // publisher table not built yet — retry / lazy-inject
 
-                NCLMetaField? metaField = ResolveValidateField(metaTable, vs);
-                if (metaField == null)
-                {
-                    // Loud: the subscriber names a field we cannot resolve on the publisher table.
-                    Console.Error.WriteLine($"[Subscribers] validate target field not found: {vs.Handle.DiagnosticName}");
-                    _injectedSubscriberMethods.Add(vs.Handle.Method); // don't retry forever
-                    failed++;
-                    continue;
-                }
-                EnsureFieldEventTriggerData(metaField);
-
-                object? scope;
-                try
-                {
-                    scope = metaField.GetEventScope(
-                        (NavTriggerEventType)vs.Handle.EventTypeOrdinal,
-                        EventScopeGetOption.CreateIfNotFound);
-                }
-                catch (Exception ex)
-                {
-                    var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
-                    Console.Error.WriteLine($"[Subscribers] field GetEventScope failed for " +
-                        $"{vs.Handle.DiagnosticName}: {inner.GetType().Name}: {inner.Message}");
-                    failed++;
-                    continue;
-                }
-                if (scope == null) { failed++; continue; }
-
-                object? subscription;
-                try { subscription = BuildSubscription(vs.Handle); }
-                catch (Exception ex)
-                {
-                    var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
-                    Console.Error.WriteLine($"[Subscribers] BuildSubscription failed for " +
-                        $"{vs.Handle.DiagnosticName}: {inner.GetType().Name}: {inner.Message}");
-                    failed++;
-                    _injectedSubscriberMethods.Add(vs.Handle.Method);
-                    continue;
-                }
-                if (subscription == null) { failed++; _injectedSubscriberMethods.Add(vs.Handle.Method); continue; }
-
-                AppendSubscriptionToScope(scope, subscription);
-                _injectedSubscriberMethods.Add(vs.Handle.Method);
-                injected++;
+                TryInjectOneValidateSub(vs, metaTable, ref injected, ref failed);
             }
         }
 
         if (injected > 0 || failed > 0)
             Console.Error.WriteLine($"[Subscribers] validate-inject: injected={injected} " +
                 $"failed={failed} skipped-no-publisher={skipped} subs={_validateSubs.Count}");
+    }
+
+    /// <summary>
+    /// Inject any not-yet-injected field-validate subscribers that target <paramref name="tableId"/>
+    /// onto the supplied (freshly built) NCLMetaTable. Called from BuildNCLMetaTable so a subscriber
+    /// on a not-yet-built publisher table — e.g. an ISV subscribing to a precompiled BaseApp table's
+    /// OnAfterValidateEvent — is wired onto the very metatable instance the runtime Record uses, at
+    /// the moment that table is first built (no eager startup building, which perturbs unrelated
+    /// setup). Idempotent via <c>_injectedSubscriberMethods</c>.
+    /// </summary>
+    public static void InjectValidateSubsForTable(int tableId, object metaTableObj)
+    {
+        if (_reflectionFailed || _navAppGroupBaseGroup == null) return;
+        if (metaTableObj is not NCLMetaTable metaTable) return;
+        // Ensure discovery has run so _validateSubs is populated (it may not have been if this
+        // table is built before the first bulk injection pass).
+        try { EnsureRegistryFresh(); } catch { }
+        if (_validateSubs.Count == 0) return;
+
+        lock (_lock)
+        {
+            int injected = 0, failed = 0;
+            foreach (var vs in _validateSubs)
+            {
+                if (vs.Handle.PublisherId != tableId) continue;
+                if (_injectedSubscriberMethods.Contains(vs.Handle.Method)) continue;
+                TryInjectOneValidateSub(vs, metaTable, ref injected, ref failed);
+            }
+            if (injected > 0 || failed > 0)
+                Console.Error.WriteLine($"[Subscribers] validate-inject (table {tableId}, lazy): " +
+                    $"injected={injected} failed={failed}");
+        }
+    }
+
+    /// <summary>Inject one validate subscriber onto its target field's event scope on
+    /// <paramref name="metaTable"/>. Caller holds <c>_lock</c>. Marks the method injected so it is
+    /// not double-registered (which would fire the subscriber twice).</summary>
+    private static void TryInjectOneValidateSub(ValidateSub vs, NCLMetaTable metaTable,
+        ref int injected, ref int failed)
+    {
+        NCLMetaField? metaField = ResolveValidateField(metaTable, vs);
+        if (metaField == null)
+        {
+            // Loud: the subscriber names a field we cannot resolve on the publisher table.
+            Console.Error.WriteLine($"[Subscribers] validate target field not found: {vs.Handle.DiagnosticName}");
+            _injectedSubscriberMethods.Add(vs.Handle.Method); // don't retry forever
+            failed++;
+            return;
+        }
+        EnsureFieldEventTriggerData(metaField);
+
+        object? scope;
+        try
+        {
+            scope = metaField.GetEventScope(
+                (NavTriggerEventType)vs.Handle.EventTypeOrdinal,
+                EventScopeGetOption.CreateIfNotFound);
+        }
+        catch (Exception ex)
+        {
+            var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+            Console.Error.WriteLine($"[Subscribers] field GetEventScope failed for " +
+                $"{vs.Handle.DiagnosticName}: {inner.GetType().Name}: {inner.Message}");
+            failed++;
+            return;
+        }
+        if (scope == null) { failed++; return; }
+
+        object? subscription;
+        try { subscription = BuildSubscription(vs.Handle); }
+        catch (Exception ex)
+        {
+            var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+            Console.Error.WriteLine($"[Subscribers] BuildSubscription failed for " +
+                $"{vs.Handle.DiagnosticName}: {inner.GetType().Name}: {inner.Message}");
+            failed++;
+            _injectedSubscriberMethods.Add(vs.Handle.Method);
+            return;
+        }
+        if (subscription == null) { failed++; _injectedSubscriberMethods.Add(vs.Handle.Method); return; }
+
+        AppendSubscriptionToScope(scope, subscription);
+        _injectedSubscriberMethods.Add(vs.Handle.Method);
+        injected++;
     }
 
     /// <summary>Resolve a validate subscriber's target field on the publisher table — by
