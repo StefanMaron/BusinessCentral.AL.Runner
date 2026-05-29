@@ -118,6 +118,7 @@ public static partial class RecordPatches
         _parsedTables.Clear();
         _parsedExtensionFields.Clear();
         _extensionIdsByBaseTable.Clear();
+        _fieldTriggersWiredTables.Clear();
         _parsedPages.Clear();
         _parsedReports.Clear();
         _parsedReportExtensions.Clear();
@@ -768,9 +769,12 @@ public static partial class RecordPatches
         // handles the xRec/OldRecord and subtable instances; this is the path the test's own
         // `Rec: Record "…"` variable comes through, which would otherwise have no extensions.
         RegisterParsedTableExtensions(rec, id);
-        // Wire field-validate subscribers onto this table's (built+cached) metatable — see the
-        // matching call in NCLMetaTable_CreateObjectInstance for the rationale (lazy injection for
-        // on-demand-built tables an ISV subscribes to).
+        // Wire this table's field OnValidate/OnLookup handlers + field-validate subscribers onto its
+        // (built+cached) metatable. Both matter for tables built lazily at runtime — e.g. a precompiled
+        // BaseApp table whose metatable did not exist when the startup passes ran: without the field
+        // wiring its OnValidate body never runs (e.g. Purchase Header."Buy-from Vendor No." copying the
+        // vendor name), without the subscriber injection an ISV's OnAfterValidateEvent never fires.
+        WireFieldTriggerHandlersForTable(id, metaTable);
         AlRunnerV2.Patches.EventSubscriberPatches.InjectValidateSubsForTable(id, metaTable);
         return rec;
     }

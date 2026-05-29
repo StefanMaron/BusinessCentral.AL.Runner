@@ -77,10 +77,11 @@ public static partial class RecordPatches
         {
             BindTableExtensions(metaTableSelf, rec);
             RegisterParsedTableExtensions(rec, tableId);
-            // Wire any field-validate subscribers targeting this table onto its (now built+cached)
-            // metatable — covers subscribers on tables built on demand at runtime (e.g. an ISV on a
-            // BaseApp table) that the startup bulk pass missed. Safe here (outside GetOrAdd's value
-            // factory, so BuildSubscription's metadata lookups hit the cache, no reentrancy).
+            // Wire field OnValidate/OnLookup handlers + field-validate subscribers onto this table's
+            // (now built+cached) metatable — covers tables built on demand at runtime (e.g. a
+            // precompiled BaseApp table) that the startup passes missed. Safe here (outside GetOrAdd's
+            // value factory, so any metadata lookups hit the cache, no reentrancy).
+            WireFieldTriggerHandlersForTable(tableId, metaTableSelf);
             EventSubscriberPatches.InjectValidateSubsForTable(tableId, metaTableSelf);
         }
         return rec;

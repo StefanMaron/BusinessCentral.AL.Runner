@@ -606,8 +606,31 @@ public static partial class RecordPatches
         foreach (var kvp in _metaTableCache)
         {
             if (kvp.Value is NCLMetaTable mt)
+            {
                 WireFieldTriggerHandlers(mt, kvp.Key);
+                _fieldTriggersWiredTables.TryAdd(kvp.Key, 1);
+            }
         }
+    }
+
+    // Tables whose field-trigger handlers have been wired, so the per-table call on the hot
+    // record-materialisation path is a no-op after the first time.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, byte> _fieldTriggersWiredTables = new();
+
+    /// <summary>
+    /// Wire a single table's field-trigger handlers (the field OnValidate/OnLookup methods on the
+    /// Record CLR type) onto its NCLMetaField EventTriggerData. Called from the record-materialisation
+    /// chokepoints so a table built LAZILY at runtime — notably a precompiled BaseApp table whose
+    /// metatable did not exist when WireFieldTriggerHandlersAll ran at SetTestAssembly — still gets
+    /// its field-validate logic wired. Without this, validating a field on such a table never runs
+    /// the field's OnValidate body (e.g. Purchase Header."Buy-from Vendor No." copying Vendor.Name
+    /// into "Buy-from Vendor Name"). Idempotent + guarded so the hot path pays the cost once.
+    /// </summary>
+    internal static void WireFieldTriggerHandlersForTable(int tableId, object metaTableObj)
+    {
+        if (metaTableObj is not NCLMetaTable mt) return;
+        if (!_fieldTriggersWiredTables.TryAdd(tableId, 1)) return; // already wired
+        WireFieldTriggerHandlers(mt, tableId);
     }
 
     // Single AppDomain walk that finds every NavRecord-derived "Record<N>" type and bulk-populates

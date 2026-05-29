@@ -107,8 +107,9 @@ public static partial class BcRuntime
         // OnBefore/OnAfterValidate handlers fired through FieldRef.Validate) dispatch to a
         // real extension instance instead of falling back to a cast of the base record.
         RecordPatches.RegisterParsedTableExtensions(record, tableNo);
-        // Wire field-validate subscribers onto this table's metatable (lazy injection for
-        // on-demand-built tables — e.g. an ISV subscribing to a BaseApp table's validate event).
+        // Wire field OnValidate/OnLookup handlers + field-validate subscribers onto this table's
+        // metatable (lazy wiring for on-demand-built tables — e.g. a precompiled BaseApp table).
+        RecordPatches.WireFieldTriggerHandlersForTable(tableNo, metaTable);
         AlRunnerV2.Patches.EventSubscriberPatches.InjectValidateSubsForTable(tableNo, metaTable);
         // SharedRecordRef.Record is a non-public-accessor property on the headless
         // build, so include NonPublic in the lookup (Public-only returns null → NRE).
