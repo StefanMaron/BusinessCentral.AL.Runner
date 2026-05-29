@@ -75,6 +75,7 @@ public static partial class RecordPatches
 
         if (rec != null)
         {
+            StampObjectId(rec, tableId);
             BindTableExtensions(metaTableSelf, rec);
             RegisterParsedTableExtensions(rec, tableId);
             // Wire field OnValidate/OnLookup handlers + field-validate subscribers onto this table's
@@ -85,6 +86,56 @@ public static partial class RecordPatches
             EventSubscriberPatches.InjectValidateSubsForTable(tableId, metaTableSelf);
         }
         return rec;
+    }
+
+    private static FieldInfo? _fObjectIdBacking;
+    private static System.Reflection.ConstructorInfo? _ctorApplicationObjectId;
+    private static object? _objectTypeTableEnum;
+
+    /// <summary>
+    /// Ensure a freshly-built record carries ObjectId = (Table, tableId). Records the runner
+    /// constructs via reflection can end up with ObjectId.ObjectNumber == 0; that is harmless for
+    /// field access but breaks NavRecord.ALByValue, which builds the clone handle from
+    /// base.ObjectId.ObjectNumber — a 0 there makes the clone's CreateTarget receive tableId 0
+    /// (e.g. No. Series "Default Nos." validate cloning xRec → CloneForVariant throw). Stamping the
+    /// real table id is faithful (a record's ObjectId IS (Table, tableId)).
+    /// </summary>
+    private static void StampObjectId(NavRecord rec, int tableId)
+    {
+        if (tableId <= 0) return;
+        try
+        {
+            if (_fObjectIdBacking == null)
+            {
+                var aobType = typeof(Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase);
+                _fObjectIdBacking = aobType.GetField("objectId",
+                    BindingFlags.NonPublic | BindingFlags.Instance);
+                var navNcl = aobType.Assembly;
+                var tAppObjId = navNcl.GetType("Microsoft.Dynamics.Nav.Types.ApplicationObjectId")
+                    ?? AppDomain.CurrentDomain.GetAssemblies()
+                        .Select(a => a.GetType("Microsoft.Dynamics.Nav.Types.ApplicationObjectId"))
+                        .FirstOrDefault(t => t != null);
+                var tObjectType = AppDomain.CurrentDomain.GetAssemblies()
+                    .Select(a => a.GetType("Microsoft.Dynamics.Nav.Types.ObjectType"))
+                    .FirstOrDefault(t => t != null);
+                if (tAppObjId != null && tObjectType != null)
+                {
+                    _objectTypeTableEnum = Enum.Parse(tObjectType, "Table");
+                    _ctorApplicationObjectId = tAppObjId.GetConstructor(new[] { tObjectType, typeof(int) });
+                }
+            }
+            if (_fObjectIdBacking == null || _ctorApplicationObjectId == null || _objectTypeTableEnum == null)
+                return;
+
+            var current = _fObjectIdBacking.GetValue(rec);
+            // Only stamp when needed (ObjectNumber == 0), so we never disturb a correctly-set id.
+            var onProp = current?.GetType().GetProperty("ObjectNumber");
+            if (onProp?.GetValue(current) is int n && n != 0) return;
+
+            var oid = _ctorApplicationObjectId.Invoke(new object?[] { _objectTypeTableEnum, tableId });
+            AlRunnerV2.Infrastructure.FieldPoke.SetInstance(_fObjectIdBacking, rec, oid);
+        }
+        catch { /* best-effort: stamping is a safety net, never fatal */ }
     }
 
     private static NavRecord? BuildBaseNavRecord(

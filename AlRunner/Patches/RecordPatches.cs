@@ -763,6 +763,7 @@ public static partial class RecordPatches
         // Construct Record{ID}(parent, metaTable, isTemporary, sharedTable, companyName, securityFiltering)
         var rec = (NavRecord)ctor.Invoke(new object?[] { self, metaTable, isTemp, null, null,
             SecurityFiltering.Ignored });
+        StampObjectId(rec, id);
 
         // Register any tableextensions on this (primary) record instance so the extension's
         // record-level triggers and field-validate triggers dispatch. CreateObjectInstance
