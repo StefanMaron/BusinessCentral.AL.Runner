@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 83;
+    private const int CACHE_VERSION = 84;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -172,6 +172,11 @@ public static class NclCecilRewrite
         // NavSession.GetPermissionSet (Batch 8) — both 3-arg overloads (ByObjectId
         // + ByObjectIds). Leaf of the CalcSums permission-verify path.
         "Microsoft.Dynamics.Nav.Runtime.NavSession::GetPermissionSet/3",
+        // NavCodeunit run path (Batch 8). DoRunAsync/2 + RunCodeunit/3. Only the
+        // (DataError,Int32,NavRecord) RunCodeunit is JmpHook'd/Cecil'd; the sibling
+        // (DataError,String,NavRecord) /3 is never hooked, so the by-arity key is safe.
+        "Microsoft.Dynamics.Nav.Runtime.NavCodeunit::DoRunAsync/2",
+        "Microsoft.Dynamics.Nav.Runtime.NavCodeunit::RunCodeunit/3",
     };
 
     /// <summary>
@@ -4195,6 +4200,22 @@ public static class NclCecilRewrite
                 ByParams(Rt + "NavSession", "GetPermissionSet",
                          "NavApplicationObjectBase", "Int32", "IEnumerable`1"),
                 H(typeof(AlRunnerV2.BcRuntime), "NavSession_GetPermissionSet_ByObjectIds"));
+
+            // ── NavCodeunit run path (Batch 8) — DoRunAsync + RunCodeunit ───────
+            // DoRunAsync's first line builds a timing scope via
+            // DiagnosticsResolver.GetMostSpecificInstance(Session) which NREs on the
+            // skeleton; the static RunCodeunit reaches the same inlined body. Both
+            // dispatch OnRun directly via the helpers. NavCodeunitHandle.CreateTarget
+            // (already CecilOwned, Batch 3) is on the same path → migrate together.
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavCodeunit", "DoRunAsync", "DataError", "NavRecord"),
+                H(typeof(AlRunnerV2.BcRuntime), "NavCodeunit_DoRunAsync"));
+            // RunCodeunit has TWO 3-arg overloads ((DataError,Int32,NavRecord) and
+            // (DataError,String,NavRecord)); mirror the JmpHook by targeting only the
+            // Int32 one. The String/lower-arity overloads forward into it.
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavCodeunit", "RunCodeunit", "DataError", "Int32", "NavRecord"),
+                H(typeof(AlRunnerV2.BcRuntime), "NavCodeunit_RunCodeunit"));
 
             // ── FlowField CalcFieldsAsync(2)/(3) — already Cecil-body-rewritten above
             //    (see ~line 1751). FlowFieldPatches.Register additionally JmpHook.Apply's
