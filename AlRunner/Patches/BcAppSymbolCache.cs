@@ -7,7 +7,7 @@ using System.Text.Json;
 
 namespace AlRunnerV2.Patches;
 
-internal static class BcAppSymbolCache
+internal static partial class BcAppSymbolCache
 {
     // v3: added Queries to the parsed payload (generic NCLMetaQuery builder).
     private const int CacheVersion = 3;

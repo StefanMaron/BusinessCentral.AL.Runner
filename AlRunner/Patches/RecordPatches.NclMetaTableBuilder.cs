@@ -88,10 +88,18 @@ public static partial class RecordPatches
             var systemModifiedAtParsed= new ParsedField(2000000003, "SystemModifiedAt",  "DateTime",   0);
             var systemModifiedByParsed= new ParsedField(2000000004, "SystemModifiedBy",  "Guid",       0);
             // Merge any tableextension fields for this base table.
+            // De-duplicate by field id: precompiled .app SymbolReference.json sometimes lists
+            // extension fields both in the base table's Tables[].Fields entry AND in
+            // TableExtensions[].Fields (e.g. BC BaseApp table 242 "Source Code Setup" already
+            // carries its extension fields in Tables[]). Duplicating them corrupts the
+            // NCLMetaTable field layout that R2R-precompiled BC code has baked offsets for.
+            // Only append ext fields whose id is NOT already present in the base table's own list.
             var extFields = _parsedExtensionFields.TryGetValue(parsed.TableName.ToLowerInvariant(), out var ef)
                 ? ef : Enumerable.Empty<ParsedField>();
+            var baseFieldIds = new HashSet<int>(parsed.Fields.Select(f => f.FieldId));
+            var extFieldsNew = extFields.Where(f => !baseFieldIds.Contains(f.FieldId));
             var allParsed = new[] { timestampParsed }.Concat(parsed.Fields)
-                .Concat(extFields)
+                .Concat(extFieldsNew)
                 .Concat(new[] { systemIdParsed, systemCreatedAtParsed, systemCreatedByParsed,
                                 systemModifiedAtParsed, systemModifiedByParsed }).ToArray();
             var fields = allParsed.Select((f, idx) =>

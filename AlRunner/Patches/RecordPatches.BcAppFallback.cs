@@ -42,6 +42,8 @@ public static partial class RecordPatches
     private static Dictionary<int, (string AppPath, ParsedTable Table)>? _bcSymbolTableIndex;
     // Query symbol index: queryId → QuerySymbol, built from registered .app SymbolReference.json.
     private static Dictionary<int, BcAppSymbolCache.QuerySymbol>? _bcSymbolQueryIndex;
+    // Extension index built flag. Data lands directly in _parsedExtensionFields/_extensionIdsByBaseTable.
+    private static bool _bcSymbolExtensionIndexBuilt;
     private static readonly object _bcTableIndexLock = new();
 
     // Negative cache: tableIds we've already tried and not found.
@@ -67,10 +69,11 @@ public static partial class RecordPatches
                         enumSymbol.Options.ToArray(),
                         enumSymbol.Indexes.ToArray(),
                         enumSymbol.Implementations.Select(i => i.ToArray()).ToArray());
-                // Invalidate the index so newly-added .app gets picked up on next miss.
+                // Invalidate the indexes so newly-added .app gets picked up on next miss.
                 _bcTableIndex = null;
                 _bcSymbolTableIndex = null;
                 _bcSymbolQueryIndex = null;
+                _bcSymbolExtensionIndexBuilt = false;
             }
         }
     }
@@ -362,5 +365,67 @@ public static partial class RecordPatches
         _bcSymbolTableIndex = idx;
         if (idx.Count > 0)
             Console.Error.WriteLine($"[RecordPatches] BcAppFallback: indexed {idx.Count} symbol table id(s) across {_bcAppPaths.Count} BC .app file(s)");
+        // Co-build the extension index whenever the table index is (re)built.
+        EnsureBcSymbolExtensionIndex();
+    }
+
+    /// <summary>
+    /// Merge tableextension fields from all registered BC .app SymbolReference.json files
+    /// into <c>_parsedExtensionFields</c> and <c>_extensionIdsByBaseTable</c>.
+    ///
+    /// Must be called while holding <see cref="_bcTableIndexLock"/>.
+    /// Only runs once per registration epoch; reset by <see cref="AddBcAppPath"/> and by
+    /// <see cref="ResetForReload"/> (since _parsedExtensionFields is cleared on reload).
+    ///
+    /// Mirrors AlSourceParser.cs:246-260 for populating those dictionaries.
+    ///
+    /// De-duplicates by field id: precompiled BaseApp SymbolReference.json lists fields both
+    /// in the base table's Tables[] entry AND in TableExtensions[].Fields. The merge skips
+    /// fields already present in _parsedTables (if the base table has been populated) by
+    /// checking the merged list at build time — see NclMetaTableBuilder's deduplicate block.
+    /// </summary>
+    private static void EnsureBcSymbolExtensionIndex()
+    {
+        if (_bcSymbolExtensionIndexBuilt) return;
+        _bcSymbolExtensionIndexBuilt = true;
+
+        int merged = 0;
+        foreach (var appPath in _bcAppPaths)
+        {
+            try
+            {
+                foreach (var ext in BcAppSymbolCache.GetTableExtensions(appPath))
+                {
+                    if (string.IsNullOrEmpty(ext.TargetTableName)) continue;
+                    var key = ext.TargetTableName.ToLowerInvariant();
+
+                    // Append fields to _parsedExtensionFields — keep existing list from AL source.
+                    // IMPORTANT: do NOT add ext.ExtensionId to _extensionIdsByBaseTable.
+                    // _extensionIdsByBaseTable drives RegisterParsedTableExtensions which instantiates
+                    // the runner-compiled TableExtension{id} CLR type and wires its AL triggers.
+                    // Precompiled extension types from dep .app DLLs are handled by BC's own R2R
+                    // machinery — registering them from _extensionIdsByBaseTable would cause double-
+                    // registration (BC registers the precompiled type, we'd register it again → CRASH).
+                    if (!_parsedExtensionFields.TryGetValue(key, out var existing))
+                        _parsedExtensionFields[key] = new List<ParsedField>(ext.Fields);
+                    else
+                    {
+                        var existingIds = new HashSet<int>(existing.Select(f => f.FieldId));
+                        foreach (var f in ext.Fields)
+                            if (existingIds.Add(f.FieldId))
+                                existing.Add(f);
+                    }
+
+                    merged++;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[RecordPatches] BcAppFallback: extension index failed for {Path.GetFileName(appPath)}: {ex.Message}");
+            }
+        }
+
+        if (merged > 0)
+            Console.Error.WriteLine($"[RecordPatches] BcAppFallback: merged {merged} precompiled tableextension(s) into _parsedExtensionFields across {_bcAppPaths.Count} BC .app file(s)");
     }
 }
