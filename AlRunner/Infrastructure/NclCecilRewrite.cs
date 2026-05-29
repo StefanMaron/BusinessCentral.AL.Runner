@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 76;
+    private const int CACHE_VERSION = 78;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -84,6 +84,65 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.NavMediaSet::ALImport/4",
         "Microsoft.Dynamics.Nav.Runtime.NavMediaSet::ALExport/2",
         "Microsoft.Dynamics.Nav.Runtime.NavMediaValueBase::get_ALMediaId/0",
+        // ── Record / session / data-access path (Batch 6 — the LINCHPIN). ────────
+        // Migrated ATOMICALLY so the whole path is single-mechanism (Cecil), killing
+        // the JmpHook+Cecil coexistence spin. Each key's body is rewritten in the
+        // Batch-6 block in RewriteNcl to forward to its existing JmpHook helper.
+        // NCLMetadata lookups
+        "Microsoft.Dynamics.Nav.Runtime.NCLMetadata::GetMetaTableById/3",
+        "Microsoft.Dynamics.Nav.Runtime.NCLMetadata::GetMetaApplicationObject/4",
+        "Microsoft.Dynamics.Nav.Runtime.NCLMetadata::GetMetaApplicationObject/3",
+        "Microsoft.Dynamics.Nav.Runtime.NCLMetaTable::GetFieldByNo/2",
+        // NavSession getters
+        "Microsoft.Dynamics.Nav.Runtime.NavSession::get_DataAccessSource/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavSession::get_Database/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavSession::get_SortingProperties/0",
+        // DataAccessSource + TempTableDataProvider
+        "Microsoft.Dynamics.Nav.Runtime.DataAccessSource::GetDataAccessForTable/2",
+        "Microsoft.Dynamics.Nav.Runtime.TempTableDataProvider::.ctor/2",
+        "Microsoft.Dynamics.Nav.Runtime.TempTableDataProvider::CalcNumeric/1",
+        // Collation comparers
+        "Microsoft.Dynamics.Nav.Runtime.NavDatabase::get_CollationAwareStringComparer/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavRecordId::get_CollationAwareStringComparer/0",
+        // NavRecord no-ops
+        "Microsoft.Dynamics.Nav.Runtime.NavRecord::Dispose/1",
+        "Microsoft.Dynamics.Nav.Runtime.NavRecord::IsGlobalTriggerImplemented/1",
+        "Microsoft.Dynamics.Nav.Runtime.NavRecord::UpdateReferencesOnRenameAsync/2",
+        // RecordLink / management
+        "Microsoft.Dynamics.Nav.Runtime.RecordLink::MoveLinksAsync/2",
+        "Microsoft.Dynamics.Nav.Runtime.NavManagementTasks::CopyCompany/2",
+        // NCLMetaApplicationObject
+        "Microsoft.Dynamics.Nav.Runtime.NCLMetaApplicationObject::CheckApplicationObjectIsValid/1",
+        "Microsoft.Dynamics.Nav.Runtime.NCLMetaApplicationObject::get_ApplicationObjectClrType/0",
+        // RecordImplementation path
+        "Microsoft.Dynamics.Nav.Runtime.RecordImplementation::VerifyPermissions/2",
+        "Microsoft.Dynamics.Nav.Runtime.RecordImplementation::InternalFindRecordWithoutCheckingValuesAsync/4",
+        "Microsoft.Dynamics.Nav.Runtime.RecordImplementation::VerifySecurityFiltersOnRecordAsync/4",
+        "Microsoft.Dynamics.Nav.Runtime.RecordImplementation::VerifySecurityFiltersAsync/2",
+        "Microsoft.Dynamics.Nav.Runtime.RecordImplementation::get_IsOpen/0",
+        // NavServerEventSource telemetry
+        "Microsoft.Dynamics.Nav.Runtime.NavServerEventSource::get_Log/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavServerEventSource::WritePermissionUncheckedEvent/10",
+        // Misc
+        "Microsoft.Dynamics.Nav.Runtime.Data.SequentialUuidCreator+NativeMethods::NewSequentialId/0",
+        "Microsoft.Dynamics.Nav.Runtime.TempTableStatistics::ReportIncrementChange/3",
+        "Microsoft.Dynamics.Nav.Runtime.NavSystemCodeunitGlobalTriggers::GetTriggersOnTable/1",
+        // NavSession getter cluster + GetActiveCompany + NavStream.Target (same atomic path)
+        "Microsoft.Dynamics.Nav.Runtime.NavSession::get_CurrentMethodScope/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavSession::get_NavAppGroup/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavSession::get_LocalLanguageNoFallback/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavSession::get_IsLocalLanguage/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavSession::GetSecurityFilters/5",
+        "Microsoft.Dynamics.Nav.Runtime.NavSession::PushDynamicCaptionStack/2",
+        "Microsoft.Dynamics.Nav.Runtime.NavSession::SyncFormatSettings/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavSession::get_Culture/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavSession::get_WindowsCulture/0",
+        "Microsoft.Dynamics.Nav.Runtime.RecordImplementation::GetActiveCompany/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavStream::get_Target/0",
+        // FlowField CalcFieldsAsync — body already Cecil-rewritten upstream; register
+        // keys so FlowFieldPatches.Register's JmpHook.Apply fallback becomes a no-op.
+        "Microsoft.Dynamics.Nav.Runtime.RecordImplementation::CalcFieldsAsync/2",
+        "Microsoft.Dynamics.Nav.Runtime.RecordImplementation::CalcFieldsAsync/3",
     };
 
     /// <summary>
@@ -3778,37 +3837,260 @@ public static class NclCecilRewrite
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // Record / data-access path (RecordWritePatches.cs ApplyRecordPatches) —
-        // ATTEMPTED in Batch 4, REVERTED, left JmpHook'd. Documented per the
-        // "never leave the gate red" rule.
+        // Record / session / data-access path — JmpHook→Cecil ATOMIC migration
+        // (Batch 6, the LINCHPIN).
         //
-        // With the NavApplicationObjectBase ctor migrated above, the dominant
-        // Cecil-only failure shifts to TempTableDataProvider..ctor (NRE on
-        // navSession.Database.CollationAwareStringComparer) and the supporting
-        // NavSession DataAccessSource/Database getters. The obvious next step —
-        // ReplaceBodyWithHelper-forwarding those to their existing JmpHook helpers
-        // (RecordPatches.*) — was implemented and BISECTED: migrating *even the
-        // single TempTableDataProvider..ctor* HANGS DEFAULT mode (60s watchdog
-        // timeout on the first record-using test), while keystone-only stays green
-        // at 147P/1F/1E.
+        // Batch 4 proved that migrating ANY SINGLE record-path method piecemeal
+        // (even just TempTableDataProvider..ctor) HANGS default mode: the still-
+        // JmpHook'd remainder of the write/find/getter path reaches the migrated
+        // method through R2R-precompiled / inlined call sites, and a Cecil body
+        // coexisting with the JmpHook'd remainder produces the safepoint-free
+        // 100%-CPU coexistence spin (same class Batch 3 removed for CreateTarget).
         //
-        // Root cause (consistent with feedback_r2r_inlining_traps): the rest of the
-        // record write/find path (InsertAsync, InternalFindRecord*, the *Async
-        // bypasses, FlowField CalcFieldsAsync via InstallIndirect, etc.) is STILL
-        // JmpHook'd and reaches the temp-table provider through R2R-precompiled /
-        // inlined call sites. A Cecil body on the ctor/getters coexisting with the
-        // JmpHook'd remainder produces a mixed-mechanism dispatch the record path
-        // spins on — the same class of coexistence spin Batch 3 removed for
-        // CreateTarget by making a method owned by exactly one mechanism.
+        // The fix is to migrate the ENTIRE remaining record/session/data-access set
+        // to Cecil in ONE build so the whole path is single-mechanism (Cecil) — no
+        // coexistence → no spin. Each method below already has a working JmpHook
+        // replacement helper (RecordPatches.* / TelemetryPatches.* / HelperShims.*);
+        // the migration is mechanical: rewrite the Ncl body to forward to that same
+        // helper (ReplaceBodyWithHelper handles arg-boxing + return-cast), and add
+        // every key to CecilOwned so the existing Hook(...) install auto-no-ops.
         //
-        // The record path can therefore only migrate as ONE ATOMIC all-or-nothing
-        // set (ctor + getters + every *Async write/find replacement + the
-        // InstallIndirect FlowField hooks + the NavRecord InitializeComponent
-        // prepends), not piecemeal — which exceeds a single safe batch and needs the
-        // generic-ValueTask<bool> completed-task shim the *Async targets require.
-        // Deferred to a dedicated record-path batch. Until then these stay JmpHook'd
-        // (correct in default mode) and remain the dominant Cecil-only gap.
+        // The *Async no-op targets (VerifySecurityFilters*, MoveLinksAsync,
+        // UpdateReferencesOnRenameAsync) all return the NON-generic ValueTask and map
+        // to HelperShims.ReturnValueTask{2..5} (which return `default` ValueTask) —
+        // an exact value-type return match, so no completed-task shim is needed.
+        // InternalFindRecordWithoutCheckingValuesAsync returns ValueTask<bool> and is
+        // forwarded to its existing ValueTask<bool>-returning replacement.
+        //
+        // Token-safety: ReplaceBodyWithHelper / ReplaceBodyConst import only our own
+        // helper memberRefs and emit only ldc/box/castclass against types already in
+        // Ncl's tables — no new Ncl typeRefs/memberRefs (no R2R caller corruption).
         // ─────────────────────────────────────────────────────────────────────
+        {
+            var nclMod = asm.MainModule;
+            const string Rt = "Microsoft.Dynamics.Nav.Runtime.";
+
+            // Resolve a method by (type, name, exact ordered param-type SimpleNames) so
+            // we pick the SAME overload the JmpHook install picks (several targets have
+            // sibling overloads). Loud-fails if the shape changed.
+            MethodDefinition ByParams(string typeFull, string name, params string[] paramTypeNames)
+            {
+                var t = nclMod.GetType(typeFull)
+                    ?? throw new InvalidOperationException(
+                        $"[Cecil] type {typeFull} not found — Ncl shape changed; do not commit");
+                var m = t.Methods.FirstOrDefault(x =>
+                    x.Name == name && x.HasBody
+                    && x.Parameters.Count == paramTypeNames.Length
+                    && x.Parameters.Select((p, i) => p.ParameterType.Name == paramTypeNames[i]).All(b => b))
+                    ?? throw new InvalidOperationException(
+                        $"[Cecil] {typeFull}.{name}({string.Join(",", paramTypeNames)}) not found — Ncl shape changed; do not commit");
+                return m;
+            }
+
+            MethodInfo H(Type cls, string name) =>
+                cls.GetMethod(name, BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException($"[Cecil] helper {cls.Name}.{name} not found");
+
+            var recordPatches = typeof(AlRunnerV2.Patches.RecordPatches);
+            var helperShims   = typeof(AlRunnerV2.BcRuntime);          // NoOp*/ReturnValueTask*/ReturnTrue etc are BcRuntime statics
+            var telemetry     = typeof(AlRunnerV2.BcRuntime);          // NavServerEventSource_* are BcRuntime partials too
+            var navRecordIdP  = typeof(AlRunnerV2.Patches.NavRecordIdPatches);
+
+            // ── NCLMetadata lookups (RecordPatches.cs:150-189) ──────────────────
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NCLMetadata", "GetMetaTableById", "Int32", "Boolean", "Int32"),
+                H(recordPatches, "NCLMetadata_GetMetaTableById"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NCLMetadata", "GetMetaApplicationObject", "ObjectType", "Int32", "Boolean", "Int32"),
+                H(recordPatches, "NCLMetadata_GetMetaApplicationObjectByType"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NCLMetadata", "GetMetaApplicationObject", "ApplicationObjectId", "Boolean", "Int32"),
+                H(recordPatches, "NCLMetadata_GetMetaApplicationObjectById"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NCLMetaTable", "GetFieldByNo", "Int32", "Int32"),
+                H(recordPatches, "NCLMetaTable_GetFieldByNoExt"));
+
+            // ── NavSession getters / DataAccessSource (RecordWritePatches.cs:84-104,482) ──
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavSession", "get_DataAccessSource", 0),
+                H(recordPatches, "NavSession_get_DataAccessSource"));
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavSession", "get_Database", 0),
+                H(recordPatches, "NavSession_get_Database"));
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavSession", "get_SortingProperties", 0),
+                H(recordPatches, "NavSession_get_SortingProperties"));
+
+            // ── DataAccessSource.GetDataAccessForTable (RecordWritePatches.cs:106) ──
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "DataAccessSource", "GetDataAccessForTable", "NCLMetaTable", "Boolean"),
+                H(recordPatches, "NavDataAccessSource_GetDataAccessForTable"));
+
+            // ── TempTableDataProvider ctor (NavSession,NCLMetaTable) + CalcNumeric ──
+            {
+                var ttdp = nclMod.GetType(Rt + "TempTableDataProvider")
+                    ?? throw new InvalidOperationException("[Cecil] TempTableDataProvider not found — do not commit");
+                var ttdpCtor = ttdp.Methods.FirstOrDefault(m =>
+                    m.IsConstructor && m.HasBody && m.Parameters.Count == 2
+                    && m.Parameters[0].ParameterType.Name == "NavSession"
+                    && m.Parameters[1].ParameterType.Name == "NCLMetaTable")
+                    ?? throw new InvalidOperationException("[Cecil] TempTableDataProvider(NavSession,NCLMetaTable) ctor not found — do not commit");
+                ReplaceBodyWithHelper(nclMod, ttdpCtor, H(recordPatches, "TempTableDataProviderCtorReplacement"));
+            }
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "TempTableDataProvider", "CalcNumeric", "CalcNumericProviderRequest"),
+                H(recordPatches, "TempTableDataProvider_CalcNumeric"));
+
+            // ── NavDatabase / NavRecordId collation comparers ───────────────────
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavDatabase", "get_CollationAwareStringComparer", 0),
+                H(recordPatches, "NavDatabase_get_CollationAwareStringComparer"));
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavRecordId", "get_CollationAwareStringComparer", 0),
+                H(navRecordIdP, "NavRecordId_get_CollationAwareStringComparer"));
+
+            // ── NavRecord no-ops (Dispose / IsGlobalTriggerImplemented / UpdateRefs) ──
+            // Dispose(bool) → NoOp2; IsGlobalTriggerImplemented(Triggers) → ReturnFalse2;
+            // UpdateReferencesOnRenameAsync(List,NavRecord) instance overload → ReturnValueTask3.
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavRecord", "Dispose", "Boolean"),
+                H(helperShims, "NoOp2"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavRecord", "IsGlobalTriggerImplemented", "Triggers"),
+                H(helperShims, "ReturnFalse2"));
+            {
+                var navRec = nclMod.GetType(Rt + "NavRecord")!;
+                var updRefs = navRec.Methods.FirstOrDefault(m =>
+                    m.Name == "UpdateReferencesOnRenameAsync" && m.HasBody && m.HasThis
+                    && m.Parameters.Count == 2 && m.Parameters[1].ParameterType.Name == "NavRecord")
+                    ?? throw new InvalidOperationException("[Cecil] NavRecord.UpdateReferencesOnRenameAsync(List,NavRecord) not found — do not commit");
+                ReplaceBodyWithHelper(nclMod, updRefs, H(helperShims, "ReturnValueTask3"));
+            }
+
+            // ── RecordLink.MoveLinksAsync(NavRecord,NavRecord) static → ReturnValueTask2 ──
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "RecordLink", "MoveLinksAsync", "NavRecord", "NavRecord"),
+                H(helperShims, "ReturnValueTask2"));
+
+            // ── NavManagementTasks.CopyCompany(String,String) instance void → NoOp3 ──
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavManagementTasks", "CopyCompany", "String", "String"),
+                H(helperShims, "NoOp3"));
+
+            // ── NCLMetaApplicationObject (CheckApplicationObjectIsValid / ClrType) ──
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NCLMetaApplicationObject", "CheckApplicationObjectIsValid", "NavApplicationObjectBase"),
+                H(helperShims, "NoOp2"));
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NCLMetaApplicationObject", "get_ApplicationObjectClrType", 0),
+                H(recordPatches, "NCLMetaApplicationObject_get_ApplicationObjectClrType"));
+
+            // ── RecordImplementation path (perms / find / security / IsOpen) ─────
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "RecordImplementation", "VerifyPermissions", "PermissionMask", "Boolean"),
+                H(helperShims, "NoOp3"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "RecordImplementation", "InternalFindRecordWithoutCheckingValuesAsync",
+                         "DataError", "PrimaryKeyCacheRequest", "Boolean", "Boolean"),
+                H(helperShims, "RecordImpl_InternalFindRecordWithoutCheckingValuesAsync"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "RecordImplementation", "VerifySecurityFiltersOnRecordAsync",
+                         "IRecordBuffer", "FilterFieldDictionary", "Boolean", "Boolean"),
+                H(helperShims, "ReturnValueTask5"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "RecordImplementation", "VerifySecurityFiltersAsync",
+                         "MutableRecordBuffer", "SecurityFilterType"),
+                H(helperShims, "ReturnValueTask3"));
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "RecordImplementation", "get_IsOpen", 0),
+                H(helperShims, "ReturnTrue"));
+
+            // ── NavServerEventSource (telemetry) ────────────────────────────────
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavServerEventSource", "get_Log", 0),
+                H(telemetry, "NavServerEventSource_get_Log"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavServerEventSource", "WritePermissionUncheckedEvent",
+                         "String", "String", "String", "String", "Int32", "Int32", "Int32", "Int32", "Int32", "Int32"),
+                H(telemetry, "NavServerEventSource_WritePermissionUncheckedEvent"));
+
+            // ── SequentialUuidCreator.NativeMethods.NewSequentialId() → Guid ─────
+            {
+                var nm = nclMod.GetType(Rt + "Data.SequentialUuidCreator/NativeMethods");
+                var newSeq = nm?.Methods.FirstOrDefault(m => m.Name == "NewSequentialId" && m.HasBody && m.Parameters.Count == 0);
+                if (newSeq != null)
+                    ReplaceBodyWithHelper(nclMod, newSeq, H(recordPatches, "NewSequentialId_Replacement"));
+            }
+
+            // ── TempTableStatistics.ReportIncrementChange(int,int,int) → NoOp4 ──
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "TempTableStatistics", "ReportIncrementChange", "Int32", "Int32", "Int32"),
+                H(helperShims, "NoOp4"));
+
+            // ── NavSystemCodeunitGlobalTriggers.GetTriggersOnTable(int) → Triggers.None ──
+            // Helper returns int 0; the target returns the int-backed Triggers enum.
+            // Emit `ldc.i4.0; ret` directly (enum/underlying-int are ret-compatible),
+            // bypassing the int→enum boxing path entirely.
+            {
+                var gt = FindNclMethod(nclMod, Rt + "NavSystemCodeunitGlobalTriggers", "GetTriggersOnTable", 1);
+                var body = gt.Body;
+                body.Instructions.Clear();
+                body.Variables.Clear();
+                body.ExceptionHandlers.Clear();
+                var il = body.GetILProcessor();
+                il.Append(il.Create(OpCodes.Ldc_I4_0));
+                il.Append(il.Create(OpCodes.Ret));
+                body.MaxStackSize = 1;
+                Console.Error.WriteLine("[Cecil] Replaced NavSystemCodeunitGlobalTriggers.GetTriggersOnTable → Triggers.None");
+            }
+
+            // ── NavSession getter cluster + GetActiveCompany + NavStream.Target ──
+            // These are installed via Hook(...) from the main ApplyAllPatches (BcRuntime.cs
+            // ~525-570 / 2291 / 2380), NOT ApplyRecordPatches — but they sit on the same
+            // record/session R2R-inlined call path (CloneRecord → GetActiveCompany,
+            // NavMethodScope.Run → SyncFormatSettings, etc.), so they MUST migrate in the
+            // same atomic build to keep the path single-mechanism.
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavSession", "get_CurrentMethodScope", 0),
+                H(helperShims, "GetCurrentMethodScopeReplacement"));
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavSession", "get_NavAppGroup", 0),
+                H(helperShims, "NavSession_NavAppGroup"));
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavSession", "get_LocalLanguageNoFallback", 0),
+                H(helperShims, "NavSession_LocalLanguageNoFallback"));
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavSession", "get_IsLocalLanguage", 0),
+                H(helperShims, "ReturnFalse_1Arg"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavSession", "GetSecurityFilters",
+                         "Int32", "Int32", "SecurityFilterType", "NavApplicationObjectBase", "NavApplicationObjectBase"),
+                H(helperShims, "NavSession_GetSecurityFilters"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavSession", "PushDynamicCaptionStack", "Int32", "Int32"),
+                H(helperShims, "ReturnFalse_3Args"));
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavSession", "SyncFormatSettings", 0),
+                H(helperShims, "NavSession_SyncFormatSettings"));
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavSession", "get_Culture", 0),
+                H(helperShims, "NavSession_get_Culture"));
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavSession", "get_WindowsCulture", 0),
+                H(helperShims, "NavSession_get_Culture"));
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "RecordImplementation", "GetActiveCompany", 0),
+                H(helperShims, "RecordImplementation_GetActiveCompany"));
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavStream", "get_Target", 0),
+                H(helperShims, "NavStream_get_Target"));
+
+            // ── FlowField CalcFieldsAsync(2)/(3) — already Cecil-body-rewritten above
+            //    (see ~line 1751). FlowFieldPatches.Register additionally JmpHook.Apply's
+            //    a (dead-under-R2R) fallback on the SAME methods; registering their keys
+            //    in CecilOwned turns that fallback into a no-op so the path is strictly
+            //    single-mechanism. No rewrite here — the body replace is upstream.
+        }
 
         var outStream = new MemoryStream();
         asm.Write(outStream);
