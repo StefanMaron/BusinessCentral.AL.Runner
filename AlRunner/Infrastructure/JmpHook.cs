@@ -37,11 +37,29 @@ internal static class JmpHook
         try { Console.Error.WriteLine(line); Console.Error.Flush(); } catch { }
     }
 
-    // DIAGNOSTIC: AL_RUNNER_NO_JMPHOOK=1 turns every JmpHook into a no-op so we can
-    // A/B whether a hang/regression comes from the JmpHook layer (runtime-native
-    // entry-point overwrite, runtime-version-sensitive) vs the Cecil IL-rewrite layer.
-    private static readonly bool _disabled =
-        Environment.GetEnvironmentVariable("AL_RUNNER_NO_JMPHOOK") == "1";
+    // JmpHooks overwrite a JIT'd method's native entry point with an x86-64 JMP. That
+    // native-precode parsing is tuned to .NET 10's layout and SEGFAULTS on .NET 8 —
+    // which is BC28's REAL runtime (Server.runtimeconfig.json tfm=net8.0). The runner
+    // is migrating every hook to the runtime-agnostic Cecil IL-rewrite layer; ~102
+    // methods are already Cecil-owned (and auto-skipped here regardless of runtime).
+    //
+    // Until the last clusters are migrated, JmpHooks still add ~25 net10-only corpus
+    // passes. So the DEFAULT is runtime-conditional: JmpHooks ON only on net10 (where
+    // they work), OFF (Cecil-only) on every other runtime. This makes net8 run with no
+    // hangs/segfaults OUT OF THE BOX, costs net10 nothing, and is the safe behaviour for
+    // any future runtime bump (net11+ → Cecil-only automatically).
+    //
+    // Overrides: AL_RUNNER_NO_JMPHOOK=1 forces OFF (Cecil-only, the eventual end state);
+    //            AL_RUNNER_ENABLE_JMPHOOK=1 forces ON (e.g. to A/B on a non-net10 runtime).
+    private static readonly bool _disabled = ComputeDisabled();
+
+    private static bool ComputeDisabled()
+    {
+        if (Environment.GetEnvironmentVariable("AL_RUNNER_NO_JMPHOOK") == "1") return true;
+        if (Environment.GetEnvironmentVariable("AL_RUNNER_ENABLE_JMPHOOK") == "1") return false;
+        // JmpHooks are only safe on the runtime their precode parser was tuned for (net10).
+        return Environment.Version.Major != 10;
+    }
 
     public static void Apply(MethodBase original, MethodInfo replacement, string name)
     {
