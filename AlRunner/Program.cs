@@ -293,11 +293,67 @@ string watchBundleName = bundles.Count == 1
     ? Path.GetFileName(Path.GetFullPath(bundles[0]).TrimEnd(Path.DirectorySeparatorChar))
     : $"{bundles.Count} bundles";
 
+// Scroll offset (in lines from the top) for the idle dashboard viewport. The
+// rendered dashboard frequently exceeds the terminal height (long failure stacks),
+// so the idle branch paints only the window that fits and the user scrolls with
+// the arrow/page/home/end keys. Reset to 0 on each fresh cycle paint.
+int watchScroll = 0;
+
+// Render the dashboard to a flat list of (already-ANSI-markup) lines at the current
+// console width, so the idle branch can window it into the visible viewport.
+List<string> RenderDashboardLines(WatchStatus status, DateTime ts, TimeSpan dur)
+{
+    int width = Math.Max(40, Console.WindowWidth);
+    var sw = new StringWriter();
+    var rec = Spectre.Console.AnsiConsole.Create(new Spectre.Console.AnsiConsoleSettings
+    {
+        Ansi = Spectre.Console.AnsiSupport.Yes,
+        ColorSystem = Spectre.Console.ColorSystemSupport.TrueColor,
+        Out = new Spectre.Console.AnsiConsoleOutput(sw),
+    });
+    rec.Profile.Width = width;
+    rec.Write(WatchDashboard.Build(results, watchBundleName, status, ts, dur));
+    return sw.ToString().Replace("\r\n", "\n").TrimEnd('\n').Split('\n').ToList();
+}
+
+// Console.KeyAvailable can still throw on some terminals even when stdin isn't
+// flagged redirected; treat any failure as "no key" so the watch loop never crashes.
+static bool SafeKeyAvailable()
+{
+    try { return Console.KeyAvailable; }
+    catch { return false; }
+}
+
+// Paint a window of pre-rendered lines starting at `offset`, clamped to the screen.
+// Returns the clamped offset actually used (so the caller's scroll state stays valid).
+int PaintWatchViewport(List<string> lines, int offset)
+{
+    int height = Math.Max(5, Console.WindowHeight);
+    // Last line is a sticky footer hint; reserve one row for it.
+    int viewport = Math.Max(1, height - 1);
+    int maxOffset = Math.Max(0, lines.Count - viewport);
+    if (offset > maxOffset) offset = maxOffset;
+    if (offset < 0) offset = 0;
+
+    Spectre.Console.AnsiConsole.Clear();
+    var window = lines.Skip(offset).Take(viewport);
+    foreach (var l in window)
+        Console.Out.WriteLine(l);
+
+    bool more = lines.Count > viewport;
+    var hint = more
+        ? $"[grey]↑↓ scroll · PgUp/PgDn · Home/End · q quit   ({offset + 1}-{Math.Min(offset + viewport, lines.Count)}/{lines.Count})[/]"
+        : "[grey]↑↓ scroll · q quit[/]";
+    Spectre.Console.AnsiConsole.Markup(hint);
+    return offset;
+}
+
 // Paint the busy "running…" frame so the cold first cycle (~70-90s) doesn't look
 // frozen. No-op unless the interactive dashboard is active.
 void PaintWatchRunning()
 {
     if (!watchUi) return;
+    watchScroll = 0;
     Spectre.Console.AnsiConsole.Clear();
     Spectre.Console.AnsiConsole.Write(
         WatchDashboard.Build(results, watchBundleName, WatchStatus.Running,
@@ -309,6 +365,28 @@ if (watchUi) PaintWatchRunning();
 while (true)
 {
 results.Clear();
+// Clean loading (#5): the interactive dashboard owns the whole screen, but the
+// run-cycle body emits diagnostic Console.WriteLine noise ("[bundle] resolved N
+// dep(s)", "loaded N assembl(ies)", "[i/N] … suites", …) that would scroll over
+// the painted "⟳ running…" frame. Silence stdout for the duration of the cycle
+// body when the dashboard is active (AnsiConsole binds its own writer at startup,
+// so the spinner repaint is unaffected). Under --verbose, keep the logs. Restored
+// right after the bundle loop, before any dashboard repaint that uses Console.Out.
+var savedOut = Console.Out;
+var savedErr = Console.Error;
+bool stdoutSilenced = false;
+if (watchUi && !AlRunnerV2.Log.Verbose)
+{
+    // Silence BOTH streams: the diagnostic noise is split across stdout
+    // (dep-resolve / suite-count lines) and stderr ([cache] MISS/WROTE lines),
+    // and either would scroll over the painted frame. Per-bundle compile/exec
+    // failures are still surfaced — they're collected into bundleErrors and
+    // rendered as COMPILE/EXEC FAILED nodes in the dashboard tree. A truly fatal
+    // dep-load aborts with return 1 (process exit), so nothing important is hidden.
+    Console.SetOut(TextWriter.Null);
+    Console.SetError(TextWriter.Null);
+    stdoutSilenced = true;
+}
 int i2 = 0;
 foreach (var bundle in bundles)
 {
@@ -394,6 +472,9 @@ foreach (var bundle in bundles)
                 // Abort immediately with exit 1: running with a broken dependency
                 // produces cryptic NavNCLMissingMethodException with object ID 0,
                 // which is far harder to diagnose than this immediate loud failure.
+                // Restore the real streams first (we may have silenced them for the
+                // clean-loading frame) so this fatal reason isn't swallowed.
+                if (stdoutSilenced) { Console.SetOut(savedOut); Console.SetError(savedErr); }
                 Console.Error.WriteLine(
                     $"FATAL: dependency compile failed — cannot continue. {ex.Message}");
                 return 1;
@@ -752,6 +833,15 @@ foreach (var bundle in bundles)
         bundleEmit, bundleComp, bundleRun));
 }
 
+// Restore the streams silenced for the clean-loading frame (#5) before any dashboard
+// repaint / summary that writes to Console.Out / Console.Error.
+if (stdoutSilenced)
+{
+    Console.SetOut(savedOut);
+    Console.SetError(savedErr);
+    stdoutSilenced = false;
+}
+
 if (!watchMode)
     break;   // normal mode: one pass, fall through to the summary below
 
@@ -763,15 +853,66 @@ var cycleDur = results.Aggregate(TimeSpan.Zero,
 
 if (watchUi)
 {
-    // Interactive: repaint the live dashboard in place (clear + redraw), showing
-    // the idle "● watching" status. No "[watch] waiting…" line — the footer's
-    // "Ctrl+C to quit" + the header status carry that information on the TTY.
-    Spectre.Console.AnsiConsole.Clear();
-    Spectre.Console.AnsiConsole.Write(
-        WatchDashboard.Build(results, watchBundleName, WatchStatus.Idle,
-            DateTime.Now, cycleDur));
-    if (!WaitForSourceChange(bundles))
-        return 0;
+    // Interactive: render the idle "● watching" dashboard once, then service
+    // keyboard scrolling AND the file-change watcher in one interleaved poll loop.
+    // The dashboard frequently exceeds the screen, so we paint only the visible
+    // window at the current scroll offset and let arrow/page/home/end keys move it.
+    var idleTs = DateTime.Now;
+    watchScroll = 0;
+    var lines = RenderDashboardLines(WatchStatus.Idle, idleTs, cycleDur);
+    watchScroll = PaintWatchViewport(lines, watchScroll);
+
+    var armed = ArmSourceWatch(bundles);
+    if (armed == null) return 0;
+    var (signal, watchers) = armed.Value;
+    bool changed = false;
+    // Console.KeyAvailable throws InvalidOperationException when stdin is redirected
+    // (a pipe/file rather than a real terminal). We still want the dashboard + file
+    // watching in that case (output is a TTY), just without scroll keys. Probe once.
+    bool keyboard = !Console.IsInputRedirected;
+    try
+    {
+        while (true)
+        {
+            if (signal.IsSet) { System.Threading.Thread.Sleep(250); changed = true; break; }
+
+            if (keyboard && SafeKeyAvailable())
+            {
+                var key = Console.ReadKey(intercept: true);
+                int height = Math.Max(5, Console.WindowHeight);
+                int page = Math.Max(1, height - 2);
+                bool repaint = true;
+                switch (key.Key)
+                {
+                    case ConsoleKey.UpArrow:    watchScroll--; break;
+                    case ConsoleKey.DownArrow:  watchScroll++; break;
+                    case ConsoleKey.PageUp:     watchScroll -= page; break;
+                    case ConsoleKey.PageDown:   watchScroll += page; break;
+                    case ConsoleKey.Home:       watchScroll = 0; break;
+                    case ConsoleKey.End:        watchScroll = int.MaxValue; break;
+                    case ConsoleKey.Q:          return 0; // quit
+                    case ConsoleKey.C when key.Modifiers.HasFlag(ConsoleModifiers.Control):
+                        return 0; // Ctrl+C (intercepted as a key) also quits
+                    default: repaint = false; break;
+                }
+                if (repaint)
+                {
+                    // Re-render (window may have changed if the terminal was resized).
+                    lines = RenderDashboardLines(WatchStatus.Idle, idleTs, cycleDur);
+                    watchScroll = PaintWatchViewport(lines, watchScroll);
+                }
+                continue; // drain remaining buffered keys promptly before sleeping
+            }
+
+            System.Threading.Thread.Sleep(40); // don't busy-spin at 100% CPU
+        }
+    }
+    finally
+    {
+        foreach (var w in watchers) { w.EnableRaisingEvents = false; w.Dispose(); }
+        signal.Dispose();
+    }
+    if (!changed) return 0;
     PaintWatchRunning(); // flip the header to "⟳ running…" while the next cycle compiles
 }
 else
@@ -1206,6 +1347,30 @@ static List<string> DiffServerFiles(Dictionary<string, string>? prev, Dictionary
 // on a change (loop again), false if there is nothing to watch.
 static bool WaitForSourceChange(List<string> bundles)
 {
+    var armed = ArmSourceWatch(bundles);
+    if (armed == null) return false;
+    var (signal, watchers) = armed.Value;
+    try
+    {
+        signal.Wait();                       // block until the first .al change
+        System.Threading.Thread.Sleep(250);  // debounce: let a save storm settle
+        return true;
+    }
+    finally
+    {
+        foreach (var w in watchers) { w.EnableRaisingEvents = false; w.Dispose(); }
+        signal.Dispose();
+    }
+}
+
+/// <summary>
+/// Arm FileSystemWatchers over the bundles' source roots and return a settable
+/// signal + the watchers so the caller can interleave the file-change wait with
+/// other work (e.g. the interactive dashboard's keyboard polling). Returns null
+/// if there are no source dirs to watch. The caller owns disposal of both.
+/// </summary>
+static (System.Threading.ManualResetEventSlim Signal, List<FileSystemWatcher> Watchers)? ArmSourceWatch(List<string> bundles)
+{
     var dirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     foreach (var b in bundles)
     {
@@ -1216,10 +1381,10 @@ static bool WaitForSourceChange(List<string> bundles)
     if (dirs.Count == 0)
     {
         Console.Error.WriteLine("[watch] no source directories to watch.");
-        return false;
+        return null;
     }
 
-    using var signal = new System.Threading.ManualResetEventSlim(false);
+    var signal = new System.Threading.ManualResetEventSlim(false);
     void OnChanged(object _, FileSystemEventArgs e)
     {
         if (e.FullPath.EndsWith(".al", StringComparison.OrdinalIgnoreCase)) signal.Set();
@@ -1242,16 +1407,7 @@ static bool WaitForSourceChange(List<string> bundles)
         w.Changed += OnChanged; w.Created += OnChanged; w.Deleted += OnChanged; w.Renamed += OnRenamed;
         watchers.Add(w);
     }
-    try
-    {
-        signal.Wait();                       // block until the first .al change
-        System.Threading.Thread.Sleep(250);  // debounce: let a save storm settle
-        return true;
-    }
-    finally
-    {
-        foreach (var w in watchers) { w.EnableRaisingEvents = false; w.Dispose(); }
-    }
+    return (signal, watchers);
 }
 
 static void DumpCsharpSources(string dir, string moduleName, IReadOnlyList<EmittedSource> sources)
