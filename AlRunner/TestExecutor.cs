@@ -22,7 +22,8 @@ public enum TestIsolation { Codeunit, Test, Disabled }
 
 public sealed record TestResult(string Codeunit, string Method, TestOutcome Outcome,
                                 string? Message, string? FullException, TimeSpan Duration,
-                                string? AlCallStack = null);
+                                string? AlCallStack = null,
+                                string? CodeunitDisplayName = null);
 
 public sealed class TestExecutor
 {
@@ -82,11 +83,16 @@ public sealed class TestExecutor
             PerfTrace.Log($"TestExecutor.Instantiate END {t.Name}");
             if (instance == null) continue;
 
+            // Resolve the AL object name (e.g. "Test Table Event Dispatch") off the
+            // instantiated codeunit — it derives from NavApplicationObjectBase and exposes
+            // a public ObjectName property. Falls back to the .NET type name on failure.
+            var displayName = ResolveDisplayName(instance, t.Name);
+
             foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Instance))
             {
                 if (!IsTestMethod(m)) continue;
                 if (filter != null && !MethodMatchesFilter(t.Name, m.Name, filter)) continue;
-                var result = RunOne(t.Name, m, instance);
+                var result = RunOne(t.Name, m, instance, displayName);
                 results.Add(result);
                 if (IsTimeout(result))
                     return results;
@@ -137,6 +143,31 @@ public sealed class TestExecutor
         m.GetCustomAttributes(inherit: false)
          .Any(a => a.GetType().Name is "NavTestAttribute" or "TestAttribute");
 
+    // Cached reflection handle for NavApplicationObjectBase.ObjectName (same pattern as
+    // AlCallStackCapture._piObjectName). Resolved lazily from the instance's runtime type
+    // so we don't hard-depend on the type being loaded at JIT time.
+    private static PropertyInfo? _piObjectName;
+    private static bool _piObjectNameResolved;
+
+    private static string ResolveDisplayName(object instance, string fallback)
+    {
+        try
+        {
+            if (!_piObjectNameResolved)
+            {
+                _piObjectNameResolved = true;
+                var appObjType = typeof(Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase);
+                _piObjectName = appObjType.GetProperty("ObjectName",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            }
+            if (_piObjectName != null && _piObjectName.GetValue(instance) is string name
+                && !string.IsNullOrWhiteSpace(name))
+                return name;
+        }
+        catch { /* fall through to fallback */ }
+        return fallback;
+    }
+
     private static object? InstantiateCodeunit(Type t)
     {
         var ctor = t.GetConstructors().FirstOrDefault(c =>
@@ -146,7 +177,7 @@ public sealed class TestExecutor
         return ctor.Invoke(new object[] { BcRuntime.RootTreeStub! });
     }
 
-    private TestResult RunOne(string codeunit, MethodInfo m, object instance)
+    private TestResult RunOne(string codeunit, MethodInfo m, object instance, string displayName)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         PerfTrace.Log($"TestExecutor.RunOne START {codeunit}.{m.Name}");
@@ -161,7 +192,8 @@ public sealed class TestExecutor
             var args = m.GetParameters().Length == 0 ? Array.Empty<object>() : null;
             if (args == null)
                 return new TestResult(codeunit, m.Name, TestOutcome.Error,
-                    $"unsupported test signature ({m.GetParameters().Length} params)", null, sw.Elapsed);
+                    $"unsupported test signature ({m.GetParameters().Length} params)", null, sw.Elapsed,
+                    null, displayName);
             var timeout = TestTimeout();
             var invokeResult = InvokeWithTimeout(() => m.Invoke(instance, args), timeout);
             if (!invokeResult.Completed)
@@ -169,11 +201,12 @@ public sealed class TestExecutor
                 PerfTrace.Log($"TestExecutor.RunOne TIMEOUT {codeunit}.{m.Name} {sw.ElapsedMilliseconds}ms");
                 var alStack = AlRunnerV2.Infrastructure.AlCallStackCapture.CaptureCurrent();
                 return new TestResult(codeunit, m.Name, TestOutcome.Error,
-                    $"TIMEOUT after {(int)timeout.TotalSeconds}s", null, sw.Elapsed, alStack);
+                    $"TIMEOUT after {(int)timeout.TotalSeconds}s", null, sw.Elapsed, alStack, displayName);
             }
             invokeResult.Exception?.Throw();
             PerfTrace.Log($"TestExecutor.RunOne PASS {codeunit}.{m.Name} {sw.ElapsedMilliseconds}ms");
-            return new TestResult(codeunit, m.Name, TestOutcome.Pass, null, null, sw.Elapsed);
+            return new TestResult(codeunit, m.Name, TestOutcome.Pass, null, null, sw.Elapsed,
+                null, displayName);
         }
         catch (TargetInvocationException tex)
         {
@@ -184,14 +217,14 @@ public sealed class TestExecutor
             // We can't classify Pass/Fail vs Error perfectly without knowing all of them,
             // so for now: any thrown exception is Fail.
             return new TestResult(codeunit, m.Name, TestOutcome.Fail,
-                $"{inner.GetType().Name}: {inner.Message}", inner.ToString(), sw.Elapsed, alStack);
+                $"{inner.GetType().Name}: {inner.Message}", inner.ToString(), sw.Elapsed, alStack, displayName);
         }
         catch (Exception ex)
         {
             PerfTrace.Log($"TestExecutor.RunOne ERROR {codeunit}.{m.Name} {sw.ElapsedMilliseconds}ms {ex.GetType().Name}: {ex.Message}");
             var alStack = AlRunnerV2.Infrastructure.AlCallStackCapture.GetCaptured(ex);
             return new TestResult(codeunit, m.Name, TestOutcome.Error,
-                ex.Message, ex.ToString(), sw.Elapsed, alStack);
+                ex.Message, ex.ToString(), sw.Elapsed, alStack, displayName);
         }
     }
 
