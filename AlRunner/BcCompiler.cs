@@ -64,6 +64,10 @@ public sealed class BcCompiler
     // equivalent. Bundling all suites into one Compilation ran into cross-suite
     // object-id collisions and silently produced 0 sources.
     private static NavCA.ISymbolReferenceLoader? _refLoader;
+    // Content signature of the inputs _refLoader was built from (package dirs + extra
+    // symbol dirs + resolved dep set). GetSharedReferences rebuilds the loader only when
+    // this changes, so an unchanged dependency set keeps the warmed loader.
+    private static string? _loaderSignature;
     private static NavCA.SymbolReferenceSpecification[]? _refSpecs;
     // Cached JSON symbol loaders — one per package dir that has *.symbols.json files.
     // Kept separately so specs can be recomputed with _currentAppId exclusion without
@@ -203,8 +207,9 @@ public sealed class BcCompiler
         lock (_refSync)
         {
             _extraSymbolDirs = dirs;
-            _refLoader = null;   // force rebuild so the new dirs are picked up
-            _cachedJsonLoaders = null;
+            // The loader rebuild is driven by ComputeLoaderSignature (which includes the
+            // extra dirs), so changing them triggers a rebuild on the next
+            // GetSharedReferences — without unconditionally discarding the warm loader.
         }
     }
 
@@ -250,11 +255,33 @@ public sealed class BcCompiler
         {
             _resolvedDeps = deps;
             _packageCacheDirs = packageCacheDirs;
-            _refLoader = null;
-            _refSpecs = null;
-            _cachedJsonLoaders = null;
+            _refSpecs = null;        // specs are cheap; recomputed per GetSharedReferences call
             _extraSymbolDirs = null; // reset so stale layered-build dirs don't leak to next bundle
+            // NOTE: do NOT null _refLoader here. GetSharedReferences rebuilds the (expensive)
+            // loader only when its content signature changes (ComputeLoaderSignature), so an
+            // unchanged dep set keeps the warm loader instead of re-running the ~40s
+            // WarmReferenceLoader on every call. This also lets --watch reuse warm deps.
         }
+    }
+
+    /// <summary>
+    /// A stable content signature of the inputs the reference loader is built from, so the
+    /// loader (and its ~40s warm) is rebuilt only when the dependency closure actually
+    /// changes — not on every SetResolvedDeps/SetExtraSymbolDirs call or every bundle.
+    /// </summary>
+    private static string ComputeLoaderSignature(
+        List<string> packageDirs,
+        IReadOnlyList<string>? extraSymbolDirs,
+        IReadOnlyList<(AppManifest Manifest, string AppPath)>? deps)
+    {
+        var parts = new List<string>();
+        foreach (var d in packageDirs.OrderBy(x => x, StringComparer.Ordinal)) parts.Add("P:" + d);
+        if (extraSymbolDirs != null)
+            foreach (var d in extraSymbolDirs.OrderBy(x => x, StringComparer.Ordinal)) parts.Add("X:" + d);
+        if (deps != null)
+            foreach (var t in deps.OrderBy(x => x.AppPath, StringComparer.Ordinal))
+                parts.Add("D:" + t.AppPath + "@" + t.Manifest.Version);
+        return string.Join("\n", parts);
     }
 
     private static (NavCA.ISymbolReferenceLoader? Loader, NavCA.SymbolReferenceSpecification[] Specs)
@@ -262,20 +289,27 @@ public sealed class BcCompiler
     {
         lock (_refSync)
         {
-            // ── Loader (expensive filesystem scan) — cache and reuse ──────────────
-            // The loader scans package dirs for .app files and serves ModuleDefinitions.
-            // This is the expensive part (filesystem + zip reads) — cache it.
-            if (_refLoader == null)
+            // ── Loader (expensive filesystem scan + symbol warm) — cache and reuse ──
+            // The loader scans package dirs for .app files and serves ModuleDefinitions,
+            // then WarmReferenceLoader sequentially reads every reachable symbol spec
+            // (~40s for a heavy Base App dep set). This is pure dependency work — it does
+            // not depend on the bundle source — so it is rebuilt ONLY when its content
+            // signature (package dirs + extra symbol dirs + resolved dep set) changes.
+            // Unchanged deps → the warm loader is reused across calls, across bundles, and
+            // across --watch re-runs.
+            var packageDirs = bundleAlpackagesDirs
+                .Where(Directory.Exists)
+                .Distinct()
+                .ToList();
+            if (_packageCacheDirs != null)
+                packageDirs.AddRange(_packageCacheDirs.Where(Directory.Exists));
+            else
+                packageDirs.AddRange(ResolveSymbolDirs());
+            packageDirs = packageDirs.Distinct().ToList();
+
+            var loaderSig = ComputeLoaderSignature(packageDirs, _extraSymbolDirs, _resolvedDeps);
+            if (_refLoader == null || loaderSig != _loaderSignature)
             {
-                var packageDirs = bundleAlpackagesDirs
-                    .Where(Directory.Exists)
-                    .Distinct()
-                    .ToList();
-                if (_packageCacheDirs != null)
-                    packageDirs.AddRange(_packageCacheDirs.Where(Directory.Exists));
-                else
-                    packageDirs.AddRange(ResolveSymbolDirs());
-                packageDirs = packageDirs.Distinct().ToList();
                 if (packageDirs.Count == 0) return (null, Array.Empty<NavCA.SymbolReferenceSpecification>());
 
                 _refLoader = NavSymRef.ReferenceLoaderFactory.CreateReferenceLoader(packageDirs);
@@ -317,6 +351,7 @@ public sealed class BcCompiler
                 // hit warm caches instead of racing on cold file reads. Best-effort: any
                 // failure just leaves the cold-read path to the compiler as before.
                 WarmReferenceLoader(_refLoader, _resolvedDeps);
+                _loaderSignature = loaderSig;
             }
 
             // ── Specs (cheap) — recompute each call with _currentAppId exclusion ──
@@ -476,6 +511,10 @@ public sealed class BcCompiler
             preprocessorSymbols: Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}"),
             documentationMode: NavCA.DocumentationMode.None);
 
+        bool _timing = Environment.GetEnvironmentVariable("BCCOMPILER_TIMING") == "1";
+        var _tw = System.Diagnostics.Stopwatch.StartNew();
+        void _mark(string p) { if (_timing) Console.Error.WriteLine($"[emit-timing] {p}: {_tw.ElapsedMilliseconds}ms"); _tw.Restart(); }
+
         var trees = new NavSyntax.SyntaxTree[alFiles.Count];
         Parallel.For(0, alFiles.Count, i =>
         {
@@ -483,6 +522,7 @@ public sealed class BcCompiler
             trees[i] = NavSyntax.SyntaxTree.ParseObjectText(
                 src, path: alFiles[i], encoding: null!, parseOpts, default);
         });
+        _mark($"parse {alFiles.Count} files");
 
         // CompilationOptions: identical to v1 (Program.cs:1548-1555).
         var compOpts = new NavCA.CompilationOptions(
@@ -511,6 +551,7 @@ public sealed class BcCompiler
             .SelectMany(d => Directory.EnumerateDirectories(d, ".alpackages", SearchOption.AllDirectories))
             .Distinct();
         var (refLoader, specs) = GetSharedReferences(bundleAlpackages);
+        _mark($"GetSharedReferences ({specs.Length} specs)");
         if (refLoader != null)
         {
             compilation = compilation.WithReferenceLoader(refLoader);
@@ -537,6 +578,7 @@ public sealed class BcCompiler
             emitResult = compilation.Emit(NavCA.EmitOptions.Default, outputter);
         }
         catch (Exception ex) { caught = ex; }
+        _mark("compilation.Emit (bind + IL gen)");
 
         if (Environment.GetEnvironmentVariable("BCCOMPILER_DIAG") == "1")
         {
