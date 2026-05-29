@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 88;
+    private const int CACHE_VERSION = 89;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -189,6 +189,13 @@ public static class NclCecilRewrite
         // Event-binding metadata cluster (Batch 8).
         "Microsoft.Dynamics.Nav.Runtime.NavCodeunit::get_MetaCodeunit/0",
         "Microsoft.Dynamics.Nav.Runtime.NCLMetaCodeunit::get_IsEventManualBinding/0",
+        // ALSystemOperatingSystem GetUrl family (Batch 8) — all 7-arg overloads.
+        "Microsoft.Dynamics.Nav.Runtime.ALSystemOperatingSystem::GetUrlCore/7",
+        "Microsoft.Dynamics.Nav.Runtime.ALSystemOperatingSystem::ALGetUrl/7",
+        "Microsoft.Dynamics.Nav.Runtime.ALSystemOperatingSystem::ALGetUrlInternal/7",
+        // NavNotification send/recall (Batch 8).
+        "Microsoft.Dynamics.Nav.Runtime.NavNotification::ALSend/1",
+        "Microsoft.Dynamics.Nav.Runtime.NavNotification::ALRecall/1",
     };
 
     /// <summary>
@@ -4278,6 +4285,23 @@ public static class NclCecilRewrite
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "NCLMetaCodeunit", "get_IsEventManualBinding", 0),
                 H(typeof(AlRunnerV2.BcRuntime), "NCLMetaCodeunit_get_IsEventManualBinding"));
+
+            // ── ALSystemOperatingSystem GetUrl family (Batch 8) ─────────────────
+            // GetUrlCore / ALGetUrl / ALGetUrlInternal (all 7-arg) reach the absent
+            // service-instance URL infrastructure → NRE. Helper returns a stub URL.
+            foreach (var urlName in new[] { "GetUrlCore", "ALGetUrl", "ALGetUrlInternal" })
+                ReplaceBodyWithHelper(nclMod,
+                    ByParams(Rt + "ALSystemOperatingSystem", urlName,
+                             "NavClientType", "String", "NavObjectType", "Int32", "Object", "Boolean", "String"),
+                    H(helperShims, "ALSystemOperatingSystem_GetUrlCore"));
+
+            // ── NavNotification.ALSend / ALRecall (Batch 8) ─────────────────────
+            // Real body reaches the absent notification-dispatch layer → NRE. Helper
+            // populates NotificationInfo.Id (mirror) and returns true.
+            foreach (var notifName in new[] { "ALSend", "ALRecall" })
+                ReplaceBodyWithHelper(nclMod,
+                    ByParams(Rt + "NavNotification", notifName, "DataError"),
+                    H(helperShims, "NavNotification_ALSendOrRecall"));
 
             // ── FlowField CalcFieldsAsync(2)/(3) — already Cecil-body-rewritten above
             //    (see ~line 1751). FlowFieldPatches.Register additionally JmpHook.Apply's
