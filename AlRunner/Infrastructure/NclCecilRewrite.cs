@@ -3621,6 +3621,39 @@ public static class NclCecilRewrite
                     "NavApplicationObjectBaseCtorReplacement", BindingFlags.Public | BindingFlags.Static)!);
         }
 
+        // ─────────────────────────────────────────────────────────────────────
+        // Record / data-access path (RecordWritePatches.cs ApplyRecordPatches) —
+        // ATTEMPTED in Batch 4, REVERTED, left JmpHook'd. Documented per the
+        // "never leave the gate red" rule.
+        //
+        // With the NavApplicationObjectBase ctor migrated above, the dominant
+        // Cecil-only failure shifts to TempTableDataProvider..ctor (NRE on
+        // navSession.Database.CollationAwareStringComparer) and the supporting
+        // NavSession DataAccessSource/Database getters. The obvious next step —
+        // ReplaceBodyWithHelper-forwarding those to their existing JmpHook helpers
+        // (RecordPatches.*) — was implemented and BISECTED: migrating *even the
+        // single TempTableDataProvider..ctor* HANGS DEFAULT mode (60s watchdog
+        // timeout on the first record-using test), while keystone-only stays green
+        // at 147P/1F/1E.
+        //
+        // Root cause (consistent with feedback_r2r_inlining_traps): the rest of the
+        // record write/find path (InsertAsync, InternalFindRecord*, the *Async
+        // bypasses, FlowField CalcFieldsAsync via InstallIndirect, etc.) is STILL
+        // JmpHook'd and reaches the temp-table provider through R2R-precompiled /
+        // inlined call sites. A Cecil body on the ctor/getters coexisting with the
+        // JmpHook'd remainder produces a mixed-mechanism dispatch the record path
+        // spins on — the same class of coexistence spin Batch 3 removed for
+        // CreateTarget by making a method owned by exactly one mechanism.
+        //
+        // The record path can therefore only migrate as ONE ATOMIC all-or-nothing
+        // set (ctor + getters + every *Async write/find replacement + the
+        // InstallIndirect FlowField hooks + the NavRecord InitializeComponent
+        // prepends), not piecemeal — which exceeds a single safe batch and needs the
+        // generic-ValueTask<bool> completed-task shim the *Async targets require.
+        // Deferred to a dedicated record-path batch. Until then these stay JmpHook'd
+        // (correct in default mode) and remain the dominant Cecil-only gap.
+        // ─────────────────────────────────────────────────────────────────────
+
         var outStream = new MemoryStream();
         asm.Write(outStream);
         var modifiedBytes = outStream.ToArray();
