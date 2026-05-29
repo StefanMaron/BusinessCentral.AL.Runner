@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 91;
+    private const int CACHE_VERSION = 95;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -2592,6 +2592,37 @@ public static class NclCecilRewrite
                     if (!method.HasBody) continue;
                     var ps = method.Parameters;
 
+                    // Query-execution path: ALOpen/ALRead sync wrappers drive the REAL
+                    // async engine (ALOpenAsync/ALReadAsync → FindDataImplAsync →
+                    // GetDataAccessForQuery → in-memory GetDataAccessForTable). Now that
+                    // NavQuery instances carry a real NCLMetaQuery (built via
+                    // RecordPatches.BuildRealNCLMetaQuery), keep their ORIGINAL bodies so
+                    // queries actually execute against in-memory data instead of being stubbed.
+                    if (method.Name == "ALOpen" || method.Name == "ALRead")
+                        continue;
+
+                    // Query metadata / filter-state AL wrappers — their ORIGINAL bodies
+                    // dereference NCLMetaQuery.QueryDefinition.GetColumnByNo(...) (column
+                    // name/caption/no, SetRange/SetFilter, GetFilter) or just clear the
+                    // open dataset (TopNumberOfRowsToReturn setter, ValidateTablesNotVirtual,
+                    // CheckMetadataHasNotChanged). They were stubbed when NCLMetaQuery was
+                    // null; now that NavQuery instances carry a REAL NCLMetaQuery (built via
+                    // RecordPatches.BuildRealNCLMetaQuery) those bodies work, so keep them —
+                    // exactly the ALOpen/ALRead un-stub above. This restores real column
+                    // metadata (ColumnName/ColumnCaption/ColumnNo) and query filter state
+                    // (SetRange/SetFilter set the FilterFieldDictionary keyed by the query
+                    // column; GetFilter reads it back). Filter *evaluation* against the
+                    // in-memory store is handled in RecordPatches.QueryProjection (table-
+                    // field-keyed translation), so leaving these as real is faithful.
+                    if (method.Name == "ALColumnName" || method.Name == "ALColumnCaption"
+                        || method.Name == "ALColumnNo" || method.Name == "ALGetFilter"
+                        || method.Name == "get_ALGetFilters"
+                        || method.Name == "ALSetFilter" || method.Name == "ALSetRangeSafe"
+                        || method.Name == "set_ALTopNumberOfRowsToReturn"
+                        || method.Name == "ValidateTablesNotVirtual"
+                        || method.Name == "CheckMetadataHasNotChanged")
+                        continue;
+
                     // ALColumnName(int) -> "Column" + columnNo
                     // ALColumnCaption(int) -> "Column" + columnNo
                     if ((method.Name == "ALColumnName" || method.Name == "ALColumnCaption")
@@ -2781,6 +2812,63 @@ public static class NclCecilRewrite
                 }
                 Console.Error.WriteLine($"[Cecil] Rewrote {rewriteCount} NavQuery method(s) (ALColumnName/Caption, ALGetFilter(s), ALSetFilter, ALSetRangeSafe, ALClose, set_ALTopNumberOfRowsToReturn)");
             }
+        }
+
+        // NCLMetadata.EnsureAppGroupOwnedObjectsInitialized(NavAppGroup, string) → no-op.
+        // Building a real NCLMetaQuery (RecordPatches.BuildRealNCLMetaQuery) drives BC's
+        // CreateQueryDefinition, whose ResolveAppGroupForTableMetadataResolution calls this
+        // to lazily initialise an app group's owned objects. On the skeleton that recurses
+        // into InitializeBaseAppGroup, which locks on a null `appObjectInitializationChangeOrRemovalSyncRoot`
+        // (ArgumentNullException) and would otherwise build empty metadata for every system
+        // object. We resolve table metadata via the GetMetaTableById hook (which ignores app
+        // group), so this lazy group-object init is unnecessary work — no-op it. (Tables never
+        // reach here because their lookups are hooked before the app-group machinery; only the
+        // query-definition build hits it.)
+        {
+            var nclMetadataT = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.NCLMetadata");
+            var m = nclMetadataT?.Methods.FirstOrDefault(mm =>
+                mm.Name == "EnsureAppGroupOwnedObjectsInitialized" && mm.HasBody &&
+                mm.ReturnType.FullName == "System.Void" && mm.Parameters.Count == 2);
+            if (m != null)
+            {
+                var body = m.Body;
+                body.Instructions.Clear();
+                body.ExceptionHandlers.Clear();
+                body.Variables.Clear();
+                body.GetILProcessor().Append(body.GetILProcessor().Create(OpCodes.Ret));
+                body.MaxStackSize = 0;
+                Console.Error.WriteLine("[Cecil] Rewrote NCLMetadata.EnsureAppGroupOwnedObjectsInitialized → no-op (skip skeleton app-group lazy init)");
+            }
+            else
+            {
+                Console.Error.WriteLine("[Cecil] WARN: NCLMetadata.EnsureAppGroupOwnedObjectsInitialized(NavAppGroup,string) not found — query metadata build may NRE");
+            }
+        }
+
+        // NavSession.VerifyExecutePermission(...) void overloads → no-op.
+        // The real query open path (NavQuery.VerifyPermissions → VerifyExecutePermission →
+        // HasCachedExecutePermissions) NREs on the skeleton session's null permission cache.
+        // There is a JmpHook for this (BcRuntime), but JmpHooks are disabled (Cecil-only), so
+        // it never lands. The skeleton runs as SUPER — execute permission is always granted —
+        // so no-op is faithful. (Codeunits don't hit this; our CreateTarget bypasses dispatch.)
+        {
+            var navSessionT = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.NavSession");
+            int vepCount = 0;
+            foreach (var m in (navSessionT?.Methods ?? Enumerable.Empty<MethodDefinition>())
+                .Where(mm => mm.Name == "VerifyExecutePermission" && mm.HasBody
+                    && mm.ReturnType.FullName == "System.Void").ToList())
+            {
+                var body = m.Body;
+                body.Instructions.Clear();
+                body.ExceptionHandlers.Clear();
+                body.Variables.Clear();
+                body.GetILProcessor().Append(body.GetILProcessor().Create(OpCodes.Ret));
+                body.MaxStackSize = 0;
+                vepCount++;
+            }
+            Console.Error.WriteLine($"[Cecil] Rewrote {vepCount} NavSession.VerifyExecutePermission overload(s) → no-op");
         }
 
         // NavReport sync wrappers + DataItemIterator.SetTableView.
@@ -4030,6 +4118,25 @@ public static class NclCecilRewrite
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "TempTableDataProvider", "CalcNumeric", "CalcNumericProviderRequest"),
                 H(recordPatches, "TempTableDataProvider_CalcNumeric"));
+
+            // ── TempTableDataProvider.Find / FindFromPosition (query column projection) ──
+            // Single-dataitem query reads route through GetDataAccessForQuery → the same
+            // in-memory TempTableDataProvider that holds the inserted rows. The provider is
+            // TABLE-shaped: it returns ReadOnlyRecordBuffers indexed by table field
+            // ColumnIndex, but NavQuery.GetColumnValue reads CurrentDataRow[queryColumn
+            // .ColumnIndex] (the QUERY result slot), so columns come back as 0. Real BC's
+            // SQL provider projects via a SELECT; the temp provider never does. These two
+            // replacements forward to the provider's own private FindImplementation /
+            // FindByPositionImplementation (storage/filter/sort untouched) and, ONLY when
+            // the request targets an NCLMetaQuery, re-shape each table buffer into a
+            // query-shaped buffer. Ordinary table reads pass straight through. See
+            // RecordPatches.QueryProjection.cs.
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "TempTableDataProvider", "Find", "FindProviderRequest", "Func`1"),
+                H(recordPatches, "TempTableDataProvider_Find"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "TempTableDataProvider", "FindFromPosition", "PositionedFindProviderRequest", "Func`1"),
+                H(recordPatches, "TempTableDataProvider_FindFromPosition"));
 
             // ── NavDatabase / NavRecordId collation comparers ───────────────────
             ReplaceBodyWithHelper(nclMod,

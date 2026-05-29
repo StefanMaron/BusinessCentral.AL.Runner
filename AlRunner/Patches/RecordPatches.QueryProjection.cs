@@ -1,0 +1,401 @@
+// RecordPatches.QueryProjection — project query columns from in-memory table rows.
+//
+// PROBLEM (single-dataitem query reads return 0):
+//   NavQuery.FindDataImplAsync issues a find against
+//   DataAccessSource.GetDataAccessForQuery(NCLMetaQuery).FindAsync(request) where the
+//   request's MetaApplicationObject is the NCLMetaQuery. On the skeleton runtime that
+//   DataAccess is backed by BC's TempTableDataProvider (the in-memory store where the
+//   AL test inserted its rows). TempTableDataProvider is TABLE-shaped: it returns
+//   ReadOnlyRecordBuffers whose slots are indexed by the table field ColumnIndex.
+//   But NavQuery.GetColumnValue reads CurrentDataRow[queryColumn.ColumnIndex], where
+//   queryColumn.ColumnIndex is the 0-based QUERY result slot. The two index spaces do
+//   not line up, so every column comes back as the default (0 / '').
+//
+//   In real BC the SQL provider projects via a SELECT (table field -> result slot);
+//   the temp provider never does because queries normally never reach it. We reproduce
+//   exactly that projection here.
+//
+// FAITHFUL FIX (mirrors SQL SELECT projection):
+//   The public TempTableDataProvider.Find / FindFromPosition entry points are
+//   Cecil-redirected (NclCecilRewrite) to the two helpers below. They call the
+//   provider's own private FindImplementation / FindByPositionImplementation (the
+//   genuine in-memory storage + filter + sort logic, untouched), then — and only when
+//   the request's MetaApplicationObject is an NCLMetaQuery — re-shape each table buffer
+//   into a query-shaped ReadOnlyRecordBuffer:
+//       projected[col.ColumnIndex] = tableBuffer[col.SourceTableField.ColumnIndex]
+//   For non-query (ordinary Record) reads the buffers pass straight through unchanged,
+//   so this is a no-op on the 99% table-read path.
+//
+// SCOPE: single-dataitem (no join) queries. A join request would have a query
+//   definition with >1 included table; the temp provider already cannot serve that
+//   (DataAccessSource.GetDataAccessForQuery throws QueriesBetweenDataSourcesNotSupported
+//   when the included tables map to different DataAccess instances), so join handling
+//   stays a follow-up. An aggregate / const / non-source column has no SourceTableField
+//   and is left at its slot default rather than faked — surfaced as a follow-up, never
+//   silently wrong for source columns.
+using System.Collections;
+using System.Collections.Generic;
+using System.Reflection;
+using Microsoft.Dynamics.Nav.Runtime;
+
+namespace AlRunnerV2.Patches;
+
+public static partial class RecordPatches
+{
+    private static MethodInfo? _mTtdpFindImpl;
+    private static MethodInfo? _mTtdpFindByPositionImpl;
+    private static Type? _tFindTypeEnum;
+    private static Type? _tReadOnlyRecordBuffer;
+    private static ConstructorInfo? _ctorReadOnlyRecordBuffer;
+    private static PropertyInfo? _pReqMetaAppObj;
+    private static PropertyInfo? _pReqFindType;
+    private static PropertyInfo? _pReqTopNumberOfRows;
+
+    private static void EnsureQueryProjectionReflection(object tempProvider)
+    {
+        if (_mTtdpFindImpl != null) return;
+        var ttdp = tempProvider.GetType(); // TempTableDataProvider
+        _mTtdpFindImpl = ttdp.GetMethod("FindImplementation",
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("TempTableDataProvider.FindImplementation not found");
+        _mTtdpFindByPositionImpl = ttdp.GetMethod("FindByPositionImplementation",
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("TempTableDataProvider.FindByPositionImplementation not found");
+
+        var nclAsm = ttdp.Assembly;
+        _tFindTypeEnum = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.FindType");
+        _tReadOnlyRecordBuffer = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.ReadOnlyRecordBuffer")
+            ?? throw new InvalidOperationException("ReadOnlyRecordBuffer not found");
+        // public ReadOnlyRecordBuffer(NCLMetaApplicationObject metaApplicationObject, params NavValue[] immutableFields)
+        var navValueArr = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.NavValue")!.MakeArrayType();
+        var metaAppObj = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetaApplicationObject")!;
+        _ctorReadOnlyRecordBuffer = _tReadOnlyRecordBuffer.GetConstructor(new[] { metaAppObj, navValueArr })
+            ?? throw new InvalidOperationException("ReadOnlyRecordBuffer(NCLMetaApplicationObject, NavValue[]) ctor not found");
+
+        var reqBase = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.DataProviderRequest")!;
+        _pReqMetaAppObj = reqBase.GetProperty("MetaApplicationObject", BindingFlags.Public | BindingFlags.Instance)!;
+        var findReq = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.FindProviderRequest")!;
+        _pReqFindType = findReq.GetProperty("FindType", BindingFlags.Public | BindingFlags.Instance)!;
+        _pReqTopNumberOfRows = findReq.GetProperty("TopNumberOfRowsToReturn", BindingFlags.Public | BindingFlags.Instance)!;
+    }
+
+    /// <summary>
+    /// Replacement for TempTableDataProvider.Find(FindProviderRequest, Func&lt;bool&gt;).
+    /// Mirrors the original: FindImplementation(request), Take(1) when FindType.FirstOnly,
+    /// then projects query columns when the request targets a query.
+    /// </summary>
+    public static IEnumerable<ReadOnlyRecordBuffer> TempTableDataProvider_Find(
+        object self, object request, Func<bool>? onlyCurrentKeyNeededForNextRow)
+    {
+        EnsureQueryProjectionReflection(self);
+        var execRequest = TranslateQueryFilters(request);
+        var raw = (IEnumerable<ReadOnlyRecordBuffer>)_mTtdpFindImpl!.Invoke(self, new[] { execRequest })!;
+        raw = ApplyFirstOnly(request, raw);
+        return ProjectIfQuery(request, raw);
+    }
+
+    /// <summary>
+    /// Replacement for TempTableDataProvider.FindFromPosition(PositionedFindProviderRequest, Func&lt;bool&gt;).
+    /// </summary>
+    public static IEnumerable<ReadOnlyRecordBuffer> TempTableDataProvider_FindFromPosition(
+        object self, object request, Func<bool>? onlyCurrentKeyNeededForNextRow)
+    {
+        EnsureQueryProjectionReflection(self);
+        var execRequest = TranslateQueryFilters(request);
+        var raw = (IEnumerable<ReadOnlyRecordBuffer>)_mTtdpFindByPositionImpl!.Invoke(self, new[] { execRequest })!;
+        raw = ApplyFirstOnly(request, raw);
+        return ProjectIfQuery(request, raw);
+    }
+
+    // ── Query filter translation (SetRange / SetFilter on a query column) ──────────
+    // NavQuery.SetRange/SetFilter store a FilterFieldDictionary keyed by the
+    // NCLMetaQueryColumn, with each FilterExpression bound to that column's
+    // ExpressionContext. The TempTableDataProvider filter visitor evaluates
+    // `(NCLMetaField)expressionContext.Metadata` against the table buffer
+    // (input[NCLMetaField.ColumnIndex]) — a query column is NOT an NCLMetaField, so the
+    // raw filter never matches the table row. Real BC's SQL provider applies the filter
+    // in the WHERE clause against the source column. We reproduce that: rebuild each
+    // query-column-keyed filter so it targets the column's SourceTableField (the real
+    // NCLMetaField) and re-key the dictionary by that field, then hand the temp provider
+    // a table-shaped request it can evaluate. Single-dataitem only: every column maps to
+    // one included table.
+    private static Type? _tFiltersAndMarks;
+    private static Type? _tFilterFieldDictionary;
+    private static Type? _tUnaryFilterExpr;
+    private static Type? _tBinaryFilterExpr;
+    private static Type? _tFilterExpr;
+    private static Type? _tNavFieldMetadata;
+    private static bool _filterReflectionReady;
+
+    private static void EnsureFilterReflection()
+    {
+        if (_filterReflectionReady) return;
+        var asm = _tReadOnlyRecordBuffer!.Assembly;
+        const string rt = "Microsoft.Dynamics.Nav.Runtime.";
+        _tFiltersAndMarks = asm.GetType(rt + "FiltersAndMarks");
+        _tFilterFieldDictionary = asm.GetType(rt + "FilterFieldDictionary");
+        _tUnaryFilterExpr = asm.GetType(rt + "UnaryFilterExpression");
+        _tBinaryFilterExpr = asm.GetType(rt + "BinaryFilterExpression");
+        _tFilterExpr = asm.GetType(rt + "FilterExpression");
+        _tNavFieldMetadata = asm.GetType(rt + "INavFieldMetadata");
+        _tNCLMetaQueryColumn = asm.GetType(rt + "NCLMetaQueryColumn");
+        _filterReflectionReady = true;
+    }
+
+    /// <summary>
+    /// If <paramref name="request"/> targets a query and carries query-column-keyed
+    /// filters, returns a clone of the request with those filters re-keyed/re-targeted to
+    /// the source table fields so the temp provider can evaluate them. Otherwise returns
+    /// the request unchanged.
+    /// </summary>
+    private static object TranslateQueryFilters(object request)
+    {
+        var metaAppObj = _pReqMetaAppObj!.GetValue(request);
+        if (metaAppObj == null || _tNCLMetaQuery == null || !_tNCLMetaQuery.IsInstanceOfType(metaAppObj))
+            return request; // ordinary table read — nothing to translate.
+
+        EnsureFilterReflection();
+        var filtersAndMarks = request.GetType().GetProperty("FiltersAndMarks", BindingFlags.Public | BindingFlags.Instance)!
+            .GetValue(request);
+        if (filtersAndMarks == null) return request;
+        var filters = _tFiltersAndMarks!.GetProperty("Filters", BindingFlags.Public | BindingFlags.Instance)!
+            .GetValue(filtersAndMarks);
+        if (filters == null) return request;
+
+        // FilterFieldDictionary.Items : Tuple<INavFieldMetadata, FilterExpression>[]
+        var items = (Array?)_tFilterFieldDictionary!.GetProperty("Items", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
+            .GetValue(filters);
+        if (items == null || items.Length == 0) return request; // no field filters → nothing to do.
+
+        var translatedTuples = new List<object>();
+        bool anyTranslated = false;
+        foreach (var item in items)
+        {
+            // Tuple<INavFieldMetadata, FilterExpression>
+            var key = item!.GetType().GetProperty("Item1")!.GetValue(item);
+            var expr = item.GetType().GetProperty("Item2")!.GetValue(item);
+            if (key != null && _tNCLMetaQueryColumn != null && _tNCLMetaQueryColumn.IsInstanceOfType(key))
+            {
+                var srcField = key.GetType().GetProperty("SourceTableField", BindingFlags.Public | BindingFlags.Instance)!.GetValue(key);
+                if (srcField != null && expr != null)
+                {
+                    var srcCtx = srcField.GetType().GetProperty("ExpressionContext", BindingFlags.Public | BindingFlags.Instance)!.GetValue(srcField);
+                    var retargeted = RetargetFilterExpression(expr, srcCtx!);
+                    translatedTuples.Add(MakeFieldTuple(srcField, retargeted));
+                    anyTranslated = true;
+                    continue;
+                }
+            }
+            translatedTuples.Add(item); // already table-keyed or no source — keep as-is.
+        }
+        if (!anyTranslated) return request;
+
+        // Build FilterFieldDictionary(IEnumerable<Tuple<INavFieldMetadata, FilterExpression>>)
+        var newFilters = BuildFilterFieldDictionary(translatedTuples);
+        var markedRecords = _tFiltersAndMarks.GetProperty("MarkedRecords", BindingFlags.Public | BindingFlags.Instance)!.GetValue(filtersAndMarks);
+        var newFam = Activator.CreateInstance(_tFiltersAndMarks, newFilters, markedRecords)!;
+        return CloneRequestWithFilters(request, newFam);
+    }
+
+    private static Type? _tNCLMetaQueryColumn;
+
+    private static object MakeFieldTuple(object field, object expr)
+    {
+        // Tuple<INavFieldMetadata, FilterExpression>
+        var tupleType = typeof(Tuple<,>).MakeGenericType(_tNavFieldMetadata!, _tFilterExpr!);
+        return Activator.CreateInstance(tupleType, field, expr)!;
+    }
+
+    private static object BuildFilterFieldDictionary(List<object> tuples)
+    {
+        var tupleType = typeof(Tuple<,>).MakeGenericType(_tNavFieldMetadata!, _tFilterExpr!);
+        var arr = Array.CreateInstance(tupleType, tuples.Count);
+        for (int i = 0; i < tuples.Count; i++) arr.SetValue(tuples[i], i);
+        // FilterFieldDictionary(IEnumerable<Tuple<INavFieldMetadata, FilterExpression>>)
+        var ienumType = typeof(IEnumerable<>).MakeGenericType(tupleType);
+        var ctor = _tFilterFieldDictionary!.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .First(c => c.GetParameters().Length == 1 && c.GetParameters()[0].ParameterType == ienumType);
+        return ctor.Invoke(new object[] { arr });
+    }
+
+    /// <summary>Rebuild a filter expression tree, retargeting Unary leaves to <paramref name="targetCtx"/>.</summary>
+    private static object RetargetFilterExpression(object expr, object targetCtx)
+    {
+        var t = expr.GetType();
+        if (_tUnaryFilterExpr!.IsInstanceOfType(expr))
+        {
+            // new UnaryFilterExpression(FilterExpressionType, NavValue, FilterExpressionContext, valueToken, isConstInMetadata)
+            var exprType = _tFilterExpr!.GetProperty("ExpressionType", BindingFlags.Public | BindingFlags.Instance)!.GetValue(expr);
+            var value = t.GetProperty("Value", BindingFlags.Public | BindingFlags.Instance)!.GetValue(expr);
+            var ctor = _tUnaryFilterExpr.GetConstructors()
+                .First(c => c.GetParameters().Length >= 3
+                    && c.GetParameters()[0].ParameterType.Name == "FilterExpressionType");
+            var ps = ctor.GetParameters();
+            var args = new object?[ps.Length];
+            args[0] = exprType; args[1] = value; args[2] = targetCtx;
+            for (int i = 3; i < ps.Length; i++) args[i] = ps[i].HasDefaultValue ? ps[i].DefaultValue : (ps[i].ParameterType.IsValueType ? Activator.CreateInstance(ps[i].ParameterType) : null);
+            return ctor.Invoke(args);
+        }
+        if (_tBinaryFilterExpr!.IsInstanceOfType(expr))
+        {
+            var exprType = _tFilterExpr!.GetProperty("ExpressionType", BindingFlags.Public | BindingFlags.Instance)!.GetValue(expr);
+            var left = t.GetProperty("Left", BindingFlags.Public | BindingFlags.Instance)!.GetValue(expr);
+            var right = t.GetProperty("Right", BindingFlags.Public | BindingFlags.Instance)!.GetValue(expr);
+            var newLeft = RetargetFilterExpression(left!, targetCtx);
+            var newRight = RetargetFilterExpression(right!, targetCtx);
+            var ctor = _tBinaryFilterExpr.GetConstructors()
+                .First(c => c.GetParameters().Length == 3 && c.GetParameters()[0].ParameterType.Name == "FilterExpressionType");
+            return ctor.Invoke(new object?[] { exprType, newLeft, newRight });
+        }
+        // Other expression kinds (wildcard/fieldEqualsField/etc.) are not produced by
+        // single-column SetRange/SetFilter; leave them (will not match a table field and
+        // is a documented follow-up if a test relies on them).
+        return expr;
+    }
+
+    private static object CloneRequestWithFilters(object request, object newFiltersAndMarks)
+    {
+        // Both FindProviderRequest and PositionedFindProviderRequest share the same field
+        // set; reconstruct via the full ctor pulling every other field off the original.
+        var t = request.GetType();
+        object Get(string n) => t.GetProperty(n, BindingFlags.Public | BindingFlags.Instance)!.GetValue(request)!;
+        var isPositioned = t.Name == "PositionedFindProviderRequest";
+        var ctor = t.GetConstructors().First(c =>
+        {
+            var ps = c.GetParameters();
+            return ps.Length >= 13 && ps[1].ParameterType.Name == "NCLMetaApplicationObject";
+        });
+        var ps = ctor.GetParameters();
+        var args = new object?[ps.Length];
+        for (int i = 0; i < ps.Length; i++)
+        {
+            args[i] = ps[i].Name switch
+            {
+                "companyToken" => Get("CompanyToken"),
+                "metaApplicationObject" => Get("MetaApplicationObject"),
+                "lockState" => Get("LockState"),
+                "filtersAndMarks" => newFiltersAndMarks,
+                "globalAndSecurityFilters" => GetOrNull("GlobalAndSecurityFilters"),
+                "flowFieldSecurityFiltering" => Get("FlowFieldSecurityFiltering"),
+                "autoCalcFields" => GetOrNull("AutoCalcFields"),
+                "sortingFields" => GetOrNull("SortingFields"),
+                "findType" => Get("FindType"),
+                "startingPosition" => isPositioned ? GetOrNull("StartingPosition") : null,
+                "includeCurrent" => isPositioned ? Get("IncludeCurrent") : false,
+                "topNumberOfRowsToReturn" => Get("TopNumberOfRowsToReturn"),
+                "skipNumberOfRows" => Get("SkipNumberOfRows"),
+                "fastNumberOfRowsToReturn" => Get("FastNumberOfRowsToReturn"),
+                "timeout" => GetOrNull("Timeout"),
+                "fieldLoadInfo" => GetOrNull("FieldLoadInfo"),
+                _ => ps[i].HasDefaultValue ? ps[i].DefaultValue : (ps[i].ParameterType.IsValueType ? Activator.CreateInstance(ps[i].ParameterType) : null)
+            };
+        }
+        return ctor.Invoke(args);
+
+        object? GetOrNull(string n) => t.GetProperty(n, BindingFlags.Public | BindingFlags.Instance)?.GetValue(request);
+    }
+
+    private static IEnumerable<ReadOnlyRecordBuffer> ApplyFirstOnly(object request, IEnumerable<ReadOnlyRecordBuffer> rows)
+    {
+        // Original Find/FindFromPosition return enumerable.Take(1) when FindType == FirstOnly.
+        var findType = _pReqFindType!.GetValue(request);
+        var firstOnly = findType != null && Convert.ToInt32(findType) == FirstOnlyOrdinal();
+        return firstOnly ? rows.Take(1) : rows;
+    }
+
+    private static int _firstOnlyOrdinal = -1;
+    private static int FirstOnlyOrdinal()
+    {
+        if (_firstOnlyOrdinal < 0)
+            _firstOnlyOrdinal = Convert.ToInt32(Enum.Parse(_tFindTypeEnum!, "FirstOnly"));
+        return _firstOnlyOrdinal;
+    }
+
+    private static IEnumerable<ReadOnlyRecordBuffer> ProjectIfQuery(object request, IEnumerable<ReadOnlyRecordBuffer> rows)
+    {
+        var metaAppObj = _pReqMetaAppObj!.GetValue(request);
+        if (metaAppObj == null || _tNCLMetaQuery == null || !_tNCLMetaQuery.IsInstanceOfType(metaAppObj))
+            return rows; // ordinary table read — pass through unchanged.
+
+        // Query.TopNumberOfRowsToReturn caps the dataset. NavQuery passes it through the
+        // request's TopNumberOfRowsToReturn; the temp provider's Find only honours
+        // FindType.FirstOnly (Take(1)), never the Top cap — that's a query concept the SQL
+        // provider would enforce via TOP. Apply it here, scoped to query requests so
+        // ordinary table reads keep BC's exact (uncapped) behaviour.
+        var top = _pReqTopNumberOfRows!.GetValue(request);
+        int topN = top == null ? 0 : Convert.ToInt32(top);
+        if (topN > 0) rows = rows.Take(topN);
+
+        return ProjectQueryRows(metaAppObj, rows);
+    }
+
+    // Cached per NCLMetaQuery: the (queryColumnIndex -> tableFieldColumnIndex) projection map
+    // and the result slot count.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, ProjectionPlan> _projectionPlans = new();
+
+    private sealed class ProjectionPlan
+    {
+        public int SlotCount;
+        // map[i] = (queryResultSlot, tableFieldSlot); a value of -1 tableFieldSlot means
+        // the column has no NCLMetaField source (aggregate/const) → leave at default.
+        public (int querySlot, int tableSlot)[] Map = Array.Empty<(int, int)>();
+    }
+
+    private static IEnumerable<ReadOnlyRecordBuffer> ProjectQueryRows(object nclMetaQuery, IEnumerable<ReadOnlyRecordBuffer> rows)
+    {
+        var plan = _projectionPlans.GetValue(nclMetaQuery, BuildProjectionPlan);
+        foreach (var row in rows)
+        {
+            var fields = new object?[plan.SlotCount];
+            foreach (var (querySlot, tableSlot) in plan.Map)
+            {
+                if (tableSlot < 0 || tableSlot >= row.FieldCount) continue; // unsupported column → default
+                fields[querySlot] = row[tableSlot];
+            }
+            // ReadOnlyRecordBuffer(NCLMetaApplicationObject, params NavValue[])
+            yield return (ReadOnlyRecordBuffer)_ctorReadOnlyRecordBuffer!.Invoke(
+                new object?[] { nclMetaQuery, ToNavValueArray(fields) });
+        }
+    }
+
+    private static Type? _tNavValue;
+    private static Array ToNavValueArray(object?[] values)
+    {
+        _tNavValue ??= _tReadOnlyRecordBuffer!.Assembly.GetType("Microsoft.Dynamics.Nav.Runtime.NavValue")!;
+        var arr = Array.CreateInstance(_tNavValue, values.Length);
+        for (int i = 0; i < values.Length; i++) arr.SetValue(values[i], i);
+        return arr;
+    }
+
+    private static ProjectionPlan BuildProjectionPlan(object nclMetaQuery)
+    {
+        // queryDef = nclMetaQuery.QueryDefinition; columns = queryDef.Columns
+        var queryDef = _tNCLMetaQuery!.GetProperty("QueryDefinition", BindingFlags.Public | BindingFlags.Instance)!
+            .GetValue(nclMetaQuery)!;
+        var columns = (IEnumerable)queryDef.GetType()
+            .GetProperty("Columns", BindingFlags.Public | BindingFlags.Instance)!
+            .GetValue(queryDef)!;
+
+        var map = new List<(int, int)>();
+        int maxSlot = -1;
+        foreach (var col in columns)
+        {
+            var ct = col.GetType(); // NCLMetaQueryColumn
+            int querySlot = (int)ct.GetProperty("ColumnIndex", BindingFlags.Public | BindingFlags.Instance)!.GetValue(col)!;
+            if (querySlot > maxSlot) maxSlot = querySlot;
+
+            int tableSlot = -1;
+            // SourceTableField is the NCLMetaField backing this column (null/throws for
+            // aggregate/const columns — treat those as unsupported → leave default).
+            try
+            {
+                var srcField = ct.GetProperty("SourceTableField", BindingFlags.Public | BindingFlags.Instance)!.GetValue(col);
+                if (srcField != null)
+                    tableSlot = (int)srcField.GetType().GetProperty("ColumnIndex", BindingFlags.Public | BindingFlags.Instance)!.GetValue(srcField)!;
+            }
+            catch { tableSlot = -1; }
+            map.Add((querySlot, tableSlot));
+        }
+        return new ProjectionPlan { SlotCount = maxSlot + 1, Map = map.ToArray() };
+    }
+}

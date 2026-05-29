@@ -502,6 +502,39 @@ public static partial class BcRuntime
             throw new InvalidOperationException(
                 $"Query{id} is not present in the test assembly or any loaded dependency.");
 
+        // TEMP DIAGNOSTIC (qdiag): log which ctor path is taken and whether the
+        // resulting NavQuery has a usable NCLMetaQuery / QueryDefinition.
+        object QDiag(int arity, object q)
+        {
+            if (Environment.GetEnvironmentVariable("AL_RUNNER_QDIAG") != "1") return q;
+            try
+            {
+                var mqProp = q.GetType().GetProperty("NCLMetaQuery",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                var mq = mqProp?.GetValue(q);
+                string qd;
+                if (mq == null) qd = "NCLMetaQuery=NULL";
+                else
+                {
+                    try
+                    {
+                        var qdProp = mq.GetType().GetProperty("QueryDefinition",
+                            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                        var qdv = qdProp?.GetValue(mq);
+                        qd = $"NCLMetaQuery={mq.GetType().Name} QueryDefinition={(qdv == null ? "null" : qdv.GetType().Name)}";
+                    }
+                    catch (Exception ex)
+                    {
+                        var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+                        qd = $"NCLMetaQuery={mq.GetType().Name} QueryDefinition THREW {inner.GetType().Name}: {inner.Message}";
+                    }
+                }
+                File.AppendAllText("/tmp/qdiag.txt", $"Query{id}: ctor arity={arity}; {qd}\n");
+            }
+            catch (Exception ex) { File.AppendAllText("/tmp/qdiag.txt", $"Query{id}: QDiag failed: {ex.Message}\n"); }
+            return q;
+        }
+
         // Try ctor signatures matching NavQuery's three protected constructors:
         //   (ITreeObject parent)                          — AL-emitted convenience
         //   (ITreeObject parent, SecurityFiltering, NCLMetaQuery)
@@ -511,12 +544,12 @@ public static partial class BcRuntime
         var oneArg = ctors.FirstOrDefault(c => c.GetParameters().Length == 1 &&
             typeof(Microsoft.Dynamics.Nav.Runtime.ITreeObject)
                 .IsAssignableFrom(c.GetParameters()[0].ParameterType));
-        if (oneArg != null) return oneArg.Invoke(new object[] { self });
+        if (oneArg != null) return QDiag(1, oneArg.Invoke(new object[] { self }));
 
         var twoArg = ctors.FirstOrDefault(c => c.GetParameters().Length == 2 &&
             typeof(Microsoft.Dynamics.Nav.Runtime.ITreeObject)
                 .IsAssignableFrom(c.GetParameters()[0].ParameterType));
-        if (twoArg != null) return twoArg.Invoke(new object?[] { self, null });
+        if (twoArg != null) return QDiag(2, twoArg.Invoke(new object?[] { self, null }));
 
         // 3-arg (ITreeObject, SecurityFiltering, NCLMetaQuery): NavQuery..ctor was
         // Cecil-rewritten to be null-safe (skips metadata access), so we can pass
@@ -534,7 +567,10 @@ public static partial class BcRuntime
             var secFilt = threeArgMq.GetParameters()[1].ParameterType;
             // SecurityFiltering.Disabled = 0 (first enum member); use 0 as a safe default.
             var secVal = Enum.ToObject(secFilt, 0);
-            return threeArgMq.Invoke(new object?[] { self, secVal, null });
+            // Build a REAL NCLMetaQuery so the genuine async engine can execute the
+            // query against the in-memory provider (null → NRE in FindDataImplAsync).
+            var meta = AlRunnerV2.Patches.RecordPatches.BuildRealNCLMetaQuery(id, queryType);
+            return QDiag(31, threeArgMq.Invoke(new object?[] { self, secVal, meta }));
         }
 
         // 4-arg (ITreeObject, int, SecurityFiltering, NCLMetaQuery): chains to the
@@ -552,7 +588,7 @@ public static partial class BcRuntime
         {
             var secFilt = fourArg.GetParameters()[2].ParameterType;
             var secVal = Enum.ToObject(secFilt, 0);
-            return fourArg.Invoke(new object?[] { self, id, secVal, null });
+            return QDiag(4, fourArg.Invoke(new object?[] { self, id, secVal, null }));
         }
 
         // 3-arg (ITreeObject, int, SecurityFiltering): also Cecil-rewritten to skip metadata.
@@ -568,7 +604,7 @@ public static partial class BcRuntime
         {
             var secFilt = threeArgInt.GetParameters()[2].ParameterType;
             var secVal = Enum.ToObject(secFilt, 0);
-            return threeArgInt.Invoke(new object?[] { self, id, secVal });
+            return QDiag(32, threeArgInt.Invoke(new object?[] { self, id, secVal }));
         }
 
         var sigs = string.Join(" | ", ctors.Select(c =>
