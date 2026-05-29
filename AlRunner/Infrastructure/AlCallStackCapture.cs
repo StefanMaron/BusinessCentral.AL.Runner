@@ -29,6 +29,17 @@ public static class AlCallStackCapture
     /// <summary>The most recently captured AL call stack string (process-global).</summary>
     private static volatile string? _captured;
 
+    /// <summary>
+    /// AL stack captured per exception instance, at the exception's FIRST first-chance
+    /// (the original throw point — the deepest, most complete chain). Keyed by instance so
+    /// the test runner can ask for the stack of the *specific* exception that failed the
+    /// test, rather than whatever NavException happened to be thrown last (a later rethrow
+    /// during async unwinding, or an internally-caught asserterror exception, would
+    /// otherwise clobber the single _captured slot with a shallower stack). ConditionalWeakTable
+    /// keys on reference identity and lets dead exceptions be GC'd.
+    /// </summary>
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Exception, string> _byException = new();
+
     /// <summary>True while a test is executing; controls FCE capture (process-global).</summary>
     private static volatile bool _captureEnabled;
 
@@ -42,7 +53,8 @@ public static class AlCallStackCapture
     private static bool _reflInit;
     private static object? _knownSession;               // NavSession, set by Initialize()
     private static FieldInfo?    _fSessCurrentScopeField; // NavSession.<CurrentMethodScope>k__BackingField
-    private static PropertyInfo? _piStackTrace;         // NavMethodScope.StackTrace
+    private static PropertyInfo? _piParentScope;        // NavMethodScope.ParentScope
+    private static PropertyInfo? _piIsRootScope;        // NavMethodScope.IsRootScope
     private static PropertyInfo? _piApplicationObject;  // NavMethodScope.ApplicationObject
     private static PropertyInfo? _piObjectName;         // NavApplicationObjectBase.ObjectName
     private static PropertyInfo? _piScopeName;          // NavMethodScope.ScopeName
@@ -58,14 +70,30 @@ public static class AlCallStackCapture
 
     // ─── Public API ───────────────────────────────────────────────────────────
 
+    /// <summary>The most recent capture (for AL-facing GetLastErrorCallStack and the timeout path).</summary>
     public static string? GetCaptured() => _captured;
+
+    /// <summary>
+    /// The AL stack captured for <paramref name="exception"/> at its original throw point.
+    /// Falls back to the most-recent capture if this exact instance wasn't recorded
+    /// (e.g. it was wrapped/re-created on the way out).
+    /// </summary>
+    public static string? GetCaptured(Exception? exception)
+    {
+        if (exception != null && _byException.TryGetValue(exception, out var s))
+            return s;
+        return _captured;
+    }
 
     public static string? CaptureCurrent()
     {
-        _captured = null;
-        try { DoCapture(); }
+        try
+        {
+            var s = BuildStack();
+            if (s != null) _captured = s;
+            return s;
+        }
         catch { return null; }
-        return _captured;
     }
 
     /// <summary>
@@ -106,11 +134,22 @@ public static class AlCallStackCapture
         // Filter: only NavException subclasses carry AL-visible errors.
         if (_tNavException == null || !_tNavException.IsInstanceOfType(e.Exception)) return;
 
+        // Capture only the FIRST first-chance for this exact exception instance — that is
+        // the original throw point with the deepest, most complete scope chain. Later
+        // first-chances for the same instance (ExceptionDispatchInfo.Throw rethrows during
+        // async unwinding) fire at shallower scopes and would otherwise truncate the stack.
+        if (_byException.TryGetValue(e.Exception, out _)) return;
+
         // Guard against re-entrant FCE (can happen if reflection below throws).
         _captureEnabled = false;
         try
         {
-            DoCapture();
+            var s = BuildStack();
+            if (s != null)
+            {
+                _byException.AddOrUpdate(e.Exception, s);
+                _captured = s;
+            }
         }
         catch
         {
@@ -122,9 +161,10 @@ public static class AlCallStackCapture
         }
     }
 
-    private static void DoCapture()
+    /// <summary>Builds the AL call-stack string for the current scope chain, or null if none.</summary>
+    private static string? BuildStack()
     {
-        if (_knownSession == null) return;
+        if (_knownSession == null) return null;
 
         // CurrentMethodScope is JMP-hooked to return the skeleton root scope.
         // We bypass the hook and read the backing field directly to get the
@@ -135,24 +175,35 @@ public static class AlCallStackCapture
             var raw = _fSessCurrentScopeField.GetValue(_knownSession);
             currentScope = raw as NavMethodScope;
         }
-        if (currentScope == null) return;
+        if (currentScope == null) return null;
 
-        var stackTraceRaw = _piStackTrace?.GetValue(currentScope);
-        var stackTrace = stackTraceRaw as IEnumerable<NavMethodScope>;
-        if (stackTrace == null) return;
-
+        // Walk the ParentScope chain directly rather than NavMethodScope.StackTrace.
+        // StackTrace yields only scopes with IsStackFrame=true; in the runner the
+        // generic ALMethodScope frames produced for precompiled MS/ISV library calls
+        // (Base App, Tests-TestLibraries, etc.) have IsStackFrame=false, so StackTrace
+        // drops them and the captured AL stack stops at the first frame in the test's
+        // own app. Walking ParentScope and formatting every frame that has an
+        // ApplicationObject restores the full cross-app call stack; FormatFrame returns
+        // null for the root/try/system scopes (null ApplicationObject), so they are
+        // naturally excluded. A visited-set + depth cap guard against cycles.
         var sb = new StringBuilder();
         bool first = true;
-        foreach (var scope in stackTrace)
+        var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        object? cur = currentScope;
+        int depth = 0;
+        while (cur is NavMethodScope scope && depth++ < 500 && visited.Add(cur))
         {
             var line = FormatFrame(scope);
-            if (line == null) continue;
-            if (!first) sb.AppendLine();
-            sb.Append(line);
-            first = false;
+            if (line != null)
+            {
+                if (!first) sb.AppendLine();
+                sb.Append(line);
+                first = false;
+            }
+            if (_piIsRootScope?.GetValue(scope) is true) break;
+            cur = _piParentScope?.GetValue(scope);
         }
-        if (!first)
-            _captured = sb.ToString();
+        return first ? null : sb.ToString();
     }
 
     // ─── Private helpers ──────────────────────────────────────────────────────
@@ -324,7 +375,9 @@ public static class AlCallStackCapture
             BindingFlags.NonPublic | BindingFlags.Instance);
 
         var scopeType = typeof(NavMethodScope);
-        _piStackTrace = scopeType.GetProperty("StackTrace",
+        _piParentScope = scopeType.GetProperty("ParentScope",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        _piIsRootScope = scopeType.GetProperty("IsRootScope",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
         _piApplicationObject = scopeType.GetProperty("ApplicationObject",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);

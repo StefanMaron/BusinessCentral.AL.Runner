@@ -179,7 +179,7 @@ public sealed class TestExecutor
         {
             var inner = Unwrap(tex);
             PerfTrace.Log($"TestExecutor.RunOne FAIL {codeunit}.{m.Name} {sw.ElapsedMilliseconds}ms {inner.GetType().Name}: {inner.Message}");
-            var alStack = AlRunnerV2.Infrastructure.AlCallStackCapture.GetCaptured();
+            var alStack = AlRunnerV2.Infrastructure.AlCallStackCapture.GetCaptured(inner);
             // BC's Assert.* throws specific exception types for test failures.
             // We can't classify Pass/Fail vs Error perfectly without knowing all of them,
             // so for now: any thrown exception is Fail.
@@ -189,7 +189,7 @@ public sealed class TestExecutor
         catch (Exception ex)
         {
             PerfTrace.Log($"TestExecutor.RunOne ERROR {codeunit}.{m.Name} {sw.ElapsedMilliseconds}ms {ex.GetType().Name}: {ex.Message}");
-            var alStack = AlRunnerV2.Infrastructure.AlCallStackCapture.GetCaptured();
+            var alStack = AlRunnerV2.Infrastructure.AlCallStackCapture.GetCaptured(ex);
             return new TestResult(codeunit, m.Name, TestOutcome.Error,
                 ex.Message, ex.ToString(), sw.Elapsed, alStack);
         }
