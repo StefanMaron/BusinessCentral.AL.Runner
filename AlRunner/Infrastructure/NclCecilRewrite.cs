@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 81;
+    private const int CACHE_VERSION = 82;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -158,6 +158,17 @@ public static class NclCecilRewrite
         // keys so FlowFieldPatches.Register's JmpHook.Apply fallback becomes a no-op.
         "Microsoft.Dynamics.Nav.Runtime.RecordImplementation::CalcFieldsAsync/2",
         "Microsoft.Dynamics.Nav.Runtime.RecordImplementation::CalcFieldsAsync/3",
+        // NavRecordRef cluster (Batch 8). get_Target + open-gates + all 6 ALOpen
+        // overloads. ALOpen keys are by arity (Key counts declared params), so /1../4
+        // each cover every overload of that arity — both the (int,…) and
+        // (CompilationTarget,int,…) families. Migrated atomically (same R2R path).
+        "Microsoft.Dynamics.Nav.Runtime.NavRecordRef::get_Target/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavRecordRef::CheckIsOpenAllowed/2",
+        "Microsoft.Dynamics.Nav.Runtime.NavRecordRef::IsOpenAllowed/2",
+        "Microsoft.Dynamics.Nav.Runtime.NavRecordRef::ALOpen/1",
+        "Microsoft.Dynamics.Nav.Runtime.NavRecordRef::ALOpen/2",
+        "Microsoft.Dynamics.Nav.Runtime.NavRecordRef::ALOpen/3",
+        "Microsoft.Dynamics.Nav.Runtime.NavRecordRef::ALOpen/4",
     };
 
     /// <summary>
@@ -4128,6 +4139,44 @@ public static class NclCecilRewrite
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "NavStream", "get_Target", 0),
                 H(helperShims, "NavStream_get_Target"));
+
+            // ── NavRecordRef cluster (Batch 8) — get_Target + open-gates + ALOpen ─
+            // get_Target's real body NREs on base.Tree.Session.Company.SharedObjects
+            // on the headless skeleton; the replacement constructs a SharedRecordRef
+            // parented to the process-wide skeleton container (NavRecordRefPatches).
+            // CheckIsOpenAllowed / IsOpenAllowed gate Open against permissions that
+            // are absent on the skeleton; the 6 ALOpen overloads build the Record via
+            // OpenRecordRefById (which itself calls NavRecordRef_get_Target). These all
+            // sit on the SAME record/RecordRef R2R-inlined path as get_Target, so they
+            // migrate together — a Cecil get_Target coexisting with a JmpHook'd ALOpen
+            // (or vice-versa) reproduced the Batch-7b coexistence spin / NRE. Atomic.
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavRecordRef", "get_Target", 0),
+                H(typeof(AlRunnerV2.BcRuntime), "NavRecordRef_get_Target"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavRecordRef", "CheckIsOpenAllowed", "CompilationTarget", "Int32"),
+                H(helperShims, "NoOp3"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavRecordRef", "IsOpenAllowed", "CompilationTarget", "Int32"),
+                H(helperShims, "ReturnTrue_ThreeArgs"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavRecordRef", "ALOpen", "Int32"),
+                H(typeof(AlRunnerV2.BcRuntime), "NavRecordRef_ALOpen_Int"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavRecordRef", "ALOpen", "Int32", "Boolean"),
+                H(typeof(AlRunnerV2.BcRuntime), "NavRecordRef_ALOpen_IntBool"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavRecordRef", "ALOpen", "Int32", "Boolean", "String"),
+                H(typeof(AlRunnerV2.BcRuntime), "NavRecordRef_ALOpen_IntBoolCompany"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavRecordRef", "ALOpen", "CompilationTarget", "Int32"),
+                H(typeof(AlRunnerV2.BcRuntime), "NavRecordRef_ALOpen_TargetInt"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavRecordRef", "ALOpen", "CompilationTarget", "Int32", "Boolean"),
+                H(typeof(AlRunnerV2.BcRuntime), "NavRecordRef_ALOpen_TargetIntBool"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavRecordRef", "ALOpen", "CompilationTarget", "Int32", "Boolean", "String"),
+                H(typeof(AlRunnerV2.BcRuntime), "NavRecordRef_ALOpen_TargetIntBoolCompany"));
 
             // ── FlowField CalcFieldsAsync(2)/(3) — already Cecil-body-rewritten above
             //    (see ~line 1751). FlowFieldPatches.Register additionally JmpHook.Apply's

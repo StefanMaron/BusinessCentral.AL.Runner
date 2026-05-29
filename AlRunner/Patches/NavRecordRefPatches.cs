@@ -103,8 +103,13 @@ public static partial class BcRuntime
         {
             target, metaTable, isTemporary, null, null, SecurityFiltering.Ignored
         });
-        target.GetType().GetProperty("Record", BindingFlags.Public | BindingFlags.Instance)!
-            .SetValue(target, record);
+        // SharedRecordRef.Record is a non-public-accessor property on the headless
+        // build, so include NonPublic in the lookup (Public-only returns null → NRE).
+        var recordProp = target.GetType().GetProperty("Record",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException(
+                $"RecordRef.Open: SharedRecordRef has no 'Record' property on {target.GetType().FullName}");
+        recordProp.SetValue(target, record);
     }
 
     // NavObjectList<T>.get_Target — same Option-C shape as NavRecordRef.get_Target.
