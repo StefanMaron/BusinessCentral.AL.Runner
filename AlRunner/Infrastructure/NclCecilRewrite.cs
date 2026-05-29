@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 82;
+    private const int CACHE_VERSION = 83;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -169,6 +169,9 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.NavRecordRef::ALOpen/2",
         "Microsoft.Dynamics.Nav.Runtime.NavRecordRef::ALOpen/3",
         "Microsoft.Dynamics.Nav.Runtime.NavRecordRef::ALOpen/4",
+        // NavSession.GetPermissionSet (Batch 8) — both 3-arg overloads (ByObjectId
+        // + ByObjectIds). Leaf of the CalcSums permission-verify path.
+        "Microsoft.Dynamics.Nav.Runtime.NavSession::GetPermissionSet/3",
     };
 
     /// <summary>
@@ -4177,6 +4180,21 @@ public static class NclCecilRewrite
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavRecordRef", "ALOpen", "CompilationTarget", "Int32", "Boolean", "String"),
                 H(typeof(AlRunnerV2.BcRuntime), "NavRecordRef_ALOpen_TargetIntBoolCompany"));
+
+            // ── NavSession.GetPermissionSet (Batch 8) — both 3-arg overloads ─────
+            // Real body NREs reaching the skeleton's (null) Permissions object.
+            // Both return the all-granted PermissionSet singleton. This is the leaf
+            // of the CalcSums path (ALCalcSumsAsync → CalcSumsAsync →
+            // VerifyPermissionsCalculatedFields → GetPermissionSet) which NREs in
+            // Cecil-only mode; migrating it fixes that whole cluster.
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavSession", "GetPermissionSet",
+                         "NavApplicationObjectBase", "Int32", "ApplicationObjectId"),
+                H(typeof(AlRunnerV2.BcRuntime), "NavSession_GetPermissionSet_ByObjectId"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavSession", "GetPermissionSet",
+                         "NavApplicationObjectBase", "Int32", "IEnumerable`1"),
+                H(typeof(AlRunnerV2.BcRuntime), "NavSession_GetPermissionSet_ByObjectIds"));
 
             // ── FlowField CalcFieldsAsync(2)/(3) — already Cecil-body-rewritten above
             //    (see ~line 1751). FlowFieldPatches.Register additionally JmpHook.Apply's
