@@ -83,6 +83,10 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
     <PackageReference Include="Mono.Cecil" Version="0.11.6" />
+    <!-- Cross-platform terminal UI for the watch-mode live dashboard. MIT-licensed,
+         renders correctly on Windows/macOS/Linux and degrades to plain text on
+         non-interactive stdout (CI, pipes). See WatchDashboard.cs. -->
+    <PackageReference Include="Spectre.Console" Version="0.49.1" />
   </ItemGroup>
 
   <!-- BC service tier runtime dependencies not in the default .NET runtime.

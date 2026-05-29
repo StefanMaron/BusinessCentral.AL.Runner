@@ -276,7 +276,36 @@ if (serverMode)
     return RunServerLoop(serverStdin!, serverStdout!);
 
 // Watch loop: normal mode runs exactly one pass then breaks to the summary below.
-// Watch mode loops forever — each pass re-emits (warm) and spawns a child to run.
+// Watch mode loops forever — each pass re-emits (warm) and re-runs in-process.
+//
+// On an interactive TTY the watch loop renders a live, in-place Spectre.Console
+// dashboard (WatchDashboard) that repaints each cycle. On a non-interactive stdout
+// (CI, a pipe, VS Code, the WatchTests harness) it MUST fall back to the plain
+// line output (Reporter.PrintPerTest/PrintSummary + the "[watch] waiting…" marker)
+// so existing consumers and the integration test keep working — never emit ANSI to
+// a redirected stream. Detect via Console.IsOutputRedirected AND Spectre's own
+// interactivity probe (which also returns false for dumb/no-color terminals).
+bool watchUi = watchMode
+    && !Console.IsOutputRedirected
+    && Spectre.Console.AnsiConsole.Profile.Capabilities.Interactive
+    && Spectre.Console.AnsiConsole.Profile.Capabilities.Ansi;
+string watchBundleName = bundles.Count == 1
+    ? Path.GetFileName(Path.GetFullPath(bundles[0]).TrimEnd(Path.DirectorySeparatorChar))
+    : $"{bundles.Count} bundles";
+
+// Paint the busy "running…" frame so the cold first cycle (~70-90s) doesn't look
+// frozen. No-op unless the interactive dashboard is active.
+void PaintWatchRunning()
+{
+    if (!watchUi) return;
+    Spectre.Console.AnsiConsole.Clear();
+    Spectre.Console.AnsiConsole.Write(
+        WatchDashboard.Build(results, watchBundleName, WatchStatus.Running,
+            DateTime.Now, TimeSpan.Zero));
+}
+
+if (watchUi) PaintWatchRunning();
+
 while (true)
 {
 results.Clear();
@@ -706,10 +735,17 @@ foreach (var bundle in bundles)
         }
     }
 
-    if (watchMode)
-        Console.WriteLine($"  [watch] re-emitted {rel} ({bundleEmit.TotalSeconds:F1}s) — running…");
-    else
-        Console.WriteLine($"  → {sP}P/{sF}F/{sE}E across {bundleTests.Count} tests, {bundleErrors.Count} suite errors ({(bundleEmit + bundleComp + bundleRun).TotalSeconds:F1}s)");
+    // The interactive dashboard owns the whole screen and is painted after the
+    // cycle, so suppress these per-bundle status lines there (they'd be wiped by
+    // the next Clear anyway and corrupt the cleared frame). Piped watch + normal
+    // mode keep their existing line output verbatim.
+    if (!watchUi)
+    {
+        if (watchMode)
+            Console.WriteLine($"  [watch] re-emitted {rel} ({bundleEmit.TotalSeconds:F1}s) — running…");
+        else
+            Console.WriteLine($"  → {sP}P/{sF}F/{sE}E across {bundleTests.Count} tests, {bundleErrors.Count} suite errors ({(bundleEmit + bundleComp + bundleRun).TotalSeconds:F1}s)");
+    }
     if (bundleTests.Count == 0 && bundleErrors.Count > 0) bundleStage = BucketStage.CompileFailed;
     results.Add(new BucketResult(bundleAbs, bundleStage,
         bundleErrors, null, bundleTests,
@@ -720,20 +756,41 @@ if (!watchMode)
     break;   // normal mode: one pass, fall through to the summary below
 
 // ── Watch mode: the bundles just ran IN-PROCESS above (deps stayed warm).
-// Print this iteration's results, then block until an .al source change and
+// Show this iteration's results, then block until an .al source change and
 // loop (reset + re-emit warm + re-run, all in the same warm process). ─────────
-Reporter.PrintPerTest(results, Console.Out, showPass);
-Reporter.PrintSummary(results, Console.Out);
-Console.WriteLine("[watch] waiting for AL source changes… (Ctrl+C to quit)");
-// Flush before blocking: when stdout is a pipe/file (a TUI front-end, VS Code, or
-// a test harness) it is block-buffered, so the cycle's results + this marker would
-// otherwise sit unflushed for the entire idle wait. A TTY auto-flushes, but piped
-// consumers must see each cycle as it completes.
-Console.Out.Flush();
-if (!WaitForSourceChange(bundles))
-    return 0;
-Console.WriteLine("[watch] change detected — re-running…");
-Console.Out.Flush();
+var cycleDur = results.Aggregate(TimeSpan.Zero,
+    (acc, b) => acc + b.EmitTime + b.CompileTime + b.RunTime);
+
+if (watchUi)
+{
+    // Interactive: repaint the live dashboard in place (clear + redraw), showing
+    // the idle "● watching" status. No "[watch] waiting…" line — the footer's
+    // "Ctrl+C to quit" + the header status carry that information on the TTY.
+    Spectre.Console.AnsiConsole.Clear();
+    Spectre.Console.AnsiConsole.Write(
+        WatchDashboard.Build(results, watchBundleName, WatchStatus.Idle,
+            DateTime.Now, cycleDur));
+    if (!WaitForSourceChange(bundles))
+        return 0;
+    PaintWatchRunning(); // flip the header to "⟳ running…" while the next cycle compiles
+}
+else
+{
+    // Non-interactive fallback: the existing plain line output. The WatchTests
+    // integration test asserts on these exact markers — do not change them.
+    Reporter.PrintPerTest(results, Console.Out, showPass);
+    Reporter.PrintSummary(results, Console.Out);
+    Console.WriteLine("[watch] waiting for AL source changes… (Ctrl+C to quit)");
+    // Flush before blocking: when stdout is a pipe/file (a TUI front-end, VS Code, or
+    // a test harness) it is block-buffered, so the cycle's results + this marker would
+    // otherwise sit unflushed for the entire idle wait. A TTY auto-flushes, but piped
+    // consumers must see each cycle as it completes.
+    Console.Out.Flush();
+    if (!WaitForSourceChange(bundles))
+        return 0;
+    Console.WriteLine("[watch] change detected — re-running…");
+    Console.Out.Flush();
+}
 } // end while(true) watch loop
 
 Reporter.PrintPerTest(results, Console.Out, showPass);
