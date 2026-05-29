@@ -83,6 +83,35 @@ al-runner --out results.json ./my-bundle
 al-runner --verbose ./my-bundle
 ```
 
+### Watch mode (live dashboard)
+
+```bash
+al-runner <bundle-dir> --watch [--package-cache PATH ...] [--cache DIR]
+```
+
+Stays resident with dependencies + BC patches loaded once, and re-runs the bundle **in-process** on every `.al` save (~seconds/save after a one-time cold first cycle).
+
+On an interactive terminal `--watch` renders a **live, non-scrolling dashboard** that repaints in place on each cycle (like vitest / cargo-watch):
+
+```text
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ al-runner my-app  ·  ● watching  ·  last run 11.45.05 · 0,9s                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────┬────────┬────┬───────────────────────────────╮
+│ Test                           │ Status │ ms │ Message                       │
+├────────────────────────────────┼────────┼────┼───────────────────────────────┤
+│ Codeunit60110.Insert_OnInsert… │ FAIL   │ 38 │ Assert.AreEqual failed.       │
+│                                │        │    │ Expected:<1>. Actual:<9>.     │
+╰────────────────────────────────┴────────┴────┴───────────────────────────────╯
+
+0P / 1F / 0E  ·  1 total    Ctrl+C to quit
+```
+
+The header status flips to `⟳ running…` while a cycle compiles+runs (so the cold first run never looks frozen) and back to `● watching` when idle. Rendered cross-platform (Windows/macOS/Linux) via [Spectre.Console](https://spectreconsole.net/).
+
+When stdout is **not** an interactive terminal (CI, a pipe, VS Code, a test harness), `--watch` automatically falls back to plain line output (`PASS`/`FAIL` per test + a `[watch] waiting for AL source changes…` marker) and emits no ANSI/cursor control. There is no separate UI flag — `--watch` itself is the dashboard.
+
 ### Server mode (warm daemon for editor integrations)
 
 ```bash
