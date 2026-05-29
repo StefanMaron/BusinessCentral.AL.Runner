@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 78;
+    private const int CACHE_VERSION = 81;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -114,6 +114,21 @@ public static class NclCecilRewrite
         // NCLMetaApplicationObject
         "Microsoft.Dynamics.Nav.Runtime.NCLMetaApplicationObject::CheckApplicationObjectIsValid/1",
         "Microsoft.Dynamics.Nav.Runtime.NCLMetaApplicationObject::get_ApplicationObjectClrType/0",
+        // NCLEnumMetadata.Create(int) (Batch 7 — THE CreateNoSeriesLine spin fix).
+        // Its body is Cecil-rewritten to forward to BcRuntime.NCLEnumMetadata_CreateByIdAlAware
+        // (see RewriteNcl ~line 232), but BcRuntime.cs ALSO JmpHook'd it. That double-patch
+        // (Cecil body + JmpHook JMP-precode) is the exact COEXISTENCE the registry exists to
+        // prevent: the JmpHook precode thunk (ReportStubBlock<MethodCallThunk>) spins
+        // safepoint-free when reached on the AL-Validate construction path (e.g.
+        // Library - No. Series.CreateNoSeriesLine validating an enum/option field). Listing
+        // its key here makes JmpHook.Apply skip it → single-mechanism (Cecil) → no spin.
+        "Microsoft.Dynamics.Nav.Runtime.NCLEnumMetadata::Create/1",
+        // get_ApplicationObjectConstructor + Populate + CompileAndLoadClrObject (Batch 7
+        // — completes the insert/construction path so ALInsertAsync→get_OldRecord→
+        // CreateObjectInstance→{getter,Populate,CompileAndLoadClrObject} is single-mechanism).
+        "Microsoft.Dynamics.Nav.Runtime.NCLMetaApplicationObject::get_ApplicationObjectConstructor/0",
+        "Microsoft.Dynamics.Nav.Runtime.NCLMetaApplicationObject::Populate/0",
+        "Microsoft.Dynamics.Nav.Runtime.NCLMetaApplicationObject::CompileAndLoadClrObject/0",
         // RecordImplementation path
         "Microsoft.Dynamics.Nav.Runtime.RecordImplementation::VerifyPermissions/2",
         "Microsoft.Dynamics.Nav.Runtime.RecordImplementation::InternalFindRecordWithoutCheckingValuesAsync/4",
@@ -3984,6 +3999,35 @@ public static class NclCecilRewrite
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "NCLMetaApplicationObject", "get_ApplicationObjectClrType", 0),
                 H(recordPatches, "NCLMetaApplicationObject_get_ApplicationObjectClrType"));
+            // ── NCLMetaApplicationObject.get_ApplicationObjectConstructor (Batch 7) ──
+            // The real getter calls CompileAndLoadClrObject under a lock on a null
+            // `nclMetaObjectCLRTypeContainer` on a skeleton meta → NRE in Monitor.
+            // The JmpHook returns null (ReturnNull_OneArg); callers like
+            // NCLMetaTable.CreateObjectInstance fall back to constructing NavRecord
+            // directly via `new NavRecord(parent, TableId, this, …)`. The reference-
+            // type-null return is exactly `ldnull; ret`. Migrating it to Cecil makes
+            // the whole AL insert/construction path (ALInsertAsync → get_OldRecord →
+            // CreateObjectInstance → this getter) single-mechanism, killing the
+            // JmpHook+Cecil coexistence spin that hangs default mode.
+            ReplaceBodyConst(
+                FindNclMethod(nclMod, Rt + "NCLMetaApplicationObject", "get_ApplicationObjectConstructor", 0),
+                ConstResult.Null);
+            // ── NCLMetaApplicationObject.Populate() / CompileAndLoadClrObject() (Batch 7) ──
+            // These are the direct cluster siblings of get_ApplicationObjectConstructor:
+            // the real getter and CreateObjectInstance both walk through Populate /
+            // CompileAndLoadClrObject, which NRE on a hand-built skeleton meta (null
+            // nclMetaObjectCLRTypeContainer / null ObjectLoader). Both are JmpHook'd to
+            // NoOp_OneArg in MetadataPatches; migrating them to Cecil void no-ops keeps
+            // the whole construction path single-mechanism — the still-JmpHook'd siblings
+            // were the coexistence partners that spun default mode on the AL-Validate /
+            // construction path (e.g. Library - No. Series.CreateNoSeriesLine). Both are
+            // 0-param instance void → ReplaceBodyConst(Void) emits `ret`.
+            ReplaceBodyConst(
+                FindNclMethod(nclMod, Rt + "NCLMetaApplicationObject", "Populate", 0),
+                ConstResult.Void);
+            ReplaceBodyConst(
+                FindNclMethod(nclMod, Rt + "NCLMetaApplicationObject", "CompileAndLoadClrObject", 0),
+                ConstResult.Void);
 
             // ── RecordImplementation path (perms / find / security / IsOpen) ─────
             ReplaceBodyWithHelper(nclMod,
