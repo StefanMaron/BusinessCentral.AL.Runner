@@ -1,0 +1,23 @@
+{
+  "id": "c3d4e5f6-0718-492a-bc3d-4e5f60718293",
+  "name": "ESM XApp Table",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Dependency app: the publisher table whose field OnAfterValidateEvent a sibling app subscribes to.",
+  "description": "Cross-app half of the event-subscriber var-Rec mutation reproducer. Defines the table; the sibling main app subscribes to its OnAfterValidateEvent from a DIFFERENT app.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 60300,
+      "to": 60349
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
