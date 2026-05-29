@@ -27,6 +27,8 @@ using System.Runtime.CompilerServices;
 using AlRunnerV2.Infrastructure;
 using Microsoft.Dynamics.Nav.EventSubscription;
 using Microsoft.Dynamics.Nav.Types;
+using NCLMetaTable = Microsoft.Dynamics.Nav.Runtime.NCLMetaTable;
+using NCLMetaField = Microsoft.Dynamics.Nav.Runtime.NCLMetaField;
 
 namespace AlRunnerV2.Patches;
 
@@ -43,9 +45,16 @@ public static class EventSubscriberPatches
         int EventTypeOrdinal,
         string DiagnosticName);
 
+    // Field-scoped validate subscribers ([EventSubscriber(Table, …, 'OnAfterValidateEvent',
+    // 'FieldName', …)]). Unlike Insert/Modify/Delete/Rename (table-level, dispatched from
+    // NCLMetaTable.tableTriggerEventHandler), OnBefore/OnAfterValidateEvent fire from the
+    // *field's own* NavEventScope (NCLMetaField.GetEventScope) — see DoInjectValidate.
+    private sealed record ValidateSub(SubscriberHandle Handle, int FieldId, string FieldName);
+
     private static readonly object _lock = new();
     private static readonly Dictionary<Key, List<SubscriberHandle>> _byKey = new();
     private static readonly Dictionary<CodeunitEventKey, List<MethodInfo>> _byCodeunitKey = new();
+    private static readonly List<ValidateSub> _validateSubs = new();
 
     /// <summary>
     /// Look up codeunit-event subscribers registered for a (publisherCodeunitId, eventMethodName).
@@ -144,6 +153,7 @@ public static class EventSubscriberPatches
     {
         if (_publisherLookup == null) return;
         DoInject(_publisherLookup);
+        DoInjectValidate(_publisherLookup);
         SeedCodeunitEventScopeSentinels();
     }
 
@@ -229,6 +239,7 @@ public static class EventSubscriberPatches
         {
             _byKey.Clear();
             _byCodeunitKey.Clear();
+            _validateSubs.Clear();
             _codeunitTypeCache.Clear();
             _injectedSubscriberMethods.Clear();
             _seededScopeTypes.Clear();
@@ -346,6 +357,133 @@ public static class EventSubscriberPatches
     }
 
     /// <summary>
+    /// Inject field-scoped validate subscribers (OnBefore/OnAfterValidateEvent). These are
+    /// dispatched by BC's own NavRecord validate path:
+    ///   if (metaField.IsEventSubscribed(OnAfterValidateEvent, appGroup))
+    ///       NavTableTriggerEventHandler.FireOnValidateEvent(OnAfterValidateEvent, this, metaField)
+    ///   → metaField.GetEventScope(triggerEventType).CheckAndFireTriggerEventsAsync(...)
+    /// so the field's *own* NavEventScope is the per-field filter (the fire path filters
+    /// only by app group, never re-checks the field). We therefore resolve the subscriber's
+    /// target field on the publisher table and append the subscription to that field's scope.
+    /// </summary>
+    private static void DoInjectValidate(Func<int, object?> getNclMetaTable)
+    {
+        if (_validateSubs.Count == 0) return;
+        if (_navAppGroupBaseGroup == null) return;
+
+        int injected = 0, failed = 0, skipped = 0;
+        lock (_lock)
+        {
+            foreach (var vs in _validateSubs)
+            {
+                if (_injectedSubscriberMethods.Contains(vs.Handle.Method)) continue;
+
+                NCLMetaTable? metaTable;
+                try { metaTable = getNclMetaTable(vs.Handle.PublisherId) as NCLMetaTable; }
+                catch { metaTable = null; }
+                if (metaTable == null) { skipped++; continue; } // publisher table not built yet — retry next pass
+
+                NCLMetaField? metaField = ResolveValidateField(metaTable, vs);
+                if (metaField == null)
+                {
+                    // Loud: the subscriber names a field we cannot resolve on the publisher table.
+                    Console.Error.WriteLine($"[Subscribers] validate target field not found: {vs.Handle.DiagnosticName}");
+                    _injectedSubscriberMethods.Add(vs.Handle.Method); // don't retry forever
+                    failed++;
+                    continue;
+                }
+                EnsureFieldEventTriggerData(metaField);
+
+                object? scope;
+                try
+                {
+                    scope = metaField.GetEventScope(
+                        (NavTriggerEventType)vs.Handle.EventTypeOrdinal,
+                        EventScopeGetOption.CreateIfNotFound);
+                }
+                catch (Exception ex)
+                {
+                    var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+                    Console.Error.WriteLine($"[Subscribers] field GetEventScope failed for " +
+                        $"{vs.Handle.DiagnosticName}: {inner.GetType().Name}: {inner.Message}");
+                    failed++;
+                    continue;
+                }
+                if (scope == null) { failed++; continue; }
+
+                object? subscription;
+                try { subscription = BuildSubscription(vs.Handle); }
+                catch (Exception ex)
+                {
+                    var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+                    Console.Error.WriteLine($"[Subscribers] BuildSubscription failed for " +
+                        $"{vs.Handle.DiagnosticName}: {inner.GetType().Name}: {inner.Message}");
+                    failed++;
+                    _injectedSubscriberMethods.Add(vs.Handle.Method);
+                    continue;
+                }
+                if (subscription == null) { failed++; _injectedSubscriberMethods.Add(vs.Handle.Method); continue; }
+
+                AppendSubscriptionToScope(scope, subscription);
+                _injectedSubscriberMethods.Add(vs.Handle.Method);
+                injected++;
+            }
+        }
+
+        if (injected > 0 || failed > 0)
+            Console.Error.WriteLine($"[Subscribers] validate-inject: injected={injected} " +
+                $"failed={failed} skipped-no-publisher={skipped} subs={_validateSubs.Count}");
+    }
+
+    /// <summary>Resolve a validate subscriber's target field on the publisher table — by
+    /// field name (the common AL form) first, falling back to the numeric field id.</summary>
+    private static NCLMetaField? ResolveValidateField(NCLMetaTable metaTable, ValidateSub vs)
+    {
+        if (!string.IsNullOrEmpty(vs.FieldName)
+            && metaTable.TryGetFieldByName(vs.FieldName, out var byName) && byName != null)
+            return byName;
+        if (vs.FieldId != 0 && metaTable.TryGetFieldByNo(vs.FieldId, out var byNo) && byNo != null)
+            return byNo;
+        return null;
+    }
+
+    private static FieldInfo? _fMetaFieldEventTriggerDataBacking;
+
+    /// <summary>NCLMetaField.EventTriggerDataValue is a get-only auto-prop; BC sets it lazily
+    /// when a field has an OnValidate/OnLookup trigger. A validate subscriber may target a
+    /// field with no trigger, so ensure the holder exists before GetEventScope reads it.</summary>
+    private static void EnsureFieldEventTriggerData(NCLMetaField metaField)
+    {
+        if (metaField.EventTriggerDataValue != null) return;
+        _fMetaFieldEventTriggerDataBacking ??= typeof(NCLMetaField).GetField(
+            "<EventTriggerDataValue>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance);
+        if (_fMetaFieldEventTriggerDataBacking == null) return;
+        var etd = new NCLMetaField.EventTriggerData();
+        FieldPoke.SetInstance(_fMetaFieldEventTriggerDataBacking, metaField, etd);
+    }
+
+    /// <summary>Append one NavEventSubscription to a NavEventScope.registeredSubscriptions array.</summary>
+    private static void AppendSubscriptionToScope(object scope, object subscription)
+    {
+        var existing = (Array?)_fRegisteredSubscriptions!.GetValue(scope);
+        int oldLen = existing?.Length ?? 0;
+        var merged = Array.CreateInstance(_tNavEventSubscription!, oldLen + 1);
+        if (existing != null && oldLen > 0) Array.Copy(existing, 0, merged, 0, oldLen);
+        merged.SetValue(subscription, oldLen);
+        FieldPoke.SetInstance(_fRegisteredSubscriptions, scope, merged);
+    }
+
+    /// <summary>Read the validate subscriber's target field (name + id) from its
+    /// NavEventSubscriberAttribute.</summary>
+    private static void ReadFieldTarget(object attr, out int fieldId, out string fieldName)
+    {
+        fieldId = 0; fieldName = "";
+        var t = attr.GetType();
+        try { fieldId = (int)(t.GetProperty("TargetFieldId")?.GetValue(attr) ?? 0); } catch { }
+        try { fieldName = (string?)t.GetProperty("TargetFieldName")?.GetValue(attr) ?? ""; } catch { }
+    }
+
+    /// <summary>
     /// Discovery: walk loaded assemblies for [NavEventSubscriberAttribute] methods, index
     /// by (publisher id, NavTriggerEventType ordinal). Incremental — only re-scans when the
     /// assembly count grows.
@@ -409,6 +547,16 @@ public static class EventSubscriberPatches
                         if (publisherObjType == 1) // Table → existing trigger path
                         {
                             int ord = ResolveEventOrdinalFromName(methodName);
+                            if (ord == 9 || ord == 10) // OnBefore/OnAfterValidateEvent — field-scoped
+                            {
+                                if (_validateSubs.Any(v => v.Handle.Method == m)) continue;
+                                ReadFieldTarget(attr, out int vFieldId, out string vFieldName);
+                                var vHandle = new SubscriberHandle(t, codeunitId, m, publisherId, ord,
+                                    $"{t.Name}.{m.Name} → Table {publisherId}/{methodName}('{vFieldName}')");
+                                _validateSubs.Add(new ValidateSub(vHandle, vFieldId, vFieldName));
+                                added++;
+                                continue;
+                            }
                             if (ord == 0) continue;
                             var key = new Key(publisherId, ord);
                             if (!_byKey.TryGetValue(key, out var lst))
@@ -499,6 +647,8 @@ public static class EventSubscriberPatches
         "OnAfterDeleteEvent"  => 6,
         "OnBeforeRenameEvent" => 7,
         "OnAfterRenameEvent"  => 8,
+        "OnBeforeValidateEvent" => 9,
+        "OnAfterValidateEvent"  => 10,
         _ => 0,
     };
 
@@ -545,21 +695,64 @@ public static class EventSubscriberPatches
         var on = (int)oidT.GetProperty("ObjectNumber")!.GetValue(targetObjectId)!;
         var methodName = (string)oType.GetProperty("TargetMethodName")!.GetValue(original)!;
         var memberId = (int)oType.GetProperty("MemberId")!.GetValue(original)!;
-        // Find the 5-arg ctor: (ObjectType, int, string, int memberId, string fieldName, EventSubscriberCallOptions options)
-        var ctor = oType.GetConstructors().FirstOrDefault(c =>
-        {
-            var p = c.GetParameters();
-            return p.Length == 6 && p[3].ParameterType == typeof(int)
-                && p[4].ParameterType == typeof(string);
-        });
+        // Preserve the field target — for field-based events (OnBefore/OnAfterValidateEvent) the
+        // NavEventSubscription ctor resolves the publisher field from these and, if it can't,
+        // returns early with ErrorFieldNotFound leaving SubscriberParameters null → an NRE later
+        // in TriggerPrepareParametersCallBack. Zeroing the field name (as the original code did)
+        // was harmless for table-level Insert/Modify/… events but broke validate-event dispatch.
+        var fieldName = (string?)oType.GetProperty("TargetFieldName")!.GetValue(original) ?? "";
+        var fieldId = (int)(oType.GetProperty("TargetFieldId")?.GetValue(original) ?? 0);
         object? replacement = null;
-        if (ctor != null)
+        if (!string.IsNullOrEmpty(fieldName))
         {
-            var optsParam = ctor.GetParameters()[5].ParameterType;
-            var zeroOpts = Enum.ToObject(optsParam, 0);
-            replacement = ctor.Invoke(new object?[] {
-                Enum.ToObject(typeof(ObjectType), ot), on, methodName, memberId, "", zeroOpts
+            // (ObjectType, int objNo, string method, int memberId, string fieldName, options)
+            var ctor = oType.GetConstructors().FirstOrDefault(c =>
+            {
+                var p = c.GetParameters();
+                return p.Length == 6 && p[3].ParameterType == typeof(int)
+                    && p[4].ParameterType == typeof(string);
             });
+            if (ctor != null)
+            {
+                var zeroOpts = Enum.ToObject(ctor.GetParameters()[5].ParameterType, 0);
+                replacement = ctor.Invoke(new object?[] {
+                    Enum.ToObject(typeof(ObjectType), ot), on, methodName, memberId, fieldName, zeroOpts
+                });
+            }
+        }
+        else if (fieldId != 0)
+        {
+            // (ObjectType, int objNo, string method, int memberId, int fieldId, options)
+            var ctor = oType.GetConstructors().FirstOrDefault(c =>
+            {
+                var p = c.GetParameters();
+                return p.Length == 6 && p[3].ParameterType == typeof(int)
+                    && p[4].ParameterType == typeof(int);
+            });
+            if (ctor != null)
+            {
+                var zeroOpts = Enum.ToObject(ctor.GetParameters()[5].ParameterType, 0);
+                replacement = ctor.Invoke(new object?[] {
+                    Enum.ToObject(typeof(ObjectType), ot), on, methodName, memberId, fieldId, zeroOpts
+                });
+            }
+        }
+        else
+        {
+            // No field target (table-level Insert/Modify/Delete/Rename event).
+            var ctor = oType.GetConstructors().FirstOrDefault(c =>
+            {
+                var p = c.GetParameters();
+                return p.Length == 6 && p[3].ParameterType == typeof(int)
+                    && p[4].ParameterType == typeof(string);
+            });
+            if (ctor != null)
+            {
+                var zeroOpts = Enum.ToObject(ctor.GetParameters()[5].ParameterType, 0);
+                replacement = ctor.Invoke(new object?[] {
+                    Enum.ToObject(typeof(ObjectType), ot), on, methodName, memberId, "", zeroOpts
+                });
+            }
         }
         if (replacement == null) return;
         // Field-poke the auto-prop backing field.
