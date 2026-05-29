@@ -96,6 +96,83 @@ public static partial class BcRuntime
         if (stNclField != null)
             FieldPoke.SetInstance(stNclField, _skeletonSystemTenant, _skeletonNCLMetadata);
 
+        // 4a. Seed NavTenant.defaultEncoding so NavTenant.DefaultEncoding returns without touching the
+        //      tenant Database. With a non-null tenant now wired onto the session (step below), the
+        //      blob/stream text path (NCLManagedAdapter.GetDefaultEncoding → session.Tenant.DefaultEncoding)
+        //      reaches NavTenant.DefaultEncoding; its getter falls into `IsDatabaseInitialized`
+        //      (→ database.IsValueCreated) when defaultEncoding is null, which NREs because the
+        //      skeleton tenant's `database` LazyEx is null. Pre-setting defaultEncoding short-circuits
+        //      that branch. UTF-8 is BC's own default tenant encoding (TextEncoding.UTF8) — faithful.
+        var defaultEncodingField = navTenantType.GetField("defaultEncoding", BindingFlags.NonPublic | BindingFlags.Instance);
+        if (defaultEncodingField != null)
+            FieldPoke.SetInstance(defaultEncodingField, _skeletonSystemTenant, System.Text.Encoding.UTF8);
+        else
+            Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: NavTenant.defaultEncoding field NOT FOUND");
+
+        // 4b. Populate the skeleton tenant's TenantSettings and wire the tenant onto the session.
+        //
+        //     "Environment Information" (CU457) → "Environment Information Impl." (CU3702) → its
+        //     navTenantSettingsHelper.IsSandbox()/IsProduction()/GetEnvironmentName() call into
+        //     Microsoft.Dynamics.Nav.NavUserAccount.NavTenantSettingsHelper, whose bodies read
+        //     `NavCurrentThread.Session.Tenant.TenantSettings.EnvironmentType` (and EnvironmentName).
+        //     On the headless skeleton `NavSession.tenant`/`systemTenant` were null, so the very
+        //     first hop (Session.Tenant) NRE'd inside the .NET helper and surfaced as
+        //     NavNCLDotNetInvokeException(IsSandbox).
+        //
+        //     NavTenantSettings (Microsoft.Dynamics.Nav.Types) is a thin wrapper: every property is
+        //     backed by an inner `Dictionary<string,object> tenantSettings`, read via
+        //     `Get(default, name)` which returns the *default* when the key is absent. So an empty
+        //     dictionary yields EnvironmentType=Production (the literal default in the getter,
+        //     matching the value the real NavSystemTenant ctor passes) and EnvironmentName=null.
+        //     A GetUninitializedObject instance leaves that dictionary null → TryGetValue NREs;
+        //     initialising it to an empty dictionary is all that is required.
+        //
+        //     Faithful headless value: the runner runs no service tier and no Azure tenant — the
+        //     equivalent of an OnPrem deployment. The default Production environment is exactly the
+        //     non-sandbox, non-SaaS case: IsSandbox()=false, IsProduction()=true, and IsSaaS() (whose
+        //     isSaaSConfig stays false) =false. These are the correct OnPrem answers, not a fake.
+        var tenantSettingsField   = navTenantType.GetField("tenantSettings", BindingFlags.NonPublic | BindingFlags.Instance);
+        var navTenantSettingsType = tenantSettingsField?.FieldType;
+        if (navTenantSettingsType != null && tenantSettingsField != null)
+        {
+            var skeletonTenantSettings = RuntimeHelpers.GetUninitializedObject(navTenantSettingsType);
+
+            // Initialise the inner property dictionary that all NavTenantSettings getters read
+            // through (mirrors the type's own field initialiser `= new Dictionary<string,object>()`).
+            var innerDictField = navTenantSettingsType.GetField("tenantSettings",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            if (innerDictField != null)
+            {
+                var dict = Activator.CreateInstance(innerDictField.FieldType)!;
+                FieldPoke.SetInstance(innerDictField, skeletonTenantSettings, dict);
+            }
+            else
+                Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: NavTenantSettings.tenantSettings dict field NOT FOUND");
+
+            FieldPoke.SetInstance(tenantSettingsField, _skeletonSystemTenant!, skeletonTenantSettings);
+            Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: skeleton TenantSettings (default Production env) wired");
+        }
+        else
+        {
+            Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: NavTenant.tenantSettings field NOT FOUND — IsSandbox/IsSaaS will still NRE");
+        }
+
+        // Wire the skeleton tenant onto the session's `tenant` field so `Session.Tenant` resolves to
+        // the skeleton (carrying its TenantSettings + default encoding) instead of null. We only set
+        // `tenant` — the existing `systemTenant` injection into the NavTenantCollection (step 6 below)
+        // already covers NavGlobal.SystemTenant; touching `Session.SystemTenant` is unnecessary and
+        // out of scope here.
+        if (_skeletonSession != null)
+        {
+            var sessType = _skeletonSession.GetType();
+            var sessTenantField = sessType.GetField("tenant", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (sessTenantField != null && sessTenantField.GetValue(_skeletonSession) == null)
+            {
+                FieldPoke.SetInstance(sessTenantField, _skeletonSession, _skeletonSystemTenant!);
+                Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: skeleton tenant wired onto session.tenant");
+            }
+        }
+
         // 5. Populate cache hook target — NCLMetaApplicationObject.Populate is called
         //    from NCLMetadata.GetMetaApplicationObjectInternal when the cache entry's
         //    `metadataLoaded` flag is false. Our hand-built NCLMetaTable instances have

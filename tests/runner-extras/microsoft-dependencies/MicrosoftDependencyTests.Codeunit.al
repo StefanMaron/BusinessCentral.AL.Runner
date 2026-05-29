@@ -120,4 +120,25 @@ codeunit 61001 "Microsoft Dependency Tests"
         Assert.IsTrue(NoSeriesLine.Get('ALRLIB', 10000), 'Library - No. Series should create a No. Series Line.');
     end;
 
+    [Test]
+    procedure BaseAppCodeunit_EnvironmentInformation_IsSandbox_IsFalse()
+    var
+        EnvironmentInformation: Codeunit "Environment Information";
+    begin
+        // Codeunit 457 -> 3702 "Environment Information Impl." -> NavTenantSettingsHelper.IsSandbox
+        // dereferences NavCurrentThread.Session.Tenant.TenantSettings.EnvironmentType. On the headless
+        // skeleton the session.tenant was null -> NRE. Faithful headless default is OnPrem (non-sandbox):
+        // EnvironmentType = Production -> IsSandbox() = false.
+        Assert.IsTrue(not EnvironmentInformation.IsSandbox(), 'Headless OnPrem environment must not be a sandbox.');
+    end;
+
+    [Test]
+    procedure BaseAppCodeunit_EnvironmentInformation_IsSaaS_IsFalse()
+    var
+        EnvironmentInformation: Codeunit "Environment Information";
+    begin
+        // IsSaaS() bottoms out in IsSandbox() + isSaaSConfig; on headless OnPrem both are false.
+        Assert.IsTrue(not EnvironmentInformation.IsSaaS(), 'Headless OnPrem environment must not be SaaS.');
+    end;
+
 }
