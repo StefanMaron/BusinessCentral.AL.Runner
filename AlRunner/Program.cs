@@ -1615,29 +1615,33 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
     // Topological sort of impl paths (deps before dependents).
     var sortedImpls = TopologicalSort(implPaths.ToList(), idByKey);
 
-    // Create a deterministic workspace cache dir. The synthetic package contents
-    // are derived from the impl AL sources + dependencies, so a stable key lets
-    // repeated runs reuse the same handoff instead of leaking one folder per run.
-    var workspaceKey = ComputeSourceWorkspaceKey(sortedImpls, idByKey);
-    var wsDir = Path.Combine(
+    // Each impl gets its OWN deterministic cache dir keyed on THAT impl's own
+    // sources + dependency identities. Editing one impl therefore only invalidates
+    // its own dir — the unchanged siblings keep cache-HITting. (A single shared
+    // combined-key dir, the previous design, orphaned every sibling's cache
+    // whenever any one impl changed → a full layered rebuild on each edit.)
+    var workspaceRoot = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        ".cache", "al-runner", "workspace-deps",
-        workspaceKey[..12]);
-    Directory.CreateDirectory(wsDir);
+        ".cache", "al-runner", "workspace-deps");
 
-    // Extended packageCacheDirs = workspace dir first (wins over stale cached .app),
-    // then the original dirs. Record wsDir as a synthetic-workspace dir so Main
-    // keeps it out of the compile-time .app scanner (it holds a source-only .app
-    // with no SymbolReference.json → would trip AL1023) while still using it for
-    // runtime dep resolution + the symbols.json compile handoff.
-    workspaceDirsOut.Add(wsDir);
-    var extendedCaches = new List<string> { wsDir };
-    extendedCaches.AddRange(packageCacheDirs);
+    // Each impl dir is recorded as a synthetic-workspace dir (kept out of the
+    // compile-time .app scanner — source-only .app, no SymbolReference.json →
+    // AL1023) and prepended to the caches so it wins over a stale cached .app.
+    var implDirs = new List<string>();
 
     int emitted = 0;
     foreach (var implPath in sortedImpls)
     {
         if (!idByKey.TryGetValue(implPath, out var implId)) continue;
+
+        var implKey = ComputeSourceWorkspaceKey(new[] { implPath }, idByKey);
+        var wsDir = Path.Combine(workspaceRoot, implKey[..12]);
+        Directory.CreateDirectory(wsDir);
+        if (!implDirs.Contains(wsDir, StringComparer.OrdinalIgnoreCase))
+            implDirs.Add(wsDir);
+        if (!workspaceDirsOut.Contains(wsDir, StringComparer.OrdinalIgnoreCase))
+            workspaceDirsOut.Add(wsDir);
+
         var safePublisher = Sanitize(implId.Publisher);
         var safeName = Sanitize(implId.Name);
         var safeVer = implId.Version.ToString().Replace('.', '_');
@@ -1741,8 +1745,11 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
     }
 
     if (emitted > 0)
-        Console.WriteLine($"[layered] pre-built {emitted} impl package(s) in-process → {wsDir}");
+        Console.WriteLine($"[layered] pre-built {emitted} impl package(s) in-process across {implDirs.Count} cache dir(s)");
 
+    // Impl dirs first (win over any stale cached .app), then the original caches.
+    var extendedCaches = new List<string>(implDirs);
+    extendedCaches.AddRange(packageCacheDirs);
     return extendedCaches;
 
     static string Sanitize(string s)
@@ -1842,18 +1849,19 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
         return sb.ToString();
     }
 
-    // 4. Topo-sort (deps before dependents) + compile to a deterministic workspace dir, prepend.
+    // 4. Topo-sort (deps before dependents) + compile each dep to its OWN
+    // deterministic workspace dir, keyed on that dep's own sources + dep
+    // identities. Editing one source dep then only invalidates its own cache —
+    // unchanged sibling source deps keep cache-HITting. (A single shared
+    // combined-key dir orphaned every sibling whenever any one changed.)
     var sorted = TopologicalSort(toBuild.ToList(), sourceApps);
-    var workspaceKey = ComputeSourceWorkspaceKey(sorted, sourceApps);
-    var wsDir = Path.Combine(
+    var workspaceRoot = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        ".cache", "al-runner", "workspace-deps",
-        workspaceKey[..12]);
-    Directory.CreateDirectory(wsDir);
-    // Synthetic-workspace dir: source-only .apps (no SymbolReference.json) +
-    // symbols.json sidecars. Keep out of the compile-time .app scanner (AL1023)
-    // but use for runtime resolution + symbols.json handoff. See Main.
-    workspaceDirsOut.Add(wsDir);
+        ".cache", "al-runner", "workspace-deps");
+    // Synthetic-workspace dirs (per dep): source-only .apps (no SymbolReference.json)
+    // + symbols.json sidecars. Kept out of the compile-time .app scanner (AL1023)
+    // but used for runtime resolution + symbols.json handoff. See Main.
+    var depDirs = new List<string>();
     // The dependent bundles' own `.alpackages` carry the Microsoft platform symbol
     // closure (Base Application / System Application / Business Foundation / …) as real
     // .app files committed alongside the corpus. On CI, packageCacheDirs is EMPTY
@@ -1870,6 +1878,14 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
     foreach (var dir in sorted)
     {
         if (!sourceApps.TryGetValue(dir, out var sid)) continue;
+        // Per-dep cache dir keyed on THIS dep's own sources + dep identities.
+        var depKey = ComputeSourceWorkspaceKey(new[] { dir }, sourceApps);
+        var wsDir = Path.Combine(workspaceRoot, depKey[..12]);
+        Directory.CreateDirectory(wsDir);
+        if (!depDirs.Contains(wsDir, StringComparer.OrdinalIgnoreCase))
+            depDirs.Add(wsDir);
+        if (!workspaceDirsOut.Contains(wsDir, StringComparer.OrdinalIgnoreCase))
+            workspaceDirsOut.Add(wsDir);
         // Register the source-dep's AL dir for runtime metadata parsing, so its
         // tableextensions on Base App tables (e.g. a cross-app tableextension adding a
         // field to "Item Journal Batch") get merged into the base table's NCLMetaTable.
@@ -1942,7 +1958,7 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
         emitted++;
     }
     if (emitted == 0) return packageCacheDirs;
-    var extended = new List<string> { wsDir };
+    var extended = new List<string>(depDirs);
     extended.AddRange(packageCacheDirs);
     return extended;
 }
