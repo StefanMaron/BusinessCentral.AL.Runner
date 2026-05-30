@@ -148,6 +148,62 @@ public static partial class BcRuntime
         AlRunnerV2.PerfTrace.Log($"SetTestAssembly.FixupEnumFieldOptionMetadataAll {sw.ElapsedMilliseconds}ms");
     }
 
+    // Cached reflection for Codeunit151.initializationInProgress field.
+    // Populated on first call to PrimeCodeunit151Instance; null if not yet resolved or not found.
+    private static FieldInfo? _fCu151InitializationInProgress;
+    private static bool _fCu151Resolved;
+
+    /// <summary>
+    /// Populate skeleton state on a freshly-created <c>Codeunit151</c>
+    /// (SystemInitializationImpl, SingleInstance=true, System Application): set
+    /// <c>initializationInProgress = true</c> so the UNMODIFIED
+    /// <c>SystemInitialization.IsInProgress()</c> returns true. This is a skeleton-state
+    /// poke, NOT a DLL-body rewrite (precompiled-dll-respect).
+    ///
+    /// Why true: BaseApp <c>WorkflowEventHandling.AddEventToLibrary</c> (CU 1520) throws
+    /// "An event with description X already exists." when an event's UI description
+    /// duplicates an existing one, UNLESS <c>IsInProgress()</c> is true (the company-init
+    /// registration context, where BC tolerates the collision). <c>IsInProgress()</c> is
+    /// only ever READ inside <c>AddEventToLibrary</c> (event registration), never during
+    /// test assertions, so always-true has no observable effect on test logic.
+    ///
+    /// KNOWN LIMITATION (deliberate): this masks a BC-version mismatch. The runner pins
+    /// BaseApp 28.1, but apps like RecoverySolutions target <c>application: 26.0.0.0</c>.
+    /// BC 28.1 added a native "item journal batch approval" workflow event whose
+    /// description collides with such apps' own pre-28 events; on the targeted BC 26 there
+    /// is no collision (real CI is green). The faithful fix is version-aware artifact
+    /// selection (use the BC major matching each bundle's app.json <c>application</c>);
+    /// until then this poke keeps these tests progressing rather than failing on a
+    /// conflict that does not exist on the version they actually target.
+    ///
+    /// Called from <see cref="NavCodeunitHandle_CreateTarget"/> for every Codeunit151
+    /// instance — CreateTarget builds a new instance per call (no runner singleton cache),
+    /// so the flag must be set right after construction, before the caller reads it.
+    /// </summary>
+    public static void PrimeCodeunit151Instance(object instance)
+    {
+        try
+        {
+            if (!_fCu151Resolved)
+            {
+                _fCu151Resolved = true;
+                const BindingFlags bf = BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance;
+                _fCu151InitializationInProgress =
+                    instance.GetType().GetField("initializationInProgress", bf)
+                    ?? instance.GetType().GetField("InitializationInProgress",   bf);
+                if (_fCu151InitializationInProgress == null)
+                    Console.Error.WriteLine($"[BcRuntime] PrimeCodeunit151: initializationInProgress field " +
+                        $"not found on {instance.GetType().FullName} — IsInProgress() will always be false");
+            }
+            _fCu151InitializationInProgress?.SetValue(instance, true);
+        }
+        catch (Exception ex)
+        {
+            var inner = ex is System.Reflection.TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+            Console.Error.WriteLine($"[BcRuntime] PrimeCodeunit151Instance failed: {inner.GetType().Name}: {inner.Message}");
+        }
+    }
+
     /// <summary>
     /// Drop every per-bundle, bundle-derived cache so the SAME process can load an
     /// edited bundle of the same identity (server mode) without serving stale

@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 96;
+    private const int CACHE_VERSION = 98;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -1079,39 +1079,43 @@ public static class NclCecilRewrite
             }
         }
 
-        // ALTaskScheduler.ALCreateTaskAsync — async ValueTask<Guid>; real impl
-        // depends on a background scheduler (NavCurrentThread.Session.TaskScheduler)
-        // that doesn't exist in the runner. Test contract
-        // (tests/bucket-1/codeunit-runtime/122-unstubbed-types) is "CreateTask
-        // returns a Guid; subsequent CancelTask returns true". Cecil rewrites the
-        // async wrapper to a synchronous ValueTask.FromResult(Guid.Empty); the
-        // CancelTask family already no-ops via existing patches.
+        // ALTaskScheduler — background-job scheduling (scope.md §3.6).
+        //
+        // ALCreateTaskAsync is LEFT UNMODIFIED on purpose: its real BC body already
+        // throws BC's own NavCreateScheduledTasksNotAllowedException when
+        // CanCreateTask(session) is false (which we make so below). Letting the real
+        // body run is the faithful behaviour — guarded AL (`if CanCreateTask then …`)
+        // skips creation cleanly; unguarded AL that calls CreateTask directly gets
+        // BC's own loud "scheduled tasks not allowed" exception instead of a silent
+        // Guid.Empty. (Earlier this method was rewritten to return Guid.Empty to satisfy
+        // an archived bucket-1 test; that was a silent fake suppressing BC's guard.)
         {
             var alTaskSchedulerType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.ALTaskScheduler");
             if (alTaskSchedulerType != null)
             {
-                var fromResultGuid = typeof(System.Threading.Tasks.ValueTask)
-                    .GetMethods()
-                    .First(m => m.Name == "FromResult" && m.IsGenericMethod && m.GetParameters().Length == 1)
-                    .MakeGenericMethod(typeof(Guid));
-                var fromResultGuidRef = asm.MainModule.ImportReference(fromResultGuid);
-                foreach (var m in alTaskSchedulerType.Methods.Where(x => x.Name == "ALCreateTaskAsync"))
+
+                // ALTaskScheduler.ALCanCreateTask + private CanCreateTask — both access
+                // session.Authenticator which NREs on the skeleton.  The runner has no real
+                // task scheduler, so the faithful return value is false (no tasks can be
+                // created).  InsertJobQueueData in WorkflowSetup.InitWorkflow gates its
+                // job-queue row insertion on this, so returning false makes it skip the
+                // Insert cleanly rather than NRE-ing through the authenticator.
+                // Both methods return plain bool — ldc.i4.0; ret is all we need.
+                // No new typeRefs/memberRefs added (avoids R2R token-shift risk).
+                foreach (var m in alTaskSchedulerType.Methods
+                    .Where(x => (x.Name == "ALCanCreateTask" || x.Name == "CanCreateTask")
+                                && x.ReturnType.FullName == "System.Boolean"
+                                && x.HasBody))
                 {
                     var body = m.Body;
                     body.Instructions.Clear();
                     body.Variables.Clear();
                     body.ExceptionHandlers.Clear();
-                    var il = body.GetILProcessor();
-                    var guidLocal = new VariableDefinition(asm.MainModule.ImportReference(typeof(Guid)));
-                    body.Variables.Add(guidLocal);
-                    body.InitLocals = true;
-                    il.Append(il.Create(OpCodes.Ldloca_S, guidLocal));
-                    il.Append(il.Create(OpCodes.Initobj, asm.MainModule.ImportReference(typeof(Guid))));
-                    il.Append(il.Create(OpCodes.Ldloc, guidLocal));
-                    il.Append(il.Create(OpCodes.Call, fromResultGuidRef));
-                    il.Append(il.Create(OpCodes.Ret));
+                    var ilc = body.GetILProcessor();
+                    ilc.Append(ilc.Create(OpCodes.Ldc_I4_0));   // false
+                    ilc.Append(ilc.Create(OpCodes.Ret));
                     body.MaxStackSize = 1;
-                    Console.Error.WriteLine($"[Cecil] Rewrote ALTaskScheduler.{m.Name} → return ValueTask.FromResult(Guid.Empty)");
+                    Console.Error.WriteLine($"[Cecil] Rewrote ALTaskScheduler.{m.Name} → return false");
                 }
             }
         }

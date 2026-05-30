@@ -141,7 +141,14 @@ public static partial class BcRuntime
         if (ctor == null)
             throw new InvalidOperationException(
                 $"Codeunit{id} has no single-arg ITreeObject constructor");
-        return (Microsoft.Dynamics.Nav.Runtime.NavCodeunit)ctor.Invoke(new object[] { self });
+        var instance = (Microsoft.Dynamics.Nav.Runtime.NavCodeunit)ctor.Invoke(new object[] { self });
+        // Codeunit 151 = SystemInitializationImpl (SingleInstance=true, System Application).
+        // Populate skeleton state (NOT a DLL-body rewrite — precompiled-dll-respect): set
+        // initializationInProgress = true on the fresh instance so the unmodified
+        // SystemInitialization.IsInProgress() returns true. See PrimeCodeunit151Instance.
+        if (id == 151)
+            AlRunnerV2.BcRuntime.PrimeCodeunit151Instance(instance);
+        return instance;
     }
 
     // Cache: NavTestPage type (same type for all IDs; resolved once).

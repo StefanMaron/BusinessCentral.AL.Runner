@@ -127,7 +127,8 @@ invokes `OnInitReport` → `OnPreReport` → per-DataItem `OnPreDataItem` / `OnP
 
 | API | Reason |
 |---|---|
-| Job Queue Entry execution against a scheduler | No scheduler. `TaskScheduler.CreateTask` runs synchronously inline (§2-ish — runs the codeunit but doesn't respect NotBefore). |
+| Task scheduling (`TaskScheduler.CreateTask`) | No scheduler. `ALTaskScheduler.CanCreateTask` returns **false** (faithful: the runner cannot schedule tasks). Guarded AL (`if TaskScheduler.CanCreateTask then …`) skips creation cleanly. Unguarded AL that calls `CreateTask` directly hits BC's own `NavCreateScheduledTasksNotAllowedException` (BC's real body throws it when `CanCreateTask` is false — we do not substitute behaviour). Tasks are never executed. |
+| Job Queue Entry execution against a scheduler | No scheduler — job-queue rows are not picked up and run. |
 | `IsolatedStorage` scoped to *real* session/user/company beyond the runner's flat in-memory bag | Possible TODO if needed; currently a single in-memory bag. |
 
 ### §3.7. Cryptography requiring external KMS / certificates <a id="crypto-external"></a>
