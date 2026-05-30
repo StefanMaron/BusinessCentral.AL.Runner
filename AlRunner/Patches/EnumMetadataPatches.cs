@@ -284,15 +284,18 @@ public static partial class BcRuntime
             throw new InvalidOperationException(
                 $"Unable to cast enum '{optionValue.NavOptionMetadata.OptionString}' value '{optionValue}' to interface at index {interfaceIndex}.");
 
+        // Build the implementing codeunit handle and wrap its live target in the interface
+        // handle. We must NOT dispose `handle` afterwards: disposing the NavCodeunitHandle
+        // tears down the codeunit instance's tree (including child handles such as a var-record
+        // field like Codeunit7035.vendor, allocated in InitializeComponent). The returned
+        // NavInterfaceHandle keeps a reference to that exact instance, so a later interface
+        // dispatch (e.g. Price Source - Vendor.GetId reading `vendor.Target`) would observe a
+        // disposed handle and get null → NRE. This mirrors BC's own ToInterface overloads
+        // (ALCompiler.ToInterface(ITreeObject, NavApplicationObjectBaseHandle<T>) /
+        // (ITreeObject, NavApplicationObjectBase)) which wrap the target and never dispose the
+        // source handle — ownership of the target transfers to the interface handle.
         var handle = new NavCodeunitHandle(parentOfResult, implementationCodeunitId);
-        try
-        {
-            return new NavInterfaceHandle(parentOfResult, handle.Target);
-        }
-        finally
-        {
-            handle.Dispose();
-        }
+        return new NavInterfaceHandle(parentOfResult, handle.Target);
     }
 
     private static readonly MethodInfo? GetImplementationCodeunitIdMethod = typeof(NCLOptionMetadata).GetMethod(

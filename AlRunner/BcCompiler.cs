@@ -894,12 +894,14 @@ public sealed class BcCompiler
                 var values = enumSym.Values;
                 var options = new string[values.Length];
                 var indexes = new int[values.Length];
+                var implementations = new int[values.Length][];
                 for (int i = 0; i < values.Length; i++)
                 {
                     options[i] = values[i].Name ?? string.Empty;
                     indexes[i] = values[i].Ordinal;
+                    implementations[i] = ReadEnumValueImplementations(values[i]);
                 }
-                AlEnumMetadataRegistry.Register(enumSym.Id, enumSym.Name, options, indexes);
+                AlEnumMetadataRegistry.Register(enumSym.Id, enumSym.Name, options, indexes, implementations);
             }
             if (Environment.GetEnvironmentVariable("BCCOMPILER_TRACE") == "1")
                 Console.Error.WriteLine($"  emit[{AddCalls}]: {symbol.Name}");
@@ -909,6 +911,41 @@ public sealed class BcCompiler
                 Directory.CreateDirectory(dir);
                 var fname = string.Concat(symbol.Name.Select(c => char.IsLetterOrDigit(c) ? c : '_')) + ".cs";
                 File.WriteAllText(Path.Combine(dir, fname), src);
+            }
+        }
+
+        /// <summary>
+        /// Read the resolved implementation-codeunit ids for one AL enum value's
+        /// interface implementations, ordered by interface-declaration index.
+        ///
+        /// The compiler resolves the value's <c>Implementation</c> property to a
+        /// comma-separated list of codeunit ids (e.g. <c>"60201"</c>, or
+        /// <c>"60201,60202"</c> for an enum implementing two interfaces) — the
+        /// same shape the prebuilt SymbolReference JSON carries, which
+        /// <see cref="AlRunnerV2.Patches.BcAppSymbolCache"/> already parses. Capturing it
+        /// here lets enum→interface casts (<c>ALCompiler.ToInterface(NavOption,index)</c>)
+        /// resolve the implementing codeunit for enums compiled from source, not
+        /// just for prebuilt MS/ISV apps. Without this the runner returned -1 and
+        /// threw "Unable to cast enum '…' to interface at index N".
+        /// </summary>
+        private static int[] ReadEnumValueImplementations(NavCA.IEnumValueSymbol value)
+        {
+            try
+            {
+                var impl = value.GetProperty(NavCA.PropertyKind.Implementation);
+                var text = impl?.ValueText;
+                if (string.IsNullOrEmpty(text))
+                    return Array.Empty<int>();
+                var parts = text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                var ids = new List<int>(parts.Length);
+                foreach (var part in parts)
+                    if (int.TryParse(part, out var id))
+                        ids.Add(id);
+                return ids.ToArray();
+            }
+            catch
+            {
+                return Array.Empty<int>();
             }
         }
 
