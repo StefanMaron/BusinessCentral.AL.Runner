@@ -139,9 +139,61 @@ public static partial class BcRuntime
             }
             var fld = scopeType.GetField(p.Name!,
                 BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
-            args[i] = fld?.GetValue(publisherScope);
+            args[i] = CoerceArg(fld?.GetValue(publisherScope), p.ParameterType);
         }
         subscriberMethod.Invoke(subscriberInstance, args);
+    }
+
+    private static Type? _tNavOption;
+    private static PropertyInfo? _pNavOption_Value;
+
+    /// <summary>
+    /// Coerce a publisher event-scope field value to the subscriber parameter's CLR type.
+    ///
+    /// AL compiles an <c>Option</c>-typed event argument so that the publisher's scope
+    /// field carries a runtime <c>NavOption</c> (the option carrier, holding the integer
+    /// ordinal in <c>.Value</c>), while a subscriber declaring the same parameter as an
+    /// AL <c>Option</c> emits it as a plain <c>Int32</c> slot. Reflection's
+    /// <c>MethodInfo.Invoke</c> does no NavOption→Int32 conversion, so the raw value must
+    /// be unwrapped to its ordinal here. The mirror case (subscriber declares the param as
+    /// the NavOption carrier, field is an int) is handled too. This is faithful: a NavOption
+    /// is exactly its integer ordinal as far as an AL Option/Integer parameter observes.
+    /// All other types pass through unchanged.
+    /// </summary>
+    private static object? CoerceArg(object? value, Type paramType)
+    {
+        if (value == null) return null;
+        var vt = value.GetType();
+        if (paramType.IsAssignableFrom(vt)) return value;
+
+        EnsureNavOptionReflection();
+
+        // NavOption field → Int32 (or other integral) subscriber parameter: unwrap ordinal.
+        if (_tNavOption != null && _tNavOption.IsAssignableFrom(vt))
+        {
+            object? ordinal = _pNavOption_Value?.GetValue(value);
+            if (ordinal != null)
+            {
+                var underlying = paramType.IsEnum ? Enum.GetUnderlyingType(paramType) : paramType;
+                if (underlying == typeof(int) || underlying == typeof(long)
+                    || underlying == typeof(short) || underlying == typeof(byte))
+                {
+                    object converted = Convert.ChangeType(ordinal, underlying);
+                    return paramType.IsEnum ? Enum.ToObject(paramType, converted) : converted;
+                }
+            }
+        }
+
+        return value;
+    }
+
+    private static void EnsureNavOptionReflection()
+    {
+        if (_tNavOption != null) return;
+        var nclAsm = AppDomain.CurrentDomain.GetAssemblies()
+            .First(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
+        _tNavOption = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.NavOption");
+        _pNavOption_Value = _tNavOption?.GetProperty("Value", BindingFlags.Public | BindingFlags.Instance);
     }
 
     private static int ExtractCodeunitIdFromTypeName(Type t)
