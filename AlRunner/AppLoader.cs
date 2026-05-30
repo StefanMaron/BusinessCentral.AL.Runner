@@ -273,6 +273,58 @@ public static class AppLoader
         return ReadAlFromNavx(nms.ToArray());
     }
 
+    /// <summary>
+    /// Returns report layout resources (`.rdlc`, `.docx`, `.xlsx`) shipped in an `.app`'s
+    /// <c>layout/</c> folder, as (FileName, Bytes). A code-bearing report object declares
+    /// <c>LayoutFile = './X.rdlc'</c> relative to its source; BC's compile-time layout-embed
+    /// step reads that file and NREs (AL1081 "Unable to update report layout … Object reference
+    /// not set") if it is absent. The Tier-3 source compile must therefore stage these next to
+    /// the extracted `.al` so the relative reference resolves. Handles both the direct NAVX zip
+    /// and the R2R nested-.app case, mirroring <see cref="ExtractAl"/>.
+    /// </summary>
+    public static IReadOnlyList<(string FileName, byte[] Bytes)> ExtractReportLayouts(string appPath)
+    {
+        var bytes = File.ReadAllBytes(appPath);
+        var direct = ReadLayoutsFromNavx(bytes);
+        if (direct.Count > 0) return direct;
+
+        // R2R nested case.
+        using var zipStream = new MemoryStream(bytes, NavxZipOffset(bytes), bytes.Length - NavxZipOffset(bytes));
+        using var zip = new ZipArchive(zipStream, ZipArchiveMode.Read);
+        var nested = zip.Entries.FirstOrDefault(e =>
+            e.FullName.EndsWith(".app", StringComparison.OrdinalIgnoreCase)
+            && !e.FullName.Contains('/'));
+        if (nested == null) return Array.Empty<(string, byte[])>();
+        using var ns = nested.Open();
+        using var nms = new MemoryStream();
+        ns.CopyTo(nms);
+        return ReadLayoutsFromNavx(nms.ToArray());
+    }
+
+    private static List<(string FileName, byte[] Bytes)> ReadLayoutsFromNavx(byte[] data)
+    {
+        var offset = NavxZipOffset(data);
+        var result = new List<(string, byte[])>();
+        using var ms = new MemoryStream(data, offset, data.Length - offset, writable: false);
+        using var zip = new ZipArchive(ms, ZipArchiveMode.Read);
+        foreach (var entry in zip.Entries
+            .Where(e => e.FullName.StartsWith("layout/", StringComparison.OrdinalIgnoreCase)
+                     && (e.FullName.EndsWith(".rdlc", StringComparison.OrdinalIgnoreCase)
+                      || e.FullName.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)
+                      || e.FullName.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))))
+        {
+            // The package stores layout names URL-encoded (e.g. "Test%20Report%20-%20Default=RDLC.rdlc");
+            // the report's LayoutFile reference uses the decoded name. Decode so the staged file
+            // name matches the './<Name>' reference.
+            var decoded = Uri.UnescapeDataString(entry.Name);
+            using var s = entry.Open();
+            using var msEntry = new MemoryStream();
+            s.CopyTo(msEntry);
+            result.Add((decoded, msEntry.ToArray()));
+        }
+        return result;
+    }
+
     // ── internals ────────────────────────────────────────────────────────────
 
     private static ZipArchive OpenAppZip(string appPath)

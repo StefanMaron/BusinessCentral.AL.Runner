@@ -225,20 +225,185 @@ public sealed class BcCompiler
             if (_dotNetResolverFactory != null)
                 return _dotNetResolverFactory;
 
-            // Probing paths: service-tier artifacts dir (BC's own .NET deps
-            // such as Aspose, Azure SDK, BouncyCastle etc. shipped alongside Ncl.dll)
-            // plus the runtime's own base-class library location.
+            // Probing paths, in priority order. BC's DotNet metadata reader resolves a
+            // `DotNet "Type"` alias by loading the named assembly and looking up the type
+            // as a *TypeDefinition* — it does NOT follow type-forwarders. The runtime
+            // `netstandard.dll` / `System.Xml.*` shipped in the shared-framework dir are
+            // pure forwarder *facades* (1 typeDef, ~2600 ExportedType forwarders), so a
+            // `DotNet "System.Xml.XmlException"` alias against `netstandard, 2.1.0.0`
+            // binds to NavTypeKind.None there → emit crashes with "Unexpected value 'None'".
+            // The matching *reference* assemblies (NETStandard.Library.Ref, the NETCore.App
+            // ref pack) carry the same types as real TypeDefinitions, so probe those FIRST.
+            // This is what lets the source-dependency compile of Microsoft's Tests-TestLibraries
+            // (XmlDocument/XmlNode/etc. interop) emit instead of zeroing the whole module.
             var probingPaths = new List<string>();
+            foreach (var refDir in EnumerateDotNetRefAssemblyDirs())
+                if (Directory.Exists(refDir))
+                    probingPaths.Add(refDir);
+            // BC service-tier artifacts dir (BC's own .NET deps such as Aspose, Azure SDK,
+            // BouncyCastle etc. shipped alongside Ncl.dll, plus PermissionTestHelper add-in).
             if (Directory.Exists(DefaultServiceTierDir))
                 probingPaths.Add(DefaultServiceTierDir);
-            // BCL: where mscorlib / System.* lives (net10.0 shared framework).
+            foreach (var addinDir in EnumerateServiceTierAddinDirs())
+                if (Directory.Exists(addinDir))
+                    probingPaths.Add(addinDir);
+            // BCL: where mscorlib / System.* lives (shared framework) — last-resort
+            // fallback for assemblies with no reference-assembly counterpart.
             var runtimeDir = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
             if (Directory.Exists(runtimeDir))
                 probingPaths.Add(runtimeDir);
 
+            if (Environment.GetEnvironmentVariable("BCCOMPILER_DIAG") == "1")
+                Console.Error.WriteLine(
+                    "[BcCompiler-diag] DotNet probing paths:\n  " + string.Join("\n  ", probingPaths));
+
             var locator = new NavDotNet.AssemblyLocator(probingPaths);
             _dotNetResolverFactory = new NavDotNet.DotNetResolverFactory(locator);
             return _dotNetResolverFactory;
+        }
+    }
+
+    /// <summary>
+    /// .NET reference-assembly directories (full-metadata, not forwarder facades) that BC's
+    /// DotNet alias resolver can read TypeDefinitions from. Derived from the running dotnet
+    /// install's <c>packs/</c> dir. Returns the NETStandard.Library.Ref (covers the
+    /// <c>netstandard, 2.1.0.0</c> aliases the test-toolkit declares) and the
+    /// Microsoft.NETCore.App.Ref pack (covers <c>System.Xml.*</c>, <c>System.Net.Http</c>,
+    /// etc. used transitively). Highest version of each is preferred.
+    /// </summary>
+    private static IEnumerable<string> EnumerateDotNetRefAssemblyDirs()
+    {
+        // Resolve the dotnet root: shared-framework dir is …/dotnet/shared/Microsoft.NETCore.App/<v>.
+        var runtimeDir = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
+        string? dotnetRoot = null;
+        var idx = runtimeDir.Replace('\\', '/').IndexOf("/shared/", StringComparison.OrdinalIgnoreCase);
+        if (idx > 0) dotnetRoot = runtimeDir.Substring(0, idx);
+        dotnetRoot ??= Environment.GetEnvironmentVariable("DOTNET_ROOT");
+        if (string.IsNullOrEmpty(dotnetRoot) || !Directory.Exists(dotnetRoot))
+            yield break;
+
+        var packs = Path.Combine(dotnetRoot, "packs");
+        if (!Directory.Exists(packs)) yield break;
+
+        // ORDER MATTERS. BC's DotNet alias resolver probes the path in order and binds a type
+        // to the FIRST assembly that carries it as a real TypeDefinition. Both the net-core
+        // ref pack's `System.Runtime.dll` and `netstandard.dll` carry `System.Uri` as a real
+        // typedef, but Ncl's `ALAzureAdCodeGrantFlow` ctor references `System.Uri` from
+        // `System.Runtime, 8.0.0.0`. If `netstandard, 2.1.0.0` (which also defines System.Uri)
+        // is probed first, the toolkit's `DotNet Uri` alias binds to netstandard and the
+        // conversion to Ncl's parameter fails (AL0133 "cannot convert System.Uri to System.Uri").
+        // So yield the runtime-matched NETCore.App ref pack FIRST; netstandard only supplies the
+        // handful of aliases (BindingFlags, etc.) that have no net-core ref-pack counterpart.
+
+        // Microsoft.NETCore.App.Ref/<v>/ref/net<x>.0 — MUST match the runtime major version BC's
+        // Ncl.dll was built against (BC 28 = .NET 8 → System.Runtime, 8.0.0.0), NOT simply the
+        // highest pack installed (a net10 ref pack would bind System.Uri to System.Runtime,
+        // 10.0.0.0 and break the same conversion). Pin to the running shared-framework major.
+        var coreRef = Path.Combine(packs, "Microsoft.NETCore.App.Ref");
+        if (Directory.Exists(coreRef))
+        {
+            int? runtimeMajor = null;
+            var sfName = Path.GetFileName(runtimeDir.TrimEnd('/', '\\')); // "8.0.25"
+            if (Version.TryParse(sfName, out var sfv)) runtimeMajor = sfv.Major;
+
+            var candidates = Directory.EnumerateDirectories(coreRef)
+                .Select(d => (Dir: d, Ver: Version.TryParse(Path.GetFileName(d), out var v) ? v : null))
+                .Where(t => t.Ver != null)
+                .ToList();
+            var best = candidates
+                .Where(t => runtimeMajor == null || t.Ver!.Major == runtimeMajor.Value)
+                .OrderByDescending(t => t.Ver)
+                .Select(t => t.Dir)
+                .FirstOrDefault()
+                ?? candidates.OrderByDescending(t => t.Ver).Select(t => t.Dir).FirstOrDefault();
+            if (best != null)
+            {
+                var refSub = Path.Combine(best, "ref");
+                if (Directory.Exists(refSub))
+                    foreach (var tfm in Directory.EnumerateDirectories(refSub))
+                        yield return tfm;
+            }
+        }
+
+        // NETStandard.Library.Ref/<v>/ref/netstandard2.1 — AFTER the net-core ref pack.
+        var nsRef = Path.Combine(packs, "NETStandard.Library.Ref");
+        if (Directory.Exists(nsRef))
+        {
+            var best = Directory.EnumerateDirectories(nsRef)
+                .OrderByDescending(d => Version.TryParse(Path.GetFileName(d), out var v) ? v : new Version(0, 0))
+                .FirstOrDefault();
+            if (best != null)
+            {
+                var refSub = Path.Combine(best, "ref");
+                if (Directory.Exists(refSub))
+                    foreach (var tfm in Directory.EnumerateDirectories(refSub))
+                        yield return tfm;
+            }
+        }
+    }
+
+    /// <summary>
+    /// BC ServiceTier <c>Add-ins/*</c> directories. Microsoft's test-toolkit declares
+    /// <c>DotNet "Microsoft.Dynamics.Nav.PermissionTestHelper"</c>, whose DLL ships under
+    /// <c>ServiceTier/.../Service/Add-ins/PermissionTestHelper/</c>, not in the flat
+    /// artifacts dir. Surfacing the add-in dirs lets that alias resolve.
+    /// </summary>
+    private static IEnumerable<string> EnumerateServiceTierAddinDirs()
+    {
+        // ServiceTierDir is …/artifacts/<v>; the bcartifacts ServiceTier add-ins live in the
+        // download cache. Probe both the artifacts dir's own Add-ins (if flattened there) and
+        // the sibling bcartifacts cache.
+        var roots = new List<string>();
+        if (Directory.Exists(DefaultServiceTierDir))
+            roots.Add(DefaultServiceTierDir);
+        // bcartifacts cache: scope to the HIGHEST-version sandbox dir only. The cache can hold
+        // several BC versions side by side (e.g. 27.5 and 28.1); adding all of them puts a
+        // second copy of every Add-in / Test-Assembly (incl. MockTest.dll) on the DotNet
+        // probing path, and the AssemblyLocator may then bind a type (e.g.
+        // MockTest.MockAzureKeyVaultSecretProvider) from the WRONG-version assembly whose
+        // transitive Ncl reference does not match the pinned-version Ncl on the path → the
+        // toolkit's Azure-KV / Azure-AD codeunits fail to bind the interface (AL0133). Scope
+        // to the pinned version (mirrors BcArtifacts' highest-version convention).
+        var sandbox = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".bcartifacts.cache", "sandbox");
+        if (Directory.Exists(sandbox))
+        {
+            var bestSandbox = Directory.EnumerateDirectories(sandbox)
+                .Select(d => (Dir: d, Ver: System.Version.TryParse(Path.GetFileName(d), out var v) ? v : null))
+                .Where(t => t.Ver != null)
+                .OrderByDescending(t => t.Ver)
+                .Select(t => t.Dir)
+                .FirstOrDefault();
+            if (bestSandbox != null) roots.Add(bestSandbox);
+        }
+        foreach (var root in roots)
+        {
+            // ServiceTier Add-ins/* (PermissionTestHelper et al.).
+            IEnumerable<string> addins;
+            try { addins = Directory.EnumerateDirectories(root, "Add-ins", SearchOption.AllDirectories); }
+            catch { addins = Array.Empty<string>(); }
+            foreach (var addinRoot in addins)
+            {
+                yield return addinRoot;
+                IEnumerable<string> subs;
+                try { subs = Directory.EnumerateDirectories(addinRoot); }
+                catch { continue; }
+                foreach (var sub in subs) yield return sub;
+            }
+            // Test Assemblies/* (MockTest.dll — in-process test mocks such as the mock
+            // Azure Key Vault secret provider the System App Test Library aliases).
+            IEnumerable<string> testAsm;
+            try { testAsm = Directory.EnumerateDirectories(root, "Test Assemblies", SearchOption.AllDirectories); }
+            catch { testAsm = Array.Empty<string>(); }
+            foreach (var taRoot in testAsm)
+            {
+                yield return taRoot;
+                IEnumerable<string> subs;
+                try { subs = Directory.EnumerateDirectories(taRoot); }
+                catch { continue; }
+                foreach (var sub in subs) yield return sub;
+            }
         }
     }
 
@@ -269,6 +434,80 @@ public sealed class BcCompiler
     /// loader (and its ~40s warm) is rebuilt only when the dependency closure actually
     /// changes — not on every SetResolvedDeps/SetExtraSymbolDirs call or every bundle.
     /// </summary>
+    // Process-wide staging dir for deduplicated .app symlinks (one subdir per loader signature).
+    private static readonly object _stageSync = new();
+    private static string? _stageRootCache;
+
+    /// <summary>
+    /// Returns a package-dir list in which each app identity (AppId) appears at most once.
+    /// If no AppId is duplicated across the given dirs, the original list is returned
+    /// unchanged (zero cost, byte-identical loader behaviour). Otherwise a staging directory
+    /// is built containing one symlink (copy fallback) per unique AppId — keeping the first
+    /// occurrence in scan order — and a single-element list pointing at it is returned.
+    /// Non-.app content (e.g. *.symbols.json) is intentionally NOT staged here; the caller
+    /// scans the ORIGINAL dirs for those. See call site for the AL0275 rationale.
+    /// </summary>
+    private static List<string> DeduplicateAppPackageDirs(List<string> packageDirs)
+    {
+        // Collect every .app, keyed by (AppId, Version), preserving dir scan order. The key
+        // MUST include the version: the same AppId legitimately ships in multiple versions
+        // across the package caches, and the resolver needs each distinct version to satisfy a
+        // version-pinned reference (collapsing by AppId alone drops versions -> AL1022). Only a
+        // second occurrence of the SAME (AppId, Version) is dropped -- that is the byte-for-byte
+        // duplicate (e.g. a test-library .app present in both the bundle .alpackages and the
+        // bcartifacts test dir) that produces the AL0275 self-ambiguity.
+        var seen = new HashSet<(Guid, string)>();
+        var picked = new List<string>();
+        var dupFound = false;
+        foreach (var dir in packageDirs)
+        {
+            IEnumerable<string> apps;
+            try { apps = Directory.EnumerateFiles(dir, "*.app", SearchOption.AllDirectories); }
+            catch { continue; }
+            foreach (var app in apps)
+            {
+                var m = AppLoader.ReadManifest(app);
+                if (m == null) continue;
+                if (!seen.Add((m.AppId, m.Version.ToString()))) { dupFound = true; continue; }
+                picked.Add(app);
+            }
+        }
+        if (!dupFound) return packageDirs; // common case — leave the hot path untouched
+
+        // Build (or reuse) a staging dir keyed by the exact picked-app set so concurrent /
+        // repeated compiles with the same dedup result share one staging dir.
+        var sb = new System.Text.StringBuilder();
+        foreach (var p in picked.OrderBy(x => x, StringComparer.Ordinal)) sb.Append(p).Append('\n');
+        string key;
+        using (var sha = System.Security.Cryptography.SHA256.Create())
+            key = Convert.ToHexString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(sb.ToString())))
+                .ToLowerInvariant()[..16];
+
+        lock (_stageSync)
+        {
+            _stageRootCache ??= Path.Combine(Path.GetTempPath(), "al-runner-pkgdedup");
+            var stage = Path.Combine(_stageRootCache, key);
+            if (!Directory.Exists(stage))
+            {
+                var tmp = stage + ".tmp-" + Guid.NewGuid().ToString("N")[..8];
+                Directory.CreateDirectory(tmp);
+                foreach (var src in picked)
+                {
+                    var dst = Path.Combine(tmp, Path.GetFileName(src));
+                    // Two different apps can share a file name across dirs (rare); disambiguate.
+                    if (File.Exists(dst))
+                        dst = Path.Combine(tmp, Path.GetFileNameWithoutExtension(src) + "_" +
+                                                Guid.NewGuid().ToString("N")[..6] + ".app");
+                    try { File.CreateSymbolicLink(dst, src); }
+                    catch { try { File.Copy(src, dst, overwrite: true); } catch { } }
+                }
+                try { Directory.Move(tmp, stage); }
+                catch { if (!Directory.Exists(stage)) throw; try { Directory.Delete(tmp, true); } catch { } }
+            }
+            return new List<string> { stage };
+        }
+    }
+
     private static string ComputeLoaderSignature(
         List<string> packageDirs,
         IReadOnlyList<string>? extraSymbolDirs,
@@ -307,12 +546,26 @@ public sealed class BcCompiler
                 packageDirs.AddRange(ResolveSymbolDirs());
             packageDirs = packageDirs.Distinct().ToList();
 
-            var loaderSig = ComputeLoaderSignature(packageDirs, _extraSymbolDirs, _resolvedDeps);
+            // Deduplicate the .app set the symbol loader sees BY APP IDENTITY. The same
+            // Microsoft app (e.g. "System Application Test Library") is commonly present in
+            // BOTH the bundle's own .alpackages AND the bcartifacts test-app cache dir we add
+            // for test-toolkit resolution. CreateReferenceLoader scans every dir, so it loads
+            // the identical module twice → BC binds it as two extensions with the same name →
+            // AL0275 "ambiguous reference between X (…) and X (…)" for every type it declares.
+            // The _currentAppId spec-exclusion drops the *spec* but not the *loaded module*, so
+            // when that app's OWN source is compiled (a Tier-3 source-dep compile), its source
+            // collides with the duplicated symbol module and the emit zeroes. Staging one .app
+            // per unique AppId removes the duplication faithfully — the service tier never
+            // publishes the same app twice. When there are no duplicates this is a no-op and
+            // the original dirs are used unchanged (corpus path keeps identical behaviour).
+            var loaderScanDirs = DeduplicateAppPackageDirs(packageDirs);
+
+            var loaderSig = ComputeLoaderSignature(loaderScanDirs, _extraSymbolDirs, _resolvedDeps);
             if (_refLoader == null || loaderSig != _loaderSignature)
             {
-                if (packageDirs.Count == 0) return (null, Array.Empty<NavCA.SymbolReferenceSpecification>());
+                if (loaderScanDirs.Count == 0) return (null, Array.Empty<NavCA.SymbolReferenceSpecification>());
 
-                _refLoader = NavSymRef.ReferenceLoaderFactory.CreateReferenceLoader(packageDirs);
+                _refLoader = NavSymRef.ReferenceLoaderFactory.CreateReferenceLoader(loaderScanDirs);
 
                 // Chain JSON-symbols loaders for any `*.symbols.json` in the package dirs
                 // (written by EmitDepSymbols for source dependencies we compiled ourselves).

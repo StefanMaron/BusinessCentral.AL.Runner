@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 99;
+    private const int CACHE_VERSION = 103;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -1033,6 +1033,120 @@ public static class NclCecilRewrite
             il.Append(il.Create(OpCodes.Ret));
             body.MaxStackSize = 1;
             Console.Error.WriteLine("[Cecil] Rewrote NavObjectList`1.get_Target → BcRuntime.NavObjectList_get_Target helper");
+        }
+
+        // NavHttpClient egress (ALGet/ALPost/ALPut/ALDelete/ALPatch + their *Async and
+        // *Send variants) — external HTTP is permanently out of scope (docs/scope.md §3.2,
+        // anchor external-http). On the headless skeleton these NRE deep inside
+        // NavHttpClient.get_Target() (no real HttpClient/network), which surfaces as a raw
+        // NullReferenceException — a silent-ish failure that does NOT name the unsupported
+        // surface. loud-failures.md requires we throw loudly, naming the API + reason AT THE
+        // CALL SITE. Rewrite each egress body to throw the "out-of-scope: <api> — external-http
+        // — see docs/scope.md#external-http" InvalidOperationException (same message contract +
+        // memberRef as the NavReport.SaveAs OOS rewrite above; reusing the existing memberRef
+        // keeps R2R token offsets stable). Header / base-address configuration methods
+        // (ALSetBaseAddress, ALDefaultRequestHeaders, …) are deliberately left intact — only
+        // the methods that actually egress are rewritten.
+        {
+            var httpType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavHttpClient");
+            if (httpType != null)
+            {
+                // Reuse the InvalidOperationException(string) `oosCtor` imported above (same
+                // pattern as NavReport.SaveAs). The "out-of-scope: <api> — <reason> — see
+                // docs/scope.md#<anchor>" message format is the loud-failures contract that AL
+                // `asserterror`/`Assert.ExpectedError('out-of-scope:')` matches. Using the
+                // already-imported memberRef avoids adding a new typeRef/memberRef to Ncl
+                // (R2R token-shift safety — see feedback_r2r_cecil_token_shift).
+                var egressVerbs = new[] { "ALGet", "ALPost", "ALPut", "ALDelete", "ALPatch", "ALSend" };
+                int httpRewritten = 0;
+                foreach (var method in httpType.Methods)
+                {
+                    if (!method.HasBody) continue;
+                    var verb = egressVerbs.FirstOrDefault(v =>
+                        method.Name == v || method.Name == v + "Async");
+                    if (verb == null) continue;
+
+                    var apiLabel = "HttpClient." + verb.Substring(2); // "HttpClient.Get"
+                    var body = method.Body;
+                    body.Instructions.Clear();
+                    body.Variables.Clear();
+                    body.ExceptionHandlers.Clear();
+                    var il = body.GetILProcessor();
+                    il.Append(il.Create(OpCodes.Ldstr,
+                        $"out-of-scope: {apiLabel} — external-http — see docs/scope.md#external-http"));
+                    il.Append(il.Create(OpCodes.Newobj, oosCtor));
+                    il.Append(il.Create(OpCodes.Throw));
+                    body.MaxStackSize = 1;
+                    httpRewritten++;
+                }
+                if (httpRewritten > 0)
+                    Console.Error.WriteLine($"[Cecil] Rewrote {httpRewritten} NavHttpClient egress method(s) → throw OOS (external-http)");
+
+                // NavHttpClient.get_Target — must NOT throw: the AL `HttpClient` value type
+                // lazily materialises its backing SharedNavHttpClient via get_Target during
+                // FIELD SETUP (scope ctor), before any verb call. The real body NREs on the
+                // headless skeleton (base.Tree.Session.Company.SharedObjects is null). Delegate
+                // to the existing helper that constructs a SharedNavHttpClient parented to the
+                // skeleton container (no HTTP infra in that ctor) — same Cecil-delegation shape
+                // as NavObjectList`1.get_Target. With construction succeeding, the egress verbs
+                // above are what throw OOS, so `asserterror HttpClient.Get(...)` observes the
+                // named failure at the call site. (The prior JmpHook for this getter no longer
+                // fires under Cecil-only mode, which is why the raw NRE was surfacing.)
+                var getTarget = httpType.Methods.FirstOrDefault(mm => mm.Name == "get_Target");
+                if (getTarget != null && getTarget.HasBody)
+                {
+                    var sharedHttpType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.SharedNavHttpClient");
+                    var helperMI = typeof(AlRunnerV2.BcRuntime).GetMethod(
+                        nameof(AlRunnerV2.BcRuntime.NavHttpClient_get_Target),
+                        BindingFlags.Public | BindingFlags.Static);
+                    if (sharedHttpType != null && helperMI != null)
+                    {
+                        var helperRef = asm.MainModule.ImportReference(helperMI);
+                        var body = getTarget.Body;
+                        body.Instructions.Clear();
+                        body.Variables.Clear();
+                        body.ExceptionHandlers.Clear();
+                        var il = body.GetILProcessor();
+                        il.Append(il.Create(OpCodes.Ldarg_0));
+                        il.Append(il.Create(OpCodes.Call, helperRef));
+                        il.Append(il.Create(OpCodes.Castclass, sharedHttpType));
+                        il.Append(il.Create(OpCodes.Ret));
+                        body.MaxStackSize = 1;
+                        Console.Error.WriteLine("[Cecil] Rewrote NavHttpClient.get_Target → BcRuntime helper (skeleton-parented)");
+                    }
+                }
+            }
+
+            // NavHttpResponseMessageBase.get_Target — same skeleton-parented delegation as
+            // NavHttpClient.get_Target above. The AL `HttpResponseMessage` value type also
+            // materialises its backing SharedNavHttpResponseMessage during scope-ctor field
+            // setup and NREs on the headless skeleton; its JmpHook no longer fires under
+            // Cecil-only mode. Delegate to the existing BcRuntime helper so the response value
+            // constructs cleanly (the HTTP egress that would populate it throws OOS first).
+            var httpRespType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavHttpResponseMessageBase");
+            if (httpRespType != null)
+            {
+                var getTarget = httpRespType.Methods.FirstOrDefault(mm => mm.Name == "get_Target");
+                var sharedRespType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.SharedNavHttpResponseMessage");
+                var helperMI = typeof(AlRunnerV2.BcRuntime).GetMethod(
+                    nameof(AlRunnerV2.BcRuntime.NavHttpResponseMessageBase_get_Target),
+                    BindingFlags.Public | BindingFlags.Static);
+                if (getTarget != null && getTarget.HasBody && sharedRespType != null && helperMI != null)
+                {
+                    var helperRef = asm.MainModule.ImportReference(helperMI);
+                    var body = getTarget.Body;
+                    body.Instructions.Clear();
+                    body.Variables.Clear();
+                    body.ExceptionHandlers.Clear();
+                    var il = body.GetILProcessor();
+                    il.Append(il.Create(OpCodes.Ldarg_0));
+                    il.Append(il.Create(OpCodes.Call, helperRef));
+                    il.Append(il.Create(OpCodes.Castclass, sharedRespType));
+                    il.Append(il.Create(OpCodes.Ret));
+                    body.MaxStackSize = 1;
+                    Console.Error.WriteLine("[Cecil] Rewrote NavHttpResponseMessageBase.get_Target → BcRuntime helper (skeleton-parented)");
+                }
+            }
         }
 
         // ALDatabase.ALSetDefaultTableConnection / ALHasTableConnection — both NRE

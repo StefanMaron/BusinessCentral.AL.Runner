@@ -44,23 +44,46 @@ public sealed class DependencyLoader
         var list = new List<Assembly>();
         foreach (var (m, path) in ordered)
         {
-            // A source-only Microsoft app carries compile-time symbols, not a runtime DLL.
-            // Upfront source-compiling large test-toolkit packages is both slow and can hang;
-            // runtime codeunits are resolved lazily from extracted service-tier DLLs by
-            // CodeunitPatches.FindCodeunitType (or safely no-op for known test-toolkit ranges).
-            // R2R Microsoft apps still must load, because they carry the actual runtime chunks.
-            if (string.Equals(m.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)
-                && !AppLoader.IsR2R(path))
-            {
-                Console.Error.WriteLine($"[deps] load skip Microsoft source-only symbols: {m.Publisher}_{m.Name} v{m.Version}");
-                continue;
-            }
             if (_cache.TryGetValue(m.AppId, out var existing))
             {
                 list.Add(existing);
                 continue;
             }
-            var asm = LoadOne(m, path, bucketRoot);
+            // A source-only Microsoft app carries compile-time symbols, not a runtime DLL.
+            // Two sub-cases, and we can only tell them apart by trying to compile:
+            //   (a) Platform symbol-stub apps (System, Base Application, …) ship AL whose
+            //       procedures are external/native — their REAL runtime lives in the
+            //       extracted service-tier DLLs. Emit/Roslyn cannot reconstruct a body, so a
+            //       Tier-3 source-compile fails; the faithful resolution is lazy dispatch from
+            //       the service-tier DLL index (CodeunitPatches.FindCodeunitType / ServiceTierDllIndex).
+            //   (b) Test-library apps (Tests-TestLibraries → CU131352 "Library - Document
+            //       Approvals", System Application Test Library, …) ship FULL codeunit bodies
+            //       NOT present in the service-tier DLLs. Those MUST source-compile so the test
+            //       exercises their real bodies instead of a lying NoOp.
+            // The old code unconditionally skipped ALL Microsoft source-only apps, which forced
+            // case (b) into a NoOp. We now let them flow through LoadOne (whose Tier-2.5 DLL-first
+            // step already short-circuits case (a) when the index covers every codeunit). If a
+            // Microsoft app still reaches Tier-3 and its compile fails, that is case (a) with an
+            // index gap — fall back to skip (lazy DLL dispatch), which is faithful for platform
+            // apps, rather than aborting the whole run. Non-Microsoft deps keep failing LOUD.
+            bool microsoftSourceOnly =
+                string.Equals(m.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)
+                && !AppLoader.IsR2R(path);
+            Assembly? asm;
+            try
+            {
+                asm = LoadOne(m, path, bucketRoot);
+            }
+            catch (AlRunnerV2.Infrastructure.DependencyLoadException) when (microsoftSourceOnly)
+            {
+                // Platform symbol-stub app whose runtime is the service-tier DLLs: skip the
+                // source-compile and let runtime codeunit resolution serve real bodies from the
+                // DLL index (or NoOp for the documented system/test-toolkit ranges).
+                Console.Error.WriteLine(
+                    $"[deps] Microsoft source-only {m.Publisher}_{m.Name} v{m.Version}: Tier-3 compile " +
+                    $"unavailable — deferring to service-tier DLL dispatch at runtime");
+                continue;
+            }
             if (asm != null)
             {
                 _cache[m.AppId] = asm;
@@ -192,6 +215,22 @@ public sealed class DependencyLoader
         {
             var fileSafe = SanitizeFileName(name);
             File.WriteAllText(Path.Combine(tempDir, fileSafe), src);
+        }
+        // Stage report layout resources (.rdlc/.docx/.xlsx) next to the .al so a code-bearing
+        // report's `LayoutFile = './X.rdlc'` reference resolves at compile time. Without these,
+        // BC's layout-embed step NREs (AL1081) and — because Emit is atomic per module — zeroes
+        // the WHOLE app, taking otherwise-clean codeunits (e.g. CU131352) down with it. Written
+        // with their real (URL-decoded) names so the relative './<Name>' reference matches.
+        foreach (var existing in Directory.EnumerateFiles(tempDir, "*.rdlc")
+                     .Concat(Directory.EnumerateFiles(tempDir, "*.docx"))
+                     .Concat(Directory.EnumerateFiles(tempDir, "*.xlsx")))
+        {
+            try { File.Delete(existing); } catch { }
+        }
+        foreach (var (layoutName, layoutBytes) in AppLoader.ExtractReportLayouts(appPath))
+        {
+            try { File.WriteAllBytes(Path.Combine(tempDir, Path.GetFileName(layoutName)), layoutBytes); }
+            catch (Exception ex) { Console.Error.WriteLine($"[deps] layout stage failed for {layoutName}: {ex.Message}"); }
         }
 
         IReadOnlyList<EmittedSource> emitted;
