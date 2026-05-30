@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 103;
+    private const int CACHE_VERSION = 105;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -75,6 +75,14 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALConfirm/3",
         "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALConfirm/4",
         "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALConfirm/5",
+        // NavDialog.ALOpenAsync<T> / ALUpdateAsync (Batch 5 — headless progress-dialog no-op).
+        // Instance methods; Key arity excludes `this`. Owned by the Cecil body rewrite so the
+        // legacy ALUpdateAsync JmpHook block in BcRuntime auto-skips (no coexistence spin).
+        "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALOpenAsync/3",
+        "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALUpdateAsync/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALUpdateAsync/1",
+        "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALUpdateAsync/2",
+        "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALClose/0",
         // NavMediaSet / NavMediaValueBase (Batch 5 — in-memory shim; no re-entrancy).
         "Microsoft.Dynamics.Nav.Runtime.NavMediaSet::ALInsert/2",
         "Microsoft.Dynamics.Nav.Runtime.NavMediaSet::ALRemove/2",
@@ -952,6 +960,109 @@ public static class NclCecilRewrite
                     navDialogRewrote++;
                 }
                 Console.Error.WriteLine($"[Cecil] Batch 5: rewrote {navDialogRewrote} NavDialog.ALStrMenu/ALConfirm overload(s) → inline const/arg body");
+
+                // ── NavDialog.ALOpenAsync<T> / ALUpdateAsync → headless no-op ─────────────
+                //
+                // A BC `Dialog.Open`/`Dialog.Update` opens/refreshes a progress (status) window.
+                // In a HEADLESS test run there is no client UI and no client callback, so the
+                // real body NREs: every path through ALOpenAsync dereferences `base.Tree.Session`,
+                // and the dialog's tree-root session is not wired for an AL Dialog variable created
+                // during a field-OnValidate trigger (TreeHandler.session resolves to null), so the
+                // very first `IsWebServiceClientRequest(base.Tree.Session)` → `session.ClientConnectionType`
+                // throws NullReferenceException (verified against the RS Document-Approvals path:
+                // Codeunit131101.EnableWorkflow → Record1501.Enabled_a45_OnValidate → ALOpenAsync).
+                //
+                // FAITHFULNESS (loud-failures audit): a progress window carries NO return value the
+                // business logic branches on — it is pure display state. Real BC already no-ops the
+                // ENTIRE method for non-UI sessions (the `IsWebServiceClientRequest(...) → return
+                // default(ValueTask)` early-out at the top of the real body). Returning a completed
+                // default ValueTask is therefore observably equivalent to BC's own behaviour for a
+                // callback-less session: the AL code after Dialog.Open runs identically whether or
+                // not a window appeared. This is NOT a silent fake — it is the same code path BC
+                // takes when there is no UI. CONFIRM/STRMENU (which DO return a user choice the logic
+                // branches on) are handled separately above (ALConfirm/ALStrMenu) and route to the
+                // test's handler contract; they are explicitly NOT covered here.
+                //
+                // BOOKKEEPING: the dialog's own `isOpen` flag must stay consistent so that a
+                // subsequent Dialog.Update / Dialog.Close does not throw NavNCLDialogException
+                // ("the operation failed because the dialog box is not open"). We therefore
+                // rewrite ALOpenAsync to set isOpen=true and ALClose to set isOpen=false before
+                // returning — pure in-object state, no session/UI deref. This is the same flag
+                // BC's real bodies maintain; we keep it without the UI callback. ALUpdateAsync
+                // is a plain no-op (it only refreshes the window).
+                //
+                // Token-safe: only initobj on the method's own ValueTask return type (already
+                // referenced) and ldfld/stfld on the dialog's own bool `isOpen` field — no new
+                // typeRef/memberRef imports.
+                var isOpenField = navDialogCecilType.Fields.FirstOrDefault(f => f.Name == "isOpen")
+                    ?? throw new InvalidOperationException(
+                        "NavDialog.isOpen field not found in Ncl — shape changed; do not commit");
+
+                int navDialogAsyncRewrote = 0;
+                foreach (var m in navDialogCecilType.Methods
+                    .Where(m => (m.Name == "ALOpenAsync" || m.Name == "ALUpdateAsync")
+                                && m.HasBody && !m.IsStatic))
+                {
+                    var ret = m.ReturnType;
+                    // Only rewrite the value-type ValueTask returns (ALOpenAsync<T>, ALUpdateAsync*).
+                    if (!ret.IsValueType
+                        || !ret.FullName.StartsWith("System.Threading.Tasks.ValueTask"))
+                        continue;
+
+                    var body = m.Body;
+                    body.Instructions.Clear();
+                    body.Variables.Clear();
+                    body.ExceptionHandlers.Clear();
+                    var il = body.GetILProcessor();
+
+                    // ALOpenAsync only: `this.isOpen = true;`
+                    if (m.Name == "ALOpenAsync")
+                    {
+                        il.Append(il.Create(OpCodes.Ldarg_0));
+                        il.Append(il.Create(OpCodes.Ldc_I4_1));
+                        il.Append(il.Create(OpCodes.Stfld, isOpenField));
+                    }
+
+                    var local = new VariableDefinition(asm.MainModule.ImportReference(ret));
+                    body.Variables.Add(local);
+                    body.InitLocals = true;
+                    il.Append(il.Create(OpCodes.Ldloca_S, local));
+                    il.Append(il.Create(OpCodes.Initobj, asm.MainModule.ImportReference(ret)));
+                    il.Append(il.Create(OpCodes.Ldloc_0));
+                    il.Append(il.Create(OpCodes.Ret));
+                    body.MaxStackSize = 2;
+                    navDialogAsyncRewrote++;
+                }
+                if (navDialogAsyncRewrote == 0)
+                    throw new InvalidOperationException(
+                        "NavDialog.ALOpenAsync/ALUpdateAsync not found in Ncl — shape changed; do not commit");
+
+                // ALClose() — `this.isOpen = false; return;` (skip every base.Tree.Session deref
+                // / ClientCallback.DialogClose / Company.UnregisterOpenDialog, all of which NRE
+                // on the headless skeleton). Void parameterless instance method.
+                int navDialogCloseRewrote = 0;
+                foreach (var m in navDialogCecilType.Methods
+                    .Where(m => m.Name == "ALClose" && m.HasBody && !m.IsStatic
+                                && m.Parameters.Count == 0
+                                && m.ReturnType.FullName == "System.Void"))
+                {
+                    var body = m.Body;
+                    body.Instructions.Clear();
+                    body.Variables.Clear();
+                    body.ExceptionHandlers.Clear();
+                    var il = body.GetILProcessor();
+                    il.Append(il.Create(OpCodes.Ldarg_0));
+                    il.Append(il.Create(OpCodes.Ldc_I4_0));
+                    il.Append(il.Create(OpCodes.Stfld, isOpenField));
+                    il.Append(il.Create(OpCodes.Ret));
+                    body.MaxStackSize = 2;
+                    navDialogCloseRewrote++;
+                }
+                if (navDialogCloseRewrote == 0)
+                    throw new InvalidOperationException(
+                        "NavDialog.ALClose() not found in Ncl — shape changed; do not commit");
+
+                Console.Error.WriteLine($"[Cecil] Batch 5: rewrote {navDialogAsyncRewrote} NavDialog.ALOpenAsync/ALUpdateAsync + {navDialogCloseRewrote} ALClose overload(s) → headless no-op (isOpen bookkeeping preserved)");
             }
             else
             {
