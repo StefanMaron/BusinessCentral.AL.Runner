@@ -34,6 +34,32 @@ codeunit 60210 "Mut Probe Tests ESM"
     end;
 
     [Test]
+    procedure Validate_ThenModify_SubscriberMutationPersistsToDb()
+    var
+        Rec: Record "Mut Probe ESM";
+        Reread: Record "Mut Probe ESM";
+    begin
+        // Mirrors the RS integration pattern: Validate fires the subscriber that
+        // mutates "Target Field" on the live var Rec, then Modify must persist
+        // that mutated in-memory value to the DB. Re-reading the row must show
+        // the subscriber's write — not blank (the symptom the RS posting test hit:
+        // posted doc "Posting Description" came back as <>).
+        Rec.Init();
+        Rec."No." := 'C1';
+        Rec."Target Field" := '';
+        Rec.Insert(true);
+
+        // [WHEN] validate fires the subscriber (mutates live Rec) and Modify persists
+        Rec.Validate("Trigger Field", 'Z');
+        Rec.Modify(true);
+
+        // [THEN] a fresh read from the DB carries the subscriber's mutation
+        Reread.Get('C1');
+        Assert.AreEqual('MUTATED:Z', Reread."Target Field",
+            'Subscriber mutation made during Validate must persist through Modify to the DB');
+    end;
+
+    [Test]
     procedure Validate_NoSubscriberMutation_LeavesFieldUntouched()
     var
         Rec: Record "Mut Probe ESM";
