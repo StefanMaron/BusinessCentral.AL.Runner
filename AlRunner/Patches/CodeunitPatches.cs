@@ -33,8 +33,16 @@ public static partial class BcRuntime
         Microsoft.Dynamics.Nav.Types.DataError errorLevel,
         Microsoft.Dynamics.Nav.Runtime.NavRecord? record)
     {
-        InvokeOnRun(self, record);
-        return new System.Threading.Tasks.ValueTask<bool>(true);
+        try
+        {
+            InvokeOnRun(self, record);
+            return new System.Threading.Tasks.ValueTask<bool>(true);
+        }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(tie.InnerException);
+            return default;
+        }
     }
 
     /// <summary>
@@ -94,21 +102,88 @@ public static partial class BcRuntime
     {
         try
         {
-            var onRun = self.GetType().GetMethod("OnRun",
-                BindingFlags.NonPublic | BindingFlags.Instance, null,
-                new[] { typeof(Microsoft.Dynamics.Nav.Runtime.INavRecordHandle) }, null);
-            if (onRun != null)
-                onRun.Invoke(self, new object?[] { record });
+            var concreteType = self.GetType();
+
+            // The AL `trigger OnRun()` is compiled by BC's CodeAnalysis emitter into an
+            // ASYNC method named `OnRunAsync` on the concrete codeunit class (and only the
+            // dependency-compile path emits the async form; our test-bundle path emits a
+            // synchronous `OnRun` override). `GetMethod("OnRun", ...)` returns the INHERITED
+            // base `NavCodeunit.OnRun` (an empty no-op) when the concrete type only declares
+            // `OnRunAsync` — so invoking it silently does nothing (the whole codeunit body
+            // never runs). This is the bug that made `Codeunit.Run("Purch.-Post", …)` a no-op
+            // on source-compiled Base App codeunits: posting produced no posted documents,
+            // no ledger entries, and an empty `Last Posting No.`.
+            //
+            // Resolve the codeunit's OWN trigger entry: prefer a concrete `OnRunAsync`, then a
+            // concrete `OnRun` override; both with the INavRecordHandle overload first, then the
+            // parameterless form. Only fall back to an inherited `OnRun` if the concrete type
+            // declares no trigger of its own (genuinely empty OnRun).
+            var trigger = FindConcreteTrigger(concreteType, "OnRunAsync")
+                       ?? FindConcreteTrigger(concreteType, "OnRun")
+                       ?? concreteType.GetMethod("OnRun",
+                              BindingFlags.NonPublic | BindingFlags.Instance, null,
+                              new[] { typeof(Microsoft.Dynamics.Nav.Runtime.INavRecordHandle) }, null)
+                       ?? concreteType.GetMethod("OnRun",
+                              BindingFlags.NonPublic | BindingFlags.Instance, null, Type.EmptyTypes, null);
+
+            if (trigger == null)
+                return;
+
+            object? result;
+            if (trigger.GetParameters().Length == 1)
+                result = trigger.Invoke(self, new object?[] { record });
             else
-            {
-                var onRun0 = self.GetType().GetMethod("OnRun",
-                    BindingFlags.NonPublic | BindingFlags.Instance, null, Type.EmptyTypes, null);
-                onRun0?.Invoke(self, null);
-            }
+                result = trigger.Invoke(self, null);
+
+            AwaitIfTask(result);
         }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(tie.InnerException);
+        }
+    }
+
+    /// <summary>
+    /// Finds a codeunit-trigger method named <paramref name="name"/> that is DECLARED ON the
+    /// concrete codeunit type itself (not inherited from <c>NavCodeunit</c>), preferring the
+    /// <c>INavRecordHandle</c> overload over the parameterless form. Returns null if the
+    /// concrete type does not declare such a trigger, so the caller can fall back.
+    /// </summary>
+    private static MethodInfo? FindConcreteTrigger(Type concreteType, string name)
+    {
+        var oneArg = concreteType.GetMethod(name,
+            BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly,
+            null, new[] { typeof(Microsoft.Dynamics.Nav.Runtime.INavRecordHandle) }, null);
+        if (oneArg != null) return oneArg;
+        return concreteType.GetMethod(name,
+            BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly,
+            null, Type.EmptyTypes, null);
+    }
+
+    /// <summary>
+    /// If the trigger returned a Task / ValueTask (the async `OnRunAsync` emit), block on it so
+    /// the synchronous <c>Codeunit.Run</c> contract holds and any AL error propagates here.
+    /// </summary>
+    private static void AwaitIfTask(object? result)
+    {
+        switch (result)
+        {
+            case null:
+                return;
+            case System.Threading.Tasks.Task t:
+                t.GetAwaiter().GetResult();
+                return;
+            case System.Threading.Tasks.ValueTask vt:
+                vt.GetAwaiter().GetResult();
+                return;
+            default:
+                var rt = result.GetType();
+                if (rt.IsGenericType && rt.GetGenericTypeDefinition() == typeof(System.Threading.Tasks.ValueTask<>))
+                {
+                    var asTask = rt.GetMethod("AsTask")!.Invoke(result, null) as System.Threading.Tasks.Task;
+                    asTask?.GetAwaiter().GetResult();
+                }
+                return;
         }
     }
 

@@ -3104,6 +3104,83 @@ public static class NclCecilRewrite
             Console.Error.WriteLine($"[Cecil] Rewrote {vepCount} NavSession.VerifyExecutePermission overload(s) → no-op");
         }
 
+        // SessionTransactionExtensions.SetRecordConsistent / SetRecordInconsistent → no-op.
+        // These extension methods mark a record's transaction-consistency state via the
+        // session's DataAccessSource, which is null on the skeleton session. The posting
+        // preview-mode manager (Codeunit 9500 StopPreviewMode/SetPreviewMode) calls
+        // SetRecordConsistent unconditionally during a normal (non-preview) post, so the real
+        // body NREs in SessionTransactionExtensions.SetRecordConsistent and aborts the whole
+        // post. There is a JmpHook for this (BcRuntime → NoOp2) but JmpHooks are disabled
+        // (Cecil-only), so it never lands — migrate it here. With no SQL transaction backend the
+        // record-consistency marking is observably a no-op: AL code cannot observe a difference
+        // because there is no deferred-consistency commit to honor or reject. (The in-memory
+        // store applies writes immediately.) void return → single ret.
+        {
+            var sessTxExtT = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.SessionTransactionExtensions");
+            int srcCount = 0;
+            foreach (var m in (sessTxExtT?.Methods ?? Enumerable.Empty<MethodDefinition>())
+                .Where(mm => (mm.Name == "SetRecordConsistent" || mm.Name == "SetRecordInconsistent")
+                    && mm.HasBody && mm.ReturnType.FullName == "System.Void").ToList())
+            {
+                var body = m.Body;
+                body.Instructions.Clear();
+                body.ExceptionHandlers.Clear();
+                body.Variables.Clear();
+                body.GetILProcessor().Append(body.GetILProcessor().Create(OpCodes.Ret));
+                body.MaxStackSize = 0;
+                srcCount++;
+            }
+            Console.Error.WriteLine($"[Cecil] Rewrote {srcCount} SessionTransactionExtensions.SetRecord(In)Consistent overload(s) → no-op");
+        }
+
+        // ALDatabase.{set,get}_ALLockTimeout / {set,get}_ALLockTimeoutDuration → trivial.
+        // Each accessor reaches DataAccessSource.CreateAppDataProvider() (via CreateAppDataAccess),
+        // which NREs on the skeleton session's null DataAccessSource. Posting calls
+        // LockTimeout(false) (RunWithCheck → set_ALLockTimeoutDuration) on every non-GUI post,
+        // so the real setter aborts the whole post. Lock-timeout is a SQL-transaction concept the
+        // in-memory store has no analogue for; a setter no-op + getter default is observably
+        // faithful (AL code only reads back what posting itself sets, and the value has no effect
+        // without a SQL lock manager). JmpHooks exist for these (BcRuntime) but are disabled
+        // (Cecil-only), so migrate here. Setters (void): single ret. Getters: push default + ret.
+        {
+            var alDbT = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.ALDatabase");
+            int ltCount = 0;
+            foreach (var m in (alDbT?.Methods ?? Enumerable.Empty<MethodDefinition>())
+                .Where(mm => mm.HasBody && (
+                    mm.Name == "set_ALLockTimeout" || mm.Name == "get_ALLockTimeout" ||
+                    mm.Name == "set_ALLockTimeoutDuration" || mm.Name == "get_ALLockTimeoutDuration")).ToList())
+            {
+                var body = m.Body;
+                body.Instructions.Clear();
+                body.ExceptionHandlers.Clear();
+                body.Variables.Clear();
+                var il = body.GetILProcessor();
+                var rt = m.ReturnType.FullName;
+                if (rt == "System.Void")
+                {
+                    il.Append(il.Create(OpCodes.Ret));
+                    body.MaxStackSize = 0;
+                }
+                else if (rt == "System.Boolean" || rt == "System.Int32")
+                {
+                    il.Append(il.Create(OpCodes.Ldc_I4_0));
+                    il.Append(il.Create(OpCodes.Ret));
+                    body.MaxStackSize = 1;
+                }
+                else
+                {
+                    // get_ALLockTimeoutDuration may return a richer duration type; load default.
+                    il.Append(il.Create(OpCodes.Ldc_I4_0));
+                    il.Append(il.Create(OpCodes.Ret));
+                    body.MaxStackSize = 1;
+                }
+                ltCount++;
+            }
+            Console.Error.WriteLine($"[Cecil] Rewrote {ltCount} ALDatabase.ALLockTimeout(Duration) accessor(s) → trivial");
+        }
+
         // NavReport sync wrappers + DataItemIterator.SetTableView.
         //
         // RunReportAsync is async ValueTask (forbidden to Cecil-rewrite — see checkpoint 002),
