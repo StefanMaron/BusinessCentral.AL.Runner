@@ -29,6 +29,42 @@ if (args[0] == "--version")
     return 0;
 }
 
+// ── Disable ReadyToRun before any BC type loads ───────────────────────────────
+// BC's R2R-precompiled native images bypass our Cecil/runtime hooks: when a hot
+// caller (e.g. RecordImplementation.IssueFindRequestAsync) is R2R, the JIT inlines
+// the call past the method we rewrote, so the interception silently no-ops and the
+// skeleton re-enters BC's native find/calc state machines — which AV because they
+// expect service-tier transactional/cache state we don't have (virtual Field table
+// find, multi-dataitem query find, FlowField calc, …). DOTNET_ReadyToRun=0 forces
+// JIT-from-IL, which is byte-identical in behaviour (corpus is the same 1663/69/0
+// fail-set either way) and routes every call through our hooks deterministically.
+// The setting is read at CLR init, so it can only be applied by re-execing once
+// with it set. Escape hatch: AL_RUNNER_ENABLE_R2R=1 keeps R2R on (e.g. for an
+// apples-to-apples perf comparison). Guard prevents an infinite re-exec loop.
+if (Environment.GetEnvironmentVariable("DOTNET_ReadyToRun") is null
+    && Environment.GetEnvironmentVariable("AL_RUNNER_ENABLE_R2R") != "1"
+    && Environment.GetEnvironmentVariable("AL_RUNNER_R2R_REEXECED") != "1")
+{
+    var psi = new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!)
+    {
+        UseShellExecute = false,
+    };
+    var argv0 = Environment.GetCommandLineArgs();
+    // Under the `dotnet` muxer, ProcessPath is dotnet and argv[0] (the managed dll)
+    // must be forwarded; under the native apphost it must NOT be (see the Cecil
+    // re-exec below for the same rule).
+    var underDotnet0 = System.IO.Path.GetFileNameWithoutExtension(Environment.ProcessPath!)
+        .Equals("dotnet", StringComparison.OrdinalIgnoreCase);
+    foreach (var a in (underDotnet0 ? argv0 : argv0.Skip(1)))
+        psi.ArgumentList.Add(a);
+    psi.Environment["DOTNET_ReadyToRun"] = "0";
+    psi.Environment["AL_RUNNER_R2R_REEXECED"] = "1";
+    Console.Error.WriteLine("[r2r] re-execing with DOTNET_ReadyToRun=0 (hooks fire deterministically; AL_RUNNER_ENABLE_R2R=1 to disable)");
+    using var r2rChild = System.Diagnostics.Process.Start(psi)!;
+    r2rChild.WaitForExit();
+    return r2rChild.ExitCode;
+}
+
 // ── --server mode: long-running JSON-RPC daemon over stdin/stdout (the VS Code
 // extension depends on this flag). The protocol requires stdout to carry ONLY the
 // newline-delimited JSON — so capture the real stdin/stdout now and redirect ALL
