@@ -73,6 +73,8 @@ public static class FlowFieldPatches
     private static PropertyInfo? _pNclMetaFieldParent;
     private static PropertyInfo? _pCalcFormulaCalculationMethod;
     private static PropertyInfo? _pCalcFormulaFilters;
+    private static PropertyInfo? _pNclMetaFilterFilterType;   // NCLMetaFilter.FilterType
+    private static object? _filterTypeField;                  // NCLMetaFilterType.Field
     private static PropertyInfo? _pCalcFormulaSourceField;
     private static PropertyInfo? _pCalcFormulaNegateResult;
     private static PropertyInfo? _pCalcFormulaTableId;
@@ -208,6 +210,11 @@ public static class FlowFieldPatches
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
         _pFilterFieldValueField = _tNCLMetaFilterField.GetProperty("ValueField",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        _pNclMetaFilterFilterType = _tNCLMetaFilter.GetProperty("FilterType",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        var tFilterTypeEnum = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetaFilterType");
+        if (tFilterTypeEnum != null)
+            _filterTypeField = Enum.Parse(tFilterTypeEnum, "Field");
 
         // Enum values
         _cmNone   = Enum.Parse(_tNCLMetaCalcMethod, "None");
@@ -250,6 +257,59 @@ public static class FlowFieldPatches
         }
         else
             Console.Error.WriteLine("[FlowFieldPatches] WARN: 3-arg CalcFieldsAsync not found");
+    }
+
+    // ── FlowFieldsHelper.FieldsAndFormulaAreSelfReferencing replacement ──────────
+    // Null-safe equivalent of the BC body.
+    //
+    // The real BC body is:
+    //   foreach (NCLMetaField f in fieldsToCalc)
+    //     foreach (NCLMetaFilter filter in f.CalculationFormula.Filters)
+    //       if (filter.FilterType == Field && Equals(((NCLMetaFilterField)filter).ValueField, f))
+    //         return true;
+    //   return false;
+    //
+    // ROOT CAUSE of the NRE (file-probe + decompile evidence):
+    //   On the skeleton runtime, a FlowField metafield whose CalculationFormula could
+    //   not be materialised falls back to the shared `NCLMetaCalculationFormula.EmptyFormula`
+    //   singleton (NCLMetaField ctor: `metaCalculationFormula != null ? CreateFrom... : EmptyFormula`).
+    //   EmptyFormula is constructed as `new NCLMetaCalculationFormula(0,0,None,false, null)` —
+    //   its `Filters` (an NCLMetaFilterCollection) is NULL. The real BC body then NREs on
+    //   `EmptyFormula.Filters` because EmptyFormula is never reached this way on a live tier
+    //   (a live tier always has a real formula). Observed on Purchase Line "Matched Order Lines"
+    //   (table 39, field 2701) during Purch.-Post → ProcessMatchedReceiptOnInvoice, when a
+    //   temp Purchase Line buffer is filtered on the FlowField via TempTableDataProvider's
+    //   RecordBufferEvaluatorVisitor.
+    //
+    // FAITHFULNESS: a formula with no field-type filters cannot be self-referencing via a
+    // field filter, so the correct answer for a null/empty Filters collection is `false` —
+    // identical to what BC computes when the foreach over a non-null empty collection runs
+    // zero iterations. This is the runtime-engine layer (Ncl), not AL business logic; the
+    // guard only hardens the self-reference probe against the skeleton's EmptyFormula.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool FieldsAndFormulaAreSelfReferencing(Array fieldsToCalc)
+    {
+        if (fieldsToCalc == null) throw new ArgumentNullException(nameof(fieldsToCalc));
+        foreach (var fieldObj in fieldsToCalc)
+        {
+            if (fieldObj == null) continue;
+            var formula = _pNclMetaFieldCalculationFormula!.GetValue(fieldObj);
+            if (formula == null) continue;
+            var filters = _pCalcFormulaFilters!.GetValue(formula);
+            if (filters == null) continue;                 // EmptyFormula: null collection → no self-ref
+            foreach (var filter in (System.Collections.IEnumerable)filters)
+            {
+                if (filter == null) continue;
+                // NCLMetaFilterField carries ValueField; FilterType==Field means a field filter.
+                var filterTypeObj = _pNclMetaFilterFilterType!.GetValue(filter);
+                if (!Equals(filterTypeObj, _filterTypeField)) continue;
+                // Only NCLMetaFilterField exposes ValueField; cast-safe via the cached property.
+                if (!_tNCLMetaFilterField!.IsInstanceOfType(filter)) continue;
+                var valueField = _pFilterFieldValueField!.GetValue(filter);
+                if (Equals(valueField, fieldObj)) return true;
+            }
+        }
+        return false;
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
