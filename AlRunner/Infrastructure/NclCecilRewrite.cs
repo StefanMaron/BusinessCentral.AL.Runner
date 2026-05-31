@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 105;
+    private const int CACHE_VERSION = 109;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -104,6 +104,7 @@ public static class NclCecilRewrite
         // NavSession getters
         "Microsoft.Dynamics.Nav.Runtime.NavSession::get_DataAccessSource/0",
         "Microsoft.Dynamics.Nav.Runtime.NavSession::get_Database/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavTenant::get_Database/0",
         "Microsoft.Dynamics.Nav.Runtime.NavSession::get_SortingProperties/0",
         // DataAccessSource + TempTableDataProvider
         "Microsoft.Dynamics.Nav.Runtime.DataAccessSource::GetDataAccessForTable/2",
@@ -2191,6 +2192,42 @@ public static class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Replaced RecordImplementation.CalcFieldsAsync(DataError,NCLMetaField[],bool) → FlowFieldPatches.RecordImpl_CalcFieldsAsync_3");
         }
 
+        // ── FlowFieldsHelper.FieldsAndFormulaAreSelfReferencing(NCLMetaField[]) ──────
+        // The real BC body iterates `f.CalculationFormula.Filters` and NREs when the
+        // formula is the shared `NCLMetaCalculationFormula.EmptyFormula` singleton,
+        // whose `Filters` collection is constructed as null. That happens for skeleton
+        // FlowFields whose CalculationFormula could not be materialised (observed on
+        // Purchase Line "Matched Order Lines" 39/2701 during Purch.-Post via the
+        // TempTableDataProvider filter visitor). Rewrite the body to a null-safe helper
+        // that returns the same value BC would compute (false for an empty/null filter
+        // set — no field-filter ⇒ no self-reference). Runtime-engine layer; no AL body
+        // is touched. Reuses the helper already shipped in Runner.dll.
+        {
+            var ffh = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.FlowFieldsHelper")
+                ?? throw new InvalidOperationException("FlowFieldsHelper type not found");
+            var m = ffh.Methods.FirstOrDefault(x =>
+                x.Name == "FieldsAndFormulaAreSelfReferencing" && x.Parameters.Count == 1
+                && x.Parameters[0].ParameterType is ArrayType)
+                ?? throw new InvalidOperationException("FlowFieldsHelper.FieldsAndFormulaAreSelfReferencing not found");
+
+            var helperMi = typeof(AlRunnerV2.Patches.FlowFieldPatches).GetMethod(
+                nameof(AlRunnerV2.Patches.FlowFieldPatches.FieldsAndFormulaAreSelfReferencing),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("FlowFieldPatches.FieldsAndFormulaAreSelfReferencing not found");
+            var helperRef = asm.MainModule.ImportReference(helperMi);
+
+            var body = m.Body;
+            body.Instructions.Clear();
+            body.Variables.Clear();
+            body.ExceptionHandlers.Clear();
+            var il = body.GetILProcessor();
+            il.Append(il.Create(OpCodes.Ldarg_0));
+            il.Append(il.Create(OpCodes.Call, helperRef));
+            il.Append(il.Create(OpCodes.Ret));
+            body.MaxStackSize = 1;
+            Console.Error.WriteLine("[Cecil] Replaced FlowFieldsHelper.FieldsAndFormulaAreSelfReferencing → FlowFieldPatches (null-safe)");
+        }
+
         // ── RecordImplementation.InternalFindRecordWithoutCheckingValuesAsync ─────
         // This async ValueTask method is reached heavily by precompiled MS test
         // libraries (e.g. Library - Purchase.CreateVendor → FindPaymentMethod).
@@ -2341,6 +2378,38 @@ public static class NclCecilRewrite
             il.Append(il.Create(OpCodes.Ret));
             body.MaxStackSize = 1;
             Console.Error.WriteLine("[Cecil] Replaced NavSession.get_ExecutionContext → return ExecutionContext.Normal");
+        }
+
+        // ── ALNavApp.GetDataVersionForUpgrade(NavAppRuntimeMetadata) → return null ──
+        // The method probes whether an app data-upgrade is in progress, via
+        // `NavCurrentThread.Session?.Database?.UpgradeManager…`. Under R2R the
+        // `Session.Database` access is inlined to `Session.Tenant.Database`, bypassing
+        // our NavSession.get_Database redirect, and `NavTenant.Database` throws
+        // ArgumentNullException("NavDatabase") because the skeleton tenant has no
+        // database LazyEx. A headless test session is NEVER in a data upgrade, so the
+        // faithful result is the same `null` the real body returns when
+        // navAppUpgradeContext == null (the normal, non-upgrade case). Returning null
+        // makes the `GetDataVersionForInstall(app) ?? GetDataVersionForUpgrade(app) ??
+        // app.Version` chain fall through to app.Version, exactly as on a live tier with
+        // no upgrade running. Reached from FeatureTelemetry.LogUsage → ALGetModuleInfo
+        // during Purch.-Post (RecoverySolutions CU74486 posting tests). Runtime-engine
+        // layer; no AL business-logic body is touched.
+        {
+            var alNavApp = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.ALNavApp")
+                ?? throw new InvalidOperationException("ALNavApp type not found");
+            var m = alNavApp.Methods.FirstOrDefault(x =>
+                x.Name == "GetDataVersionForUpgrade" && x.Parameters.Count == 1 && x.IsStatic)
+                ?? throw new InvalidOperationException("ALNavApp.GetDataVersionForUpgrade not found — Ncl shape changed; do not commit");
+
+            var body = m.Body;
+            body.Instructions.Clear();
+            body.Variables.Clear();
+            body.ExceptionHandlers.Clear();
+            var il = body.GetILProcessor();
+            il.Append(il.Create(OpCodes.Ldnull)); // no upgrade in progress → null data version
+            il.Append(il.Create(OpCodes.Ret));
+            body.MaxStackSize = 1;
+            Console.Error.WriteLine("[Cecil] Replaced ALNavApp.GetDataVersionForUpgrade → return null (no skeleton upgrade)");
         }
 
         // ── NavRecord.ALInsertAsync(DataError, bool, bool) — AutoIncrement prepend ──
@@ -4405,6 +4474,13 @@ public static class NclCecilRewrite
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "NavSession", "get_Database", 0),
                 H(recordPatches, "NavSession_get_Database"));
+            // NavTenant.get_Database — R2R inlines NavSession.Database → NavTenant.Database
+            // past the redirect above, so callers (ALNavApp.ALGetModuleInfo via telemetry)
+            // hit NavTenant.Database directly. It throws ArgNull("NavDatabase") on the
+            // skeleton (database LazyEx null by design). Return the skeleton NavDatabase.
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavTenant", "get_Database", 0),
+                H(recordPatches, "NavTenant_get_Database"));
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "NavSession", "get_SortingProperties", 0),
                 H(recordPatches, "NavSession_get_SortingProperties"));

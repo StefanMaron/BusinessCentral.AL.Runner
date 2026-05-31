@@ -148,6 +148,44 @@ public static partial class RecordPatches
         }
     }
 
+    /// <summary>
+    /// On _parsedTables miss for a table referenced by NAME (e.g. a FlowField
+    /// CalcFormula's source table), resolve the table id from the BC .app symbol
+    /// index by name and materialise it via TryPopulateParsedTableFromBcApps.
+    /// Returns the parsed ParsedTable or null. Used by BuildMetaCalcFormula so a
+    /// Base App FlowField (e.g. Purchase Line "Matched Order Lines" → count of
+    /// "Matched Order Line") gets a real formula instead of falling back to the
+    /// null EmptyFormula (which later NREs/throws on EmptyFormula.SourceField).
+    /// </summary>
+    internal static ParsedTable? TryPopulateParsedTableByName(string tableName)
+    {
+        if (string.IsNullOrEmpty(tableName)) return null;
+        // Already parsed?
+        var existing = _parsedTables.Values.FirstOrDefault(t =>
+            string.Equals(t.TableName, tableName, StringComparison.OrdinalIgnoreCase));
+        if (existing != null) return existing;
+
+        lock (_bcTableIndexLock)
+        {
+            EnsureBcSymbolTableIndex();
+            if (_bcSymbolTableIndex != null)
+            {
+                foreach (var (id, entry) in _bcSymbolTableIndex)
+                {
+                    if (!string.Equals(entry.Table.TableName, tableName, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (!_parsedTables.ContainsKey(id))
+                    {
+                        _parsedTables[id] = entry.Table;
+                        Console.Error.WriteLine($"[RecordPatches] BcAppFallback: parsed table '{tableName}' ({id}) by name from {Path.GetFileName(entry.AppPath)}");
+                    }
+                    return _parsedTables[id];
+                }
+            }
+        }
+        return null;
+    }
+
     private static readonly Regex _rxAnyTableId = new(
         @"\btable\s+(\d+)\s+(?:""[^""]+""|[A-Za-z_]\w*)[^{]*?\{",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);

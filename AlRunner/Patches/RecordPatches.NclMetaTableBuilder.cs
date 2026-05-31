@@ -352,6 +352,15 @@ public static partial class RecordPatches
             string.Equals(t.TableName, cf.SourceTableName, StringComparison.OrdinalIgnoreCase));
         if (srcTable == null)
         {
+            // Lazily materialise the source table from the BC .app symbol index by name.
+            // Base App FlowFields commonly reference a sibling Base App table that wasn't
+            // parsed yet when this table was built (e.g. Purchase Line "Matched Order Lines"
+            // → "Matched Order Line"). Without this the formula falls back to the null
+            // EmptyFormula, which later throws on EmptyFormula.SourceField (table 0).
+            srcTable = TryPopulateParsedTableByName(cf.SourceTableName);
+        }
+        if (srcTable == null)
+        {
             Console.Error.WriteLine($"[RecordPatches] BuildMetaCalcFormula: source table '{cf.SourceTableName}' not found in parsed tables");
             return null;
         }

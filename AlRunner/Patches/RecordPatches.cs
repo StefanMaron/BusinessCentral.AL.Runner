@@ -275,6 +275,32 @@ public static partial class RecordPatches
         }
         if (_fNavDatabaseSqlSortingProperties != null && _sqlSortingProperties != null)
             _fNavDatabaseSqlSortingProperties.SetValue(_skeletonDatabase, _sqlSortingProperties);
+
+        // Populate sqlDatabaseProperties so NavDatabase.SqlDatabaseProperties returns a
+        // non-null object. BaseApp telemetry (FeatureTelemetry.LogUsage → ALGetModuleInfo)
+        // reads NavGlobal.AppDatabase.SqlDatabaseProperties.ApplicationFamily; on a skeleton
+        // with no SQL there is no real ApplicationFamily, and the field defaults to "" —
+        // a faithful empty-family value (telemetry-only, dropped as HTTP egress is OOS).
+        var fSqlDbProps = _tNavDatabase.GetField("sqlDatabaseProperties",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        var tSqlDbProps = _tNavDatabase.Assembly.GetType("Microsoft.Dynamics.Nav.Runtime.NavSqlDatabaseProperties");
+        if (fSqlDbProps != null && tSqlDbProps != null)
+        {
+            // GetUninitializedObject skips field initializers, so applicationFamily and lockObj
+            // are null and databasePropertiesReady is false. The ApplicationFamily getter calls
+            // ReadDatabaseProperties(), which would Monitor.TryEnter(lockObj) (null → ArgNull) and
+            // open a NavSqlConnectionScope (no SQL on the skeleton). Set databasePropertiesReady=true
+            // and applicationFamily="" so the getter short-circuits to the empty family value —
+            // the faithful "no SQL family known" result; telemetry is dropped (HTTP egress OOS).
+            var sqlDbProps = RuntimeHelpers.GetUninitializedObject(tSqlDbProps);
+            tSqlDbProps.GetField("applicationFamily", BindingFlags.NonPublic | BindingFlags.Instance)
+                ?.SetValue(sqlDbProps, string.Empty);
+            tSqlDbProps.GetField("lockObj", BindingFlags.NonPublic | BindingFlags.Instance)
+                ?.SetValue(sqlDbProps, new object());
+            tSqlDbProps.GetField("databasePropertiesReady", BindingFlags.NonPublic | BindingFlags.Instance)
+                ?.SetValue(sqlDbProps, true);
+            fSqlDbProps.SetValue(_skeletonDatabase, sqlDbProps);
+        }
         Console.Error.WriteLine($"[RecordPatches] Skeleton NavDatabase built: {_skeletonDatabase.GetType().Name}");
 
         // DataAccessSource fields to poke when creating skeleton
@@ -374,7 +400,47 @@ public static partial class RecordPatches
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static object? NavSession_get_Database(object self)
     {
-        Console.Error.WriteLine($"[RecordPatches] NavSession_get_Database: _skeletonDatabase={_skeletonDatabase?.GetType().Name ?? "null"}");
+        return _skeletonDatabase;
+    }
+
+    // Cached NavTenant.database (LazyEx<NavDatabase>) field, resolved lazily.
+    private static FieldInfo? _fNavTenantDatabase;
+    private static bool _fNavTenantDatabaseResolved;
+
+    /// <summary>
+    /// Replacement for NavTenant.get_Database. The real getter throws
+    /// ArgumentNullException("NavDatabase") when the tenant's `database` LazyEx is null,
+    /// which it always is on the skeleton (MetadataPatches leaves it null by design).
+    /// Under R2R, `NavSession.Database => Tenant.Database` is inlined past our
+    /// NavSession.get_Database redirect, so callers like ALNavApp.ALGetModuleInfo
+    /// (FeatureTelemetry.LogUsage during Purch.-Post) reach NavTenant.Database directly.
+    /// Return the runner's skeleton NavDatabase (which carries collation/sorting and an
+    /// empty-family SqlDatabaseProperties) instead of throwing. If a real database LazyEx
+    /// is ever present we honour it. Runtime-engine layer; faithful — the skeleton DOES
+    /// have a minimal database, returning it is more correct than throwing.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static object? NavTenant_get_Database(object self)
+    {
+        if (!_fNavTenantDatabaseResolved)
+        {
+            _fNavTenantDatabase = self?.GetType().GetField("database",
+                BindingFlags.NonPublic | BindingFlags.Instance)
+                ?? self?.GetType().BaseType?.GetField("database",
+                    BindingFlags.NonPublic | BindingFlags.Instance);
+            _fNavTenantDatabaseResolved = true;
+        }
+        if (self != null && _fNavTenantDatabase != null)
+        {
+            var lazy = _fNavTenantDatabase.GetValue(self);
+            if (lazy != null)
+            {
+                // LazyEx<NavDatabase>.Value — return the real DB if the tenant has one.
+                var pValue = lazy.GetType().GetProperty("Value");
+                var v = pValue?.GetValue(lazy);
+                if (v != null) return v;
+            }
+        }
         return _skeletonDatabase;
     }
 
