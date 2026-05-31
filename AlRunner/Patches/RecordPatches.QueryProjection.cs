@@ -142,23 +142,22 @@ public static partial class RecordPatches
             return NavDataAccessSource_GetDataAccessForTable(self, null!, false); // shouldn't happen; let original-style path surface
 
         // Single data source (single dataitem, or all tables already share one DataAccess) —
-        // original behaviour: return that single instance.
+        // original behaviour: return that single instance. (A genuinely single-dataitem
+        // query lands here; the projection layer reshapes the one table's rows.)
+        bool singleDataItem = !IsMultiDataItemQuery(queryDefinition);
         bool allSame = accesses.All(a => ReferenceEquals(a, accesses[0]));
-        if (allSame)
+        if (singleDataItem && allSame)
             return accesses[0];
 
-        // Join across distinct in-memory data sources. Determine emptiness per table.
-        bool anyNonEmpty = tableList.Any(t => TableHasAnyRow(self, (NCLMetaTable)t));
-        if (!anyNonEmpty)
-        {
-            QLog($"GetDataAccessForQuery: {tableList.Count}-table join, all empty → returning root DataAccess (faithful no-rows)");
-            return accesses[0]; // root/driving table; empty → query yields no rows
-        }
-
-        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
-            "NavQuery (multi-dataitem join with data)",
-            "query-join-not-implemented — in-memory cross-table query joins are not yet supported; " +
-            "see docs/scope.md. (Empty-table joins are supported and return no rows.)");
+        // Multi-dataitem JOIN. We execute the join ourselves in the projection layer
+        // (ExecuteJoinQuery), reading every dataitem's table via this DataAccessSource.
+        // Stash the source keyed by the query definition so the projection layer can reach
+        // the sibling tables, and return the ROOT table's DataAccess so FindAsync still has
+        // a provider to call into (whose query-shaped Find we intercept and replace with the
+        // joined result set). See RecordPatches.QueryJoin.cs.
+        StashJoinSource(queryDefinition, self);
+        QLog($"GetDataAccessForQuery: {tableList.Count}-dataitem join → in-memory join via root DataAccess");
+        return accesses[0];
     }
 
     private static void EnsureGetDataAccessForQueryReflection(object dataAccessSource)
@@ -456,6 +455,22 @@ public static partial class RecordPatches
         var metaAppObj = _pReqMetaAppObj!.GetValue(request);
         if (metaAppObj == null || _tNCLMetaQuery == null || !_tNCLMetaQuery.IsInstanceOfType(metaAppObj))
             return rows; // ordinary table read — pass through unchanged.
+
+        // Multi-dataitem JOIN: ignore the single-table `rows` (the root scan the engine
+        // requested) and produce the joined+projected result set ourselves by reading
+        // every dataitem's table. See RecordPatches.QueryJoin.cs.
+        var queryDef = _tNCLMetaQuery.GetProperty("QueryDefinition", BindingFlags.Public | BindingFlags.Instance)!
+            .GetValue(metaAppObj);
+        if (queryDef != null && IsMultiDataItemQuery(queryDef))
+        {
+            // The isolated executor returns boxed ReadOnlyRecordBuffers (non-generic
+            // IEnumerable) so its assembly carries no Ncl type in its public surface; cast
+            // back here, where QueryProjection.cs already (necessarily) references the type.
+            var joined = ExecuteJoinQuery(metaAppObj).Cast<ReadOnlyRecordBuffer>();
+            var topJ = _pReqTopNumberOfRows!.GetValue(request);
+            int topNJ = topJ == null ? 0 : Convert.ToInt32(topJ);
+            return topNJ > 0 ? joined.Take(topNJ) : joined;
+        }
 
         // Query.TopNumberOfRowsToReturn caps the dataset. NavQuery passes it through the
         // request's TopNumberOfRowsToReturn; the temp provider's Find only honours

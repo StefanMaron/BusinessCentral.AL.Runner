@@ -47,6 +47,24 @@
     </AssemblyAttribute>
   </ItemGroup>
 
+  <!-- The isolated multi-dataitem query-JOIN executor. al-runner references it ONLY via
+       Assembly.LoadFrom + reflection at runtime (see RecordPatches.QueryJoin.cs) — there
+       is no compile-time type reference, so the executor's Ncl-reflecting IL never enters
+       al-runner.dll's metadata and cannot perturb the startup ReadyToRun bind. This
+       ProjectReference exists purely to co-build the assembly and copy it beside
+       al-runner.dll (and into the tool package). ReferenceOutputAssembly=false keeps the
+       compiler from binding against it. -->
+  <ItemGroup>
+    <ProjectReference Include="../AlRunner.QueryJoin/AlRunner.QueryJoin.csproj"
+                      ReferenceOutputAssembly="false"
+                      Private="true"
+                      OutputItemType="Content"
+                      CopyToOutputDirectory="PreserveNewest">
+      <Pack>true</Pack>
+      <PackagePath>tools/$(TargetFramework)/any/</PackagePath>
+    </ProjectReference>
+  </ItemGroup>
+
   <ItemGroup>
     <None Include="../README.md" Pack="true" PackagePath="/" />
     <None Include="../CHANGELOG.md" Pack="true" PackagePath="/" />

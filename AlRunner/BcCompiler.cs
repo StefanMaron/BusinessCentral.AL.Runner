@@ -942,7 +942,59 @@ public sealed class BcCompiler
                 alDiags.Add($"emit-crash: {caught.GetType().Name}: {caught.Message.Split('\n', 2)[0]}");
         }
 
+        // ── Bundle query-symbol registration ────────────────────────────────────
+        // Source-compiled queries (no prebuilt .app in the bundle root) have no
+        // SymbolReference.json, so the NCLMetaQuery builder cannot read this bundle's
+        // BC-compiler-assigned query column ids — and the emitted Query DLL calls
+        // GetColumnByNo with exactly those ids. Without them a query NREs in
+        // FindDataImplAsync (NCLMetaQuery==null). The prebuilt-.app path (corpus)
+        // already supplies them; this fills the gap for source-only bundles.
+        //
+        // We extract the queries from the SAME compilation we just emitted (so the ids
+        // match the DLL byte-for-byte — no extra compile), serialize them to a temp
+        // SymbolReference.json, and register that file so TryGetQuerySymbol finds them.
+        // Gated on the bundle actually declaring a query, so the common (no-query)
+        // bundle pays nothing.
+        if (caught == null && (emitResult?.Success ?? false) && BundleDeclaresQuery(alFiles))
+        {
+            try { EmitAndRegisterBundleQuerySymbols(compilation, moduleName); }
+            catch (Exception ex)
+            {
+                // Never fail the run for this — a query that then can't build its
+                // metaquery surfaces its own loud error downstream.
+                if (Environment.GetEnvironmentVariable("AL_RUNNER_QDIAG") == "1")
+                    Console.Error.WriteLine($"[BcCompiler] bundle query-symbol emit failed: {ex.Message}");
+            }
+        }
+
         return new BcEmitOutput(outputter.Captured, alDiags);
+    }
+
+    // Cheap text probe: does any source file declare an AL `query` object? Avoids
+    // building the (non-trivial) ModuleDefinition for the 99% of bundles with none.
+    private static bool BundleDeclaresQuery(IEnumerable<string> alFiles)
+    {
+        var rx = new System.Text.RegularExpressions.Regex(
+            @"(^|\n)\s*query\s+\d+\s", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        foreach (var f in alFiles)
+        {
+            try { if (rx.IsMatch(File.ReadAllText(f))) return true; } catch { }
+        }
+        return false;
+    }
+
+    // Serialize the compilation's SymbolReference (which carries Queries[] with the
+    // BC-compiler-assigned column ids) to a temp file and register it for query-symbol
+    // lookup. One file per (moduleName) — overwritten each run so it tracks the source.
+    private static void EmitAndRegisterBundleQuerySymbols(NavCA.Compilation compilation, string moduleName)
+    {
+        var safe = new string(moduleName.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
+        var dir = Path.Combine(Path.GetTempPath(), "al-runner-query-symbols");
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, safe + ".SymbolReference.json");
+        using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
+            SymbolJsonWriter.WriteSymbolJson(compilation, fs);
+        AlRunnerV2.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(path);
     }
 
     /// <summary>

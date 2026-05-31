@@ -42,6 +42,11 @@ public static partial class RecordPatches
     private static Dictionary<int, (string AppPath, ParsedTable Table)>? _bcSymbolTableIndex;
     // Query symbol index: queryId → QuerySymbol, built from registered .app SymbolReference.json.
     private static Dictionary<int, BcAppSymbolCache.QuerySymbol>? _bcSymbolQueryIndex;
+    // Raw SymbolReference.json files registered as query-symbol-only sources (the bundle's
+    // own freshly-compiled query metadata, written by BcCompiler.Emit for source-only
+    // bundles that ship no prebuilt .app). Kept separate from _bcAppPaths because these
+    // are loose .json files, not .app zips.
+    private static readonly List<string> _bcQuerySymbolJsonPaths = new();
     // Extension index built flag. Data lands directly in _parsedExtensionFields/_extensionIdsByBaseTable.
     private static bool _bcSymbolExtensionIndexBuilt;
     private static readonly object _bcTableIndexLock = new();
@@ -296,6 +301,25 @@ public static partial class RecordPatches
         }
     }
 
+    /// <summary>
+    /// Register a loose SymbolReference.json file (NOT a .app) as a query-symbol source.
+    /// Used for source-only bundles whose queries we just compiled in-process — the file
+    /// carries the BC-compiler-assigned column ids that the emitted Query DLL calls
+    /// GetColumnByNo with. Idempotent; invalidates the query index so it's re-read.
+    /// </summary>
+    public static void RegisterBundleQuerySymbolsJson(string jsonPath)
+    {
+        if (string.IsNullOrEmpty(jsonPath) || !File.Exists(jsonPath)) return;
+        lock (_bcTableIndexLock)
+        {
+            if (!_bcQuerySymbolJsonPaths.Contains(jsonPath, StringComparer.OrdinalIgnoreCase))
+                _bcQuerySymbolJsonPaths.Add(jsonPath);
+            // Always invalidate: the file is overwritten each run, so re-read even if the
+            // path was already registered.
+            _bcSymbolQueryIndex = null;
+        }
+    }
+
     private static void EnsureBcSymbolQueryIndex()
     {
         if (_bcSymbolQueryIndex != null) return;
@@ -311,6 +335,22 @@ public static partial class RecordPatches
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"[RecordPatches] BcAppFallback: query SymbolReference read failed for {Path.GetFileName(appPath)}: {ex.Message}");
+            }
+        }
+        // Loose SymbolReference.json sources (the bundle's own freshly-compiled queries).
+        // Registered AFTER .app sources but only filling gaps (ContainsKey guard), so a
+        // prebuilt .app's authoritative ids always win.
+        foreach (var jsonPath in _bcQuerySymbolJsonPaths)
+        {
+            try
+            {
+                foreach (var q in BcAppSymbolCache.GetFromJson(jsonPath).Queries)
+                    if (!idx.ContainsKey(q.Id))
+                        idx[q.Id] = q;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[RecordPatches] BcAppFallback: query symbols.json read failed for {Path.GetFileName(jsonPath)}: {ex.Message}");
             }
         }
         _bcSymbolQueryIndex = idx;

@@ -35,6 +35,23 @@ internal static partial class BcAppSymbolCache
     private sealed record CachePayload(long Length, long LastWriteUtcTicks,
         List<ParsedTable> Tables, List<EnumSymbol> Enums, List<QuerySymbol> Queries);
 
+    /// <summary>
+    /// Parse a loose <c>SymbolReference.json</c> file (the raw module JSON, NOT a .app
+    /// zip) into <see cref="AppSymbols"/>. Used for the bundle's own freshly-compiled
+    /// query symbols, written by <c>BcCompiler.Emit</c>. Mirrors <see cref="Parse"/> but
+    /// reads the JSON directly. No on-disk cache: the file is overwritten every run, and
+    /// parsing a single small module is cheap.
+    /// </summary>
+    internal static AppSymbols GetFromJson(string jsonPath)
+    {
+        var tables = new Dictionary<int, ParsedTable>();
+        var enums = new Dictionary<int, EnumSymbol>();
+        var queries = new Dictionary<int, QuerySymbol>();
+        using var doc = JsonDocument.Parse(File.ReadAllText(jsonPath));
+        VisitSymbolContainer(doc.RootElement, tables, enums, queries);
+        return new AppSymbols(tables.Values.ToList(), enums.Values.ToList(), queries.Values.ToList());
+    }
+
     internal static AppSymbols Get(string appPath)
     {
         var info = new FileInfo(appPath);

@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ════════════════════════════════════════════════════════════════════════
+       AlRunner.QueryJoin — the in-memory multi-dataitem query-JOIN executor,
+       deliberately isolated into its OWN assembly.
+
+       WHY A SEPARATE ASSEMBLY (the load-chain / R2R contract):
+         The join executor reflects heavily over BC's Microsoft.Dynamics.Nav.Runtime
+         types (NCLMetaQueryDefinition, ReadOnlyRecordBuffer, NavValue, …). When that
+         code lived inside al-runner.dll it tipped the process-startup ReadyToRun
+         cross-assembly binding (al-runner.dll → Ncl.dll) over a fragility cliff: a
+         minimal one-table Insert bundle SIGSEGV'd (exit 139) purely because this IL
+         was compiled in, even though it never executed. Sister class to the project's
+         known `feedback_r2r_cecil_token_shift` trap, but on the al-runner→Ncl R2R
+         binding side.
+
+         The fix is to keep this IL OUT of al-runner.dll's startup R2R metadata. To be
+         maximally robust this assembly references NO Ncl types in its own static
+         signatures either — it operates entirely on `object` + reflection, with the
+         handful of al-runner helpers it needs supplied as delegates via JoinContext.
+         al-runner loads it LAZILY (Assembly.Load on the first multi-dataitem query),
+         so the JIT never eagerly binds any of its (reflection-only) fixups at process
+         start. The minimal-insert canary then passes with R2R ON again.
+
+         This is our own assembly — fully ours to change (precompiled-dll-respect:
+         "the runtime engine / our compile pipeline / our own assemblies are ours").
+       ════════════════════════════════════════════════════════════════════════ -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>AlRunner.QueryJoin</AssemblyName>
+    <RootNamespace>AlRunnerV2.QueryJoin</RootNamespace>
+    <TieredCompilation>false</TieredCompilation>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- Pure reflection over Ncl types — NO direct Reference to any BC DLL. That is
+         the whole point: nothing here participates in al-runner's startup R2R bind. -->
+  </PropertyGroup>
+
+</Project>
