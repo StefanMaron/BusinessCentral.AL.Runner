@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 109;
+    private const int CACHE_VERSION = 114;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -4531,6 +4531,25 @@ public static class NclCecilRewrite
                 ByParams(Rt + "TempTableDataProvider", "FindFromPosition", "PositionedFindProviderRequest", "Func`1"),
                 H(recordPatches, "TempTableDataProvider_FindFromPosition"));
 
+            // ── DataAccess.InnerFindAsync — virtual Field table (2000000041) managed bypass ──
+            // The virtual Field system table cannot go through BC's native InnerFindAsync: its
+            // SQL transactional-cache prologue (per-object SystemId/PrimaryKey caches +
+            // table-version tokens, keyed by ObjectId) AVs because the virtual table is never
+            // registered in those structures (the service tier serves it from a dedicated
+            // VirtualDataProvider that bypasses this cache; crash file-proven, even with zero
+            // rows and TableType=Temporary). We PREPEND a guard to InnerFindAsync that, ONLY when
+            // request.MetaApplicationObject.ObjectId == 2000000041, calls our managed find
+            // (provider.Find → ResultSet → ResultSetEnumerator — InnerFindAsync's own safe tail)
+            // and returns; every other table falls through to the ORIGINAL InnerFindAsync IL
+            // untouched. We target InnerFindAsync (NOT the tiny FindAsync, which is R2R-inlined
+            // into its callers and so a rewrite of it never fires under default R2R — file-traced).
+            // The helper returns a boxed ValueTask<ResultSetEnumerator>; the prepended IL
+            // unbox.any's it to the declared return type. See RecordPatches.FieldFindIntercept.cs.
+            PrependFieldFindGuard(nclMod,
+                ByParams(Rt + "DataAccess", "InnerFindAsync", "FindCacheRequest", "Boolean", "Func`1"),
+                H(recordPatches, "DataAccess_IsFieldFindRequest"),
+                H(recordPatches, "DataAccess_FieldFindManaged"));
+
             // ── NavDatabase / NavRecordId collation comparers ───────────────────
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "NavDatabase", "get_CollationAwareStringComparer", 0),
@@ -4996,6 +5015,79 @@ public static class NclCecilRewrite
         body.MaxStackSize = Math.Max(1, argCount);
         Console.Error.WriteLine($"[Cecil] Replaced {target.FullName} → {helperMi.DeclaringType?.Name}.{helperMi.Name}"
             + (needsCast ? $" (castclass {targetRet.Name})" : ""));
+    }
+
+    /// <summary>
+    /// PREPEND a conditional guard to the START of <paramref name="target"/> (a value-type-return
+    /// method) WITHOUT replacing the original body. Emits, before the original first instruction:
+    /// <code>
+    ///   if (predicate(this, arg1)) {           // predicate: object,object → bool
+    ///       return (TRet)(boxed) handler(this, arg1, arg2);   // handler: object,object,bool → object
+    ///   }
+    ///   // else fall through to the ORIGINAL body unchanged
+    /// </code>
+    /// Used to intercept DataAccess.InnerFindAsync for the virtual Field table only, leaving the
+    /// original async body intact for every other table. The handler returns a boxed value-type
+    /// (ValueTask&lt;ResultSetEnumerator&gt;); we unbox.any to the declared return type.
+    /// Token-safe: imports only our two helper refs + the target's OWN return-type reference.
+    /// Assumes target shape: instance method (this), arg1 = request (ref type), arg2 = bool.
+    /// </summary>
+    private static void PrependFieldFindGuard(
+        ModuleDefinition module, MethodDefinition target, MethodInfo predicateMi, MethodInfo handlerMi)
+    {
+        if (!target.HasThis || target.Parameters.Count < 2)
+            throw new InvalidOperationException($"[Cecil] {target.FullName} unexpected shape for PrependFieldFindGuard");
+        if (predicateMi.ReturnType != typeof(bool))
+            throw new InvalidOperationException($"[Cecil] {predicateMi.Name} must return bool");
+        if (handlerMi.ReturnType != typeof(object))
+            throw new InvalidOperationException($"[Cecil] {handlerMi.Name} must return object");
+        var targetRet = target.ReturnType;
+        if (!targetRet.IsValueType)
+            throw new InvalidOperationException($"[Cecil] {target.FullName} return must be a value type");
+
+        var predicateRef = module.ImportReference(predicateMi);
+        var handlerRef = module.ImportReference(handlerMi);
+        var body = target.Body;
+        var il = body.GetILProcessor();
+        var first = body.Instructions[0];
+
+        // Build the prologue in REVERSE-insert order before `first`.
+        // IL:
+        //   ldarg.0                       // this
+        //   ldarg.1                       // request
+        //   call bool predicate(object,object)
+        //   brfalse  <first>              // not Field → run original body
+        //   ldarg.0                       // this
+        //   ldarg.1                       // request
+        //   ldarg.2                       // fromPosition (bool)
+        //   call object handler(object,object,bool)
+        //   unbox.any <TRet>
+        //   ret
+        var ldThis1 = il.Create(OpCodes.Ldarg_0);
+        var ldReq1 = il.Create(OpCodes.Ldarg_1);
+        var callPred = il.Create(OpCodes.Call, predicateRef);
+        var brFalse = il.Create(OpCodes.Brfalse, first);
+        var ldThis2 = il.Create(OpCodes.Ldarg_0);
+        var ldReq2 = il.Create(OpCodes.Ldarg_1);
+        var ldPos = il.Create(OpCodes.Ldarg_2);
+        var callHandler = il.Create(OpCodes.Call, handlerRef);
+        var unbox = il.Create(OpCodes.Unbox_Any, targetRet);
+        var ret = il.Create(OpCodes.Ret);
+
+        il.InsertBefore(first, ldThis1);
+        il.InsertBefore(first, ldReq1);
+        il.InsertBefore(first, callPred);
+        il.InsertBefore(first, brFalse);
+        il.InsertBefore(first, ldThis2);
+        il.InsertBefore(first, ldReq2);
+        il.InsertBefore(first, ldPos);
+        il.InsertBefore(first, callHandler);
+        il.InsertBefore(first, unbox);
+        il.InsertBefore(first, ret);
+
+        // Prologue pushes at most 3 slots (this,request,bool); ensure stack is large enough.
+        body.MaxStackSize = Math.Max(body.MaxStackSize, 3);
+        Console.Error.WriteLine($"[Cecil] Prepended Field-find guard to {target.FullName} → {handlerMi.DeclaringType?.Name}.{handlerMi.Name}");
     }
 
     /// <summary>

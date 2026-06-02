@@ -39,6 +39,8 @@ public static partial class RecordPatches
     private static FieldInfo? _fVatdcInstance;
     private static Type? _tDataAccessSource;
     private static MethodInfo? _mCreateTempDataAccess;
+    private static MethodInfo? _mGetVirtualDataAccess;
+    private static System.Reflection.PropertyInfo? _pNclMetaTableIsVirtualTable;
     private static Type? _tGlobalFilters;
     private static Type? _tNavDatabase;
     private static Type? _tCollationAwareStringComparer;
@@ -243,6 +245,14 @@ public static partial class RecordPatches
         _tDataAccessSource = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.DataAccessSource")!;
         _mCreateTempDataAccess = _tDataAccessSource.GetMethod("CreateTempDataAccess",
             BindingFlags.NonPublic | BindingFlags.Instance)!;
+        // GetVirtualDataAccess(NCLMetaTable) — BC's real router for virtual/system tables
+        // (Field=2000000041 → FieldDataProvider, AllObj=2000000038 → AllObjDataProvider, …).
+        // We re-route virtual tables here instead of dumping them into the empty temp store.
+        _mGetVirtualDataAccess = _tDataAccessSource.GetMethod("GetVirtualDataAccess",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        _pNclMetaTableIsVirtualTable = nclAsm
+            .GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetaTable")!
+            .GetProperty("IsVirtualTable", BindingFlags.Public | BindingFlags.Instance);
 
         // GlobalFilters (public ctor)
         _tGlobalFilters = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.GlobalFilters")!;
@@ -984,6 +994,51 @@ public static partial class RecordPatches
             var perTable = _dataAccessByTable.GetValue(self,
                 static _ => new ConcurrentDictionary<int, object>());
             var tableId = table.TableId;
+
+            // ── Virtual Field system table (2000000041) ──────────────────────────────────
+            // The Field table is virtual: the service tier computes its rows on the fly from
+            // NCLMetadata (one row per NCLMetaField of the filtered TableNo) via the native
+            // FieldDataProvider. Routing it to our empty in-memory store returns zero rows,
+            // which makes BC code that iterates it (e.g. "Library - Workflow".EnableWorkflow,
+            // Field.SetRange(TableNo,<t>); Field.FindSet()) throw "There is no Field within the
+            // filter."
+            //
+            // The block below builds a managed Field-row provider: it populates our in-memory
+            // store with REAL Field rows produced by BC's OWN managed row-builder
+            // FieldDataProvider.GetFieldRecordBuffer (a pure NCLMetaField→NavValue[] projection,
+            // NOT the crashing native find path) — see RecordPatches.FieldVirtualTable.cs. The
+            // populate is faithful and works (hundreds of rows insert cleanly for every table).
+            //
+            // DEFAULT-ON. The subsequent `Field.FindSet()` is routed through a managed find
+            // interception (a guard prepended to DataAccess.InnerFindAsync — see
+            // RecordPatches.FieldFindIntercept.cs) that, for 2000000041 ONLY, runs the find
+            // entirely in managed code (provider.Find → ResultSet → ResultSetEnumerator),
+            // bypassing BC's native InnerFindAsync SQL transactional-cache prologue which AVs on
+            // this virtual system table (its per-object SystemId/PK caches + table-version tokens
+            // are never allocated — crash file-proven even with zero rows and TableType=Temporary).
+            // The filtered TableNo's field rows are populated on demand at find time. Every other
+            // table falls through to the original native InnerFindAsync unchanged.
+            if (IsFieldVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var fieldDa))
+                {
+                    var created = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    fieldDa = perTable.GetOrAdd(tableId, created);
+                }
+                // Top up rows for every source table currently materialised (idempotent). The
+                // subsequent Field.FindSet() is routed through DataAccess_FindAsync (a managed
+                // bypass of BC's R2R InnerFindAsync, which AVs on this virtual system table) —
+                // see RecordPatches.FieldFindIntercept.cs — and the filtered TableNo is populated
+                // on demand there. This whole path is now DEFAULT-ON (no env gate): the find
+                // interception means a populated Field table no longer crashes under R2R.
+                var session = _fDasSession?.GetValue(self)
+                    ?? throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                        "Field (virtual table 2000000041)",
+                        "field-virtual-table — DataAccessSource has no skeleton session; see docs/scope.md");
+                PopulateFieldVirtualTable(fieldDa, table, session);
+                return fieldDa;
+            }
+
             if (perTable.TryGetValue(tableId, out var cached))
             {
                 return cached;

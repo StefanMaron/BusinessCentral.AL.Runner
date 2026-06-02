@@ -17,6 +17,50 @@ public static partial class BcRuntime
 {
     private static object? _skeletonNCLMetadata;
     private static object? _skeletonSystemTenant;
+    private static Type? _systemTenantTypeForSeed;
+    private static bool _metadataProviderSeeded;
+
+    /// <summary>
+    /// Lazily seed the skeleton NavSystemTenant.metadataProvider with a real MetadataProvider —
+    /// exactly what NavSystemTenant's own ctor does (`metadataProvider = new MetadataProvider();`).
+    /// We skipped that ctor via GetUninitializedObject, so NavGlobal.MetadataProvider
+    /// (=> SystemTenant.MetadataProvider) is null. The virtual-Field data provider
+    /// (FieldDataProvider) derives from MetadataDataProvider whose ctor ThrowIfNull's the provider,
+    /// so it cannot construct without this. Called the FIRST time the virtual Field table is
+    /// accessed (never eagerly), so non-Field-table tests see baseline NavGlobal state.
+    /// </summary>
+    public static void EnsureMetadataProviderSeeded()
+    {
+        if (_metadataProviderSeeded) return;
+        _metadataProviderSeeded = true;
+        var systemTenantType = _systemTenantTypeForSeed;
+        if (systemTenantType == null || _skeletonSystemTenant == null) return;
+        var stMetaProvField = systemTenantType.GetField("metadataProvider", BindingFlags.NonPublic | BindingFlags.Instance);
+        if (stMetaProvField == null)
+        {
+            Console.Error.WriteLine("[BcRuntime] EnsureMetadataProviderSeeded: NavSystemTenant.metadataProvider field NOT FOUND — virtual Field table will fail");
+            return;
+        }
+        // Only seed if currently null (don't clobber a real provider).
+        if (stMetaProvField.GetValue(_skeletonSystemTenant) != null) return;
+        try
+        {
+            var metaProvType = stMetaProvField.FieldType; // Microsoft.Dynamics.Nav.XmlMetadata.MetadataProvider
+            var metaProvCtor = metaProvType.GetConstructor(
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance, null, Type.EmptyTypes, null);
+            var metaProv = metaProvCtor != null
+                ? metaProvCtor.Invoke(null)
+                : RuntimeHelpers.GetUninitializedObject(metaProvType);
+            FieldPoke.SetInstance(stMetaProvField, _skeletonSystemTenant, metaProv);
+        }
+        catch (Exception ex)
+        {
+            var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+            Console.Error.WriteLine($"[BcRuntime] EnsureMetadataProviderSeeded: MetadataProvider seed failed ({inner.GetType().Name}: {inner.Message}); falling back to uninitialised instance");
+            FieldPoke.SetInstance(stMetaProvField, _skeletonSystemTenant,
+                RuntimeHelpers.GetUninitializedObject(stMetaProvField.FieldType));
+        }
+    }
 
     /// <summary>Exposes the manufactured skeleton NCLMetadata so other patch files can
     /// FieldPoke into its caches (e.g. populate per-table NCLMetaTable entries).</summary>
@@ -95,6 +139,30 @@ public static partial class BcRuntime
         var stNclField = systemTenantType.GetField("nclMetadata", BindingFlags.NonPublic | BindingFlags.Instance);
         if (stNclField != null)
             FieldPoke.SetInstance(stNclField, _skeletonSystemTenant, _skeletonNCLMetadata);
+
+        // 4½. Seed the skeleton SystemTenant's `metadataProvider` field with a real
+        //      MetadataProvider — exactly what NavSystemTenant's own ctor does
+        //      (`metadataProvider = new MetadataProvider();`). We skipped that ctor via
+        //      GetUninitializedObject, so NavGlobal.MetadataProvider (=> SystemTenant.MetadataProvider)
+        //      was null. Virtual-table data providers (FieldDataProvider, AllObjDataProvider, …)
+        //      derive from MetadataDataProvider whose ctor `ArgumentNullException.ThrowIfNull`s the
+        //      MetadataProvider, so without this the virtual Field table (2000000041) could not be
+        //      served and BC's Field-iterating code threw "There is no Field within the filter."
+        //      A bare `new MetadataProvider()` is the faithful default — the FieldDataProvider's
+        //      GetFieldsOnTable path reads only NclMetadata, never dereferencing this provider.
+        // Seeding a real MetadataProvider lets us construct a MANAGED FieldDataProvider whose
+        // row-builder (GetFieldRecordBuffer) materialises the virtual Field table (2000000041)
+        // rows — see RecordPatches.FieldVirtualTable.cs. DEFAULT-ON: the downstream Field.FindSet()
+        // is now routed through a managed find interception (RecordPatches.FieldFindIntercept.cs)
+        // that bypasses BC's R2R DataAccess.InnerFindAsync (which AVs on this virtual system
+        // table), so the whole virtual-Field path ships on by default.
+        // NOTE: seeding NavSystemTenant.metadataProvider is deferred to a LAZY call
+        // (EnsureMetadataProviderSeeded), triggered the first time the virtual Field table
+        // (2000000041) is actually accessed — see RecordPatches.FieldVirtualTable. Seeding it
+        // eagerly here changed NavGlobal.MetadataProvider for ALL tests and was observed to
+        // perturb unrelated paths (e.g. NavQuery.ValidateTablesNotVirtual). Lazy seeding keeps
+        // every non-Field-table test byte-identical to baseline.
+        _systemTenantTypeForSeed = systemTenantType;
 
         // 4a. Seed NavTenant.defaultEncoding so NavTenant.DefaultEncoding returns without touching the
         //      tenant Database. With a non-null tenant now wired onto the session (step below), the
