@@ -478,12 +478,19 @@ public static partial class RecordPatches
                     var key = ext.TargetTableName.ToLowerInvariant();
 
                     // Append fields to _parsedExtensionFields — keep existing list from AL source.
-                    // IMPORTANT: do NOT add ext.ExtensionId to _extensionIdsByBaseTable.
-                    // _extensionIdsByBaseTable drives RegisterParsedTableExtensions which instantiates
-                    // the runner-compiled TableExtension{id} CLR type and wires its AL triggers.
-                    // Precompiled extension types from dep .app DLLs are handled by BC's own R2R
-                    // machinery — registering them from _extensionIdsByBaseTable would cause double-
-                    // registration (BC registers the precompiled type, we'd register it again → CRASH).
+                    // Also add the extension id to _extensionIdsByBaseTable so RegisterParsedTableExtensions
+                    // can instantiate the precompiled TableExtension{id} CLR type (from dep .app DLLs)
+                    // and wire its triggers. This mirrors the AL-source path (AlSourceParser.cs:257-260).
+                    // Registration is guarded in RegisterParsedTableExtensions: malformed instances
+                    // (ObjectId.ObjectNumber ≠ extId) and duplicates are skipped without crashing.
+                    if (ext.ExtensionId > 0)
+                    {
+                        if (!_extensionIdsByBaseTable.TryGetValue(key, out var extIdList))
+                            _extensionIdsByBaseTable[key] = extIdList = new List<int>();
+                        if (!extIdList.Contains(ext.ExtensionId))
+                            extIdList.Add(ext.ExtensionId);
+                    }
+
                     if (!_parsedExtensionFields.TryGetValue(key, out var existing))
                         _parsedExtensionFields[key] = new List<ParsedField>(ext.Fields);
                     else

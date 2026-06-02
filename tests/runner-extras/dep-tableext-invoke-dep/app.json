@@ -1,0 +1,23 @@
+{
+  "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+  "name": "DepTableExt Dep",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Dependency app: defines a table and a tableextension that adds a field + a procedure.",
+  "description": "Cross-bundle half of dep-tableext-invoke. Defines a base table and a tableextension that adds a field and a procedure on it. The consuming app calls the extension procedure to verify InvokeAsync fires correctly for a runner-compiled dep tableextension.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 60700,
+      "to": 60749
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

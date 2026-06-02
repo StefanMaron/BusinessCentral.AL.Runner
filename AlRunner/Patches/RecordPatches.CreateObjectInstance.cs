@@ -91,6 +91,7 @@ public static partial class RecordPatches
     private static FieldInfo? _fObjectIdBacking;
     private static System.Reflection.ConstructorInfo? _ctorApplicationObjectId;
     private static object? _objectTypeTableEnum;
+    private static object? _objectTypeTableExtensionEnum;
 
     /// <summary>
     /// Ensure a freshly-built record carries ObjectId = (Table, tableId). Records the runner
@@ -105,25 +106,7 @@ public static partial class RecordPatches
         if (tableId <= 0) return;
         try
         {
-            if (_fObjectIdBacking == null)
-            {
-                var aobType = typeof(Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase);
-                _fObjectIdBacking = aobType.GetField("objectId",
-                    BindingFlags.NonPublic | BindingFlags.Instance);
-                var navNcl = aobType.Assembly;
-                var tAppObjId = navNcl.GetType("Microsoft.Dynamics.Nav.Types.ApplicationObjectId")
-                    ?? AppDomain.CurrentDomain.GetAssemblies()
-                        .Select(a => a.GetType("Microsoft.Dynamics.Nav.Types.ApplicationObjectId"))
-                        .FirstOrDefault(t => t != null);
-                var tObjectType = AppDomain.CurrentDomain.GetAssemblies()
-                    .Select(a => a.GetType("Microsoft.Dynamics.Nav.Types.ObjectType"))
-                    .FirstOrDefault(t => t != null);
-                if (tAppObjId != null && tObjectType != null)
-                {
-                    _objectTypeTableEnum = Enum.Parse(tObjectType, "Table");
-                    _ctorApplicationObjectId = tAppObjId.GetConstructor(new[] { tObjectType, typeof(int) });
-                }
-            }
+            EnsureApplicationObjectIdHelpers();
             if (_fObjectIdBacking == null || _ctorApplicationObjectId == null || _objectTypeTableEnum == null)
                 return;
 
@@ -136,6 +119,59 @@ public static partial class RecordPatches
             AlRunnerV2.Infrastructure.FieldPoke.SetInstance(_fObjectIdBacking, rec, oid);
         }
         catch { /* best-effort: stamping is a safety net, never fatal */ }
+    }
+
+    /// <summary>
+    /// Stamp ObjectId = (TableExtension, extId) on a freshly-constructed extension instance.
+    /// The NavApplicationObjectBase ctor replacement (NavApplicationObjectBaseCtorReplacement)
+    /// skips the `this.objectId = objectId` assignment because the field is readonly and the
+    /// replacement needs to avoid the NRE-prone session/app-group calls. As a result every
+    /// runner-constructed NavRecordExtension comes out with ObjectId.ObjectNumber == 0.
+    /// NavRecord.RegisterTableExtension keys tableExtensionsById on ObjectId.ObjectNumber, so
+    /// all extensions end up at key 0 and the second registration crashes with ArgumentException.
+    /// Stamping the correct id here fixes both the crash and makes InvokeAsync(extId) find the
+    /// right extension at runtime (it searches by ObjectId.ObjectNumber == extensionId).
+    /// Faithful: an extension's ObjectId IS (TableExtension, extId) — see NavRecordExtension ctor.
+    /// </summary>
+    private static void StampExtensionObjectId(NavRecordExtension ext, int extId)
+    {
+        if (extId <= 0) return;
+        try
+        {
+            EnsureApplicationObjectIdHelpers();
+            if (_fObjectIdBacking == null || _ctorApplicationObjectId == null || _objectTypeTableExtensionEnum == null)
+                return;
+
+            var current = _fObjectIdBacking.GetValue(ext);
+            var onProp = current?.GetType().GetProperty("ObjectNumber");
+            if (onProp?.GetValue(current) is int n && n != 0) return; // already correct
+
+            var oid = _ctorApplicationObjectId.Invoke(new object?[] { _objectTypeTableExtensionEnum, extId });
+            AlRunnerV2.Infrastructure.FieldPoke.SetInstance(_fObjectIdBacking, ext, oid);
+        }
+        catch { /* best-effort */ }
+    }
+
+    private static void EnsureApplicationObjectIdHelpers()
+    {
+        if (_fObjectIdBacking != null) return;
+        var aobType = typeof(Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase);
+        _fObjectIdBacking = aobType.GetField("objectId",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        var navNcl = aobType.Assembly;
+        var tAppObjId = navNcl.GetType("Microsoft.Dynamics.Nav.Types.ApplicationObjectId")
+            ?? AppDomain.CurrentDomain.GetAssemblies()
+                .Select(a => a.GetType("Microsoft.Dynamics.Nav.Types.ApplicationObjectId"))
+                .FirstOrDefault(t => t != null);
+        var tObjectType = AppDomain.CurrentDomain.GetAssemblies()
+            .Select(a => a.GetType("Microsoft.Dynamics.Nav.Types.ObjectType"))
+            .FirstOrDefault(t => t != null);
+        if (tAppObjId != null && tObjectType != null)
+        {
+            _objectTypeTableEnum = Enum.Parse(tObjectType, "Table");
+            _objectTypeTableExtensionEnum = Enum.Parse(tObjectType, "TableExtension");
+            _ctorApplicationObjectId = tAppObjId.GetConstructor(new[] { tObjectType, typeof(int) });
+        }
     }
 
     private static NavRecord? BuildBaseNavRecord(
@@ -267,8 +303,15 @@ public static partial class RecordPatches
                     $"{extType.FullName} has no (ITreeObject) constructor — cannot register table extension " +
                     $"for table {tableId}; its triggers would silently not fire.");
             var ext = (NavRecordExtension?)ctor.Invoke(new object?[] { rec });
-            if (ext != null)
-                rec.RegisterTableExtension(ext);
+            if (ext == null) continue;
+
+            // The NavApplicationObjectBase ctor replacement skips setting objectId (readonly field).
+            // Stamp it now so RegisterTableExtension's tableExtensionsById.Add(ObjectId.ObjectNumber)
+            // uses the correct extId as the key instead of 0. This also makes InvokeAsync(extId) find
+            // the extension (it searches orderedTableExtensions by ObjectId.ObjectNumber == extensionId).
+            StampExtensionObjectId(ext, extId);
+
+            rec.RegisterTableExtension(ext);
         }
     }
 }

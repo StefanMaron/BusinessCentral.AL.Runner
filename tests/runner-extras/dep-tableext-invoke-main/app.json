@@ -1,0 +1,30 @@
+{
+  "id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+  "name": "DepTableExt Main",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Main test app: invokes a procedure on a tableextension defined in a DEPENDENCY app.",
+  "description": "Proves that runner-compiled tableextension code in a dependency app is correctly registered on records (via RegisterParsedTableExtensions / _extensionIdsByBaseTable) and that the AL InvokeAsync path reaches it — the cross-bundle analogue of the RS CU74486 posting path where a precompiled BaseApp tableextension was not found.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "name": "DepTableExt Dep",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 60750,
+      "to": 60799
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
