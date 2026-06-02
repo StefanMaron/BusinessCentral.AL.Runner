@@ -467,6 +467,13 @@ public static partial class RecordPatches
             // IEnumerable) so its assembly carries no Ncl type in its public surface; cast
             // back here, where QueryProjection.cs already (necessarily) references the type.
             var joined = ExecuteJoinQuery(metaAppObj).Cast<ReadOnlyRecordBuffer>();
+            // Apply the live NavQuery's runtime filters (SetRange/SetFilter) as a POST-projection
+            // pass. The single-dataitem path pushes these into the temp provider's WHERE
+            // (TranslateQueryFilters); the join executor reads each dataitem's table with only its
+            // STATIC metadata filters, so runtime filters must be evaluated against the projected
+            // rows here. Without this the join returns UNFILTERED rows (a correctness bug). Done
+            // before Top so the cap applies to the filtered set, matching SQL TOP-after-WHERE.
+            joined = ApplyJoinRuntimeFilters(metaAppObj, request, joined);
             var topJ = _pReqTopNumberOfRows!.GetValue(request);
             int topNJ = topJ == null ? 0 : Convert.ToInt32(topJ);
             return topNJ > 0 ? joined.Take(topNJ) : joined;
@@ -482,6 +489,107 @@ public static partial class RecordPatches
         if (topN > 0) rows = rows.Take(topN);
 
         return ProjectQueryRows(metaAppObj, rows);
+    }
+
+    private static MethodInfo? _mFilterExprEvaluate;
+    private static PropertyInfo? _pColColumnIndexQ;
+
+    /// <summary>
+    /// Apply the live NavQuery's runtime filters (the request's FiltersAndMarks, keyed by
+    /// NCLMetaQueryColumn) to the already-projected join rows. Each filter's FilterExpression
+    /// is evaluated — using BC's own <c>FilterExpression.Evaluate(NavValue, ISortingRulesProvider)</c>,
+    /// so range / &lt;&gt; / &amp; / | semantics match real BC exactly — against the NavValue in the
+    /// column's projection slot (NCLMetaQueryColumn.ColumnIndex). Rows failing any filter are
+    /// dropped. If a filtered column is NOT projected (no result slot, ColumnIndex &lt; 0, or out
+    /// of range) we cannot evaluate it post-projection, so we throw RunnerOutOfScopeException
+    /// rather than silently return wrong rows (loud-failures rule).
+    /// </summary>
+    private static IEnumerable<ReadOnlyRecordBuffer> ApplyJoinRuntimeFilters(
+        object nclMetaQuery, object request, IEnumerable<ReadOnlyRecordBuffer> rows)
+    {
+        EnsureFilterReflection();
+        var fam = request.GetType().GetProperty("FiltersAndMarks", BindingFlags.Public | BindingFlags.Instance)?
+            .GetValue(request);
+        if (fam == null) return rows;
+        var filters = _tFiltersAndMarks!.GetProperty("Filters", BindingFlags.Public | BindingFlags.Instance)!
+            .GetValue(fam);
+        if (filters == null) return rows;
+        var items = (Array?)_tFilterFieldDictionary!.GetProperty("Items", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
+            .GetValue(filters);
+        if (items == null || items.Length == 0) return rows; // no runtime filters → unchanged.
+
+        // Build (projectionSlot, FilterExpression) pairs. Loud-fail on any non-projected column.
+        _pColColumnIndexQ ??= _tNCLMetaQueryColumn!.GetProperty("ColumnIndex", BindingFlags.Public | BindingFlags.Instance)!;
+        var conds = new List<(int slot, object expr)>();
+        foreach (var item in items)
+        {
+            // Tuple<INavFieldMetadata, FilterExpression>
+            var key = item!.GetType().GetProperty("Item1")!.GetValue(item);
+            var expr = item.GetType().GetProperty("Item2")!.GetValue(item);
+            if (expr == null) continue;
+            if (key == null || _tNCLMetaQueryColumn == null || !_tNCLMetaQueryColumn.IsInstanceOfType(key))
+                // A non-query-column key on a query request should not occur; refuse to guess.
+                throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                    "NavQuery (multi-dataitem join)",
+                    "query-join-runtime-filter-on-nonprojected-column — a runtime filter is keyed by a " +
+                    $"non-query-column ({key?.GetType().Name ?? "null"}); cannot evaluate post-projection; see docs/scope.md");
+            int slot = (int)_pColColumnIndexQ.GetValue(key)!;
+            if (slot < 0)
+                throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                    "NavQuery (multi-dataitem join)",
+                    "query-join-runtime-filter-on-nonprojected-column — a runtime filter targets a query " +
+                    "column with no result slot (filter-only column); cannot evaluate post-projection; see docs/scope.md");
+            conds.Add((slot, expr));
+        }
+        if (conds.Count == 0) return rows;
+
+        var session = TryGetCurrentSession(nclMetaQuery);
+        return rows.Where(row =>
+        {
+            foreach (var (slot, expr) in conds)
+            {
+                if (slot >= row.FieldCount)
+                    throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                        "NavQuery (multi-dataitem join)",
+                        $"query-join-runtime-filter-on-nonprojected-column — filtered slot {slot} is outside the " +
+                        $"projected row (FieldCount {row.FieldCount}); cannot evaluate post-projection; see docs/scope.md");
+                var navValue = row[slot];
+                if (!EvaluateFilterExpression(expr, navValue, session))
+                    return false;
+            }
+            return true;
+        });
+    }
+
+    /// <summary>Invoke BC's FilterExpression.Evaluate(NavValue, ISortingRulesProvider) by reflection.</summary>
+    private static bool EvaluateFilterExpression(object expr, object navValue, object? sortingRules)
+    {
+        _mFilterExprEvaluate ??= _tFilterExpr!.GetMethod("Evaluate", BindingFlags.Public | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("FilterExpression.Evaluate(NavValue, ISortingRulesProvider) not found");
+        return (bool)_mFilterExprEvaluate.Invoke(expr, new[] { navValue, sortingRules })!;
+    }
+
+    private static PropertyInfo? _pNavCurrentThreadSession;
+    private static bool _navCurrentThreadResolved;
+
+    /// <summary>
+    /// The current NavSession (which implements ISortingRulesProvider) — the same sorting-rules
+    /// provider BC passes to FilterExpression.Evaluate on the real WHERE path. Used only by the
+    /// Text/Code-collation comparison branch of FilterExpressionContext.Compare; null is tolerated
+    /// for numeric/integer comparisons. Resolved via NavCurrentThread.Session.
+    /// </summary>
+    private static object? TryGetCurrentSession(object anyNclTyped)
+    {
+        if (!_navCurrentThreadResolved)
+        {
+            _navCurrentThreadResolved = true;
+            var nclAsm = anyNclTyped.GetType().Assembly;
+            var tNavCurrentThread = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.NavCurrentThread");
+            _pNavCurrentThreadSession = tNavCurrentThread?.GetProperty("Session",
+                BindingFlags.Public | BindingFlags.Static | BindingFlags.NonPublic);
+        }
+        try { return _pNavCurrentThreadSession?.GetValue(null); }
+        catch { return null; }
     }
 
     // Cached per NCLMetaQuery: the (queryColumnIndex -> tableFieldColumnIndex) projection map

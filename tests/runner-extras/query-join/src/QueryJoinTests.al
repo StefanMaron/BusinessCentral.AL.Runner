@@ -138,6 +138,79 @@ codeunit 60391 "QJ Query Join Tests"
     end;
 
     [Test]
+    procedure InnerJoin_RuntimeSetRangeOnParentColumn_FiltersJoinedRows()
+    var
+        Q: Query "QJ Cust Orders Inner";
+        RowCount: Integer;
+    begin
+        // Runtime filter on a PARENT query column. Without filters InnerJoin yields 3 rows
+        // (Alice/1/100, Alice/2/200, Bob/3/300). SetRange(CustNo='C2') must keep ONLY Bob's
+        // single order row. If the join executor ignored runtime filters it would return all
+        // three rows (this assertion would then fail) — proving the filter is applied.
+        Seed();
+        Q.SetRange(CustNo, 'C2');
+        Q.Open();
+        RowCount := 0;
+
+        Assert.IsTrue(Q.Read(), 'Filtered InnerJoin must return Bob''s joined row');
+        RowCount += 1;
+        Assert.AreEqual('C2', Q.CustNo, 'Filtered row must be the C2 (Bob) row');
+        Assert.AreEqual('Bob', Q.CustName, 'Filtered row customer name');
+        Assert.AreEqual(3, Q.EntryNo, 'Filtered row order entry no');
+        Assert.AreEqual(300, Q.Amount, 'Filtered row order amount');
+
+        Assert.IsFalse(Q.Read(), 'SetRange(CustNo=C2) must exclude all of Alice''s rows');
+        Q.Close();
+        Assert.AreEqual(1, RowCount, 'SetRange on parent column must return exactly 1 joined row');
+    end;
+
+    [Test]
+    procedure InnerJoin_RuntimeSetFilterOnChildColumn_FiltersJoinedRows()
+    var
+        Q: Query "QJ Cust Orders Inner";
+        RowCount: Integer;
+        SawAmount200: Boolean;
+        SawAmount300: Boolean;
+    begin
+        // Runtime SetFilter on a CHILD query column. Amount > 150 must drop order 1 (100) and
+        // keep orders 2 (200) and 3 (300). Unfiltered would be 3 rows incl. Amount 100.
+        Seed();
+        Q.SetFilter(Amount, '>%1', 150);
+        Q.Open();
+        RowCount := 0;
+        SawAmount200 := false;
+        SawAmount300 := false;
+
+        while Q.Read() do begin
+            RowCount += 1;
+            Assert.IsTrue(Q.Amount > 150, 'Every returned row must satisfy Amount>150');
+            if Q.Amount = 200 then
+                SawAmount200 := true;
+            if Q.Amount = 300 then
+                SawAmount300 := true;
+        end;
+        Q.Close();
+
+        Assert.AreEqual(2, RowCount, 'SetFilter(Amount>150) must return exactly 2 joined rows');
+        Assert.IsTrue(SawAmount200, 'Amount 200 row must be present');
+        Assert.IsTrue(SawAmount300, 'Amount 300 row must be present');
+    end;
+
+    [Test]
+    procedure InnerJoin_RuntimeSetRange_ExcludingValue_ClosesResultSet()
+    var
+        Q: Query "QJ Cust Orders Inner";
+    begin
+        // A runtime filter value matching NO joined row must yield an empty resultset.
+        // If filters were ignored this would (wrongly) return all 3 rows and FAIL.
+        Seed();
+        Q.SetRange(CustNo, 'C9'); // no such customer
+        Q.Open();
+        Assert.IsFalse(Q.Read(), 'A runtime filter matching no row must close the resultset');
+        Q.Close();
+    end;
+
+    [Test]
     procedure InnerJoin_NoChildRows_ClosesResultSet()
     var
         Cust: Record "QJ Customer";
