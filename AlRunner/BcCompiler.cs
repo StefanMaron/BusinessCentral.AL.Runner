@@ -1128,17 +1128,25 @@ public sealed class BcCompiler
         var home = Environment.GetEnvironmentVariable("HOME");
         if (string.IsNullOrEmpty(home)) yield break;
 
+        // Match the process-global selected BC version (BcArtifacts.SelectedVersion) so
+        // compile symbols, runtime deps, and the engine all agree. These caches may carry
+        // a different patch level than the artifacts tree, so match on major.minor.
+        var sel = AlRunnerV2.Infrastructure.BcArtifacts.SelectedVersion;
+        var mmPrefix = $"{sel.Major}.{sel.Minor}";
+
         foreach (var rel in new[] { ".local/share/al-runner/symbols", ".bcartifacts.cache/sandbox" })
         {
             var root = Path.Combine(home, rel);
             if (!Directory.Exists(root)) continue;
-            var bestVer = Directory.EnumerateDirectories(root)
-                .Select(d => (Dir: d, Ver: System.Version.TryParse(Path.GetFileName(d), out var v) ? v : null))
-                .Where(t => t.Ver != null)
-                .OrderByDescending(t => t.Ver)
-                .Select(t => t.Dir)
-                .FirstOrDefault();
-            if (bestVer == null) continue;
+            string bestVer;
+            try
+            {
+                bestVer = AlRunnerV2.Infrastructure.BcArtifacts.SelectArtifactVersionDir(root, mmPrefix);
+            }
+            catch (InvalidOperationException)
+            {
+                continue; // optional cache without a matching version
+            }
 
             if (rel.StartsWith(".local"))
             {

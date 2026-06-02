@@ -29,6 +29,16 @@ if (args[0] == "--version")
     return 0;
 }
 
+// ── Early validation of the BC selection flags ────────────────────────────────
+// Must run BEFORE the R2R re-exec below, because that re-exec rewrites
+// `--artifact-path <std-cache>` into `--bc-version` for the child (see
+// RewriteArtifactPathArg) — which would otherwise mask the mutual-exclusion error.
+if (args.Contains("--bc-version") && args.Contains("--artifact-path"))
+{
+    Console.Error.WriteLine("--bc-version and --artifact-path are mutually exclusive (pick a version OR an explicit path).");
+    return 2;
+}
+
 // ── Disable ReadyToRun before any BC type loads ───────────────────────────────
 // BC's R2R-precompiled native images bypass our Cecil/runtime hooks: when a hot
 // caller (e.g. RecordImplementation.IssueFindRequestAsync) is R2R, the JIT inlines
@@ -49,7 +59,7 @@ if (Environment.GetEnvironmentVariable("DOTNET_ReadyToRun") is null
     {
         UseShellExecute = false,
     };
-    var argv0 = Environment.GetCommandLineArgs();
+    var argv0 = RewriteArtifactPathArg(Environment.GetCommandLineArgs());
     // Under the `dotnet` muxer, ProcessPath is dotnet and argv[0] (the managed dll)
     // must be forwarded; under the native apphost it must NOT be (see the Cecil
     // re-exec below for the same rule).
@@ -156,8 +166,17 @@ bool watchMode = false;
 // --dump-csharp DIR: write the emitted C# (BC Compilation.Emit output, post-BcAssembler
 // polyfill injection) to disk for every bundle compile. Useful for debugging codegen.
 string? dumpCsharpDir = null;
+// --bc-version X / --artifact-path DIR: BC artifact/version selection overrides.
+// Default (neither set) = latest version in the artifacts cache. --bc-version accepts a
+// prefix ("28.1") or full version; --artifact-path points at an explicit artifact root
+// (the dir containing platform/ + w1/). Mutually exclusive. Resolved into the
+// process-global BcArtifacts selection below, before any resolver runs.
+string? bcVersionArg = null;
+string? artifactPathArg = null;
 for (int i = 0; i < args.Length; i++)
 {
+    if (args[i] == "--bc-version" && i + 1 < args.Length) { bcVersionArg = args[++i]; continue; }
+    if (args[i] == "--artifact-path" && i + 1 < args.Length) { artifactPathArg = args[++i]; continue; }
     if (args[i] == "--out" && i + 1 < args.Length) { outPath = args[++i]; printClassification = true; continue; }
     if (args[i] == "--classify") { printClassification = true; continue; }
     if (args[i] == "--package-cache" && i + 1 < args.Length) { packageCacheArgs.Add(args[++i]); continue; }
@@ -204,6 +223,49 @@ if (serverMode && watchMode)
     Console.Error.WriteLine("--server and --watch are mutually exclusive (both stay warm in-process; pick one).");
     return 2;
 }
+// ── BC artifact/version selection (must run BEFORE the Cecil block below, which
+// reads BcArtifacts.ServiceTierDir, and before any dependency/symbol resolver). Sets
+// the process-global selection that resolvers A (engine), B (deps), C (symbols) all
+// read, so a single chosen version drives the whole run. No auto-download: a missing /
+// empty artifact root or an unmatched version throws loud (named download command).
+// (Mutual exclusion is validated early — before the R2R re-exec — at the top of the file.)
+// When --artifact-path points at a version-named child of the standard artifacts
+// cache (the common case), translate it to the equivalent --bc-version selection so it
+// takes the byte-identical code path as --bc-version. The explicit-root branch is then
+// reserved for roots OUTSIDE the standard cache. (Empirically the bare existence of the
+// explicit-root selection branch perturbs BC's R2R-precompiled startup bind enough to
+// trigger a teardown AV — MEMORY.md "R2R-layout-perturbation native AV"; this keeps the
+// in-cache case on the proven path.)
+if (artifactPathArg != null)
+{
+    try
+    {
+        var translated = AlRunnerV2.Infrastructure.BcArtifacts.TryTranslateArtifactPathToVersion(artifactPathArg);
+        if (translated != null) { bcVersionArg = translated; artifactPathArg = null; }
+    }
+    catch (InvalidOperationException ex)
+    {
+        Console.Error.WriteLine($"BC version selection failed: {ex.Message}");
+        return 2;
+    }
+}
+try
+{
+    AlRunnerV2.Infrastructure.BcArtifacts.SelectVersion(bcVersionArg, artifactPathArg);
+    // Consistency guard: the engine DLLs baked into bin/ are built for a fixed BC
+    // major.minor; if the selected version's major.minor differs, dependency symbols
+    // and the engine can disagree — fail loud rather than crash deep in BC. Patch-level
+    // skew (28.1.x build vs 28.1.y cache) is tolerated.
+    AlRunnerV2.Infrastructure.BcArtifacts.VerifyEngineConsistency(AppContext.BaseDirectory);
+    Console.Error.WriteLine($"[bc] selected BC {AlRunnerV2.Infrastructure.BcArtifacts.SelectedVersion} " +
+        $"({AlRunnerV2.Infrastructure.BcArtifacts.ServiceTierDir})");
+}
+catch (InvalidOperationException ex)
+{
+    Console.Error.WriteLine($"BC version selection failed: {ex.Message}");
+    return 2;
+}
+
 if (alCacheDir != null) Directory.CreateDirectory(alCacheDir);
 Console.WriteLine(serverMode
     ? "al-runner v2 — server mode (JSON-RPC over stdin/stdout)"
@@ -232,7 +294,7 @@ Console.WriteLine(serverMode
         {
             UseShellExecute = false,
         };
-        var argv = Environment.GetCommandLineArgs();
+        var argv = RewriteArtifactPathArg(Environment.GetCommandLineArgs());
         // Under the `dotnet` muxer, ProcessPath is dotnet and argv[0] (the managed
         // dll) must be forwarded as its first arg. Under the native apphost,
         // ProcessPath is the app itself and argv[0] must NOT be forwarded (the
@@ -1505,6 +1567,16 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                            method    accepted as v1 alias for codeunit");
     w.WriteLine();
     w.WriteLine("EXECUTION");
+    w.WriteLine("  --bc-version X          Select the BC artifact version (e.g. \"28.1\" or a full");
+    w.WriteLine("                          version). Default: the latest version present in");
+    w.WriteLine("                          ~/.local/share/al-runner/artifacts. A prefix matches the");
+    w.WriteLine("                          highest version with that prefix. The runner never");
+    w.WriteLine("                          auto-downloads; an unavailable version fails loud.");
+    w.WriteLine("                          Mutually exclusive with --artifact-path.");
+    w.WriteLine("  --artifact-path DIR     Use an explicit BC artifact root (the dir containing");
+    w.WriteLine("                          platform/ + w1/), bypassing the cache scan. Its version");
+    w.WriteLine("                          is read from the dir name or the contained Ncl.dll.");
+    w.WriteLine("                          Mutually exclusive with --bc-version.");
     w.WriteLine("  --package-cache PATH    Extra directory to scan for .app dependencies");
     w.WriteLine("                          (repeatable). Default scan: ~/.bcartifacts.cache,");
     w.WriteLine("                          ~/.local/share/al-runner/artifacts, and bundle .alpackages/.");
@@ -2352,15 +2424,46 @@ static IEnumerable<string> BcArtifactTestDirs(string cacheDir)
     }
 }
 
-// Default cache: the latest BC artifact version under ~/.bcartifacts.cache/sandbox/
-// + the curated symbol set under ~/.local/share/al-runner/symbols/.
+// Rewrite a forwarded argv so that `--artifact-path <dir>` becomes `--bc-version <ver>`
+// when <dir> is a version-named child of the standard artifacts cache. Re-exec children
+// then take the byte-identical code path as `--bc-version` (the explicit-root selection
+// branch otherwise perturbs BC's R2R-precompiled startup bind enough to trigger a
+// teardown access violation — see MEMORY.md "R2R-layout-perturbation native AV"). A
+// path OUTSIDE the standard cache is left as `--artifact-path` (the child needs it).
+static string[] RewriteArtifactPathArg(string[] argv)
+{
+    var outv = new List<string>(argv.Length);
+    for (int i = 0; i < argv.Length; i++)
+    {
+        if (argv[i] == "--artifact-path" && i + 1 < argv.Length)
+        {
+            string? ver = null;
+            try { ver = AlRunnerV2.Infrastructure.BcArtifacts.TryTranslateArtifactPathToVersion(argv[i + 1]); }
+            catch (InvalidOperationException) { ver = null; }
+            if (ver != null) { outv.Add("--bc-version"); outv.Add(ver); i++; continue; }
+        }
+        outv.Add(argv[i]);
+    }
+    return outv.ToArray();
+}
+
+// Default cache: the selected BC version (BcArtifacts.SelectedVersion — latest in the
+// artifacts cache, or the --bc-version / --artifact-path override) under
+// ~/.bcartifacts.cache/sandbox/ + the curated symbol set under
+// ~/.local/share/al-runner/symbols/. These two trees may carry a different *patch*
+// level than the artifacts tree (e.g. sandbox 28.1.x vs artifacts 28.1.y), so we match
+// on the selected major.minor prefix and pick the highest such version (System.Version
+// sort — the old StringComparer.Ordinal sort mis-ordered e.g. "28.1.9" > "28.1.10").
 static IEnumerable<string> DefaultPackageCacheDirs()
 {
     var home = Environment.GetEnvironmentVariable("HOME");
     if (string.IsNullOrEmpty(home)) yield break;
 
+    var sel = AlRunnerV2.Infrastructure.BcArtifacts.SelectedVersion;
+    var mmPrefix = $"{sel.Major}.{sel.Minor}";
+
     var bcRoot = Path.Combine(home, ".bcartifacts.cache", "sandbox");
-    var bcLatest = LatestVersionDir(bcRoot);
+    var bcLatest = SelectVersionDirOrNull(bcRoot, mmPrefix);
     if (bcLatest != null)
     {
         var w1Ext = Path.Combine(bcLatest, "w1", "Extensions");
@@ -2375,16 +2478,27 @@ static IEnumerable<string> DefaultPackageCacheDirs()
     }
 
     var symRoot = Path.Combine(home, ".local", "share", "al-runner", "symbols");
-    var symLatest = LatestVersionDir(symRoot);
+    var symLatest = SelectVersionDirOrNull(symRoot, mmPrefix);
     if (symLatest != null) yield return symLatest;
 }
 
-static string? LatestVersionDir(string root)
+// Highest version-named child of <root> matching <versionPrefix> (System.Version sort),
+// or null if the root is absent or has no matching version dir. Unlike the artifact
+// helper this returns null rather than throwing: these caches are optional augmentation
+// of the artifact dir, and a missing sandbox/symbols tree is not fatal (the corpus runs
+// from the artifact dir alone). The artifact dir itself fails loud via BcArtifacts.
+static string? SelectVersionDirOrNull(string root, string versionPrefix)
 {
     if (!Directory.Exists(root)) return null;
-    return Directory.EnumerateDirectories(root)
-        .OrderByDescending(d => Path.GetFileName(d), StringComparer.Ordinal)
-        .FirstOrDefault();
+    try
+    {
+        return AlRunnerV2.Infrastructure.BcArtifacts.SelectArtifactVersionDir(root, versionPrefix);
+    }
+    catch (InvalidOperationException)
+    {
+        // No matching version in this optional cache — fine.
+        return null;
+    }
 }
 
 // Walks up from <bundlePath> until it finds a dir containing app.json.

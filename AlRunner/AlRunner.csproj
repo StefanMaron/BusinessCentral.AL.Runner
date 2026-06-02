@@ -143,18 +143,30 @@
     </Reference>
   </ItemGroup>
 
-  <!-- Auto-download BC Service Tier DLLs if not present.
-       Runs in the outer build (BeforeTargets=DispatchToInnerBuilds) so DLLs are present
-       before either inner build starts its ResolveAssemblyReferences pass. Also runs in
-       single-target builds (BeforeTargets=ResolveAssemblyReferences) where there is no
-       outer/inner split. Skipped in inner multi-target builds (TargetFramework is set,
-       TargetFrameworks is also set) to avoid redundant downloads. -->
+  <!-- BC Service Tier DLL provisioning. Downloading is an EXPLICIT, opt-in step
+       (-p:AllowBcArtifactDownload=true): the runner never auto-downloads. When the DLLs
+       are absent and the opt-in flag is not set, the build fails loud with the exact
+       download command. When they are present (the normal case) neither target runs.
+
+       Both targets run in the outer build (BeforeTargets=DispatchToInnerBuilds) so DLLs
+       are present before either inner build's ResolveAssemblyReferences pass, and in
+       single-target builds (BeforeTargets=ResolveAssemblyReferences); they skip inner
+       multi-target builds (TargetFramework + TargetFrameworks both set). -->
   <Target Name="EnsureBCServiceTierDlls"
           BeforeTargets="DispatchToInnerBuilds;ResolveAssemblyReferences"
           Condition="!Exists('$(ServiceTierPath)/Microsoft.Dynamics.Nav.Types.dll')
+                     AND '$(AllowBcArtifactDownload)' == 'true'
                      AND ('$(TargetFrameworks)' == '' OR '$(TargetFramework)' == '')">
-    <Message Importance="high" Text="BC Service Tier DLLs not found at $(ServiceTierPath). Downloading via range request..." />
+    <Message Importance="high" Text="BC Service Tier DLLs not found at $(ServiceTierPath). Downloading via range request (AllowBcArtifactDownload=true)..." />
     <Exec Command="dotnet run --project &quot;$(RepoRoot)/tools/DownloadArtifacts&quot; -- service-tier $(_BCVersion) &quot;$(ServiceTierPath)&quot;" />
+  </Target>
+
+  <Target Name="FailIfBCServiceTierDllsMissing"
+          BeforeTargets="DispatchToInnerBuilds;ResolveAssemblyReferences"
+          Condition="!Exists('$(ServiceTierPath)/Microsoft.Dynamics.Nav.Types.dll')
+                     AND '$(AllowBcArtifactDownload)' != 'true'
+                     AND ('$(TargetFrameworks)' == '' OR '$(TargetFramework)' == '')">
+    <Error Text="BC Service Tier DLLs not found at $(ServiceTierPath). The runner does NOT auto-download. Either point ServiceTierPath at an existing artifact dir, or download explicitly:&#xA;  dotnet run --project &quot;$(RepoRoot)/tools/DownloadArtifacts&quot; -- service-tier $(_BCVersion) &quot;$(ServiceTierPath)&quot;&#xA;Or re-run the build with -p:AllowBcArtifactDownload=true to download as part of the build." />
   </Target>
 
 </Project>
