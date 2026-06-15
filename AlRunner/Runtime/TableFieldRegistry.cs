@@ -280,8 +280,9 @@ public static class TableFieldRegistry
             if (nameToId.TryGetValue(tableName, out var sourceTableId))
                 _pageSourceTable[pageId] = sourceTableId;
             else
-                // Table not registered yet (page parsed before its source table) — store
-                // the table name for deferred resolution when GetSourceTableId() is called.
+                // Table not registered yet (page parsed before its source table) — park the
+                // table name; it is resolved by the eager sweep at the end of ParseAndRegister
+                // (every parse pass runs serially before the parallel rewrite).
                 _pagePendingSourceTable[pageId] = tableName;
 
             // Track SourceTableTemporary = true so the rewriter can emit

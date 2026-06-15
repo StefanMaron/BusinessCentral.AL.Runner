@@ -55,8 +55,13 @@ public class TableFieldRegistryConcurrencyTests
             for (int i = 0; i < count; i++)
                 Assert.Equal(firstTableId + i, results[i]);
 
-            // Negative direction: an unregistered page id returns null, not a bogus id.
-            Assert.Null(TableFieldRegistry.GetSourceTableId(firstPageId + count + 1));
+            // Negative direction: a page whose SourceTable names a table that is never
+            // registered stays unresolved — the sweep must not fabricate an id, and
+            // GetSourceTableId must return null rather than a bogus mapping.
+            const int orphanPageId = firstPageId + count;
+            TableFieldRegistry.ParseAndRegister(
+                $"page {orphanPageId} \"Orphan\" {{ SourceTable = \"NoSuchTable\"; }}\n");
+            Assert.Null(TableFieldRegistry.GetSourceTableId(orphanPageId));
         }
         finally
         {
