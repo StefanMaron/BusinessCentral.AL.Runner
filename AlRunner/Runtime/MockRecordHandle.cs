@@ -949,6 +949,13 @@ public class MockRecordHandle : IConvertible
     {
         var table = GetRows();
         var pkFields = GetPrimaryKeyFields();
+        if (keyValues.Length > pkFields.Length)
+        {
+            // The platform raises this unconditionally — even when Get's return
+            // value is consumed — and quotes the table name, not the caption.
+            string overKeyedTableName = TableFieldRegistry.GetTableName(_tableId) ?? $"table {_tableId}";
+            throw new Exception($"Too many key fields were specified, so \"{overKeyedTableName}\" could not be retrieved. The number of fields in the primary key is {pkFields.Length}.");
+        }
         foreach (var row in table)
         {
             bool match = true;

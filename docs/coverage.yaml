@@ -8911,8 +8911,9 @@ Table.Get (Joker):
   tests:
     - tests/bucket-1/record-table/02-record-operations
     - tests/bucket-1/record-table/188-table-crud
+    - tests/bucket-1/record-table/102-get-key-arity
     - tests/bucket-2/data-formats/96-object-to-navvalue
-  notes: ALGet(DataError, params NavValue[]) plus object catch-all overloads for 1–4 keys (issue #1260, NavComplexValue→object rewrite).
+  notes: ALGet(DataError, params NavValue[]) plus object catch-all overloads for 1–4 keys (issue #1260, NavComplexValue→object rewrite). Raises the platform "Too many key fields were specified" error when more values than PK fields are supplied, unconditionally and quoting the table name — container-verified on BC 28.1 (issue #1630).
 
 Table.GetAscending (Joker):
   layer: runtime-api
