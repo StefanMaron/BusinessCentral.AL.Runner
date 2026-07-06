@@ -820,7 +820,7 @@ public static class DepExtractor
     private static string GenerateStub(string typeName, string objectName, int id) =>
         typeName switch
         {
-            "Table"     => $"table {id} \"{objectName}\" {{ fields {{ field(1; \"DummyKey\"; Code[20]) {{}} }} keys {{ key(PK; \"DummyKey\") {{}} }} }}",
+            "Table"     => $"table {id} \"{objectName}\" {{ /* {Runtime.TableFieldRegistry.SynthesizedSchemaMarker} */ fields {{ field(1; \"DummyKey\"; Code[20]) {{}} }} keys {{ key(PK; \"DummyKey\") {{}} }} }}",
             "Page"      => $"page {id} \"{objectName}\" {{ }}",
             "Codeunit"  => $"codeunit {id} \"{objectName}\" {{ }}",
             "Enum"      => $"enum {id} \"{objectName}\" {{ value(0; Default) {{}} }}",
@@ -878,7 +878,7 @@ public static class DepExtractor
             fieldDecls.Add($"field({nextFieldId++}; \"{f}\"; Text[250]) {{}}");
         }
         var fields = string.Join(" ", fieldDecls);
-        return $"table {id} \"{objectName}\" {{ fields {{ {fields} }} keys {{ key(PK; \"DummyKey\") {{}} }} }}";
+        return $"table {id} \"{objectName}\" {{ /* {Runtime.TableFieldRegistry.SynthesizedSchemaMarker} */ fields {{ {fields} }} keys {{ key(PK; \"DummyKey\") {{}} }} }}";
     }
 
     /// <summary>

@@ -45,6 +45,13 @@ public class MockRecordHandle : IConvertible
     // Primary key field numbers per table (registered via RegisterPrimaryKey)
     private static readonly Dictionary<int, int[]> _primaryKeys = new();
 
+    // Tables whose registered PK width is authoritative — parsed from a fully
+    // resolved keys block of real table source, or registered explicitly.
+    // Tables outside this set (unregistered fallback [1], synthesized stubs,
+    // partially resolved key declarations) may understate the real PK width,
+    // so arity enforcement must skip them.
+    private static readonly HashSet<int> _authoritativePks = new();
+
     // All declared keys per table, in declaration order. Index 0 = primary key.
     // Used by ALCurrentKeyIndex get/set to switch iteration sort order.
     private static readonly Dictionary<int, List<int[]>> _tableKeys = new();
@@ -213,6 +220,7 @@ public class MockRecordHandle : IConvertible
     public static void RegisterPrimaryKey(int tableId, params int[] fieldNos)
     {
         _primaryKeys[tableId] = fieldNos;
+        _authoritativePks.Add(tableId);
         // Keep _tableKeys[0] in sync with primary key for ALCurrentKeyIndex resolution.
         if (!_tableKeys.TryGetValue(tableId, out var list))
             _tableKeys[tableId] = list = new List<int[]>();
@@ -227,11 +235,15 @@ public class MockRecordHandle : IConvertible
     /// The first entry is the clustered primary key. Subsequent entries are
     /// secondary keys referenced by <c>RecRef.CurrentKeyIndex := N</c>.
     /// </summary>
-    public static void RegisterKeys(int tableId, List<int[]> keys)
+    public static void RegisterKeys(int tableId, List<int[]> keys, bool pkAuthoritative = true)
     {
         if (keys == null || keys.Count == 0) return;
         _tableKeys[tableId] = new List<int[]>(keys);
         _primaryKeys[tableId] = keys[0];
+        if (pkAuthoritative)
+            _authoritativePks.Add(tableId);
+        else
+            _authoritativePks.Remove(tableId);
     }
 
     internal static List<int[]> GetKeysForTable(int tableId)
@@ -949,6 +961,14 @@ public class MockRecordHandle : IConvertible
     {
         var table = GetRows();
         var pkFields = GetPrimaryKeyFields();
+        if (keyValues.Length > pkFields.Length && _authoritativePks.Contains(_tableId))
+        {
+            // The platform raises this unconditionally — even when Get's return
+            // value is consumed — and quotes the table name, not the caption.
+            // Enforced only for authoritative PKs: an understated fallback or
+            // stub PK width would reject calls the real table accepts.
+            throw new Exception($"Too many key fields were specified, so \"{ALTableName}\" could not be retrieved. The number of fields in the primary key is {pkFields.Length}.");
+        }
         foreach (var row in table)
         {
             bool match = true;

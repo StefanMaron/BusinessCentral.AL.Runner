@@ -52,8 +52,10 @@ public static class TableFieldRegistry
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     // key(Name; Field1, "Quoted Field 2", Field3)  — only the fields we need.
+    // Quoted names may contain ')' (e.g. "Amount (LCY)"), so consume quoted
+    // chunks whole instead of stopping at the first ')'.
     private static readonly Regex KeyDecl = new(
-        @"\bkey\s*\(\s*[^;]+;\s*([^)]+)\)",
+        @"\bkey\s*\(\s*[^;]+;\s*((?:""[^""]*""|[^)""])+)\)",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     // AL escapes embedded apostrophes by doubling them, e.g. 'Vendor''s Name'.
@@ -118,8 +120,17 @@ public static class TableFieldRegistry
         _pageSourceTableTemporary.Clear();
     }
 
+    /// <summary>
+    /// Marker embedded (as an AL block comment) in auto-generated table stubs
+    /// whose schema is synthesized rather than taken from real table source.
+    /// A synthesized primary key says nothing about the real table's PK, so
+    /// arity checks must not be enforced against it.
+    /// </summary>
+    public const string SynthesizedSchemaMarker = "alrunner-synthesized-schema";
+
     public static void ParseAndRegister(string alSource)
     {
+        bool synthesizedSchema = alSource.Contains(SynthesizedSchemaMarker, StringComparison.Ordinal);
         foreach (Match tm in TableHeader.Matches(alSource))
         {
             if (!int.TryParse(tm.Groups[1].Value, out var tableId)) continue;
@@ -228,24 +239,37 @@ public static class TableFieldRegistry
 
             // Extract all declared keys (primary + secondary) and register them
             // so RecRef.CurrentKeyIndex := N can switch the active sort key.
-            // The first matched key is the clustered primary key.
+            // The first matched key is the clustered primary key. The PK is
+            // only "authoritative" (safe to enforce arity against) when every
+            // declared field of that first key resolved to a field id and the
+            // source is not a synthesized stub — otherwise the registered
+            // width can understate the real table's PK.
             var keys = new List<int[]>();
+            bool firstKeyFullyResolved = false;
+            bool isFirstKeyDecl = true;
             foreach (Match km in KeyDecl.Matches(body))
             {
                 var keyList = km.Groups[1].Value;
                 var keyFieldIds = new List<int>();
+                int declaredParts = 0;
                 foreach (var rawPart in keyList.Split(','))
                 {
                     var part = rawPart.Trim().Trim('"').Trim();
                     if (part.Length == 0) continue;
+                    declaredParts++;
                     if (fields.TryGetValue(part, out var fid))
                         keyFieldIds.Add(fid);
+                }
+                if (isFirstKeyDecl)
+                {
+                    firstKeyFullyResolved = declaredParts > 0 && keyFieldIds.Count == declaredParts;
+                    isFirstKeyDecl = false;
                 }
                 if (keyFieldIds.Count > 0)
                     keys.Add(keyFieldIds.ToArray());
             }
             if (keys.Count > 0)
-                MockRecordHandle.RegisterKeys(tableId, keys);
+                MockRecordHandle.RegisterKeys(tableId, keys, pkAuthoritative: firstKeyFullyResolved && !synthesizedSchema);
         }
 
         // Parse tableextension and page declarations: both need a name→ID reverse map.

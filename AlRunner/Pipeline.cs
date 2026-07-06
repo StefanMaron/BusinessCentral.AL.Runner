@@ -1708,7 +1708,7 @@ public class AlRunnerPipeline
             var stubAl = compilation != null
                 ? RenderTableStubFromSymbols(compilation, id)
                 : null;
-            alStubs.Add(stubAl ?? $"table {id} \"AutoStub{id}\" {{ fields {{ field(1; PK; Integer) {{ }} }} keys {{ key(PK; PK) {{ Clustered = true; }} }} }}");
+            alStubs.Add(stubAl ?? $"table {id} \"AutoStub{id}\" {{ /* {Runtime.TableFieldRegistry.SynthesizedSchemaMarker} */ fields {{ field(1; PK; Integer) {{ }} }} keys {{ key(PK; PK) {{ Clustered = true; }} }} }}");
         }
 
         // Register table stubs with field/init-value registries so runtime mocks
