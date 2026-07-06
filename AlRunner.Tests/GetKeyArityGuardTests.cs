@@ -153,10 +153,26 @@ public class GetKeyArityGuardTests
         Assert.Equal(0, (int)(NavInteger)handle.GetFieldValueSafe(2, NavType.Integer));
     }
 
+    [Fact]
+    public void ALGet_UnderArity_ThrowError_MessageListsAllPkFieldsWithBoundDefaults()
+    {
+        RegisterUnderArityTable();
+
+        var handle = new MockRecordHandle(UnderArityTableId);
+        var ex = Assert.Throws<Exception>(() =>
+            handle.ALGet(DataError.ThrowError, new NavCode(20, "Q")));
+
+        // Container-verified on BC 28.1: every PK field is listed by name
+        // with its value — including the bound trailing default — joined
+        // with a comma and no space.
+        Assert.Contains(
+            "does not exist. Identification fields and values: Code 1='Q',Int 1='0'",
+            ex.Message);
+    }
+
     private const int DurationPkTableId = 99766;
 
-    [Fact]
-    public void ALGet_DurationPkField_UnderArity_FindsExplicitDefaultKeyedRow()
+    private static void RegisterDurationPkTable()
     {
         TableFieldRegistry.ParseAndRegister($$"""
             table {{DurationPkTableId}} "Duration PK Table"
@@ -172,20 +188,119 @@ public class GetKeyArityGuardTests
                 }
             }
             """);
+    }
 
-        // Store the default duration EXPLICITLY so the row carries a value
-        // (an absent entry short-circuits the comparison and would hide a
-        // default-string mismatch).
-        var insert = new MockRecordHandle(DurationPkTableId);
-        insert.SetFieldValueSafe(1, NavType.Code, new NavCode(20, "G"));
-        insert.SetFieldValueSafe(2, NavType.Duration, NavDuration.Default);
-        insert.ALInsert(DataError.ThrowError);
+    private static void InsertDurationRow(string code1, NavDuration dur1)
+    {
+        var handle = new MockRecordHandle(DurationPkTableId);
+        handle.SetFieldValueSafe(1, NavType.Code, new NavCode(20, code1));
+        handle.SetFieldValueSafe(2, NavType.Duration, dur1);
+        handle.ALInsert(DataError.ThrowError);
+    }
 
-        // The missing "Dur 1" binds as the Duration default, which is exactly
-        // this row's stored value — the bound default and the stored value
-        // must stringify identically for the match to hold.
+    [Fact]
+    public void ALGet_DurationPkField_UnderArity_BindsDefaultNotPrefix()
+    {
+        RegisterDurationPkTable();
+        InsertDurationRow("H", 5000L);
+
+        var handle = new MockRecordHandle(DurationPkTableId);
+
+        // Real BC binds the missing "Dur 1" as the Duration default 0 and
+        // looks up ('H', 0), which does not exist. A prefix match would
+        // return the ('H', 5000ms) row.
+        Assert.False(handle.ALGet(DataError.TrapError, new NavCode(20, "H")));
+    }
+
+    [Fact]
+    public void ALGet_DurationPkField_UnderArity_FindsExplicitDefaultKeyedRowAmongSiblings()
+    {
+        RegisterDurationPkTable();
+        // Non-default duration first, so a prefix match would surface it;
+        // the default row stores its value EXPLICITLY so the bound default
+        // and the stored value must stringify identically to match.
+        InsertDurationRow("G", 5000L);
+        InsertDurationRow("G", NavDuration.Default);
+
         var handle = new MockRecordHandle(DurationPkTableId);
         Assert.True(handle.ALGet(DataError.TrapError, new NavCode(20, "G")));
+        Assert.Equal(0L, (long)(NavDuration)handle.GetFieldValueSafe(2, NavType.Duration));
+    }
+
+    private const int AbsentTrailingPkTableId = 99767;
+
+    [Fact]
+    public void ALGet_FullArity_FindsRowWithUnassignedTrailingPkField()
+    {
+        TableFieldRegistry.ParseAndRegister($$"""
+            table {{AbsentTrailingPkTableId}} "Absent Trailing PK Table"
+            {
+                fields
+                {
+                    field(1; "Code 1"; Code[20]) { }
+                    field(2; "Int 1"; Integer) { }
+                }
+                keys
+                {
+                    key(PK; "Code 1", "Int 1") { Clustered = true; }
+                }
+            }
+            """);
+
+        // "Int 1" is never assigned, so the stored row has no entry for it.
+        var insert = new MockRecordHandle(AbsentTrailingPkTableId);
+        insert.SetFieldValueSafe(1, NavType.Code, new NavCode(20, "F"));
+        insert.ALInsert(DataError.ThrowError);
+
+        var handle = new MockRecordHandle(AbsentTrailingPkTableId);
+
+        // Real BC stores the unassigned field as its default 0, so the row
+        // is keyed ('F', 0): the explicit-default lookup must find it and
+        // a non-default lookup must not — the absent entry compares as the
+        // field type's default, not as "".
+        Assert.True(handle.ALGet(DataError.TrapError, new NavCode(20, "F"), NavInteger.Create(0)));
+        Assert.False(handle.ALGet(DataError.TrapError, new NavCode(20, "F"), NavInteger.Create(5)));
+    }
+
+    private const int ZeroArgTableId = 99768;
+
+    [Fact]
+    public void ALGet_ZeroKeyValues_BindsAllPkDefaults()
+    {
+        TableFieldRegistry.ParseAndRegister($$"""
+            table {{ZeroArgTableId}} "Zero Arg Get Table"
+            {
+                fields
+                {
+                    field(1; "Code 1"; Code[20]) { }
+                    field(2; "Int 1"; Integer) { }
+                }
+                keys
+                {
+                    key(PK; "Code 1", "Int 1") { Clustered = true; }
+                }
+            }
+            """);
+
+        var insert = new MockRecordHandle(ZeroArgTableId);
+        insert.SetFieldValueSafe(1, NavType.Code, new NavCode(20, "SETUP"));
+        insert.SetFieldValueSafe(2, NavType.Integer, NavInteger.Create(0));
+        insert.ALInsert(DataError.ThrowError);
+
+        var handle = new MockRecordHandle(ZeroArgTableId);
+
+        // Get() binds every PK field to its type default — ('', 0). The
+        // 'SETUP' row must not match (the old first-row semantics would
+        // return it).
+        Assert.False(handle.ALGet(DataError.TrapError));
+
+        var insertBlank = new MockRecordHandle(ZeroArgTableId);
+        insertBlank.SetFieldValueSafe(1, NavType.Code, new NavCode(20, ""));
+        insertBlank.SetFieldValueSafe(2, NavType.Integer, NavInteger.Create(0));
+        insertBlank.ALInsert(DataError.ThrowError);
+
+        Assert.True(handle.ALGet(DataError.TrapError));
+        Assert.Equal("", (string)(NavCode)handle.GetFieldValueSafe(1, NavType.Code));
     }
 
     [Fact]

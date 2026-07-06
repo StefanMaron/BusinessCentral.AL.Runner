@@ -135,6 +135,121 @@ codeunit 50135 "Get Key Arity Tests"
     end;
 
     [Test]
+    procedure UnderArityGetOnDurationPkBindsDefaultsNotPrefix()
+    var
+        Rec: Record "Duration Key Arity Table";
+    begin
+        // [GIVEN] A row whose trailing Duration PK value is NOT the type default
+        Rec.Init();
+        Rec."Code 1" := 'H';
+        Rec."Dur 1" := 5000;
+        Rec.Insert(false);
+
+        // [WHEN] Getting with only the leading key value
+        // [THEN] The missing "Dur 1" binds as the Duration default 0 and the
+        // lookup targets ('H', 0), which does not exist — a prefix match
+        // would wrongly return the ('H', 5000ms) row
+        Assert.IsFalse(Rec.Get('H'), 'Under-arity Get on a Duration PK must bind the missing key value as the Duration default, not prefix-match');
+
+        // [THEN] The unconsumed form raises the record-not-found error
+        asserterror Rec.Get('H');
+        Assert.ExpectedError('does not exist');
+    end;
+
+    [Test]
+    procedure UnderArityGetOnDurationPkPicksDefaultKeyedRowAmongSiblings()
+    var
+        Rec: Record "Duration Key Arity Table";
+    begin
+        // [GIVEN] Two rows sharing the leading key value; the non-default
+        // Duration inserted FIRST, so a prefix match would surface it
+        Rec.Init();
+        Rec."Code 1" := 'G';
+        Rec."Dur 1" := 5000;
+        Rec.Payload := 'five-seconds';
+        Rec.Insert(false);
+
+        Rec.Init();
+        Rec."Code 1" := 'G';
+        Rec."Dur 1" := 0;
+        Rec.Payload := 'zero';
+        Rec.Insert(false);
+
+        // [WHEN] Getting with only the leading key value
+        // [THEN] The exact ('G', 0) row is returned, not the first prefix match
+        Clear(Rec);
+        Assert.IsTrue(Rec.Get('G'), 'Under-arity Get must find the Duration-default-keyed row');
+        Assert.AreEqual('zero', Rec.Payload, 'Under-arity Get must bind the Duration-default row, not the first row sharing the leading key value');
+    end;
+
+    [Test]
+    procedure FullArityGetFindsRowWithUnassignedTrailingPk()
+    var
+        Rec: Record "Two Key Arity Table";
+    begin
+        // [GIVEN] A row inserted without ever assigning the trailing PK
+        // field — real BC stores it as the type default 0
+        Rec.Init();
+        Rec."Code 1" := 'U';
+        Rec.Payload := 'unassigned-int';
+        Rec.Insert(false);
+
+        // [WHEN] Getting with the full PK, spelling the default explicitly
+        // [THEN] The row is found — an unassigned PK field compares as its
+        // type default, not as an empty value distinct from 0
+        Clear(Rec);
+        Assert.IsTrue(Rec.Get('U', 0), 'Full-arity Get with the explicit default must find the row whose trailing PK field was never assigned');
+        Assert.AreEqual('unassigned-int', Rec.Payload, 'Retrieved row must carry the payload');
+
+        // [THEN] A non-default value still misses
+        Assert.IsFalse(Rec.Get('U', 5), 'Full-arity Get with a non-default value must not find the default-keyed row');
+    end;
+
+    [Test]
+    procedure ZeroArgGetBindsAllPkDefaults()
+    var
+        Rec: Record "Two Key Arity Table";
+    begin
+        // [GIVEN] Only a row keyed by a non-default value
+        Rec.Init();
+        Rec."Code 1" := 'S';
+        Rec."Int 1" := 5;
+        Rec.Insert(false);
+
+        // [WHEN] Getting with zero key values
+        // [THEN] Every PK field binds to its type default — ('', 0) — so the
+        // 'S' row must not match (first-row semantics would return it)
+        Assert.IsFalse(Rec.Get(), 'Zero-arg Get must bind all PK fields to defaults, not return the first row');
+        asserterror Rec.Get();
+        Assert.ExpectedError('does not exist');
+
+        // [GIVEN] A row keyed entirely by defaults
+        Rec.Init();
+        Rec."Code 1" := '';
+        Rec."Int 1" := 0;
+        Rec.Payload := 'blank';
+        Rec.Insert(false);
+
+        // [THEN] Zero-arg Get finds exactly that row
+        Clear(Rec);
+        Assert.IsTrue(Rec.Get(), 'Zero-arg Get must find the all-defaults row');
+        Assert.AreEqual('blank', Rec.Payload, 'Zero-arg Get must bind the all-defaults row');
+    end;
+
+    [Test]
+    procedure UnderArityNotFoundErrorListsAllPkFieldsWithBoundDefaults()
+    var
+        Rec: Record "Two Key Arity Table";
+    begin
+        // [WHEN] An under-arity Get misses in the unconsumed form
+        // [THEN] The error lists every PK field by name with its value,
+        // including the bound trailing default — container-verified on
+        // BC 28.1: "Identification fields and values: Code 1='Q',Int 1='0'"
+        asserterror Rec.Get('Q');
+        Assert.ExpectedError('Identification fields and values: Code 1=''Q'',Int 1=''0''');
+    end;
+
+    [Test]
     procedure GetOnParenNamedPkWithExactAritySucceeds()
     var
         Rec: Record "Paren PK Table";
