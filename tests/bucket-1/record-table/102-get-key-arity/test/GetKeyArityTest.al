@@ -75,14 +75,63 @@ codeunit 50135 "Get Key Arity Tests"
         Rec.Insert(false);
 
         // [WHEN] Getting with fewer values than PK fields
-        // [THEN] No arity error fires and the call still finds the row —
-        // guards the over-arity check against overshooting into rejecting
-        // under-arity calls, which real BC accepts. Deliberately does not
-        // pin HOW the missing trailing value binds; with a single row the
-        // lookup semantics are indistinguishable.
+        // [THEN] No arity error fires and the call finds the row: the
+        // missing trailing key value binds as the Integer default 0,
+        // which is exactly this row's key
         Clear(Rec);
         Assert.IsTrue(Rec.Get('D'), 'Under-arity Get must not raise the too-many-key-fields error');
         Assert.AreEqual('default-int', Rec.Payload, 'Under-arity Get must still find the row');
+    end;
+
+    [Test]
+    procedure UnderArityGetBindsDefaultsNotPrefix()
+    var
+        Rec: Record "Two Key Arity Table";
+    begin
+        // [GIVEN] A row whose trailing PK value is NOT the type default
+        Rec.Init();
+        Rec."Code 1" := 'E';
+        Rec."Int 1" := 5;
+        Rec.Insert(false);
+
+        // [WHEN] Getting with only the leading key value
+        // [THEN] Real BC binds the missing "Int 1" as 0 and looks up
+        // ('E', 0), which does not exist — a prefix match on ('E', *)
+        // would wrongly return the ('E', 5) row (container-verified
+        // against BC 28.1)
+        Assert.IsFalse(Rec.Get('E'), 'Under-arity Get must bind the missing trailing key value as the type default, not prefix-match');
+
+        // [THEN] The unconsumed form raises the record-not-found error
+        asserterror Rec.Get('E');
+        Assert.ExpectedError('does not exist');
+    end;
+
+    [Test]
+    procedure UnderArityGetPicksDefaultKeyedRowAmongSiblings()
+    var
+        Rec: Record "Two Key Arity Table";
+    begin
+        // [GIVEN] Two rows sharing the leading key value; the one with the
+        // non-default trailing key inserted FIRST, so a prefix match would
+        // surface it instead of the default-keyed row
+        Rec.Init();
+        Rec."Code 1" := 'F';
+        Rec."Int 1" := 5;
+        Rec.Payload := 'five';
+        Rec.Insert(false);
+
+        Rec.Init();
+        Rec."Code 1" := 'F';
+        Rec."Int 1" := 0;
+        Rec.Payload := 'zero';
+        Rec.Insert(false);
+
+        // [WHEN] Getting with only the leading key value
+        // [THEN] The missing trailing value binds as 0 and the exact
+        // ('F', 0) row is returned, not the first prefix match
+        Clear(Rec);
+        Assert.IsTrue(Rec.Get('F'), 'Under-arity Get must find the row keyed by the type default');
+        Assert.AreEqual('zero', Rec.Payload, 'Under-arity Get must bind the default-keyed row, not the first row sharing the leading key value');
     end;
 
     [Test]

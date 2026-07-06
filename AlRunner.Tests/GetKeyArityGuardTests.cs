@@ -96,6 +96,63 @@ public class GetKeyArityGuardTests
         Assert.Contains("The number of fields in the primary key is 2.", ex.Message);
     }
 
+    private const int UnderArityTableId = 99765;
+
+    private static void RegisterUnderArityTable()
+    {
+        TableFieldRegistry.ParseAndRegister($$"""
+            table {{UnderArityTableId}} "Under Arity Table"
+            {
+                fields
+                {
+                    field(1; "Code 1"; Code[20]) { }
+                    field(2; "Int 1"; Integer) { }
+                }
+                keys
+                {
+                    key(PK; "Code 1", "Int 1") { Clustered = true; }
+                }
+            }
+            """);
+    }
+
+    private static void InsertRow(string code1, int int1)
+    {
+        var handle = new MockRecordHandle(UnderArityTableId);
+        handle.SetFieldValueSafe(1, NavType.Code, new NavCode(20, code1));
+        handle.SetFieldValueSafe(2, NavType.Integer, NavInteger.Create(int1));
+        handle.ALInsert(DataError.ThrowError);
+    }
+
+    [Fact]
+    public void ALGet_RegisteredPk_FewerValues_BindsDefaultNotPrefix()
+    {
+        RegisterUnderArityTable();
+        InsertRow("E", 5);
+
+        var handle = new MockRecordHandle(UnderArityTableId);
+
+        // Real BC binds the missing "Int 1" as 0 and looks up ('E', 0),
+        // which does not exist. A prefix match would return the ('E', 5) row.
+        Assert.False(handle.ALGet(DataError.TrapError, new NavCode(20, "E")));
+    }
+
+    [Fact]
+    public void ALGet_RegisteredPk_FewerValues_FindsDefaultKeyedRow()
+    {
+        RegisterUnderArityTable();
+        InsertRow("F", 5);
+        InsertRow("F", 0);
+
+        var handle = new MockRecordHandle(UnderArityTableId);
+        var found = handle.ALGet(DataError.TrapError, new NavCode(20, "F"));
+
+        // ('F', 5) sits first in insertion order — binding the default must
+        // select the exact ('F', 0) row, not the first leading-key match.
+        Assert.True(found);
+        Assert.Equal(0, (int)(NavInteger)handle.GetFieldValueSafe(2, NavType.Integer));
+    }
+
     [Fact]
     public void ExtractDeps_MissingTableStub_CarriesSynthesizedSchemaMarker()
     {

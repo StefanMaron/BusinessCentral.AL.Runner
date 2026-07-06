@@ -969,15 +969,31 @@ public class MockRecordHandle : IConvertible
             // stub PK width would reject calls the real table accepts.
             throw new Exception($"Too many key fields were specified, so \"{ALTableName}\" could not be retrieved. The number of fields in the primary key is {pkFields.Length}.");
         }
+        // Missing trailing key values bind as the field type's default and the
+        // lookup requires an exact full-PK match, like the real service tier —
+        // never a prefix match. Only for authoritative PKs: an overstated
+        // fallback or stub PK width would demand defaults for fields that are
+        // not actually part of the real key.
+        bool bindDefaults = keyValues.Length < pkFields.Length && _authoritativePks.Contains(_tableId);
+        int compareCount = bindDefaults ? pkFields.Length : Math.Min(keyValues.Length, pkFields.Length);
         foreach (var row in table)
         {
             bool match = true;
-            for (int i = 0; i < keyValues.Length && i < pkFields.Length; i++)
+            for (int i = 0; i < compareCount; i++)
             {
                 var fieldNo = pkFields[i];
                 var rowVal = row.TryGetValue(fieldNo, out var rv) ? NavValueToString(rv) : "";
-                var keyVal = NavValueToString(keyValues[i]);
-                if (!PkValuesEqual(rowVal, keyVal)) { match = false; break; }
+                if (i < keyValues.Length)
+                {
+                    var keyVal = NavValueToString(keyValues[i]);
+                    if (!PkValuesEqual(rowVal, keyVal)) { match = false; break; }
+                }
+                else if (rowVal.Length != 0 && !PkValuesEqual(rowVal, DefaultPkValueString(fieldNo)))
+                {
+                    // An absent row entry is the unassigned default and always
+                    // matches a default-bound key value.
+                    match = false; break;
+                }
             }
             if (match)
             {
@@ -1066,6 +1082,33 @@ public class MockRecordHandle : IConvertible
                 System.Globalization.CultureInfo.InvariantCulture, out var db))
             return da == db;
         return false;
+    }
+
+    /// <summary>
+    /// Stringified default value of a PK field's type, for comparing rows
+    /// against key values that Get was called without. Mirrors what
+    /// <see cref="NavValueToString"/> produces for a default-initialized
+    /// NavValue of the field's type; types whose default stringifies to ""
+    /// (Code, Text, Date, Time, DateTime) fall through to the default arm.
+    /// </summary>
+    private string DefaultPkValueString(int fieldNo)
+    {
+        var typeName = TableFieldRegistry.GetFieldTypeName(_tableId, fieldNo) ?? "";
+        switch (typeName.ToLowerInvariant())
+        {
+            case "integer":
+            case "biginteger":
+            case "decimal":
+            case "option":
+            case "duration":
+                return "0";
+            case "boolean":
+                return "False";
+            case "guid":
+                return Guid.Empty.ToString();
+            default:
+                return typeName.StartsWith("enum", StringComparison.OrdinalIgnoreCase) ? "0" : "";
+        }
     }
 
     // -----------------------------------------------------------------------
