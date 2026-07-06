@@ -153,6 +153,41 @@ public class GetKeyArityGuardTests
         Assert.Equal(0, (int)(NavInteger)handle.GetFieldValueSafe(2, NavType.Integer));
     }
 
+    private const int DurationPkTableId = 99766;
+
+    [Fact]
+    public void ALGet_DurationPkField_UnderArity_FindsExplicitDefaultKeyedRow()
+    {
+        TableFieldRegistry.ParseAndRegister($$"""
+            table {{DurationPkTableId}} "Duration PK Table"
+            {
+                fields
+                {
+                    field(1; "Code 1"; Code[20]) { }
+                    field(2; "Dur 1"; Duration) { }
+                }
+                keys
+                {
+                    key(PK; "Code 1", "Dur 1") { Clustered = true; }
+                }
+            }
+            """);
+
+        // Store the default duration EXPLICITLY so the row carries a value
+        // (an absent entry short-circuits the comparison and would hide a
+        // default-string mismatch).
+        var insert = new MockRecordHandle(DurationPkTableId);
+        insert.SetFieldValueSafe(1, NavType.Code, new NavCode(20, "G"));
+        insert.SetFieldValueSafe(2, NavType.Duration, NavDuration.Default);
+        insert.ALInsert(DataError.ThrowError);
+
+        // The missing "Dur 1" binds as the Duration default, which is exactly
+        // this row's stored value — the bound default and the stored value
+        // must stringify identically for the match to hold.
+        var handle = new MockRecordHandle(DurationPkTableId);
+        Assert.True(handle.ALGet(DataError.TrapError, new NavCode(20, "G")));
+    }
+
     [Fact]
     public void ExtractDeps_MissingTableStub_CarriesSynthesizedSchemaMarker()
     {

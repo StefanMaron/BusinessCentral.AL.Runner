@@ -976,6 +976,13 @@ public class MockRecordHandle : IConvertible
         // not actually part of the real key.
         bool bindDefaults = keyValues.Length < pkFields.Length && _authoritativePks.Contains(_tableId);
         int compareCount = bindDefaults ? pkFields.Length : Math.Min(keyValues.Length, pkFields.Length);
+        string[]? defaultKeyStrings = null;
+        if (bindDefaults)
+        {
+            defaultKeyStrings = new string[pkFields.Length];
+            for (int i = keyValues.Length; i < pkFields.Length; i++)
+                defaultKeyStrings[i] = DefaultPkValueString(pkFields[i]);
+        }
         foreach (var row in table)
         {
             bool match = true;
@@ -988,7 +995,7 @@ public class MockRecordHandle : IConvertible
                     var keyVal = NavValueToString(keyValues[i]);
                     if (!PkValuesEqual(rowVal, keyVal)) { match = false; break; }
                 }
-                else if (rowVal.Length != 0 && !PkValuesEqual(rowVal, DefaultPkValueString(fieldNo)))
+                else if (rowVal.Length != 0 && !PkValuesEqual(rowVal, defaultKeyStrings![i]))
                 {
                     // An absent row entry is the unassigned default and always
                     // matches a default-bound key value.
@@ -1086,29 +1093,20 @@ public class MockRecordHandle : IConvertible
 
     /// <summary>
     /// Stringified default value of a PK field's type, for comparing rows
-    /// against key values that Get was called without. Mirrors what
-    /// <see cref="NavValueToString"/> produces for a default-initialized
-    /// NavValue of the field's type; types whose default stringifies to ""
-    /// (Code, Text, Date, Time, DateTime) fall through to the default arm.
+    /// against key values that Get was called without. Derived via
+    /// <see cref="DefaultForType"/> + <see cref="NavValueToString"/> so the
+    /// bound default and a stored default-valued field go through the same
+    /// formatter and cannot drift apart. Enum type names carry the enum name
+    /// (e.g. <c>Enum "My Enum"</c>) and store as NavOption, so they map to
+    /// Option instead of the mapper's Text fallback.
     /// </summary>
     private string DefaultPkValueString(int fieldNo)
     {
         var typeName = TableFieldRegistry.GetFieldTypeName(_tableId, fieldNo) ?? "";
-        switch (typeName.ToLowerInvariant())
-        {
-            case "integer":
-            case "biginteger":
-            case "decimal":
-            case "option":
-            case "duration":
-                return "0";
-            case "boolean":
-                return "False";
-            case "guid":
-                return Guid.Empty.ToString();
-            default:
-                return typeName.StartsWith("enum", StringComparison.OrdinalIgnoreCase) ? "0" : "";
-        }
+        var navType = typeName.StartsWith("enum", StringComparison.OrdinalIgnoreCase)
+            ? NavType.Option
+            : MockFieldRef.MapAlTypeToNavType(typeName);
+        return NavValueToString(DefaultForType(navType));
     }
 
     // -----------------------------------------------------------------------

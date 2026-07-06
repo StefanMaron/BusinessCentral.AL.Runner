@@ -584,7 +584,7 @@ public class MockFieldRef
         _fieldNo = fieldNo;
     }
 
-    private static NavType MapAlTypeToNavType(string typeName)
+    internal static NavType MapAlTypeToNavType(string typeName)
     {
         return typeName.ToLowerInvariant() switch
         {
