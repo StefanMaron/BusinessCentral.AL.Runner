@@ -75,11 +75,13 @@ codeunit 50135 "Get Key Arity Tests"
         Rec.Insert(false);
 
         // [WHEN] Getting with fewer values than PK fields
-        // [THEN] No arity error fires and the default-keyed row is found —
+        // [THEN] No arity error fires and the call still finds the row —
         // guards the over-arity check against overshooting into rejecting
-        // under-arity calls, which real BC accepts
+        // under-arity calls, which real BC accepts. Deliberately does not
+        // pin HOW the missing trailing value binds; with a single row the
+        // lookup semantics are indistinguishable.
         Clear(Rec);
         Assert.IsTrue(Rec.Get('D'), 'Under-arity Get must not raise the too-many-key-fields error');
-        Assert.AreEqual('default-int', Rec.Payload, 'Under-arity Get must retrieve the row keyed by defaults');
+        Assert.AreEqual('default-int', Rec.Payload, 'Under-arity Get must still find the row');
     end;
 }
