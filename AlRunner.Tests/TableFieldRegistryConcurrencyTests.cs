@@ -7,11 +7,12 @@ namespace AlRunner.Tests;
 /// <summary>
 /// Thread-safety regression for <see cref="TableFieldRegistry.GetSourceTableId"/>.
 ///
-/// The method used to mutate two non-concurrent dictionaries on its deferred-resolution
-/// branch. Those writes ran on the parallel rewrite path (Parallel.For in Pipeline.cs),
-/// so two threads resolving still-pending pages at once threw
+/// GetSourceTableId is called from the parallel rewrite path (Parallel.For in Pipeline.cs)
+/// and must stay a pure reader: a dictionary write on that path throws
 /// "Operations that change non-concurrent collections must have exclusive access...".
-/// Resolution now happens serially in ParseAndRegister, leaving GetSourceTableId a pure reader.
+/// Pending page→source-table entries are therefore resolved serially inside
+/// ParseAndRegister; this test parks 1000 pending pages, resolves them, and hammers
+/// GetSourceTableId concurrently to guard that invariant.
 ///
 /// Placed in the Pipeline collection because TableFieldRegistry static state is process-global
 /// and shared with every other in-process pipeline test; the collection serializes them so no

@@ -277,13 +277,9 @@ public static class TableFieldRegistry
             if (!stMatch.Success) continue;
 
             var tableName = stMatch.Groups[1].Success ? stMatch.Groups[1].Value : stMatch.Groups[2].Value;
-            if (nameToId.TryGetValue(tableName, out var sourceTableId))
-                _pageSourceTable[pageId] = sourceTableId;
-            else
-                // Table not registered yet (page parsed before its source table) — park the
-                // table name; it is resolved by the eager sweep at the end of ParseAndRegister
-                // (every parse pass runs serially before the parallel rewrite).
-                _pagePendingSourceTable[pageId] = tableName;
+            // Park the name unconditionally; the sweep at the end of this call is the single
+            // resolution path for page→source-table mappings.
+            _pagePendingSourceTable[pageId] = tableName;
 
             // Track SourceTableTemporary = true so the rewriter can emit
             // new MockRecordHandle(tableId, true) for the page's Rec property.
@@ -373,24 +369,18 @@ public static class TableFieldRegistry
             }
         }
 
-        // Eagerly resolve any pending page→source-table entries now that this file's tables
-        // are registered. ParseAndRegister runs serially for every source file before the
-        // parallel rewrite, so resolving here keeps GetSourceTableId a pure, lock-free reader —
-        // no dictionary writes on the parallel hot path.
-        if (_pagePendingSourceTable.Count > 0)
+        // Resolve pending page→source-table entries against the tables registered so far.
+        // ParseAndRegister runs serially for every source file before the parallel rewrite,
+        // so resolving here keeps GetSourceTableId a pure, lock-free reader — no dictionary
+        // writes on the parallel hot path. Removing while enumerating is safe: on the
+        // net8.0+ targets, Dictionary.Remove does not invalidate active enumerators.
+        foreach (var pending in _pagePendingSourceTable)
         {
-            List<int>? resolvedPages = null;
-            foreach (var pending in _pagePendingSourceTable)
+            if (nameToId.TryGetValue(pending.Value, out var resolvedTableId))
             {
-                if (nameToId.TryGetValue(pending.Value, out var resolvedTableId))
-                {
-                    _pageSourceTable[pending.Key] = resolvedTableId;
-                    (resolvedPages ??= new()).Add(pending.Key);
-                }
+                _pageSourceTable[pending.Key] = resolvedTableId;
+                _pagePendingSourceTable.Remove(pending.Key);
             }
-            if (resolvedPages != null)
-                foreach (var pageId in resolvedPages)
-                    _pagePendingSourceTable.Remove(pageId);
         }
     }
 
@@ -420,8 +410,8 @@ public static class TableFieldRegistry
     /// <c>SourceTable = "TableName"</c> in the page definition, or <c>null</c> if
     /// not registered.
     ///
-    /// Pages whose source table is parsed after the page itself are parked as pending
-    /// entries during <see cref="ParseAndRegister"/> and resolved at the end of each
+    /// Page→source-table mappings are parked as pending entries during
+    /// <see cref="ParseAndRegister"/> and resolved by the sweep at the end of each
     /// parse pass — all of which run serially before the parallel rewrite. This method
     /// is therefore a pure reader with no writes, safe to call concurrently.
     /// </summary>
