@@ -84,4 +84,42 @@ codeunit 50135 "Get Key Arity Tests"
         Assert.IsTrue(Rec.Get('D'), 'Under-arity Get must not raise the too-many-key-fields error');
         Assert.AreEqual('default-int', Rec.Payload, 'Under-arity Get must still find the row');
     end;
+
+    [Test]
+    procedure GetOnParenNamedPkWithExactAritySucceeds()
+    var
+        Rec: Record "Paren PK Table";
+    begin
+        // [GIVEN] A row in a table whose first PK field name contains
+        // parentheses (cf. BaseApp names like "Amount (LCY)")
+        Rec.Init();
+        Rec."Code (Main)" := 'X';
+        Rec."Line No." := 7;
+        Rec.Payload := 'paren-row';
+        Rec.Insert(false);
+
+        // [WHEN] Getting with exactly as many values as the 2-field PK
+        // [THEN] The call succeeds — the paren in the quoted field name must
+        // not shrink the PK the arity check compares against
+        Clear(Rec);
+        Assert.IsTrue(Rec.Get('X', 7), 'Exact-arity Get on a paren-named PK field must retrieve the row');
+        Assert.AreEqual('paren-row', Rec.Payload, 'Retrieved row must carry the payload');
+    end;
+
+    [Test]
+    procedure GetOnParenNamedPkOverArityErrors()
+    var
+        Rec: Record "Paren PK Table";
+    begin
+        // [GIVEN] A row in the paren-named-PK table
+        Rec.Init();
+        Rec."Code (Main)" := 'X';
+        Rec."Line No." := 7;
+        Rec.Insert(false);
+
+        // [WHEN] Getting with 3 values against the 2-field PK
+        // [THEN] The platform error fires and reports the true PK width, 2
+        asserterror Rec.Get('X', 7, 42);
+        Assert.ExpectedError('Too many key fields were specified, so "Paren PK Table" could not be retrieved. The number of fields in the primary key is 2.');
+    end;
 }
