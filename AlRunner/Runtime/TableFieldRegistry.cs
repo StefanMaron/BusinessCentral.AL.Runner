@@ -301,12 +301,9 @@ public static class TableFieldRegistry
             if (!stMatch.Success) continue;
 
             var tableName = stMatch.Groups[1].Success ? stMatch.Groups[1].Value : stMatch.Groups[2].Value;
-            if (nameToId.TryGetValue(tableName, out var sourceTableId))
-                _pageSourceTable[pageId] = sourceTableId;
-            else
-                // Table not registered yet (page parsed before its source table) — store
-                // the table name for deferred resolution when GetSourceTableId() is called.
-                _pagePendingSourceTable[pageId] = tableName;
+            // Park the name unconditionally; the sweep at the end of this call is the single
+            // resolution path for page→source-table mappings.
+            _pagePendingSourceTable[pageId] = tableName;
 
             // Track SourceTableTemporary = true so the rewriter can emit
             // new MockRecordHandle(tableId, true) for the page's Rec property.
@@ -395,6 +392,20 @@ public static class TableFieldRegistry
                 _optionMembersFields[(baseTableId, fieldId)] = om.Groups[2].Value.Trim();
             }
         }
+
+        // Resolve pending page→source-table entries against the tables registered so far.
+        // ParseAndRegister runs serially for every source file before the parallel rewrite,
+        // so resolving here keeps GetSourceTableId a pure, lock-free reader — no dictionary
+        // writes on the parallel hot path. Removing while enumerating is safe: on the
+        // net8.0+ targets, Dictionary.Remove does not invalidate active enumerators.
+        foreach (var pending in _pagePendingSourceTable)
+        {
+            if (nameToId.TryGetValue(pending.Value, out var resolvedTableId))
+            {
+                _pageSourceTable[pending.Key] = resolvedTableId;
+                _pagePendingSourceTable.Remove(pending.Key);
+            }
+        }
     }
 
     public static int? GetFieldId(int tableId, string fieldName)
@@ -421,33 +432,15 @@ public static class TableFieldRegistry
     /// <summary>
     /// Returns the source table ID for the given page, as declared by
     /// <c>SourceTable = "TableName"</c> in the page definition, or <c>null</c> if
-    /// not registered.  Populated by <see cref="ParseAndRegister"/> when it
-    /// processes page declarations.
+    /// not registered.
     ///
-    /// When the page was parsed before its source table (file ordering issue),
-    /// the table name is stored as a pending entry and resolved here on first call
-    /// once the table has been registered.
+    /// Page→source-table mappings are parked as pending entries during
+    /// <see cref="ParseAndRegister"/> and resolved by the sweep at the end of each
+    /// parse pass — all of which run serially before the parallel rewrite. This method
+    /// is therefore a pure reader with no writes, safe to call concurrently.
     /// </summary>
     public static int? GetSourceTableId(int pageId)
-    {
-        if (_pageSourceTable.TryGetValue(pageId, out var id)) return id;
-
-        // Deferred resolution: the page was parsed before its source table was registered.
-        if (_pagePendingSourceTable.TryGetValue(pageId, out var pendingName))
-        {
-            // Try to resolve now that all tables may have been registered.
-            foreach (var kv in _tableNames)
-            {
-                if (string.Equals(kv.Value, pendingName, StringComparison.OrdinalIgnoreCase))
-                {
-                    _pageSourceTable[pageId] = kv.Key;
-                    _pagePendingSourceTable.Remove(pageId);
-                    return kv.Key;
-                }
-            }
-        }
-        return null;
-    }
+        => _pageSourceTable.TryGetValue(pageId, out var id) ? id : (int?)null;
 
     /// <summary>
     /// Returns <c>true</c> when the page declared <c>SourceTableTemporary = true</c>.
