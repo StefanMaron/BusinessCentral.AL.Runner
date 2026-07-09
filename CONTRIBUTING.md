@@ -4,6 +4,13 @@ Thanks for your interest in contributing. This guide covers the requirements eve
 
 ---
 
+## How to build
+
+Download dependencies, AL Compiler, and Business Central
+```
+dotnet build /t:EnsureBCServiceTierDlls .\AlRunner\AlRunner.csproj
+```
+
 ## Before you start
 
 Read `README.md` (architecture overview), `docs/limitations.md` (architectural limits and runtime boundaries), and `docs/coverage.yaml` (mock-surface coverage). `CLAUDE.md` is the entry point for AI coding agents working in the repo; it points at the rules in `.claude/rules/` and the on-demand reference in `.claude/skills/`. Understanding the project's design before building will save you from conflicts.
