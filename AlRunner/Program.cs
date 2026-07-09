@@ -3289,7 +3289,7 @@ public static class RoslynCompiler
         return new CompileResult(assembly, alc);
     }
 
-    private const string BcArtifactVersion = "27.5.46862.48827";
+    private const string BcArtifactVersion = "27.5.46862.52376";
     private const string BcArtifactUrl = "https://bcartifacts-exdbf9fwegejdqak.b02.azurefd.net/sandbox/" + BcArtifactVersion + "/platform";
 
     private static string? FindServiceTierPath()
