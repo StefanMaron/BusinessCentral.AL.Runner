@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 116;
+    private const int CACHE_VERSION = 117;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -41,6 +41,13 @@ public static class NclCecilRewrite
     // ─────────────────────────────────────────────────────────────────────────
     public static readonly HashSet<string> CecilOwned = new()
     {
+        // IsolatedStorageRepository lowest layer (Cecil-migrated onto the
+        // TenantStoragePatches in-memory store) — legacy JmpHooks must no-op.
+        "Microsoft.Dynamics.Nav.Runtime.IsolatedStorageRepository::Set/9",
+        "Microsoft.Dynamics.Nav.Runtime.IsolatedStorageRepository::Get/8",
+        "Microsoft.Dynamics.Nav.Runtime.IsolatedStorageRepository::Contains/6",
+        "Microsoft.Dynamics.Nav.Runtime.IsolatedStorageRepository::Contains/5",
+        "Microsoft.Dynamics.Nav.Runtime.IsolatedStorageRepository::Delete/6",
         // NavMethodScope cluster (migrated in Batch 2; registering now so their
         // JmpHooks — if any still install — become no-ops under the registry).
         "Microsoft.Dynamics.Nav.Runtime.NavMethodScope::.ctor/3",
@@ -1410,6 +1417,41 @@ public static class NclCecilRewrite
                     ReplaceBodyWithHelper(asm.MainModule, m, h);
                     Console.Error.WriteLine($"[Cecil] Rewrote ALNavApp.{m.Name} → NavAppResourcePatches (skeleton-safe encoding + resource lookup)");
                 }
+            }
+        }
+
+        // IsolatedStorageRepository — Cecil migration of the TenantStoragePatches
+        // lowest layer. The AL-facing ALIsolatedStorage bodies delegate here, and AL
+        // output also lands here directly for Contains/Delete. The real bodies open
+        // tenant-scoped NavRecord 2000000107 via NavCurrentThread.Session state that
+        // the skeleton lacks → NRE (the exact crash SPBLIC's Extension Setup
+        // SetAppValue hit inside Pageworks's OnInstallAppPerDatabase). The legacy
+        // JmpHook replacements in TenantStoragePatches never install under the
+        // Cecil-only default, so rewrite the five statics onto those SAME in-memory
+        // helpers (scope-honouring store, AES for encrypted entries) and let every
+        // higher ALIsolatedStorage entry run its REAL body into them.
+        // Keys registered in CecilOwned so the legacy Hook(...) installs auto-no-op.
+        // RED→GREEN: tests/runner-extras/isolated-storage.
+        {
+            var repoType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.IsolatedStorageRepository");
+            if (repoType != null)
+            {
+                var tsp = typeof(AlRunnerV2.Patches.TenantStoragePatches);
+                void RewriteRepo(string name, int paramCount, string helperName)
+                {
+                    var m = repoType.Methods.FirstOrDefault(x => x.Name == name && x.Parameters.Count == paramCount)
+                        ?? throw new InvalidOperationException(
+                            $"IsolatedStorageRepository.{name}/{paramCount} not found — Ncl shape changed");
+                    var h = tsp.GetMethod(helperName, BindingFlags.Public | BindingFlags.Static)
+                        ?? throw new InvalidOperationException($"TenantStoragePatches.{helperName} not found");
+                    ReplaceBodyWithHelper(asm.MainModule, m, h);
+                }
+                RewriteRepo("Set", 9, nameof(AlRunnerV2.Patches.TenantStoragePatches.Repo_Set));
+                RewriteRepo("Get", 8, nameof(AlRunnerV2.Patches.TenantStoragePatches.Repo_Get));
+                RewriteRepo("Contains", 6, nameof(AlRunnerV2.Patches.TenantStoragePatches.Repo_Contains_6));
+                RewriteRepo("Contains", 5, nameof(AlRunnerV2.Patches.TenantStoragePatches.Repo_Contains_5));
+                RewriteRepo("Delete", 6, nameof(AlRunnerV2.Patches.TenantStoragePatches.Repo_Delete));
+                Console.Error.WriteLine("[Cecil] Rewrote IsolatedStorageRepository.{Set,Get,Contains×2,Delete} → TenantStoragePatches in-memory store");
             }
         }
 
