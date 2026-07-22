@@ -67,18 +67,74 @@ public static partial class BcRuntime
     public static void SetCurrentBundleInfo(Guid appId, string name, string publisher, string version)
         => _currentBundleInfo = (appId, name, publisher, version);
 
+    // Per-assembly module identity: every emitted AL assembly (test bundle emit AND
+    // each dependency emit) is a distinct BC "module". NavApp.GetCurrentModuleInfo
+    // inside a dependency's code (e.g. SPBLIC's CheckSupportedVersion) must see THAT
+    // app's name/version, not the bundle's — real BC resolves the module of the
+    // currently executing object. Keyed by Assembly instance (Assembly.Load(byte[])).
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<
+        Assembly, (Guid AppId, string Name, string Publisher, string Version)> _moduleInfoByAssembly = new();
+
+    public static void RegisterModuleInfoForAssembly(
+        Assembly asm, Guid appId, string name, string publisher, string version)
+        => _moduleInfoByAssembly[asm] = (appId, name, publisher, version);
+
     /// <summary>
     /// Register an assembly with the current bundle's app info so AlCallStackCapture
     /// can decorate AL call stack frames from that assembly.
     /// </summary>
     public static void RegisterTestAssemblyInfo(System.Reflection.Assembly asm)
     {
-        var (_, name, publisher, version) = _currentBundleInfo;
+        var (appId, name, publisher, version) = _currentBundleInfo;
         AlRunnerV2.Infrastructure.AlCallStackCapture.RegisterAssemblyInfo(asm, name, publisher, version);
+        _moduleInfoByAssembly[asm] = (appId, name, publisher, version);
     }
 
     public static (Guid AppId, string Name, string Publisher, string Version) GetCurrentModuleAppInfo()
         => _currentBundleInfo;
+
+    /// <summary>
+    /// Module info of the app whose emitted assembly is <paramref name="asm"/> —
+    /// called by the per-assembly ALNavApp_GetCurrentModuleInfo polyfill with its own
+    /// executing assembly. Falls back to the current bundle info (single-bundle case /
+    /// pre-registration edge).
+    /// </summary>
+    public static (Guid AppId, string Name, string Publisher, string Version) GetModuleAppInfoFor(Assembly asm)
+        => _moduleInfoByAssembly.TryGetValue(asm, out var info) ? info : _currentBundleInfo;
+
+    /// <summary>Module info by AppId across every registered assembly (deps + bundle),
+    /// for NavApp.GetModuleInfo(moduleId). Null when the id is unknown.</summary>
+    public static (Guid AppId, string Name, string Publisher, string Version)? TryGetModuleInfoByAppId(Guid moduleId)
+    {
+        var (bid, bn, bp, bv) = _currentBundleInfo;
+        if (moduleId == bid) return (bid, bn, bp, bv);
+        foreach (var kv in _moduleInfoByAssembly)
+            if (kv.Value.AppId == moduleId) return kv.Value;
+        return null;
+    }
+
+    /// <summary>
+    /// NavApp.GetCallerModuleInfo semantics: the module of the nearest stack frame
+    /// belonging to a DIFFERENT registered AL assembly than <paramref name="self"/>
+    /// (real BC walks method scopes past the current app). Falls back to
+    /// <paramref name="self"/>'s own info when no foreign AL frame is on the stack
+    /// (e.g. a test calling directly into its own app).
+    /// </summary>
+    public static (Guid AppId, string Name, string Publisher, string Version) GetCallerModuleAppInfoFor(Assembly self)
+    {
+        try
+        {
+            var trace = new System.Diagnostics.StackTrace(fNeedFileInfo: false);
+            for (int i = 0; i < trace.FrameCount; i++)
+            {
+                var asm = trace.GetFrame(i)?.GetMethod()?.DeclaringType?.Assembly;
+                if (asm == null || asm == self) continue;
+                if (_moduleInfoByAssembly.TryGetValue(asm, out var info)) return info;
+            }
+        }
+        catch { }
+        return GetModuleAppInfoFor(self);
+    }
 
     // Set to the currently-loaded test assembly so CreateTarget looks up codeunit types there.
     private static Assembly? _currentTestAssembly;

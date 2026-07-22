@@ -1,0 +1,32 @@
+{
+  "id": "a7d1f5b9-8e4c-4b2d-9f6a-0c5e9d4b7a8f",
+  "name": "NavAppModuleInfo Main",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Consuming bundle of the per-module NavApp.GetCurrentModuleInfo reproducer: asserts the dep sees its own identity (25.8.43.0) while the bundle sees its own (1.0.0.0).",
+  "description": "Companion of navapp-moduleinfo-dep. Proves per-emitted-assembly module identity: GetCurrentModuleInfo inside the dependency returns the dep's name/version, GetCurrentModuleInfo here returns this bundle's, GetCallerModuleInfo inside the dep names this bundle, and GetModuleInfo(depId) resolves the registered dep by AppId.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "f6c0e4a8-7d3b-4a1c-8e5f-9b4d8c3a6f7e",
+      "name": "NavAppModuleInfo Dep",
+      "publisher": "AL Runner",
+      "version": "25.8.43.0"
+    }
+  ],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [
+    {
+      "from": 61240,
+      "to": 61249
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

@@ -1,0 +1,25 @@
+{
+  "id": "f6c0e4a8-7d3b-4a1c-8e5f-9b4d8c3a6f7e",
+  "name": "NavAppModuleInfo Dep",
+  "publisher": "AL Runner",
+  "version": "25.8.43.0",
+  "brief": "Dependency half of the per-module NavApp.GetCurrentModuleInfo reproducer: exposes its OWN module identity, which must be this app's (25.8.43.0), never the consuming bundle's.",
+  "description": "RED before the fix: the runner's GetCurrentModuleInfo polyfill returned the bundle-global app info, so a dependency asking for its own version saw the consuming bundle's 1.0.0.0 — the exact wall SPBLIC's CheckSupportedVersion hit during Pageworks install ('update Pageworks to at least version 25.8.43.0'). GREEN after: each emitted assembly resolves its own registered module identity; GetCallerModuleInfo resolves the nearest foreign AL frame.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [
+    {
+      "from": 61230,
+      "to": 61239
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

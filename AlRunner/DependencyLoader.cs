@@ -95,6 +95,11 @@ public sealed class DependencyLoader
                 // source dir for source deps packaged into a synthetic workspace .app).
                 AlRunnerV2.Patches.NavAppResourcePatches.RegisterDependencyAssembly(
                     asm, m.AppId, m.Name, m.Publisher, m.Version.ToString(), path);
+                // Per-assembly module identity: this dep's code sees ITS OWN app info
+                // from NavApp.GetCurrentModuleInfo (real BC's executing-module rule),
+                // not the bundle's.
+                BcRuntime.RegisterModuleInfoForAssembly(
+                    asm, m.AppId, m.Name, m.Publisher, m.Version.ToString());
                 list.Add(asm);
             }
         }

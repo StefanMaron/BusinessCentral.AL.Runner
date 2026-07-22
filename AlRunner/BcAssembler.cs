@@ -561,29 +561,35 @@ namespace AlRunnerV2Shim
         public static int ALMaxStrLen(string text)
             => int.MaxValue; // unlimited Text passed as raw string
 
-        // NavApp.GetCurrentModuleInfo — returns module info from the loaded bundle's app.json.
+        // NavApp.GetCurrentModuleInfo — module info of the EXECUTING app. This polyfill
+        // class is compiled into each emitted assembly (bundle emit + every dep emit),
+        // so GetExecutingAssembly() here IS the module whose AL code made the call —
+        // BcRuntime maps it to that app's identity (real BC's executing-module rule;
+        // a dependency like SPBLIC must see its own name/version, not the bundle's).
         public static void ALNavApp_GetCurrentModuleInfo(
             Microsoft.Dynamics.Nav.Types.DataError errorLevel,
             Microsoft.Dynamics.Nav.Runtime.ByRef<Microsoft.Dynamics.Nav.Runtime.NavModuleInfo> info)
         {
-            var (appId, name, publisher, version) = global::AlRunnerV2.BcRuntime.GetCurrentModuleAppInfo();
+            var (appId, name, publisher, version) = global::AlRunnerV2.BcRuntime.GetModuleAppInfoFor(
+                global::System.Reflection.Assembly.GetExecutingAssembly());
             var navVersion = new Microsoft.Dynamics.Nav.Runtime.NavVersion(version);
             var emptyDeps = Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavModuleDependencyInfo>.Default;
             info.Value = new Microsoft.Dynamics.Nav.Runtime.NavModuleInfo(
                 appId, name, publisher, navVersion, navVersion, emptyDeps, appId);
         }
 
-        // NavApp.GetModuleInfo(errorLevel, moduleId, info) — see top-of-class string-replace
-        // entry for full rationale: only the current bundle is known; on a matching AppId we
-        // populate and return true, otherwise return false (callers that pass errorLevel.Throw
-        // and want a strict miss can still distinguish by checking the bool return).
+        // NavApp.GetModuleInfo(errorLevel, moduleId, info) — resolves any REGISTERED
+        // module (bundle + every loaded dependency assembly) by AppId; unknown ids
+        // return false (callers that pass errorLevel.Throw and want a strict miss can
+        // still distinguish by checking the bool return).
         public static bool ALNavApp_GetModuleInfo(
             Microsoft.Dynamics.Nav.Types.DataError errorLevel,
             global::System.Guid moduleId,
             Microsoft.Dynamics.Nav.Runtime.ByRef<Microsoft.Dynamics.Nav.Runtime.NavModuleInfo> info)
         {
-            var (appId, name, publisher, version) = global::AlRunnerV2.BcRuntime.GetCurrentModuleAppInfo();
-            if (moduleId != appId) return false;
+            var found = global::AlRunnerV2.BcRuntime.TryGetModuleInfoByAppId(moduleId);
+            if (found == null) return false;
+            var (appId, name, publisher, version) = found.Value;
             var navVersion = new Microsoft.Dynamics.Nav.Runtime.NavVersion(version);
             var emptyDeps = Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavModuleDependencyInfo>.Default;
             info.Value = new Microsoft.Dynamics.Nav.Runtime.NavModuleInfo(
@@ -591,11 +597,19 @@ namespace AlRunnerV2Shim
             return true;
         }
 
+        // NavApp.GetCallerModuleInfo — the module that CALLED into the executing app
+        // (nearest stack frame from a different registered AL assembly); falls back to
+        // the executing app itself when no cross-module frame exists.
         public static bool ALNavApp_GetCallerModuleInfo(
             Microsoft.Dynamics.Nav.Types.DataError errorLevel,
             Microsoft.Dynamics.Nav.Runtime.ByRef<Microsoft.Dynamics.Nav.Runtime.NavModuleInfo> info)
         {
-            ALNavApp_GetCurrentModuleInfo(errorLevel, info);
+            var (appId, name, publisher, version) = global::AlRunnerV2.BcRuntime.GetCallerModuleAppInfoFor(
+                global::System.Reflection.Assembly.GetExecutingAssembly());
+            var navVersion = new Microsoft.Dynamics.Nav.Runtime.NavVersion(version);
+            var emptyDeps = Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavModuleDependencyInfo>.Default;
+            info.Value = new Microsoft.Dynamics.Nav.Runtime.NavModuleInfo(
+                appId, name, publisher, navVersion, navVersion, emptyDeps, appId);
             return true;
         }
 
