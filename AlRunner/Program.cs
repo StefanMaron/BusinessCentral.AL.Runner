@@ -565,6 +565,10 @@ foreach (var bundle in bundles)
     if (watchMode)
         BcRuntime.ResetForNewBundleReload();
 
+    // Forget the previous bundle's install-trigger registrations so a bundle
+    // without deps doesn't inherit a sibling bundle's Install codeunits.
+    AlRunnerV2.InstallTriggerRunner.ResetForNewBundle();
+
     // ── per-bucket dep resolution ──────────────────────────────────────────
     var bucketRoot = FindBucketRoot(bundleAbs);
     if (bucketRoot != null)
@@ -603,6 +607,9 @@ foreach (var bundle in bundles)
                     BcCompiler.SetExtraSymbolDirs(layeredWorkspaceDirs);
                 var loaded = depLoader.LoadAll(ordered, bucketRoot);
                 Console.WriteLine($"  [{rel}] loaded {loaded.Count} dep assembl(ies)");
+                // Register dep assemblies (dependency order) so their Subtype=Install
+                // codeunit lifecycle triggers fire before this bundle's tests run.
+                AlRunnerV2.InstallTriggerRunner.SetDependencyAssemblies(loaded);
                 // Source-only dependency loading compiles those dependencies through
                 // BcCompiler too, which updates the process-wide reference state. Restore
                 // this bundle's dependency symbols before emitting the bundle itself.
@@ -1288,6 +1295,10 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 ordered = resolver.Resolve(roots);
                 BcCompiler.SetResolvedDeps(ordered, resolverDirs);
                 var loaded = depLoader.LoadAll(ordered, bucketRoot);
+                // New bundle in the server session: replace (not inherit) the
+                // install-trigger registrations, then register this bundle's deps.
+                AlRunnerV2.InstallTriggerRunner.ResetForNewBundle();
+                AlRunnerV2.InstallTriggerRunner.SetDependencyAssemblies(loaded);
                 BcCompiler.SetResolvedDeps(ordered, resolverDirs);
                 foreach (var (_, appPath) in ordered)
                     AlRunnerV2.Patches.RecordPatches.AddBcAppPath(appPath);

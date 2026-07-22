@@ -75,6 +75,17 @@ public sealed class TestExecutor
         typeSw.Stop();
         PerfTrace.Log($"TestExecutor.GetTypes {types.Length} type(s) {typeSw.ElapsedMilliseconds}ms");
 
+        // Model a freshly-installed bundle: register this assembly with the
+        // install-trigger runner and fire every loaded app's Subtype=Install
+        // codeunit triggers (dep apps first, this bundle last) BEFORE the first
+        // test. With Disabled isolation there is no reset below, so this initial
+        // firing is the only seeding; for Codeunit/Test isolation the seed is
+        // re-applied after every store reset (see below) because the runner's
+        // reset wipes the store instead of rolling back to the committed
+        // install-seeded baseline real BC restores.
+        InstallTriggerRunner.SetTestAssembly(assembly);
+        InstallTriggerRunner.RunAll();
+
         foreach (var t in types)
         {
             if (!IsTestCodeunit(t)) continue;
@@ -93,7 +104,12 @@ public sealed class TestExecutor
             // the whole codeunit in one transaction, so tests inside share state but
             // each NEW codeunit starts fresh.
             if (Isolation == TestIsolation.Codeunit)
+            {
                 AlRunnerV2.Patches.RecordPatches.ResetPerTestState();
+                // Restore the install-seeded baseline the reset just wiped
+                // (real BC's rollback preserves committed install seeding).
+                InstallTriggerRunner.RunAll();
+            }
 
             object? instance;
             PerfTrace.Log($"TestExecutor.Instantiate START {t.Name}");
@@ -208,7 +224,11 @@ public sealed class TestExecutor
         // Per-test reset only when isolation == Test. For Codeunit / Disabled the
         // reset (if any) happens at codeunit boundaries instead.
         if (Isolation == TestIsolation.Test)
+        {
             AlRunnerV2.Patches.RecordPatches.ResetPerTestState();
+            // Restore the install-seeded baseline (see Run for why).
+            InstallTriggerRunner.RunAll();
+        }
         // Clear any AL call stack captured from a previous test on this thread.
         AlRunnerV2.Infrastructure.AlCallStackCapture.Clear();
         // Enter BC's own "in test" scope for the duration of this test (mirrors
