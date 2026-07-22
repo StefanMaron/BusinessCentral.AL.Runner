@@ -90,8 +90,28 @@ public static class InstallTriggerRunner
             {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 var instance = cu.Ctor.Invoke(new object[] { BcRuntime.RootTreeStub! });
-                InvokeTrigger(cu, instance, cu.PerCompany, "OnInstallAppPerCompany");
-                InvokeTrigger(cu, instance, cu.PerDatabase, "OnInstallAppPerDatabase");
+                try
+                {
+                    InvokeTrigger(cu, instance, cu.PerCompany, "OnInstallAppPerCompany");
+                    InvokeTrigger(cu, instance, cu.PerDatabase, "OnInstallAppPerDatabase");
+                }
+                finally
+                {
+                    // MEMORY LEAK FIX: this instance was constructed parented to the
+                    // process-wide BcRuntime.RootTreeStub (ITreeObject ctor →
+                    // TreeHandler.CreateTreeHandler → parentHandler.InternalAddChild),
+                    // which permanently links it into RootTreeStub's child chain unless
+                    // disposed. RunAll() re-instantiates every Install codeunit on every
+                    // call — once per test codeunit under the default Codeunit isolation,
+                    // once per TEST under Test isolation (see TestExecutor.cs) — so without
+                    // disposal this is the dominant amplifier of the runner's memory growth
+                    // across a full corpus run. The instance is purely transient (models a
+                    // one-shot install-trigger firing; any seeded state lives in the
+                    // in-memory table store, not on this object), so disposing it
+                    // immediately after its triggers fire is faithful and unlinks it from
+                    // RootTreeStub via TreeHandler.Dispose()'s InternalRemoveChild.
+                    (instance as IDisposable)?.Dispose();
+                }
                 PerfTrace.Log($"InstallTrigger {cu.Type.Name} ({asm.GetName().Name}) {sw.ElapsedMilliseconds}ms");
             }
     }

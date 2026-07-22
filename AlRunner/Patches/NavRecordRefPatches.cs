@@ -23,6 +23,33 @@ public static partial class BcRuntime
     private static MethodInfo? _mTreeSetReferenceTarget;
     private static PropertyInfo? _pNavRecordRefTree;
 
+    // MEMORY LEAK FIX (see docs comment on RecordPatches.ResetPerTestState): every
+    // SharedRecordRef / SharedNavStream / SharedHttpRequest / SharedHttpResponseMessage /
+    // SharedNavHttpClient / SharedNavObjectDictionary constructed with
+    // _skeletonSharedObjectContainer as its ITreeSharedObjectContainer parent becomes a
+    // PERMANENT node in that container's TreeHandler child linked list — TreeObject's
+    // ctor unconditionally calls TreeHandler.CreateTreeHandler(parent, this), which links
+    // into parentHandler.firstChildHandler/nextSiblingHandler (Ncl TreeHandler ctor +
+    // InternalAddChild) and nothing ever removed them. Because
+    // _skeletonSharedObjectContainer is a single process-wide static (created once, reused
+    // for the life of the process), that linked list — and everything each child
+    // transitively holds (e.g. SharedRecordRef.record → the live NavRecord with its field
+    // values/BLOBs) — grows without bound across the whole run. This is a completely
+    // separate retention path from _dataAccessByTable (which IS cleared every
+    // ResetPerTestState) and was NOT being cleared anywhere.
+    //
+    // Fix: sweep the container's children at the same per-test/per-codeunit boundary
+    // _dataAccessByTable already resets at. TreeHandler.DisposeAllChildren() is BC's own
+    // mechanism for this (atomically detaches the child chain and disposes each host
+    // object) — nothing legitimately needs one of these wrapper objects to survive past
+    // the test that created it, since a fresh one is always re-derived from
+    // tree.GetReferenceTarget() the next time it's needed.
+    public static void DisposeSkeletonSharedObjectContainerChildren()
+    {
+        if (_skeletonSharedObjectContainer is ITreeObject treeObject)
+            treeObject.Tree?.DisposeAllChildren();
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static object NavRecordRef_get_Target(object self)
     {

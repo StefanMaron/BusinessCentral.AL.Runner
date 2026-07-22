@@ -980,6 +980,13 @@ public static partial class RecordPatches
         // IsolatedStorage in-memory store — per-test reset matches BC semantics where
         // a test's writes are rolled back on completion.
         AlRunnerV2.Patches.TenantStoragePatches.ResetForTest();
+
+        // Process-wide skeleton TreeSharedObjectContainer (SharedRecordRef / SharedNavStream
+        // / SharedHttpRequest / SharedHttpResponseMessage / SharedNavHttpClient /
+        // SharedNavObjectDictionary wrappers) — see BcRuntime.DisposeSkeletonSharedObjectContainerChildren
+        // for why this is a distinct leak from _dataAccessByTable above and must be swept
+        // at the same per-test boundary.
+        AlRunnerV2.BcRuntime.DisposeSkeletonSharedObjectContainerChildren();
     }
 
     public static object NavDataAccessSource_GetDataAccessForTable(object self, NCLMetaTable table, bool isTemporary)

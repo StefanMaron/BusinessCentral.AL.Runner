@@ -22,9 +22,11 @@
     <ProjectReference Include="../AlRunner/AlRunner.csproj" />
   </ItemGroup>
 
-  <!-- BC CodeAnalysis types (SymbolReferenceSpecification, ISymbolReferenceLoader, …) used
-       by JsonLoaderDependencyFallthroughTests. Same resolution as AlRunner.csproj — plain
-       <Reference> items do not flow transitively through the project reference. -->
+  <!-- BC CodeAnalysis / Ncl types (SymbolReferenceSpecification, ISymbolReferenceLoader,
+       ITreeObject, TreeHandler, TreeSharedObjectContainer, …) used by
+       JsonLoaderDependencyFallthroughTests and SkeletonSharedObjectContainerLeakTests.
+       Same resolution as AlRunner.csproj — plain <Reference> items do not flow
+       transitively through the project reference. -->
   <PropertyGroup>
     <_BCVersion>28.1.49838.50794</_BCVersion>
     <_CacheBase Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(USERPROFILE)/.local/share/al-runner</_CacheBase>
@@ -34,6 +36,10 @@
   <ItemGroup>
     <Reference Include="Microsoft.Dynamics.Nav.CodeAnalysis">
       <HintPath>$(ServiceTierPath)/Microsoft.Dynamics.Nav.CodeAnalysis.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Microsoft.Dynamics.Nav.Ncl">
+      <HintPath>$(ServiceTierPath)/Microsoft.Dynamics.Nav.Ncl.dll</HintPath>
       <Private>true</Private>
     </Reference>
   </ItemGroup>

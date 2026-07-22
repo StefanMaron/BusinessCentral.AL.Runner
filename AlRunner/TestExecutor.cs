@@ -128,14 +128,31 @@ public sealed class TestExecutor
             // a public ObjectName property. Falls back to the .NET type name on failure.
             var displayName = ResolveDisplayName(instance, t.Name);
 
-            foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+            try
             {
-                if (!IsTestMethod(m)) continue;
-                if (filter != null && !MethodMatchesFilter(t.Name, m.Name, filter)) continue;
-                var result = RunOne(t.Name, m, instance, displayName);
-                results.Add(result);
-                if (IsTimeout(result))
-                    return results;
+                foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+                {
+                    if (!IsTestMethod(m)) continue;
+                    if (filter != null && !MethodMatchesFilter(t.Name, m.Name, filter)) continue;
+                    var result = RunOne(t.Name, m, instance, displayName);
+                    results.Add(result);
+                    if (IsTimeout(result))
+                        return results;
+                }
+            }
+            finally
+            {
+                // MEMORY LEAK FIX: InstantiateCodeunit parents every test codeunit
+                // instance to the process-wide BcRuntime.RootTreeStub (ITreeObject ctor →
+                // TreeHandler.CreateTreeHandler → parentHandler.InternalAddChild), which
+                // permanently links it into RootTreeStub's child chain unless disposed.
+                // With one instance retained per test codeunit for the life of the
+                // process, this is a real (if smaller than the install-trigger
+                // amplification — see InstallTriggerRunner.RunAll) base leak. Nothing
+                // needs this instance once its test methods have all run, so dispose it
+                // here to unlink it from RootTreeStub (TreeHandler.Dispose() →
+                // InternalRemoveChild).
+                (instance as IDisposable)?.Dispose();
             }
         }
         totalSw.Stop();
