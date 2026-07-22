@@ -2025,11 +2025,30 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
     // compile-time .app scanner — source-only .app, no SymbolReference.json →
     // AL1023) and prepended to the caches so it wins over a stale cached .app.
     var implDirs = new List<string>();
+    // Every impl bundle's own .alpackages, collected so they can be added to the shared
+    // caches returned to the dependent bundles. A dependent (e.g. a test bundle) resolves
+    // its dep on an impl by following the impl's synthesized .app, which declares the impl's
+    // OWN deps — including vendored/ISV apps (e.g. a licensing app) that live only in the
+    // impl's .alpackages. Without these dirs the dependent's resolution fails with
+    // "Dependency not found" for that transitive dep, so the impl never loads and its
+    // namespaces read as unknown. (Compile symbols for the impl itself come from the
+    // *.symbols.json sidecar; these dirs cover its transitive .app closure.)
+    var implAlpackagesDirs = new List<string>();
 
     int emitted = 0;
     foreach (var implPath in sortedImpls)
     {
         if (!idByKey.TryGetValue(implPath, out var implId)) continue;
+
+        // The impl bundle's own .alpackages (same dirs the main per-bundle compile scans),
+        // reused for both this impl's symbol-emit and the dependent-visible caches below.
+        var implBucketRootForPkgs = FindBucketRoot(implPath) ?? implPath;
+        var thisImplAlpackages = Directory
+            .EnumerateDirectories(implBucketRootForPkgs, ".alpackages", SearchOption.AllDirectories)
+            .ToList();
+        foreach (var d in thisImplAlpackages)
+            if (!implAlpackagesDirs.Contains(d, StringComparer.OrdinalIgnoreCase))
+                implAlpackagesDirs.Add(d);
 
         var implKey = ComputeSourceWorkspaceKey(new[] { implPath }, idByKey);
         var wsDir = Path.Combine(workspaceRoot, implKey[..12]);
@@ -2084,11 +2103,22 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
                 // on Application — never on the whole marketplace).
                 // ScopeCurrentAppIdentity sets _currentAppId to the impl so
                 // GetSharedReferences excludes the impl from its own specs (self-ref guard).
-                var implResolver = new DependencyResolver(packageCacheDirs);
+                // Include the impl bundle's OWN .alpackages in the resolver + symbol dirs —
+                // the SAME dirs the main per-bundle compile uses (see the bundlePkgDirs path
+                // in the compile loop). They carry the impl's vendored/declared deps (e.g.
+                // an ISV licensing app) AND the Microsoft platform `System` app whose symbols
+                // define the System.* / System.AI.* namespaces (e.g. the "Copilot Capability"
+                // enum). Without them the layered impl symbol-emit resolves against only the
+                // global --package-cache and fails where the standalone compile succeeds:
+                // "Dependency not found" for a vendored dep, or AL0185/AL0133 "Copilot
+                // Capability is missing". The impl compiles fine on its own BECAUSE it uses
+                // these dirs; the layered impl-emit must too.
+                // ORIGINAL package cache dirs + the impl's .alpackages (NOT extendedCaches,
+                // which includes wsDir — wsDir has no valid .app yet at this point anyway).
+                var implSymbolDirs = thisImplAlpackages.Concat(packageCacheDirs).Distinct().ToList();
+                var implResolver = new DependencyResolver(implSymbolDirs);
                 var implDeps = implResolver.Resolve(implId.Dependencies);
-                // Use the ORIGINAL package cache dirs (not extendedCaches which includes wsDir)
-                // for the symbol compile — wsDir has no valid .app yet at this point anyway.
-                BcCompiler.SetResolvedDeps(implDeps, packageCacheDirs);
+                BcCompiler.SetResolvedDeps(implDeps, implSymbolDirs);
                 using (BcCompiler.ScopeCurrentAppIdentity(implId.AppId, implId.Publisher, implId.Version))
                     new BcCompiler().EmitDepSymbols(new[] { implPath }, implId.Name, implId.AppId, implId.Publisher, implId.Version, symbolsPath);
                 DepsSidecarWriter.Write(
@@ -2144,10 +2174,14 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
     if (emitted > 0)
         Console.WriteLine($"[layered] pre-built {emitted} impl package(s) in-process across {implDirs.Count} cache dir(s)");
 
-    // Impl dirs first (win over any stale cached .app), then the original caches.
+    // Impl dirs first (win over any stale cached .app), then the original caches, then the
+    // impl bundles' own .alpackages (last, so they never shadow a package-cache resolution —
+    // they only ADD the impls' transitive/vendored .app closure a dependent needs to resolve
+    // its dep on an impl). Distinct preserves order and drops any dir already listed.
     var extendedCaches = new List<string>(implDirs);
     extendedCaches.AddRange(packageCacheDirs);
-    return extendedCaches;
+    extendedCaches.AddRange(implAlpackagesDirs);
+    return extendedCaches.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
     static string Sanitize(string s)
     {
