@@ -47,7 +47,31 @@ public sealed class TestExecutor
         var ctorParam = typeof(Microsoft.Dynamics.Nav.Runtime.ITreeObject);
         var filter = NormaliseFilter(TestFilter);
         var typeSw = System.Diagnostics.Stopwatch.StartNew();
-        var types = assembly.GetTypes();
+        Type[] types;
+        try
+        {
+            types = assembly.GetTypes();
+        }
+        catch (ReflectionTypeLoadException ex)
+        {
+            // One unresolvable referenced type (e.g. a dependency whose runtime DLL was not
+            // produced) otherwise takes the ENTIRE suite down with an opaque "Unable to load
+            // one or more of the requested types". Surface the concrete loader failures (per
+            // .claude/rules/loud-failures.md) and continue with the types that DID load — a
+            // test codeunit that itself references the missing type will simply not appear.
+            types = ex.Types.Where(t => t != null).ToArray()!;
+            var reasons = ex.LoaderExceptions
+                .Where(e => e != null)
+                .Select(e => e!.Message)
+                .Distinct()
+                .Take(10)
+                .ToList();
+            Console.Error.WriteLine(
+                $"[test-exec] WARNING: {ex.LoaderExceptions.Length} type(s) in the test assembly " +
+                $"failed to load; continuing with {types.Length} loadable type(s). Causes:");
+            foreach (var r in reasons)
+                Console.Error.WriteLine($"    {r}");
+        }
         typeSw.Stop();
         PerfTrace.Log($"TestExecutor.GetTypes {types.Length} type(s) {typeSw.ElapsedMilliseconds}ms");
 
