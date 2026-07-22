@@ -109,13 +109,23 @@ public sealed class BcAssembler
             var p = Path.Combine(ServiceTierDir, n + ".dll");
             if (File.Exists(p)) yield return p;
         }
-        // .NET shared framework — System.Runtime, mscorlib equivalents
+        // .NET shared framework — System.Runtime, mscorlib equivalents.
+        // IMPORTANT: some BC-bundled NuGet assemblies also match "System.*"
+        // (e.g. System.IdentityModel.Tokens.Jwt) but are versioned to the target BC
+        // release, NOT the .NET shared framework. Prefer the SELECTED ServiceTierDir
+        // copy whenever it exists so compile references track the target BC version
+        // instead of whatever CopyLocal put in bin at build time (a step toward one
+        // binary spanning BC minor versions). Pure-BCL System.* (System.Runtime, …)
+        // are not in ServiceTierDir, so they fall through to the bin/TPA copy.
         var tpa = (string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!;
         foreach (var p in tpa.Split(Path.PathSeparator))
         {
             var name = Path.GetFileNameWithoutExtension(p);
             if (name.StartsWith("System.") || name == "mscorlib" || name == "netstandard")
-                yield return p;
+            {
+                var inArtifact = Path.Combine(ServiceTierDir, name + ".dll");
+                yield return File.Exists(inArtifact) ? inArtifact : p;
+            }
         }
         // The runner's own assembly — polyfill shims call back into AlRunnerV2.BcRuntime
         // helpers (e.g. NCLEnumMetadata_CreateByIdAlAware) so AL emit-time captured
