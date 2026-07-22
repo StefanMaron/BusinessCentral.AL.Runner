@@ -833,6 +833,163 @@ public sealed class BcCompiler
         catch (Exception ex) { caught = ex; }
         _mark("compilation.Emit (bind + IL gen)");
 
+        // Opt-in diagnostic (AL_RUNNER_DIAG_EMITRETRY=1) for investigating a module that still
+        // fails to emit after the retry loop below: prints the ORIGINAL (pre-retry) declaration
+        // diagnostics, including AL0275/AL0264 ambiguous/duplicate-reference counts, which are a
+        // distinct class of failure from the emitter-crash / plain-emit-diagnostic cases the
+        // retry loop actually excludes-and-retries on. Silent by default — does not affect the
+        // fix's behaviour, only visibility when diagnosing a NEW module that still fails.
+        if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_EMITRETRY") == "1")
+        {
+            var origDecl = compilation.GetDeclarationDiagnostics()
+                .Where(d => d.Severity == NavDiag.DiagnosticSeverity.Error).ToList();
+            var origAmbig = origDecl.Where(d => d.Id == "AL0275" || d.Id == "AL0264").ToList();
+            Console.Error.WriteLine($"[DIAG-RETRY] {moduleName} ORIGINAL (pre-retry) declDiags={origDecl.Count} ambiguous(AL0275/AL0264)={origAmbig.Count} caught={caught?.GetType().Name ?? "<none>"} captured={outputter.Captured.Count} specsLen={specs.Length}");
+            foreach (var d in origAmbig.Take(5))
+                Console.Error.WriteLine($"[DIAG-RETRY]   {d.Id} @ {d.Location}: {d.GetMessage().Split('\n', 2)[0]}");
+        }
+
+        // Resilience: Compilation.Emit is atomic PER MODULE — one broken, unrelated object
+        // (e.g. a mock Page crashing BC's emitter with "Unexpected value 'BadExpression'", or a
+        // mock Codeunit method with "Unexpected value 'None' of type NavTypeKind") throws an
+        // AggregateException that zeroes out EVERY object in the module, including otherwise-
+        // clean codeunits elsewhere in a large (100+ object) test-library package. That silent
+        // total loss is what produces the cryptic "NavNCLMissingMethodException ... object with
+        // ID 0" at runtime for a dependency compile: the still-good codeunit's type is never
+        // resolvable, so codeunit dispatch falls back to a NoOp stub whose inherited (un-
+        // overridden) OnInvoke throws for ANY procedure call — regardless of the NoOp's own
+        // (correctly-stamped) ObjectId. See DependencyLoader's Tier-3 compile / CodeunitPatches'
+        // NavCodeunitHandle_CreateTarget fallback.
+        //
+        // BC's own AggregateException names each failing object individually
+        // ("Object:'<Type> <Namespace>.\"<Name>\"' ..."). Parse those names, drop ONLY the
+        // source files that declare them, and retry. Excluding one broken object can surface
+        // ANOTHER previously-masked one (e.g. an ambiguous-reference bind error that only
+        // manifests once its sibling stops crashing emit first), so retry iteratively — each
+        // round drops whatever NEW objects the latest exception names — bounded so a
+        // pathological module can't loop forever. Never silent: every excluded object and any
+        // repeat failure is always logged (not gated behind BCCOMPILER_DIAG), and if the module
+        // still produces 0 sources after exhausting rounds, the ORIGINAL failure is preserved
+        // for the EMIT-ZERO diagnostic below (no regression versus the pre-fix behaviour).
+        {
+            const int maxRounds = 10;
+            // Indices are always relative to the ORIGINAL alFiles/trees arrays (captured once,
+            // before any exclusion round) — rebuilding `trees` smaller each round while still
+            // indexing with original-file indices would silently misalign the two and blow up
+            // with an IndexOutOfRangeException on the second round onward.
+            var originalTrees = trees;
+            var keepIdx = Enumerable.Range(0, alFiles.Count).ToList();
+            var allExcluded = new List<string>();
+            int round = 0;
+            // A round can fail two different ways and both are handled the same (exclude the
+            // culprit file(s), retry):
+            //   1. Compilation.Emit THROWS (an emitter crash on a bound tree, e.g. "Unexpected
+            //      value 'BadExpression'") — BC's AggregateException names the failing objects
+            //      textually ("Object:'<Type> <Ns>."<Name>"'"), matched back to a source file
+            //      via DeclaresObject.
+            //   2. Excluding round 1's crash-causing object(s) can itself surface a NEW, plain
+            //      compile error with NO crash (Emit returns Success=false, 0 sources, nothing
+            //      thrown) — e.g. another object that referenced the just-excluded type now
+            //      fails to resolve it. Those diagnostics carry a real Location.SourceTree, so
+            //      the offending file is identified directly (no text matching needed).
+            while (outputter.Captured.Count == 0 && round < maxRounds)
+            {
+                List<int> nextKeepIdx;
+                List<string> roundExcluded;
+                if (caught != null)
+                {
+                    var failing = ExtractFailingObjectRefs(caught.Message);
+                    if (failing.Count == 0) break;
+                    nextKeepIdx = new List<int>();
+                    roundExcluded = new List<string>();
+                    foreach (var i in keepIdx)
+                    {
+                        string src;
+                        try { src = File.ReadAllText(alFiles[i]); }
+                        catch { nextKeepIdx.Add(i); continue; }
+                        var hit = failing.FirstOrDefault(f => DeclaresObject(src, f.Type, f.Namespace, f.Name));
+                        if (hit.Name != null)
+                            roundExcluded.Add($"{hit.Type} {hit.Namespace}.\"{hit.Name}\"");
+                        else
+                            nextKeepIdx.Add(i);
+                    }
+                }
+                else if (emitResult != null && !emitResult.Success)
+                {
+                    if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_EMITRETRY") == "1")
+                    {
+                        var errs = emitResult.Diagnostics.Where(d => d.Severity == NavDiag.DiagnosticSeverity.Error).ToList();
+                        Console.Error.WriteLine($"[DIAG-RETRY] {moduleName} round{round + 1}-diag: {errs.Count} error diagnostic(s)");
+                        foreach (var d in errs.Take(15))
+                            Console.Error.WriteLine($"[DIAG-RETRY]   [{d.Id}] @ {d.Location}: {d.GetMessage().Split('\n', 2)[0]}");
+                    }
+                    var badTrees = new HashSet<Microsoft.Dynamics.Nav.CodeAnalysis.Syntax.SyntaxTree>(
+                        emitResult.Diagnostics
+                            .Where(d => d.Severity == NavDiag.DiagnosticSeverity.Error && d.Location.IsInSource)
+                            .Select(d => d.Location.SourceTree!));
+                    if (badTrees.Count == 0) break;
+                    nextKeepIdx = new List<int>();
+                    roundExcluded = new List<string>();
+                    foreach (var i in keepIdx)
+                    {
+                        if (badTrees.Contains(originalTrees[i]))
+                            roundExcluded.Add(Path.GetFileNameWithoutExtension(alFiles[i]));
+                        else
+                            nextKeepIdx.Add(i);
+                    }
+                }
+                else break; // no exception and no failed EmitResult to learn from — nothing to exclude
+
+                if (roundExcluded.Count == 0 || nextKeepIdx.Count == 0) break; // nothing new identified, or nothing left
+
+                round++;
+                allExcluded.AddRange(roundExcluded);
+                Console.Error.WriteLine(
+                    $"[BcCompiler] {moduleName}: EMIT-FAIL round {round} on {roundExcluded.Count} broken object(s) " +
+                    $"unrelated to the rest of the module — excluding and retrying: {string.Join(", ", roundExcluded)}");
+                keepIdx = nextKeepIdx;
+
+                var retryTrees = keepIdx.Select(i => originalTrees[i]).ToArray();
+                var retryCompilation = NavCA.Compilation.Create(
+                    moduleName: moduleName,
+                    publisher: _currentPublisher ?? "AlRunnerV2",
+                    version: _currentVersion ?? new Version(1, 0, 0, 0),
+                    appId: appId,
+                    syntaxTrees: retryTrees,
+                    options: compOpts);
+                if (refLoader != null)
+                {
+                    retryCompilation = retryCompilation.WithReferenceLoader(refLoader);
+                    if (specs.Length > 0)
+                        retryCompilation = retryCompilation.AddReferences(specs);
+                }
+                retryCompilation = retryCompilation.WithDotNetResolverFactory(GetOrCreateDotNetFactory());
+                var retryOutputter = new CaptureOutputter();
+                Exception? retryCaught = null;
+                Microsoft.Dynamics.Nav.CodeAnalysis.Emit.EmitResult? retryEmitResult = null;
+                try { retryEmitResult = retryCompilation.Emit(NavCA.EmitOptions.Default, retryOutputter); }
+                catch (Exception ex2) { retryCaught = ex2; }
+
+                outputter = retryOutputter;
+                caught = retryCaught;
+                emitResult = retryEmitResult;
+                compilation = retryCompilation;
+                trees = retryTrees;
+            }
+            if (allExcluded.Count > 0)
+            {
+                if (outputter.Captured.Count > 0)
+                    Console.Error.WriteLine(
+                        $"[BcCompiler] {moduleName}: retry after excluding {allExcluded.Count} broken object(s) " +
+                        $"across {round} round(s) succeeded — {outputter.Captured.Count} object(s) compiled");
+                else
+                    Console.Error.WriteLine(
+                        $"[BcCompiler] {moduleName}: retry after excluding {allExcluded.Count} broken object(s) " +
+                        $"across {round} round(s) STILL produced 0 sources — giving up (original failure preserved)");
+            }
+        }
+
+
         if (Environment.GetEnvironmentVariable("BCCOMPILER_DIAG") == "1")
         {
             Console.Error.WriteLine($"[BcCompiler-diag] module={moduleName} alFiles={alFiles.Count} addCalls={outputter.AddCalls} captured={outputter.Captured.Count} lastAdded={outputter.LastAddedName ?? "<none>"} caught={caught?.GetType().Name ?? "<none>"} emitSuccess={emitResult?.Success}");
@@ -981,6 +1138,49 @@ public sealed class BcCompiler
             try { if (rx.IsMatch(File.ReadAllText(f))) return true; } catch { }
         }
         return false;
+    }
+
+    // BC's Compilation.Emit AggregateException names each failing object individually, e.g.:
+    //   "Failure while emitting object. Object:'Page System.TestLibraries.Reflection.\"Record
+    //    Selection Test Page\"' (Unexpected value 'BadExpression' ...)"
+    //   "Failure while emitting method. Object:'Codeunit System.TestLibraries.Email.\"Connector
+    //    Mock\"' Method:'Initialize()' (...)"
+    //   "Failure while emitting metadata for object:'Table ...\"Cues And KPIs Test 1 Cue\"' (...)"
+    // But an object declared with NO `namespace` line at all (still legal AL — namespaces are
+    // an opt-in convention, not mandatory) is named WITHOUT the "<Namespace>." segment, e.g.:
+    //   "Failure while emitting method. Object:'Codeunit \"EmitRetryTest Bad\"' Method:'Crash()' (...)"
+    // The namespace group must therefore be OPTIONAL, not required, or every namespace-less
+    // object silently fails to match and the retry loop can't identify it (confirmed via a
+    // synthetic repro in AlRunner.Tests/BcCompilerEmitRetryTests.cs — the very first version of
+    // this regex required a namespace and produced zero matches for a namespace-less crash).
+    private static readonly System.Text.RegularExpressions.Regex _failingObjectRx = new(
+        @"[Oo]bject:'(\w+) (?:([\w.]+)\.)?""([^""]+)""'",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static List<(string Type, string Namespace, string Name)> ExtractFailingObjectRefs(string message)
+    {
+        var result = new List<(string, string, string)>();
+        foreach (System.Text.RegularExpressions.Match mm in _failingObjectRx.Matches(message))
+            result.Add((mm.Groups[1].Value, mm.Groups[2].Value, mm.Groups[3].Value));
+        return result;
+    }
+
+    // True when an AL source file has an object header line for the given (type, name) — e.g.
+    // `codeunit 134688 "Connector Mock"` — AND, when a namespace was named, also declares that
+    // namespace (e.g. `namespace System.TestLibraries.Email;`). An empty namespace means BC's
+    // failure message named the object with none (see _failingObjectRx above), so the namespace
+    // check is skipped rather than requiring a `namespace ...;` line that may not exist.
+    // Used to identify exactly which source file(s) to drop from a retry-without-the-broken-
+    // object compile.
+    private static bool DeclaresObject(string src, string type, string ns, string name)
+    {
+        var headerRx = new System.Text.RegularExpressions.Regex(
+            $@"(?im)^\s*{System.Text.RegularExpressions.Regex.Escape(type)}\s+\d+\s+""{System.Text.RegularExpressions.Regex.Escape(name)}""");
+        if (!headerRx.IsMatch(src)) return false;
+        if (string.IsNullOrEmpty(ns)) return true;
+        var nsRx = new System.Text.RegularExpressions.Regex(
+            $@"(?im)^\s*namespace\s+{System.Text.RegularExpressions.Regex.Escape(ns)}\s*;");
+        return nsRx.IsMatch(src);
     }
 
     // Serialize the compilation's SymbolReference (which carries Queries[] with the
