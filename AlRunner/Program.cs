@@ -249,6 +249,31 @@ if (artifactPathArg != null)
         return 2;
     }
 }
+// When the user pinned neither --bc-version nor --artifact-path, default the artifact
+// selection to the ENGINE's built MAJOR rather than blindly latest-in-cache: this binary
+// can only faithfully run its own major (cross-major needs a matching engine build), so a
+// stray download of another major must never become the default. Within the major, any
+// cached minor is interchangeable (verified 28.1<->28.2), so latest-in-major is picked.
+// The target project's app.json (application/platform) is read purely as a cross-check —
+// a mismatch means the project targets a BC major this runner build can't run, surfaced
+// as a clear message instead of a deep failure. All of this stays overridable.
+if (bcVersionArg == null && artifactPathArg == null)
+{
+    var engineMajor = AlRunnerV2.Infrastructure.BcArtifacts.EngineMajor(AppContext.BaseDirectory);
+    if (engineMajor != null)
+    {
+        bcVersionArg = engineMajor.Value.ToString();
+        var projMajor = TryDeriveBcMajorFromProject(bundles);
+        if (projMajor != null && projMajor != engineMajor.Value.ToString())
+            Console.Error.WriteLine($"[bc] warning: project app.json targets BC major {projMajor} but this " +
+                $"runner build supports major {engineMajor} (cross-major needs a matching runner build). " +
+                $"Selecting latest cached {engineMajor}.x — override with --bc-version if a {projMajor}.x " +
+                $"runner is available.");
+        else
+            Console.Error.WriteLine($"[bc] no --bc-version given — selecting latest cached BC {engineMajor}.x " +
+                $"(runner engine major). Override with --bc-version.");
+    }
+}
 try
 {
     AlRunnerV2.Infrastructure.BcArtifacts.SelectVersion(bcVersionArg, artifactPathArg);
@@ -2530,6 +2555,42 @@ static string? FindBucketRoot(string bundlePath)
         var parent = Path.GetDirectoryName(cur);
         if (parent == cur) return null;
         cur = parent;
+    }
+    return null;
+}
+
+// Derive the BC MAJOR version the target project is built for, from the first bundle's
+// app.json `application` field (falling back to `platform`). Used to default the BC
+// artifact selection when the user gave neither --bc-version nor --artifact-path, so the
+// runner picks the cache version matching the project instead of blindly latest-in-cache
+// (a stray higher-minor download must not silently become the default). Returns the MAJOR
+// as a selection prefix (e.g. "28") — the MAJOR-only engine-consistency contract means any
+// cached minor within that major is interchangeable (verified 28.1<->28.2). Returns null
+// when no app.json / no version field is found (caller then falls back to latest-in-cache).
+static string? TryDeriveBcMajorFromProject(IEnumerable<string> bundlePaths)
+{
+    foreach (var bundle in bundlePaths)
+    {
+        string abs;
+        try { abs = Path.GetFullPath(bundle); } catch { continue; }
+        var root = FindBucketRoot(abs) ?? (Directory.Exists(abs) ? abs : Path.GetDirectoryName(abs));
+        if (string.IsNullOrEmpty(root)) continue;
+        var appJson = Path.Combine(root, "app.json");
+        if (!File.Exists(appJson)) continue;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(appJson));
+            var r = doc.RootElement;
+            foreach (var field in new[] { "application", "platform" })
+            {
+                if (r.TryGetProperty(field, out var fv)
+                    && fv.ValueKind == System.Text.Json.JsonValueKind.String
+                    && Version.TryParse(fv.GetString(), out var v)
+                    && v.Major > 0)
+                    return v.Major.ToString();
+            }
+        }
+        catch { /* unparseable manifest — fall through to next bundle / latest-in-cache */ }
     }
     return null;
 }

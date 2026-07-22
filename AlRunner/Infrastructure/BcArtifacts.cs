@@ -232,6 +232,18 @@ public static class BcArtifacts
     /// AssemblyName.Version = 28.0.0.0), so minor/patch skew (28.1.x build vs 28.1.y
     /// cache, or a 28.0-stamped assembly inside a 28.1 artifact) is expected and tolerated.
     /// </summary>
+    /// <summary>
+    /// The BC MAJOR version the engine (bin Ncl.dll) was built for, or null when the
+    /// engine DLL is absent / unversioned. This is the only major this binary can run
+    /// (cross-major needs a matching engine build); used to default artifact selection.
+    /// </summary>
+    public static int? EngineMajor(string binDir)
+    {
+        var ncl = Path.Combine(binDir, "Microsoft.Dynamics.Nav.Ncl.dll");
+        if (!File.Exists(ncl)) return null;
+        return System.Reflection.AssemblyName.GetAssemblyName(ncl).Version?.Major;
+    }
+
     public static void VerifyEngineConsistency(string binDir)
     {
         var ncl = Path.Combine(binDir, "Microsoft.Dynamics.Nav.Ncl.dll");
