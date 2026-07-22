@@ -964,6 +964,19 @@ public static partial class RecordPatches
     /// isolation transaction. Without this the in-memory store accumulates state
     /// across tests and Insert calls hit duplicate-key errors on common identifiers.
     /// </summary>
+    // TEMPORARY (memory-census diagnostic) — total DataAccessSource entries and
+    // summed per-table DataAccess entry counts across all of them. See MemoryCensus.cs.
+    internal static (int sources, int tables) CensusDataAccessByTable()
+    {
+        int sources = 0, tables = 0;
+        foreach (var (_, perTable) in _dataAccessByTable)
+        {
+            sources++;
+            tables += perTable.Count;
+        }
+        return (sources, tables);
+    }
+
     public static void ResetPerTestState()
     {
         // ConditionalWeakTable doesn't support Clear directly; the simplest correct

@@ -50,6 +50,38 @@ public static partial class BcRuntime
             treeObject.Tree?.DisposeAllChildren();
     }
 
+    // TEMPORARY (memory-census diagnostic) — count the container's live child chain
+    // WITHOUT disposing it, by walking TreeHandler's private child-linked-list fields
+    // via reflection. Best-effort: returns -1 if the field shape can't be found.
+    // See MemoryCensus.cs.
+    private static FieldInfo? _fTreeHandlerFirstChild;
+    private static FieldInfo? _fTreeHandlerNextSibling;
+    internal static int CensusSharedObjectContainerChildCount()
+    {
+        if (_skeletonSharedObjectContainer is not ITreeObject treeObject || treeObject.Tree == null)
+            return 0;
+        var tree = treeObject.Tree;
+        var treeType = tree.GetType();
+        if (_fTreeHandlerFirstChild == null)
+            _fTreeHandlerFirstChild = treeType.GetField("firstChildHandler",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+        if (_fTreeHandlerFirstChild == null) return -1;
+        if (_fTreeHandlerNextSibling == null)
+            _fTreeHandlerNextSibling = _fTreeHandlerFirstChild.FieldType.GetField("nextSiblingHandler",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+        if (_fTreeHandlerNextSibling == null) return -1;
+
+        int n = 0;
+        var cur = _fTreeHandlerFirstChild.GetValue(tree);
+        var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        while (cur != null && seen.Add(cur))
+        {
+            n++;
+            cur = _fTreeHandlerNextSibling.GetValue(cur);
+        }
+        return n;
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static object NavRecordRef_get_Target(object self)
     {

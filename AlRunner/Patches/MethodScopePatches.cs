@@ -125,10 +125,52 @@ public static partial class BcRuntime
     ///   1. Decrements the ThreadStatic recursion depth counter.
     ///   2. Restores session.CurrentMethodScope to parentScope (the actual parent captured at
     ///      ctor entry), mirroring what the original Dispose(bool) body does.
+    ///   3. Detaches the TreeHandler node the ctor replacement linked as a child of
+    ///      _skeletonRootScope (see MEMORY LEAK FIX note below) so it stops being a permanent
+    ///      GC root.
     ///
-    /// The original 89-byte body (resource cleanup, base.Dispose call) is not run; for the
-    /// headless test harness this is acceptable — no real transactions, cancellation, or tree
-    /// deregistration is needed for test correctness.
+    /// MEMORY LEAK FIX (dominant per-test leak; see docs comment on
+    /// RecordPatches.ResetPerTestState / BcRuntime.DisposeSkeletonSharedObjectContainerChildren
+    /// for the analogous, already-fixed leak on the OTHER skeleton container):
+    /// NavMethodScopeCtorReplacement above links every constructed method-scope object (i.e.
+    /// EVERY AL procedure/method call — top-level, local procedure, event, everything) as a
+    /// permanent TreeHandler child of the single process-wide static _skeletonRootScope via
+    /// TreeHandler.CreateTreeHandler(_skeletonRootScope, self). Because this Dispose
+    /// replacement never unlinked that child handler, the handler (and everything it
+    /// transitively retains — the scope object itself, its locals, and for local-procedure
+    /// scopes the compiler-emitted `<Method>_Scope__...` frame objects) was NEVER removed from
+    /// _skeletonRootScope's child chain. That chain lives for the entire process lifetime, so
+    /// memory grew by one retained node per AL method/procedure call — not just per test or
+    /// per codeunit. Confirmed via gcdump: a single 960KB-input pure-AL decompression test
+    /// (~870K calls to two byte-at-a-time local procedures) alone retained ~1.2GB of
+    /// TreeObjectHandler + scope-frame + ByRef-wrapper objects even after a forced blocking
+    /// Gen2 GC, all rooted through _skeletonRootScope's child chain. This is the dominant leak
+    /// (much larger than the SharedObjectContainer one above, since it fires on every call
+    /// rather than every record/stream/link access).
+    ///
+    /// Fix approach — DETACH ONLY, not full Dispose(): TreeHandler's public Dispose() cascades
+    /// into DisposeAllChildren(), which calls IDisposable.Dispose() on every descendant
+    /// hostObject. That is too aggressive here: some values created "inside" a call (e.g. a
+    /// dedup'd/shared image stream promoted into a longer-lived cache by our own patches, or a
+    /// BLOB written by a deeply-nested render call and read back by an outer caller) are still
+    /// legitimately reachable after the creating scope returns, and forcing their Dispose() at
+    /// scope-exit corrupted that data (confirmed empirically: calling the full Dispose() here
+    /// turned 3 pre-existing PageworksImageTest failures into 5 — the two new failures were
+    /// image/BLOB content going missing — "no image XObject stream to compare" / "0 image
+    /// draws found" — exactly what premature disposal of shared render buffers would cause).
+    /// Real BC's compiler-generated code guarantees no such value is left ONLY reachable via a
+    /// disposing scope's tree position (handle-typed values crossing a scope boundary are
+    /// copied/re-parented by the emitted IL); our runner's polyfills don't fully replicate that
+    /// guarantee, so a hard cascading Dispose() is unsafe here.
+    ///
+    /// Instead we just unlink this scope's TreeHandler node from its parent's child chain
+    /// (mirroring TreeHandler's private InternalRemoveChild, resolved via reflection against
+    /// the abstract base type — see _fTreeHandler* fields in BcRuntime.cs) WITHOUT touching its
+    /// own children or calling hostObject.Dispose(). This breaks the artificial GC root that
+    /// _skeletonRootScope's chain represents; anything only reachable through the now-detached
+    /// subtree becomes ordinary collectible garbage on the next GC, while anything still
+    /// legitimately referenced elsewhere (e.g. via a persistent cache field) survives via normal
+    /// GC reachability, exactly as it would if the tree link had simply never been kept.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void NavMethodScope_Dispose(object? self, bool disposing)
@@ -144,6 +186,50 @@ public static partial class BcRuntime
             var parent = msScope != null ? _fMsParentScope.GetValue(msScope) : _skeletonRootScope;
             FieldPoke.SetInstance(_fSessCurrentScope, _skeletonSession, parent ?? _skeletonRootScope);
         }
+
+        DetachTreeHandlerFromParent(self);
+    }
+
+    /// <summary>
+    /// Unlinks the TreeHandler stored in self's TreeObject.tree field from its parent's
+    /// child chain, without disposing hostObjects (see NavMethodScope_Dispose doc above).
+    /// Mirrors TreeHandler.InternalRemoveChild's doubly-linked-list surgery.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void DetachTreeHandlerFromParent(object? self)
+    {
+        if (self == null || _fTreeObjTree == null) return;
+        if (_fTreeHandlerParent == null || _fTreeHandlerFirstChildBase == null ||
+            _fTreeHandlerPrevSibling == null || _fTreeHandlerNextSiblingBase == null)
+            return;
+
+        var handler = _fTreeObjTree.GetValue(self);
+        if (handler == null) return;
+
+        var parentHandler = _fTreeHandlerParent.GetValue(handler);
+        if (parentHandler == null) return; // already detached, or a root handler
+
+        var prev = _fTreeHandlerPrevSibling.GetValue(handler);
+        var next = _fTreeHandlerNextSiblingBase.GetValue(handler);
+
+        if (next != null) _fTreeHandlerPrevSibling.SetValue(next, prev);
+        if (prev != null)
+        {
+            _fTreeHandlerNextSiblingBase.SetValue(prev, next);
+        }
+        else
+        {
+            // We were the parent's firstChildHandler.
+            var parentFirstChild = _fTreeHandlerFirstChildBase.GetValue(parentHandler);
+            if (ReferenceEquals(parentFirstChild, handler))
+                _fTreeHandlerFirstChildBase.SetValue(parentHandler, next);
+        }
+
+        // Clear this handler's own links so it doesn't keep the (now-detached) sibling
+        // chain or parent reachable either, and so it can't be mistaken for still-attached.
+        _fTreeHandlerPrevSibling.SetValue(handler, null);
+        _fTreeHandlerNextSiblingBase.SetValue(handler, null);
+        _fTreeHandlerParent.SetValue(handler, null);
     }
 
     /// <summary>

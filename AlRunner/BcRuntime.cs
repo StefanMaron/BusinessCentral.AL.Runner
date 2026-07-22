@@ -31,6 +31,15 @@ public static partial class BcRuntime
     private static MethodInfo? _mCreateTreeHandler;    // TreeHandler.CreateTreeHandler
     private static Type? _navNCLDialogExceptionType;   // NavNCLDialogException (for NavDialog.ALError replacement)
 
+    // MEMORY LEAK FIX fields (see MethodScopePatches.NavMethodScope_Dispose) — private
+    // doubly-linked-list fields declared on the ABSTRACT TreeHandler base class. Must be
+    // resolved via typeof(TreeHandler)/treeHandlerType directly: GetField(NonPublic|Instance)
+    // on a concrete subtype's Type does NOT surface inherited private base-class fields.
+    private static FieldInfo? _fTreeHandlerParent;          // TreeHandler.parentHandler
+    private static FieldInfo? _fTreeHandlerFirstChildBase;  // TreeHandler.firstChildHandler
+    private static FieldInfo? _fTreeHandlerPrevSibling;     // TreeHandler.previousSiblingHandler
+    private static FieldInfo? _fTreeHandlerNextSiblingBase; // TreeHandler.nextSiblingHandler
+
     // NavApplicationObjectBase ctor replacement fields.
     private static FieldInfo? _fAoSession;             // NavApplicationObjectBase.session
     private static FieldInfo? _fAoObjectId;            // NavApplicationObjectBase.objectId (readonly struct)
@@ -1079,8 +1088,21 @@ public static partial class BcRuntime
         if (sessType != null)
             _fSessCurrentScope = sessType.GetField("<CurrentMethodScope>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance);
         if (treeHandlerType != null)
+        {
             _mCreateTreeHandler = treeHandlerType.GetMethod("CreateTreeHandler",
                 BindingFlags.Public | BindingFlags.Static);
+            // MEMORY LEAK FIX — resolved on treeHandlerType (the base class) so these
+            // private fields are found regardless of the concrete handler subtype
+            // (TreeObjectHandler/TreeSharedObjectHandler/TreeObjectReferenceHandler).
+            _fTreeHandlerParent          = treeHandlerType.GetField("parentHandler",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            _fTreeHandlerFirstChildBase  = treeHandlerType.GetField("firstChildHandler",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            _fTreeHandlerPrevSibling     = treeHandlerType.GetField("previousSiblingHandler",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            _fTreeHandlerNextSiblingBase = treeHandlerType.GetField("nextSiblingHandler",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+        }
 
         // Build a proper NavMethodScope+RootMethodScope skeleton so the NavMethodScope ctor
         // (which calls base(parent)) can create child TreeHandlers from it safely.

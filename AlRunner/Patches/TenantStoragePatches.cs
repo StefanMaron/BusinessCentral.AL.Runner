@@ -55,6 +55,9 @@ public static class TenantStoragePatches
 
     public static void ResetForTest() => _store.Clear();
 
+    // TEMPORARY (memory-census diagnostic) — total stored entries. See MemoryCensus.cs.
+    internal static int CensusEntryCount() => _store.Count;
+
     public static void Register(Assembly navNcl)
     {
         var tALIso = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ALIsolatedStorage");

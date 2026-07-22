@@ -167,6 +167,18 @@ public static class MediaSetPatches
         }
     }
 
+    // TEMPORARY (memory-census diagnostic) — total Guid entries stored across all
+    // (ParentRecord, FieldNo) keys. ConditionalWeakTable has no direct Count, so this
+    // sums each tracked entry's inner dictionary list lengths. See MemoryCensus.cs.
+    internal static int CensusEntryCount()
+    {
+        int n = 0;
+        foreach (var (_, dict) in _recStore)
+            foreach (var (_, list) in dict)
+                n += list.Count;
+        return n;
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static Guid NavMediaSet_get_ALMediaId(object self)
     {

@@ -21,6 +21,7 @@
 // on those reaches AL output (JIT'd code outside Ncl.dll R2R) — the
 // `precompiled-dll-respect.md` R2R-internal-call caveat doesn't bite for AL callers.
 
+using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using AlRunnerV2.Infrastructure;
@@ -50,6 +51,14 @@ public static class RecordLinkPatches
             _links.Clear();
             _nextId = 0;
         }
+    }
+
+    // TEMPORARY (memory-census diagnostic) — total link entries across all records.
+    // See MemoryCensus.cs.
+    internal static int CensusEntryCount()
+    {
+        lock (_lock)
+            return _links.Values.Sum(l => l.Count);
     }
 
     public static void Register(Assembly navNcl)

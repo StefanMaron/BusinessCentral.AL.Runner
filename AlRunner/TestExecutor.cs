@@ -295,6 +295,8 @@ public sealed class TestExecutor
         finally
         {
             BcRuntime.LeaveTestExecutionScope();
+            // Env-gated memory-census diagnostic (AL_RUNNER_MEM_CENSUS=1); no-op when unset — see MemoryCensus.cs.
+            MemoryCensus.Log(codeunit, m.Name);
         }
     }
 
