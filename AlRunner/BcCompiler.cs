@@ -1133,7 +1133,8 @@ public sealed class BcCompiler
     /// </summary>
     private static IEnumerable<string> ResolveSymbolDirs()
     {
-        var home = Environment.GetEnvironmentVariable("HOME");
+        // Cross-platform home (POSIX HOME is null on Windows — see AlRunnerPaths).
+        var home = AlRunnerV2.Infrastructure.AlRunnerPaths.UserHome;
         if (string.IsNullOrEmpty(home)) yield break;
 
         // Match the process-global selected BC version (BcArtifacts.SelectedVersion) so

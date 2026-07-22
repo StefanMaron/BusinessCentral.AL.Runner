@@ -91,8 +91,11 @@
 
   <PropertyGroup>
     <_BCVersion>28.1.49838.50794</_BCVersion>
-    <!-- Cross-platform cache directory for auto-downloaded BC service tier -->
-    <_CacheBase Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(LOCALAPPDATA)/al-runner</_CacheBase>
+    <!-- Cross-platform cache directory for the build-time BC service tier. MUST match the
+         runtime artifacts root (BcArtifacts.ArtifactsRoot = UserProfile/.local/share/al-runner/
+         artifacts on every OS) so a dev's downloaded artifacts serve both the build and the
+         run. USERPROFILE is the Windows equivalent of $HOME (SpecialFolder.UserProfile). -->
+    <_CacheBase Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(USERPROFILE)/.local/share/al-runner</_CacheBase>
     <_CacheBase Condition="!$([MSBuild]::IsOSPlatform('Windows'))">$(HOME)/.local/share/al-runner</_CacheBase>
   </PropertyGroup>
 

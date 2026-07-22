@@ -49,7 +49,8 @@ public sealed class BcAssembler
     {
         var sourceList = sources.ToList();
         if (Environment.GetEnvironmentVariable("DUMP_CS") == "1")
-            foreach (var s in sourceList) File.WriteAllText($"/tmp/gen_{s.Name}.cs", s.Code);
+            foreach (var s in sourceList)
+                File.WriteAllText(Path.Combine(Path.GetTempPath(), $"gen_{s.Name}.cs"), s.Code);
         var trees = sourceList
             .Select(s => CSharpSyntaxTree.ParseText(
                 ApplyPolyfillRedirects(s.Code), path: s.Name + ".cs"))

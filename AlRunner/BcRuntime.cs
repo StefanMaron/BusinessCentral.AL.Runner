@@ -385,7 +385,7 @@ public static partial class BcRuntime
         Console.Out.Flush();
         Console.Error.WriteLine(ready);
         Console.Error.Flush();
-        try { System.IO.File.AppendAllText("/tmp/al-runner-startup.log", ready + "\n"); } catch { }
+        try { System.IO.File.AppendAllText(Path.Combine(Path.GetTempPath(), "al-runner-startup.log"), ready + "\n"); } catch { }
 
         // Wire FirstChanceException-based AL call-stack capture now that patches are live
         // and _skeletonSession is initialised. This must happen after all hooks so that

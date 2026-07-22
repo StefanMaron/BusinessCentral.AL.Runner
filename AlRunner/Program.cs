@@ -2477,7 +2477,8 @@ static IEnumerable<string> ExpandPackageCacheDirs(IEnumerable<string> userDirs)
 // and yields platform/Applications and platform/ModernDev if they exist.
 static IEnumerable<string> BcArtifactTestDirs(string cacheDir)
 {
-    var home = Environment.GetEnvironmentVariable("HOME");
+    // Cross-platform home (POSIX HOME is null on Windows — see AlRunnerPaths).
+    var home = AlRunnerV2.Infrastructure.AlRunnerPaths.UserHome;
     if (string.IsNullOrEmpty(home)) yield break;
 
     var bcRoot = Path.GetFullPath(Path.Combine(home, ".bcartifacts.cache"));
@@ -2537,7 +2538,8 @@ static string[] RewriteArtifactPathArg(string[] argv)
 // sort — the old StringComparer.Ordinal sort mis-ordered e.g. "28.1.9" > "28.1.10").
 static IEnumerable<string> DefaultPackageCacheDirs()
 {
-    var home = Environment.GetEnvironmentVariable("HOME");
+    // Cross-platform home (POSIX HOME is null on Windows — see AlRunnerPaths).
+    var home = AlRunnerV2.Infrastructure.AlRunnerPaths.UserHome;
     if (string.IsNullOrEmpty(home)) yield break;
 
     var sel = AlRunnerV2.Infrastructure.BcArtifacts.SelectedVersion;
