@@ -57,6 +57,14 @@ public static class BcArtifacts
     private static string ArtifactsRoot => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ArtifactsRoot_Rel);
 
+    /// <summary>The per-user artifacts root (<c>~/.local/share/al-runner/artifacts</c>),
+    /// where each BC version lives in a version-named subdir. Public for the provisioning
+    /// flow, which downloads into <see cref="ArtifactDirFor"/> before selection runs.</summary>
+    public static string ArtifactsRootDir => ArtifactsRoot;
+
+    /// <summary>The artifact directory for a specific full version string.</summary>
+    public static string ArtifactDirFor(string version) => Path.Combine(ArtifactsRoot, version);
+
     /// <summary>
     /// Explicitly select the BC version used by every resolver this process.
     /// Call once at startup BEFORE any resolver runs. Idempotent: a second call with

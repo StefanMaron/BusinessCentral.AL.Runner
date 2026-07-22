@@ -15,9 +15,10 @@ public static class Log
 
     // Matches `[Component]` or `[ComponentName]` at the start of a line — alphanumeric
     // tag in square brackets, NOT a numeric progress tag like `[1/3]`.
-    // `[layered]` and `[watch]` are explicitly exempted — they are user-facing output
-    // (layered source-build progress; watch-mode status), not internal diagnostics.
-    private static readonly Regex ComponentTag = new(@"^\[(?!(?:layered|watch)\])[A-Za-z][A-Za-z0-9._+]*\]",
+    // `[layered]`, `[watch]` and `[provision]` are explicitly exempted — they are
+    // user-facing output (layered source-build progress; watch-mode status; artifact
+    // provisioning/download progress), not internal diagnostics.
+    private static readonly Regex ComponentTag = new(@"^\[(?!(?:layered|watch|provision)\])[A-Za-z][A-Za-z0-9._+]*\]",
         RegexOptions.Compiled);
 
     public static void Install()

@@ -65,6 +65,14 @@
     </ProjectReference>
   </ItemGroup>
 
+  <!-- BC-free provisioning library (HTTP + ZIP artifact downloader). Referenced so the
+       runner can verify/auto-resolve missing BC artifacts in-process (ProvisioningCheck)
+       instead of shelling out to `dotnet run`. It carries no BC deps, so it does not
+       perturb the engine load chain. -->
+  <ItemGroup>
+    <ProjectReference Include="../AlRunner.Provisioning/AlRunner.Provisioning.csproj" />
+  </ItemGroup>
+
   <ItemGroup>
     <None Include="../README.md" Pack="true" PackagePath="/" />
     <None Include="../CHANGELOG.md" Pack="true" PackagePath="/" />

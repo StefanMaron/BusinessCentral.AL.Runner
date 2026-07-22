@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="AlRunner/AlRunner.csproj" />
+  <Project Path="AlRunner.Provisioning/AlRunner.Provisioning.csproj" />
   <Project Path="AlRunner.Tests/AlRunner.Tests.csproj" />
 </Solution>

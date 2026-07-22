@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- BC-FREE provisioning library: HTTP + ZIP only, zero Microsoft.Dynamics.Nav.*
+       references. Both AlRunner (for in-process auto-provision) and the standalone
+       tools/DownloadArtifacts CLI reference this. It MUST stay BC-free so it builds
+       before AlRunner's BC engine DLLs are present (the AlRunner build target runs the
+       CLI to fetch those very DLLs — a reference on AlRunner would be a build cycle). -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>AlRunner.Provisioning</RootNamespace>
+  </PropertyGroup>
+
+</Project>

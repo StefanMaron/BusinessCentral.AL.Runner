@@ -173,8 +173,16 @@ string? dumpCsharpDir = null;
 // process-global BcArtifacts selection below, before any resolver runs.
 string? bcVersionArg = null;
 string? artifactPathArg = null;
+// `provision` subcommand: `al-runner provision [<project>]` provisions the BC artifacts
+// for the project's version and exits (no test run). `--auto-provision` provisions on the
+// fly when artifacts are missing, then continues the normal run. Both are the opt-in that
+// gates the runner's otherwise-forbidden downloads (no silent auto-download).
+bool provisionSubcommand = args.Length > 0 && args[0] == "provision";
+bool autoProvision = false;
 for (int i = 0; i < args.Length; i++)
 {
+    if (i == 0 && args[i] == "provision") { continue; } // consumed as subcommand
+    if (args[i] == "--auto-provision") { autoProvision = true; continue; }
     if (args[i] == "--bc-version" && i + 1 < args.Length) { bcVersionArg = args[++i]; continue; }
     if (args[i] == "--artifact-path" && i + 1 < args.Length) { artifactPathArg = args[++i]; continue; }
     if (args[i] == "--out" && i + 1 < args.Length) { outPath = args[++i]; printClassification = true; continue; }
@@ -274,6 +282,20 @@ if (bcVersionArg == null && artifactPathArg == null)
                 $"(runner engine major). Override with --bc-version.");
     }
 }
+// ── Provisioning (opt-in): `provision` subcommand or --auto-provision. Resolves the
+// target version, downloads the engine service-tier closure if it's missing/incomplete,
+// then (subcommand) exits or (flag) continues the run against what was provisioned. This
+// is the ONLY path that downloads — a normal run never does.
+if (provisionSubcommand || autoProvision)
+{
+    var prc = RunProvisioning(bcVersionArg, artifactPathArg, bundles, out var provisionedVersion);
+    if (provisionSubcommand)
+        return prc; // the subcommand always exits after provisioning, never runs tests
+    if (prc == 0 && provisionedVersion != null)
+        bcVersionArg = provisionedVersion; // run against the version we just ensured
+    // On failure with --auto-provision we fall through; SelectVersion below emits the
+    // loud, path-naming error (and the detailed ProvisioningCheck report if partial).
+}
 try
 {
     AlRunnerV2.Infrastructure.BcArtifacts.SelectVersion(bcVersionArg, artifactPathArg);
@@ -289,6 +311,22 @@ catch (InvalidOperationException ex)
 {
     Console.Error.WriteLine($"BC version selection failed: {ex.Message}");
     return 2;
+}
+
+// Completeness gate: the selected version's dir exists, but is its engine closure whole?
+// A partial /service/ closure would otherwise fail deep in a FileLoadException at runtime
+// (the version-agnostic engine serves the BC-app closure from this dir). On a normal run
+// we do NOT download — we print ONE loud, path-naming report + the one-command fix and
+// stop. (--auto-provision already completed it above, so this only trips on a real gap.)
+{
+    var provReport = AlRunnerV2.Infrastructure.ProvisioningCheck.Check(
+        AlRunnerV2.Infrastructure.BcArtifacts.SelectedVersion.ToString(),
+        AlRunnerV2.Infrastructure.BcArtifacts.ServiceTierDir);
+    if (!provReport.Ok)
+    {
+        Console.Error.WriteLine(provReport.ToDetailedMessage(bundles.Count > 0 ? bundles[0] : null));
+        return 2;
+    }
 }
 
 if (alCacheDir != null) Directory.CreateDirectory(alCacheDir);
@@ -2593,6 +2631,78 @@ static string? TryDeriveBcMajorFromProject(IEnumerable<string> bundlePaths)
         catch { /* unparseable manifest — fall through to next bundle / latest-in-cache */ }
     }
     return null;
+}
+
+// Provisioning driver for the `provision` subcommand / --auto-provision. Resolves the
+// target BC version (explicit --bc-version, else the engine major, else the project major),
+// prefers an already-cached matching version (completing a partial one) and otherwise
+// resolves the latest full version from the CDN, then downloads the engine service-tier
+// closure if it is missing/incomplete. Returns 0 on success (already-complete counts) and
+// sets provisionedVersion to the full version to run against; 1 on failure. This is opt-in
+// — the only path in the runner that downloads.
+static int RunProvisioning(string? bcVersionArg, string? artifactPathArg,
+    List<string> bundles, out string? provisionedVersion)
+{
+    provisionedVersion = null;
+
+    if (artifactPathArg != null)
+    {
+        Console.Error.WriteLine("[provision] --artifact-path points at an explicit dir; nothing to provision.");
+        return 0;
+    }
+
+    // Resolve the full version to provision.
+    string? full = null;
+    if (bcVersionArg != null && System.Version.TryParse(bcVersionArg, out var maybeFull) && maybeFull.Revision >= 0
+        && bcVersionArg.Split('.').Length == 4)
+    {
+        full = bcVersionArg; // an explicit 4-part version — provision exactly that
+    }
+    else
+    {
+        var prefix = bcVersionArg
+            ?? AlRunnerV2.Infrastructure.BcArtifacts.EngineMajor(AppContext.BaseDirectory)?.ToString()
+            ?? TryDeriveBcMajorFromProject(bundles);
+        if (prefix == null)
+        {
+            Console.Error.WriteLine("[provision] cannot determine which BC version to provision — pass " +
+                "--bc-version <ver> (no --bc-version, no engine in bin, and no readable project app.json).");
+            return 1;
+        }
+        // Prefer an already-cached version matching the prefix (completes a partial one);
+        // otherwise resolve the latest full version from the public CDN index.
+        try
+        {
+            var cachedDir = AlRunnerV2.Infrastructure.BcArtifacts.SelectArtifactVersionDir(
+                AlRunnerV2.Infrastructure.BcArtifacts.ArtifactsRootDir, prefix);
+            full = Path.GetFileName(cachedDir);
+            Console.Error.WriteLine($"[provision] found cached BC {full} for prefix '{prefix}' — verifying completeness.");
+        }
+        catch (InvalidOperationException)
+        {
+            Console.Error.WriteLine($"[provision] no cached BC {prefix}.x — resolving latest full version from the CDN...");
+            full = AlRunner.Provisioning.ArtifactDownloader.ResolveVersion(prefix);
+            if (full == null)
+            {
+                Console.Error.WriteLine($"[provision] could not resolve a full BC version for prefix '{prefix}'.");
+                return 1;
+            }
+        }
+    }
+
+    var serviceTierDir = AlRunnerV2.Infrastructure.BcArtifacts.ArtifactDirFor(full);
+    var report = AlRunnerV2.Infrastructure.ProvisioningCheck.Check(full, serviceTierDir);
+    if (report.Ok)
+    {
+        Console.Error.WriteLine($"[provision] BC {full} engine artifacts already complete at {serviceTierDir}.");
+        provisionedVersion = full;
+        return 0;
+    }
+
+    if (!AlRunnerV2.Infrastructure.ProvisioningCheck.AutoProvision(full, serviceTierDir))
+        return 1;
+    provisionedVersion = full;
+    return 0;
 }
 
 static void SetBundleInfoFromAppJson(string appJsonPath)
