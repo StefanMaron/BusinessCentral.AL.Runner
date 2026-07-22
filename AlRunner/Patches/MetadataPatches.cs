@@ -20,6 +20,75 @@ public static partial class BcRuntime
     private static Type? _systemTenantTypeForSeed;
     private static bool _metadataProviderSeeded;
 
+    // Test-execution sandbox seam (step 4c below + EnterTestExecutionScope/LeaveTestExecutionScope).
+    // Resolved once in InjectSkeletonSystemTenant; null means the seam is unavailable and the two
+    // methods below are no-ops (IsSandbox() then keeps the tenant-settings Production default).
+    private static System.Reflection.PropertyInfo? _piTestExecution;
+    private static object? _testExecutionInstance;
+    private static System.Reflection.FieldInfo? _fExecutingTestCodeUnit;
+    private static System.Reflection.MethodInfo? _mSetTestTenantEnvironmentType;
+    private static bool _testTenantEnvironmentTypeSet;
+
+    /// <summary>
+    /// Called by TestExecutor immediately before invoking an AL [Test] method. Mirrors real BC's
+    /// NavTestExecution.EnterTestCodeunit: field-pokes `executingTestCodeUnit` to the actual,
+    /// concrete NavTestCodeunit-derived instance under test (TestExecutor already instantiated it
+    /// via the codeunit's own ITreeObject ctor — it is a real object, never a synthetic sentinel),
+    /// which flips `NavTestExecution.InTest` (`executingTestCodeUnit != null`) true for exactly the
+    /// duration of the test, exactly as real BC's service-tier test harness does per test codeunit.
+    ///
+    /// On the FIRST successful entry only, additionally calls
+    /// Microsoft.Dynamics.Nav.NavUserAccount.NavTenantSettingsHelper.SetTestTenantEnvironmentType(true)
+    /// — the same call real BC's harness makes once per test session — which requires InTest==true
+    /// (hence calling it only after the field-poke above) and sets a private static tuple that,
+    /// once non-null, is consulted by IsSandbox() for the rest of the process regardless of InTest;
+    /// LeaveTestExecutionScope only needs to undo the per-test InTest flag, never that tuple.
+    ///
+    /// Net effect: NavTenantSettingsHelper.IsSandbox()/IsProduction() (reached via Codeunit 457
+    /// "Environment Information" -> 3702 "Environment Information Impl.") report sandbox=true for
+    /// the duration of every AL test, and fall back to the faithful tenant-settings Production
+    /// default the instant no test is executing — matching real BC, where "test execution never
+    /// observes a production tenant" is a standing guarantee ISV apps (e.g. Pageworks) rely on.
+    /// Skeleton-state populate + one documented call into an MS DLL's own public seam designed for
+    /// exactly this — no method body is rewritten. See .claude/rules/precompiled-dll-respect.md.
+    /// </summary>
+    public static void EnterTestExecutionScope(object testCodeunitInstance)
+    {
+        if (_testExecutionInstance == null || _fExecutingTestCodeUnit == null) return;
+        try
+        {
+            FieldPoke.SetInstance(_fExecutingTestCodeUnit, _testExecutionInstance, testCodeunitInstance);
+            if (!_testTenantEnvironmentTypeSet && _mSetTestTenantEnvironmentType != null)
+            {
+                _mSetTestTenantEnvironmentType.Invoke(null, new object[] { true });
+                _testTenantEnvironmentTypeSet = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+            Console.Error.WriteLine($"[BcRuntime] EnterTestExecutionScope: sandbox seam failed ({inner.GetType().Name}: {inner.Message}) — IsSandbox() stays Production-default for this test");
+        }
+    }
+
+    /// <summary>
+    /// Called by TestExecutor after a test method returns/throws/times out. Mirrors real BC's
+    /// NavTestExecution.LeaveTestCodeunit: clears `executingTestCodeUnit` back to null so `InTest`
+    /// (and therefore IsSandbox()'s test-harness branch) is false again outside test execution —
+    /// only the per-test flag is undone; the process-lifetime SetTestTenantEnvironmentType(true)
+    /// tuple set by EnterTestExecutionScope's first call is intentionally left in place.
+    /// </summary>
+    public static void LeaveTestExecutionScope()
+    {
+        if (_testExecutionInstance == null || _fExecutingTestCodeUnit == null) return;
+        try { FieldPoke.SetInstance(_fExecutingTestCodeUnit, _testExecutionInstance, null); }
+        catch (Exception ex)
+        {
+            var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+            Console.Error.WriteLine($"[BcRuntime] LeaveTestExecutionScope: failed ({inner.GetType().Name}: {inner.Message})");
+        }
+    }
+
     /// <summary>
     /// Lazily seed the skeleton NavSystemTenant.metadataProvider with a real MetadataProvider —
     /// exactly what NavSystemTenant's own ctor does (`metadataProvider = new MetadataProvider();`).
@@ -195,10 +264,15 @@ public static partial class BcRuntime
         //     A GetUninitializedObject instance leaves that dictionary null → TryGetValue NREs;
         //     initialising it to an empty dictionary is all that is required.
         //
-        //     Faithful headless value: the runner runs no service tier and no Azure tenant — the
-        //     equivalent of an OnPrem deployment. The default Production environment is exactly the
-        //     non-sandbox, non-SaaS case: IsSandbox()=false, IsProduction()=true, and IsSaaS() (whose
-        //     isSaaSConfig stays false) =false. These are the correct OnPrem answers, not a fake.
+        //     Faithful headless value at the TENANT level: the runner runs no service tier and no
+        //     Azure tenant — the equivalent of an OnPrem deployment, so the EMPTY dictionary default
+        //     (EnvironmentType=Production, EnvironmentName=null) is the correct tenant-settings
+        //     answer. But IsSandbox()/IsProduction() do NOT read tenant settings directly — they
+        //     read them only as a FALLBACK when `Session.TestExecution.InTest` is false (see step 4c
+        //     below, which wires the same "test execution is always a sandbox" seam BC's own
+        //     service-tier test harness uses). isSaaSConfig has no analogous test-harness seam and
+        //     stays false, so IsSaaS() (=IsSandbox() && isSaaSConfig) remains false even once 4c
+        //     flips IsSandbox() to true.
         var tenantSettingsField   = navTenantType.GetField("tenantSettings", BindingFlags.NonPublic | BindingFlags.Instance);
         var navTenantSettingsType = tenantSettingsField?.FieldType;
         if (navTenantSettingsType != null && tenantSettingsField != null)
@@ -238,6 +312,47 @@ public static partial class BcRuntime
             {
                 FieldPoke.SetInstance(sessTenantField, _skeletonSession, _skeletonSystemTenant!);
                 Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: skeleton tenant wired onto session.tenant");
+            }
+        }
+
+        // 4c. Resolve (once) the reflection handles TestExecutor needs to wire the "a running
+        //     test is always a sandbox, never production" seam BC's own real service-tier test
+        //     harness relies on. See EnterTestExecutionScope/LeaveTestExecutionScope below for
+        //     the per-test call, and the rationale.
+        if (_skeletonSession != null)
+        {
+            try
+            {
+                var sessType = _skeletonSession.GetType();
+                _piTestExecution = sessType.GetProperty("TestExecution",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                var testExecution = _piTestExecution?.GetValue(_skeletonSession);
+                if (testExecution == null)
+                {
+                    Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: session.TestExecution returned null — sandbox seam NOT wired, IsSandbox() stays Production-default");
+                }
+                else
+                {
+                    _testExecutionInstance = testExecution;
+                    var testExecType = testExecution.GetType(); // Microsoft.Dynamics.Nav.Runtime.NavTestExecution
+                    _fExecutingTestCodeUnit = testExecType.GetField("executingTestCodeUnit", BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (_fExecutingTestCodeUnit == null)
+                        Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: NavTestExecution.executingTestCodeUnit field NOT FOUND — sandbox seam NOT wired");
+
+                    var nuaAsm = AppDomain.CurrentDomain.GetAssemblies()
+                        .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.NavUserAccount")
+                        ?? Assembly.Load("Microsoft.Dynamics.Nav.NavUserAccount");
+                    var tenantSettingsHelperType = nuaAsm?.GetType("Microsoft.Dynamics.Nav.NavUserAccount.NavTenantSettingsHelper");
+                    _mSetTestTenantEnvironmentType = tenantSettingsHelperType?.GetMethod("SetTestTenantEnvironmentType",
+                        BindingFlags.Public | BindingFlags.Static);
+                    if (_mSetTestTenantEnvironmentType == null)
+                        Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: NavTenantSettingsHelper.SetTestTenantEnvironmentType NOT FOUND — sandbox seam NOT wired, IsSandbox() stays Production-default");
+                }
+            }
+            catch (Exception ex)
+            {
+                var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+                Console.Error.WriteLine($"[BcRuntime] InjectSkeletonSystemTenant: sandbox seam resolution failed ({inner.GetType().Name}: {inner.Message}) — IsSandbox() stays Production-default");
             }
         }
 

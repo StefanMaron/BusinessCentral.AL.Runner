@@ -121,24 +121,38 @@ codeunit 61001 "Microsoft Dependency Tests"
     end;
 
     [Test]
-    procedure BaseAppCodeunit_EnvironmentInformation_IsSandbox_IsFalse()
+    procedure BaseAppCodeunit_EnvironmentInformation_IsSandbox_IsTrue()
     var
         EnvironmentInformation: Codeunit "Environment Information";
     begin
         // Codeunit 457 -> 3702 "Environment Information Impl." -> NavTenantSettingsHelper.IsSandbox
-        // dereferences NavCurrentThread.Session.Tenant.TenantSettings.EnvironmentType. On the headless
-        // skeleton the session.tenant was null -> NRE. Faithful headless default is OnPrem (non-sandbox):
-        // EnvironmentType = Production -> IsSandbox() = false.
-        Assert.IsTrue(not EnvironmentInformation.IsSandbox(), 'Headless OnPrem environment must not be a sandbox.');
+        // dereferences NavCurrentThread.Session.Tenant.TenantSettings.EnvironmentType, UNLESS
+        // Session.TestExecution.InTest is true and NavTenantSettingsHelper's private
+        // testEnvironmentTypeIsSandbox tuple says sandbox — exactly the seam BC's own real
+        // service-tier test harness uses (SetTestTenantEnvironmentType(true)) so that ANY AL
+        // test code running under the test harness observes a sandbox, never production. The
+        // runner now wires that same seam once per run, mirroring real BC: a test execution
+        // context is always a sandbox, never production.
+        Assert.IsTrue(EnvironmentInformation.IsSandbox(), 'A running test-execution context must report as a sandbox (mirrors real BC test harness).');
+        Assert.IsTrue(not EnvironmentInformation.IsProduction(), 'A running test-execution context must never report as production.');
     end;
 
     [Test]
-    procedure BaseAppCodeunit_EnvironmentInformation_IsSaaS_IsFalse()
+    procedure BaseAppCodeunit_EnvironmentInformation_IsSaaS_IsTrue()
     var
         EnvironmentInformation: Codeunit "Environment Information";
     begin
-        // IsSaaS() bottoms out in IsSandbox() + isSaaSConfig; on headless OnPrem both are false.
-        Assert.IsTrue(not EnvironmentInformation.IsSaaS(), 'Headless OnPrem environment must not be SaaS.');
+        // Codeunit 3702 "Environment Information Impl." IsSaaS(), decompiled from the real
+        // Microsoft.Dynamics.Nav.BusinessApplication System App DLL: unless the AL-test-only
+        // `testabilitySoftwareAsAService` override is set (it isn't here), IsSaaS() memoizes
+        // `isSaaSConfig := IsSandbox() | <OnCheckSoftwareAsAService event result>` the first time
+        // it's called and returns `isSaaSConfig` from then on. Since IsSandbox() is now true for a
+        // running test (mirrors BC's own test harness — see the IsSandbox test above), the `|`
+        // makes isSaaSConfig true regardless of the event result: real BC's own formula ties
+        // IsSaaS() to IsSandbox() being true, not the other way around. A production on-prem
+        // tenant can be non-SaaS; a sandbox (which every BC test execution now faithfully is)
+        // cannot.
+        Assert.IsTrue(EnvironmentInformation.IsSaaS(), 'A running test-execution sandbox must report as SaaS (IsSaaS = IsSandbox | event, per Codeunit 3702).');
     end;
 
     [Test]

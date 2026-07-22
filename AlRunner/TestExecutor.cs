@@ -211,6 +211,11 @@ public sealed class TestExecutor
             AlRunnerV2.Patches.RecordPatches.ResetPerTestState();
         // Clear any AL call stack captured from a previous test on this thread.
         AlRunnerV2.Infrastructure.AlCallStackCapture.Clear();
+        // Enter BC's own "in test" scope for the duration of this test (mirrors
+        // NavTestExecution.EnterTestCodeunit/LeaveTestCodeunit) — see BcRuntime.EnterTestExecutionScope
+        // for why: it's what makes NavTenantSettingsHelper.IsSandbox()/IsProduction() (Codeunit 457
+        // "Environment Information") report a sandbox during test execution, exactly like real BC.
+        BcRuntime.EnterTestExecutionScope(instance);
         try
         {
             var args = m.GetParameters().Length == 0 ? Array.Empty<object>() : null;
@@ -249,6 +254,10 @@ public sealed class TestExecutor
             var alStack = AlRunnerV2.Infrastructure.AlCallStackCapture.GetCaptured(ex);
             return new TestResult(codeunit, m.Name, TestOutcome.Error,
                 ex.Message, ex.ToString(), sw.Elapsed, alStack, displayName);
+        }
+        finally
+        {
+            BcRuntime.LeaveTestExecutionScope();
         }
     }
 
