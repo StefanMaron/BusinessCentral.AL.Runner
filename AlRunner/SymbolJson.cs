@@ -307,7 +307,16 @@ public sealed class JsonSymbolReferenceLoader : ISymbolReferenceLoader
         if (Environment.GetEnvironmentVariable("ALRUNNER_DUMP_SYMBOLS") == "1")
             Console.Error.WriteLine($"  DEBUG JsonLoader.GetDependencies({reference.Publisher}/{reference.Name} v{reference.Version})");
         if (TryGetDependencies(reference, out var deps)) return deps;
-        return Enumerable.Empty<SymbolReferenceSpecification>();
+        // This loader does not know the module at all — signal "not mine" the same way
+        // LoadModule does, so CompositeSymbolReferenceLoader falls through to the next
+        // child (the BC package scanner). Returning an empty list here instead would WIN
+        // the composite race and erase the real dependency list of every .app module
+        // (e.g. System Application → platform System), degrading cross-module types in
+        // method signatures to __MissingTypeSymbol__ (AL0133) whenever any sidecar
+        // symbols exist (i.e. every multi-bundle layered run).
+        throw new FileNotFoundException(
+            $"Symbol reference dependencies not found: {reference.Publisher}/{reference.Name} {reference.Version}",
+            _rootDirectory);
     }
 
     public ModuleInfo LoadModuleInfo(SymbolReferenceSpecification reference, IList<Diagnostic> diagnostics, LoadModuleInfoFlags flags)
