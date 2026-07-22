@@ -169,4 +169,35 @@
     <Error Text="BC Service Tier DLLs not found at $(ServiceTierPath). The runner does NOT auto-download. Either point ServiceTierPath at an existing artifact dir, or download explicitly:&#xA;  dotnet run --project &quot;$(RepoRoot)/tools/DownloadArtifacts&quot; -- service-tier $(_BCVersion) &quot;$(ServiceTierPath)&quot;&#xA;Or re-run the build with -p:AllowBcArtifactDownload=true to download as part of the build." />
   </Target>
 
+  <!-- Version-agnosticism across a BC major's minors (verified 28.1<->28.2).
+
+       BC 28 modernised its runtime onto a large external closure — the Azure SDK
+       (Azure.*) and the Microsoft.Identity / Microsoft.IdentityModel / System.IdentityModel
+       token stack. Those DLLs are minor-version-pinned: a 28.2 R2R Base App binds
+       Microsoft.Identity.ServiceEssentials.Core 1.43.0.0 while 28.1 shipped 1.39.0.0.
+
+       RAR CopyLocal's the whole transitive closure of the 5 BC references into bin at
+       whatever version _BCVersion points at (build-time). If those copies sit in the
+       application base dir, the default ALC binds them FIRST by simple name; when a
+       different-minor R2R app then requests a higher version, the bind fails with
+       FileLoadException 0x80131621 and the app never loads.
+
+       Fix: keep these OUT of bin. The DependencyLoader ALC Resolving handler
+       (EnsureResolverInstalled) already serves any such assembly from the SELECTED
+       version's artifact dir (BcArtifacts.ServiceTierDir) on demand — so the runner
+       serves whichever minor the target project actually needs, from BC's own shipped
+       copy, instead of a build-time-pinned one. One engine binary spans a major's minors.
+       (The 5 BC references themselves — Ncl/Types/Common/Language/CodeAnalysis — stay in
+       bin: those ARE the engine and are covered by the MAJOR-only consistency contract.)
+
+       Cross-MAJOR still needs a matching engine build; this only relaxes the minors. -->
+  <Target Name="StripBcAppClosureFromCopyLocal" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)"
+        Condition="$([System.String]::Copy('%(Filename)').StartsWith('Microsoft.Identity'))
+                   OR $([System.String]::Copy('%(Filename)').StartsWith('System.IdentityModel'))
+                   OR $([System.String]::Copy('%(Filename)').StartsWith('Azure.'))" />
+    </ItemGroup>
+  </Target>
+
 </Project>
