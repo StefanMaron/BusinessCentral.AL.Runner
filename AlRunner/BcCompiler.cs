@@ -439,26 +439,45 @@ public sealed class BcCompiler
     private static string? _stageRootCache;
 
     /// <summary>
-    /// Returns a package-dir list in which each app identity (AppId) appears at most once.
-    /// If no AppId is duplicated across the given dirs, the original list is returned
-    /// unchanged (zero cost, byte-identical loader behaviour). Otherwise a staging directory
-    /// is built containing one symlink (copy fallback) per unique AppId — keeping the first
-    /// occurrence in scan order — and a single-element list pointing at it is returned.
-    /// Non-.app content (e.g. *.symbols.json) is intentionally NOT staged here; the caller
-    /// scans the ORIGINAL dirs for those. See call site for the AL0275 rationale.
+    /// Returns a package-dir list in which each app identity (AppId) appears at most once,
+    /// and — when <paramref name="excludeAppId"/> is set — in which that one AppId is absent
+    /// entirely. If neither a cross-dir duplicate nor the excluded AppId is found, the
+    /// original list is returned unchanged (zero cost, byte-identical loader behaviour).
+    /// Otherwise a staging directory is built containing one symlink (copy fallback) per
+    /// unique, non-excluded AppId — keeping the first occurrence in scan order — and a
+    /// single-element list pointing at it is returned. Non-.app content (e.g.
+    /// *.symbols.json) is intentionally NOT staged here; the caller scans the ORIGINAL dirs
+    /// for those. See call site for the AL0275 rationale.
     /// </summary>
-    private static List<string> DeduplicateAppPackageDirs(List<string> packageDirs)
+    private static List<string> DeduplicateAppPackageDirs(List<string> packageDirs, Guid? excludeAppId = null)
     {
         // Collect every .app, keyed by (AppId, Version), preserving dir scan order. The key
         // MUST include the version: the same AppId legitimately ships in multiple versions
         // across the package caches, and the resolver needs each distinct version to satisfy a
-        // version-pinned reference (collapsing by AppId alone drops versions -> AL1022). Only a
+        // version-pinned reference (collapsing by AppId alone drops versions -> AL1022). A
         // second occurrence of the SAME (AppId, Version) is dropped -- that is the byte-for-byte
         // duplicate (e.g. a test-library .app present in both the bundle .alpackages and the
         // bcartifacts test dir) that produces the AL0275 self-ambiguity.
+        //
+        // excludeAppId additionally drops EVERY occurrence of one specific AppId outright.
+        // This is used when compiling a dependency's OWN decompiled AL source as the PRIMARY
+        // compile (DependencyLoader's Tier-3 path): GetSharedReferences already excludes that
+        // dep's own SymbolReferenceSpecification (via _currentAppId) so the compiler never
+        // REQUESTS it as a reference — but the reference LOADER is a separate object built
+        // from a directory scan, and it still happily enumerates + serves that dep's own .app
+        // if the .app is simply present in one of the scanned dirs (which it always is, since
+        // that's exactly how DependencyResolver found it in the first place). BC's binder
+        // resolves loosely-typed references (e.g. a Permission Set's `tabledata "X"` grant)
+        // by asking the loader for ANY module that declares "X" — regardless of whether a
+        // spec was ever added for that module — so the same table ends up visible via BOTH
+        // the primary source tree being compiled AND the still-loader-visible .app, and BC
+        // reports "'X' is an ambiguous reference between ... and ..." naming the SAME
+        // extension twice. Physically removing the .app from the loader's scan set (not just
+        // from the requested specs) is the only way to make that dep's own source the sole
+        // source of truth for its own objects during its own compile.
         var seen = new HashSet<(Guid, string)>();
         var picked = new List<string>();
-        var dupFound = false;
+        var changed = false;
         foreach (var dir in packageDirs)
         {
             IEnumerable<string> apps;
@@ -468,14 +487,15 @@ public sealed class BcCompiler
             {
                 var m = AppLoader.ReadManifest(app);
                 if (m == null) continue;
-                if (!seen.Add((m.AppId, m.Version.ToString()))) { dupFound = true; continue; }
+                if (excludeAppId != null && m.AppId == excludeAppId.Value) { changed = true; continue; }
+                if (!seen.Add((m.AppId, m.Version.ToString()))) { changed = true; continue; }
                 picked.Add(app);
             }
         }
-        if (!dupFound) return packageDirs; // common case — leave the hot path untouched
+        if (!changed) return packageDirs; // common case — leave the hot path untouched
 
         // Build (or reuse) a staging dir keyed by the exact picked-app set so concurrent /
-        // repeated compiles with the same dedup result share one staging dir.
+        // repeated compiles with the same dedup/exclusion result share one staging dir.
         var sb = new System.Text.StringBuilder();
         foreach (var p in picked.OrderBy(x => x, StringComparer.Ordinal)) sb.Append(p).Append('\n');
         string key;
@@ -511,7 +531,8 @@ public sealed class BcCompiler
     private static string ComputeLoaderSignature(
         List<string> packageDirs,
         IReadOnlyList<string>? extraSymbolDirs,
-        IReadOnlyList<(AppManifest Manifest, string AppPath)>? deps)
+        IReadOnlyList<(AppManifest Manifest, string AppPath)>? deps,
+        Guid? excludeAppId)
     {
         var parts = new List<string>();
         foreach (var d in packageDirs.OrderBy(x => x, StringComparer.Ordinal)) parts.Add("P:" + d);
@@ -520,6 +541,11 @@ public sealed class BcCompiler
         if (deps != null)
             foreach (var t in deps.OrderBy(x => x.AppPath, StringComparer.Ordinal))
                 parts.Add("D:" + t.AppPath + "@" + t.Manifest.Version);
+        // The loader must be rebuilt whenever the excluded-self-app changes: a loader built
+        // while excluding dep A's own .app must not be reused unfiltered (or filtered for
+        // dep A) when the current compile is dep B's own Tier-3 source compile — each dep's
+        // own .app needs to be absent ONLY from ITS OWN compile's loader.
+        parts.Add("E:" + (excludeAppId?.ToString() ?? "<none>"));
         return string.Join("\n", parts);
     }
 
@@ -533,9 +559,9 @@ public sealed class BcCompiler
             // then WarmReferenceLoader sequentially reads every reachable symbol spec
             // (~40s for a heavy Base App dep set). This is pure dependency work — it does
             // not depend on the bundle source — so it is rebuilt ONLY when its content
-            // signature (package dirs + extra symbol dirs + resolved dep set) changes.
-            // Unchanged deps → the warm loader is reused across calls, across bundles, and
-            // across --watch re-runs.
+            // signature (package dirs + extra symbol dirs + resolved dep set + the excluded
+            // self-app, see below) changes. Unchanged deps → the warm loader is reused
+            // across calls, across bundles, and across --watch re-runs.
             var packageDirs = bundleAlpackagesDirs
                 .Where(Directory.Exists)
                 .Distinct()
@@ -546,21 +572,37 @@ public sealed class BcCompiler
                 packageDirs.AddRange(ResolveSymbolDirs());
             packageDirs = packageDirs.Distinct().ToList();
 
-            // Deduplicate the .app set the symbol loader sees BY APP IDENTITY. The same
-            // Microsoft app (e.g. "System Application Test Library") is commonly present in
-            // BOTH the bundle's own .alpackages AND the bcartifacts test-app cache dir we add
-            // for test-toolkit resolution. CreateReferenceLoader scans every dir, so it loads
-            // the identical module twice → BC binds it as two extensions with the same name →
-            // AL0275 "ambiguous reference between X (…) and X (…)" for every type it declares.
-            // The _currentAppId spec-exclusion drops the *spec* but not the *loaded module*, so
-            // when that app's OWN source is compiled (a Tier-3 source-dep compile), its source
-            // collides with the duplicated symbol module and the emit zeroes. Staging one .app
-            // per unique AppId removes the duplication faithfully — the service tier never
-            // publishes the same app twice. When there are no duplicates this is a no-op and
-            // the original dirs are used unchanged (corpus path keeps identical behaviour).
-            var loaderScanDirs = DeduplicateAppPackageDirs(packageDirs);
+            // Deduplicate the .app set the symbol loader sees BY APP IDENTITY, AND exclude
+            // the AppId currently being compiled as PRIMARY source (_currentAppId), if any.
+            //
+            // Dedup: the same Microsoft app (e.g. "System Application Test Library") is
+            // commonly present in BOTH the bundle's own .alpackages AND the bcartifacts
+            // test-app cache dir we add for test-toolkit resolution. CreateReferenceLoader
+            // scans every dir, so it loads the identical module twice → BC binds it as two
+            // extensions with the same name → AL0275 "ambiguous reference between X (…) and
+            // X (…)" for every type it declares.
+            //
+            // Self-exclusion: when a dependency's OWN decompiled AL source is the PRIMARY
+            // compile (DependencyLoader's Tier-3 path scopes _currentAppId to that dep's own
+            // identity via ScopeCurrentAppIdentity), the SPEC list below already excludes
+            // that dep's own SymbolReferenceSpecification — but the reference LOADER is a
+            // separate object built from a directory scan and still happily serves that
+            // dep's .app if it's simply present in a scanned dir (which it always is: that
+            // .app is exactly how DependencyResolver found the dep in the first place). BC's
+            // binder resolves some references (e.g. a Permission Set's `tabledata "X"` grant)
+            // by asking the loader for ANY module declaring "X", regardless of whether a spec
+            // was ever added for that module — so the object ends up visible via BOTH the
+            // primary source tree being compiled AND the still-loader-visible .app, and BC
+            // reports the exact "'X' is an ambiguous reference between ... and ..." (same
+            // extension named twice) failure this fixes. Physically removing that one .app
+            // from the loader's scan set — not just from the requested specs — makes the
+            // dep's own source the sole source of truth for its own objects during its own
+            // compile. Staging one .app per unique (non-excluded) AppId is a no-op when there
+            // is nothing to dedup/exclude, so the corpus/main-bundle path (which never needs
+            // self-exclusion) keeps identical behaviour and cost.
+            var loaderScanDirs = DeduplicateAppPackageDirs(packageDirs, _currentAppId);
 
-            var loaderSig = ComputeLoaderSignature(loaderScanDirs, _extraSymbolDirs, _resolvedDeps);
+            var loaderSig = ComputeLoaderSignature(loaderScanDirs, _extraSymbolDirs, _resolvedDeps, _currentAppId);
             if (_refLoader == null || loaderSig != _loaderSignature)
             {
                 if (loaderScanDirs.Count == 0) return (null, Array.Empty<NavCA.SymbolReferenceSpecification>());
@@ -845,6 +887,12 @@ public sealed class BcCompiler
                 .Where(d => d.Severity == NavDiag.DiagnosticSeverity.Error).ToList();
             var origAmbig = origDecl.Where(d => d.Id == "AL0275" || d.Id == "AL0264").ToList();
             Console.Error.WriteLine($"[DIAG-RETRY] {moduleName} ORIGINAL (pre-retry) declDiags={origDecl.Count} ambiguous(AL0275/AL0264)={origAmbig.Count} caught={caught?.GetType().Name ?? "<none>"} captured={outputter.Captured.Count} specsLen={specs.Length}");
+            if (origAmbig.Count > 0)
+            {
+                Console.Error.WriteLine($"[DIAG-RETRY]   _currentAppId={_currentAppId}");
+                foreach (var s in specs)
+                    Console.Error.WriteLine($"[DIAG-RETRY]   spec: {s.Publisher}/{s.Name}/{s.Version} appId={s.AppId}");
+            }
             foreach (var d in origAmbig.Take(5))
                 Console.Error.WriteLine($"[DIAG-RETRY]   {d.Id} @ {d.Location}: {d.GetMessage().Split('\n', 2)[0]}");
         }
