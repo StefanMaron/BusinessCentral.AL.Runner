@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 114;
+    private const int CACHE_VERSION = 115;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -217,6 +217,9 @@ public static class NclCecilRewrite
         // NavNotification send/recall (Batch 8).
         "Microsoft.Dynamics.Nav.Runtime.NavNotification::ALSend/1",
         "Microsoft.Dynamics.Nav.Runtime.NavNotification::ALRecall/1",
+        // ALCompiler.DotNetToNavOutStream — skeleton SharedObjects fallback for
+        // .NET-stream → NavOutStream marshalling (Cryptography Management GenerateHash).
+        "Microsoft.Dynamics.Nav.Runtime.ALCompiler::DotNetToNavOutStream/2",
     };
 
     /// <summary>
@@ -1145,6 +1148,27 @@ public static class NclCecilRewrite
             il.Append(il.Create(OpCodes.Ret));
             body.MaxStackSize = 1;
             Console.Error.WriteLine("[Cecil] Rewrote NavObjectList`1.get_Target → BcRuntime.NavObjectList_get_Target helper");
+        }
+
+        // ALCompiler.DotNetToNavOutStream — marshals a NavDotNet-wrapped .NET Stream into
+        // a NavOutStream. Real body wraps the stream in a NavStreamProvider parented to
+        //     parentOfResult.Tree.Session.Company.SharedObjects
+        // which is null on the headless skeleton → NRE (or ArgumentNullException from the
+        // TreeObject base ctor). Hit by System Application CU 1279 "Cryptography Management
+        // Impl." GenerateHash(InStream, HashAlgorithmType) — Pageworks cluster #1. Rewrite
+        // to delegate to BcRuntime.ALCompiler_DotNetToNavOutStream, which replicates the
+        // real branches exactly and parents the provider to the real session container when
+        // present, else the process-wide skeleton TreeSharedObjectContainer (same approach
+        // as the get_Target family above). RED→GREEN: tests/runner-extras/crypto-hash-instream.
+        {
+            var alCompilerType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.ALCompiler")
+                ?? throw new InvalidOperationException("ALCompiler not found in Ncl — shape changed");
+            var dotNetToNavOutStream = alCompilerType.Methods.FirstOrDefault(m =>
+                m.Name == "DotNetToNavOutStream" && m.Parameters.Count == 2)
+                ?? throw new InvalidOperationException("ALCompiler.DotNetToNavOutStream/2 not found — shape changed");
+            ReplaceBodyWithHelper(asm.MainModule, dotNetToNavOutStream,
+                nameof(AlRunnerV2.BcRuntime.ALCompiler_DotNetToNavOutStream));
+            Console.Error.WriteLine("[Cecil] Rewrote ALCompiler.DotNetToNavOutStream → BcRuntime helper (skeleton SharedObjects fallback)");
         }
 
         // NavHttpClient egress (ALGet/ALPost/ALPut/ALDelete/ALPatch + their *Async and
