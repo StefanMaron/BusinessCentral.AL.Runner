@@ -1,0 +1,25 @@
+{
+  "id": "d4a8c2e6-5b1f-4e9a-8c3d-7f2b6a1e4d5c",
+  "name": "XasmEventDispatch Dep",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Impl half of the cross-assembly event-dispatch reproducer: declares a codeunit event publisher + StaticAutomatic subscriber, and runs as its OWN bundle first so its emitted assembly stays loaded.",
+  "description": "In a multi-bundle run this app is BOTH bundle 1's own emitted test assembly AND (via the layered pre-pass workspace .app) a source-compiled dependency assembly of bundle 2 — so its subscriber codeunit type exists in TWO loaded assemblies. RED before the fix: the codeunit-event dispatcher registered the subscriber MethodInfo from both copies, then invoked them on ONE instance → TargetException ('Object does not match target type') on the mismatched copy and a double-fire on the matched one. GREEN after: the handler MethodInfo is resolved against the instance's actual runtime type and same-AL-subscriber duplicates across assemblies fire exactly once.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [
+    {
+      "from": 61210,
+      "to": 61219
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

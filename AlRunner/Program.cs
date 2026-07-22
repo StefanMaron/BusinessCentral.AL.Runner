@@ -2051,6 +2051,11 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
     {
         if (!idByKey.TryGetValue(implPath, out var implId)) continue;
 
+        // Remember the impl's SOURCE dir by AppId so NavApp.GetResource can serve its
+        // app.json resourceFolders files when the impl loads as a dependency via the
+        // synthesized workspace .app (which carries no /resources/ part).
+        AlRunnerV2.Patches.NavAppResourcePatches.RegisterSourceDirForApp(implId.AppId, implPath);
+
         // The impl bundle's own .alpackages (same dirs the main per-bundle compile scans),
         // reused for both this impl's symbol-emit and the dependent-visible caches below.
         var implBucketRootForPkgs = FindBucketRoot(implPath) ?? implPath;

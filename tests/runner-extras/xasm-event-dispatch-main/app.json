@@ -1,0 +1,32 @@
+{
+  "id": "e5b9d3f7-6c2a-4f0b-9d4e-8a3c7b2f5e6d",
+  "name": "XasmEventDispatch Main",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Dependent half of the cross-assembly event-dispatch reproducer: fires the dep app's codeunit event while the dep's subscriber codeunit type exists in two loaded assemblies.",
+  "description": "Runs as bundle 2 after xasm-event-dispatch-dep ran as bundle 1. The dep app is now loaded TWICE (bundle 1's emit + this bundle's dep compile), so the codeunit-event registry holds the same AL subscriber from two assemblies. RED: MethodInfo.Invoke on an instance from the other assembly → TargetException 'Object does not match target type' (the exact failure that aborted Pageworks.Test's SPBLIC OnInstallAppPerDatabase → CU9999.OnGetPerCompanyUpgradeTags chain), or a double-fire. GREEN: exactly one increment, no TargetException.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "d4a8c2e6-5b1f-4e9a-8c3d-7f2b6a1e4d5c",
+      "name": "XasmEventDispatch Dep",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [
+    {
+      "from": 61220,
+      "to": 61229
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

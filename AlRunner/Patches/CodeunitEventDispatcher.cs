@@ -74,11 +74,34 @@ public static partial class BcRuntime
             .GetValue(publisherScope);
         if (pubObj == null) return;
 
+        // Cross-assembly dedupe: in a multi-bundle run the SAME AL subscriber codeunit
+        // can be emitted into two loaded assemblies (an impl bundle's own emit + the
+        // dependent bundle's dep compile), and the registry scan collects the
+        // MethodInfo from BOTH copies. That is ONE AL subscriber, so it must fire
+        // exactly once — dispatch one per (codeunit id, method name, param shape);
+        // InvokeOneSubscriber resolves the surviving MethodInfo against the
+        // instance's actual runtime type, so which copy survives is irrelevant.
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var sub in subs)
         {
+            if (!seen.Add(SubscriberAlIdentity(sub))) continue;
             try { InvokeOneSubscriber(publisherScope, scopeType, pubObj, sub); }
             catch (TargetInvocationException tie) { throw tie.InnerException ?? tie; }
         }
+    }
+
+    /// <summary>
+    /// Assembly-independent identity of an AL subscriber method: declaring codeunit
+    /// id + method name + parameter type NAMES (full CLR identity would differ per
+    /// emitted assembly for the same AL code).
+    /// </summary>
+    private static string SubscriberAlIdentity(MethodInfo m)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append(ExtractCodeunitIdFromTypeName(m.DeclaringType!)).Append(':').Append(m.Name);
+        foreach (var p in m.GetParameters())
+            sb.Append('|').Append(p.ParameterType.Name);
+        return sb.ToString();
     }
 
     /// <summary>
@@ -117,6 +140,25 @@ public static partial class BcRuntime
         var subscriberInstance = _pNavCodeunitHandle_Target!.GetValue(handle);
         if (subscriberInstance == null) return;
 
+        // Cross-assembly type mismatch: the registry may hold this MethodInfo from a
+        // DIFFERENT emitted assembly than the one the codeunit registry instantiated
+        // (same AL codeunit compiled into both an impl bundle's own emit and the
+        // dependent bundle's dep assembly). MethodInfo.Invoke would then throw
+        // TargetException 'Object does not match target type' — re-resolve the handler
+        // against the instance's ACTUAL runtime type (same AL body, canonical copy).
+        if (!subscriberClrType.IsInstanceOfType(subscriberInstance))
+        {
+            var remapped = ResolveOnInstanceType(subscriberInstance.GetType(), subscriberMethod);
+            if (remapped == null)
+                throw new InvalidOperationException(
+                    $"[Dispatch] subscriber {subscriberClrType.FullName}.{subscriberMethod.Name} " +
+                    $"({subscriberClrType.Assembly.GetName().Name}) has no matching method on the " +
+                    $"instantiated type {subscriberInstance.GetType().FullName} " +
+                    $"({subscriberInstance.GetType().Assembly.GetName().Name}) — cross-assembly " +
+                    "codeunit copies diverged; refusing to silently skip the subscriber.");
+            subscriberMethod = remapped;
+        }
+
         // Match subscriber parameters by name to publisher-scope instance fields.
         // Case-insensitive — AL emit lowercases C# fields, but ParameterInfo.Name preserves AL casing.
         // Special case: leading "Sender" parameter on IncludeSender=true subscriber receives a
@@ -142,6 +184,32 @@ public static partial class BcRuntime
             args[i] = CoerceArg(fld?.GetValue(publisherScope), p.ParameterType);
         }
         subscriberMethod.Invoke(subscriberInstance, args);
+    }
+
+    /// <summary>
+    /// Find the method on <paramref name="instanceType"/> matching a registry
+    /// MethodInfo that was scanned from a different emitted assembly's copy of the
+    /// same AL codeunit: same name, same arity, same parameter type NAMES (the CLR
+    /// types themselves differ per assembly for e.g. ByRef&lt;T&gt; of emitted types).
+    /// </summary>
+    private static MethodInfo? ResolveOnInstanceType(Type instanceType, MethodInfo template)
+    {
+        var tps = template.GetParameters();
+        MethodInfo? match = null;
+        foreach (var m in instanceType.GetMethods(
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static))
+        {
+            if (m.Name != template.Name) continue;
+            var ps = m.GetParameters();
+            if (ps.Length != tps.Length) continue;
+            bool ok = true;
+            for (int i = 0; i < ps.Length; i++)
+                if (ps[i].ParameterType.Name != tps[i].ParameterType.Name) { ok = false; break; }
+            if (!ok) continue;
+            match = m;
+            break;
+        }
+        return match;
     }
 
     private static Type? _tNavOption;
