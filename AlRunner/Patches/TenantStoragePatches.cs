@@ -364,6 +364,12 @@ public static class TenantStoragePatches
 
     // ── IsolatedStorageRepository.* (lowest level — AL output hits these for
     //    Contains/Delete and for Set/Get via ALIsolatedStorage delegation) ──────
+    // NOTE (Cecil migration): with the AL-facing ALIsolatedStorage bodies running
+    // REAL code, encryption happens ABOVE this layer — ALSetEncrypted calls
+    // ALSystemEncryption.ALEncrypt before Repository.Set, and the real Get calls
+    // ALDecrypt when the stored status is Encrypted. The repository must therefore
+    // store and return the value VERBATIM (exactly like BC's table 2000000107 row),
+    // only remembering the EncryptionStatus — re-encrypting here would double-wrap.
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool Repo_Set(DataError de, NavGuid appId, DataScope scope,
                                 string companyName, NavGuid userId, string key, string value,
@@ -371,7 +377,8 @@ public static class TenantStoragePatches
     {
         var mode = encryptionStatus == 1 /* EncryptionStatus.Encrypted */ ? Encryption.Encrypted : Encryption.None;
         var isSecret = targetValueType == 1;
-        return SetImpl(key, value, scope, mode, isSecret);
+        _store[ComposeKey(scope, key)] = new Entry(value, mode, isSecret);
+        return true;
     }
 
     // BC return type is ValueTuple<bool, ...>. Probe showed return ValueTuple`2.
@@ -388,8 +395,9 @@ public static class TenantStoragePatches
             value.Value = new NavText(string.Empty);
             return (false, 0 /* EncryptionStatus.PlainText */);
         }
-        var plain = entry.Status == Encryption.Encrypted ? SysEnc_ALDecrypt(entry.Ciphertext) : entry.Ciphertext;
-        value.Value = new NavText(plain);
+        // Verbatim, like BC's stored row — the REAL ALIsolatedStorage.Get body
+        // ALDecrypts when the returned status is Encrypted (see Repo_Set note).
+        value.Value = new NavText(entry.Ciphertext);
         return (true, entry.Status == Encryption.Encrypted ? 1 : 0);
     }
 

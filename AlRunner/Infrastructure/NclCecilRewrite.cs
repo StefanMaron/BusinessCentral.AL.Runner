@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 117;
+    private const int CACHE_VERSION = 118;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -48,6 +48,12 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.IsolatedStorageRepository::Contains/6",
         "Microsoft.Dynamics.Nav.Runtime.IsolatedStorageRepository::Contains/5",
         "Microsoft.Dynamics.Nav.Runtime.IsolatedStorageRepository::Delete/6",
+        // ALSystemEncryption AL-facing statics (Cecil-migrated onto the in-process
+        // AES envelope) — legacy JmpHooks must no-op.
+        "Microsoft.Dynamics.Nav.Runtime.ALSystemEncryption::ALEncrypt/1",
+        "Microsoft.Dynamics.Nav.Runtime.ALSystemEncryption::ALDecrypt/1",
+        "Microsoft.Dynamics.Nav.Runtime.ALSystemEncryption::ALKeyExists/0",
+        "Microsoft.Dynamics.Nav.Runtime.ALSystemEncryption::ALEncryptionEnabled/0",
         // NavMethodScope cluster (migrated in Batch 2; registering now so their
         // JmpHooks — if any still install — become no-ops under the registry).
         "Microsoft.Dynamics.Nav.Runtime.NavMethodScope::.ctor/3",
@@ -1452,6 +1458,33 @@ public static class NclCecilRewrite
                 RewriteRepo("Contains", 5, nameof(AlRunnerV2.Patches.TenantStoragePatches.Repo_Contains_5));
                 RewriteRepo("Delete", 6, nameof(AlRunnerV2.Patches.TenantStoragePatches.Repo_Delete));
                 Console.Error.WriteLine("[Cecil] Rewrote IsolatedStorageRepository.{Set,Get,Contains×2,Delete} → TenantStoragePatches in-memory store");
+            }
+
+            // ALSystemEncryption — same dead-JmpHook migration. The real bodies resolve a
+            // tenant RSA/KeyVault encryption provider (NavTenant.GetEncryptionKeyFileName →
+            // "The given database is not a tenant database" on the skeleton), hit by
+            // BaseApp CU1266/1279 IsEncryptionEnabled from SPBLIC's SetAppValue during
+            // the Pageworks install. Rewrite the four AL-facing statics onto the
+            // in-process AES envelope (real crypto — encrypted ≠ plaintext; key exists /
+            // encryption enabled are TRUE, matching an encryption-enabled BC tenant).
+            var sysEncType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.ALSystemEncryption");
+            if (sysEncType != null)
+            {
+                var tsp2 = typeof(AlRunnerV2.Patches.TenantStoragePatches);
+                void RewriteEnc(string name, int paramCount, string helperName)
+                {
+                    var m = sysEncType.Methods.FirstOrDefault(x => x.Name == name && x.Parameters.Count == paramCount)
+                        ?? throw new InvalidOperationException(
+                            $"ALSystemEncryption.{name}/{paramCount} not found — Ncl shape changed");
+                    var h = tsp2.GetMethod(helperName, BindingFlags.Public | BindingFlags.Static)
+                        ?? throw new InvalidOperationException($"TenantStoragePatches.{helperName} not found");
+                    ReplaceBodyWithHelper(asm.MainModule, m, h);
+                }
+                RewriteEnc("ALEncrypt", 1, nameof(AlRunnerV2.Patches.TenantStoragePatches.SysEnc_ALEncrypt));
+                RewriteEnc("ALDecrypt", 1, nameof(AlRunnerV2.Patches.TenantStoragePatches.SysEnc_ALDecrypt));
+                RewriteEnc("ALKeyExists", 0, nameof(AlRunnerV2.Patches.TenantStoragePatches.SysEnc_ALKeyExists));
+                RewriteEnc("ALEncryptionEnabled", 0, nameof(AlRunnerV2.Patches.TenantStoragePatches.SysEnc_ALEncryptionEnabled));
+                Console.Error.WriteLine("[Cecil] Rewrote ALSystemEncryption.{ALEncrypt,ALDecrypt,ALKeyExists,ALEncryptionEnabled} → in-process AES envelope");
             }
         }
 

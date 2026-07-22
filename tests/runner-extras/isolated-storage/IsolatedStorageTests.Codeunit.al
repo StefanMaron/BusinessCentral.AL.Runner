@@ -34,6 +34,33 @@ codeunit 61250 "Isolated Storage Tests"
     end;
 
     [Test]
+    procedure EncryptDecrypt_RoundTripsAndIsNotPlaintext()
+    var
+        CipherText: Text;
+    begin
+        if not EncryptionEnabled() then
+            Error('EncryptionEnabled must be true on the runner (in-process AES envelope).');
+        CipherText := Encrypt('its-secret');
+        if CipherText = 'its-secret' then
+            Error('Encrypt must not return the plaintext.');
+        if Decrypt(CipherText) <> 'its-secret' then
+            Error('Decrypt must round-trip the exact plaintext.');
+    end;
+
+    [Test]
+    procedure SetEncrypted_GetRoundTripsPlaintext()
+    var
+        Value: Text;
+    begin
+        if not IsolatedStorage.SetEncrypted('its-enc-key', 'its-enc-value') then
+            Error('IsolatedStorage.SetEncrypted must return true.');
+        if not IsolatedStorage.Get('its-enc-key', Value) then
+            Error('IsolatedStorage.Get must find the encrypted entry.');
+        if Value <> 'its-enc-value' then
+            Error('Encrypted entry must round-trip to plaintext on Get, got %1.', Value);
+    end;
+
+    [Test]
     procedure Get_MissingKey_ReturnsFalse()
     var
         Value: Text;
