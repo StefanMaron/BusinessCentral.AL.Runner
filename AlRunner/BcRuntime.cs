@@ -33,6 +33,7 @@ public static partial class BcRuntime
 
     // NavApplicationObjectBase ctor replacement fields.
     private static FieldInfo? _fAoSession;             // NavApplicationObjectBase.session
+    private static FieldInfo? _fAoObjectId;            // NavApplicationObjectBase.objectId (readonly struct)
     private static FieldInfo? _fAoOrigGroupId;         // NavApplicationObjectBase.originalAppGroupId
     private static FieldInfo? _fAoRuntimeGroupId;      // NavApplicationObjectBase.runtimeAppGroupId
     private static FieldInfo? _fNavComplexValueTree;   // NavComplexValue.tree (distinct from TreeObject.tree)
@@ -618,6 +619,7 @@ public static partial class BcRuntime
 
             // Cache fields for the ctor replacement.
             _fAoSession       = aoType.GetField("session",             BindingFlags.NonPublic | BindingFlags.Instance);
+            _fAoObjectId      = aoType.GetField("objectId",            BindingFlags.NonPublic | BindingFlags.Instance);
             _fAoOrigGroupId   = aoType.GetField("originalAppGroupId",  BindingFlags.NonPublic | BindingFlags.Instance);
             _fAoRuntimeGroupId= aoType.GetField("runtimeAppGroupId",   BindingFlags.NonPublic | BindingFlags.Instance);
 

@@ -106,7 +106,7 @@ if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_NRE") == "1")
 {
     AppDomain.CurrentDomain.FirstChanceException += (s, e) =>
     {
-        if (e.Exception is NullReferenceException)
+        if (e.Exception is NullReferenceException or ArgumentNullException)
         {
             Console.Error.WriteLine($"[FCE-NRE] {e.Exception}");
         }

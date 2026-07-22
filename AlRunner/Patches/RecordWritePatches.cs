@@ -463,6 +463,21 @@ public static partial class BcRuntime
             // Pre-build an uninitialised NavServerEventSource singleton (cached in static field).
             _skeletonNavServerEventSource = RuntimeHelpers.GetUninitializedObject(navServerEventSourceType);
 
+            // GetUninitializedObject skips field initializers, so the instance's
+            // `private readonly object mutex = new object();` never ran (mutex == null).
+            // Every EventViewer-channel property getter is `lock(mutex) { ... }`;
+            // lock(null) -> Monitor.ReliableEnter -> ArgumentNullException. Because
+            // TrappableOperationExecutor.HandleError logs the caught exception via
+            // this singleton BEFORE mapping/rethrowing it, that ArgumentNullException
+            // REPLACED the real error on every trappable operation. Poke a real mutex
+            // so the logging path just works (and no-ops on the empty sinks).
+            var mutexField = navServerEventSourceType.GetField("mutex",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            if (mutexField != null)
+                AlRunnerV2.Infrastructure.FieldPoke.SetInstance(mutexField, _skeletonNavServerEventSource, new object());
+            else
+                Console.Error.WriteLine("[BcRuntime] WARNING: NavServerEventSource.mutex field not found — trappable-error logging may mask real exceptions");
+
             var getLog = navServerEventSourceType.GetProperty("Log",
                 BindingFlags.Public | BindingFlags.Static)?.GetGetMethod(true);
             if (getLog != null)

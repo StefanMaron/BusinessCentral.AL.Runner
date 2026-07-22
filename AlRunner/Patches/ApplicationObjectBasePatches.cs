@@ -54,6 +54,20 @@ public static partial class BcRuntime
                 catch (Exception ex) { Console.Error.WriteLine($"[AoCtor] tree creation failed for {self?.GetType().Name}: {ex.Message}"); }
             }
         }
+        // 1b. Replicate `this.objectId = objectId` from the real ctor. The field is a readonly
+        //     ApplicationObjectId struct; FieldInfo.SetValue with the boxed struct copies it
+        //     (same mechanism StampObjectId already uses for NavRecord). Without this every
+        //     runner-constructed codeunit/page/report has ObjectId.ObjectNumber == 0, which
+        //     breaks any identity check on the handle — e.g. NavCodeunitHandle.ALAssign throws
+        //     NavNCLNotSupportedOperationException("ObjectId != other.ObjectId") on
+        //     `List of [Codeunit]`.Get because the element handle (built from Target.ObjectId==0)
+        //     never matches the destination variable's real id. Faithful: this IS the real
+        //     ctor's assignment, with the caller-supplied value.
+        if (_fAoObjectId != null && objectId != null)
+        {
+            try { FieldPoke.SetInstance(_fAoObjectId, self, objectId); }
+            catch (Exception ex) { Console.Error.WriteLine($"[AoCtor] objectId stamp failed for {self?.GetType().Name}: {ex.Message}"); }
+        }
         // 2. Inject skeleton session instead of `session = base.Tree.Session` (which gives null).
         if (_fAoSession != null)
         {

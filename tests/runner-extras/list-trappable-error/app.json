@@ -1,0 +1,25 @@
+{
+  "id": "b3f1c2d3-4b5f-4a6c-9d8e-1f2a3b4c5d71",
+  "name": "Runner Extras - List Trappable Error",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves trappable collection errors surface BC's REAL error text, not a masked ArgumentNullException from the skeleton logging path.",
+  "description": "RED before the fix: the skeleton NavServerEventSource is built with RuntimeHelpers.GetUninitializedObject, so its 'mutex' field initializer never ran (mutex == null). TrappableOperationExecutor.HandleError logs the caught exception BEFORE mapping/rethrowing it; the logging path reaches NavServerEventSource.get_NavServerEventViewerEvents whose body is lock(mutex) -> lock(null) -> ArgumentNullException 'Value cannot be null.' which REPLACES the real exception on every trappable error. GREEN after: an empty List of [Integer].Get(5) surfaces BC's real NavNCLArgumentOutOfRangeException text.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [
+    {
+      "from": 60710,
+      "to": 60719
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
