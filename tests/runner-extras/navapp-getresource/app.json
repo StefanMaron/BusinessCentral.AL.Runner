@@ -1,0 +1,28 @@
+{
+  "id": "c7e2f4b1-9a3d-4c6e-8b5f-1d2e3a4b5c6d",
+  "name": "Runner Extras - NavApp GetResource",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves NavApp.GetResource / GetResourceAsText serve the app's packaged resources (app.json resourceFolders) and throw the real BC not-found error on a miss.",
+  "description": "RED before the fix: ALNavApp.GetPackagedResource NREd on the skeleton's null CurrentMethodScope/OwningApp/NavAppMetadataRetriever chain, so any app calling NavApp.GetResource in an install trigger or test aborted (Pageworks RegisterBaselineFonts). GREEN after: the runner locates the resource bytes in the owning app's declared resourceFolders (source bundle) or /resources/ package part (.app dependency) and returns a real NavInStream; a missing name throws BC's own NavNclResourceNotFoundException text, never a silent default.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [
+    {
+      "from": 61200,
+      "to": 61209
+    }
+  ],
+  "resourceFolders": [
+    "res"
+  ],
+  "runtime": "14.0",
+  "features": []
+}

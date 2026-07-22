@@ -90,6 +90,11 @@ public sealed class DependencyLoader
                 _byName[asm.GetName().Name ?? ""] = asm;
                 // Register app metadata so AlCallStackCapture can decorate frames.
                 AlCallStackCapture.RegisterAssemblyInfo(asm, m.Name, m.Publisher, m.Version.ToString());
+                // Register the assembly's app package so NavApp.GetResource can serve
+                // this app's packaged resources (.app /resources/ part, or the sibling
+                // source dir for source deps packaged into a synthetic workspace .app).
+                AlRunnerV2.Patches.NavAppResourcePatches.RegisterDependencyAssembly(
+                    asm, m.AppId, m.Name, m.Publisher, m.Version.ToString(), path);
                 list.Add(asm);
             }
         }

@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 115;
+    private const int CACHE_VERSION = 116;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -1370,44 +1370,45 @@ public static class NclCecilRewrite
             }
         }
 
-        // ALNavApp.ALGetResourceAsTextAsync — async Task<NavText>; real impl
-        // requires the .app package being mounted (no service tier here). Corpus
-        // contract (tests/al-language/.../session/TestNavAppExtended.al:41):
-        // missing resource → throw, matching real BC v28.1. Runner has no .app
-        // mounted so every call is a missing-resource call → always throw.
-        //
-        // Token-safety: throws System.InvalidOperationException via the
-        // parameterless ctor that is ALREADY in Ncl's memberRef table — avoids
-        // adding new typeRefs/memberRefs which can shift metadata tokens and
-        // corrupt R2R-precompiled callers (see feedback_r2r_inlining_traps).
+        // ALNavApp resource retrieval — NavApp.GetResource / GetResourceAsText are IN
+        // SCOPE: the runner knows every loaded AL assembly's owning app and where its
+        // resource bytes live (bundle source dir resourceFolders / .app "/resources/"
+        // part). The real bodies NRE on the skeleton's null
+        // CurrentMethodScope→…→OwningApp / NavAppMetadataRetriever chain (the exact
+        // abort Pageworks's install trigger RegisterBaselineFonts hit), so:
+        //   • the private GetPackagedResource(NavSession, string) — the single choke
+        //     point every ALGetResource* overload awaits — is rewritten to
+        //     NavAppResourcePatches.ALNavApp_GetPackagedResource, which serves a
+        //     completed Task<Stream> over the owning app's resource bytes and throws
+        //     BC's own NavNclResourceNotFoundException on a miss (faithful, incl. the
+        //     corpus TestNavAppExtended missing-resource contract);
+        //   • ALGetResourceAsTextAsync is rewritten too because its REAL body reads
+        //     session.Tenant.DefaultEncoding before the resource fetch — null Tenant
+        //     on the skeleton → NRE; the helper replicates the encoding switch
+        //     skeleton-safely. RED→GREEN: tests/runner-extras/navapp-getresource.
         {
             var alNavAppType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.ALNavApp");
             if (alNavAppType != null)
             {
-                // Find the parameterless ctor of System.InvalidOperationException that
-                // already exists in Ncl's memberRef table (verified via dump). No import.
-                var iopCtorRef = asm.MainModule.GetMemberReferences()
-                    .OfType<MethodReference>()
-                    .FirstOrDefault(mr =>
-                        mr.DeclaringType.FullName == "System.InvalidOperationException"
-                        && mr.Name == ".ctor"
-                        && mr.Parameters.Count == 0);
-                if (iopCtorRef != null)
+                var getPackaged = alNavAppType.Methods.FirstOrDefault(x =>
+                    x.Name == "GetPackagedResource" && x.Parameters.Count == 2);
+                if (getPackaged != null)
                 {
-                    foreach (var m in alNavAppType.Methods.Where(x => x.Name == "ALGetResourceAsTextAsync"))
-                    {
-                        if (!m.ReturnType.FullName.StartsWith("System.Threading.Tasks.Task`1<"))
-                            continue;
-                        var body = m.Body;
-                        body.Instructions.Clear();
-                        body.Variables.Clear();
-                        body.ExceptionHandlers.Clear();
-                        var il = body.GetILProcessor();
-                        il.Append(il.Create(OpCodes.Newobj, iopCtorRef));
-                        il.Append(il.Create(OpCodes.Throw));
-                        body.MaxStackSize = 1;
-                        Console.Error.WriteLine($"[Cecil] Rewrote ALNavApp.{m.Name} → throw InvalidOperationException (token-safe)");
-                    }
+                    var h = typeof(AlRunnerV2.Patches.NavAppResourcePatches).GetMethod(
+                        nameof(AlRunnerV2.Patches.NavAppResourcePatches.ALNavApp_GetPackagedResource),
+                        BindingFlags.Public | BindingFlags.Static)!;
+                    ReplaceBodyWithHelper(asm.MainModule, getPackaged, h);
+                    Console.Error.WriteLine("[Cecil] Rewrote ALNavApp.GetPackagedResource → NavAppResourcePatches (owning-app resource lookup)");
+                }
+                foreach (var m in alNavAppType.Methods.Where(x => x.Name == "ALGetResourceAsTextAsync"))
+                {
+                    if (!m.ReturnType.FullName.StartsWith("System.Threading.Tasks.Task`1<"))
+                        continue;
+                    var h = typeof(AlRunnerV2.Patches.NavAppResourcePatches).GetMethod(
+                        nameof(AlRunnerV2.Patches.NavAppResourcePatches.ALNavApp_ALGetResourceAsTextAsync),
+                        BindingFlags.Public | BindingFlags.Static)!;
+                    ReplaceBodyWithHelper(asm.MainModule, m, h);
+                    Console.Error.WriteLine($"[Cecil] Rewrote ALNavApp.{m.Name} → NavAppResourcePatches (skeleton-safe encoding + resource lookup)");
                 }
             }
         }

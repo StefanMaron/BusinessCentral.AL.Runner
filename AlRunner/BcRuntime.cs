@@ -114,6 +114,9 @@ public static partial class BcRuntime
         if (_currentTestAssembly == asm) return;
         _currentTestAssembly = asm;
         _codeunitTypeCache.Clear();
+        // NavApp.GetResource: bind this emitted assembly to the current bundle dir
+        // (its app.json resourceFolders are where the app's resource bytes live).
+        AlRunnerV2.Patches.NavAppResourcePatches.RegisterTestAssembly(asm);
         var sw = System.Diagnostics.Stopwatch.StartNew();
         // (B) Spike: enumerate closed NavObjectDictionary`2 instantiations now that
         //     the test assembly is loaded and its closed generic types are in the AppDomain.

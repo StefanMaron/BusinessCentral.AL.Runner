@@ -2286,6 +2286,10 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
                  string.Equals(dep.Publisher, sid.Publisher, StringComparison.OrdinalIgnoreCase));
             if (!match) continue;
             AlRunnerV2.Patches.RecordPatches.AddSourceDir(dir);
+            // Remember the sibling source dir by AppId so NavApp.GetResource can serve
+            // its resourceFolders files even when the dep loads via the synthetic
+            // workspace-deps .app (which carries no /resources/ part).
+            AlRunnerV2.Patches.NavAppResourcePatches.RegisterSourceDirForApp(sid.AppId, dir);
             if (!packageAvailable)
                 toBuild.Add(dir);
         }
@@ -2801,6 +2805,10 @@ static int RunProvisioning(string? bcVersionArg, string? artifactPathArg,
 
 static void SetBundleInfoFromAppJson(string appJsonPath)
 {
+    // Remember (or clear) the bundle dir for NavApp.GetResource: the emitted test
+    // assembly's resources are the files under this dir's app.json resourceFolders.
+    AlRunnerV2.Patches.NavAppResourcePatches.SetCurrentBundleDir(
+        File.Exists(appJsonPath) ? Path.GetDirectoryName(Path.GetFullPath(appJsonPath)) : null);
     try
     {
         using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(appJsonPath));
