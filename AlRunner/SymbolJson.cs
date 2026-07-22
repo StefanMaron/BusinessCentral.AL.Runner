@@ -142,6 +142,42 @@ public static class DepsSidecarWriter
 {
     public sealed record DepEntry(string Publisher, string Name, Version Version, Guid AppId);
 
+    /// <summary>
+    /// Build the sidecar dependency closure a source dep must declare so that BC's
+    /// ReferenceManager can link cross-app type references appearing in its PUBLIC surface
+    /// (procedure parameters, return types, field/property types) at downstream compile time.
+    /// <para>
+    /// The naive list — the app.json <c>dependencies</c> array minus <c>Optional</c> entries —
+    /// is WRONG: the Microsoft platform apps (Application/System/Base Application/System
+    /// Application/Business Foundation) are synthesized as <c>Optional</c> implicit roots
+    /// (from the manifest's <c>application</c>/<c>platform</c> fields), so filtering them out
+    /// drops exactly the apps whose types most commonly appear in a signature — e.g.
+    /// <c>Codeunit "Temp Blob"</c> (System Application) or <c>Enum "Copilot Capability"</c>
+    /// (platform System). A dependent then sees those parameter types as
+    /// <c>__MissingTypeSymbol__</c> (AL0133). See issue #1546.
+    /// </para>
+    /// The correct closure is what the dep actually COMPILED against: the resolved manifest
+    /// set (real AppIds/versions), UNIONed with any Microsoft platform app physically present
+    /// in the dep's own <c>.alpackages</c> — those enter the dep compile via the raw package
+    /// scan even when they are not in the resolved spec closure. Deduped by AppId; the dep's
+    /// own AppId and empty AppIds (unresolvable implicit roots) are excluded.
+    /// </summary>
+    public static IReadOnlyList<DepEntry> BuildClosure(
+        IEnumerable<DepEntry> resolvedDeps,
+        IEnumerable<DepEntry> vendoredPlatformApps,
+        Guid selfAppId)
+    {
+        var byId = new Dictionary<Guid, DepEntry>();
+        void Add(DepEntry d)
+        {
+            if (d.AppId == Guid.Empty || d.AppId == selfAppId) return;
+            if (!byId.ContainsKey(d.AppId)) byId[d.AppId] = d;
+        }
+        foreach (var d in resolvedDeps) Add(d);
+        foreach (var d in vendoredPlatformApps) Add(d);
+        return byId.Values.ToList();
+    }
+
     /// <summary>Write a <c>*.symbols.deps.json</c> file at <paramref name="path"/>.</summary>
     public static void Write(string path, string publisher, string name, Version version, Guid appId, IEnumerable<DepEntry> dependencies)
     {

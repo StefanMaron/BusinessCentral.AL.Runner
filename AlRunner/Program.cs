@@ -2121,10 +2121,19 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
                 BcCompiler.SetResolvedDeps(implDeps, implSymbolDirs);
                 using (BcCompiler.ScopeCurrentAppIdentity(implId.AppId, implId.Publisher, implId.Version))
                     new BcCompiler().EmitDepSymbols(new[] { implPath }, implId.Name, implId.AppId, implId.Publisher, implId.Version, symbolsPath);
+                // Declare the FULL compile closure — the resolved deps (real AppIds/versions)
+                // UNIONed with the Microsoft platform apps vendored in the impl's own
+                // .alpackages. Filtering to non-Optional declared deps drops the implicit
+                // platform roots (System Application, platform System, …) that carry types
+                // like "Temp Blob"/"Copilot Capability" appearing in the impl's public
+                // signatures, degrading them to __MissingTypeSymbol__ downstream. See #1546.
                 DepsSidecarWriter.Write(
                     depsPath, implId.Publisher, implId.Name, implId.Version, implId.AppId,
-                    implId.Dependencies.Where(d => !d.Optional)
-                        .Select(d => new DepsSidecarWriter.DepEntry(d.Publisher, d.Name, d.Version, d.AppId)));
+                    DepsSidecarWriter.BuildClosure(
+                        implDeps.Select(d => new DepsSidecarWriter.DepEntry(
+                            d.Manifest.Publisher, d.Manifest.Name, d.Manifest.Version, d.Manifest.AppId)),
+                        ScanVendoredPlatformApps(thisImplAlpackages),
+                        implId.AppId));
             }
             catch (Exception ex)
             {
@@ -2371,10 +2380,19 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
             {
                 using (BcCompiler.ScopeCurrentAppIdentity(sid.AppId, sid.Publisher, sid.Version))
                     new BcCompiler().EmitDepSymbols(new[] { dir }, sid.Name, sid.AppId, sid.Publisher, sid.Version, symbolsPath);
+                // Full compile closure (resolved deps ∪ vendored platform apps) — see the
+                // impl-bundle site above and #1546. Filtering to non-Optional declared deps
+                // would drop the implicit platform roots whose types appear in this dep's
+                // public surface, yielding __MissingTypeSymbol__ in the dependent compile.
+                var depOwnAlpackages = Directory.EnumerateDirectories(
+                    FindBucketRoot(dir) ?? dir, ".alpackages", SearchOption.AllDirectories);
                 DepsSidecarWriter.Write(
                     depsPath, sid.Publisher, sid.Name, sid.Version, sid.AppId,
-                    sid.Dependencies.Where(d => !d.Optional)
-                        .Select(d => new DepsSidecarWriter.DepEntry(d.Publisher, d.Name, d.Version, d.AppId)));
+                    DepsSidecarWriter.BuildClosure(
+                        resolvedDepDeps.Select(d => new DepsSidecarWriter.DepEntry(
+                            d.Manifest.Publisher, d.Manifest.Name, d.Manifest.Version, d.Manifest.AppId)),
+                        ScanVendoredPlatformApps(depOwnAlpackages),
+                        sid.AppId));
             }
             catch (Exception ex)
             {
@@ -2631,6 +2649,35 @@ static string? FindBucketRoot(string bundlePath)
         cur = parent;
     }
     return null;
+}
+
+// Scan the given dirs for Microsoft PLATFORM apps (Application/System/Base Application/
+// System Application/Business Foundation) and return one sidecar DepEntry per distinct
+// app (real AppId + version read from the .app manifest). These apps enter a source dep's
+// compile via the raw package scan of its own .alpackages even when they are NOT part of
+// the resolved spec closure (they are synthesized as Optional implicit roots). A dependent
+// app can therefore only link the types they carry — e.g. `Codeunit "Temp Blob"`
+// (System Application), `Enum "Copilot Capability"` (platform System) — if the dep's
+// sidecar declares them. Without this a dependent sees those parameter types as
+// __MissingTypeSymbol__ (AL0133). Scoped to the dep's OWN .alpackages (not the global
+// package cache) to keep the scan bounded and the declared closure faithful to what the
+// dep actually vendored. See DepsSidecarWriter.BuildClosure and issue #1546.
+static IEnumerable<DepsSidecarWriter.DepEntry> ScanVendoredPlatformApps(IEnumerable<string> dirs)
+{
+    foreach (var dir in dirs)
+    {
+        if (!Directory.Exists(dir)) continue;
+        IEnumerable<string> apps;
+        try { apps = Directory.EnumerateFiles(dir, "*.app", SearchOption.AllDirectories); }
+        catch { continue; }
+        foreach (var app in apps)
+        {
+            var m = AppLoader.ReadManifest(app);
+            if (m == null) continue;
+            if (AlRunnerV2.DependencyResolver.IsMicrosoftPlatformApp(m.Name, m.Publisher))
+                yield return new DepsSidecarWriter.DepEntry(m.Publisher, m.Name, m.Version, m.AppId);
+        }
+    }
 }
 
 // Derive the BC MAJOR version the target project is built for, from the first bundle's
