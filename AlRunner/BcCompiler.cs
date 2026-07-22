@@ -1061,8 +1061,16 @@ public sealed class BcCompiler
         // Loud failure (per .claude/rules/loud-failures.md): if the dep does not compile,
         // surface the AL diagnostics here rather than letting WriteSymbolJson fail with a
         // cryptic "Unable to build ModuleDefinition" (the converter NREs on dangling symbols).
+        // AL0327 = a ControlAddIn resource file (Scripts/StartupScript/StyleSheets/Images)
+        // could not be located. These are browser-side assets the headless runner never
+        // renders, and they do NOT affect the AL symbol table a dependent app compiles
+        // against (the add-in's AL-visible surface — procedures/events — is fully declared
+        // in the .al). The primary bundle compile (see Compilation.Emit path above) never
+        // checks declaration diagnostics and so already tolerates AL0327; mirror that here
+        // rather than failing a source-dep whose only fault is a missing JS/CSS resource.
         var errors = compilation.GetDeclarationDiagnostics()
             .Where(d => d.Severity == NavCA.Diagnostics.DiagnosticSeverity.Error)
+            .Where(d => d.Id != "AL0327")
             .ToList();
         if (errors.Count > 0)
             throw new InvalidOperationException(
