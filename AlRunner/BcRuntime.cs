@@ -111,6 +111,57 @@ public static partial class BcRuntime
     public static (Guid AppId, string Name, string Publisher, string Version) GetModuleAppInfoFor(Assembly asm)
         => _moduleInfoByAssembly.TryGetValue(asm, out var info) ? info : _currentBundleInfo;
 
+    /// <summary>
+    /// Stack-walk version of <see cref="GetModuleAppInfoFor"/> for use from the Cecil
+    /// patch on <c>ALNavApp.ALGetCurrentModuleInfo</c> in precompiled deps (where
+    /// <c>Assembly.GetExecutingAssembly()</c> would return the Ncl.dll or runner assembly,
+    /// not the dep's assembly). Walks the call stack and returns the info for the FIRST
+    /// registered AL assembly found — that is the precompiled dep whose AL code called
+    /// NavApp.GetCurrentModuleInfo.
+    /// </summary>
+    public static (Guid AppId, string Name, string Publisher, string Version) GetCurrentModuleFromCallStack()
+    {
+        try
+        {
+            var trace = new System.Diagnostics.StackTrace(fNeedFileInfo: false);
+            for (int i = 0; i < trace.FrameCount; i++)
+            {
+                var asm = trace.GetFrame(i)?.GetMethod()?.DeclaringType?.Assembly;
+                if (asm == null) continue;
+                if (_moduleInfoByAssembly.TryGetValue(asm, out var info)) return info;
+            }
+        }
+        catch { }
+        return _currentBundleInfo;
+    }
+
+    /// <summary>
+    /// Stack-walk version of <see cref="GetCallerModuleAppInfoFor"/> for use from the
+    /// Cecil patch on <c>ALNavApp.ALGetCallerModuleInfo</c> in precompiled deps. Finds
+    /// the first registered AL assembly on the stack (the "current" / "self" module —
+    /// the precompiled dep that invoked GetCallerModuleInfo), then returns the first
+    /// DIFFERENT registered assembly above it (the true "caller").
+    /// </summary>
+    public static (Guid AppId, string Name, string Publisher, string Version) GetCallerModuleFromCallStack()
+    {
+        try
+        {
+            var trace = new System.Diagnostics.StackTrace(fNeedFileInfo: false);
+            Assembly? selfAsm = null;
+            for (int i = 0; i < trace.FrameCount; i++)
+            {
+                var asm = trace.GetFrame(i)?.GetMethod()?.DeclaringType?.Assembly;
+                if (asm == null) continue;
+                if (!_moduleInfoByAssembly.ContainsKey(asm)) continue;
+                if (selfAsm == null) { selfAsm = asm; continue; }
+                if (asm != selfAsm) return _moduleInfoByAssembly[asm];
+            }
+            if (selfAsm != null) return GetModuleAppInfoFor(selfAsm);
+        }
+        catch { }
+        return _currentBundleInfo;
+    }
+
     /// <summary>Module info by AppId across every registered assembly (deps + bundle),
     /// for NavApp.GetModuleInfo(moduleId). Null when the id is unknown.</summary>
     public static (Guid AppId, string Name, string Publisher, string Version)? TryGetModuleInfoByAppId(Guid moduleId)

@@ -1426,6 +1426,39 @@ public static class NclCecilRewrite
             }
         }
 
+        // ── ALNavApp.ALGetCurrentModuleInfo / ALGetCallerModuleInfo ───────────────────
+        // Both NRE on the skeleton (NavTenant.get_Database chain). Precompiled deps
+        // (SystemApp, ISV DLLs) call the real Ncl.dll methods directly; source-compiled
+        // deps are already safe via the BcAssembler polyfill redirect. Cecil-patch both
+        // here so precompiled facades like CopilotCapability.RegisterCapability return
+        // the correct module identity from the stack-walk registry.
+        // RED→GREEN: Pageworks Codeunit50364 tests 2-7 ("Capability has already been registered").
+        {
+            var alNavAppModuleType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.ALNavApp");
+            if (alNavAppModuleType != null)
+            {
+                var mCurrent = alNavAppModuleType.Methods.FirstOrDefault(x =>
+                    x.Name == "ALGetCurrentModuleInfo" && x.Parameters.Count == 2 && x.IsStatic);
+                if (mCurrent != null)
+                {
+                    var h = typeof(AlRunnerV2.Patches.NavAppModuleInfoPatches).GetMethod(
+                        nameof(AlRunnerV2.Patches.NavAppModuleInfoPatches.ALNavApp_GetCurrentModuleInfo),
+                        BindingFlags.Public | BindingFlags.Static)!;
+                    ReplaceBodyWithHelper(asm.MainModule, mCurrent, h);
+                }
+
+                var mCaller = alNavAppModuleType.Methods.FirstOrDefault(x =>
+                    x.Name == "ALGetCallerModuleInfo" && x.Parameters.Count == 2 && x.IsStatic);
+                if (mCaller != null)
+                {
+                    var h = typeof(AlRunnerV2.Patches.NavAppModuleInfoPatches).GetMethod(
+                        nameof(AlRunnerV2.Patches.NavAppModuleInfoPatches.ALNavApp_GetCallerModuleInfo),
+                        BindingFlags.Public | BindingFlags.Static)!;
+                    ReplaceBodyWithHelper(asm.MainModule, mCaller, h);
+                }
+            }
+        }
+
         // IsolatedStorageRepository — Cecil migration of the TenantStoragePatches
         // lowest layer. The AL-facing ALIsolatedStorage bodies delegate here, and AL
         // output also lands here directly for Contains/Delete. The real bodies open
