@@ -580,11 +580,11 @@ public static class FlowFieldPatches
                     result = NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, v);
                 }
                 else if (Equals(calcMethod, _cmMin))
-                    result = minV ?? NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, 0);
+                    result = minV ?? TypedDefaultForField(fieldObj) ?? NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, 0);
                 else if (Equals(calcMethod, _cmMax))
-                    result = maxV ?? NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, 0);
+                    result = maxV ?? TypedDefaultForField(fieldObj) ?? NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, 0);
                 else if (Equals(calcMethod, _cmLookup))
-                    result = lookupV ?? NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, "");
+                    result = lookupV ?? TypedDefaultForField(fieldObj) ?? NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, "");
                 else
                 {
                     Console.Error.WriteLine($"[FlowFieldPatches] unsupported CalculationMethod {calcMethod}");
@@ -692,6 +692,39 @@ public static class FlowFieldPatches
         try
         {
             return NavGlobal.NCLMetadata.GetMetaTableById(tableId, requireCompiled: false);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    // Produce a typed default NavValue for an NCLMetaField, matching the field's own type
+    // (0 for Integer, '' for Text, 0D for Decimal, …) — the SAME real BC factory
+    // RecordPatches.QueryJoin.cs already reuses for its unmatched-LeftOuterJoin-column case
+    // (NavValue.GetDefaultNavValue(INavValueMetadata, nullSupport:false); NCLMetaField IS an
+    // INavValueMetadata). Used for Min/Max/Lookup's "no source row matched the filter" case:
+    // that previously hardcoded a bare `0` (Min/Max) or `""` (Lookup) regardless of the
+    // TARGET field's real type — faithful for an Integer target, but NavValue.
+    // CreateNavValueFromObject then throws NavNCLEvaluateException for any other type (a Date/
+    // Text/Decimal Min or Max field, or — the case that surfaced this — an Integer Lookup
+    // field, since "" doesn't evaluate to Integer either). GetDefaultNavValue always returns
+    // the field's OWN type's default, so this is correct for every field type, not just the
+    // one the original hardcoded literal happened to match.
+    private static MethodInfo? _mFlowFieldGetDefaultNavValue;
+    private static NavValue? TypedDefaultForField(object fieldObj)
+    {
+        try
+        {
+            var nclAsm = fieldObj.GetType().Assembly;
+            var tNavValue = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.NavValue");
+            var tMeta = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.INavValueMetadata");
+            if (tNavValue == null || tMeta == null) return null;
+            _mFlowFieldGetDefaultNavValue ??= tNavValue.GetMethod("GetDefaultNavValue",
+                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static,
+                binder: null, types: new[] { tMeta, typeof(bool) }, modifiers: null);
+            if (_mFlowFieldGetDefaultNavValue == null) return null;
+            return _mFlowFieldGetDefaultNavValue.Invoke(null, new object?[] { fieldObj, false }) as NavValue;
         }
         catch
         {

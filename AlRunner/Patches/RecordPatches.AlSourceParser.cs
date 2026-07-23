@@ -63,9 +63,22 @@ public static partial class RecordPatches
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // Captures: (type) table ["."field] [where(filters)]
-    // Groups: 1=type, 2=table(quoted), 3=field(quoted), 4=field(unquoted), 5=where
+    // Groups: 1=type, 2=table(quoted), 3=table(unquoted), 4=field(quoted), 5=field(unquoted), 6=where
+    //
+    // The table name alternation (quoted OR bare identifier) mirrors the field name
+    // alternation next to it — a single-word AL object name (e.g. `PageworksDSFieldConfigLine`)
+    // is legal WITHOUT quotes, exactly like a single-word field name already was handled.
+    // Before this fix the table name was quoted-only: `lookup(PageworksDSFieldConfigLine.
+    // TargetTableNo where(...))` (a genuine, common AL pattern — no spaces in the name, so no
+    // quotes needed) silently failed this regex, TryParseCalcFormula returned null, and the
+    // FlowField's NCLMetaField.CalculationFormula was left at EmptyFormula — CalcFields()
+    // became a silent no-op, leaving the field at its type default (e.g. 0) instead of the
+    // real looked-up value. Verified via ilspycmd/live trace: FlowFieldPatches.
+    // RecordImpl_CalcFieldsAsync_3 logged "formula == EmptyFormula, skipping" for exactly this
+    // field, and a runner-extras repro with a matching unquoted table name reproduced a
+    // FlowField silently resolving to 0 instead of the seeded value.
     private static readonly Regex RxCalcFormulaParts = new(
-        @"^\s*(count|sum|lookup|exist|average|min|max)\s*\(\s*""([^""]+)""(?:\.(?:""([^""]+)""|([A-Za-z_]\w*)))?\s*(?:where\s*\((.+)\))?\s*\)\s*$",
+        @"^\s*(count|sum|lookup|exist|average|min|max)\s*\(\s*(?:""([^""]+)""|([A-Za-z_]\w*))(?:\.(?:""([^""]+)""|([A-Za-z_]\w*)))?\s*(?:where\s*\((.+)\))?\s*\)\s*$",
         RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.Singleline);
 
     // Captures field-reference filter: "SourceField"|Unquoted = field("ParentField"|Unquoted)
@@ -285,10 +298,11 @@ public static partial class RecordPatches
         if (!pm.Success) return null;
 
         var formulaType = pm.Groups[1].Value;
-        var sourceTableName = pm.Groups[2].Value;
-        var sourceFieldName = pm.Groups[3].Success && pm.Groups[3].Length > 0 ? pm.Groups[3].Value
-                            : pm.Groups[4].Success && pm.Groups[4].Length > 0 ? pm.Groups[4].Value : null;
-        var whereText = pm.Groups[5].Success ? pm.Groups[5].Value : "";
+        var sourceTableName = pm.Groups[2].Success && pm.Groups[2].Length > 0 ? pm.Groups[2].Value
+                            : pm.Groups[3].Value;
+        var sourceFieldName = pm.Groups[4].Success && pm.Groups[4].Length > 0 ? pm.Groups[4].Value
+                            : pm.Groups[5].Success && pm.Groups[5].Length > 0 ? pm.Groups[5].Value : null;
+        var whereText = pm.Groups[6].Success ? pm.Groups[6].Value : "";
 
         var filters = new List<ParsedCalcFilter>();
         foreach (Match fm in RxCalcFilter.Matches(whereText))

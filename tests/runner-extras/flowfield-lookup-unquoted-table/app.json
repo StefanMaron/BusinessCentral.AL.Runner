@@ -1,0 +1,24 @@
+{
+  "id": "f6a7b8c9-0d1e-4213-9f3a-4b5c6d7e8f92",
+  "name": "Runner Extras - FlowField Lookup Unquoted Table",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Regression: a lookup() FlowField CalcFormula whose source table name is an unquoted AL identifier (e.g. `lookup(MyTable.Field where(...))`, legal AL — quotes are only required when the name contains spaces) must parse and calculate correctly, not silently resolve to 0.",
+  "description": "RecordPatches.AlSourceParser.RxCalcFormulaParts required the CalcFormula's source table name to be double-quoted (`lookup(\"My Table\".Field where(...))`); a single-word unquoted table name (`lookup(MyTable.Field where(...))` — legal AL, exactly what Pageworks' PageworksDSFieldMapLine.TargetTableNo declares against PageworksDSFieldConfigLine) silently failed the regex. TryParseCalcFormula returned null, so the field's NCLMetaField.CalculationFormula stayed at NCLMetaCalculationFormula.EmptyFormula, and FlowFieldPatches.RecordImpl_CalcFieldsAsync_3's own EmptyFormula check made CalcFields() a silent no-op — the field stayed at its type default (0) instead of the real looked-up value. Downstream AL code that opens a RecordRef/FieldRef by that now-zero table number then throws 'no NCLMetaTable for table 0' (or a field-not-found style error for other CalcFormula shapes) with no indication the real cause was upstream, in metadata parsing.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 61700,
+      "to": 61799
+    }
+  ],
+  "runtime": "17.0",
+  "target": "Cloud",
+  "features": []
+}
