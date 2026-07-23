@@ -83,12 +83,19 @@ public sealed class TestExecutor
         // re-applied after every store reset (see below) because the runner's
         // reset wipes the store instead of rolling back to the committed
         // install-seeded baseline real BC restores.
+        var seedSw = System.Diagnostics.Stopwatch.StartNew();
         InstallTriggerRunner.SetTestAssembly(assembly);
         InstallTriggerRunner.RunAll();
+        PerfTrace.Log($"TestExecutor.InitialInstallSeed {seedSw.ElapsedMilliseconds}ms");
 
+        long scanMs = 0, instMs = 0, dispMs = 0, methodsMs = 0, disposeMs = 0, methodLoopMs = 0;   // PERF attribution accumulators
+        var stageSw = new System.Diagnostics.Stopwatch();
         foreach (var t in types)
         {
-            if (!IsTestCodeunit(t)) continue;
+            stageSw.Restart();
+            var isTestCu = IsTestCodeunit(t);
+            scanMs += stageSw.ElapsedMilliseconds;
+            if (!isTestCu) continue;
             if (filter != null && !CodeunitMatchesFilter(t, filter)) continue;
 
             // W-8b A-prime: this assembly may contain AL [EventSubscriber] codeunits whose
@@ -105,14 +112,19 @@ public sealed class TestExecutor
             // each NEW codeunit starts fresh.
             if (Isolation == TestIsolation.Codeunit)
             {
+                var resetSw = System.Diagnostics.Stopwatch.StartNew();
                 AlRunnerV2.Patches.RecordPatches.ResetPerTestState();
+                var resetMs = resetSw.ElapsedMilliseconds;
+                resetSw.Restart();
                 // Restore the install-seeded baseline the reset just wiped
                 // (real BC's rollback preserves committed install seeding).
                 InstallTriggerRunner.RunAll();
+                PerfTrace.Log($"TestExecutor.CodeunitBoundary {t.Name} reset={resetMs}ms installSeed={resetSw.ElapsedMilliseconds}ms t={totalSw.ElapsedMilliseconds}ms");
             }
 
             object? instance;
             PerfTrace.Log($"TestExecutor.Instantiate START {t.Name}");
+            stageSw.Restart();
             try { instance = InstantiateCodeunit(t); }
             catch (Exception ex)
             {
@@ -120,25 +132,32 @@ public sealed class TestExecutor
                     Unwrap(ex).Message, ex.ToString(), TimeSpan.Zero));
                 continue;
             }
-            PerfTrace.Log($"TestExecutor.Instantiate END {t.Name}");
+            instMs += stageSw.ElapsedMilliseconds;
+            PerfTrace.Log($"TestExecutor.Instantiate END {t.Name} {stageSw.ElapsedMilliseconds}ms");
             if (instance == null) continue;
 
             // Resolve the AL object name (e.g. "Test Table Event Dispatch") off the
             // instantiated codeunit — it derives from NavApplicationObjectBase and exposes
             // a public ObjectName property. Falls back to the .NET type name on failure.
+            stageSw.Restart();
             var displayName = ResolveDisplayName(instance, t.Name);
+            dispMs += stageSw.ElapsedMilliseconds;
 
+            var loopSw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Instance))
                 {
                     if (!IsTestMethod(m)) continue;
                     if (filter != null && !MethodMatchesFilter(t.Name, m.Name, filter)) continue;
+                    stageSw.Restart();
                     var result = RunOne(t.Name, m, instance, displayName);
+                    methodsMs += stageSw.ElapsedMilliseconds;
                     results.Add(result);
                     if (IsTimeout(result))
                         return results;
                 }
+                methodLoopMs += loopSw.ElapsedMilliseconds;
             }
             finally
             {
@@ -152,10 +171,13 @@ public sealed class TestExecutor
                 // needs this instance once its test methods have all run, so dispose it
                 // here to unlink it from RootTreeStub (TreeHandler.Dispose() →
                 // InternalRemoveChild).
+                stageSw.Restart();
                 (instance as IDisposable)?.Dispose();
+                disposeMs += stageSw.ElapsedMilliseconds;
             }
         }
         totalSw.Stop();
+        PerfTrace.Log($"TestExecutor stages scan={scanMs}ms instantiate={instMs}ms displayName={dispMs}ms runOneOuter={methodsMs}ms dispose={disposeMs}ms methodLoop={methodLoopMs}ms");
         PerfTrace.Log($"TestExecutor total {results.Count} test(s) {totalSw.ElapsedMilliseconds}ms");
         return results;
     }
