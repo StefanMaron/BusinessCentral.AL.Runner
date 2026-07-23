@@ -434,27 +434,44 @@ if (!provisionSubcommand && packageCacheDirs.Count > 0)
     var version = AlRunnerV2.Infrastructure.BcArtifacts.SelectedVersion.ToString();
     var platformReport = AlRunnerV2.Infrastructure.ProvisioningCheck.CheckPlatformApps(
         version, packageCacheDirs);
-    if (!platformReport.Ok)
+    // Test-toolkit apps (Business Foundation Test Libraries, Application Test Library, …)
+    // are a SEPARATE artifact set from the w1 platform apps (they live under the
+    // `platform` artifact, not `w1`) — a cache can have complete R2R platform apps and
+    // still be missing the whole test toolkit, which fails compiling any test bundle.
+    var toolkitPresent = AlRunnerV2.Infrastructure.ProvisioningCheck.TestToolkitPresent(packageCacheDirs);
+
+    if (!platformReport.Ok && !autoProvision)
     {
-        if (autoProvision)
+        Console.Error.WriteLine(platformReport.ToDetailedMessage());
+        return 2;
+    }
+
+    if (autoProvision && (!platformReport.Ok || !toolkitPresent))
+    {
+        // Resolve ONE target full version and reuse it for both artifact sets — avoids
+        // resolving two different minors for what should be the same provisioning pass.
+        // Priority: (a) the missing/symbol-only platform apps carry their OWN version
+        // (the engine is version-agnostic w.r.t. the R2R apps it dispatches to at
+        // runtime, so this can be a different minor than the engine's SelectedVersion);
+        // (b) else derive from whatever platform app IS already present in the cache
+        // (only the toolkit is missing); (c) else fall back to the engine's own version.
+        var mm = !platformReport.Ok
+            ? AlRunnerV2.Infrastructure.ProvisioningCheck.DeriveProvisionMajorMinor(platformReport, version)
+            : AlRunnerV2.Infrastructure.ProvisioningCheck.DerivePresentPlatformMajorMinor(packageCacheDirs, version);
+        var full = AlRunner.Provisioning.ArtifactDownloader.ResolveVersion(
+            mm, m => Console.Error.WriteLine($"[provision] {m}"));
+        if (full == null)
+        {
+            Console.Error.WriteLine($"[provision] could not resolve a full BC artifact version for '{mm}'; cannot continue.");
+            return 2;
+        }
+        // Pick first writable cache dir.
+        var pkgCacheOut = packageCacheDirs.FirstOrDefault(Directory.Exists)
+            ?? packageCacheDirs[0];
+
+        if (!platformReport.Ok)
         {
             Console.Error.WriteLine("[provision] platform R2R apps missing — downloading...");
-            // The missing apps carry their OWN version (platformReport.Issues), which can be
-            // a different minor than the engine's SelectedVersion — the engine is
-            // version-agnostic w.r.t. the R2R apps it dispatches to at runtime. Provision the
-            // apps' minor, not a truncation of the engine version (that 404s: PlatformApps
-            // needs a FULL artifact version like 28.2.50931.52786, not "28.1").
-            var mm = AlRunnerV2.Infrastructure.ProvisioningCheck.DeriveProvisionMajorMinor(platformReport, version);
-            var full = AlRunner.Provisioning.ArtifactDownloader.ResolveVersion(
-                mm, m => Console.Error.WriteLine($"[provision] {m}"));
-            if (full == null)
-            {
-                Console.Error.WriteLine($"[provision] could not resolve a full BC artifact version for '{mm}'; cannot continue.");
-                return 2;
-            }
-            // Pick first writable cache dir.
-            var pkgCacheOut = packageCacheDirs.FirstOrDefault(Directory.Exists)
-                ?? packageCacheDirs[0];
             var rc = AlRunner.Provisioning.ArtifactDownloader.PlatformApps(
                 full, pkgCacheOut, m => Console.Error.WriteLine($"[provision] {m}"));
             if (rc != 0)
@@ -472,10 +489,24 @@ if (!provisionSubcommand && packageCacheDirs.Count > 0)
                 return 2;
             }
         }
-        else
+
+        if (!toolkitPresent)
         {
-            Console.Error.WriteLine(platformReport.ToDetailedMessage());
-            return 2;
+            Console.Error.WriteLine("[provision] test-toolkit apps missing — downloading...");
+            var rc = AlRunner.Provisioning.ArtifactDownloader.TestApps(
+                full, pkgCacheOut, m => Console.Error.WriteLine($"[provision] {m}"));
+            if (rc != 0)
+            {
+                Console.Error.WriteLine("[provision] test-toolkit download failed; cannot continue.");
+                return 2;
+            }
+            // Re-check: never silently continue on a partial/failed provision.
+            toolkitPresent = AlRunnerV2.Infrastructure.ProvisioningCheck.TestToolkitPresent(packageCacheDirs);
+            if (!toolkitPresent)
+            {
+                Console.Error.WriteLine("[provision] test-toolkit apps still missing after download.");
+                return 2;
+            }
         }
     }
 }

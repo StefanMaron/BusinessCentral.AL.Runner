@@ -326,4 +326,117 @@ public sealed class ProvisioningCheckTests : IDisposable
 
         Assert.Equal("28", mm);
     }
+
+    // ── TestToolkitPresent ────────────────────────────────────────────────────
+
+    [Fact]
+    public void TestToolkitPresent_EmptyDir_ReturnsFalse()
+    {
+        Assert.False(ProvisioningCheck.TestToolkitPresent(new[] { _dir }));
+    }
+
+    [Fact]
+    public void TestToolkitPresent_NonexistentDir_ReturnsFalse()
+    {
+        var gone = Path.Combine(_dir, "does-not-exist");
+        Assert.False(ProvisioningCheck.TestToolkitPresent(new[] { gone }));
+    }
+
+    [Fact]
+    public void TestToolkitPresent_OnlyPlatformApp_ReturnsFalse()
+    {
+        var dir = Path.Combine(_dir, "pkg-platform-only");
+        Directory.CreateDirectory(dir);
+        WriteR2RApp(dir, "microsoft_system application_28.2.0.0.app",
+            "00000000-0000-0000-0000-000000000010", "System Application", "Microsoft", "28.2.0.0");
+
+        Assert.False(ProvisioningCheck.TestToolkitPresent(new[] { dir }));
+    }
+
+    [Fact]
+    public void TestToolkitPresent_OnlyNonMicrosoftApp_ReturnsFalse()
+    {
+        var dir = Path.Combine(_dir, "pkg-isv-only");
+        Directory.CreateDirectory(dir);
+        WriteSymbolOnlyApp(dir, "isv_business foundation test libraries_1.0.0.0.app",
+            "00000000-0000-0000-0000-000000000011", "Business Foundation Test Libraries", "Contoso ISV", "1.0.0.0");
+
+        Assert.False(ProvisioningCheck.TestToolkitPresent(new[] { dir }));
+    }
+
+    [Fact]
+    public void TestToolkitPresent_BusinessFoundationTestLibraries_ReturnsTrue()
+    {
+        var dir = Path.Combine(_dir, "pkg-bftl");
+        Directory.CreateDirectory(dir);
+        WriteSymbolOnlyApp(dir, "microsoft_business foundation test libraries_28.2.0.0.app",
+            "bee8cf2f-494a-42f4-aabd-650e87934d39", "Business Foundation Test Libraries", "Microsoft", "28.2.0.0");
+
+        Assert.True(ProvisioningCheck.TestToolkitPresent(new[] { dir }));
+    }
+
+    [Fact]
+    public void TestToolkitPresent_OnlyApplicationTestLibrary_ReturnsFalse()
+    {
+        // Regression guard for the real clean-cache case: a project's own .alpackages
+        // vendors "Application Test Library" but NOT "Business Foundation Test Libraries".
+        // The toolkit is NOT fully provisioned, so this must be false (download must fire).
+        // A looser OR-match on Application Test Library reported true here and skipped the
+        // test-apps download, then the test bundle failed to compile on the missing BFTL.
+        var dir = Path.Combine(_dir, "pkg-atl");
+        Directory.CreateDirectory(dir);
+        WriteSymbolOnlyApp(dir, "microsoft_application test library_28.2.0.0.app",
+            "00000000-0000-0000-0000-000000000012", "Application Test Library", "Microsoft", "28.2.0.0");
+
+        Assert.False(ProvisioningCheck.TestToolkitPresent(new[] { dir }));
+    }
+
+    // ── DerivePresentPlatformMajorMinor ───────────────────────────────────────
+
+    [Fact]
+    public void DerivePresentPlatformMajorMinor_NoAppsPresent_FallsBackToFallbackVersion()
+    {
+        var mm = ProvisioningCheck.DerivePresentPlatformMajorMinor(new[] { _dir }, "28.1.49838.50794");
+        Assert.Equal("28.1", mm);
+    }
+
+    [Fact]
+    public void DerivePresentPlatformMajorMinor_NonexistentDir_FallsBackToFallbackVersion()
+    {
+        var gone = Path.Combine(_dir, "does-not-exist");
+        var mm = ProvisioningCheck.DerivePresentPlatformMajorMinor(new[] { gone }, "28.1.49838.50794");
+        Assert.Equal("28.1", mm);
+    }
+
+    [Fact]
+    public void DerivePresentPlatformMajorMinor_ShortFallback_ReturnsAsIs()
+    {
+        var mm = ProvisioningCheck.DerivePresentPlatformMajorMinor(new[] { _dir }, "28.1");
+        Assert.Equal("28.1", mm);
+    }
+
+    [Fact]
+    public void DerivePresentPlatformMajorMinor_BaseApplicationPresent_UsesItsMajorMinor()
+    {
+        var dir = Path.Combine(_dir, "pkg-baseapp");
+        Directory.CreateDirectory(dir);
+        WriteR2RApp(dir, "microsoft_base application_28.3.0.0.app",
+            "00000000-0000-0000-0000-000000000013", "Base Application", "Microsoft", "28.3.0.0");
+
+        // Fallback deliberately a different minor — the present app's version must win.
+        var mm = ProvisioningCheck.DerivePresentPlatformMajorMinor(new[] { dir }, "28.1.49838.50794");
+        Assert.Equal("28.3", mm);
+    }
+
+    [Fact]
+    public void DerivePresentPlatformMajorMinor_SystemApplicationPresent_UsesItsMajorMinor()
+    {
+        var dir = Path.Combine(_dir, "pkg-sysapp");
+        Directory.CreateDirectory(dir);
+        WriteSymbolOnlyApp(dir, "microsoft_system application_28.4.0.0.app",
+            "00000000-0000-0000-0000-000000000014", "System Application", "Microsoft", "28.4.0.0");
+
+        var mm = ProvisioningCheck.DerivePresentPlatformMajorMinor(new[] { dir }, "28.1.49838.50794");
+        Assert.Equal("28.4", mm);
+    }
 }

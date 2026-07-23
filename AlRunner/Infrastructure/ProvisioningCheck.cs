@@ -183,6 +183,86 @@ public static class ProvisioningCheck
         });
     }
 
+    // ── Test-toolkit presence check ───────────────────────────────────────────
+    // Microsoft ships the test-toolkit apps (Business Foundation Test Libraries,
+    // Application Test Library, System Application Test Library, Test Runner, Library
+    // Assert, Library Variable Storage, Tests-TestLibraries, Permissions Mock, …) as a
+    // SEPARATE artifact set from the w1 platform apps (they live under the `platform`
+    // artifact's Applications/<area>/Test/ tree, not w1/Extensions). A clean cache that
+    // only has the platform apps still fails to compile any test bundle that depends on
+    // ALTestRunner/Library Assert/etc. Detect that gap here so --auto-provision can close
+    // it too, instead of leaving the "re-run with --auto-provision" message from a
+    // different check to lie about what it actually does.
+    //
+    // We only need to detect the presence of ONE well-known test-toolkit app to know the
+    // whole set was provisioned together (ArtifactDownloader.TestApps always downloads the
+    // full set in one shot) — checking for all of them would just be redundant I/O.
+    // The definitive marker that the Microsoft test toolkit is provisioned. Chosen
+    // deliberately: it is the foundational test lib every BC test bundle transitively
+    // depends on (chain: Tests-TestLibraries → Application Test Library → Business
+    // Foundation Test Libraries) AND it is provided ONLY by the downloaded test-apps
+    // set — a project's own .alpackages commonly vendors "Application Test Library" but
+    // NOT this one. Using a looser OR-match (accepting Application Test Library) falsely
+    // reports the toolkit "present" for a cache that vendors App Test Library yet still
+    // lacks Business Foundation Test Libraries, so the auto-provision download never fires
+    // and the test bundle then fails to compile — exactly the gap this check exists to catch.
+    public const string TestToolkitSentinelApp = "Business Foundation Test Libraries";
+
+    /// <summary>
+    /// True if the Microsoft test toolkit is provisioned in <paramref name="packageCacheDirs"/>,
+    /// detected via <see cref="TestToolkitSentinelApp"/> (a Microsoft-published .app of that
+    /// name). Missing/nonexistent dirs are skipped. Pure filesystem scan — no network.
+    /// </summary>
+    public static bool TestToolkitPresent(IReadOnlyList<string> packageCacheDirs)
+    {
+        foreach (var dir in packageCacheDirs)
+        {
+            if (!Directory.Exists(dir)) continue;
+            foreach (var appFile in Directory.EnumerateFiles(dir, "*.app", SearchOption.AllDirectories))
+            {
+                var m = AlRunnerV2.AppLoader.ReadManifest(appFile);
+                if (m == null) continue;
+                if (!string.Equals(m.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
+                if (string.Equals(TestToolkitSentinelApp, m.Name, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Derives the BC major.minor to auto-provision FROM WHAT'S ALREADY IN THE CACHE: scans
+    /// <paramref name="packageCacheDirs"/> for a Microsoft "Base Application" or "System
+    /// Application" .app and returns its major.minor. Used when there's no
+    /// <see cref="PlatformAppsReport"/> issue to derive from (e.g. platform apps are already
+    /// R2R-complete but the test toolkit is still missing) — we still need SOME minor to
+    /// resolve a full artifact version for the test-toolkit download, and the platform apps
+    /// already in the cache are the most reliable signal of which minor this project targets.
+    /// Falls back to <paramref name="fallbackVersion"/>'s major.minor when no such app is found.
+    /// </summary>
+    public static string DerivePresentPlatformMajorMinor(
+        IReadOnlyList<string> packageCacheDirs, string fallbackVersion)
+    {
+        foreach (var dir in packageCacheDirs)
+        {
+            if (!Directory.Exists(dir)) continue;
+            foreach (var appFile in Directory.EnumerateFiles(dir, "*.app", SearchOption.AllDirectories))
+            {
+                var m = AlRunnerV2.AppLoader.ReadManifest(appFile);
+                if (m == null) continue;
+                if (!string.Equals(m.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
+                if (!string.Equals(m.Name, "Base Application", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(m.Name, "System Application", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var v = m.Version.ToString();
+                var vparts = v.Split('.');
+                return vparts.Length >= 2 ? string.Join(".", vparts.Take(2)) : v;
+            }
+        }
+        var parts = fallbackVersion.Split('.');
+        return parts.Length >= 2 ? string.Join(".", parts.Take(2)) : fallbackVersion;
+    }
+
     public sealed record Report(string Version, string ServiceTierDir, IReadOnlyList<string> MissingFiles)
     {
         public bool Ok => MissingFiles.Count == 0;
