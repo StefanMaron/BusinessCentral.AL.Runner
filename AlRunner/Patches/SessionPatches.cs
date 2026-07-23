@@ -60,6 +60,15 @@ public static partial class BcRuntime
     public static int NavSession_LocalLanguageNoFallback(object? self) => -1;
 
     /// <summary>
+    /// Replacement for NavSession.get_LocalFormatRegion — the real getter reads the
+    /// (skeleton-null) format-region stack. Empty string = "no region override",
+    /// same as an empty stack on the service tier. Reached from report execution
+    /// (LogReportExecutionStatus / ReportLocalLanguageScope).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static string NavSession_LocalFormatRegion(object? self) => string.Empty;
+
+    /// <summary>
     /// Replacement for NavSession.GetSecurityFilters — bypasses Database.SecurityAndLicense which
     /// NREs on the skeleton database. Return null; RecordImplementation treats null as "no security
     /// filters" (matches the IsPermissionSystemEnabled=false code path in the original method).

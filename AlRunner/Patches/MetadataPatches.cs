@@ -135,6 +135,11 @@ public static partial class BcRuntime
     /// FieldPoke into its caches (e.g. populate per-table NCLMetaTable entries).</summary>
     public static object? SkeletonNCLMetadata => _skeletonNCLMetadata;
 
+    /// <summary>The skeleton NavSystemTenant (carries the skeleton NCLMetadata + tenant
+    /// settings). Exposed so report-execution sessions can be given a non-null
+    /// <c>systemTenant</c> — see NavReportSync.SeedSessionSystemTenant.</summary>
+    public static object? SkeletonSystemTenant => _skeletonSystemTenant;
+
     /// <summary>
     /// Called from ApplyAllPatches *after* the real NavEnvironment ctor has run successfully
     /// (`InstantiateStandaloneNavEnvironment(true,false)`). At that point
@@ -293,6 +298,15 @@ public static partial class BcRuntime
 
             FieldPoke.SetInstance(tenantSettingsField, _skeletonSystemTenant!, skeletonTenantSettings);
             Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: skeleton TenantSettings (default Production env) wired");
+
+            // NavTenant.Id => id ?? tenantSettings.Id — both null on the skeleton.
+            // NavFile.GetUserDirectoryAndEnsureExists (report temp-file path) does
+            // Path.Combine(serverUsersFolder, Tenant.Id, …) → ArgumentNull without it.
+            FieldInfo? tenantIdField = null;
+            for (var walkT = _skeletonSystemTenant!.GetType(); walkT != null && tenantIdField == null; walkT = walkT.BaseType)
+                tenantIdField = walkT.GetField("id", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (tenantIdField != null && tenantIdField.GetValue(_skeletonSystemTenant) == null)
+                FieldPoke.SetInstance(tenantIdField, _skeletonSystemTenant, "default");
         }
         else
         {
@@ -312,6 +326,51 @@ public static partial class BcRuntime
             {
                 FieldPoke.SetInstance(sessTenantField, _skeletonSession, _skeletonSystemTenant!);
                 Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: skeleton tenant wired onto session.tenant");
+            }
+
+            // Session.UserFolder — auto-property, null on the skeleton (the real
+            // service tier resolves it from the user's server folder). NavFile.TempPath
+            // does Path.Combine(Session.UserFolder, "TEMP\\") → ArgumentNull without it,
+            // which surfaces as NavNCLInvalidPathException and traps SaveAs to `false`.
+            // The report XML/dataset processors buffer through NavFile temp files, so
+            // wire a real writable runner-owned folder here.
+            var userFolderBacking = sessType.GetField("<UserFolder>k__BackingField",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            if (userFolderBacking != null && string.IsNullOrEmpty(userFolderBacking.GetValue(_skeletonSession) as string))
+            {
+                var userFolder = System.IO.Path.Combine(
+                    System.IO.Path.GetTempPath(), "al-runner-navserver", "user", Environment.ProcessId.ToString());
+                System.IO.Directory.CreateDirectory(userFolder);
+                FieldPoke.SetInstance(userFolderBacking, _skeletonSession, userFolder);
+                Console.Error.WriteLine($"[BcRuntime] InjectSkeletonSystemTenant: session.UserFolder wired to {userFolder}");
+            }
+
+            // Session.Diagnostics — auto-property, null on the skeleton. The report
+            // execution chain calls session.Diagnostics.CreateTraceScope(...) directly
+            // (RunReportInternalCoreAsync / ExecuteDataItemIteratorAsync). Wire the same
+            // instance BC uses as its ambient fallback (NavDiagnostics.GetMostSpecificInstance)
+            // so trace scopes are real, not fabricated.
+            var diagBacking = sessType.GetField("<Diagnostics>k__BackingField",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            if (diagBacking != null && diagBacking.GetValue(_skeletonSession) == null)
+            {
+                // NavDiagnostics lives in Types.dll (namespace Microsoft.Dynamics.Nav.Diagnostic).
+                var tDiag = typeof(Microsoft.Dynamics.Nav.Runtime.NavSession).Assembly
+                    .GetType("Microsoft.Dynamics.Nav.Diagnostic.NavDiagnostics")
+                    ?? AppDomain.CurrentDomain.GetAssemblies()
+                        .Select(a => a.GetType("Microsoft.Dynamics.Nav.Diagnostic.NavDiagnostics"))
+                        .FirstOrDefault(t => t != null);
+                var ambient = tDiag?.GetProperty("GetMostSpecificInstance",
+                        BindingFlags.Public | BindingFlags.Static)?.GetValue(null)
+                    ?? tDiag?.GetField("GetMostSpecificInstance",
+                        BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+                if (ambient != null)
+                {
+                    FieldPoke.SetInstance(diagBacking, _skeletonSession, ambient);
+                    Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: session.Diagnostics wired to ambient NavDiagnostics");
+                }
+                else
+                    Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: NavDiagnostics.GetMostSpecificInstance NOT resolved — session.Diagnostics stays null");
             }
         }
 

@@ -1504,6 +1504,13 @@ public sealed class BcCompiler
                 }
                 AlEnumMetadataRegistry.Register(enumSym.Id, enumSym.Name, options, indexes, implementations);
             }
+            // Capture the per-report runtime metadata XML the emit pipeline hands us
+            // (the same XML the service tier stores at publish time). Consumed at run
+            // time by NavReportSync.StubInitializeMetadata to build a REAL MetaReport
+            // so BC's report execution chain runs on genuine metadata.
+            if (symbol is NavCA.IReportTypeSymbol reportSym && !string.IsNullOrEmpty(metadata))
+                AlReportMetadataRegistry.Register(reportSym.Id, metadata);
+
             if (Environment.GetEnvironmentVariable("BCCOMPILER_TRACE") == "1")
                 Console.Error.WriteLine($"  emit[{AddCalls}]: {symbol.Name}");
             if (Environment.GetEnvironmentVariable("BCCOMPILER_DUMP_CS") == "1")

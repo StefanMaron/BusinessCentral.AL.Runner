@@ -213,13 +213,19 @@ public sealed class DependencyLoader
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             ".cache", "al-runner", "compiled-deps");
         var cachedDll = Path.Combine(cacheDir, cacheKey + ".dll");
+        var reportSidecar = Path.Combine(cacheDir, cacheKey + ".report-metadata.json");
         if (File.Exists(cachedDll))
         {
             try
             {
                 var cachedBytes = File.ReadAllBytes(cachedDll);
+                // Replay this dep's report metadata (real MetaReport XML) so
+                // SaveAs/Run of a dependency report executes on genuine metadata.
+                int replayedReports = 0;
+                if (File.Exists(reportSidecar))
+                    replayedReports = AlReportMetadataRegistry.LoadSidecar(reportSidecar);
                 Console.Error.WriteLine(
-                    $"[deps] source-cache HIT: {m.Name} v{m.Version} key={cacheKey[..12]} ({cachedBytes.Length} bytes)");
+                    $"[deps] source-cache HIT: {m.Name} v{m.Version} key={cacheKey[..12]} ({cachedBytes.Length} bytes, {replayedReports} report-metadata entries)");
                 return Assembly.Load(cachedBytes);
             }
             catch (Exception ex)
@@ -259,6 +265,9 @@ public sealed class DependencyLoader
         }
 
         IReadOnlyList<EmittedSource> emitted;
+        // Snapshot the report-metadata registry before this dep's emit so we can
+        // persist exactly the entries THIS app contributed to its own sidecar.
+        var reportIdsBeforeEmit = new HashSet<int>(AlReportMetadataRegistry.Ids);
         // Scope _currentAppId to the dep's own identity for the duration of this compile.
         // GetSharedReferences uses _currentAppId to exclude the "current app" from its
         // reference specs. Without this, the dep's resolved spec (from _resolvedDeps of
@@ -306,8 +315,13 @@ public sealed class DependencyLoader
         {
             Directory.CreateDirectory(cacheDir);
             File.WriteAllBytes(cachedDll, compile.AssemblyBytes!);
+            // Persist the report metadata THIS app's emit contributed, so cache
+            // HIT replays it (mirrors the bundle enum-registry sidecar).
+            var ownReportIds = AlReportMetadataRegistry.Ids
+                .Where(i => !reportIdsBeforeEmit.Contains(i)).ToArray();
+            int sidecarCount = AlReportMetadataRegistry.SaveSidecar(reportSidecar, ownReportIds);
             Console.Error.WriteLine(
-                $"[deps] source-cache WROTE: {m.Name} v{m.Version} key={cacheKey[..12]} ({compile.AssemblyBytes!.Length} bytes)");
+                $"[deps] source-cache WROTE: {m.Name} v{m.Version} key={cacheKey[..12]} ({compile.AssemblyBytes!.Length} bytes, {sidecarCount} report-metadata entries)");
         }
         catch (Exception ex)
         {

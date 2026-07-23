@@ -353,6 +353,8 @@ public static partial class BcRuntime
         // Enum option metadata (this partial class) + the emit-time enum registry.
         _alEnumCache.Clear();
         AlEnumMetadataRegistry.Clear();
+        AlReportMetadataRegistry.Clear();
+        NavReportSync.ResetMetadataCache();
         // Sibling patch classes with their own bundle-derived state.
         AlRunnerV2.Patches.RecordPatches.ResetForReload();
         AlRunnerV2.Patches.EventSubscriberPatches.ResetForReload();

@@ -54,6 +54,10 @@ public static class NavReportSync
     private static MethodInfo? _onInitReport;      // NavReport.OnInitReport() (protected virtual)
     private static PropertyInfo? _objectIdProp;    // NavApplicationObjectBase.ObjectId : ApplicationObjectId
     private static PropertyInfo? _objectNumberProp;// ApplicationObjectId.ObjectNumber : int
+    private static FieldInfo? _objectIdField;      // NavApplicationObjectBase.objectId (private readonly ApplicationObjectId)
+    private static ConstructorInfo? _appObjIdCtor; // ApplicationObjectId(ObjectType, int)
+    private static object? _objectTypeReport;      // ObjectType.Report boxed enum value
+    private static PropertyInfo? _realMetaDefaultLayout; // Types.Metadata.MetaReport.DefaultLayout
     private static MethodInfo? _rdlcLayoutMethod;  // NavReport.RDLCLayout(DataError, int, NavInStream)
     private static Type? _dataErrorType;           // Microsoft.Dynamics.Nav.Types.DataError
 
@@ -80,6 +84,15 @@ public static class NavReportSync
     {
         Diag($"IC step: BeginInitialization (StubInit) on {navReport?.GetType().Name}");
         if (navReport == null) { Console.Error.WriteLine("[NavReportSync] StubInit: navReport=null"); return; }
+
+        // Real-metadata path: when the emit pipeline captured this report's
+        // runtime metadata XML (AlReportMetadataRegistry), build a genuine
+        // MetaReport from it — the BC execution chain (SaveAsAsync →
+        // RunReportInternalCoreAsync → ExecuteDataItemIteratorAsync →
+        // NavDataSetBuilder) then runs on real DataItems/columns/ProcessingOnly.
+        // Falls through to the legacy uninitialized-stub path when no XML exists
+        // (e.g. reports living in precompiled MS/ISV DLLs — no emit capture).
+        if (TryInstallRealMetadata(navReport)) return;
 
         if (_metaReportType == null)
         {
@@ -113,12 +126,52 @@ public static class NavReportSync
 
         if (_metadataSetter.GetValue(navReport) != null) return;
 
-        var masterPage = _masterPageCtor.Invoke(null);
+        var masterPage = BuildEmptyMasterPage(_masterPageType!.Assembly, _masterPageType!);
         var metaReport = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(_metaReportType!);
         _metaReportMasterPageField.SetValue(metaReport, masterPage);
         _processingOnlyBackingField?.SetValue(metaReport, true);
         _metadataSetter.SetValue(navReport, metaReport);
         Console.Error.WriteLine($"[NavReportSync] StubInit: installed stub on {navReport.GetType().Name}");
+    }
+
+    private static Type? _ppType;   // Types.Metadata.PageProperties
+    private static Type? _sodType;  // Types.Metadata.SourceObjectDefinition
+    private static PropertyInfo? _masterPagePagePropsProp;
+    private static PropertyInfo? _ppSourceObjectProp;
+
+    /// <summary>
+    /// Build an empty request-page <c>MasterPage</c> carrying a minimal,
+    /// default-constructed <c>PageProperties</c> whose <c>SourceObject</c> is a
+    /// default <c>SourceObjectDefinition</c> (SourceTable=0). This is the faithful
+    /// "report has no request page" shape: NavForm.InitializeFromMetadata reads
+    /// masterPage.PageProperties.SourceObject.* on the SaveAs info-xml path, and a
+    /// bare MasterPage (null PageProperties) NREs there. Falls back to a bare
+    /// MasterPage if the metadata types cannot be resolved.
+    /// </summary>
+    public static object BuildEmptyMasterPage(System.Reflection.Assembly typesAsm, Type masterPageType)
+    {
+        var master = Activator.CreateInstance(masterPageType)!;
+        try
+        {
+            _ppType ??= typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.PageProperties");
+            _sodType ??= typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.SourceObjectDefinition");
+            if (_ppType == null || _sodType == null) return master;
+            _masterPagePagePropsProp ??= masterPageType.GetProperty("PageProperties",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            _ppSourceObjectProp ??= _ppType.GetProperty("SourceObject",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (_masterPagePagePropsProp?.CanWrite != true || _ppSourceObjectProp?.CanWrite != true) return master;
+
+            var pageProps = Activator.CreateInstance(_ppType)!;
+            var sourceObj = Activator.CreateInstance(_sodType)!;
+            _ppSourceObjectProp.SetValue(pageProps, sourceObj);
+            _masterPagePagePropsProp.SetValue(master, pageProps);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[NavReportSync] BuildEmptyMasterPage: fell back to bare MasterPage ({ex.GetType().Name}: {ex.Message})");
+        }
+        return master;
     }
 
     /// <summary>
@@ -353,6 +406,543 @@ public static class NavReportSync
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
             throw tie.InnerException;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Real report metadata (M1 of the report-execution build)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // reportId → constructed MetaReport (Types.Metadata.MetaReport) or null when
+    // no metadata XML is available for that id.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, object?> _realMetaCache = new();
+    private static ConstructorInfo? _metaReportCtor;          // MetaReport(XmlElement, CreateRequestForm, int, int, RemoveItems…)
+    private static MethodInfo? _getDataItemByName;            // MetaReport.GetDataItemByName(string)
+    private static PropertyInfo? _metaReportDataItems;        // MetaReport.DataItems
+    private static PropertyInfo? _metaDataItemPrintOnlyIfDetail; // MetaDataItem.PrintOnlyIfDetail
+    private static PropertyInfo? _dataItemMetaData;           // DataItem.MetaData
+    private static PropertyInfo? _dataItemPrintOnlyIfDetail;  // DataItem.PrintOnlyIfDetail
+    private static MethodInfo? _dataItemSetAutoCalcFields;    // DataItem.SetAutoCalcFields()
+
+    public static void ResetMetadataCache() => _realMetaCache.Clear();
+
+    /// <summary>
+    /// Build (or fetch cached) the real MetaReport for a report id from the
+    /// emit-captured metadata XML. Returns null when no XML was captured.
+    /// </summary>
+    public static object? GetRealMetaReport(int reportId)
+    {
+        if (reportId <= 0) return null;
+        return _realMetaCache.GetOrAdd(reportId, static id =>
+        {
+            if (!AlReportMetadataRegistry.TryGet(id, out var xml)) return null;
+            try
+            {
+                var typesAsm = AppDomain.CurrentDomain.GetAssemblies()
+                    .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Types")
+                    ?? throw new InvalidOperationException("Types asm not loaded");
+                var tMeta = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaReport")
+                    ?? throw new InvalidOperationException("MetaReport type not found");
+                if (_metaReportCtor == null)
+                {
+                    // MetaReport(XmlElement node, CreateRequestForm createRequestForm,
+                    //            int metadataAppGroupId, int languageAppGroupId,
+                    //            RemoveItemsOnPageBasedOnLicenseAndApplicationArea removeItems = null)
+                    _metaReportCtor = tMeta.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                        .FirstOrDefault(c =>
+                        {
+                            var ps = c.GetParameters();
+                            return ps.Length >= 3
+                                && typeof(System.Xml.XmlNode).IsAssignableFrom(ps[0].ParameterType)
+                                && ps.Skip(1).Any(p => p.ParameterType == typeof(int));
+                        })
+                        ?? throw new InvalidOperationException("MetaReport(XmlElement, …) ctor not found");
+                }
+                var doc = new System.Xml.XmlDocument();
+                doc.LoadXml(xml);
+                var ps2 = _metaReportCtor.GetParameters();
+                var args = new object?[ps2.Length];
+                args[0] = doc.DocumentElement;
+                for (int i = 1; i < ps2.Length; i++)
+                    args[i] = ps2[i].ParameterType == typeof(int) ? 0 : null;
+                var meta = _metaReportCtor.Invoke(args);
+
+                // IC tail safety: Report{N}.InitializeComponent ends with
+                // `RequestOptionsPage = new RequestPage(this, Metadata.RequestFormMetadata)`.
+                // Pre-poke `masterPage` with an empty MasterPage so
+                // EnsureMasterPageLoaded → CreateMasterPage early-returns instead of
+                // building a full request-page master (page UI is out of runner scope).
+                // The MasterPage must carry a minimal PageProperties+SourceObject: the
+                // SaveAs report-information-xml path forces NavForm.InitializeFromMetadata
+                // on this request page, which dereferences
+                // masterPage.PageProperties.SourceObject.* (SaveValues, SourceTable,
+                // PageDataSource). A bare `new MasterPage()` leaves PageProperties null →
+                // NRE. Default-constructed PageProperties/SourceObjectDefinition give the
+                // faithful empty request page (SourceTable=0 → no source table bound).
+                var tMaster = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MasterPage");
+                var masterField = tMeta.GetField("masterPage", BindingFlags.Instance | BindingFlags.NonPublic);
+                if (tMaster != null && masterField != null && masterField.GetValue(meta) == null)
+                    masterField.SetValue(meta, BuildEmptyMasterPage(typesAsm, tMaster));
+
+                Console.Error.WriteLine($"[NavReportSync] built REAL MetaReport for report {id} from emit-captured metadata XML");
+                return meta;
+            }
+            catch (Exception ex)
+            {
+                var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+                Console.Error.WriteLine($"[NavReportSync] real MetaReport build FAILED for report {id}: {inner.GetType().Name}: {inner.Message}");
+                return null;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Install the real MetaReport on `navReport.Metadata` when metadata XML is
+    /// available. Returns false to fall back to the legacy stub.
+    /// </summary>
+    private static bool TryInstallRealMetadata(object navReport)
+    {
+        int reportId = 0;
+        var name = navReport.GetType().Name;
+        if (name.Length > 6 && name.StartsWith("Report", StringComparison.Ordinal))
+            int.TryParse(name.AsSpan(6), out reportId);
+        var meta = GetRealMetaReport(reportId);
+        if (meta == null) return false;
+
+        if (_metadataSetter == null)
+        {
+            var t = navReport.GetType();
+            while (t != null && _metadataSetter == null)
+            {
+                _metadataSetter = t.GetProperty("Metadata",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                t = t.BaseType;
+            }
+        }
+        if (_metadataSetter == null) return false;
+        if (_metadataSetter.GetValue(navReport) == null)
+            _metadataSetter.SetValue(navReport, meta);
+
+        // Replicate the real DataItemIterator.BeginInitializationAsync body:
+        //   captionML = NCLCaptionStrings.CreateNCLCaptionStrings(Metadata.CaptionML, Metadata.Name)
+        // (GetCaption/ObjectID NRE on null captionML otherwise — reached from
+        // LogReportExecutionStatus at the end of every report run).
+        try
+        {
+            Type? iterT = navReport.GetType();
+            while (iterT != null && iterT.Name != "DataItemIterator") iterT = iterT.BaseType;
+            var fCaption = iterT?.GetField("captionML", BindingFlags.Instance | BindingFlags.NonPublic);
+            if (fCaption != null && fCaption.GetValue(navReport) == null)
+            {
+                var metaT = meta.GetType();
+                var captionMl = metaT.GetProperty("CaptionML",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(meta);
+                var metaName = metaT.GetProperty("Name",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(meta) as string;
+                var tCap = fCaption.FieldType;
+                // CreateNCLCaptionStrings is overloaded (string / MultiLanguage) —
+                // pick the overload matching the actual CaptionML instance type.
+                var create = tCap.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+                    .FirstOrDefault(m => m.Name == "CreateNCLCaptionStrings"
+                        && m.GetParameters().Length == 2
+                        && (captionMl == null
+                            ? m.GetParameters()[0].ParameterType != typeof(string)
+                            : m.GetParameters()[0].ParameterType.IsInstanceOfType(captionMl)));
+                if (create != null)
+                {
+                    var cap = create.Invoke(null, new object?[] { captionMl, metaName ?? string.Empty });
+                    if (cap != null) fCaption.SetValue(navReport, cap);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[NavReportSync] captionML seed failed: {ex.Message}");
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Replacement body for NavReport.Add(DataItem, string) (Cecil-rewritten).
+    /// With real metadata: faithful to BC's override — binds DataItem.MetaData
+    /// from Metadata.GetDataItemByName, applies PrintOnlyIfDetail and
+    /// SetAutoCalcFields, then appends to the dataItems list. Without real
+    /// metadata (legacy stub): plain list append, as before.
+    /// </summary>
+    public static void ReportAdd(object navReport, object dataItem, string? dataItemName)
+    {
+        // Resolve the dataItems list (DataItemIterator private field).
+        Type? navReportBase = navReport.GetType();
+        while (navReportBase != null && navReportBase.Name != "NavReport")
+            navReportBase = navReportBase.BaseType;
+        var iteratorType = navReportBase?.BaseType;
+        if (_dataItemsField == null && iteratorType != null)
+            _dataItemsField = iteratorType.GetField("dataItems",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+        var list = _dataItemsField?.GetValue(navReport) as System.Collections.IList;
+
+        // Real metadata present?
+        object? meta = null;
+        if (_metadataSetter != null || navReportBase != null)
+        {
+            var metaProp = _metadataSetter;
+            if (metaProp == null)
+            {
+                Type? t = navReport.GetType();
+                while (t != null && metaProp == null)
+                {
+                    metaProp = t.GetProperty("Metadata",
+                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    t = t.BaseType;
+                }
+            }
+            meta = metaProp?.GetValue(navReport);
+        }
+
+        bool metadataIsReal = false;
+        if (meta != null)
+        {
+            if (_metaReportDataItems == null)
+                _metaReportDataItems = meta.GetType().GetProperty("DataItems",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            try { metadataIsReal = _metaReportDataItems?.GetValue(meta) != null; }
+            catch { metadataIsReal = false; }
+        }
+
+        if (metadataIsReal)
+        {
+            try
+            {
+                object? metaDataItem = null;
+                if (dataItemName != null)
+                {
+                    if (_getDataItemByName == null)
+                        _getDataItemByName = meta!.GetType().GetMethod("GetDataItemByName",
+                            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    metaDataItem = _getDataItemByName?.Invoke(meta, new object[] { dataItemName });
+                }
+                else if (_metaReportDataItems?.GetValue(meta) is System.Collections.IList metaItems && list != null)
+                {
+                    metaDataItem = metaItems[list.Count];
+                }
+                if (metaDataItem != null)
+                {
+                    if (_dataItemMetaData == null)
+                        _dataItemMetaData = dataItem.GetType().GetProperty("MetaData",
+                            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    _dataItemMetaData?.SetValue(dataItem, metaDataItem);
+
+                    if (_metaDataItemPrintOnlyIfDetail == null)
+                        _metaDataItemPrintOnlyIfDetail = metaDataItem.GetType().GetProperty("PrintOnlyIfDetail",
+                            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (_dataItemPrintOnlyIfDetail == null)
+                        _dataItemPrintOnlyIfDetail = dataItem.GetType().GetProperty("PrintOnlyIfDetail",
+                            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    var po = _metaDataItemPrintOnlyIfDetail?.GetValue(metaDataItem);
+                    if (po != null) _dataItemPrintOnlyIfDetail?.SetValue(dataItem, po);
+
+                    if (_dataItemSetAutoCalcFields == null)
+                        _dataItemSetAutoCalcFields = dataItem.GetType().GetMethod("SetAutoCalcFields",
+                            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                            null, Type.EmptyTypes, null);
+                    _dataItemSetAutoCalcFields?.Invoke(dataItem, null);
+                    // NOTE: BC's override also caches per-column OptionCaptionML into
+                    // metaColumnOptionCaptions for GetOptionValue. Option caption
+                    // localization is not yet wired — GetOptionValue falls back to the
+                    // raw option name, which is what headless test assertions compare.
+                }
+            }
+            catch (TargetInvocationException tie) when (tie.InnerException != null)
+            {
+                throw tie.InnerException;
+            }
+        }
+
+        if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_IC") == "1")
+        {
+            var recProp = dataItem.GetType().GetProperty("Record",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            var rec = recProp?.GetValue(dataItem);
+            Console.Error.WriteLine($"[NavReportSync] ReportAdd: name={dataItemName} metadataIsReal={metadataIsReal} Record={(rec == null ? "NULL" : rec.GetType().Name)} listCount={(list?.Count ?? -1)}");
+        }
+        list?.Add(dataItem);
+    }
+
+    /// <summary>
+    /// Replacement body for TempPathHelper..ctor(string) (Cecil-rewritten).
+    /// The real ctor roots every server temp path under
+    /// ProductApplicationData.ServerPath — /usr/share/Microsoft/… on Linux,
+    /// not writable. Root under the process temp dir instead; the lazily-called
+    /// CreatePathIfNonExistent then creates subfolders on demand (with the
+    /// null-ACL CreateDirectory path — see the NavDirectorySecurity rewrite).
+    /// Reached from NavFile's cctor via ReportProcessorXmlGenerator's temp
+    /// stream buffer on the report-execution path.
+    /// </summary>
+    public static void TempPathHelper_Ctor(object self, string? folderName)
+    {
+        var t = self.GetType();
+        string name = string.IsNullOrEmpty(folderName)
+            ? Environment.ProcessId.ToString()
+            : string.Concat(folderName.Where(c => !System.IO.Path.GetInvalidFileNameChars().Contains(c)));
+        string basePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "al-runner-navserver", name);
+        System.IO.Directory.CreateDirectory(basePath);
+
+        void Set(string field, object? value)
+        {
+            var f = t.GetField(field, BindingFlags.Instance | BindingFlags.NonPublic);
+            if (f != null) AlRunnerV2.Infrastructure.FieldPoke.SetInstance(f, self, value!);
+        }
+        Set("instanceFolderName", name);
+        Set("instanceBasePath", basePath);
+        Set("configurableBasePath", basePath);
+        Set("classSpecificSourceFolders", new System.Collections.Generic.List<string>());
+    }
+
+    // Fields declared on NavReport whose `= new List<>()/new Dictionary<>()`
+    // initializers live in the ORIGINAL ctor body that the Cecil rewrite replaces
+    // (see NclCecilRewrite "NavReport..ctor" block). Cached once.
+    private static FieldInfo[]? _navReportCollectionFields;
+
+    /// <summary>
+    /// Called from the Cecil-rewritten NavReport 3-arg ctor right after the base
+    /// ctor chain: re-creates the collection field initializers the body rewrite
+    /// dropped (reportRecords, reportLabels, metaColumnOptionCaptions, report
+    /// extension maps, …). Without this, GetReportRecords/label processing NRE.
+    /// </summary>
+    public static void InitializeNavReportCollections(object navReport)
+    {
+        if (_navReportCollectionFields == null)
+        {
+            Type? t = navReport.GetType();
+            while (t != null && t.Name != "NavReport") t = t.BaseType;
+            _navReportCollectionFields = t == null
+                ? Array.Empty<FieldInfo>()
+                : t.GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
+                   .Where(f => f.FieldType.IsGenericType
+                       && (f.FieldType.GetGenericTypeDefinition() == typeof(System.Collections.Generic.List<>)
+                        || f.FieldType.GetGenericTypeDefinition() == typeof(System.Collections.Generic.Dictionary<,>)))
+                   .ToArray();
+        }
+        foreach (var f in _navReportCollectionFields)
+        {
+            if (f.GetValue(navReport) == null)
+                AlRunnerV2.Infrastructure.FieldPoke.SetInstance(f, navReport,
+                    Activator.CreateInstance(f.FieldType)!); // FieldPoke handles initonly fields
+        }
+    }
+
+    /// <summary>
+    /// Replacement body for NCLMetaReport.CreateObjectInstance(ITreeObject, bool)
+    /// (Cecil-rewritten). The skeleton NCLMetaReport has no
+    /// ApplicationObjectConstructor delegate, so construct Report{id} directly
+    /// from the loaded assemblies (same approach as NavReportHandle_CreateTarget)
+    /// and run the same post-construction steps as BC's original
+    /// (InitializeReportValues + FinalizeDataItemLoading).
+    /// </summary>
+    public static object CreateReportInstance(object nclMetaReport, object parent, bool skipRestoreSavedReportSettings)
+    {
+        // report id from NCLMetaApplicationObject.ApplicationObjectId.ObjectNumber
+        var idProp = nclMetaReport.GetType().GetProperty("ApplicationObjectId",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        var appObjId = idProp?.GetValue(nclMetaReport)
+            ?? throw new InvalidOperationException("NCLMetaReport.ApplicationObjectId unavailable");
+        var numProp = appObjId.GetType().GetProperty("ObjectNumber",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        int id = (int)(numProp?.GetValue(appObjId)
+            ?? throw new InvalidOperationException("ApplicationObjectId.ObjectNumber unavailable"));
+
+        var reportType = AlRunnerV2.BcRuntime.FindReportTypePublic(id)
+            ?? throw new InvalidOperationException(
+                $"Report{id} is not present in the test assembly or any loaded dependency.");
+
+        object instance;
+        var ctors = reportType.GetConstructors();
+        var twoArg = ctors.FirstOrDefault(c => c.GetParameters().Length == 2);
+        var oneArg = ctors.FirstOrDefault(c => c.GetParameters().Length == 1);
+        if (twoArg != null)
+            instance = twoArg.Invoke(new object?[] { parent, nclMetaReport });
+        else if (oneArg != null)
+            instance = oneArg.Invoke(new object?[] { parent });
+        else
+            throw new InvalidOperationException(
+                $"Report{id} has no (ITreeObject[, NCLMetaReport]) constructor");
+
+        // The report executes on `parent` (the SaveAs session). BC's own
+        // MetadataPatches.InjectSkeletonSystemTenant deliberately seeds only
+        // NavSession.tenant, not NavSession.systemTenant (the latter was "unnecessary"
+        // for every prior path because runner record construction goes through the
+        // hooked NavRecordHandle.CreateTarget, which passes an explicit metaTable and so
+        // never reaches NavRecord..ctor's `metaTable == null` branch).
+        //
+        // Report dataitem iteration breaks that assumption: DataItemIterator.
+        // ApplyDataItemTableViewAndRequestFormFilters constructs a *bare* scratch record
+        // (`new NavRecord(dataItem.Record.Session, tableId, securityFiltering)`) to parse
+        // the DataItemTableView string. That 3-arg ctor passes metaTable == null, so
+        // NavRecord..ctor dereferences `ParentSession.NCLMetadata`
+        // (= session.SystemTenant.NCLMetadata) — which NREs when session.systemTenant is
+        // null. Seed it with the skeleton system tenant (already carrying the skeleton
+        // NCLMetadata) so the in-scope dataset spine can build its scratch records.
+        SeedSessionSystemTenant(parent);
+
+
+        // Seed the inherited base.ObjectId with the true report id. The compiled
+        // Report{id} ctor chain leaves NavApplicationObjectBase.objectId at
+        // ObjectNumber=0 (a known runner wiring quirk worked around elsewhere by
+        // parsing the type name). Paths such as NavReport.DetermineStandardLayoutAsync
+        // key off base.ObjectId.ObjectNumber and otherwise resolve "report 0".
+        SeedObjectId(instance, id);
+
+        // Same post-steps as BC's CreateObjectInstance (extension binding is not
+        // yet wired for this path — report extensions on SaveAs TODO).
+        //
+        // InitializeReportValues restores SAVED request-page values
+        // (requestOptionsPage.InitializeRequestPageWithCustomValues). The runner has
+        // no saved report settings store, and BC itself skips the restore when
+        // skipRestoreSavedReportSettings=true (the static SaveAs path passes true
+        // for empty parameters). The request-page ctor chain is null-safe-minimal
+        // on the skeleton, so the restore walk NREs — skipping it is observably
+        // equivalent to a tenant with no saved settings.
+        try
+        {
+            if (!skipRestoreSavedReportSettings)
+            {
+                var init = instance.GetType().GetMethod("InitializeReportValues",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                try { init?.Invoke(instance, null); }
+                catch (TargetInvocationException tie) when (tie.InnerException is NullReferenceException)
+                {
+                    // Saved-settings restore walked skeleton request-page state; no
+                    // saved settings exist in the runner — equivalent to none stored.
+                }
+            }
+            var fin = instance.GetType().GetMethod("FinalizeDataItemLoading",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            fin?.Invoke(instance, null);
+        }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            throw tie.InnerException;
+        }
+        return instance;
+    }
+
+    /// <summary>
+    /// Seed the inherited NavApplicationObjectBase.objectId (private readonly
+    /// ApplicationObjectId) with the true report id when the compiled Report ctor
+    /// left it at ObjectNumber=0. Idempotent; only fires when currently 0.
+    /// </summary>
+    private static void SeedObjectId(object instance, int id)
+    {
+        if (id <= 0) return;
+        try
+        {
+            if (_objectIdField == null)
+            {
+                Type? t = instance.GetType();
+                while (t != null && _objectIdField == null)
+                {
+                    _objectIdField = t.GetField("objectId",
+                        BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+                    t = t.BaseType;
+                }
+            }
+            if (_objectIdField == null) return;
+            var appObjIdType = _objectIdField.FieldType;
+
+            // Only reseed when the inherited id is the 0 sentinel.
+            var current = _objectIdField.GetValue(instance);
+            if (current != null)
+            {
+                _objectNumberProp ??= appObjIdType.GetProperty("ObjectNumber",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (_objectNumberProp?.GetValue(current) is int n && n != 0) return;
+            }
+
+            _appObjIdCtor ??= appObjIdType.GetConstructors()
+                .FirstOrDefault(c => c.GetParameters().Length == 2
+                    && c.GetParameters()[1].ParameterType == typeof(int));
+            if (_appObjIdCtor == null) return;
+            if (_objectTypeReport == null)
+            {
+                var otType = _appObjIdCtor.GetParameters()[0].ParameterType; // ObjectType enum
+                _objectTypeReport = Enum.Parse(otType, "Report");
+            }
+            var appObjId = _appObjIdCtor.Invoke(new object?[] { _objectTypeReport, id });
+            _objectIdField.SetValue(instance, appObjId);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[NavReportSync] SeedObjectId({id}) failed: {ex.Message}");
+        }
+    }
+
+    private static FieldInfo? _sessionSystemTenantField;
+
+    /// <summary>
+    /// Ensure the report execution session's <c>systemTenant</c> field is non-null so
+    /// the report dataset spine (DataItemIterator's bare scratch-record construction,
+    /// which reaches NavRecord..ctor's <c>metaTable == null</c> branch and dereferences
+    /// <c>session.SystemTenant.NCLMetadata</c>) does not NRE. Field-poke of framework
+    /// session state with the runner's own skeleton NavSystemTenant — no MS/ISV AL body
+    /// is rewritten (see .claude/rules/precompiled-dll-respect.md).
+    /// </summary>
+    private static void SeedSessionSystemTenant(object? session)
+    {
+        if (session == null) return;
+        var skeletonTenant = AlRunnerV2.BcRuntime.SkeletonSystemTenant;
+        if (skeletonTenant == null) return;
+        try
+        {
+            if (_sessionSystemTenantField == null)
+            {
+                Type? t = session.GetType();
+                while (t != null && _sessionSystemTenantField == null)
+                {
+                    _sessionSystemTenantField = t.GetField("systemTenant",
+                        BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+                    t = t.BaseType;
+                }
+            }
+            if (_sessionSystemTenantField == null) return;
+            if (_sessionSystemTenantField.GetValue(session) == null)
+                AlRunnerV2.Infrastructure.FieldPoke.SetInstance(_sessionSystemTenantField, session, skeletonTenant);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[NavReportSync] SeedSessionSystemTenant failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Resolve the ReportModel (layout format) a report should render with, for
+    /// the runner's rewritten ReportLayoutSelection.TryGetSelectedLayoutOrDefault.
+    /// When the caller already resolved a concrete format (requestedModel != None)
+    /// that wins. Otherwise the report's own default layout drives the format,
+    /// read from the real emit-captured MetaReport — the NCL skeleton carries only
+    /// the enum default (RDLC) so it cannot distinguish Custom (in-scope custom
+    /// merger) from RDLC/Word/Excel (out-of-scope external renderers).
+    /// Types.DefaultLayout {RDLC=0,Word=1,Excel=2,Custom=3} shares the numeric
+    /// values of Report.Base.ReportModel {Rdlc=0,Word=1,Excel=2,Custom=3}, so the
+    /// mapping is identity. Returns ReportModel.None (100) when undeterminable.
+    /// </summary>
+    public static int ResolveDefaultReportModel(int reportId, int requestedModel)
+    {
+        const int None = 100;
+        if (requestedModel != None) return requestedModel;
+        try
+        {
+            var meta = GetRealMetaReport(reportId);
+            if (meta == null) return None;
+            _realMetaDefaultLayout ??= meta.GetType().GetProperty("DefaultLayout",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            var dl = _realMetaDefaultLayout?.GetValue(meta);
+            if (dl == null) return None;
+            return Convert.ToInt32(dl); // DefaultLayout → ReportModel is identity for 0..3
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[NavReportSync] ResolveDefaultReportModel({reportId}) failed: {ex.Message}");
+            return None;
         }
     }
 }

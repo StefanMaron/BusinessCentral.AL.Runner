@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 121;
+    private const int CACHE_VERSION = 122;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -403,7 +403,11 @@ public static class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Replaced ALCompiler.ToInterface(NavOption) → BcRuntime.ALCompiler_ToInterfaceFromOption");
         }
 
-        // NavReport.SaveAsAsync → throw OOS (report-rendering is out-of-scope)
+        // NavReport.SaveAsAsync now runs the REAL in-process execution chain
+        // (SaveReportAsFormatCoreAsync → RunReportInternalCoreAsync →
+        // ExecuteDataItemIteratorAsync). The out-of-scope boundary moved to the
+        // ReportResultSetProcessorFactory fork — see the §report-processor-factory
+        // rewrite block below (only genuinely external processors throw).
         var navReportType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavReport");
         if (navReportType == null)
             throw new InvalidOperationException("NavReport type not found in Ncl.dll — Ncl shape changed");
@@ -411,25 +415,6 @@ public static class NclCecilRewrite
         var oosCtorInfo = typeof(InvalidOperationException).GetConstructor(new[] { typeof(string) })
             ?? throw new InvalidOperationException("InvalidOperationException(string) ctor not found via reflection");
         var oosCtor = asm.MainModule.ImportReference(oosCtorInfo);
-
-        int saveAsRewroteCount = 0;
-        foreach (var method in navReportType.Methods.Where(mm => mm.Name == "SaveAsAsync").ToList())
-        {
-            Console.Error.WriteLine($"[Cecil] Rewriting {method.FullName}");
-            var body = method.Body;
-            body.Instructions.Clear();
-            body.Variables.Clear();
-            body.ExceptionHandlers.Clear();
-            var il = body.GetILProcessor();
-            il.Append(il.Create(OpCodes.Ldstr, "out-of-scope: NavReport.SaveAs — report-rendering — see docs/scope.md#report-rendering"));
-            il.Append(il.Create(OpCodes.Newobj, oosCtor));
-            il.Append(il.Create(OpCodes.Throw));
-            body.MaxStackSize = 1;
-            saveAsRewroteCount++;
-        }
-        if (saveAsRewroteCount == 0)
-            throw new InvalidOperationException("SaveAsAsync method not found in NavReport — Ncl shape changed; do not commit");
-        Console.Error.WriteLine($"[Cecil] Rewrote {saveAsRewroteCount} SaveAsAsync overload(s) → throw OOS");
 
         // NavReport.RunRequestPageAsync → throw OOS (request-page UI is out-of-scope)
         int runRequestPageRewroteCount = 0;
@@ -553,6 +538,47 @@ public static class NclCecilRewrite
             il.InsertBefore(firstOriginalInstr, ret);
         }
         Console.Error.WriteLine("[Cecil] Prepended masterPage null-guard to NavForm.InitializeFromMetadata → early return when masterPage is null");
+
+        // NavForm.get_PageExtensions → lazily init the backing field to an empty list.
+        // The `pageExtensions` field is only populated by the full page-extension load
+        // path (not run on the runner's report request page). Many methods
+        // (CallOnMetadataLoadedExtensionMethod, OnAfterGetRecordAsync, etc.) do
+        // `PageExtensions.Count`/`.ForEach` assuming non-null and NRE on the skeleton.
+        // An empty List<NavFormExtension> is the faithful "no page extensions" state and
+        // fixes every call site at once.
+        {
+            var getter = navFormType.Methods
+                .FirstOrDefault(mm => mm.Name == "get_PageExtensions" && mm.Parameters.Count == 0)
+                ?? throw new InvalidOperationException("get_PageExtensions not found in NavForm — Ncl shape changed; do not commit");
+            var pageExtField = navFormType.Fields
+                .FirstOrDefault(f => f.Name == "pageExtensions")
+                ?? throw new InvalidOperationException("pageExtensions field not found in NavForm — Ncl shape changed; do not commit");
+            var listCtor = asm.MainModule.ImportReference(
+                new Mono.Cecil.MethodReference(".ctor", asm.MainModule.TypeSystem.Void, pageExtField.FieldType)
+                {
+                    HasThis = true,
+                });
+            var fieldRef = asm.MainModule.ImportReference(pageExtField);
+            var body = getter.Body;
+            body.Instructions.Clear();
+            body.Variables.Clear();
+            body.ExceptionHandlers.Clear();
+            var il = body.GetILProcessor();
+            var loadAndRet = il.Create(OpCodes.Ldarg_0);
+            // if (this.pageExtensions == null) this.pageExtensions = new List<NavFormExtension>();
+            il.Append(il.Create(OpCodes.Ldarg_0));
+            il.Append(il.Create(OpCodes.Ldfld, fieldRef));
+            il.Append(il.Create(OpCodes.Brtrue_S, loadAndRet));
+            il.Append(il.Create(OpCodes.Ldarg_0));
+            il.Append(il.Create(OpCodes.Newobj, listCtor));
+            il.Append(il.Create(OpCodes.Stfld, fieldRef));
+            // return this.pageExtensions;
+            il.Append(loadAndRet);
+            il.Append(il.Create(OpCodes.Ldfld, fieldRef));
+            il.Append(il.Create(OpCodes.Ret));
+            body.MaxStackSize = 2;
+            Console.Error.WriteLine("[Cecil] Rewrote NavForm.get_PageExtensions → lazily init empty list (no page extensions on skeleton)");
+        }
 
         // NavForm.GetAutoFormatStringAsync → return default/empty (R2R-trapped; cluster #2 in CORPUS-CLASSIFICATION-2026-05-19-FINAL.md)
         int getAutoFormatRewroteCount = 0;
@@ -3541,6 +3567,11 @@ public static class NclCecilRewrite
                     // process column option captions — neither is observable by AL
                     // tests in the runner. Forward straight to base.Add (which just
                     // appends to the dataItems list).
+                    // NavReport.Add(DataItem, string) — overrides DataItemIterator.Add.
+                    // Route to NavReportSync.ReportAdd: with REAL metadata (emit-captured
+                    // MetaReport) it binds DataItem.MetaData/PrintOnlyIfDetail/AutoCalc
+                    // faithfully; with the legacy stub it degrades to a plain list append
+                    // (the old base.Add-forward behavior).
                     if (method.Name == "Add"
                         && ps.Count == 2
                         && ps[0].ParameterType.FullName == "Microsoft.Dynamics.Nav.Runtime.DataItem"
@@ -3548,28 +3579,23 @@ public static class NclCecilRewrite
                         && method.ReturnType.FullName == "System.Void"
                         && method.IsVirtual && !method.IsNewSlot)
                     {
-                        var baseAdd = navReportT.BaseType?.Resolve()?.Methods
-                            .FirstOrDefault(m => m.Name == "Add"
-                                && m.Parameters.Count == 2
-                                && m.Parameters[0].ParameterType.FullName == "Microsoft.Dynamics.Nav.Runtime.DataItem"
-                                && m.Parameters[1].ParameterType.FullName == "System.String");
-                        if (baseAdd != null)
-                        {
-                            var baseAddRef = asm.MainModule.ImportReference(baseAdd);
-                            var body = method.Body;
-                            body.Instructions.Clear();
-                            body.ExceptionHandlers.Clear();
-                            body.Variables.Clear();
-                            var il = body.GetILProcessor();
-                            il.Append(il.Create(OpCodes.Ldarg_0));
-                            il.Append(il.Create(OpCodes.Ldarg_1));
-                            il.Append(il.Create(OpCodes.Ldarg_2));
-                            il.Append(il.Create(OpCodes.Call, baseAddRef));
-                            il.Append(il.Create(OpCodes.Ret));
-                            body.MaxStackSize = 3;
-                            reportRewrites++;
-                            continue;
-                        }
+                        var reportAddInfo = typeof(AlRunnerV2.NavReportSync).GetMethod("ReportAdd",
+                            BindingFlags.Static | BindingFlags.Public)
+                            ?? throw new InvalidOperationException("NavReportSync.ReportAdd not found via reflection");
+                        var reportAddRef = asm.MainModule.ImportReference(reportAddInfo);
+                        var body = method.Body;
+                        body.Instructions.Clear();
+                        body.ExceptionHandlers.Clear();
+                        body.Variables.Clear();
+                        var il = body.GetILProcessor();
+                        il.Append(il.Create(OpCodes.Ldarg_0));
+                        il.Append(il.Create(OpCodes.Ldarg_1));
+                        il.Append(il.Create(OpCodes.Ldarg_2));
+                        il.Append(il.Create(OpCodes.Call, reportAddRef));
+                        il.Append(il.Create(OpCodes.Ret));
+                        body.MaxStackSize = 3;
+                        reportRewrites++;
+                        continue;
                     }
 
                     // BeginInitialization (sync, void, 0-arg) —
@@ -3686,24 +3712,11 @@ public static class NclCecilRewrite
                         body.MaxStackSize = 1;
                         reportRewrites++;
                     }
-                    // SaveAsPdf / SaveAsHtml / SaveAsExcel / SaveAsWord / SaveAsDocx (sync, bool)
-                    // → throw OOS. Layout rendering requires a service tier.
-                    else if (method.Name.StartsWith("SaveAs")
-                        && method.ReturnType.FullName == "System.Boolean")
-                    {
-                        var body = method.Body;
-                        body.Instructions.Clear();
-                        body.ExceptionHandlers.Clear();
-                        body.Variables.Clear();
-                        var il = body.GetILProcessor();
-                        il.Append(il.Create(OpCodes.Ldstr,
-                            "out-of-scope: NavReport." + method.Name +
-                            " (layout rendering requires service tier)"));
-                        il.Append(il.Create(OpCodes.Newobj, ioeCtor));
-                        il.Append(il.Create(OpCodes.Throw));
-                        body.MaxStackSize = 1;
-                        reportRewrites++;
-                    }
+                    // SaveAs* sync wrappers now call through to the real SaveAsAsync
+                    // chain (in-process dataset execution). The OOS boundary lives at
+                    // the ReportResultSetProcessorFactory fork — external processors
+                    // (RDLC/Word/Excel render, print server, document service) throw
+                    // there; Xml dataset + application-handled custom layouts run.
                 }
             }
             // DataItemIterator.SetTableView(NavRecord) — null-guard for skeleton instances.
@@ -3738,7 +3751,265 @@ public static class NclCecilRewrite
                     }
                 }
             }
-            Console.Error.WriteLine($"[Cecil] Rewrote {reportRewrites} NavReport/DataItemIterator method(s) (Run/RunModal→SyncRun; SaveAs*/RunRequestPage→OOS-throw; SetTableView→null-safe)");
+            Console.Error.WriteLine($"[Cecil] Rewrote {reportRewrites} NavReport/DataItemIterator method(s) (Run/RunModal→SyncRun; Add→ReportAdd; RunRequestPage→OOS-throw; SetTableView→null-safe)");
+        }
+
+        // §report-processor-factory — the TRUE out-of-scope boundary for report
+        // rendering. SaveAs/Run execute the real dataset chain in-process; only
+        // the processors that need a genuinely external surface throw:
+        //   Rdlc / Word / Excel render        → report-rendering-external
+        //   ReportServerResultSetProcessor    → printing
+        //   ReportResultSetDocumentServiceDecorator → document-service
+        // Xml dataset (ReportProcessorXmlGenerator) and the application/custom
+        // merger (ReportProcessorCustomGenerator → OnCustomDocumentMergerEx) are
+        // IN scope and left untouched.
+        {
+            var factoryT = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.Report.ReportResultSetProcessorFactory")
+                ?? throw new InvalidOperationException("ReportResultSetProcessorFactory not found in Ncl.dll — Ncl shape changed; do not commit");
+            // `oosCtor` (corlib InvalidOperationException(string), already imported by
+            // the enclosing method's earlier rewrites) is reused — token-shift rule:
+            // no NEW memberRefs beyond what the rewrite pass already introduces.
+            void ThrowBody(Mono.Cecil.MethodDefinition m, string msg)
+            {
+                var body = m.Body;
+                body.Instructions.Clear();
+                body.ExceptionHandlers.Clear();
+                body.Variables.Clear();
+                var il = body.GetILProcessor();
+                il.Append(il.Create(OpCodes.Ldstr, msg));
+                il.Append(il.Create(OpCodes.Newobj, oosCtor));
+                il.Append(il.Create(OpCodes.Throw));
+                body.MaxStackSize = 1;
+            }
+            int factoryRewrites = 0;
+            foreach (var m in factoryT.Methods.Where(mm => mm.HasBody).ToList())
+            {
+                string? reason = m.Name switch
+                {
+                    "GetRdlcResultSetProcessor" =>
+                        "out-of-scope: report-rendering-external — RDLC layout processing requires an external renderer — see docs/scope.md#report-rendering",
+                    "GetWordResultSetProcessor" =>
+                        "out-of-scope: report-rendering-external — Word layout merge (Aspose) requires an external renderer — see docs/scope.md#report-rendering",
+                    "GetExcelResultSetProcessor" =>
+                        "out-of-scope: report-rendering-external — Excel layout rendering (Aspose) requires an external renderer — see docs/scope.md#report-rendering",
+                    "GetExcelDatasetResultSetProcessor" =>
+                        "out-of-scope: report-rendering-external — Excel dataset rendering (Aspose) requires an external renderer — see docs/scope.md#report-rendering",
+                    _ => null,
+                };
+                if (reason == null) continue;
+                ThrowBody(m, reason);
+                factoryRewrites++;
+            }
+            if (factoryRewrites != 4)
+                throw new InvalidOperationException(
+                    $"ReportResultSetProcessorFactory external-processor rewrite count changed (got {factoryRewrites}, want 4) — Ncl shape changed; do not commit");
+
+            var printProcT = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.ReportServerResultSetProcessor");
+            int printCtorRewrites = 0;
+            if (printProcT != null)
+            {
+                foreach (var ctor in printProcT.Methods.Where(mm => mm.IsConstructor && !mm.IsStatic && mm.HasBody).ToList())
+                {
+                    ThrowBody(ctor,
+                        "out-of-scope: printing — physical/print-server printing requires an external print service — see docs/scope.md#report-rendering");
+                    printCtorRewrites++;
+                }
+            }
+            var docSvcT = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.Report.ReportResultSetDocumentServiceDecorator");
+            int docSvcCtorRewrites = 0;
+            if (docSvcT != null)
+            {
+                foreach (var ctor in docSvcT.Methods.Where(mm => mm.IsConstructor && !mm.IsStatic && mm.HasBody).ToList())
+                {
+                    ThrowBody(ctor,
+                        "out-of-scope: document-service — document-service upload requires an external service — see docs/scope.md#report-rendering");
+                    docSvcCtorRewrites++;
+                }
+            }
+            Console.Error.WriteLine($"[Cecil] Report OOS boundary → processor factory ({factoryRewrites} external getters, {printCtorRewrites} print-processor ctors, {docSvcCtorRewrites} doc-service ctors throw)");
+        }
+
+        // §report-layout-selection — layout-resolution NRE peel for the non-XML
+        // SaveAs/Run path. In a live tier the layout is resolved from the
+        // tenant/user layout-selection virtual tables (2000000233 / 2000000234 /
+        // 2000000231) keyed by the report's OwningApp package id. A
+        // runner-compiled report has no OwningApp, so those app-package lookups
+        // yield nothing AND opening the virtual tables NREs in the NavRecord ctor
+        // (GetMetaTableById → null → metaTable.TableType). The faithful answer for
+        // the standalone runner: no persisted layout selections exist, and the
+        // report's own requested layout format drives the processor fork. We
+        //   (a) short-circuit GetLayoutSelections → empty list (no selection rows);
+        //   (b) rewrite TryGetSelectedLayoutOrDefault so a concrete requested
+        //       format yields a built-in default ReportLayout of that Format with
+        //       empty media — the processor factory dispatches on Format, and the
+        //       RDLC/Word/Excel getters throw report-rendering-external before
+        //       touching the bytes, while the Xml/Custom processors stay in scope.
+        //       A None request returns false (caller throws NoLayout, unchanged).
+        // Both rewrites reuse operands already present in their target bodies
+        // (List<LayoutSelection>..ctor, ReportLayout..ctor(5), Array.Empty<byte>()),
+        // so no new member tokens are introduced (token-shift rule respected).
+        // Corpus-safe: this path currently NREs, and the corpus gate has 0 errors,
+        // so no corpus test reaches it today.
+        {
+            var rlsT = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.ReportLayoutSelection")
+                ?? throw new InvalidOperationException("ReportLayoutSelection not found in Ncl.dll — Ncl shape changed; do not commit");
+
+            // (a) GetLayoutSelections(session, reportId, companyName) → new List<LayoutSelection>(0)
+            var getSel = rlsT.Methods.FirstOrDefault(m => m.Name == "GetLayoutSelections" && m.HasBody)
+                ?? throw new InvalidOperationException("ReportLayoutSelection.GetLayoutSelections not found — Ncl shape changed; do not commit");
+            var listCtor = getSel.Body.Instructions
+                .Where(i => i.OpCode == OpCodes.Newobj)
+                .Select(i => i.Operand as MethodReference)
+                .FirstOrDefault(mr => mr != null && mr.Name == ".ctor" && mr.DeclaringType.Name == "List`1" && mr.Parameters.Count == 1)
+                ?? throw new InvalidOperationException("List<LayoutSelection>..ctor(int) operand not found in GetLayoutSelections — Ncl shape changed; do not commit");
+            {
+                var body = getSel.Body;
+                body.Instructions.Clear();
+                body.Variables.Clear();
+                body.ExceptionHandlers.Clear();
+                var il = body.GetILProcessor();
+                il.Append(il.Create(OpCodes.Ldc_I4_0));
+                il.Append(il.Create(OpCodes.Newobj, listCtor));
+                il.Append(il.Create(OpCodes.Ret));
+                body.MaxStackSize = 1;
+            }
+
+            // (b) TryGetSelectedLayoutOrDefault(session, reportId, reportModel, out layout)
+            var trySel = rlsT.Methods.FirstOrDefault(m => m.Name == "TryGetSelectedLayoutOrDefault" && m.HasBody && m.Parameters.Count == 4)
+                ?? throw new InvalidOperationException("ReportLayoutSelection.TryGetSelectedLayoutOrDefault not found — Ncl shape changed; do not commit");
+            var layoutCtor = trySel.Body.Instructions
+                .Where(i => i.OpCode == OpCodes.Newobj)
+                .Select(i => i.Operand as MethodReference)
+                .FirstOrDefault(mr => mr != null && mr.DeclaringType.Name == "ReportLayout" && mr.Parameters.Count == 5)
+                ?? throw new InvalidOperationException("ReportLayout..ctor(5) operand not found in TryGetSelectedLayoutOrDefault — Ncl shape changed; do not commit");
+            var arrEmptyByte = trySel.Body.Instructions
+                .Select(i => i.Operand as MethodReference)
+                .FirstOrDefault(mr => mr != null && mr.Name == "Empty" && mr.DeclaringType.Name == "Array")
+                ?? throw new InvalidOperationException("Array.Empty<byte>() operand not found in TryGetSelectedLayoutOrDefault — Ncl shape changed; do not commit");
+            // Resolve the render format via the runner: honour a concrete requested
+            // model, else read the report's REAL DefaultLayout (Custom vs RDLC/Word/
+            // Excel). The NCL skeleton only carries the enum default (RDLC) so an
+            // in-body GetMetaReportById(reportId).DefaultLayout would misclassify
+            // Custom-layout reports as RDLC → wrongly out-of-scope.
+            var resolveMi = typeof(AlRunnerV2.NavReportSync).GetMethod(
+                nameof(AlRunnerV2.NavReportSync.ResolveDefaultReportModel),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("NavReportSync.ResolveDefaultReportModel not found");
+            var resolveRef = asm.MainModule.ImportReference(resolveMi);
+            // ReportModel.None == 100 (verified against the RDLC-fallback compare in
+            // this same body: `ldarg.2; ldc.i4.s 100; bne.un`).
+            const int ReportModelNone = 100;
+            var reportModelTr = layoutCtor.Parameters[3].ParameterType;
+            {
+                var body = trySel.Body;
+                body.Instructions.Clear();
+                body.Variables.Clear();
+                body.ExceptionHandlers.Clear();
+                var fmtVar = new Mono.Cecil.Cil.VariableDefinition(reportModelTr);
+                body.Variables.Add(fmtVar);
+                var il = body.GetILProcessor();
+                // fmt = NavReportSync.ResolveDefaultReportModel(reportId, reportModel);
+                il.Append(il.Create(OpCodes.Ldarg_1));         // reportId
+                il.Append(il.Create(OpCodes.Ldarg_2));         // reportModel (requested)
+                il.Append(il.Create(OpCodes.Call, resolveRef));
+                il.Append(il.Create(OpCodes.Stloc, fmtVar));
+                // if (fmt == None) { *layout = null; return false; }
+                var build = il.Create(OpCodes.Ldarg_3);
+                il.Append(il.Create(OpCodes.Ldloc, fmtVar));
+                il.Append(il.Create(OpCodes.Ldc_I4_S, (sbyte)ReportModelNone));
+                il.Append(il.Create(OpCodes.Bne_Un_S, build));
+                il.Append(il.Create(OpCodes.Ldarg_3));
+                il.Append(il.Create(OpCodes.Ldnull));
+                il.Append(il.Create(OpCodes.Stind_Ref));
+                il.Append(il.Create(OpCodes.Ldc_I4_0));
+                il.Append(il.Create(OpCodes.Ret));
+                // build: *layout = new ReportLayout(session, reportId, "DEFAULT", fmt, Array.Empty<byte>()); return true;
+                il.Append(build);                              // ldarg.3 — address for stind.ref
+                il.Append(il.Create(OpCodes.Ldarg_0));         // session
+                il.Append(il.Create(OpCodes.Ldarg_1));         // reportId
+                il.Append(il.Create(OpCodes.Ldstr, "DEFAULT"));
+                il.Append(il.Create(OpCodes.Ldloc, fmtVar));   // fmt → Format
+                il.Append(il.Create(OpCodes.Call, arrEmptyByte));
+                il.Append(il.Create(OpCodes.Newobj, layoutCtor));
+                il.Append(il.Create(OpCodes.Stind_Ref));
+                il.Append(il.Create(OpCodes.Ldc_I4_1));
+                il.Append(il.Create(OpCodes.Ret));
+                body.MaxStackSize = 6;
+            }
+            Console.Error.WriteLine("[Cecil] Rewrote ReportLayoutSelection.GetLayoutSelections → empty; TryGetSelectedLayoutOrDefault → NavReportSync.ResolveDefaultReportModel default-format layout (was: virtual-table 2000000233/234/231 NRE)");
+        }
+
+        // NavMethodScope.RegisterCancellationToken — root-scope early-return.
+        // Report execution installs resource-governance cancellation handlers
+        // (NavReportMaxDocumentCancellationHandler / NavResultSetEndOfRowCancellationHandler /
+        // NavReportEndOfRowClientHandler) that call
+        // session.CurrentMethodScope.RegisterCancellationToken(...). The runner runs
+        // tests at the RootMethodScope, whose RegisterCancellationToken THROWS
+        // ("Cancellation tokens cannot be registered on the root method scope."). The
+        // runner enforces no MaxRows/MaxDocuments/Timeout resource limits, so skipping
+        // registration is observably equivalent (the report runs to completion, never
+        // cancelled). The handlers read scope.CancellationToken afterwards — on the root
+        // scope that yields the never-cancelled root token, exactly what "no limits" means.
+        // Prepend `if (this is RootMethodScope) return;` to both overloads.
+        {
+            var scopeT = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavMethodScope")
+                ?? throw new InvalidOperationException("NavMethodScope not found in Ncl.dll — Ncl shape changed; do not commit");
+            var rootScopeT = scopeT.NestedTypes.FirstOrDefault(t => t.Name == "RootMethodScope")
+                ?? throw new InvalidOperationException("NavMethodScope/RootMethodScope not found in Ncl.dll — Ncl shape changed; do not commit");
+            var rootScopeRef = asm.MainModule.ImportReference(rootScopeT);
+            int regRewrites = 0;
+            foreach (var m in scopeT.Methods.Where(mm => mm.Name == "RegisterCancellationToken" && mm.HasBody).ToList())
+            {
+                var first = m.Body.Instructions[0];
+                var il = m.Body.GetILProcessor();
+                //   ldarg.0
+                //   isinst RootMethodScope
+                //   brfalse.s <original first instr>
+                //   ret
+                var ldarg0 = il.Create(OpCodes.Ldarg_0);
+                il.InsertBefore(first, ldarg0);
+                il.InsertBefore(first, il.Create(OpCodes.Isinst, rootScopeRef));
+                il.InsertBefore(first, il.Create(OpCodes.Brfalse, first));
+                il.InsertBefore(first, il.Create(OpCodes.Ret));
+                regRewrites++;
+            }
+            if (regRewrites == 0)
+                throw new InvalidOperationException(
+                    "NavMethodScope.RegisterCancellationToken not found — Ncl shape changed; do not commit");
+            Console.Error.WriteLine($"[Cecil] Prepended root-scope early-return to {regRewrites} NavMethodScope.RegisterCancellationToken overload(s) (no resource governance in runner)");
+        }
+
+        // NCLMetaReport.CreateObjectInstance(ITreeObject, bool) — the skeleton
+        // NCLMetaReport has no ApplicationObjectConstructor delegate (NREs).
+        // Route to NavReportSync.CreateReportInstance which constructs the
+        // compiled Report{id} directly and runs the same post-construction steps
+        // (InitializeReportValues + FinalizeDataItemLoading).
+        {
+            var nclMetaReportT = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetaReport")
+                ?? throw new InvalidOperationException("NCLMetaReport not found in Ncl.dll — Ncl shape changed; do not commit");
+            var createInst = nclMetaReportT.Methods.FirstOrDefault(m =>
+                m.Name == "CreateObjectInstance" && m.HasBody && m.Parameters.Count == 2
+                && m.Parameters[1].ParameterType.FullName == "System.Boolean")
+                ?? throw new InvalidOperationException("NCLMetaReport.CreateObjectInstance(ITreeObject,bool) not found — Ncl shape changed; do not commit");
+            var helperInfo = typeof(AlRunnerV2.NavReportSync).GetMethod("CreateReportInstance",
+                BindingFlags.Static | BindingFlags.Public)
+                ?? throw new InvalidOperationException("NavReportSync.CreateReportInstance not found via reflection");
+            var helperRef = asm.MainModule.ImportReference(helperInfo);
+            var bodyCI = createInst.Body;
+            bodyCI.Instructions.Clear();
+            bodyCI.ExceptionHandlers.Clear();
+            bodyCI.Variables.Clear();
+            var ilCI = bodyCI.GetILProcessor();
+            ilCI.Append(ilCI.Create(OpCodes.Ldarg_0));
+            ilCI.Append(ilCI.Create(OpCodes.Ldarg_1));
+            ilCI.Append(ilCI.Create(OpCodes.Ldarg_2));
+            ilCI.Append(ilCI.Create(OpCodes.Call, helperRef));
+            var navReportTypeDef = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavReport")
+                ?? throw new InvalidOperationException("NavReport type not found — Ncl shape changed; do not commit");
+            ilCI.Append(ilCI.Create(OpCodes.Castclass, navReportTypeDef));
+            ilCI.Append(ilCI.Create(OpCodes.Ret));
+            bodyCI.MaxStackSize = 3;
+            Console.Error.WriteLine("[Cecil] Rewrote NCLMetaReport.CreateObjectInstance → NavReportSync.CreateReportInstance");
         }
 
         // RequestPageBase ctors — the 2-arg ctor (NavApplicationObjectBase, MasterPage)
@@ -4117,6 +4388,14 @@ public static class NclCecilRewrite
                         il.Append(il.Create(OpCodes.Ldc_I4_1));
                         il.Append(il.Create(OpCodes.Call, previewCanPrintSetter));
                     }
+                    // Re-create the NavReport collection field initializers this body
+                    // rewrite drops (reportRecords, reportLabels, extension maps, …).
+                    // Report execution (GetReportRecords, label processing) NREs without.
+                    var initCollectionsInfo = typeof(AlRunnerV2.NavReportSync).GetMethod(
+                        "InitializeNavReportCollections", BindingFlags.Static | BindingFlags.Public)
+                        ?? throw new InvalidOperationException("NavReportSync.InitializeNavReportCollections not found");
+                    il.Append(il.Create(OpCodes.Ldarg_0));
+                    il.Append(il.Create(OpCodes.Call, asm.MainModule.ImportReference(initCollectionsInfo)));
                     // Skip parent.Tree.Session.Company.RegisterReport(this) — Company is null on skeleton.
 
                     il.Append(il.Create(OpCodes.Ret));
@@ -4949,12 +5228,283 @@ public static class NclCecilRewrite
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "NavSession", "get_CurrentMethodScope", 0),
                 H(helperShims, "GetCurrentMethodScopeReplacement"));
+            // NavSystemCodeunit.Session walks codeunitHandle.Tree.Session — the handle's
+            // tree is skeleton-null. Route to the same skeleton session as everything else
+            // (report-execution chain: ReportingTriggers.CreateRecordRefFromRecord etc.).
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavSystemCodeunit", "get_Session", 0),
+                H(helperShims, "GetSessionReplacement"));
+            // The real InvokeAsync wraps dispatch in usage-suppression + diagnostics
+            // walking skeleton-null session state; keep only the faithful dispatch
+            // (handle.Target.InvokeAsync → real AL body → real IntegrationEvents).
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavSystemCodeunit", "InvokeAsync", 2),
+                H(helperShims, "NavSystemCodeunit_InvokeAsync"));
+            // NavDirectorySecurity.CreateSecurityForDomainDirectory → null. The real
+            // body constructs System.Security.AccessControl.DirectorySecurity, a
+            // Windows-only API that throws PlatformNotSupported on Linux (reached via
+            // NavFile's cctor → TempPathHelper.InitializeFolders on the report path).
+            // null = "no ACL", exactly what BC itself returns for non-local (Azure)
+            // topologies; CreateDirectoryWithFolderSecurity then only does
+            // Directory.CreateDirectory, which is cross-platform.
+            {
+                var nds = FindNclMethod(nclMod, Rt + "NavDirectorySecurity", "CreateSecurityForDomainDirectory", 0);
+                var body = nds.Body;
+                body.Instructions.Clear();
+                body.Variables.Clear();
+                body.ExceptionHandlers.Clear();
+                var il = body.GetILProcessor();
+                il.Append(il.Create(OpCodes.Ldnull));
+                il.Append(il.Create(OpCodes.Ret));
+                body.MaxStackSize = 1;
+                Console.Error.WriteLine("[Cecil] Replaced NavDirectorySecurity.CreateSecurityForDomainDirectory → null (no ACL on non-Windows)");
+            }
+
+            // TempPathHelper..ctor(string) → runner temp root. The real ctor roots
+            // server temp paths under ProductApplicationData.ServerPath (unwritable
+            // /usr/share/… on Linux) and pre-creates the full folder tree with ACLs.
+            {
+                var tph = nclMod.GetType(Rt + "TempPathHelper")
+                    ?? throw new InvalidOperationException("TempPathHelper not found — Ncl shape changed; do not commit");
+                var ctorTph = tph.Methods.FirstOrDefault(m => m.IsConstructor && !m.IsStatic
+                        && m.Parameters.Count == 1
+                        && m.Parameters[0].ParameterType.FullName == "System.String" && m.HasBody)
+                    ?? throw new InvalidOperationException("TempPathHelper..ctor(string) not found — Ncl shape changed; do not commit");
+                var tphHelper = typeof(AlRunnerV2.NavReportSync).GetMethod("TempPathHelper_Ctor",
+                        BindingFlags.Static | BindingFlags.Public)
+                    ?? throw new InvalidOperationException("NavReportSync.TempPathHelper_Ctor not found");
+                var tphRef = nclMod.ImportReference(tphHelper);
+                var body = ctorTph.Body;
+                body.Instructions.Clear();
+                body.Variables.Clear();
+                body.ExceptionHandlers.Clear();
+                var il = body.GetILProcessor();
+                // NOTE: object ctor chain — call base System.Object..ctor is skippable for
+                // classes (object ctor is a no-op) but verifier-friendly IL keeps it out;
+                // CoreCLR does not require it for non-COM classes at runtime.
+                il.Append(il.Create(OpCodes.Ldarg_0));
+                il.Append(il.Create(OpCodes.Ldarg_1));
+                il.Append(il.Create(OpCodes.Call, tphRef));
+                il.Append(il.Create(OpCodes.Ret));
+                body.MaxStackSize = 2;
+                Console.Error.WriteLine("[Cecil] Rewrote TempPathHelper..ctor(string) → runner temp root (unwritable /usr/share on Linux)");
+            }
+
+            // NavSession.MaximizePermissions / RemoveMaximizedPermissions → no-op.
+            // The runner has no permission system (equivalent to SUPER everywhere);
+            // the real bodies walk Database.SecurityAndLicense (null on skeleton).
+            // Reached from ReportLayoutSelection's MaximizedPermissionScope.
+            foreach (var permName in new[] { "MaximizePermissions", "RemoveMaximizedPermissions" })
+            {
+                var sessT = nclMod.GetType(Rt + "NavSession");
+                foreach (var pm in sessT!.Methods.Where(mm => mm.Name == permName && mm.HasBody).ToList())
+                {
+                    var body = pm.Body;
+                    body.Instructions.Clear();
+                    body.Variables.Clear();
+                    body.ExceptionHandlers.Clear();
+                    var il = body.GetILProcessor();
+                    il.Append(il.Create(OpCodes.Ret));
+                    body.MaxStackSize = 0;
+                }
+            }
+            Console.Error.WriteLine("[Cecil] Replaced NavSession.MaximizePermissions/RemoveMaximizedPermissions → no-op (no permission system in runner)");
+
+            // NavTenant.GetReportSettingsOverride(int) → null. The real body lazily
+            // reads the tenant's "Report Settings Override" table by spinning up a
+            // full SYSTEM SESSION (NavUserAuthentication etc. — service-tier only).
+            // A fresh tenant has no overrides; null is the real no-override result.
+            {
+                var gso = FindNclMethod(nclMod, Rt + "NavTenant", "GetReportSettingsOverride", 1);
+                var body = gso.Body;
+                body.Instructions.Clear();
+                body.Variables.Clear();
+                body.ExceptionHandlers.Clear();
+                var il = body.GetILProcessor();
+                il.Append(il.Create(OpCodes.Ldnull));
+                il.Append(il.Create(OpCodes.Ret));
+                body.MaxStackSize = 1;
+                Console.Error.WriteLine("[Cecil] Replaced NavTenant.GetReportSettingsOverride → null (no tenant overrides)");
+            }
+            // NavTenant.GetObjectAccessIntent(session, objectType, objectId) → Undefined.
+            // The real body consults per-object read-only-replica access-intent overrides
+            // (reads system table 2000000205 "Object Access Intent Override" via
+            // TryGetIntentFromTheTenantDatabase, and the read-only-application-objects
+            // definition). That whole path is a service-tier read-only-replica concept and
+            // its skeleton system-table reads NRE. It is reached from
+            // NavReport.GetConnectionIntent() on the report-execution path. The runner has
+            // no read-only replica; NavObjectAccessIntent.Undefined (0) is the faithful
+            // "no specific intent — use the default read-write connection" result, exactly
+            // as on a live tier with no overrides configured.
+            {
+                var goai = FindNclMethod(nclMod, Rt + "NavTenant", "GetObjectAccessIntent", 3);
+                var body = goai.Body;
+                body.Instructions.Clear();
+                body.Variables.Clear();
+                body.ExceptionHandlers.Clear();
+                var il = body.GetILProcessor();
+                il.Append(il.Create(OpCodes.Ldc_I4_0));
+                il.Append(il.Create(OpCodes.Ret));
+                body.MaxStackSize = 1;
+                Console.Error.WriteLine("[Cecil] Replaced NavTenant.GetObjectAccessIntent → Undefined (no read-only-replica access intent)");
+            }
+            // NavTenant.get_PartnerTelemetryClient → CreatePartnerTelemetryClient().
+            // The real getter returns `partnerTelemetryClient.Value`, but that LazyEx field
+            // is only wired up by the full tenant-initialisation path (not run on the
+            // skeleton), so `.Value` NREs. It is reached from
+            // DataItemIterator.ExecuteDataItemIteratorAsync on the report path (partner
+            // diagnostics trace scope). CreatePartnerTelemetryClient() itself is the real
+            // factory — for the runner's system tenant it returns the environment's no-op
+            // DummyClient, exactly what a live tier hands back when partner telemetry has
+            // no normal-tenant client. Bypassing the LazyEx just skips caching.
+            {
+                var getter = FindNclMethod(nclMod, Rt + "NavTenant", "get_PartnerTelemetryClient", 0);
+                var factory = FindNclMethod(nclMod, Rt + "NavTenant", "CreatePartnerTelemetryClient", 0);
+                var body = getter.Body;
+                body.Instructions.Clear();
+                body.Variables.Clear();
+                body.ExceptionHandlers.Clear();
+                var il = body.GetILProcessor();
+                il.Append(il.Create(OpCodes.Ldarg_0));
+                il.Append(il.Create(OpCodes.Call, factory));
+                il.Append(il.Create(OpCodes.Ret));
+                body.MaxStackSize = 1;
+                Console.Error.WriteLine("[Cecil] Replaced NavTenant.get_PartnerTelemetryClient → CreatePartnerTelemetryClient() (skeleton LazyEx unset)");
+            }
+            // ReportMetadataXmlRuntime.GenerateReportMetadataXml → null-safe owningApp.
+            // The method reads `owningApp = reportInstance.NclMetaReport.OwningApp` into
+            // loc.0, then writes the report-info XML's Extension{Id,Name,Publisher,Version}
+            // attributes from owningApp.{AppId,FriendlyDisplayName,Publisher,Version}.
+            // OwningApp is resolved from MetadataAppGroup.GetObjectOwner and is null for a
+            // runner-compiled report whose object isn't owned by a published app package
+            // (MetadataAppGroup.GroupId==0). The first deref (owningApp.AppId) NREs. There
+            // is no service-tier app-package registry to make this non-null globally (a
+            // blanket OwningApp override would break every object's LoadClrType path), so
+            // we surgically guard just these 4 extension-attribute assignments: when
+            // owningApp is null, emit empty extension identity (faithful "no owning app
+            // package" — the dataset/report-info spine still generates) and skip the four
+            // deref setters. Everything below (ReportId/Name/About/HelpLink + base call)
+            // runs unchanged, reusing the method's own MethodReference/String.Empty operands.
+            {
+                var grmx = nclMod.GetType("Microsoft.Dynamics.Nav.Runtime.Report.ReportMetadataXmlRuntime")
+                    ?.Methods.FirstOrDefault(mm => mm.Name == "GenerateReportMetadataXml")
+                    ?? throw new InvalidOperationException("ReportMetadataXmlRuntime.GenerateReportMetadataXml not found — Ncl shape changed; do not commit");
+                var body = grmx.Body;
+                var instrs = body.Instructions;
+
+                // Locate operands from the existing body.
+                Mono.Cecil.MethodReference SetterRef(string name) =>
+                    instrs.Select(i => i.Operand as Mono.Cecil.MethodReference)
+                          .FirstOrDefault(mr => mr != null && mr.Name == name)
+                        ?? throw new InvalidOperationException($"{name} setter call not found in GenerateReportMetadataXml — Ncl shape changed; do not commit");
+                var setExtId = SetterRef("set_ExtensionIdValue");
+                var setExtName = SetterRef("set_ExtensionNameValue");
+                var setExtPub = SetterRef("set_ExtensionPublisherValue");
+                var setExtVer = SetterRef("set_ExtensionVersionValue");
+                var stringEmpty = instrs.Select(i => i.Operand as Mono.Cecil.FieldReference)
+                        .FirstOrDefault(fr => fr != null && fr.Name == "Empty" && fr.DeclaringType.FullName == "System.String")
+                    ?? throw new InvalidOperationException("String.Empty ldsfld not found in GenerateReportMetadataXml — Ncl shape changed; do not commit");
+
+                // The first of the four extension setters is the `ldarg.0` that precedes
+                // the `call set_ExtensionIdValue`. Find that call, then walk back to its
+                // owning `ldarg.0` (2 instructions before: ldarg.0, ldloc.0, callvirt AppId,
+                // callvirt ToString, call setter — but the guard only needs the block start).
+                var firstSetterCall = instrs.First(i => (i.Operand as Mono.Cecil.MethodReference)?.Name == "set_ExtensionIdValue");
+                // Block start = ldarg.0 that begins "ldarg.0; ldloc.0; callvirt get_AppId; callvirt ToString; call setter".
+                int callIdx = instrs.IndexOf(firstSetterCall);
+                var blockStart = instrs[callIdx - 4]; // ldarg.0
+                // Continuation after the four setters = instruction right after set_ExtensionVersionValue.
+                var lastExtSetterCall = instrs.First(i => (i.Operand as Mono.Cecil.MethodReference)?.Name == "set_ExtensionVersionValue");
+                var afterExtBlock = instrs[instrs.IndexOf(lastExtSetterCall) + 1]; // ldarg.0 of ReportIdValue block
+
+                var il = body.GetILProcessor();
+                // Insert before blockStart:  if (owningApp == null) { set 4 empties; goto afterExtBlock; }
+                var guard = new[]
+                {
+                    il.Create(OpCodes.Ldloc_0),
+                    il.Create(OpCodes.Brtrue, blockStart),
+                    il.Create(OpCodes.Ldarg_0), il.Create(OpCodes.Ldsfld, stringEmpty), il.Create(OpCodes.Call, setExtId),
+                    il.Create(OpCodes.Ldarg_0), il.Create(OpCodes.Ldsfld, stringEmpty), il.Create(OpCodes.Call, setExtName),
+                    il.Create(OpCodes.Ldarg_0), il.Create(OpCodes.Ldsfld, stringEmpty), il.Create(OpCodes.Call, setExtPub),
+                    il.Create(OpCodes.Ldarg_0), il.Create(OpCodes.Ldsfld, stringEmpty), il.Create(OpCodes.Call, setExtVer),
+                    il.Create(OpCodes.Br, afterExtBlock),
+                };
+                foreach (var g in guard) il.InsertBefore(blockStart, g);
+                body.MaxStackSize = Math.Max(body.MaxStackSize, 2);
+                Console.Error.WriteLine("[Cecil] Guarded ReportMetadataXmlRuntime.GenerateReportMetadataXml → empty extension identity when OwningApp is null");
+            }
+            // NavCompany.get_CompanyDisplayName → return companyName (coalesced to empty).
+            // The real getter opens the Company system table (2000000006) via
+            // `new NavRecord(Parent, 2000000006)` to read the localized display name, where
+            // `Parent => (NavSession)base.Tree.Parent`. The skeleton company's Tree is not
+            // wired, so get_Parent NREs. It is reached from ReportRequestXmlRuntime.
+            // GenerateReportRequestXml on the SaveAs path. The real fallback when no Company
+            // row exists is GetCompanyDisplayNameDefaulted(Empty, companyName) → companyName,
+            // so returning the company name directly (empty when unset) is the faithful
+            // result without touching the unwired Tree/Company table.
+            {
+                var cdn = FindNclMethod(nclMod, Rt + "NavCompany", "get_CompanyDisplayName", 0);
+                var companyNameField = nclMod.GetType(Rt + "NavCompany").Fields
+                    .FirstOrDefault(f => f.Name == "companyName")
+                    ?? throw new InvalidOperationException("NavCompany.companyName field not found — Ncl shape changed; do not commit");
+                var stringEmptyRef = nclMod.ImportReference(
+                    typeof(string).GetField(nameof(string.Empty)));
+                var body = cdn.Body;
+                body.Instructions.Clear();
+                body.Variables.Clear();
+                body.ExceptionHandlers.Clear();
+                var il = body.GetILProcessor();
+                var ret = il.Create(OpCodes.Ret);
+                il.Append(il.Create(OpCodes.Ldarg_0));
+                il.Append(il.Create(OpCodes.Ldfld, nclMod.ImportReference(companyNameField)));
+                il.Append(il.Create(OpCodes.Dup));
+                il.Append(il.Create(OpCodes.Brtrue_S, ret));
+                il.Append(il.Create(OpCodes.Pop));
+                il.Append(il.Create(OpCodes.Ldsfld, stringEmptyRef));
+                il.Append(ret);
+                body.MaxStackSize = 1;
+                Console.Error.WriteLine("[Cecil] Replaced NavCompany.get_CompanyDisplayName → companyName (skeleton Company table/Tree unwired)");
+            }
+            // DataItemIterator.SetLoadFieldsBasedOnMetadata(DataItem) → no-op.
+            // The real body is a partial-records optimization: it reads
+            // `dataItem.Record.Session.Tenant.TenantSettings.GetEnablePartialRecordsForReports()`
+            // and, when enabled, narrows the record's loaded field set to only the
+            // metadata-referenced fields. The skeleton tenant's `tenantSettings` field is
+            // null (the tenant is built via GetUninitializedObject, not the ctor that seeds
+            // it), so the `.TenantSettings` member access NREs before the setting is even
+            // read. Skipping this optimization means the record loads all its fields —
+            // strictly a superset of what partial records would load, so every column the
+            // dataset references is present. Making it a no-op is the faithful "partial
+            // records disabled" behavior and unblocks the data-item loop.
+            {
+                var slf = FindNclMethod(nclMod, Rt + "DataItemIterator", "SetLoadFieldsBasedOnMetadata", 1);
+                var body = slf.Body;
+                body.Instructions.Clear();
+                body.Variables.Clear();
+                body.ExceptionHandlers.Clear();
+                var il = body.GetILProcessor();
+                il.Append(il.Create(OpCodes.Ret));
+                body.MaxStackSize = 0;
+                Console.Error.WriteLine("[Cecil] Replaced DataItemIterator.SetLoadFieldsBasedOnMetadata → no-op (partial records disabled; full field load)");
+            }
+            // ExecutePermissionsValidatedEx get/set consult
+            // session.Database.PermissionSetupMonitor (null on skeleton). Permissions are
+            // static in the runner — plain backing-field semantics are equivalent.
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavApplicationObjectBase", "get_ExecutePermissionsValidatedEx", 0),
+                H(helperShims, "NavAppObjBase_GetExecutePermissionsValidatedEx"));
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavApplicationObjectBase", "set_ExecutePermissionsValidatedEx", 1),
+                H(helperShims, "NavAppObjBase_SetExecutePermissionsValidatedEx"));
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "NavSession", "get_NavAppGroup", 0),
                 H(helperShims, "NavSession_NavAppGroup"));
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "NavSession", "get_LocalLanguageNoFallback", 0),
                 H(helperShims, "NavSession_LocalLanguageNoFallback"));
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavSession", "get_LocalFormatRegion", 0),
+                H(helperShims, "NavSession_LocalFormatRegion"));
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "NavSession", "get_IsLocalLanguage", 0),
                 H(helperShims, "ReturnFalse_1Arg"));

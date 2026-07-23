@@ -134,6 +134,12 @@
          BCL drift (e.g. BitArray m_array→_array/int[]→byte[]) breaks BC's
          UnsafeAccessor/precode assumptions. -->
     <PackageReference Include="System.Text.Json" Version="10.0.0" />
+    <!-- Same STJ-10 story for DiagnosticSource: BC28's Diagnostic.dll binds
+         System.Diagnostics.DiagnosticSource 10.0.0.0 (reached in-process by the
+         report-execution chain via NavDiagnostics.TraceScopeMonitorCollection).
+         Deploy the net8-targeted DiagnosticSource 10 app-local so the bind
+         resolves on the net8 runtime. -->
+    <PackageReference Include="System.Diagnostics.DiagnosticSource" Version="10.0.0" />
   </ItemGroup>
 
   <ItemGroup>

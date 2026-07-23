@@ -735,8 +735,23 @@ public static partial class RecordPatches
         var skeletonCompany = companyField?.GetValue(skeletonSession);
         if (skeletonCompany == null) return;
 
-        // Build skeleton factory (uninitialized — the ctor requires a real TreeObject).
-        var factory = RuntimeHelpers.GetUninitializedObject(tFactory);
+        // Build the factory with the REAL public ctor when the skeleton session is a
+        // TreeObject (it is — NavSession : TreeObject). A non-null `parent` makes the
+        // lazy trigger getters (ReportingTriggers etc.) construct real
+        // NavSystemCodeunit instances whose NavCodeunitHandle resolves through the
+        // runner's CreateTarget hooks — required for the report-execution chain
+        // (GetReportToRun → InvokeSubstituteReport, factory fork →
+        // InvokeApplicationReportMergeStrategy, custom merger → OnCustomDocumentMergerEx).
+        // Fall back to the old uninitialized skeleton if the ctor shape changed.
+        object factory;
+        var tTreeObject = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.TreeObject");
+        var factoryCtor = tTreeObject != null
+            ? tFactory.GetConstructor(new[] { tTreeObject })
+            : null;
+        if (factoryCtor != null && tTreeObject!.IsInstanceOfType(skeletonSession))
+            factory = factoryCtor.Invoke(new[] { skeletonSession });
+        else
+            factory = RuntimeHelpers.GetUninitializedObject(tFactory);
 
         // Build skeleton GlobalTriggers (uninitialized).
         // NavSystemCodeunitGlobalTriggers.GetTriggersOnTable checks session.IsCompanyOpen first.
@@ -781,6 +796,19 @@ public static partial class RecordPatches
         var fGlobalTriggers = tFactory.GetField("globalTriggers",
             BindingFlags.NonPublic | BindingFlags.Instance);
         fGlobalTriggers?.SetValue(factory, globalTriggers);
+
+        // openedDialogRegistry — normally allocated by NavCompany's field initializer,
+        // skipped by GetUninitializedObject. NavOpenDialogTracking (report execution:
+        // RunReportInternalCoreAsync) pushes onto it → NRE without this.
+        var tDialogRegistry = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.NavOpenedDialogRegistry");
+        var fDialogRegistry = tNavCompany.GetField("openedDialogRegistry",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        if (tDialogRegistry != null && fDialogRegistry != null
+            && fDialogRegistry.GetValue(skeletonCompany) == null)
+        {
+            fDialogRegistry.SetValue(skeletonCompany,
+                Activator.CreateInstance(tDialogRegistry, nonPublic: true));
+        }
 
         // Inject factory into NavCompany.SystemCodeunitFactory auto-property backing field.
         var fFactory = tNavCompany.GetField("<SystemCodeunitFactory>k__BackingField",

@@ -16,6 +16,20 @@
 using System.Reflection;
 using AlRunnerV2;
 
+// Diagnostic: AL_RUNNER_DIAG_FIRSTCHANCE=<substring> prints the FULL stack of
+// every first-chance exception whose type name contains the substring (use e.g.
+// "NullReference"). Invaluable when a rethrow/finally collapses the original
+// throw-site frames.
+if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_FIRSTCHANCE") is string fcFilter
+    && fcFilter.Length > 0)
+{
+    AppDomain.CurrentDomain.FirstChanceException += (_, e) =>
+    {
+        if (e.Exception.GetType().Name.Contains(fcFilter, StringComparison.OrdinalIgnoreCase))
+            Console.Error.WriteLine($"[first-chance] {e.Exception.GetType().Name}: {e.Exception.Message}\n{e.Exception.StackTrace}\n----");
+    };
+}
+
 if (args.Length == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help")
 {
     PrintHelp(args.Length == 0 ? Console.Error : Console.Out);
@@ -454,6 +468,29 @@ if (!provisionSubcommand && packageCacheDirs.Count > 0)
 DependencyLoader.EnsureResolverInstalled_Public();
 if (extraPreprocessorSymbols.Count > 0)
     BcCompiler.SetExtraPreprocessorSymbols(extraPreprocessorSymbols.Distinct().ToList());
+if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_FCE") is "1" or "2")
+{
+    var fceFull = Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_FCE") == "2";
+    AppDomain.CurrentDomain.FirstChanceException += (s, e) =>
+    {
+        var ex = e.Exception;
+        var n = ex.GetType().Name;
+        if (n.Contains("Report") || n.Contains("NullReference") || n.Contains("NavNCL") || n.Contains("InvalidOperation"))
+        {
+            var st = ex.StackTrace ?? "";
+            if (fceFull)
+            {
+                var frames = st.Split('\n').Where(l => l.Contains("Nav.")).Take(8);
+                Console.Error.WriteLine($"[FCE] {ex.GetType().FullName}: {ex.Message}\n{string.Join("\n", frames)}");
+            }
+            else
+            {
+                var frame = st.Split('\n').FirstOrDefault(l => l.Contains("Nav.Runtime") || l.Contains("NavReport") || l.Contains("Report")) ?? st.Split('\n').FirstOrDefault() ?? "";
+                Console.Error.WriteLine($"[FCE] {ex.GetType().FullName}: {ex.Message} @ {frame.Trim()}");
+            }
+        }
+    };
+}
 var t0 = System.Diagnostics.Stopwatch.StartNew();
 BcRuntime.EnsureApplied();
 Console.WriteLine($"BC runtime patches applied ({t0.ElapsedMilliseconds}ms)");
@@ -3023,7 +3060,9 @@ static string ComputeAlCacheKey(
     //    v2: added <key>.enum-registry.json sidecar so cache HIT replays the
     //    AlEnumMetadataRegistry side-effects that emit would have set up.
     //    v3: enum sidecar includes interface implementation codeunit ids.
-    WriteLine("schema:v3");
+    //    v4: sidecar also carries the AlReportMetadataRegistry (per-report
+    //        runtime metadata XML) so cache HIT replays real report metadata.
+    WriteLine("schema:v4");
 
     // 1. Runner assembly fingerprint — any rewriter / polyfill / patch change
     //    in the runner forces a cache miss.
@@ -3095,7 +3134,16 @@ static int SaveEnumRegistrySidecar(string path)
             options = e.Options,
             indexes = e.Indexes,
             implementations = e.Implementations,
-        }).ToArray()
+        }).ToArray(),
+        // v4: per-report runtime metadata XML captured from emit — replayed on
+        // cache HIT so NavReportSync builds real MetaReport instances.
+        reportMetadata = AlReportMetadataRegistry.Ids
+            .OrderBy(i => i)
+            .Select(i => new
+            {
+                id = i,
+                xml = AlReportMetadataRegistry.TryGet(i, out var x) ? x : string.Empty,
+            }).ToArray(),
     };
     var json = System.Text.Json.JsonSerializer.Serialize(dto, new System.Text.Json.JsonSerializerOptions
     {
@@ -3150,6 +3198,18 @@ static int LoadEnumRegistrySidecar(string path)
         }
         AlEnumMetadataRegistry.Register(id, name, opts, idxs, implementations);
         count++;
+    }
+    // v4: replay per-report metadata XML (absent in pre-v4 sidecars — fine,
+    // the cache key schema bump makes those unreachable anyway).
+    if (doc.RootElement.TryGetProperty("reportMetadata", out var repArr)
+        && repArr.ValueKind == System.Text.Json.JsonValueKind.Array)
+    {
+        foreach (var e in repArr.EnumerateArray())
+        {
+            AlReportMetadataRegistry.Register(
+                e.GetProperty("id").GetInt32(),
+                e.GetProperty("xml").GetString() ?? string.Empty);
+        }
     }
     return count;
 }

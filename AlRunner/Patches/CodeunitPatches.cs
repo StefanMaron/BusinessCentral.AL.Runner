@@ -391,6 +391,10 @@ public static partial class BcRuntime
     // Cache: report ID → generated Report Type.
     private static readonly ConcurrentDictionary<int, Type?> _reportTypeCache = new();
 
+    /// <summary>Public accessor for NavReportSync.CreateReportInstance (the Cecil-rewritten
+    /// NCLMetaReport.CreateObjectInstance body): report id → compiled Report{id} type.</summary>
+    public static Type? FindReportTypePublic(int id) => _reportTypeCache.GetOrAdd(id, FindReportType);
+
     /// <summary>
     /// Replacement for NavFormHandle.CreateTarget().
     /// Same shape as NavCodeunitHandle/NavTestPageHandle — bypass NavGlobal.NCLMetadata

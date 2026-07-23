@@ -117,6 +117,18 @@ public static partial class RecordPatches
             if (meta != null)
                 return meta;
         }
+        else if (objectType == ObjectType.Report)
+        {
+            // Static Report.SaveAs/Run reach the engine via
+            // NCLMetadata.GetMetaReportById → GetMetaApplicationObject(ObjectType.Report,…).
+            // Serve the same skeleton NCLMetaReport the §P populator builds; the
+            // Cecil-rewritten NCLMetaReport.CreateObjectInstance then constructs the
+            // compiled Report{id} directly (real MetaReport comes from
+            // AlReportMetadataRegistry in BeginInitialization).
+            var meta = _metaReportCache.GetOrAdd(objectId, BuildNCLMetaReport);
+            if (meta != null)
+                return meta;
+        }
         else if (objectType == ObjectType.Query)
         {
             // Precompiled / BaseApp-internal queries reach the engine via

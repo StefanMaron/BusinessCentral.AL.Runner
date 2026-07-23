@@ -86,6 +86,89 @@ public static partial class BcRuntime
         if (_fAoRuntimeGroupId != null) FieldPoke.SetInstance(_fAoRuntimeGroupId, self, 0);
     }
 
+    private static FieldInfo? _fAoExecPermValidated; // NavApplicationObjectBase.executePermissionsValidated : bool?
+
+    /// <summary>
+    /// Replacement for NavApplicationObjectBase.get_ExecutePermissionsValidatedEx.
+    /// The real getter/setter consult session.Database.PermissionSetupMonitor.SetupVersion
+    /// (live permission-change invalidation — a service-tier feature; permissions are
+    /// static in the headless runner, so plain backing-field semantics are observably
+    /// equivalent). session.Database is null on the skeleton → NRE without this.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool? NavAppObjBase_GetExecutePermissionsValidatedEx(object self)
+    {
+        _fAoExecPermValidated ??= self.GetType()
+            .GetField("executePermissionsValidated", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? FindFieldUpHierarchy(self.GetType(), "executePermissionsValidated");
+        return (bool?)_fAoExecPermValidated?.GetValue(self);
+    }
+
+    /// <summary>Setter counterpart — writes the backing field, skips the (skeleton-null)
+    /// PermissionSetupMonitor version stamp.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void NavAppObjBase_SetExecutePermissionsValidatedEx(object self, bool? value)
+    {
+        _fAoExecPermValidated ??= FindFieldUpHierarchy(self.GetType(), "executePermissionsValidated");
+        if (_fAoExecPermValidated != null)
+            _fAoExecPermValidated.SetValue(self, value);
+    }
+
+    private static FieldInfo? FindFieldUpHierarchy(Type? t, string name)
+    {
+        while (t != null)
+        {
+            var f = t.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
+            if (f != null) return f;
+            t = t.BaseType;
+        }
+        return null;
+    }
+
+    private static FieldInfo? _fSysCuHandle;      // NavSystemCodeunit.codeunitHandle
+    private static PropertyInfo? _pCuHandleTarget; // NavCodeunitHandle.Target
+    private static MethodInfo? _mCuInvokeAsync;   // NavCodeunit.InvokeAsync(int, object[])
+
+    /// <summary>
+    /// Replacement for NavSystemCodeunit.InvokeAsync(int, object[]).
+    /// The real body wraps the dispatch in NavAppUsageEventSuppressionScope +
+    /// diagnostics that walk skeleton-null session state. The DISPATCH itself is
+    /// what matters (system codeunit 2000000005 'ReportingTriggers' etc. — real
+    /// AL bodies compiled into Ncl, firing real IntegrationEvents through the
+    /// runner's universal subscriber dispatch). Resolve the handle target and
+    /// invoke it directly.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static ValueTask<object> NavSystemCodeunit_InvokeAsync(object self, int methodId, object[] arguments)
+    {
+        _fSysCuHandle ??= FindFieldUpHierarchy(self.GetType(), "codeunitHandle")
+            ?? throw new InvalidOperationException("NavSystemCodeunit.codeunitHandle field not found");
+        var handle = _fSysCuHandle.GetValue(self)
+            ?? throw new InvalidOperationException($"{self.GetType().Name}.codeunitHandle is null");
+        _pCuHandleTarget ??= handle.GetType().GetProperty("Target",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("NavCodeunitHandle.Target property not found");
+        object target;
+        try { target = _pCuHandleTarget.GetValue(handle)
+            ?? throw new InvalidOperationException("NavCodeunitHandle.Target is null"); }
+        catch (TargetInvocationException tie) when (tie.InnerException != null) { throw tie.InnerException; }
+
+        NavAppObjBase_SetExecutePermissionsValidatedEx(target, true);
+
+        _mCuInvokeAsync ??= target.GetType().GetMethod("InvokeAsync",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            null, new[] { typeof(int), typeof(object[]) }, null)
+            ?? throw new InvalidOperationException($"{target.GetType().Name}.InvokeAsync(int,object[]) not found");
+        try
+        {
+            return (ValueTask<object>)_mCuInvokeAsync.Invoke(target, new object[] { methodId, arguments })!;
+        }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            throw tie.InnerException;
+        }
+    }
+
     /// <summary>
     /// Replacement for NavApplicationObjectBase.TryInvoke(NavSession session, Action method).
     /// The real body calls session.CurrentMethodScope.GetTryMethodScope() which NREs on the
