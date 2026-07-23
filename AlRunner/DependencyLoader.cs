@@ -84,6 +84,23 @@ public sealed class DependencyLoader
                 continue;
             }
 
+            // The platform symbols app "System" is known Tier-3-uncompilable: its bodies are
+            // external/native, Roslyn always fails on the emitted `_Internal` platform calls,
+            // and the failure path below then defers to service-tier DLL dispatch anyway.
+            // Short-circuit to the SAME outcome without paying the doomed Emit+Roslyn pass
+            // (~14.5s per bundle, measured on Pageworks 2026-07-23). One clear line replaces
+            // the CS-error wall. Faithful per loud-failures: nothing new is silenced — the
+            // observable end state (no assembly, lazy service-tier dispatch) is unchanged.
+            if (microsoftSourceOnly
+                && AlRunnerV2.Infrastructure.ProvisioningCheck.IsPlatformSymbolOnlySystemApp(m.AppId, m.Publisher, m.Name))
+            {
+                Console.Error.WriteLine(
+                    $"[deps] platform symbol app {m.Publisher}_{m.Name} v{m.Version}: known " +
+                    $"Tier-3-uncompilable (external/native bodies) — skipping source compile, " +
+                    $"deferring to service-tier DLL dispatch at runtime");
+                continue;
+            }
+
             Assembly? asm;
             try
             {

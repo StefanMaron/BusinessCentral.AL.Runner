@@ -55,6 +55,27 @@ public static class ProvisioningCheck
         => KnownPlatformRuntimeApps.Any(n =>
             string.Equals(n, appName, StringComparison.OrdinalIgnoreCase));
 
+    // ── Platform symbol app "System" ──────────────────────────────────────────
+    // The Microsoft platform symbols app (Name="System", objects 2000000000..2000001000)
+    // is NOT an R2R runtime package and never will be — it ships symbol AL whose procedure
+    // bodies are external/native (`_Internal` platform methods). Its Tier-3 source-compile
+    // ALWAYS fails Roslyn (dozens of CS0103/CS1061), after which the dependency loader
+    // falls back to service-tier DLL dispatch anyway. Skipping the doomed compile up front
+    // is observably identical and saves ~14.5s per bundle (measured 2026-07-23, Pageworks).
+    // Well-known AppId, stable across BC versions.
+    public static readonly Guid PlatformSystemAppId = Guid.Parse("8874ed3a-0643-4247-9ced-7a7002f7135d");
+
+    /// <summary>
+    /// True if the app is Microsoft's platform symbols app "System" — matched by its
+    /// well-known AppId, or by publisher "Microsoft" + name "System" (symbol packages
+    /// synthesized without an AppId). ISV apps that happen to be named "System" do NOT
+    /// match (they must keep source-compiling and failing LOUD if broken).
+    /// </summary>
+    public static bool IsPlatformSymbolOnlySystemApp(Guid appId, string publisher, string name)
+        => appId == PlatformSystemAppId
+           || (string.Equals(publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)
+               && string.Equals(name, "System", StringComparison.OrdinalIgnoreCase));
+
     /// <summary>
     /// Report returned by <see cref="CheckPlatformApps"/>. Each issue entry is a symbol-only
     /// (non-R2R) platform app found in the cache that should be an R2R runtime package.
