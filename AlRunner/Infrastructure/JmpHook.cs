@@ -16,6 +16,19 @@ internal static class JmpHook
     private static extern int mprotect(IntPtr addr, nuint len, int prot);
     private const int PROT_READ = 1, PROT_WRITE = 2, PROT_EXEC = 4;
 
+    /// <summary>
+    /// Byte length for an <c>mprotect</c> call that must cover exactly the page(s) the
+    /// <paramref name="bytes"/>-byte write at <paramref name="addr"/> touches — starting from
+    /// <paramref name="pageStart"/> (the page base of <paramref name="addr"/>), rounded UP to a
+    /// page boundary. It must never extend a full page past the write: doing so re-protects an
+    /// adjacent page, and in .NET 8's interleaved code heap that neighbour is frequently live JIT
+    /// code — clearing its EXEC bit caused the flaky <c>SEGV_ACCERR</c> Pageworks crash. The old
+    /// InstallIndirect form added an unconditional <c>+ pageSize</c>; this is the corrected form
+    /// (identical shape to <c>WriteJmp</c>). Pure function so the invariant is unit-testable.
+    /// </summary>
+    internal static nuint PageRoundedRegionSize(long addr, long pageStart, int bytes, long pageSize)
+        => (nuint)(((addr - pageStart) + bytes + pageSize - 1) & ~(pageSize - 1));
+
     // Counters + last-attempted bookkeeping for post-mortem diagnosis.
     // If the process SIGSEGVs during patch install, LastAttempt names the hook
     // whose Apply() was in flight (or had just finished) when the crash occurred.
@@ -234,7 +247,18 @@ internal static class JmpHook
         long cellPage = cellAddrRaw & ~(pageSize - 1);
         long precodePage = precodeAddr.ToInt64() & ~(pageSize - 1);
         bool cellInCodePage = (cellPage == precodePage);
-        var regionSize = (nuint)((cellAddrRaw - cellPage) + 8 + pageSize);
+        // Cover ONLY the page(s) the 8-byte cell actually spans, rounded up to a page
+        // boundary — never an extra full page beyond it. The previous form
+        // ((cellAddrRaw - cellPage) + 8 + pageSize) unconditionally extended the mprotect
+        // region a whole page PAST the cell, into the following page. In .NET 8's code
+        // heap, code and precode/cell data pages interleave at 4 KB granularity, so that
+        // trailing page is frequently live JIT code. In the data-page branch below the
+        // region is restored to PROT_READ|PROT_WRITE (no EXEC), which stripped the
+        // execute bit off that adjacent code page and never restored it — a later
+        // `ret`/call into it then SIGSEGV'd with SEGV_ACCERR (flaky, JIT-layout dependent:
+        // the Pageworks CU50364 ~80% native crash). WriteJmp already rounds this way;
+        // mirror it here.
+        var regionSize = PageRoundedRegionSize(cellAddrRaw, cellPage, 8, pageSize);
 
         int restoreProt;
         int writeProt;
