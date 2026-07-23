@@ -108,4 +108,31 @@ public static partial class BcRuntime
             throw;
         }
     }
+
+    /// <summary>
+    /// Replacement for NavApplicationObjectBase.TryInvokeAsync(NavSession session, Func&lt;ValueTask&gt; method).
+    /// The real async state machine calls session.CurrentMethodScope.GetTryMethodScope() which NREs
+    /// on the skeleton session. We invoke the delegate synchronously (all BC code in the runner
+    /// runs sync on a single AL thread) catching only trappable NavBaseExceptions, matching the
+    /// faithful semantics of TryInvoke. Once this works, code that calls into the Azure Key Vault
+    /// SDK path reaches NavDotNet.CreateNavServerHandle, whose catch block throws
+    /// RunnerOutOfScopeException ("dotnet-server-interop"), making the failure loud and named.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static System.Threading.Tasks.ValueTask<bool> NavApplicationObjectBase_TryInvokeAsync(
+        object? session, System.Func<System.Threading.Tasks.ValueTask>? method)
+    {
+        if (method == null) return new System.Threading.Tasks.ValueTask<bool>(false);
+        try
+        {
+            method().GetAwaiter().GetResult();
+            return new System.Threading.Tasks.ValueTask<bool>(true);
+        }
+        catch (Exception ex)
+        {
+            if (ex is Microsoft.Dynamics.Nav.Types.Exceptions.NavBaseException nbe && !nbe.UntrappableError)
+                return new System.Threading.Tasks.ValueTask<bool>(false);
+            throw;
+        }
+    }
 }

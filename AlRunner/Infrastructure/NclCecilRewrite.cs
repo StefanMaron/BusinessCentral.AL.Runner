@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 118;
+    private const int CACHE_VERSION = 121;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -218,6 +218,11 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.PermissionManagement::SessionHasSuperOrSecurityPermissionsForUser/2",
         // NavApplicationObjectBase.TryInvoke (Batch 8) — AL TryFunction entry.
         "Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase::TryInvoke/2",
+        // NavApplicationObjectBase.TryInvokeAsync — async TryFunction entry (same skeleton
+        // issue: session.CurrentMethodScope NRE). Once patched, CU3801.InitializeFromCurrentApp
+        // can invoke its body; the Azure KV SDK load then hits the NavDotNet.CreateNavServerHandle
+        // catch block → RunnerOutOfScopeException instead of a silent NRE.
+        "Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase::TryInvokeAsync/2",
         // BitArrayHelpers.Equals (Batch 8) — static (BitArray,BitArray) overload.
         "Microsoft.Dynamics.Nav.Runtime.Utility.BitArrayHelpers::Equals/2",
         // Event-binding metadata cluster (Batch 8).
@@ -233,6 +238,17 @@ public static class NclCecilRewrite
         // ALCompiler.DotNetToNavOutStream — skeleton SharedObjects fallback for
         // .NET-stream → NavOutStream marshalling (Cryptography Management GenerateHash).
         "Microsoft.Dynamics.Nav.Runtime.ALCompiler::DotNetToNavOutStream/2",
+        // NavDotNet.CreateNavServerHandle — catch block replaced with OOS throw so
+        // absent server add-in assemblies (Azure KV SDK, etc.) fail loud instead of
+        // NRE-ing on NavGlobal.SystemTenant (null on skeleton). Happy-path try block
+        // (NavAutomationHelper.CreateDotNetObject for in-process types) is unchanged.
+        "Microsoft.Dynamics.Nav.Runtime.NavDotNet::CreateNavServerHandle/9",
+        // NavDotNet.CreateDotNet — surgical RethrowIfRunnerOOS guard inserted at the
+        // start of the catch-all block so RunnerOutOfScopeException (thrown by the
+        // patched CreateNavServerHandle) propagates out instead of being wrapped in
+        // NavNCLDotNetCreateException (which is trappable and would be silently swallowed
+        // by TryInvokeAsync → TryInitializeFromCurrentApp returns false with no OOS signal).
+        "Microsoft.Dynamics.Nav.Runtime.NavDotNet::CreateDotNet/1",
     };
 
     /// <summary>
@@ -1456,6 +1472,102 @@ public static class NclCecilRewrite
                         BindingFlags.Public | BindingFlags.Static)!;
                     ReplaceBodyWithHelper(asm.MainModule, mCaller, h);
                 }
+            }
+        }
+
+        // ── NavDotNet.CreateNavServerHandle catch block → OOS ────────────────────────
+        // The try block (NavAutomationHelper.CreateDotNetObject — succeeds for
+        // in-process types like MemoryStream, crypto) is UNTOUCHED. Only the catch
+        // block (NavNCLDotNetCreateException → add-in table fallback that NREs on
+        // NavGlobal.SystemTenant = null on the runner skeleton) is replaced with a call
+        // to ThrowServerInteropOOS, making absent-assembly accesses loud-and-named.
+        {
+            var navDotNetType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavDotNet");
+            var mCsnh = navDotNetType?.Methods.FirstOrDefault(x =>
+                x.Name == "CreateNavServerHandle" && x.Parameters.Count == 9);
+            var asmField = navDotNetType?.Fields.FirstOrDefault(f => f.Name == "assemblyFullName");
+            var ehCatch = mCsnh?.Body.ExceptionHandlers.FirstOrDefault(
+                h => h.HandlerType == ExceptionHandlerType.Catch);
+
+            if (mCsnh != null && asmField != null && ehCatch != null)
+            {
+                var helperMi = typeof(AlRunnerV2.Patches.NavDotNetPatches).GetMethod(
+                    nameof(AlRunnerV2.Patches.NavDotNetPatches.ThrowServerInteropOOS),
+                    BindingFlags.Public | BindingFlags.Static)!;
+                var helperRef = asm.MainModule.ImportReference(helperMi);
+                var il = mCsnh.Body.GetILProcessor();
+
+                // Collect all catch-block instructions (HandlerStart inclusive to HandlerEnd exclusive).
+                var toRemove = new List<Instruction>();
+                for (var cur = ehCatch.HandlerStart; cur != ehCatch.HandlerEnd && cur != null; cur = cur.Next)
+                    toRemove.Add(cur);
+
+                // Replacement body: pop caught exception, load assemblyFullName, call helper,
+                // throw (dead code — ThrowServerInteropOOS always throws; the throw opcode is
+                // required to make IL valid: puts an Exception-typed value on the stack).
+                var i0 = il.Create(OpCodes.Pop);       // discard NavNCLDotNetCreateException
+                var i1 = il.Create(OpCodes.Ldarg_0);   // this (NavDotNet)
+                var i2 = il.Create(OpCodes.Ldfld, asmField);
+                var i3 = il.Create(OpCodes.Call, helperRef);   // → Exception (always throws)
+                var i4 = il.Create(OpCodes.Throw);     // dead code; makes IL verifier happy
+
+                // Insert before the first original instruction (so they'll precede it in the list).
+                il.InsertBefore(toRemove[0], i0);
+                il.InsertBefore(toRemove[0], i1);
+                il.InsertBefore(toRemove[0], i2);
+                il.InsertBefore(toRemove[0], i3);
+                il.InsertBefore(toRemove[0], i4);
+
+                // Redirect exception handler: TryEnd and HandlerStart both originally
+                // pointed to the old pop (IL_007A). Update both to our new i0.
+                ehCatch.TryEnd = i0;
+                ehCatch.HandlerStart = i0;
+
+                // Remove original catch block instructions.
+                foreach (var instr in toRemove)
+                    il.Remove(instr);
+
+                Console.Error.WriteLine("[Cecil] Patched NavDotNet.CreateNavServerHandle catch block → ThrowServerInteropOOS");
+            }
+        }
+
+        // ── NavDotNet.CreateDotNet catch-all → rethrow RunnerOutOfScopeException ─────
+        // CreateDotNet has a catch (Exception) block that runs diagnostics then wraps
+        // any non-NavBaseException in a fresh NavNCLDotNetCreateException (trappable).
+        // Our RunnerOutOfScopeException (plain System.Exception) would be swallowed by
+        // this: it IS caught, it is NOT a NavBaseException → gets wrapped and then
+        // silently caught by TryInvokeAsync (returning false with no OOS signal).
+        // Surgical fix: insert "ldloc V_5; call RethrowIfRunnerOOS" at the very START
+        // of the catch block (right after the stloc that saves the caught exception into
+        // V_5) so OOS propagates before the wrapping code runs.  For every other
+        // exception the no-op helper returns and the original block continues normally.
+        {
+            var navDotNetType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavDotNet");
+            var mCd = navDotNetType?.Methods.FirstOrDefault(x =>
+                x.Name == "CreateDotNet" && x.Parameters.Count == 1);
+            var ehAll = mCd?.Body.ExceptionHandlers.FirstOrDefault(
+                h => h.HandlerType == ExceptionHandlerType.Catch
+                     && h.CatchType?.FullName == "System.Exception");
+
+            if (mCd != null && ehAll != null)
+            {
+                var rethrowMi = typeof(AlRunnerV2.Patches.NavDotNetPatches).GetMethod(
+                    nameof(AlRunnerV2.Patches.NavDotNetPatches.RethrowIfRunnerOOS),
+                    BindingFlags.Public | BindingFlags.Static)!;
+                var rethrowRef = asm.MainModule.ImportReference(rethrowMi);
+                var il = mCd.Body.GetILProcessor();
+
+                // HandlerStart is "stloc.s V_5". We insert AFTER it so the variable
+                // is populated before we load it.
+                var stlocInstr = ehAll.HandlerStart; // stloc.s V_5
+                var localVar = (VariableDefinition)stlocInstr.Operand;
+
+                var ldloc = il.Create(OpCodes.Ldloc_S, localVar);
+                var call  = il.Create(OpCodes.Call, rethrowRef);
+                il.InsertAfter(stlocInstr, ldloc);
+                il.InsertAfter(ldloc, call);
+
+                Console.Error.WriteLine("[Cecil] Patched NavDotNet.CreateDotNet catch-all → RethrowIfRunnerOOS guard");
             }
         }
 
@@ -4965,6 +5077,15 @@ public static class NclCecilRewrite
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavApplicationObjectBase", "TryInvoke", "NavSession", "Action"),
                 H(typeof(AlRunnerV2.BcRuntime), "NavApplicationObjectBase_TryInvoke"));
+
+            // ── NavApplicationObjectBase.TryInvokeAsync — async TryFunction ──────
+            // Same skeleton gap as the sync TryInvoke (session.CurrentMethodScope NRE),
+            // but via the async state-machine path that CU3800/3801.InitializeFromCurrentApp
+            // uses. Once running, the Azure Key Vault SDK load path hits the patched
+            // NavDotNet.CreateNavServerHandle catch block → RunnerOutOfScopeException.
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavApplicationObjectBase", "TryInvokeAsync", "NavSession", "Func`1"),
+                H(typeof(AlRunnerV2.BcRuntime), "NavApplicationObjectBase_TryInvokeAsync"));
 
             // ── BitArrayHelpers.Equals (Batch 8) — .NET API drift ───────────────
             // Real body calls GetIntArray which reads the removed private field
