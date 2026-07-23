@@ -1,0 +1,31 @@
+{
+  "id": "9a1b2c3d-4e5f-4061-8a9b-0c1d2e3f4051",
+  "name": "Runner Extras - Report Precompiled Dep Metadata",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves Report.SaveAs on a report living in a precompiled dependency (Tier-1 .deps-bin, never source-compiled by the runner, so its metadata is never emit-captured) builds a real multi-dataitem MetaReport on the fly instead of NRE-ing in DataItemIterator.FinalizeDataItemLoading.",
+  "description": "Regression test for the CreateReportInstance/DataItemIterator.FinalizeDataItemLoading NullReferenceException. The dependency 'RPD Precompiled Report Dep' (declared below, resolved from the committed .alpackages/*.app symbol package, loaded from the committed .deps-bin/*.dll — see DependencyLoader's Tier-1 precompiled-DLL path) ships report 61502 with a real two-level nested data-item tree (Header -> Line) as PURE COMPILED CODE, no AL source reachable at runtime. This hermetically reproduces the real-world bug class (report 1306 in Base Application, discovered via Pageworks CU50364) without depending on an externally-provisioned Microsoft Base Application: the runner never source-compiles this dep, so AlReportMetadataRegistry never captures its metadata XML and NavReport.Metadata falls back to the legacy stub path. Before the fix, DataItem.MetaData was never bound for either data item (metadataIsReal stayed false because the stub MetaReport's DataItems property returned null — a GetUninitializedObject skeleton whose field initializers never ran), so DataItemIterator.FinalizeDataItemLoading dereferenced a null MetaData and threw. After the fix, ReportAdd detects the stub MetaReport and synthesizes a real MetaDataItem per data item as it is added, so the report executes end to end (no rows needed — the crash was in per-instance metadata setup, before any row iteration).",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "c4d5e6f7-8a9b-40c1-8d2e-3f4a5b6c7d81",
+      "name": "RPD Precompiled Report Dep",
+      "publisher": "AL Runner Fixtures",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 61100,
+      "to": 61199
+    }
+  ],
+  "runtime": "17.0",
+  "target": "Cloud",
+  "features": []
+}

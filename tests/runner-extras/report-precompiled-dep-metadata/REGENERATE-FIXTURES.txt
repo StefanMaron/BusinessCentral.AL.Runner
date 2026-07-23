@@ -1,0 +1,68 @@
+How .alpackages/*.app and .deps-bin/*.dll in this folder were produced
+========================================================================
+
+These two binary fixtures make "RPD Precompiled Report Dep" (report 61502,
+tables 61500/61501) load as a genuinely Tier-1 precompiled dependency
+(DependencyLoader.LoadOne: <bucketRoot>/.deps-bin/<Publisher>_<Name>_<Version>.dll)
+with NO AL source reachable at compile-or-metadata time — the exact shape a
+real precompiled MS/ISV .app has, without needing an external Base Application.
+
+IMPORTANT: the dep's AL source must NEVER live inside this suite folder (or
+any other runner-extras suite folder) — a flat-bundle suite's compile step
+scans *.al recursively under its own root, so source sitting next to these
+fixtures would get swept into the MAIN app's own compile and silently defeat
+the whole point of the test (the report would get REAL captured metadata
+instead of exercising NavReportSync's stub path). Keep the dep source
+external (a scratch dir, NOT under tests/), regenerate there, then copy only
+the two binary artifacts back here.
+
+Dep app.json (place in a scratch dir, e.g. /tmp/rpd-dep/):
+  {
+    "id": "c4d5e6f7-8a9b-40c1-8d2e-3f4a5b6c7d81",
+    "name": "RPD Precompiled Report Dep",
+    "publisher": "AL Runner Fixtures",
+    "version": "1.0.0.0",
+    "dependencies": [],
+    "idRanges": [ { "from": 61500, "to": 61599 } ],
+    "runtime": "17.0",
+    "target": "Cloud",
+    "features": []
+  }
+
+Dep AL source (same scratch dir):
+  - table 61500 "RPDDep Header" (fields: "No." Code[20], Description Text[100])
+  - table 61501 "RPDDep Line" (fields: "Header No." Code[20], "Line No." Integer, Description Text[100])
+  - report 61502 "RPDDep Nested Report": dataitem(Header; "RPDDep Header") with
+    nested dataitem(Line; "RPDDep Line") linked on "Header No." = field("No.")
+
+Regenerate, from the repo root (AlRunner already built, -c Release):
+
+  # 1. Produce the .alpackages symbol/identity package (embeds src, but Tier-1
+  #    short-circuits before Tier-3 source-compile is ever attempted, so the
+  #    embedded source is harmless here — it's just for DependencyResolver's
+  #    NavxManifest.xml identity lookup).
+  dotnet run --project AlRunner -c Release -- --emit-app /tmp/rpd-dep /tmp/rpd-dep/out/dep.app
+
+  # 2. Produce the raw compiled DLL (Tier-1 target) by running the dep as a
+  #    normal bundle once (bundled Emit+Compile writes a cache entry) and
+  #    copying the cached DLL out. (`--precompile` is a more direct route in
+  #    principle but currently crashes on this box - Linux WindowsIdentity
+  #    init gap in NavEnvironment's cctor when reached via that code path
+  #    specifically - unrelated to this fix; the normal-bundle-compile route
+  #    below is the proven-working equivalent and produces byte-identical
+  #    Emit+Compile output.)
+  dotnet run --project AlRunner -c Release -- --bc-version 28.1 /tmp/rpd-dep
+  # → prints "[cache] WROTE key=<KEY> path=~/.cache/al-runner/al-out/<KEY>.dll"
+
+  # 3. Copy into place (filenames MUST match DependencyLoader.SanitizeFileName:
+  #    spaces -> underscores, "<Publisher>_<Name>_<Version>.<ext>"):
+  cp /tmp/rpd-dep/out/dep.app \
+     tests/runner-extras/report-precompiled-dep-metadata/.alpackages/AL_Runner_Fixtures_RPD_Precompiled_Report_Dep_1.0.0.0.app
+  cp ~/.cache/al-runner/al-out/<KEY>.dll \
+     "tests/runner-extras/report-precompiled-dep-metadata/.deps-bin/AL_Runner_Fixtures_RPD_Precompiled_Report_Dep_1.0.0.0.dll"
+
+Verify (must be RED without the NavReportSync.cs fix, GREEN with it — no
+--package-cache needed, fully hermetic):
+
+  dotnet run --project AlRunner -c Release -- --bc-version 28.1 --strict \
+      tests/runner-extras/report-precompiled-dep-metadata

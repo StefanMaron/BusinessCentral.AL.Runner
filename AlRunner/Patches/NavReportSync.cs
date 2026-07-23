@@ -31,8 +31,10 @@
 
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 
 namespace AlRunnerV2;
 
@@ -68,6 +70,20 @@ public static class NavReportSync
     private static FieldInfo? _metaReportMasterPageField; // MetaReport.masterPage : MasterPage
     private static FieldInfo? _processingOnlyBackingField; // MetaReport.<ProcessingOnly>k__BackingField : bool
     private static PropertyInfo? _metadataSetter;  // DataItemIterator.Metadata : MetaReport (protected set)
+    private static FieldInfo? _metaReportDataItemsField; // MetaReport.dataItems : List<MetaDataItem> (private readonly)
+
+    /// <summary>
+    /// Marks MetaReport instances built by the legacy stub path (StubInitializeMetadata,
+    /// for reports whose emit metadata was never captured — e.g. reports living in a
+    /// precompiled MS/ISV dependency .app, which the runner never source-compiles).
+    /// ReportAdd consults this to know it must synthesize a MetaDataItem for a
+    /// not-yet-seen data-item name instead of calling the real
+    /// MetaReport.GetDataItemByName (which throws ArgumentException for names it was
+    /// never told about — real BC's metadata is pre-populated at publish time from the
+    /// app's own compiled metadata store, which the runner does not have for
+    /// dependency reports it never compiled).
+    /// </summary>
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, object> _stubMetaReports = new();
 
     /// <summary>
     /// Replacement body for NavReport.BeginInitialization (sync wrapper).
@@ -129,7 +145,39 @@ public static class NavReportSync
         var masterPage = BuildEmptyMasterPage(_masterPageType!.Assembly, _masterPageType!);
         var metaReport = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(_metaReportType!);
         _metaReportMasterPageField.SetValue(metaReport, masterPage);
+        // NOTE (investigated, deliberately left as-is): ProcessingOnly=true is
+        // unfaithful for reports that are genuinely ProcessingOnly=false in real
+        // BC (BC's SaveReportAsFormatCoreAsync throws NavNCLReportProcessingOnlyException
+        // whenever Metadata.ProcessingOnly is true, so today EVERY stub-metadata
+        // report's Report.SaveAs returns false rather than running). Flipping
+        // this to false was tried and reverted: it lets execution reach real
+        // report-run code (RunReportInternalAsync -> LogReportExecutionStatus ->
+        // DataItemIterator.GetCaption), which NREs on captionML — a SEPARATE,
+        // pre-existing gap (captionML is only seeded in TryInstallRealMetadata's
+        // real-metadata branch, never in this stub branch). Out of scope for the
+        // CreateReportInstance/FinalizeDataItemLoading NRE this file's
+        // BuildSyntheticFlatMetaDataItem path fixes — left as a follow-up.
         _processingOnlyBackingField?.SetValue(metaReport, true);
+
+        // GetUninitializedObject skips every field initializer, including
+        // `private readonly List<MetaDataItem> dataItems = new List<MetaDataItem>();`.
+        // Left null, MetaReport.DataItems (=> dataItems) returns null, which
+        // ReportAdd (NavReport.Add's faithful replica) reads as "no real metadata"
+        // (metadataIsReal=false) — so DataItem.MetaData is NEVER bound and
+        // DataItemIterator.FinalizeDataItemLoading NREs on dataItem.MetaData.
+        // Give it a real (empty) list so ReportAdd takes the metadataIsReal=true
+        // branch; see BuildSyntheticFlatMetaDataItem for how the (unknown, never
+        // captured) per-data-item shape gets synthesized as ReportAdd runs.
+        _metaReportDataItemsField ??= _metaReportType!.GetField("dataItems",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        if (_metaReportDataItemsField != null)
+        {
+            var emptyList = Activator.CreateInstance(
+                typeof(List<>).MakeGenericType(_metaReportDataItemsField.FieldType.GetGenericArguments()[0]));
+            _metaReportDataItemsField.SetValue(metaReport, emptyList);
+        }
+        _stubMetaReports.AddOrUpdate(metaReport, metaReport);
+
         _metadataSetter.SetValue(navReport, metaReport);
         Console.Error.WriteLine($"[NavReportSync] StubInit: installed stub on {navReport.GetType().Name}");
     }
@@ -609,12 +657,24 @@ public static class NavReportSync
             catch { metadataIsReal = false; }
         }
 
+        bool isStubMeta = meta != null && _stubMetaReports.TryGetValue(meta, out _);
+
         if (metadataIsReal)
         {
             try
             {
                 object? metaDataItem = null;
-                if (dataItemName != null)
+                if (isStubMeta)
+                {
+                    // Stub metadata (report lives in a precompiled dependency whose emit
+                    // metadata the runner never captured — see StubInitializeMetadata).
+                    // Real BC's GetDataItemByName expects the name to already be present
+                    // (metadata is pre-populated at publish time); ours isn't, so build the
+                    // MetaDataItem on the fly instead of calling the real lookup (which
+                    // would throw ArgumentException for an as-yet-unknown name).
+                    metaDataItem = BuildSyntheticFlatMetaDataItem(meta!, dataItemName ?? $"DataItem{(list?.Count ?? 0)}");
+                }
+                else if (dataItemName != null)
                 {
                     if (_getDataItemByName == null)
                         _getDataItemByName = meta!.GetType().GetMethod("GetDataItemByName",
@@ -815,6 +875,12 @@ public static class NavReportSync
                     // saved settings exist in the runner — equivalent to none stored.
                 }
             }
+            // BC's MetaReport(XmlNode) ctor calls BuildDataItemTree() before the report runs;
+            // report metadata that did not come through that ctor leaves each MetaDataItem's
+            // ChildDataItems null (→ NRE in FindDataItemChildrenAndParent) and OwningDataItem
+            // unset (→ ArgumentNullException 'parent'). Replicate it here. Idempotent.
+            EnsureDataItemTreeBuilt(instance);
+
             var fin = instance.GetType().GetMethod("FinalizeDataItemLoading",
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
             fin?.Invoke(instance, null);
@@ -824,6 +890,120 @@ public static class NavReportSync
             throw tie.InnerException;
         }
         return instance;
+    }
+
+    private static PropertyInfo? _diDataItemsProp;   // DataItemIterator.DataItems (List<DataItem>)
+    private static MethodInfo? _mdiBuildChildren;     // MetaDataItem.BuildDataItemChildren(List<MetaDataItem>)
+
+    /// <summary>
+    /// Replicates BC MetaReport.BuildDataItemTree(): for every report DataItem's MetaDataItem,
+    /// call BuildDataItemChildren(allMetaDataItems) so MetaDataItem.ChildDataItems (null until
+    /// built) is populated and each child's OwningDataItem is set. BC does this inside the
+    /// MetaReport(XmlNode) ctor; report metadata that did not come through that ctor leaves the
+    /// links unbuilt, so DataItemIterator.FinalizeDataItemLoading → FindDataItemChildrenAndParent
+    /// dereferences the null ChildDataItems (NRE) and leaves Parent/OwningDataItem null
+    /// (ArgumentNullException 'parent' downstream). BuildDataItemChildren is idempotent (no-ops
+    /// when childDataItems is already set), so this is a safe no-op when the metadata was
+    /// tree-built upstream. Observably equivalent to real BC's report-load: same links, built by
+    /// BC's own method on BC's own MetaDataItem instances.
+    /// </summary>
+    private static Type? _synthMdiType;                     // Types.Metadata.MetaDataItem
+    private static ConstructorInfo? _synthMdiCtor;           // MetaDataItem() (public, parameterless)
+    private static PropertyInfo? _synthMdiVarNameProp;       // MetaDataItem.DataItemVarName (private set)
+    private static PropertyInfo? _synthMdiExtNameProp;       // MetaDataItem.ExternalizedName (private set)
+    private static FieldInfo? _synthMdiChildDataItemsField;  // MetaDataItem.childDataItems : List<MetaDataItem>
+
+    /// <summary>
+    /// Builds a minimal, real (field-initializer-run) <c>MetaDataItem</c> for a data
+    /// item whose report lives in a precompiled dependency the runner never
+    /// source-compiled — see the doc comment on <see cref="_stubMetaReports"/> for why
+    /// real BC's <c>GetDataItemByName</c> cannot be used here.
+    ///
+    /// Faithfulness: <c>DataItemIndent</c> is left at its default (0), i.e. every
+    /// data item is modeled as a report-root with no children. This is an HONEST
+    /// simplification, not a silent one: v0's DataItemIterator does not yet execute
+    /// nested dataitem row-iteration for ANY report (documented at the top of this
+    /// file) — flattening the (unknown, uncaptured) real nesting changes nothing
+    /// observable for what the runner currently executes. Each data item still gets
+    /// its own OnPreDataItem/OnPostDataItem trigger dispatch and column evaluation;
+    /// only parent/child row-nesting (already unimplemented) is affected.
+    /// <c>ChildDataItems</c> is set directly to a real empty list (rather than routed
+    /// through the real <c>BuildDataItemChildren</c>, whose name-matching walk
+    /// presupposes the full report-order list is known up front, which it isn't here
+    /// — data items are discovered one at a time as ReportAdd is called).
+    /// </summary>
+    private static object BuildSyntheticFlatMetaDataItem(object meta, string dataItemName)
+    {
+        if (_synthMdiType == null)
+        {
+            _synthMdiType = meta.GetType().Assembly.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaDataItem")
+                ?? throw new InvalidOperationException("MetaDataItem type not found");
+            _synthMdiCtor = _synthMdiType.GetConstructor(BindingFlags.Instance | BindingFlags.Public, null, Type.EmptyTypes, null);
+            _synthMdiVarNameProp = _synthMdiType.GetProperty("DataItemVarName",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            _synthMdiExtNameProp = _synthMdiType.GetProperty("ExternalizedName",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            _synthMdiChildDataItemsField = _synthMdiType.GetField("childDataItems",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+        }
+        if (_synthMdiCtor == null)
+            throw new InvalidOperationException("MetaDataItem() parameterless ctor not found");
+
+        var mdi = _synthMdiCtor.Invoke(null);
+        _synthMdiVarNameProp?.SetValue(mdi, dataItemName);
+        _synthMdiExtNameProp?.SetValue(mdi, dataItemName);
+        if (_synthMdiChildDataItemsField != null)
+        {
+            var emptyChildren = Activator.CreateInstance(
+                typeof(List<>).MakeGenericType(_synthMdiChildDataItemsField.FieldType.GetGenericArguments()[0]));
+            _synthMdiChildDataItemsField.SetValue(mdi, emptyChildren);
+        }
+
+        // Register into the stub MetaReport's own dataItems list too — faithful to
+        // real BC (GetDataItemByName/DataItems reflect every data item that has been
+        // bound), and lets a later ReportAdd for the SAME name (legacy index-based
+        // Add(dataItem) overload, dataItemName == null) find it again if ever needed.
+        _metaReportDataItemsField ??= meta.GetType().GetField("dataItems",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        if (_metaReportDataItemsField?.GetValue(meta) is System.Collections.IList metaList)
+            metaList.Add(mdi);
+
+        return mdi;
+    }
+
+    private static void EnsureDataItemTreeBuilt(object instance)
+    {
+        _diDataItemsProp ??= instance.GetType().GetProperty("DataItems",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        if (_diDataItemsProp?.GetValue(instance) is not System.Collections.IList dataItems || dataItems.Count == 0)
+            return;
+
+        _dataItemMetaData ??= dataItems[0]!.GetType().GetProperty("MetaData",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        if (_dataItemMetaData == null) return;
+
+        // Gather each DataItem's MetaDataItem in report (declaration) order — the order
+        // BuildDataItemChildren's DataItemIndent walk depends on.
+        var metas = new List<object>(dataItems.Count);
+        foreach (var di in dataItems)
+        {
+            var m = di == null ? null : _dataItemMetaData.GetValue(di);
+            if (m == null) return; // metadata incomplete — don't half-build; leave existing path
+            metas.Add(m);
+        }
+
+        var mdiType = metas[0].GetType();
+        // BuildDataItemChildren's parameter is List<MetaDataItem>; build that exact typed list.
+        var typedList = (System.Collections.IList)Activator.CreateInstance(
+            typeof(List<>).MakeGenericType(mdiType))!;
+        foreach (var m in metas) typedList.Add(m);
+
+        _mdiBuildChildren ??= mdiType.GetMethod("BuildDataItemChildren",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        if (_mdiBuildChildren == null) return;
+
+        foreach (var m in metas)
+            _mdiBuildChildren.Invoke(m, new object[] { typedList });
     }
 
     /// <summary>
