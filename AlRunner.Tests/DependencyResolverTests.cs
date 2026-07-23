@@ -118,6 +118,7 @@ public sealed class DependencyResolverTests : IDisposable
     /// <summary>
     /// Dep requires minimum v29.0; only v17 and v28.1 are available.
     /// Must throw InvalidOperationException whose message names the available versions.
+    /// (This is a version-mismatch problem, not a provisioning gap.)
     /// </summary>
     [Fact]
     public void MinimumNotSatisfied_ThrowsWithVersionDetail()
@@ -138,6 +139,122 @@ public sealed class DependencyResolverTests : IDisposable
         Assert.Contains("29.0", ex.Message);
         Assert.Contains("17.0", ex.Message);
         Assert.Contains("28.1", ex.Message);
+    }
+
+    // ── Part 2b: completely-absent dep → MissingDependencyException ───────────
+
+    /// <summary>
+    /// A dep declared in the manifest is completely absent from every cache dir.
+    /// Must throw MissingDependencyException (not InvalidOperationException) so Program.cs
+    /// can emit a loud provisioning-gap message and abort before a doomed compile.
+    /// </summary>
+    [Fact]
+    public void DepCompletelyAbsent_ThrowsMissingDependencyException()
+    {
+        var emptyDir = MakeDir("MDE_empty");
+        var resolver = new DependencyResolver(new[] { emptyDir });
+        var dep = new DependencyRef(
+            Guid.Parse("bee8cf2f-494a-42f4-aabd-650e87934d39"),
+            "Business Foundation Test Libraries", "Microsoft", new Version(28, 2, 0, 0));
+
+        Assert.Throws<AlRunnerV2.Infrastructure.MissingDependencyException>(
+            () => resolver.Resolve(new[] { dep }));
+    }
+
+    /// <summary>
+    /// MissingDependencyException carries the dep's identity + searched dirs.
+    /// The exception message names the publisher, name, and searched dir so the user sees
+    /// exactly what is missing and where it was looked for.
+    /// </summary>
+    [Fact]
+    public void DepCompletelyAbsent_ExceptionNamesDepAndSearchedDir()
+    {
+        var dir = MakeDir("MDE_detail");
+        var resolver = new DependencyResolver(new[] { dir });
+        var depId = Guid.Parse("bee8cf2f-494a-42f4-aabd-650e87934d39");
+        var dep = new DependencyRef(
+            depId, "Business Foundation Test Libraries", "Microsoft", new Version(28, 2, 0, 0));
+
+        var ex = Assert.Throws<AlRunnerV2.Infrastructure.MissingDependencyException>(
+            () => resolver.Resolve(new[] { dep }));
+
+        Assert.Equal("Microsoft", ex.DepPublisher);
+        Assert.Equal("Business Foundation Test Libraries", ex.DepName);
+        Assert.Equal("28.2.0.0", ex.DepVersion);
+        Assert.Equal(depId, ex.DepAppId);
+        Assert.Contains(dir, ex.SearchedDirs);
+    }
+
+    /// <summary>
+    /// ToDetailedMessage for a Microsoft dep names the al-runner provision command and
+    /// the DownloadArtifacts test-apps fix so the user can resolve it in one command.
+    /// </summary>
+    [Fact]
+    public void DepCompletelyAbsent_ToDetailedMessage_NamesProvisionCommandForMicrosoftDep()
+    {
+        var dir = MakeDir("MDE_msg_ms");
+        var ex = new AlRunnerV2.Infrastructure.MissingDependencyException(
+            "Microsoft", "Business Foundation Test Libraries", "28.2.0.0",
+            Guid.Parse("bee8cf2f-494a-42f4-aabd-650e87934d39"),
+            new[] { dir });
+
+        var msg = ex.ToDetailedMessage("28.2.50931.52786");
+
+        // Names the missing dep.
+        Assert.Contains("Business Foundation Test Libraries", msg);
+        Assert.Contains("28.2.0.0", msg);
+        Assert.Contains("Microsoft", msg);
+        // Names the provision command.
+        Assert.Contains("al-runner provision", msg);
+        // Names the DownloadArtifacts test-apps fix.
+        Assert.Contains("test-apps", msg);
+        Assert.Contains("28.2.50931.52786", msg);
+        // Frames it as a provisioning gap, not a user-code error.
+        Assert.Contains("PROVISIONING gap", msg);
+        Assert.Contains("your code is NOT the problem", msg);
+    }
+
+    /// <summary>
+    /// ToDetailedMessage for a non-Microsoft dep does NOT mention al-runner provision
+    /// (a third-party dep can't be auto-provisioned from the MS CDN).
+    /// </summary>
+    [Fact]
+    public void DepCompletelyAbsent_ToDetailedMessage_NoProvisionForThirdPartyDep()
+    {
+        var dir = MakeDir("MDE_msg_3p");
+        var ex = new AlRunnerV2.Infrastructure.MissingDependencyException(
+            "Contoso", "Contoso Core Library", "5.0.0.0",
+            Guid.NewGuid(), new[] { dir });
+
+        var msg = ex.ToDetailedMessage("28.2.50931.52786");
+
+        Assert.Contains("Contoso Core Library", msg);
+        Assert.Contains("PROVISIONING gap", msg);
+        // Should NOT suggest the MS provision path for a third-party dep.
+        Assert.DoesNotContain("test-apps", msg);
+        Assert.DoesNotContain("platform-apps", msg);
+    }
+
+    /// <summary>
+    /// Version near-miss (dep found but below minimum) still throws InvalidOperationException,
+    /// not MissingDependencyException — backward compatibility for existing callers.
+    /// </summary>
+    [Fact]
+    public void VersionNearMiss_StillThrowsInvalidOperationException_NotMissingDependencyException()
+    {
+        var appId = "dddddddd-0000-0000-0000-000000000001";
+        var dir = MakeDir("MDE_nearmiss");
+        WriteApp(dir, "App_v5.app", appId, "SomeLib", "SomePub", "5.0.0.0");
+
+        var resolver = new DependencyResolver(new[] { dir });
+        var dep = new DependencyRef(Guid.Parse(appId), "SomeLib", "SomePub",
+            new Version(10, 0, 0, 0)); // requires v10 but only v5 exists
+
+        // Must be InvalidOperationException (version near-miss), NOT MissingDependencyException
+        // (completely absent).
+        var ex = Assert.Throws<InvalidOperationException>(() => resolver.Resolve(new[] { dep }));
+        Assert.IsNotType<AlRunnerV2.Infrastructure.MissingDependencyException>(ex);
+        Assert.Contains("5.0", ex.Message);
     }
 
     // ── Part 3: Name+Publisher fallback ───────────────────────────────────────

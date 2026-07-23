@@ -380,6 +380,43 @@ var packageCacheDirs = packageCacheArgs.Count > 0
     : DefaultPackageCacheDirs().ToList();
 Console.WriteLine($"  package caches: {packageCacheDirs.Count} dir(s)");
 
+// Platform-app R2R check: scan the package cache for known Microsoft platform runtime apps
+// (System Application, Base Application, Business Foundation). If any are present as
+// symbol-only (non-R2R) packages, the runner CANNOT execute their codeunits at runtime —
+// the EMIT-ZERO crash is a provisioning gap, not a user-code error. Fail loud here before
+// any bundle compile, naming the fix, instead of deep inside the dep-load pipeline.
+// (--auto-provision downloads the R2R apps and clears the check.)
+if (!provisionSubcommand && packageCacheDirs.Count > 0)
+{
+    var version = AlRunnerV2.Infrastructure.BcArtifacts.SelectedVersion.ToString();
+    var platformReport = AlRunnerV2.Infrastructure.ProvisioningCheck.CheckPlatformApps(
+        version, packageCacheDirs);
+    if (!platformReport.Ok)
+    {
+        if (autoProvision)
+        {
+            Console.Error.WriteLine("[provision] platform R2R apps missing — downloading...");
+            var shortVer = version.Split('.').Length >= 2
+                ? string.Join(".", version.Split('.').Take(2))
+                : version;
+            // Pick first writable cache dir.
+            var pkgCacheOut = packageCacheDirs.FirstOrDefault(Directory.Exists)
+                ?? packageCacheDirs[0];
+            var rc = AlRunner.Provisioning.ArtifactDownloader.PlatformApps(shortVer, pkgCacheOut);
+            if (rc != 0)
+            {
+                Console.Error.WriteLine("[provision] platform-apps download failed; cannot continue.");
+                return 2;
+            }
+        }
+        else
+        {
+            Console.Error.WriteLine(platformReport.ToDetailedMessage());
+            return 2;
+        }
+    }
+}
+
 // One-time runtime setup. Must happen BEFORE any BC type is touched.
 // Install the assembly Resolving handler FIRST so patch reflection or generic
 // instantiation in BC code can resolve transitively-referenced service-tier DLLs
@@ -648,6 +685,19 @@ foreach (var bundle in bundles)
                 if (stdoutSilenced) { Console.SetOut(savedOut); Console.SetError(savedErr); }
                 Console.Error.WriteLine(
                     $"FATAL: dependency compile failed — cannot continue. {ex.Message}");
+                return 1;
+            }
+            catch (AlRunnerV2.Infrastructure.MissingDependencyException ex)
+            {
+                // A declared dependency is completely absent from every package-cache directory.
+                // Continuing to compile would produce thousands of misleading AL0185 "X is missing"
+                // errors that blame the user's own code. Instead: restore streams, print ONE loud
+                // provisioning-gap message naming the dep + fix commands, and abort.
+                if (stdoutSilenced) { Console.SetOut(savedOut); Console.SetError(savedErr); }
+                var bcVer = AlRunnerV2.Infrastructure.BcArtifacts.SelectedVersion.ToString();
+                Console.Error.WriteLine();
+                Console.Error.WriteLine(ex.ToDetailedMessage(bcVer));
+                Console.Error.WriteLine();
                 return 1;
             }
             catch (Exception ex)

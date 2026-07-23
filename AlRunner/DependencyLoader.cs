@@ -69,6 +69,21 @@ public sealed class DependencyLoader
             bool microsoftSourceOnly =
                 string.Equals(m.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)
                 && !AppLoader.IsR2R(path);
+
+            // Known platform runtime apps (System Application / Base Application / Business
+            // Foundation) MUST be R2R packages — their procedure bodies are external/native, so
+            // Tier-3 source-compile ALWAYS fails with EMIT-ZERO. Skip it entirely and print a
+            // loud, actionable provisioning-gap message instead of the cryptic "EMIT-ZERO" error.
+            // The runner still functions via service-tier DLL dispatch for these codeunits.
+            if (microsoftSourceOnly && AlRunnerV2.Infrastructure.ProvisioningCheck.IsKnownPlatformRuntimeApp(m.Name))
+            {
+                var bcVer = AlRunnerV2.Infrastructure.BcArtifacts.SelectedVersion.ToString();
+                Console.Error.WriteLine(
+                    AlRunnerV2.Infrastructure.ProvisioningCheck.BuildPlatformAppMissingR2RMessage(
+                        m.Publisher, m.Name, m.Version.ToString(), path, bcVer));
+                continue;
+            }
+
             Assembly? asm;
             try
             {

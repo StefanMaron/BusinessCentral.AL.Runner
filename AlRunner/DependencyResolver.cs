@@ -82,13 +82,26 @@ public sealed class DependencyResolver
                     $"{dep.Publisher}/{dep.Name}");
                 return;
             }
-            var detail = nearMissVersions != null
-                ? $"(found same-named package at {nearMissVersions} — all below minimum v{dep.Version})"
-                : $"(id={dep.AppId})";
-            throw new InvalidOperationException(
-                $"Dependency not found: {dep.Publisher}/{dep.Name} v{dep.Version} " +
-                $"{detail}. Searched: {string.Join(", ", _cacheDirs)}. " +
-                $"Stack: {string.Join(" -> ", stack.Reverse())}");
+            if (nearMissVersions != null)
+            {
+                // Dep IS in the cache, but every candidate is below the declared minimum version.
+                // This is a version-mismatch problem, not a provisioning gap.
+                throw new InvalidOperationException(
+                    $"Dependency not found: {dep.Publisher}/{dep.Name} v{dep.Version} " +
+                    $"(found same-named package at {nearMissVersions} — all below minimum v{dep.Version}). " +
+                    $"Searched: {string.Join(", ", _cacheDirs)}. " +
+                    $"Stack: {string.Join(" -> ", stack.Reverse())}");
+            }
+            // Dep is completely absent from every searched directory — this is a provisioning gap.
+            // Throw MissingDependencyException (not InvalidOperationException) so Program.cs can
+            // emit ONE loud, actionable "provisioning gap" message and abort before attempting a
+            // doomed bundle compile that would produce thousands of misleading AL0185 errors.
+            throw new AlRunnerV2.Infrastructure.MissingDependencyException(
+                dep.Publisher, dep.Name, dep.Version.ToString(), dep.AppId,
+                _cacheDirs.ToList(),
+                stack.Count > 0
+                    ? string.Join(" → ", stack.Reverse().Append(dep.Name))
+                    : dep.Name);
         }
 
         var id = found.Manifest.AppId;

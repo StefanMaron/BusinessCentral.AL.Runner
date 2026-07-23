@@ -37,6 +37,132 @@ public static class ProvisioningCheck
     // FileLoadException 0x80131621). Its presence signals the full /service/ closure landed.
     private const string ClosureSentinel = "Microsoft.Identity.ServiceEssentials.Core.dll";
 
+    // ── Platform-app R2R check ────────────────────────────────────────────────
+    // These Microsoft apps MUST be provided as R2R (publishedartifacts/*.dll) packages.
+    // Their procedure bodies are external/native — BC compiles them from AL source produces
+    // EMIT-ZERO (the emitter crashes on NavTypeKind issues). The runner defers to service-tier
+    // DLL dispatch for their codeunits at runtime. When a symbol-only .app is found in the
+    // package cache instead of the R2R runtime package, it is a PROVISIONING gap.
+    public static readonly IReadOnlyList<string> KnownPlatformRuntimeApps = new[]
+    {
+        "System Application",
+        "Base Application",
+        "Business Foundation",
+    };
+
+    /// <summary>True if <paramref name="appName"/> is a known Microsoft platform runtime app.</summary>
+    public static bool IsKnownPlatformRuntimeApp(string appName)
+        => KnownPlatformRuntimeApps.Any(n =>
+            string.Equals(n, appName, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Report returned by <see cref="CheckPlatformApps"/>. Each issue entry is a symbol-only
+    /// (non-R2R) platform app found in the cache that should be an R2R runtime package.
+    /// </summary>
+    public sealed record PlatformAppsReport(
+        string Version,
+        IReadOnlyList<(string Name, string AppVersion, string AppPath)> Issues,
+        IReadOnlyList<string> SearchedDirs)
+    {
+        public bool Ok => Issues.Count == 0;
+
+        /// <summary>
+        /// One loud, self-contained message: names every symbol-only platform app + its path,
+        /// the exact manual download command, and the one-command auto-resolve.
+        /// </summary>
+        public string ToDetailedMessage()
+        {
+            var lines = new List<string>
+            {
+                "BC runtime apps are not available as R2R packages — only symbol/dev packages were found.",
+                "  Symbol-only packages cannot execute at runtime (their procedure bodies are external/native).",
+                "",
+                "  Apps found as symbol-only (provisioning gap):",
+            };
+            foreach (var (name, ver, path) in Issues)
+                lines.Add($"    'Microsoft {name}' v{ver}  →  {path}");
+            lines.Add("");
+            lines.Add("  Resolve it ONE of these ways:");
+            lines.Add("");
+            lines.Add("  (a) One command (recommended):");
+            lines.Add("        al-runner provision");
+            lines.Add("      or re-run with --auto-provision.");
+            lines.Add("");
+            lines.Add("  (b) Download Microsoft platform apps only:");
+            var shortVer = Version.Split('.').Length >= 2
+                ? string.Join(".", Version.Split('.').Take(2))
+                : Version;
+            lines.Add($"        dotnet run --project tools/DownloadArtifacts -- platform-apps {shortVer} \"<package-cache-dir>\"");
+            return string.Join(Environment.NewLine, lines);
+        }
+    }
+
+    /// <summary>
+    /// Scan <paramref name="packageCacheDirs"/> for known Microsoft platform runtime apps
+    /// (System Application, Base Application, Business Foundation). If any are found as
+    /// symbol-only (non-R2R) packages, returns a report listing them. Returns an Ok report
+    /// when the apps are absent from the cache (they'll be served by service-tier DLLs) or
+    /// when all found apps are R2R.
+    /// </summary>
+    public static PlatformAppsReport CheckPlatformApps(
+        string version,
+        IReadOnlyList<string> packageCacheDirs)
+    {
+        var issues = new List<(string Name, string AppVersion, string AppPath)>();
+
+        foreach (var platformAppName in KnownPlatformRuntimeApps)
+        {
+            // Collect all instances of this platform app across all cache dirs.
+            var found = new List<(string AppPath, string AppVersion, bool IsR2R)>();
+            foreach (var dir in packageCacheDirs)
+            {
+                if (!Directory.Exists(dir)) continue;
+                foreach (var appFile in Directory.EnumerateFiles(dir, "*.app", SearchOption.AllDirectories))
+                {
+                    var m = AlRunnerV2.AppLoader.ReadManifest(appFile);
+                    if (m == null) continue;
+                    if (!string.Equals(m.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!string.Equals(m.Name, platformAppName, StringComparison.OrdinalIgnoreCase)) continue;
+                    found.Add((appFile, m.Version.ToString(), AlRunnerV2.AppLoader.IsR2R(appFile)));
+                }
+            }
+
+            // Issue: at least one instance found but NONE is R2R.
+            if (found.Count > 0 && !found.Any(f => f.IsR2R))
+            {
+                var best = found.OrderByDescending(f => f.AppVersion).First();
+                issues.Add((platformAppName, best.AppVersion, best.AppPath));
+            }
+        }
+
+        return new PlatformAppsReport(version, issues, packageCacheDirs);
+    }
+
+    /// <summary>
+    /// Builds the loud, actionable warning message for a known Microsoft platform app
+    /// that was found in the package cache as a symbol-only (non-R2R) package. Emitted
+    /// by DependencyLoader when it detects this condition to convert the otherwise cryptic
+    /// "EMIT-ZERO" error into a provisioning-gap explanation.
+    /// </summary>
+    public static string BuildPlatformAppMissingR2RMessage(
+        string publisher, string appName, string appVersion, string symbolOnlyPath, string bcVersion)
+    {
+        var shortVer = bcVersion.Split('.').Length >= 2
+            ? string.Join(".", bcVersion.Split('.').Take(2))
+            : bcVersion;
+        return string.Join(Environment.NewLine, new[]
+        {
+            $"[provision-gap] '{publisher} {appName}' v{appVersion} is not available as an R2R runtime package.",
+            $"  Found:  {symbolOnlyPath}",
+            $"  Status: symbol/dev package only — cannot execute at runtime (procedure bodies are external/native).",
+            $"  The runner will use service-tier DLL dispatch as a fallback.",
+            $"",
+            $"  Fix: run ONE of:",
+            $"    al-runner provision  (or re-run with --auto-provision)",
+            $"    dotnet run --project tools/DownloadArtifacts -- platform-apps {bcVersion} \"<package-cache-dir>\"",
+        });
+    }
+
     public sealed record Report(string Version, string ServiceTierDir, IReadOnlyList<string> MissingFiles)
     {
         public bool Ok => MissingFiles.Count == 0;

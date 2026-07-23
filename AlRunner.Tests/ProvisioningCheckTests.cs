@@ -1,7 +1,11 @@
 // ProvisioningCheckTests — the engine-artifact completeness gate and its loud, detailed
 // "how to fix" report (the runner's "no silent download" policy in action).
+// Also covers the platform-app R2R check (symbol-only vs R2R .app detection).
 
+using System.IO.Compression;
+using System.Text;
 using Xunit;
+using AlRunnerV2;
 using AlRunnerV2.Infrastructure;
 
 namespace AlRunnerV2.Tests;
@@ -96,5 +100,176 @@ public sealed class ProvisioningCheckTests : IDisposable
         Assert.Contains("--auto-provision", msg);
         // And it is explicit that the runner will NOT silently download.
         Assert.Contains("will not auto-download", msg);
+    }
+
+    // ── Platform-app R2R check ────────────────────────────────────────────────
+
+    /// <summary>Helper: write a minimal symbol-only (not R2R) NAVX .app to a directory.</summary>
+    private static void WriteSymbolOnlyApp(string dir, string fileName,
+        string appId, string name, string publisher, string version)
+    {
+        File.WriteAllBytes(Path.Combine(dir, fileName), MakeMinimalNavxApp(appId, name, publisher, version));
+    }
+
+    /// <summary>Helper: write a minimal R2R NAVX .app (has publishedartifacts/*.dll).</summary>
+    private static void WriteR2RApp(string dir, string fileName,
+        string appId, string name, string publisher, string version)
+    {
+        File.WriteAllBytes(Path.Combine(dir, fileName), MakeR2RNavxApp(appId, name, publisher, version));
+    }
+
+    /// <summary>Builds a NAVX .app with no publishedartifacts (symbol-only).</summary>
+    private static byte[] MakeMinimalNavxApp(string appId, string name, string publisher, string version)
+    {
+        var xml = $"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
+              <App Id="{appId}" Name="{name}" Publisher="{publisher}" Version="{version}"/>
+            </Package>
+            """;
+        return WrapNavx(xml);
+    }
+
+    /// <summary>Builds a NAVX .app with a publishedartifacts/*.dll entry (R2R-like).</summary>
+    private static byte[] MakeR2RNavxApp(string appId, string name, string publisher, string version)
+    {
+        var xml = $"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
+              <App Id="{appId}" Name="{name}" Publisher="{publisher}" Version="{version}"/>
+            </Package>
+            """;
+        return WrapNavx(xml, includePublishedArtifact: true);
+    }
+
+    private static byte[] WrapNavx(string manifestXml, bool includePublishedArtifact = false)
+    {
+        using var ms = new MemoryStream();
+        using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            var entry = zip.CreateEntry("NavxManifest.xml");
+            using (var es = entry.Open())
+                es.Write(Encoding.UTF8.GetBytes(manifestXml));
+
+            if (includePublishedArtifact)
+            {
+                var dll = zip.CreateEntry("publishedartifacts/app.dll");
+                using var ds = dll.Open();
+                ds.Write(new byte[] { 0x4D, 0x5A }); // fake PE header
+            }
+        }
+        var zipBytes = ms.ToArray();
+        var result = new byte[8 + zipBytes.Length];
+        result[0] = (byte)'N'; result[1] = (byte)'A'; result[2] = (byte)'V'; result[3] = (byte)'X';
+        BitConverter.TryWriteBytes(result.AsSpan(4, 4), (uint)8);
+        zipBytes.CopyTo(result, 8);
+        return result;
+    }
+
+    [Fact]
+    public void CheckPlatformApps_SymbolOnlySystemApp_ReportsIssue()
+    {
+        var dir = Path.Combine(_dir, "pkg");
+        Directory.CreateDirectory(dir);
+        WriteSymbolOnlyApp(dir, "microsoft_system application_28.2.0.0.app",
+            "00000000-0000-0000-0000-000000000001", "System Application", "Microsoft", "28.2.0.0");
+
+        var report = ProvisioningCheck.CheckPlatformApps("28.2.0.0", new[] { dir });
+
+        Assert.False(report.Ok);
+        Assert.Single(report.Issues);
+        Assert.Equal("System Application", report.Issues[0].Name);
+        Assert.Contains("28.2.0.0", report.Issues[0].AppVersion);
+    }
+
+    [Fact]
+    public void CheckPlatformApps_SymbolOnlySystemApp_MessageNamesAppAndFix()
+    {
+        var dir = Path.Combine(_dir, "pkg2");
+        Directory.CreateDirectory(dir);
+        WriteSymbolOnlyApp(dir, "microsoft_system application_28.2.0.0.app",
+            "00000000-0000-0000-0000-000000000002", "System Application", "Microsoft", "28.2.0.0");
+
+        var report = ProvisioningCheck.CheckPlatformApps("28.2.0.0", new[] { dir });
+        var msg = report.ToDetailedMessage();
+
+        Assert.Contains("System Application", msg);
+        Assert.Contains("platform-apps", msg);
+        Assert.Contains("al-runner provision", msg);
+        Assert.Contains("symbol-only", msg);
+    }
+
+    [Fact]
+    public void CheckPlatformApps_R2RSystemApp_IsOk()
+    {
+        var dir = Path.Combine(_dir, "pkg3");
+        Directory.CreateDirectory(dir);
+        WriteR2RApp(dir, "microsoft_system application_28.2.0.0.app",
+            "00000000-0000-0000-0000-000000000003", "System Application", "Microsoft", "28.2.0.0");
+
+        var report = ProvisioningCheck.CheckPlatformApps("28.2.0.0", new[] { dir });
+
+        Assert.True(report.Ok);
+        Assert.Empty(report.Issues);
+    }
+
+    [Fact]
+    public void CheckPlatformApps_NoPlatformAppsInCache_IsOk()
+    {
+        // Empty cache — platform apps absent is fine (served by service-tier DLLs).
+        var report = ProvisioningCheck.CheckPlatformApps("28.2.0.0", new[] { _dir });
+        Assert.True(report.Ok);
+        Assert.Empty(report.Issues);
+    }
+
+    [Fact]
+    public void CheckPlatformApps_BothR2RAndSymbolOnly_IsOk()
+    {
+        // If there's ALSO an R2R version, no issue (loader picks R2R via Tier 2).
+        var dir = Path.Combine(_dir, "pkg4");
+        Directory.CreateDirectory(dir);
+        WriteSymbolOnlyApp(dir, "microsoft_system application_28.1.0.0.app",
+            "00000000-0000-0000-0000-000000000004", "System Application", "Microsoft", "28.1.0.0");
+        WriteR2RApp(dir, "microsoft_system application_28.2.0.0.app",
+            "00000000-0000-0000-0000-000000000004", "System Application", "Microsoft", "28.2.0.0");
+
+        var report = ProvisioningCheck.CheckPlatformApps("28.2.0.0", new[] { dir });
+        Assert.True(report.Ok);
+    }
+
+    [Fact]
+    public void BuildPlatformAppMissingR2RMessage_ContainsNameAndFix()
+    {
+        var msg = ProvisioningCheck.BuildPlatformAppMissingR2RMessage(
+            "Microsoft", "System Application", "28.2.0.0",
+            "/pkg/microsoft_system application_28.2.0.0.app", "28.2.50931.52786");
+
+        Assert.Contains("System Application", msg);
+        Assert.Contains("28.2.50931.52786", msg);
+        Assert.Contains("platform-apps", msg);
+        Assert.Contains("al-runner provision", msg);
+        Assert.Contains("provision-gap", msg);
+        Assert.Contains("symbol/dev package", msg);
+    }
+
+    [Fact]
+    public void IsKnownPlatformRuntimeApp_KnownNames_ReturnsTrue()
+    {
+        Assert.True(ProvisioningCheck.IsKnownPlatformRuntimeApp("System Application"));
+        Assert.True(ProvisioningCheck.IsKnownPlatformRuntimeApp("Base Application"));
+        Assert.True(ProvisioningCheck.IsKnownPlatformRuntimeApp("Business Foundation"));
+        // Case-insensitive
+        Assert.True(ProvisioningCheck.IsKnownPlatformRuntimeApp("system application"));
+        Assert.True(ProvisioningCheck.IsKnownPlatformRuntimeApp("BASE APPLICATION"));
+    }
+
+    [Fact]
+    public void IsKnownPlatformRuntimeApp_UnknownName_ReturnsFalse()
+    {
+        Assert.False(ProvisioningCheck.IsKnownPlatformRuntimeApp("Tests-TestLibraries"));
+        Assert.False(ProvisioningCheck.IsKnownPlatformRuntimeApp("Business Foundation Test Libraries"));
+        Assert.False(ProvisioningCheck.IsKnownPlatformRuntimeApp("My Custom App"));
+        // "System" (platform) is NOT a known platform runtime app — it's served by Ncl
+        Assert.False(ProvisioningCheck.IsKnownPlatformRuntimeApp("System"));
     }
 }
