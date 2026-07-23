@@ -18,6 +18,22 @@ public static partial class BcRuntime
     // Cache: codeunit ID → generated codeunit Type (cleared per-test-assembly via SetTestAssembly).
     private static readonly ConcurrentDictionary<int, Type?> _codeunitTypeCache = new();
 
+    // Cache: codeunit ID → the single shared instance, for SingleInstance=true codeunits only.
+    // Real BC gives a SingleInstance codeunit exactly one instance per session, so instance
+    // fields persist across every call/reference within a test. Cleared at the per-test
+    // boundary by ResetSingleInstanceCache() (called from RecordPatches.ResetPerTestState(),
+    // itself invoked at both codeunit- and test-level isolation boundaries in TestExecutor) —
+    // otherwise SingleInstance state would leak from one test into the next, which real BC's
+    // per-test rollback does not allow.
+    private static readonly ConcurrentDictionary<int, Microsoft.Dynamics.Nav.Runtime.NavCodeunit> _singleInstanceCache = new();
+
+    /// <summary>
+    /// Drop every cached SingleInstance codeunit instance. Must run at the per-test-isolation
+    /// boundary (see RecordPatches.ResetPerTestState) so SingleInstance field state does not
+    /// leak across tests, mirroring real BC's per-test transaction rollback.
+    /// </summary>
+    public static void ResetSingleInstanceCache() => _singleInstanceCache.Clear();
+
     // Fallback cache: report ID → skeleton NCLMetaReport built via CreateEmptyNCLMetaReport
     // when NavGlobal.NCLMetadata.GetMetaReportById returns null or throws.
     private static readonly ConcurrentDictionary<int, object> _metaReportFallbackCache = new();
@@ -197,6 +213,14 @@ public static partial class BcRuntime
         Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle self)
     {
         int id = self.ObjectId.ObjectNumber;
+
+        // SingleInstance=true codeunits get exactly one instance per session — return the
+        // cached one (built by an earlier caller, possibly with a different `self`/handle) so
+        // its instance fields keep whatever state prior calls left in them. See the handle/
+        // parent note below for why reusing the first caller's tree-parent is correct here.
+        if (_singleInstanceCache.TryGetValue(id, out var cachedInstance))
+            return cachedInstance;
+
         var codeunitType = _codeunitTypeCache.GetOrAdd(id, FindCodeunitType);
         if (codeunitType == null)
         {
@@ -223,6 +247,17 @@ public static partial class BcRuntime
         // SystemInitialization.IsInProgress() returns true. See PrimeCodeunit151Instance.
         if (id == 151)
             AlRunnerV2.BcRuntime.PrimeCodeunit151Instance(instance);
+
+        // NavCodeunit.IsSingleInstance is a real, unmodified NCL property (base implementation
+        // `return false`; BC's own emitter overrides it per-codeunit to a compile-time constant
+        // from the AL `SingleInstance` property) — reading it off the freshly built instance is
+        // faithful metadata, not a guess. Cache session-wide on first construction so every
+        // later resolution of this codeunit id (from any handle) returns the SAME instance and
+        // its instance fields persist across calls, matching real BC's one-instance-per-session
+        // contract for SingleInstance=true codeunits.
+        if (instance.IsSingleInstance)
+            _singleInstanceCache[id] = instance;
+
         return instance;
     }
 

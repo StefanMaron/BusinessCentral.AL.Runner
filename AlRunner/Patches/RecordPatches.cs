@@ -1000,6 +1000,12 @@ public static partial class RecordPatches
         // for why this is a distinct leak from _dataAccessByTable above and must be swept
         // at the same per-test boundary.
         AlRunnerV2.BcRuntime.DisposeSkeletonSharedObjectContainerChildren();
+
+        // SingleInstance=true codeunit instances are session-scoped in real BC and get reset
+        // on the same per-test transaction rollback boundary as everything else above — without
+        // this a SingleInstance codeunit's instance-variable state would leak from one test into
+        // the next. See BcRuntime._singleInstanceCache / BcRuntime.ResetSingleInstanceCache.
+        AlRunnerV2.BcRuntime.ResetSingleInstanceCache();
     }
 
     public static object NavDataAccessSource_GetDataAccessForTable(object self, NCLMetaTable table, bool isTemporary)
