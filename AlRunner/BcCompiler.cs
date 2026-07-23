@@ -83,6 +83,35 @@ public sealed class BcCompiler
     // synthetic (SymbolReference.json-free) .app to the BC package scanner, which
     // would report AL1023 "package not valid". Set by RunLayeredPrePass.
     private static IReadOnlyList<string>? _extraSymbolDirs;
+    // Extra preprocessor symbols supplied by the caller via --define / --preprocessor-symbols.
+    // Merged with the built-in CLEANSCHEMA1..25 set at both ParseOptions sites.
+    private static IReadOnlyList<string>? _extraPreprocessorSymbols;
+
+    /// <summary>
+    /// Registers additional preprocessor symbols (e.g. from --define MY_SYM) that are
+    /// merged with the built-in CLEANSCHEMA1..25 set at every <see cref="NavCA.ParseOptions"/>
+    /// call. Symbols must be valid AL identifiers (validated by the caller).
+    /// </summary>
+    public static void SetExtraPreprocessorSymbols(IReadOnlyList<string> symbols)
+    {
+        lock (_refSync)
+        {
+            _extraPreprocessorSymbols = symbols;
+        }
+    }
+
+    /// <summary>
+    /// Returns true if <paramref name="symbol"/> is a valid AL preprocessor identifier:
+    /// one or more characters from [A-Za-z0-9_], not starting with a digit.
+    /// </summary>
+    public static bool IsValidPreprocessorSymbol(string symbol)
+    {
+        if (symbol.Length == 0) return false;
+        if (char.IsDigit(symbol[0])) return false;
+        foreach (var c in symbol)
+            if (!char.IsLetterOrDigit(c) && c != '_') return false;
+        return true;
+    }
 
     // The bundle's real app.json identity, set per bundle before Emit. Used so the
     // main compilation matches internalsVisibleTo grants from its dependencies (BC
@@ -798,12 +827,13 @@ public sealed class BcCompiler
             throw new InvalidOperationException(
                 $"BcCompiler.Emit: no .al files under {string.Join(", ", dirs)}");
 
-        // Preprocessor symbols: CLEANSCHEMA1..25. v1 computes per-source max from
-        // any #pragma the AL files set (Program.cs:1454-1462); we use the static
-        // 1..25 set v2 was already shipping — sufficient for the tests/ corpus.
+        // Preprocessor symbols: CLEANSCHEMA1..25 merged with any caller-supplied symbols.
+        // v1 computes per-source max from any #pragma the AL files set (Program.cs:1454-1462);
+        // we use the static 1..25 set v2 was already shipping — sufficient for the tests/ corpus.
         var parseOpts = new NavCA.ParseOptions(
             runtimeVersion: null!,
-            preprocessorSymbols: Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}"),
+            preprocessorSymbols: Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}")
+                .Concat(_extraPreprocessorSymbols ?? []),
             documentationMode: NavCA.DocumentationMode.None);
 
         bool _timing = Environment.GetEnvironmentVariable("BCCOMPILER_TIMING") == "1";
@@ -1270,7 +1300,8 @@ public sealed class BcCompiler
 
         var parseOpts = new NavCA.ParseOptions(
             runtimeVersion: null!,
-            preprocessorSymbols: Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}"),
+            preprocessorSymbols: Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}")
+                .Concat(_extraPreprocessorSymbols ?? []),
             documentationMode: NavCA.DocumentationMode.None);
         var trees = new NavSyntax.SyntaxTree[alFiles.Count];
         Parallel.For(0, alFiles.Count, i =>

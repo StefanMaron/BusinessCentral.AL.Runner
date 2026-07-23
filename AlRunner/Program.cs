@@ -173,6 +173,9 @@ string? dumpCsharpDir = null;
 // process-global BcArtifacts selection below, before any resolver runs.
 string? bcVersionArg = null;
 string? artifactPathArg = null;
+// Extra preprocessor symbols supplied via --define SYM / --preprocessor-symbols A,B,C.
+// Validated as AL identifiers and merged with CLEANSCHEMA1..25 in BcCompiler.
+var extraPreprocessorSymbols = new List<string>();
 // `provision` subcommand: `al-runner provision [<project>]` provisions the BC artifacts
 // for the project's version and exits (no test run). `--auto-provision` provisions on the
 // fly when artifacts are missing, then continues the normal run. Both are the opt-in that
@@ -199,6 +202,32 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--failures-only" || args[i] == "--quiet") { showPass = false; continue; }
     if (args[i] == "--strict") { strictExitCode = true; continue; }
     if ((args[i] == "--test" || args[i] == "--filter") && i + 1 < args.Length) { testFilter = args[++i]; continue; }
+    if (args[i] == "--preprocessor-symbols" && i + 1 < args.Length)
+    {
+        foreach (var raw in args[++i].Split(','))
+        {
+            var sym = raw.Trim();
+            if (sym.Length == 0) continue;
+            if (!BcCompiler.IsValidPreprocessorSymbol(sym))
+            {
+                Console.Error.WriteLine($"--preprocessor-symbols: '{sym}' is not a valid AL preprocessor symbol (letters/digits/underscores, must not start with a digit).");
+                return 2;
+            }
+            extraPreprocessorSymbols.Add(sym);
+        }
+        continue;
+    }
+    if (args[i] == "--define" && i + 1 < args.Length)
+    {
+        var sym = args[++i].Trim();
+        if (!BcCompiler.IsValidPreprocessorSymbol(sym))
+        {
+            Console.Error.WriteLine($"--define: '{sym}' is not a valid AL preprocessor symbol (letters/digits/underscores, must not start with a digit).");
+            return 2;
+        }
+        extraPreprocessorSymbols.Add(sym);
+        continue;
+    }
     if (args[i] == "--dump-csharp" && i + 1 < args.Length)
     {
         dumpCsharpDir = args[++i];
@@ -423,6 +452,8 @@ if (!provisionSubcommand && packageCacheDirs.Count > 0)
 // (Microsoft.Dynamics.Nav.Core, .AL.Common, .Apps, .TableProxyBuilder, etc. — 19
 // of the 24 BC DLLs Ncl.dll references aren't project-referenced).
 DependencyLoader.EnsureResolverInstalled_Public();
+if (extraPreprocessorSymbols.Count > 0)
+    BcCompiler.SetExtraPreprocessorSymbols(extraPreprocessorSymbols.Distinct().ToList());
 var t0 = System.Diagnostics.Stopwatch.StartNew();
 BcRuntime.EnsureApplied();
 Console.WriteLine($"BC runtime patches applied ({t0.ElapsedMilliseconds}ms)");
@@ -1739,6 +1770,13 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("  --per-suite             Legacy per-Compilation path. Default is bundled mode");
     w.WriteLine("                          (5-7x faster, parity-verified).");
     w.WriteLine("  --bundled               No-op alias for the default bundled mode (deprecated).");
+    w.WriteLine("  --define SYM            Define an AL preprocessor symbol for source compilation");
+    w.WriteLine("                          (repeatable). SYM must be a valid AL identifier");
+    w.WriteLine("                          (letters/digits/underscores, not starting with a digit).");
+    w.WriteLine("                          Merged with the built-in CLEANSCHEMA1..25 set.");
+    w.WriteLine("  --preprocessor-symbols A,B,...");
+    w.WriteLine("                          Define multiple AL preprocessor symbols (comma-separated).");
+    w.WriteLine("                          Each entry is validated identically to --define.");
     w.WriteLine();
     w.WriteLine("OUTPUT");
     w.WriteLine("  --out PATH              Write the failure-classification JSON to PATH and");
