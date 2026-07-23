@@ -439,16 +439,36 @@ if (!provisionSubcommand && packageCacheDirs.Count > 0)
         if (autoProvision)
         {
             Console.Error.WriteLine("[provision] platform R2R apps missing — downloading...");
-            var shortVer = version.Split('.').Length >= 2
-                ? string.Join(".", version.Split('.').Take(2))
-                : version;
+            // The missing apps carry their OWN version (platformReport.Issues), which can be
+            // a different minor than the engine's SelectedVersion — the engine is
+            // version-agnostic w.r.t. the R2R apps it dispatches to at runtime. Provision the
+            // apps' minor, not a truncation of the engine version (that 404s: PlatformApps
+            // needs a FULL artifact version like 28.2.50931.52786, not "28.1").
+            var mm = AlRunnerV2.Infrastructure.ProvisioningCheck.DeriveProvisionMajorMinor(platformReport, version);
+            var full = AlRunner.Provisioning.ArtifactDownloader.ResolveVersion(
+                mm, m => Console.Error.WriteLine($"[provision] {m}"));
+            if (full == null)
+            {
+                Console.Error.WriteLine($"[provision] could not resolve a full BC artifact version for '{mm}'; cannot continue.");
+                return 2;
+            }
             // Pick first writable cache dir.
             var pkgCacheOut = packageCacheDirs.FirstOrDefault(Directory.Exists)
                 ?? packageCacheDirs[0];
-            var rc = AlRunner.Provisioning.ArtifactDownloader.PlatformApps(shortVer, pkgCacheOut);
+            var rc = AlRunner.Provisioning.ArtifactDownloader.PlatformApps(
+                full, pkgCacheOut, m => Console.Error.WriteLine($"[provision] {m}"));
             if (rc != 0)
             {
                 Console.Error.WriteLine("[provision] platform-apps download failed; cannot continue.");
+                return 2;
+            }
+            // Re-check: never silently continue on a partial/failed provision.
+            platformReport = AlRunnerV2.Infrastructure.ProvisioningCheck.CheckPlatformApps(
+                version, packageCacheDirs);
+            if (!platformReport.Ok)
+            {
+                var stillMissing = string.Join(", ", platformReport.Issues.Select(i => i.Name));
+                Console.Error.WriteLine($"[provision] platform apps still symbol-only after download: {stillMissing}");
                 return 2;
             }
         }

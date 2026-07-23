@@ -272,4 +272,58 @@ public sealed class ProvisioningCheckTests : IDisposable
         // "System" (platform) is NOT a known platform runtime app — it's served by Ncl
         Assert.False(ProvisioningCheck.IsKnownPlatformRuntimeApp("System"));
     }
+
+    // ── DeriveProvisionMajorMinor ─────────────────────────────────────────────
+    // The missing/symbol-only platform apps carry their OWN real version (e.g. 28.2.x.y)
+    // in PlatformAppsReport.Issues, which can differ from the engine's SelectedVersion
+    // (e.g. 28.1.x.y — the engine is version-agnostic w.r.t. the R2R apps it dispatches
+    // to). Auto-provision must download the apps' minor, not truncate the engine's.
+
+    [Fact]
+    public void DeriveProvisionMajorMinor_UsesFirstIssueAppVersion_NotFallback()
+    {
+        var report = new ProvisioningCheck.PlatformAppsReport(
+            "28.1.49838.50794",
+            new[] { ("System Application", "28.2.50931.51111", "/pkg/sysapp.app") },
+            new[] { "/pkg" });
+
+        var mm = ProvisioningCheck.DeriveProvisionMajorMinor(report, "28.1.49838.50794");
+
+        Assert.Equal("28.2", mm);
+    }
+
+    [Fact]
+    public void DeriveProvisionMajorMinor_NoIssues_FallsBackToFallbackVersion()
+    {
+        var report = new ProvisioningCheck.PlatformAppsReport(
+            "28.1.49838.50794",
+            Array.Empty<(string, string, string)>(),
+            new[] { "/pkg" });
+
+        var mm = ProvisioningCheck.DeriveProvisionMajorMinor(report, "28.1.49838.50794");
+
+        Assert.Equal("28.1", mm);
+    }
+
+    [Fact]
+    public void DeriveProvisionMajorMinor_ShortFallback_ReturnsAsIs()
+    {
+        var report = new ProvisioningCheck.PlatformAppsReport(
+            "28.1", Array.Empty<(string, string, string)>(), new[] { "/pkg" });
+
+        var mm = ProvisioningCheck.DeriveProvisionMajorMinor(report, "28.1");
+
+        Assert.Equal("28.1", mm);
+    }
+
+    [Fact]
+    public void DeriveProvisionMajorMinor_SingleTokenVersion_ReturnedAsIs()
+    {
+        var report = new ProvisioningCheck.PlatformAppsReport(
+            "28", Array.Empty<(string, string, string)>(), new[] { "/pkg" });
+
+        var mm = ProvisioningCheck.DeriveProvisionMajorMinor(report, "28");
+
+        Assert.Equal("28", mm);
+    }
 }

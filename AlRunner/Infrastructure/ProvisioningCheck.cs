@@ -89,10 +89,11 @@ public static class ProvisioningCheck
             lines.Add("      or re-run with --auto-provision.");
             lines.Add("");
             lines.Add("  (b) Download Microsoft platform apps only:");
-            var shortVer = Version.Split('.').Length >= 2
-                ? string.Join(".", Version.Split('.').Take(2))
-                : Version;
-            lines.Add($"        dotnet run --project tools/DownloadArtifacts -- platform-apps {shortVer} \"<package-cache-dir>\"");
+            // Use the FIRST missing app's own real version — not a truncation of Version
+            // (the engine version), which can be a different minor and would 404 against
+            // the artifact CDN (it needs a FULL artifact version, e.g. 28.2.50931.52786).
+            var suggestVer = Issues.Count > 0 ? Issues[0].AppVersion : "<full-version, e.g. 28.2.50931.52786>";
+            lines.Add($"        dotnet run --project tools/DownloadArtifacts -- platform-apps {suggestVer} \"<package-cache-dir>\"");
             return string.Join(Environment.NewLine, lines);
         }
     }
@@ -139,6 +140,23 @@ public static class ProvisioningCheck
     }
 
     /// <summary>
+    /// Derives the BC major.minor to auto-provision platform apps for. The engine is
+    /// version-agnostic w.r.t. the R2R apps it dispatches to at runtime, so the minor to
+    /// download is the one the MISSING apps actually need (carried in
+    /// <paramref name="report"/>.Issues[0].AppVersion) — NOT the engine's own
+    /// <paramref name="fallbackVersion"/> (SelectedVersion), which can be a different minor
+    /// (e.g. engine 28.1 running 28.2 R2R business logic). Falls back to
+    /// <paramref name="fallbackVersion"/>'s major.minor when there are no issues. Pure —
+    /// does no I/O.
+    /// </summary>
+    public static string DeriveProvisionMajorMinor(PlatformAppsReport report, string fallbackVersion)
+    {
+        var source = report.Issues.Count > 0 ? report.Issues[0].AppVersion : fallbackVersion;
+        var parts = source.Split('.');
+        return parts.Length >= 2 ? string.Join(".", parts.Take(2)) : source;
+    }
+
+    /// <summary>
     /// Builds the loud, actionable warning message for a known Microsoft platform app
     /// that was found in the package cache as a symbol-only (non-R2R) package. Emitted
     /// by DependencyLoader when it detects this condition to convert the otherwise cryptic
@@ -147,19 +165,21 @@ public static class ProvisioningCheck
     public static string BuildPlatformAppMissingR2RMessage(
         string publisher, string appName, string appVersion, string symbolOnlyPath, string bcVersion)
     {
-        var shortVer = bcVersion.Split('.').Length >= 2
-            ? string.Join(".", bcVersion.Split('.').Take(2))
-            : bcVersion;
         return string.Join(Environment.NewLine, new[]
         {
             $"[provision-gap] '{publisher} {appName}' v{appVersion} is not available as an R2R runtime package.",
             $"  Found:  {symbolOnlyPath}",
             $"  Status: symbol/dev package only — cannot execute at runtime (procedure bodies are external/native).",
+            $"  Engine version: {bcVersion} (the app's own version, {appVersion}, may be a different minor —",
+            $"  the engine is version-agnostic w.r.t. the R2R apps it dispatches to at runtime).",
             $"  The runner will use service-tier DLL dispatch as a fallback.",
             $"",
             $"  Fix: run ONE of:",
             $"    al-runner provision  (or re-run with --auto-provision)",
-            $"    dotnet run --project tools/DownloadArtifacts -- platform-apps {bcVersion} \"<package-cache-dir>\"",
+            // Suggest the APP's own version, not bcVersion (the engine's) — the engine is
+            // version-agnostic w.r.t. the R2R apps it dispatches to, so these can differ
+            // (e.g. engine 28.1 running 28.2 R2R apps); using bcVersion here would 404.
+            $"    dotnet run --project tools/DownloadArtifacts -- platform-apps {appVersion} \"<package-cache-dir>\"",
         });
     }
 
