@@ -158,6 +158,13 @@
     <Reference Include="Microsoft.Dynamics.Nav.CodeAnalysis">
       <HintPath>$(ServiceTierPath)/Microsoft.Dynamics.Nav.CodeAnalysis.dll</HintPath>
     </Reference>
+    <!-- Needed only for INCLObjectXmlMetadataLoader.GetExtensionDeltasForAppObject's
+         parameter/return types (NavAppRuntimeMetadata / NavAppObjectMetadataRuntimeDeltas)
+         so RunnerXmlMetadataLoader.cs can implement that interface directly instead of via
+         a runtime DispatchProxy. Same artifact folder as the 5 references above. -->
+    <Reference Include="Microsoft.Dynamics.Nav.Apps">
+      <HintPath>$(ServiceTierPath)/Microsoft.Dynamics.Nav.Apps.dll</HintPath>
+    </Reference>
   </ItemGroup>
 
   <!-- BC Service Tier DLL provisioning. Downloading is an EXPLICIT, opt-in step

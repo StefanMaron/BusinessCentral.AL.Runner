@@ -72,6 +72,21 @@ public static partial class RecordPatches
             id => _metaFormCache.GetOrAdd(id, BuildNCLMetaForm), "Page");
 
         // Reports — §P, mirror via BuildNCLMetaReport using NCLMetaReport.CreateEmptyNCLMetaReport.
+        //
+        // NavGlobal.MetadataProvider (= SystemTenant.metadataProvider) is null until
+        // BcRuntime.EnsureMetadataProviderSeeded() runs (skeleton built via
+        // GetUninitializedObject; the real ctor that assigns it never ran). It was
+        // previously seeded lazily, only on first virtual-Field-table (2000000041)
+        // access — fine for FieldDataProvider, but any AL surface that reaches report
+        // metadata through the INSTANCE path (Report.DefaultLayout / Report.WordXmlPart
+        // -> NavGlobal.MetadataProvider.GetReportMetadata(id)) NREs on that null
+        // receiver BEFORE our NCLMetadata_GetMetaApplicationObjectByType hook (and hence
+        // RunnerMetaApplicationObjectLoader) is ever reached — a latent test-ordering
+        // dependency (it "worked" in bundles where some other test happened to touch the
+        // Field table first). Seed it here too: idempotent, and this method already runs
+        // once per bundle before any AL test code executes, so every report-metadata AL
+        // surface gets a real receiver regardless of test order.
+        AlRunnerV2.BcRuntime.EnsureMetadataProviderSeeded();
         PopulateOneObjectType(arr, objectTypeReport, _parsedReports.Keys.ToArray(),
             id => _metaReportCache.GetOrAdd(id, BuildNCLMetaReport), "Report");
 

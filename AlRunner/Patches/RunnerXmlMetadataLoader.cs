@@ -1,0 +1,125 @@
+// RunnerXmlMetadataLoader — a real INCLMetaApplicationObjectLoader /
+// INCLObjectXmlMetadataLoader backed by AlReportMetadataRegistry, so
+// NCLMetaReport.LoadMetadata() (via GetMetadataFromLoader() ->
+// ObjectLoader.XmlMetadataLoader.GetMetaObjectXmlMetadata) can build a real
+// MetaReport for reports the runner source-compiled.
+//
+// Why this exists (root cause, verified via ilspycmd decompile of Ncl.dll):
+//   RecordPatches.NclMetaFormReportBuilder.BuildNCLMetaReport builds skeleton
+//   NCLMetaReport entries via NCLMetaReport.CreateEmptyNCLMetaReport(loader,
+//   id, appGroup, ...), historically passing loader=null — safe for the
+//   Populate()/CompileAndLoadClrObject() no-op'd paths that entry originally
+//   served (NCLMetadata.GetMetaApplicationObject succeeding is enough for
+//   those). But NavGlobal.MetadataProvider.GetReportMetadata(id) (reached
+//   from AL via Report.WordXmlPart / Report.DefaultLayout / any AL surface
+//   that needs a report's real dataset/column shape) calls
+//   NCLMetaReport.LoadMetadata() -> GetMetadataFromLoader() ->
+//   ObjectLoader.XmlMetadataLoader.GetMetaObjectXmlMetadata(...) — a genuine
+//   NullReferenceException when ObjectLoader (=the ctor's `loader` param) is
+//   null. This is DISTINCT from the precompiled-dependency stub-metadata gap
+//   (NavReportSync.cs): that one is for reports the runner NEVER compiles;
+//   this one is for reports the runner DOES compile (AlReportMetadataRegistry
+//   already has the real emit-captured XML for them — see BcCompiler.
+//   CaptureOutputter.AddApplicationObject) but whose NCLMetaReport skeleton
+//   was never given a loader that can hand that XML back on request.
+//
+// Faithfulness: GetMetaObjectXmlMetadata returns the SAME metadata XML BC's
+// own MetaReport(XmlElement, ...) ctor parses elsewhere in this runner
+// (NavReportSync.GetRealMetaReport) — this is not a different/looser shape,
+// it is literally the emit-captured metadata for the SAME report id. Objects
+// the registry has no entry for (never compiled, or a non-report type) throw
+// loudly — never a silent empty/default document (loud-failures rule).
+//
+// Scope: this loader currently only serves ObjectType.Report — the runner's
+// AlReportMetadataRegistry is report-scoped. Page/query/xmlport source
+// metadata is a separate (currently unaddressed) gap; touching those members
+// throws RunnerOutOfScopeException rather than silently returning something
+// wrong.
+//
+// Implemented directly (no runtime DispatchProxy — tried first, but produced
+// unexplained null returns from CreateEmptyNCLMetaReport's factory Invoke
+// under this Cecil/R2R-patched runtime; direct implementation sidesteps that
+// class of risk entirely and is simpler to read).
+using Microsoft.Dynamics.Nav.Apps.MetadataDeltas;
+using Microsoft.Dynamics.Nav.Apps.Runtime;
+using Microsoft.Dynamics.Nav.Runtime;
+using Microsoft.Dynamics.Nav.Runtime.Apps;
+using Microsoft.Dynamics.Nav.Types;
+
+namespace AlRunnerV2.Patches;
+
+/// <summary>
+/// Real INCLObjectXmlMetadataLoader backed by AlReportMetadataRegistry.
+/// </summary>
+public sealed class RunnerXmlMetadataLoader : INCLObjectXmlMetadataLoader
+{
+    public NCLObjectXmlMetadata GetMetaObjectXmlMetadata(ApplicationObjectId objectId, NavAppGroup appGroup)
+    {
+        if (objectId.ObjectType == ObjectType.Report
+            && AlReportMetadataRegistry.TryGet(objectId.ObjectNumber, out var xml))
+        {
+            var doc = new System.Xml.XmlDocument();
+            doc.LoadXml(xml);
+            // MetadataHash is a cache-invalidation key only (the real
+            // NCLObjectXmlMetadataLoader hashes the app's own object summary);
+            // a stable per-report string is faithful enough since the runner
+            // has no republish/versioning concept to invalidate against.
+            return new NCLObjectXmlMetadata(doc, NavText.Create($"runner-report-{objectId.ObjectNumber}"));
+        }
+
+        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            $"INCLObjectXmlMetadataLoader.GetMetaObjectXmlMetadata({objectId.ObjectType} {objectId.ObjectNumber})",
+            "not-yet-implemented — no emit-captured metadata XML for this object " +
+            "(only reports the runner source-compiled are served; precompiled-dependency " +
+            "reports use NavReportSync's separate stub-metadata path)");
+    }
+
+    public NCLObjectXmlMetadata GetSystemTableMetaObjectXmlMetadataFromApplicationDatabase(ApplicationObjectId objectId) =>
+        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            "INCLObjectXmlMetadataLoader.GetSystemTableMetaObjectXmlMetadataFromApplicationDatabase",
+            "not-yet-implemented — system-table (2000000071) metadata-from-application-database lookup is not wired");
+
+    public NavAppObjectMetadataRuntimeDeltas GetExtensionDeltasForAppObject(ApplicationObjectId objectId, NavAppRuntimeMetadata runtimeAppMetadata) =>
+        // No extension-runtime-delta tracking in the runner (no published-app
+        // extension pipeline) — null is BC's own "no deltas" value too (see
+        // the real NCLObjectXmlMetadataLoader: it only calls the retriever
+        // when a matching Extension-format summary exists; absent that, it
+        // also returns null).
+        null!;
+}
+
+/// <summary>
+/// Minimal INCLMetaApplicationObjectLoader. Only XmlMetadataLoader is
+/// meaningfully implementable from what the runner tracks; every other
+/// member throws loudly if ever touched (none of the code paths that need
+/// this loader — NCLMetaReport.LoadMetadata/GetMetadataFromLoader — read
+/// them today).
+/// </summary>
+public sealed class RunnerMetaApplicationObjectLoader : INCLMetaApplicationObjectLoader
+{
+    public INCLObjectXmlMetadataLoader XmlMetadataLoader { get; } = new RunnerXmlMetadataLoader();
+
+    public INCLCodeLoader CodeLoader =>
+        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            "INCLMetaApplicationObjectLoader.CodeLoader",
+            "not-yet-implemented — runner metadata loader only serves report metadata XML");
+
+    public NCLMetadata MetadataCache =>
+        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            "INCLMetaApplicationObjectLoader.MetadataCache",
+            "not-yet-implemented — runner metadata loader only serves report metadata XML");
+
+    public IMetaObjectCache MetaObjectCache =>
+        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            "INCLMetaApplicationObjectLoader.MetaObjectCache",
+            "not-yet-implemented — runner metadata loader only serves report metadata XML");
+
+    public INavAppClrTypeRetriever AppClrTypeRetriever =>
+        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            "INCLMetaApplicationObjectLoader.AppClrTypeRetriever",
+            "not-yet-implemented — runner metadata loader only serves report metadata XML");
+
+    // Single shared instance — the loader is stateless (every call re-resolves
+    // against AlReportMetadataRegistry, which is itself the source of truth).
+    public static readonly RunnerMetaApplicationObjectLoader Instance = new();
+}

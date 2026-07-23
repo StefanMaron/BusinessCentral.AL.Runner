@@ -141,8 +141,15 @@ public static partial class RecordPatches
 
         try
         {
+            // loader = RunnerMetaApplicationObjectLoader.Instance (not null): NCLMetaReport.
+            // LoadMetadata() -> GetMetadataFromLoader() -> ObjectLoader.XmlMetadataLoader.
+            // GetMetaObjectXmlMetadata(...) dereferences this loader for any AL surface that
+            // needs the report's real dataset shape (Report.WordXmlPart, NavGlobal.
+            // MetadataProvider.GetReportMetadata(id), …) — see RunnerXmlMetadataLoader.cs for
+            // the root-cause writeup. A null loader NREs there; this one answers from
+            // AlReportMetadataRegistry (the same emit-captured XML NavReportSync already uses).
             var meta = _mCreateEmptyNCLMetaReport.Invoke(null,
-                new object?[] { null, reportId, _baseAppGroup, -1, string.Empty });
+                new object?[] { RunnerMetaApplicationObjectLoader.Instance, reportId, _baseAppGroup, -1, string.Empty });
 
             EnsureCachePopulatorReflection();
             if (meta != null && _fNCLMetaAppObjMetadataLoaded != null)

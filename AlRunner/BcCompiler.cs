@@ -917,6 +917,8 @@ public sealed class BcCompiler
                 .Where(d => d.Severity == NavDiag.DiagnosticSeverity.Error).ToList();
             var origAmbig = origDecl.Where(d => d.Id == "AL0275" || d.Id == "AL0264").ToList();
             Console.Error.WriteLine($"[DIAG-RETRY] {moduleName} ORIGINAL (pre-retry) declDiags={origDecl.Count} ambiguous(AL0275/AL0264)={origAmbig.Count} caught={caught?.GetType().Name ?? "<none>"} captured={outputter.Captured.Count} specsLen={specs.Length}");
+            foreach (var d in origDecl.Take(15))
+                Console.Error.WriteLine($"[DIAG-RETRY]   [{d.Id}] @ {d.Location}: {d.GetMessage().Split('\n', 2)[0]}");
             if (origAmbig.Count > 0)
             {
                 Console.Error.WriteLine($"[DIAG-RETRY]   _currentAppId={_currentAppId}");
