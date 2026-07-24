@@ -69,10 +69,6 @@ public static partial class RecordPatches
     private static MethodInfo? _mTtdpFilter;               // TempTableDataProvider.Filter(int,FiltersAndMarks,MutableRecordBuffer,SortingFieldList,bool)
     private static ConstructorInfo? _ctorFieldDictionaryNavValue; // FieldDictionary<NavValue>(Tuple<INavFieldMetadata,NavValue>[])
 
-    // NCLMetaTable.GetFieldByNo(int extensionObjectId, int fieldNo) — hooked to fall back
-    // to TryGetFieldByNo when the extension object isn't registered (unresolved extension).
-    private static MethodInfo? _mGetFieldByNoExt;
-
     // Cache: tableId → NCLMetaTable built from AL source.
     private static readonly ConcurrentDictionary<int, object?> _metaTableCache = new();
 
@@ -189,47 +185,10 @@ public static partial class RecordPatches
         _mCreateFromMetaTable = _tNCLMetaTable.GetMethod("CreateFromMetaTable",
             BindingFlags.NonPublic | BindingFlags.Static)!;
 
-        var getMetaTableById = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetadata")?
-            .GetMethod("GetMetaTableById", BindingFlags.Public | BindingFlags.Instance,
-                null, new[] { typeof(int), typeof(bool), typeof(int) }, null);
-        if (getMetaTableById != null)
-        {
-            var repl = typeof(RecordPatches).GetMethod(nameof(NCLMetadata_GetMetaTableById),
-                BindingFlags.Public | BindingFlags.Static)!;
-            JmpHook.Apply(getMetaTableById, repl, "NCLMetadata.GetMetaTableById(int,bool,int)");
-        }
-        var objectTypeType = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.ObjectType")!;
-        var applicationObjectIdType = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.ApplicationObjectId")!;
-        var getMetaApplicationObjectByType = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetadata")?
-            .GetMethod("GetMetaApplicationObject", BindingFlags.Public | BindingFlags.Instance,
-                null, new[] { objectTypeType, typeof(int), typeof(bool), typeof(int) }, null);
-        if (getMetaApplicationObjectByType != null)
-        {
-            var repl = typeof(RecordPatches).GetMethod(nameof(NCLMetadata_GetMetaApplicationObjectByType),
-                BindingFlags.Public | BindingFlags.Static)!;
-            JmpHook.Apply(getMetaApplicationObjectByType, repl, "NCLMetadata.GetMetaApplicationObject(ObjectType,int,bool,int)");
-        }
-        var getMetaApplicationObjectById = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetadata")?
-            .GetMethod("GetMetaApplicationObject", BindingFlags.Public | BindingFlags.Instance,
-                null, new[] { applicationObjectIdType, typeof(bool), typeof(int) }, null);
-        if (getMetaApplicationObjectById != null)
-        {
-            var repl = typeof(RecordPatches).GetMethod(nameof(NCLMetadata_GetMetaApplicationObjectById),
-                BindingFlags.Public | BindingFlags.Static)!;
-            JmpHook.Apply(getMetaApplicationObjectById, repl, "NCLMetadata.GetMetaApplicationObject(ApplicationObjectId,bool,int)");
-        }
-
-        // Hook NCLMetaTable.GetFieldByNo(int extensionObjectId, int fieldNo) to fall back
-        // to TryGetFieldByNo when the extension object isn't registered in our skeleton.
-        _mGetFieldByNoExt = _tNCLMetaTable.GetMethod("GetFieldByNo",
-            BindingFlags.Public | BindingFlags.Instance, null,
-            new[] { typeof(int), typeof(int) }, null);
-        if (_mGetFieldByNoExt != null)
-        {
-            var repl = typeof(RecordPatches).GetMethod(nameof(NCLMetaTable_GetFieldByNoExt),
-                BindingFlags.Public | BindingFlags.Static)!;
-            JmpHook.Apply(_mGetFieldByNoExt, repl, "NCLMetaTable.GetFieldByNo(extensionId,fieldNo)");
-        }
+        // NCLMetadata.GetMetaTableById(int,bool,int), NCLMetadata.GetMetaApplicationObject
+        // (ObjectType,int,bool,int and ApplicationObjectId,bool,int), and
+        // NCLMetaTable.GetFieldByNo(extensionId,fieldNo) are all Cecil-owned (see
+        // NclCecilRewrite.cs).
 
         // DataAccessTableVersionTokens.CreateForTempTable()
         var tDatv = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.DataAccessTableVersionTokens")!;
@@ -776,21 +735,8 @@ public static partial class RecordPatches
             fTriggersOnTables.SetValue(globalTriggers, Activator.CreateInstance(dictType));
         }
 
-        // Hook GetTriggersOnTable to short-circuit to Triggers.None for the headless runner.
-        // The real body calls NavSystemCodeunit.Invoke(GetGlobalTableTriggerMask, …) on the
-        // skeleton factory, whose own scope-machinery state is uninitialized → NRE inside
-        // InvokeAsync. The headless runner has no AL global-trigger codeunits, so Triggers.None
-        // is observably equivalent to BC running with no [EventSubscriber(GlobalTriggers,…)] hooked.
-        // Faithful per docs/scope.md §2.
-        var mGetTriggersOnTable = tGlobalTriggers.GetMethod("GetTriggersOnTable",
-            BindingFlags.NonPublic | BindingFlags.Instance);
-        if (mGetTriggersOnTable != null)
-        {
-            var repl = typeof(BcRuntime).GetMethod(nameof(BcRuntime.NavSystemCodeunitGlobalTriggers_GetTriggersOnTable),
-                BindingFlags.Public | BindingFlags.Static);
-            if (repl != null)
-                JmpHook.Apply(mGetTriggersOnTable, repl, "NavSystemCodeunitGlobalTriggers.GetTriggersOnTable");
-        }
+        // NavSystemCodeunitGlobalTriggers.GetTriggersOnTable is Cecil-owned (see
+        // NclCecilRewrite.cs) — short-circuits to Triggers.None for the headless runner.
 
         // Wire global triggers into factory.
         var fGlobalTriggers = tFactory.GetField("globalTriggers",

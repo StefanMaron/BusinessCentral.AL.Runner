@@ -5560,6 +5560,15 @@ public static class NclCecilRewrite
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "NavApplicationObjectBase", "set_ExecutePermissionsValidatedEx", 1),
                 H(helperShims, "NavAppObjBase_SetExecutePermissionsValidatedEx"));
+            // NavSession getter cluster — every one of these reads skeleton state that is
+            // null/zeroed because the runner never builds a real tenant/DB/culture stack:
+            //   get_NavAppGroup            — tenant.NavAppGroup NREs (tenant null); return NavAppGroup.BaseGroup.
+            //   get_LocalLanguageNoFallback — globalLanguageStack null; return -1 (use default).
+            //   get_IsLocalLanguage        — globalLanguageStack.Count NREs; return false (skeleton uses InvariantCulture).
+            //   GetSecurityFilters         — Database.SecurityAndLicense NREs; return null (RecordImplementation treats null as "no filtering").
+            //   PushDynamicCaptionStack    — language-stack manipulation NREs; return false (bool caller falls through to the sync FieldCaption path).
+            //   SyncFormatSettings         — cultureSettings null; return new FormatSettings().
+            //   get_Culture / get_WindowsCulture — CultureInfo.GetCultureInfo(0) throws ArgumentOutOfRangeException; return InvariantCulture.
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "NavSession", "get_NavAppGroup", 0),
                 H(helperShims, "NavSession_NavAppGroup"));

@@ -239,19 +239,6 @@ public static partial class BcRuntime
     public static string ALCompanyProperty_ALDisplayName() => "My Company";
 
     /// <summary>
-    /// Replacement for <c>NavSystemCodeunitGlobalTriggers.GetTriggersOnTable(int tableId)</c>.
-    /// Returns <c>Triggers.None</c> (= 0) for every table. The real body invokes a system
-    /// codeunit via NavSystemCodeunit.Invoke, whose internal scope-machinery state is
-    /// uninitialized on our skeleton factory and NREs. Headless runner has no AL global
-    /// triggers (no codeunit subscribes to [EventSubscriber(GlobalTriggers,…)]), so
-    /// Triggers.None is observably equivalent. Faithful per docs/scope.md §2.
-    /// Return type is the NCL <c>Triggers</c> enum (int-backed, Flags). The JIT-emitted
-    /// callers receive an int in RAX which they treat as the enum value.
-    /// </summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static int NavSystemCodeunitGlobalTriggers_GetTriggersOnTable(object self, int tableId) => 0;
-
-    /// <summary>
     /// Replacement for <c>NavSession.get_GlobalLanguage()</c>. Real body reads
     /// <c>cultureSettings.LCID</c>, but that struct field is zero-initialized on the
     /// GetUninitializedObject-built skeleton session. With IsOpen now seeded true, callers

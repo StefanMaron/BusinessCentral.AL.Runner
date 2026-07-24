@@ -168,47 +168,9 @@ public static class TenantStoragePatches
                   null, new[]{tDataError, tString, tDataScope, tByRefText, tTargetVT}, null),
                nameof(ALIsoGet_5_Text),         "ALIsolatedStorage.Get(DataError,key,scope,ByRef<NavText>,target)");
 
-        // ── IsolatedStorageRepository.* (lowest layer, AL output reaches here
-        // for Contains and Delete) ─────────────────────────────────────────────
-        // Set(DataError, NavGuid, DataScope, string, NavGuid, string, string, EncryptionStatus, TargetValueType)
-        HookIf(tRepo.GetMethod("Set", BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Static,
-                  null, new[]{tDataError, tNavGuid, tDataScope, tString, tNavGuid, tString, tString, tEncStatus, tTargetVT}, null),
-               nameof(Repo_Set),                "IsolatedStorageRepository.Set");
-        // Get(DataError, NavGuid, DataScope, TargetValueType, string, NavGuid, string, ByRef<NavText>)
-        HookIf(tRepo.GetMethod("Get", BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Static,
-                  null, new[]{tDataError, tNavGuid, tDataScope, tTargetVT, tString, tNavGuid, tString, tByRefText}, null),
-               nameof(Repo_Get),                "IsolatedStorageRepository.Get");
-        // Contains(NavGuid, DataScope, string, NavGuid, string, ref bool)
-        HookIf(tRepo.GetMethod("Contains", BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Static,
-                  null, new[]{tNavGuid, tDataScope, tString, tNavGuid, tString, tBoolByRef}, null),
-               nameof(Repo_Contains_6),         "IsolatedStorageRepository.Contains(...,ref bool)");
-        // Contains(NavGuid, DataScope, string, NavGuid, string)
-        HookIf(tRepo.GetMethod("Contains", BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Static,
-                  null, new[]{tNavGuid, tDataScope, tString, tNavGuid, tString}, null),
-               nameof(Repo_Contains_5),         "IsolatedStorageRepository.Contains");
-        // Delete(DataError, NavGuid, DataScope, string, NavGuid, string)
-        HookIf(tRepo.GetMethod("Delete", BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Static,
-                  null, new[]{tDataError, tNavGuid, tDataScope, tString, tNavGuid, tString}, null),
-               nameof(Repo_Delete),             "IsolatedStorageRepository.Delete");
-
-        // ── ALSystemEncryption (the AL-facing encrypt/decrypt entry point) ──
-        // SetEncrypted/GetEncrypted paths in AL transpile to ALEncrypt/ALDecrypt
-        // before storing/retrieving. Real BC body resolves a tenant encryption
-        // provider via TenantEncryptionProviderFactory → NavTenant.azureKeyVaultEncryptionProvider
-        // which is null on the skeleton, NRE-ing. We replace ALEncrypt/ALDecrypt
-        // with in-process AES (real crypto — encrypted ≠ plaintext).
-        var tSysEnc = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ALSystemEncryption");
-        if (tSysEnc != null)
-        {
-            HookIf(tSysEnc.GetMethod("ALEncrypt", BindingFlags.Public|BindingFlags.Static),
-                   nameof(SysEnc_ALEncrypt),   "ALSystemEncryption.ALEncrypt(plaintext)");
-            HookIf(tSysEnc.GetMethod("ALDecrypt", BindingFlags.Public|BindingFlags.Static),
-                   nameof(SysEnc_ALDecrypt),   "ALSystemEncryption.ALDecrypt(ciphertext)");
-            HookIf(tSysEnc.GetMethod("ALKeyExists", BindingFlags.Public|BindingFlags.Static),
-                   nameof(SysEnc_ALKeyExists), "ALSystemEncryption.ALKeyExists()");
-            HookIf(tSysEnc.GetMethod("ALEncryptionEnabled", BindingFlags.Public|BindingFlags.Static),
-                   nameof(SysEnc_ALEncryptionEnabled), "ALSystemEncryption.ALEncryptionEnabled()");
-        }
+        // IsolatedStorageRepository.Set/Get/Contains(6-arg)/Contains(5-arg)/Delete, and
+        // ALSystemEncryption.ALEncrypt/ALDecrypt/ALKeyExists/ALEncryptionEnabled, are all
+        // Cecil-owned (see NclCecilRewrite.cs) — same Repo_*/SysEnc_* replacement methods below.
 
         Console.Error.WriteLine($"[TenantStoragePatches] hooked {hooks} isolated-storage method(s)");
     }

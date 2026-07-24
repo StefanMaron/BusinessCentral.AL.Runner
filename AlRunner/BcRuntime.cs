@@ -638,32 +638,6 @@ public static partial class BcRuntime
             if (refresh != null) Hook(refresh, nameof(NoOp_OneArg), "CodeCoverageManager.RefreshTable");
         }
 
-        // No-op `ALFunctionTimingExecutionListener.EnsureRegistered()` — the real env ctor
-        // (line 1107) registers a process-global listener whose Start(NavMethodScope) reads
-        // `methodScope.AppId.HasValue` and other metadata that NREs on AL test scopes that
-        // run with our minimal NavMethodScopeCtorReplacement. With the skeleton init path
-        // the listener was never registered. Easiest cleanup: don't register it.
-        var alFnTimingT = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ALFunctionTimingExecutionListener");
-        var ensureReg = alFnTimingT?.GetMethod("EnsureRegistered", BindingFlags.Public | BindingFlags.Static);
-        if (ensureReg != null)
-            Hook(ensureReg, nameof(NoOp_0Args), "ALFunctionTimingExecutionListener.EnsureRegistered");
-        // Even with EnsureRegistered no-op'd, `Start(NavMethodScope)` is reachable directly
-        // via `ApplicationObjectRootScope.AddApplicationObjectRootScope -> NavForm.Update` —
-        // a different listener-registration path (likely server-listener add wired up
-        // earlier in the env init chain) installs the listener anyway. Start NREs because
-        // `methodScope.Session.ExtensionMetrics` is null on AL test scopes built via our
-        // minimal NavMethodScopeCtorReplacement. The method is purely a telemetry/diagnostic
-        // side effect — no AL semantic impact — so no-op it. Sync, single-arg, JmpHook-safe
-        // per HANDOFF §5.1 (callers in BusinessApplication.dll = external from NCL.dll).
-        var startM = alFnTimingT?.GetMethod("Start", BindingFlags.Public | BindingFlags.Static);
-        if (startM != null)
-            Hook(startM, nameof(NoOp_OneArg), "ALFunctionTimingExecutionListener.Start");
-        // Same reasoning for the symmetric Exit(NavMethodScope) — telemetry-only counter
-        // updates + long-running tracing diagnostics, no AL semantic effect.
-        var exitM = alFnTimingT?.GetMethod("Exit", BindingFlags.Public | BindingFlags.Static);
-        if (exitM != null)
-            Hook(exitM, nameof(NoOp_OneArg), "ALFunctionTimingExecutionListener.Exit");
-
         // Try the real factory first: NavEnvironment.InstantiateStandaloneNavEnvironment(true, false).
         // The cctor replacement above already wired the static `lockObject`/`instanceId`/
         // `serviceInstanceName` so the factory's MonitorLock(lockObject, ...) succeeds.
@@ -750,65 +724,16 @@ public static partial class BcRuntime
             _fAoOrigGroupId   = aoType.GetField("originalAppGroupId",  BindingFlags.NonPublic | BindingFlags.Instance);
             _fAoRuntimeGroupId= aoType.GetField("runtimeAppGroupId",   BindingFlags.NonPublic | BindingFlags.Instance);
 
-            // Hook NavApplicationObjectBase..ctor to bypass the tree-based session lookup.
-            // The real ctor does `session = base.Tree.Session` which gives null (skeleton has no real tree chain).
-            // get_Session is inlined at every call site so the property hook alone is insufficient.
-            var aoCtor = aoType.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                .FirstOrDefault(c => {
-                    var ps = c.GetParameters();
-                    return ps.Length >= 2
-                        && ps[0].ParameterType.Name == "ITreeObject"
-                        && ps[1].ParameterType.Name == "ApplicationObjectId";
-                });
-            if (aoCtor != null)
-            {
-                Console.Error.WriteLine($"[BcRuntime] Hooking NavApplicationObjectBase.ctor: {aoCtor}");
-                Hook(aoCtor, nameof(NavApplicationObjectBaseCtorReplacement), "NavApplicationObjectBase..ctor");
-            }
-            else
-                Console.Error.WriteLine("[BcRuntime] WARNING: NavApplicationObjectBase.ctor NOT FOUND");
+            // NavApplicationObjectBase..ctor is Cecil-owned (see NclCecilRewrite.cs, "Batch 4
+            // keystone") — the fields cached above are consumed by the same replacement helper
+            // (ApplicationObjectBasePatches.NavApplicationObjectBaseCtorReplacement) from there.
         }
         if (sessType != null)
         {
-            HookProperty(sessType, "CurrentMethodScope", false, nameof(GetCurrentMethodScopeReplacement));
-            // NavAppGroup reads tenant.NavAppGroup which NREs on the skeleton (tenant null).
-            // Return NavAppGroup.BaseGroup so NavForm..ctor and other consumers can complete.
-            HookProperty(sessType, "NavAppGroup", false, nameof(NavSession_NavAppGroup));
-            // LocalLanguageNoFallback reads globalLanguageStack which is null in skeleton session; return -1 (use default).
-            HookProperty(sessType, "LocalLanguageNoFallback", false, nameof(NavSession_LocalLanguageNoFallback));
-            // IsLocalLanguage reads globalLanguageStack.Count — same NRE source. Return false: the
-            // skeleton session uses InvariantCulture for formatting in headless mode.
-            var isLocalLang = sessType.GetProperty("IsLocalLanguage",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetGetMethod(true);
-            if (isLocalLang != null) Hook(isLocalLang, nameof(ReturnFalse_1Arg), "NavSession.get_IsLocalLanguage");
-            // GetSecurityFilters reads Database.SecurityAndLicense which NREs on the skeleton DB.
-            // Return null — RecordImplementation handles null filters as "no security filtering".
-            var getSecFilters = sessType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                .FirstOrDefault(m => m.Name == "GetSecurityFilters");
-            if (getSecFilters != null)
-                Hook(getSecFilters, nameof(NavSession_GetSecurityFilters), "NavSession.GetSecurityFilters");
-            // PushDynamicCaptionStack — language-stack manipulation, NREs on skeleton.
-            var pushDyn = sessType.GetMethod("PushDynamicCaptionStack",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            // PushDynamicCaptionStack is `bool (this, int, int)`. NoOp_OneArg leaves RAX
-            // undefined → callers occasionally see "true" and dive into await
-            // GetDynamicCaptionAsync which NREs (no UIHelperTriggers on skeleton). Force
-            // a deterministic `false` so the async wrapper falls through to the sync
-            // FieldCaption path (which is also patched to return FieldName).
-            if (pushDyn != null) Hook(pushDyn, nameof(ReturnFalse_3Args), "NavSession.PushDynamicCaptionStack");
-            // SyncFormatSettings also accesses cultureSettings (null in skeleton); return new FormatSettings().
-            var syncFmt = sessType.GetMethod("SyncFormatSettings", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (syncFmt != null) Hook(syncFmt, nameof(NavSession_SyncFormatSettings), "NavSession.SyncFormatSettings");
-
-            // get_Culture / get_WindowsCulture — real getters call CultureInfo.GetCultureInfo(int)
-            // with a 0 culture id on the skeleton session and throw ArgumentOutOfRangeException.
-            // Return InvariantCulture so format/parse paths work headlessly.
-            foreach (var propName in new[] { "Culture", "WindowsCulture" })
-            {
-                var getter = sessType.GetProperty(propName,
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetGetMethod(true);
-                if (getter != null) Hook(getter, nameof(NavSession_get_Culture), $"NavSession.get_{propName}");
-            }
+            // CurrentMethodScope / NavAppGroup / LocalLanguageNoFallback / IsLocalLanguage /
+            // GetSecurityFilters / PushDynamicCaptionStack / SyncFormatSettings / get_Culture /
+            // get_WindowsCulture are all Cecil-owned (see NclCecilRewrite.cs, NavSession getter
+            // cluster) — the NRE reasoning for each lives there now.
 
             // NavSession.Company getter — NavRecord.GetCompanyNameToken reads Session.Company.CompanyNameToken.
             // Build skeleton NavCompany and inject into both the property and the backing field.
@@ -1223,61 +1148,8 @@ public static partial class BcRuntime
         // setter writes back, some paths touch Diagnostics, etc.).
         // Replace the whole ctor body with a minimal safe implementation that sets only the
         // fields actually needed for Pass/Fail/Error classification at this layer of the pipeline.
-        if (msType != null)
-        {
-            var aoType2 = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase");
-            var msFlagsType = _fMsFlags?.FieldType;
-            if (aoType2 != null && msFlagsType != null)
-            {
-                var ctor3 = msType.GetConstructors(
-                    BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public)
-                    .FirstOrDefault(c => {
-                        var ps = c.GetParameters();
-                        return ps.Length == 3
-                            && ps[0].ParameterType == aoType2
-                            && ps[2].ParameterType == typeof(bool);
-                    });
-                if (ctor3 != null)
-                {
-                    Hook(ctor3, nameof(NavMethodScopeCtorReplacement), "NavMethodScope..ctor(NavApplicationObjectBase,MethodScopeFlags,bool)");
-                }
-                else
-                    Console.Error.WriteLine("[BcRuntime] WARNING: 3-arg NavMethodScope ctor NOT FOUND");
-            }
-            else
-                Console.Error.WriteLine($"[BcRuntime] WARNING: msFlagsType={msFlagsType}, aoType2={aoType2}");
-        }
-
-        // NavMethodScope.ThrowStackOverflow — stack-depth check uses non-NavMethodScope, false-positive
-        if (msType != null)
-        {
-            var tso = msType.GetMethod("ThrowStackOverflow",
-                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance);
-            if (tso != null)
-            {
-                var p = tso.GetParameters().Length + (tso.IsStatic ? 0 : 1);
-                var noop = p switch { 1 => nameof(NoOp_OneArg), 2 => nameof(NoOp2), _ => null };
-                if (noop != null) Hook(tso, noop, "NavMethodScope.ThrowStackOverflow");
-            }
-
-            // NavMethodScope.AssertError(Action body) — original calls session.Rollback() on the
-            // catch path which NREs on the skeleton session. Replace with a body that just runs
-            // the action and inverts pass/fail semantics for asserterror tests.
-            var assertError = msType.GetMethod("AssertError",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-                null, new[] { typeof(Action) }, null);
-            if (assertError != null)
-                Hook(assertError, nameof(NavMethodScope_AssertError), "NavMethodScope.AssertError");
-
-            // NavMethodScope.Dispose(bool disposing) — decrements the ThreadStatic recursion depth
-            // counter and restores session.CurrentMethodScope to parentScope (captured at ctor entry).
-            // Hooked on the virtual override so all calls via IDisposable.Dispose() land here.
-            var disposeM = msType.GetMethod("Dispose",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-                null, new[] { typeof(bool) }, null);
-            if (disposeM != null)
-                Hook(disposeM, nameof(NavMethodScope_Dispose), "NavMethodScope.Dispose(bool)");
-        }
+        // NavMethodScope..ctor(3) / ThrowStackOverflow / AssertError / Dispose(bool) are all
+        // Cecil-owned (see NclCecilRewrite.cs, "NavMethodScope cluster").
 
         // TreeHandler.get_Session — the tree's session field is null (root has no session propagated).
         // Return _skeletonSession so NavApplicationObjectBase.ctor and NavRecord.ctor can find a session.
@@ -1316,61 +1188,8 @@ public static partial class BcRuntime
         if (rollback != null)
             Hook(rollback, nameof(NoOp_OneArg), "SessionTransactionExtensions.Rollback");
 
-        // NCLEnumMetadata.Create(int) — called at field-initializer time for every enum variable;
-        // chains through NavGlobal.MetadataProvider → SystemTenant → NavEnvironment.Tenants → NRE.
-        // Returning NCLOptionMetadata.Default preserves ordinal arithmetic (NavOption.Value = passed int).
-        var nclEnumMeta = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NCLEnumMetadata");
-        if (nclEnumMeta != null)
-        {
-            var createById = nclEnumMeta.GetMethod("Create",
-                BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(int) }, null);
-            if (createById != null)
-                Hook(createById, nameof(NCLEnumMetadata_CreateByIdAlAware), "NCLEnumMetadata.Create(int)");
-        }
-
-        // NavCodeunitHandle.CreateTarget — bypass NavGlobal.NCLMetadata by constructing
-        // the codeunit directly from the loaded compiled assembly via reflection.
-        var codeunitHandleType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle");
-        if (codeunitHandleType != null)
-        {
-            var createTarget = codeunitHandleType.GetMethod("CreateTarget",
-                BindingFlags.NonPublic | BindingFlags.Instance);
-            if (createTarget != null)
-                Hook(createTarget, nameof(NavCodeunitHandle_CreateTarget), "NavCodeunitHandle.CreateTarget");
-        }
-
-        // NavCodeunit.get_MetaCodeunit — real getter chains through Session.NCLMetadata
-        // .GetMetaCodeunitById(...) which NREs on the skeleton. The only sync caller in
-        // the failing tests is BindSubscription → MetaCodeunit.IsEventManualBinding,
-        // which only needs ApplicationObjectClrType (read off attributes on the
-        // AL-emitted Codeunit{N} class). Replace the getter with a lazy-build that
-        // pre-populates a skeleton NCLMetaCodeunit with the receiver's CLR type and
-        // caches on the instance.metaCodeunit field (HANDOFF §5.2 Option C).
-        var navCodeunitTypeForMeta = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavCodeunit");
-        if (navCodeunitTypeForMeta != null)
-        {
-            var metaCuGetter = navCodeunitTypeForMeta.GetProperty("MetaCodeunit",
-                BindingFlags.Public | BindingFlags.Instance)?.GetGetMethod(true);
-            if (metaCuGetter != null)
-                Hook(metaCuGetter, nameof(NavCodeunit_get_MetaCodeunit), "NavCodeunit.get_MetaCodeunit");
-        }
-
-        // NCLMetaCodeunit.get_IsEventManualBinding — bypass LoadOptionsFromAttributeOrInstance,
-        // which dereferences base.ApplicationObjectClrType. That getter has a hooked
-        // replacement (NCLMetaApplicationObject_get_ApplicationObjectClrType), but the call
-        // site inside NCL.dll's own LoadOptionsFromAttributeOrInstance is R2R-precompiled
-        // and bypasses the JmpHook. Hook IsEventManualBinding directly to read the
-        // NavCodeunitOptionsAttribute from the stashed CLR type (companion to
-        // NavCodeunit_get_MetaCodeunit above).
-        var nclMetaCuType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetaCodeunit");
-        if (nclMetaCuType != null)
-        {
-            var isManualGetter = nclMetaCuType.GetProperty("IsEventManualBinding",
-                BindingFlags.Public | BindingFlags.Instance)?.GetGetMethod(true);
-            if (isManualGetter != null)
-                Hook(isManualGetter, nameof(NCLMetaCodeunit_get_IsEventManualBinding),
-                    "NCLMetaCodeunit.get_IsEventManualBinding");
-        }
+        // NCLEnumMetadata.Create(int), NavCodeunitHandle.CreateTarget, NavCodeunit.get_MetaCodeunit,
+        // and NCLMetaCodeunit.get_IsEventManualBinding are all Cecil-owned (see NclCecilRewrite.cs).
 
         // NavDataTransfer.SetTables — uses NCLMetadata.GetMetaTableById to validate source/dest
         // tables before staging the transfer. Validation is meaningless in headless mode (the
@@ -1441,16 +1260,9 @@ public static partial class BcRuntime
                 Hook(checkCu, nameof(NoOp2), "ALTaskScheduler.CheckCodeUnit");
         }
 
-        // ALMethodScope.AssignScopeId — chains through Session.NCLMetadata which is null;
-        // no-op leaves scopeId = null which is tolerated by the ScopeId getter.
-        var alMethodScopeType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ALMethodScope");
-        if (alMethodScopeType != null)
-        {
-            var assignScopeId = alMethodScopeType.GetMethod("AssignScopeId",
-                BindingFlags.NonPublic | BindingFlags.Instance, null, Type.EmptyTypes, null);
-            if (assignScopeId != null)
-                Hook(assignScopeId, nameof(ALMethodScope_AssignScopeId), "ALMethodScope.AssignScopeId");
-        }
+        // ALMethodScope.AssignScopeId is Cecil-owned (see NclCecilRewrite.cs, "NavMethodScope
+        // cluster") — chains through Session.NCLMetadata which is null; no-op leaves scopeId =
+        // null which is tolerated by the ScopeId getter.
 
         // ALSystemErrorHandling.get_AL{GetLastErrorText,GetLastErrorCode,GetLastErrorCallStack}
         // and ALClearLastError — real getters chain through NavCurrentThread.Session which is
@@ -1486,16 +1298,8 @@ public static partial class BcRuntime
                     "NavIntegerFormatter.FormatWithFormatNumber");
         }
 
-        // NavTestPageHandle.CreateTarget — same shape as NavCodeunitHandle: bypass the
-        // NCLMetadata lookup and construct TestPage{ID} from the loaded test assembly.
-        var testPageHandleType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavTestPageHandle");
-        if (testPageHandleType != null)
-        {
-            var createTarget = testPageHandleType.GetMethod("CreateTarget",
-                BindingFlags.NonPublic | BindingFlags.Instance);
-            if (createTarget != null)
-                Hook(createTarget, nameof(NavTestPageHandle_CreateTarget), "NavTestPageHandle.CreateTarget");
-        }
+        // NavTestPageHandle.CreateTarget and NavTestPageBase.ALGoToRecord are Cecil-owned (see
+        // NclCecilRewrite.cs).
 
         var testPageBaseType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavTestPageBase");
         if (testPageBaseType != null)
@@ -1504,23 +1308,12 @@ public static partial class BcRuntime
                 BindingFlags.NonPublic | BindingFlags.Instance);
             if (getMetaTable != null)
                 Hook(getMetaTable, nameof(NavTestPageBase_GetMetaTable), "NavTestPageBase.GetMetaTable");
-
-            var goToRecord = testPageBaseType.GetMethod("ALGoToRecord",
-                BindingFlags.Public | BindingFlags.Instance);
-            if (goToRecord != null)
-                Hook(goToRecord, nameof(NavTestPageBase_ALGoToRecord), "NavTestPageBase.ALGoToRecord");
         }
 
-        // NavFormHandle.CreateTarget — same shape as NavCodeunitHandle: bypass the
-        // NCLMetadata.GetMetaFormById lookup and construct Form{ID} from loaded assemblies.
+        // NavFormHandle.CreateTarget is Cecil-owned (see NclCecilRewrite.cs).
         var formHandleType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavFormHandle");
         if (formHandleType != null)
         {
-            var createTarget = formHandleType.GetMethod("CreateTarget",
-                BindingFlags.NonPublic | BindingFlags.Instance);
-            if (createTarget != null)
-                Hook(createTarget, nameof(NavFormHandle_CreateTarget), "NavFormHandle.CreateTarget");
-
             // NavFormHandle.Run — Page variable .Run() — non-modal UI (§3.11 OOS).
             // Uses Apply() which patches both the precode and the R2R native code, ensuring
             // callers that resolve directly to native code are also intercepted.
@@ -1617,33 +1410,8 @@ public static partial class BcRuntime
             Console.Error.WriteLine($"[BcRuntime] NavFilterPageBuilder.RunModalAsync: {filterRunModalHooked} overloads hooked");
         }
 
-        // NavReportHandle.CreateTarget — §P, same shape as NavFormHandle. The default
-        // implementation `NCLMetadata.GetMetaReportById(id, true).CreateObjectInstance(this)`
-        // works after the §P cache populator (so the GetMetaReportById no longer NREs),
-        // but CreateObjectInstance then dereferences a null ApplicationObjectConstructor
-        // delegate (skeleton metas have no NCLMetaObjectCLRTypeContainer). Replace with
-        // a direct construction of `Report{ID}` from the test assembly.
-        var reportHandleType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavReportHandle");
-        if (reportHandleType != null)
-        {
-            var createTarget = reportHandleType.GetMethod("CreateTarget",
-                BindingFlags.NonPublic | BindingFlags.Instance);
-            if (createTarget != null)
-                Hook(createTarget, nameof(NavReportHandle_CreateTarget), "NavReportHandle.CreateTarget");
-        }
-
-        // NavQueryHandle.CreateTarget — same shape as NavReportHandle. The default
-        // calls NCLMetaQuery.CreateObjectInstance which NREs on null
-        // ApplicationObjectConstructor for our skeleton meta. Replace with direct
-        // construction of `Query{ID}` from the test assembly.
-        var queryHandleType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavQueryHandle");
-        if (queryHandleType != null)
-        {
-            var createTarget = queryHandleType.GetMethod("CreateTarget",
-                BindingFlags.NonPublic | BindingFlags.Instance);
-            if (createTarget != null)
-                Hook(createTarget, nameof(NavQueryHandle_CreateTarget), "NavQueryHandle.CreateTarget");
-        }
+        // NavReportHandle.CreateTarget and NavQueryHandle.CreateTarget are Cecil-owned (see
+        // NclCecilRewrite.cs, CreateTarget family).
 
         // REPORT.RUN(id [, reqPage [, sysPrinter [, record]]]) in AL compiles to static
         // NavReport.Run(int, ...) overloads; REPORT.RUNMODAL(...) to NavReport.RunModal(...).
@@ -1813,32 +1581,11 @@ public static partial class BcRuntime
             // (EventPipe post-JIT body patch, or skeleton state populated upstream).
         }
 
-        // ALSystemOperatingSystem.GetUrlCore — real body reaches into ALSession,
-        // NavEnvironment.Instance.Tenants, and NavCurrentThread.Session.Tenant.Id —
-        // all of which NRE on the skeleton session. AL `GetUrl(...)` callers expect a
-        // non-empty URL string; we return a stub URL. Faithful per docs/scope.md:
-        // tests that parse / verify real tenant/endpoint URLs are out of scope.
-        // ALSystemOperatingSystem url methods — GetUrlCore reaches into ALSession,
-        // NavEnvironment.Instance.Tenants, and NavCurrentThread.Session.Tenant.Id —
-        // all of which NRE on the skeleton session. Real URL generation is out of
-        // scope (no service-tier endpoint manager). Tests assert only that the
-        // returned string is non-empty; hook returns a stub URL.
-        // Hook ALGetUrl / ALGetUrlInternal / GetUrlCore layers because R2R-baking
-        // can inline frames and bypass a hook at one specific level (see
-        // ALServiceInstanceID note above).
-        var alSysOsType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ALSystemOperatingSystem");
-        if (alSysOsType != null)
-        {
-            foreach (var m in alSysOsType.GetMethods(
-                         BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static))
-            {
-                if (m.Name != "GetUrlCore" && m.Name != "ALGetUrlInternal" &&
-                    m.Name != "ALGetUrl") continue;
-                if (m.GetParameters().Length != 7) continue;
-                Hook(m, nameof(ALSystemOperatingSystem_GetUrlCore),
-                    $"ALSystemOperatingSystem.{m.Name}");
-            }
-        }
+        // ALSystemOperatingSystem.GetUrlCore / ALGetUrlInternal / ALGetUrl are Cecil-owned
+        // (see NclCecilRewrite.cs) — real bodies reach into ALSession, NavEnvironment.Instance.
+        // Tenants, and NavCurrentThread.Session.Tenant.Id, all of which NRE on the skeleton
+        // session. Faithful per docs/scope.md: tests that parse/verify real tenant/endpoint
+        // URLs are out of scope; tests assert only that the returned string is non-empty.
 
         // ── Cluster batch: small NREs around session/db skeleton ─────────────
         // Each hooked method below either reaches NavCurrentThread.Session.*,
@@ -1926,33 +1673,7 @@ public static partial class BcRuntime
                 Hook(canCreate, nameof(ReturnTrue_OneArg), "ALTaskScheduler.CanCreateTask");
         }
 
-        // NavDialog.ALClose() / ALUpdateAsync(int, NavValue) — dialog is never
-        // really opened in headless mode; ALClose NREs on dialogClient. Pure
-        // no-ops let progress-dialog tests complete.
-        var navDialogType_b = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavDialog");
-        if (navDialogType_b != null)
-        {
-            var alClose = navDialogType_b.GetMethod("ALClose",
-                BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
-            if (alClose != null)
-                Hook(alClose, nameof(NoOp_OneArg), "NavDialog.ALClose");
-
-            foreach (var m in navDialogType_b.GetMethods(
-                         BindingFlags.Public | BindingFlags.Instance))
-            {
-                if (m.Name != "ALUpdateAsync") continue;
-                var ps = m.GetParameters().Length;
-                // slot count = 1 (this) + ps
-                var name = (1 + ps) switch
-                {
-                    2 => nameof(ReturnValueTask2),
-                    3 => nameof(ReturnValueTask3),
-                    _ => null,
-                };
-                if (name != null)
-                    Hook(m, name, $"NavDialog.ALUpdateAsync({ps})");
-            }
-        }
+        // NavDialog.ALClose() / ALUpdateAsync are Cecil-owned (see NclCecilRewrite.cs).
 
         // NavForm.ObjectID(bool useCaption) — instance string getter. Real body
         // reaches into MetaForm metadata; for fake/temp forms it NREs.
@@ -1965,55 +1686,9 @@ public static partial class BcRuntime
                 Hook(objectId, nameof(ReturnEmptyString_TwoArgs), "NavForm.ObjectID(bool)");
         }
 
-        // NavRecord.ValidateTruncateSupport(NavRecord) — checks DataAccessSource
-        // capability flag; safe no-op since the TruncateAsync hook in
-        // ALDatabase block already covers the actual table truncation gap.
-        var navRecordType_b = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord");
-        if (navRecordType_b != null)
-        {
-            var validateTrunc = navRecordType_b.GetMethod("ValidateTruncateSupport",
-                BindingFlags.NonPublic | BindingFlags.Static);
-            if (validateTrunc != null)
-                Hook(validateTrunc, nameof(NoOp_OneArg), "NavRecord.ValidateTruncateSupport");
-        }
-
-        // PermissionManagement.SessionHasSuperOrSecurityPermissionsForUser —
-        // headless mode has no user permission graph; treat every session as
-        // permitted. Reached via ALSetUserPassword (also hooked above).
-        var permMgmtType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.PermissionManagement");
-        if (permMgmtType != null)
-        {
-            var sessHas = permMgmtType.GetMethod("SessionHasSuperOrSecurityPermissionsForUser",
-                BindingFlags.Public | BindingFlags.Static);
-            if (sessHas != null)
-                Hook(sessHas, nameof(ReturnTrue_TwoArgs),
-                    "PermissionManagement.SessionHasSuperOrSecurityPermissionsForUser");
-        }
-
-        // RecordImplementation.SetSecurityFiltering — instance void setter that
-        // reaches DataAccess providers; AL code only observes that the call did
-        // not throw.
-        var recImplType_b = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.RecordImplementation");
-        if (recImplType_b != null)
-        {
-            var setSec = recImplType_b.GetMethod("SetSecurityFiltering",
-                BindingFlags.NonPublic | BindingFlags.Instance);
-            if (setSec != null)
-                Hook(setSec, nameof(NoOp2), "RecordImplementation.SetSecurityFiltering");
-        }
-
-        // ── DataProvider / ALDatabase additional drain ──────────────────────
-        // DataProvider.TruncateAsync — base virtual that throws "not supported".
-        // The runner has no SQL backend, so AL Record.TRUNCATE / ALTRUNCATE
-        // becomes a no-op (AL semantics: "remove all rows" — there are none).
-        var dataProviderType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.DataProvider");
-        if (dataProviderType != null)
-        {
-            var truncAsync = dataProviderType.GetMethod("TruncateAsync",
-                BindingFlags.Public | BindingFlags.Instance);
-            if (truncAsync != null && truncAsync.GetParameters().Length == 4)
-                Hook(truncAsync, nameof(DataProvider_TruncateAsync), "DataProvider.TruncateAsync");
-        }
+        // NavRecord.ValidateTruncateSupport, PermissionManagement.
+        // SessionHasSuperOrSecurityPermissionsForUser, RecordImplementation.SetSecurityFiltering,
+        // and DataProvider.TruncateAsync are all Cecil-owned (see NclCecilRewrite.cs).
 
         if (alDbType != null)
         {
@@ -2101,17 +1776,7 @@ public static partial class BcRuntime
                 Hook(listResources, nameof(ReturnEmptyNavTextList_2Args),
                     "ALNavApp.ALListResources");
         }
-        // GetMetaXmlPortById throws ThrowMetaApplicationObjectNotFound for any XmlPort not
-        // compiled by NCLCodeLoader; our cache has skeleton entries but CreateObjectInstance
-        // NREs on the null delegate. Hook to construct XmlPort{ID} directly from the assembly.
-        var xmlPortHandleType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavXmlPortHandle");
-        if (xmlPortHandleType != null)
-        {
-            var createTarget = xmlPortHandleType.GetMethod("CreateTarget",
-                BindingFlags.NonPublic | BindingFlags.Instance);
-            if (createTarget != null)
-                Hook(createTarget, nameof(NavXmlPortHandle_CreateTarget), "NavXmlPortHandle.CreateTarget");
-        }
+        // NavXmlPortHandle.CreateTarget is Cecil-owned (see NclCecilRewrite.cs, CreateTarget family).
 
         // NavXmlPort instance methods — Export/Import/Run all call Session.BeginTransaction
         // or ApplicationObjectRootScope which NRE on the skeleton; SetTableView iterates
@@ -2413,49 +2078,8 @@ public static partial class BcRuntime
                 Hook(getTenantIds, nameof(ReturnEmptyTenantIds_OneArg), "NavFile.GetTenantIds");
         }
 
-        // NavRecordRef.get_Target — bypass NRE on Session.Company.SharedObjects by
-        // constructing a SharedRecordRef parented to a process-wide skeleton container.
-        var navRecordRefType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecordRef");
-        if (navRecordRefType != null)
-        {
-            var targetGetter = navRecordRefType.GetProperty("Target",
-                BindingFlags.NonPublic | BindingFlags.Instance)?.GetGetMethod(true);
-            if (targetGetter != null)
-                Hook(targetGetter, nameof(NavRecordRef_get_Target), "NavRecordRef.get_Target");
-            var tCompilationTarget = AppDomain.CurrentDomain.GetAssemblies()
-                .First(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Types")
-                .GetType("Microsoft.Dynamics.Nav.Types.CompilationTarget");
-            if (tCompilationTarget != null)
-            {
-                var checkIsOpenAllowed = navRecordRefType.GetMethod("CheckIsOpenAllowed",
-                    BindingFlags.NonPublic | BindingFlags.Instance, null,
-                    new[] { tCompilationTarget, typeof(int) }, null);
-                if (checkIsOpenAllowed != null)
-                    Hook(checkIsOpenAllowed, nameof(NoOp3), "NavRecordRef.CheckIsOpenAllowed");
-                var isOpenAllowed = navRecordRefType.GetMethod("IsOpenAllowed",
-                    BindingFlags.NonPublic | BindingFlags.Instance, null,
-                    new[] { tCompilationTarget, typeof(int) }, null);
-                if (isOpenAllowed != null)
-                    Hook(isOpenAllowed, nameof(ReturnTrue_ThreeArgs), "NavRecordRef.IsOpenAllowed");
-            }
-            foreach (var open in navRecordRefType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                .Where(m => m.Name == "ALOpen"))
-            {
-                var ps = open.GetParameters();
-                string? repl = ps.Length switch
-                {
-                    1 when ps[0].ParameterType == typeof(int) => nameof(NavRecordRef_ALOpen_Int),
-                    2 when ps[0].ParameterType == typeof(int) && ps[1].ParameterType == typeof(bool) => nameof(NavRecordRef_ALOpen_IntBool),
-                    3 when ps[0].ParameterType == typeof(int) && ps[1].ParameterType == typeof(bool) && ps[2].ParameterType == typeof(string) => nameof(NavRecordRef_ALOpen_IntBoolCompany),
-                    2 when ps[1].ParameterType == typeof(int) => nameof(NavRecordRef_ALOpen_TargetInt),
-                    3 when ps[1].ParameterType == typeof(int) && ps[2].ParameterType == typeof(bool) => nameof(NavRecordRef_ALOpen_TargetIntBool),
-                    4 when ps[1].ParameterType == typeof(int) && ps[2].ParameterType == typeof(bool) && ps[3].ParameterType == typeof(string) => nameof(NavRecordRef_ALOpen_TargetIntBoolCompany),
-                    _ => null
-                };
-                if (repl != null)
-                    Hook(open, repl, $"NavRecordRef.ALOpen/{ps.Length}");
-            }
-        }
+        // NavRecordRef.get_Target / CheckIsOpenAllowed / IsOpenAllowed / ALOpen (all overloads)
+        // are Cecil-owned (see NclCecilRewrite.cs, NavRecordRef cluster Batch 8).
 
         // NavStringValue.CompareTo(NavStringValue) — real impl uses NavCurrentThread.Session.Culture
         // (null on skeleton). Replace with ordinal Value comparison.
@@ -2469,16 +2093,7 @@ public static partial class BcRuntime
                     "NavStringValue.CompareTo(NavStringValue)");
         }
 
-        // BitArrayHelpers.Equals uses the removed System.Collections.BitArray.m_array
-        // private field on current .NET. Replace it with public indexer-based comparison.
-        var bitArrayHelpersType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.Utility.BitArrayHelpers");
-        if (bitArrayHelpersType != null)
-        {
-            var equals = bitArrayHelpersType.GetMethod("Equals",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-            if (equals != null)
-                Hook(equals, nameof(BitArrayHelpers_Equals), "BitArrayHelpers.Equals(BitArray,BitArray)");
-        }
+        // BitArrayHelpers.Equals is Cecil-owned (see NclCecilRewrite.cs).
 
         // NavHttpRequestMessage.get_Target — same shape as NavRecordRef. Construct
         // SharedNavHttpRequestMessage parented to skeleton container.
@@ -2538,49 +2153,10 @@ public static partial class BcRuntime
             }
         }
 
-        // NavStream.get_Target — same shape as NavRecordRef. Construct SharedNavStream
-        // parented to skeleton container. Fixes NRE in NavStream ctor and all call sites
-        // that access Position, SharedStream, etc. on a freshly-created InStream/OutStream.
-        var navStreamType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavStream");
-        if (navStreamType != null)
-        {
-            var targetGetter = navStreamType.GetProperty("Target",
-                BindingFlags.NonPublic | BindingFlags.Instance)?.GetGetMethod(true);
-            if (targetGetter != null)
-                Hook(targetGetter, nameof(NavStream_get_Target), "NavStream.get_Target");
-        }
+        // NavStream.get_Target is Cecil-owned (see NclCecilRewrite.cs).
 
-        // NavSession.GetPermissionSet — skeleton has no Permissions object; NRE inside.
-        // Return the NCL-internal VirtualDataProvider.PermissionSet singleton (HasPermissions=true,
-        // VerifyPermissions=no-op). Hook both 3-arg overloads (single + IEnumerable).
-        {
-            var sessType2 = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavSession");
-            var typesAsm2 = AppDomain.CurrentDomain.GetAssemblies()
-                .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Types");
-            var appObjIdType = typesAsm2?.GetType("Microsoft.Dynamics.Nav.Types.ApplicationObjectId");
-            var navAppObjBaseT = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase");
-            if (sessType2 != null && appObjIdType != null && navAppObjBaseT != null)
-            {
-                var iEnumType = typeof(IEnumerable<>).MakeGenericType(appObjIdType);
-                var mSingle = sessType2.GetMethod("GetPermissionSet",
-                    BindingFlags.Public | BindingFlags.Instance, null,
-                    new[] { navAppObjBaseT, typeof(int), appObjIdType }, null);
-                if (mSingle != null)
-                    Hook(mSingle,
-                        typeof(BcRuntime).GetMethod(nameof(NavSession_GetPermissionSet_ByObjectId),
-                            BindingFlags.Public | BindingFlags.Static)!,
-                        "NavSession.GetPermissionSet(…,ApplicationObjectId)");
-
-                var mMulti = sessType2.GetMethod("GetPermissionSet",
-                    BindingFlags.Public | BindingFlags.Instance, null,
-                    new[] { navAppObjBaseT, typeof(int), iEnumType }, null);
-                if (mMulti != null)
-                    Hook(mMulti,
-                        typeof(BcRuntime).GetMethod(nameof(NavSession_GetPermissionSet_ByObjectIds),
-                            BindingFlags.Public | BindingFlags.Static)!,
-                        "NavSession.GetPermissionSet(…,IEnumerable<ApplicationObjectId>)");
-            }
-        }
+        // NavSession.GetPermissionSet (both 3-arg overloads) is Cecil-owned (see
+        // NclCecilRewrite.cs, Batch 8).
 
         // ALSystemNumeric.ALRandomize/ALRandom — real impls reach NavCurrentThread.Session.Random
         // (null on skeleton). Back with a process-static Random.
@@ -2627,18 +2203,7 @@ public static partial class BcRuntime
                 Hook(upper, nameof(ALSystemString_ALUppercase), "ALSystemString.ALUppercase");
         }
 
-        // RecordImplementation.GetActiveCompany — downstream NRE exposed by the get_Target
-        // patch above. Real impl reaches Session.Database.CompanyTokens which is null on
-        // the skeleton; return empty string.
-        var recImplType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.RecordImplementation");
-        if (recImplType != null)
-        {
-            var getActiveCompany = recImplType.GetMethod("GetActiveCompany",
-                BindingFlags.NonPublic | BindingFlags.Instance, null, Type.EmptyTypes, null);
-            if (getActiveCompany != null)
-                Hook(getActiveCompany, nameof(RecordImplementation_GetActiveCompany),
-                    "RecordImplementation.GetActiveCompany");
-        }
+        // RecordImplementation.GetActiveCompany is Cecil-owned (see NclCecilRewrite.cs).
 
         // ── (A) Spike: async entry-point hook DISABLED
         //ApplyALFieldCaptionAsyncHook(navNcl);
@@ -2762,61 +2327,17 @@ public static partial class BcRuntime
             }
         }
 
-        // NavCodeunit.DoRunAsync(DataError, NavRecord) — first line creates a timing scope via
-        // DiagnosticsResolver.GetMostSpecificInstance(Session) which NREs on the skeleton.
-        // Replacement calls OnRun(record) directly on the concrete subclass and returns true.
-        var navCodeunitType2 = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavCodeunit");
-        if (navCodeunitType2 != null)
-        {
-            var doRunAsync = navCodeunitType2.GetMethod("DoRunAsync",
-                BindingFlags.NonPublic | BindingFlags.Instance);
-            if (doRunAsync != null)
-                Hook(doRunAsync, nameof(NavCodeunit_DoRunAsync), "NavCodeunit.DoRunAsync");
+        // NavCodeunit.DoRunAsync and NavCodeunit.RunCodeunit are Cecil-owned (see
+        // NclCecilRewrite.cs, "NavCodeunit run path" Batch 8).
 
-            var runCodeunit = navCodeunitType2
-                .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.FlattenHierarchy)
-                .FirstOrDefault(m =>
-                {
-                    if (m.Name != "RunCodeunit" || !m.IsStatic || m.ReturnType != typeof(bool))
-                        return false;
-                    var ps = m.GetParameters();
-                    return ps.Length == 3
-                        && ps[0].ParameterType == typeof(Microsoft.Dynamics.Nav.Types.DataError)
-                        && ps[1].ParameterType == typeof(int)
-                        && ps[2].ParameterType == typeof(Microsoft.Dynamics.Nav.Runtime.NavRecord);
-                });
-            if (runCodeunit != null)
-                Hook(runCodeunit, nameof(NavCodeunit_RunCodeunit), "NavCodeunit.RunCodeunit");
-        }
-
-        // NavMethodScope.ProcessException(Exception) — when an NRE occurs in OnRun(), the real
-        // implementation tries to call session.Diagnostics.SendExceptionTag(...) which NREs again
-        // on the skeleton session (Diagnostics is null), producing a secondary NRE that masks the
-        // original.  Returning false immediately (= "not handled") lets the original exception
-        // propagate cleanly through Run()'s outer catch clauses.
-        if (msType != null)
-        {
-            var procExc = msType.GetMethod("ProcessException",
-                BindingFlags.NonPublic | BindingFlags.Instance, null,
-                new[] { typeof(Exception) }, null);
-            if (procExc != null)
-                Hook(procExc, nameof(NavMethodScope_ProcessException), "NavMethodScope.ProcessException(Exception)");
-        }
+        // NavMethodScope.ProcessException(Exception) is Cecil-owned (see NclCecilRewrite.cs,
+        // "NavMethodScope cluster").
 
         // ALDebugger — all methods are obsolete stubs; handled at source level via BcAssembler
         // polyfill redirects to avoid ABI issues with value-type parameters (DataError enum).
 
-        // NavApplicationObjectBase.TryInvoke — needs session.CurrentMethodScope; skeleton session lacks it.
-        var navAOB = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase");
-        if (navAOB != null)
-        {
-            var tryInvoke = navAOB.GetMethod("TryInvoke",
-                BindingFlags.Public | BindingFlags.Static,
-                new[] { navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavSession")!,
-                         typeof(Action) });
-            if (tryInvoke != null)
-                Hook(tryInvoke, nameof(NavApplicationObjectBase_TryInvoke), "NavApplicationObjectBase.TryInvoke(NavSession, Action)");
-        }
+        // NavApplicationObjectBase.TryInvoke(NavSession, Action) is Cecil-owned (see
+        // NclCecilRewrite.cs).
         // ALSession.ALEnableVerboseTelemetry — telemetry enable/disable; no-op is safe.
         if (alSessionType != null)
         {
@@ -2861,20 +2382,8 @@ public static partial class BcRuntime
                     "CallStackElement.TryGetSourceInfo");
         }
 
-        // NCLMetaApplicationObject.get_ApplicationObjectConstructor — real getter calls
-        // CompileAndLoadClrObject under a lock on `nclMetaObjectCLRTypeContainer`, which
-        // is null on a skeleton meta-object → NRE in Monitor.ReliableEnter. Returning null
-        // is safe: callers like NCLMetaTable.CreateObjectInstance fall back to constructing
-        // NavRecord directly via `new NavRecord(parent, TableId, this, ...)`.
-        var metaAoType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetaApplicationObject");
-        if (metaAoType != null)
-        {
-            var aoCtorGetter = metaAoType.GetProperty("ApplicationObjectConstructor",
-                BindingFlags.NonPublic | BindingFlags.Instance)?.GetGetMethod(true);
-            if (aoCtorGetter != null)
-                Hook(aoCtorGetter, nameof(ReturnNull_OneArg),
-                    "NCLMetaApplicationObject.get_ApplicationObjectConstructor");
-        }
+        // NCLMetaApplicationObject.get_ApplicationObjectConstructor is Cecil-owned (see
+        // NclCecilRewrite.cs, Batch 7).
 
         // DISABLED: ApplyInstallIndirectSpike — Step 3 calls InstallIndirect (PrepareMethod) on
         // get_IsLocalLanguage after JmpHook.Apply has already patched its precode. PrepareMethod
@@ -2884,16 +2393,11 @@ public static partial class BcRuntime
         // disabling the call loses zero runtime functionality. See issue #1619 for follow-up.
         // ApplyInstallIndirectSpike(navNcl);
 
-        // NavMediaSet — PAGE-REPORT-CLUSTERS §4: in-memory backing for ALInsert/ALRemove/
-        // get_ALCount/ALItem/ALImport/ALExport. All real implementations reach the DB/Session
-        // tier; ConditionalWeakTable<self, List<Guid>> store gives a functional in-memory set.
-        ApplyNavMediaSetPatches(navNcl);
+        // NavMediaSet (ALInsert/ALRemove/get_ALCount/ALItem/ALImport/ALExport/get_ALMediaId) and
+        // NavNotification.ALSend/ALRecall are Cecil-owned (see NclCecilRewrite.cs).
 
-        // NavDialog StrMenu + Confirm — PAGE-REPORT-CLUSTERS §5: both methods invoke BC's
-        // callback mechanism (NavNCLCallbackNotAllowedException) in standalone mode.
-        // JmpHook all ALStrMenu overloads (return 0 or defaultNo) and all ALConfirm overloads
-        // (return false). Cecil NoInlining marks in NclCecilRewrite.cs defeat R2R inlining.
-        ApplyNavDialogPatches(navNcl);
+        // NavDialog.ALStrMenu (all overloads) and NavDialog.ALConfirm (all overloads) are
+        // Cecil-owned (see NclCecilRewrite.cs, Batch 5 — inline const/arg body rewrite).
     }
 
     // ── InstallIndirect spike implementation ────────────────────────────────────────────────
@@ -2956,204 +2460,6 @@ public static partial class BcRuntime
         }
 
         Console.Error.WriteLine("[IndirectSpike] === END ApplyInstallIndirectSpike ===");
-    }
-
-    // ── NavMediaSet patches — PAGE-REPORT-CLUSTERS §4 ───────────────────────────────────────
-
-    private static void ApplyNavMediaSetPatches(Assembly navNcl)
-    {
-        var navMediaSetType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavMediaSet");
-        if (navMediaSetType == null)
-        {
-            Console.Error.WriteLine("[BcRuntime] NavMediaSet NOT FOUND — skipping MediaSet hooks");
-            return;
-        }
-
-        var patchType = typeof(AlRunnerV2.Patches.MediaSetPatches);
-        int hooked = 0;
-
-        // ALInsert(DataError errorLevel, Guid mediaId) → bool
-        var alInsert = navMediaSetType.GetMethod("ALInsert",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-        if (alInsert != null)
-        {
-            var repl = patchType.GetMethod(nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_ALInsert),
-                BindingFlags.Public | BindingFlags.Static)!;
-            JmpHook.Apply(alInsert, repl, "NavMediaSet.ALInsert");
-            hooked++;
-        }
-
-        // ALRemove(DataError errorLevel, Guid mediaId) → bool
-        var alRemove = navMediaSetType.GetMethod("ALRemove",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-        if (alRemove != null)
-        {
-            var repl = patchType.GetMethod(nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_ALRemove),
-                BindingFlags.Public | BindingFlags.Static)!;
-            JmpHook.Apply(alRemove, repl, "NavMediaSet.ALRemove");
-            hooked++;
-        }
-
-        // get_ALCount() → int  (property getter)
-        var alCountGetter = navMediaSetType.GetProperty("ALCount",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetGetMethod(true);
-        if (alCountGetter != null)
-        {
-            var repl = patchType.GetMethod(nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_get_ALCount),
-                BindingFlags.Public | BindingFlags.Static)!;
-            JmpHook.Apply(alCountGetter, repl, "NavMediaSet.get_ALCount");
-            hooked++;
-        }
-
-        // ALItem(int index) → Guid
-        var alItem = navMediaSetType.GetMethod("ALItem",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-        if (alItem != null)
-        {
-            var repl = patchType.GetMethod(nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_ALItem),
-                BindingFlags.Public | BindingFlags.Static)!;
-            JmpHook.Apply(alItem, repl, "NavMediaSet.ALItem");
-            hooked++;
-        }
-
-        // ALImport overloads — hook the two file-based overloads (ImportFile AL surface)
-        foreach (var m in navMediaSetType.GetMethods(
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)
-            .Where(m2 => m2.Name == "ALImport"))
-        {
-            var ps = m.GetParameters();
-            // Only hook the file-based overloads (second param is string fileName)
-            if (ps.Length >= 3 && ps[1].ParameterType == typeof(string))
-            {
-                var replName = ps.Length == 3
-                    ? nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_ALImport_File2)
-                    : nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_ALImport_File3);
-                var repl = patchType.GetMethod(replName, BindingFlags.Public | BindingFlags.Static);
-                if (repl != null)
-                {
-                    JmpHook.Apply(m, repl, $"NavMediaSet.ALImport/file{ps.Length - 1}");
-                    hooked++;
-                }
-            }
-        }
-
-        // ALExport(DataError, string fileBaseName) → int
-        var alExport = navMediaSetType.GetMethod("ALExport",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-        if (alExport != null)
-        {
-            var repl = patchType.GetMethod(nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_ALExport),
-                BindingFlags.Public | BindingFlags.Static)!;
-            JmpHook.Apply(alExport, repl, "NavMediaSet.ALExport");
-            hooked++;
-        }
-
-        Console.Error.WriteLine($"[BcRuntime] NavMediaSet: {hooked} methods hooked");
-
-        // Hook get_ALMediaId — declared on NavMediaValueBase but may be overridden in NavMediaSet.
-        // Try both the derived type and base type so JmpHook patches the actual vtable slot called.
-        var baseTypeForMediaId = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavMediaValueBase")
-                       ?? navMediaSetType.BaseType;
-        var replMediaId = patchType.GetMethod(nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_get_ALMediaId),
-            BindingFlags.Public | BindingFlags.Static)!;
-        // Prefer hooking on NavMediaSet (finds override or inherited via virtual dispatch).
-        var alMediaIdDerived = navMediaSetType.GetProperty("ALMediaId",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            ?.GetGetMethod(nonPublic: true)
-            ?? navMediaSetType.GetMethod("get_ALMediaId",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-        if (alMediaIdDerived != null)
-        {
-            JmpHook.Apply(alMediaIdDerived, replMediaId, "NavMediaSet.get_ALMediaId(derived)");
-            Console.Error.WriteLine("[BcRuntime] NavMediaSet: get_ALMediaId hooked (derived slot)");
-        }
-        // DISABLED: base-slot hook for NavMediaValueBase.get_ALMediaId SIGSEGVs — PrepareMethod on
-        // the base method crashes after the derived override (NavMediaSet) has already been patched.
-        // The derived hook covers all virtual-dispatch call sites; direct NavMediaValueBase calls
-        // are not observed in the corpus. See issue #1619 for full analysis.
-
-        // NavNotification.ALSend / ALRecall — the real bodies NRE at
-        // session.Diagnostics.SendTraceTag(...) and even past that need the
-        // notification dispatch layer (handlers, AddIn host) which the runner
-        // does not have. Hook to a faithful replacement that populates
-        // NotificationInfo.Id (mirror of the real body) and returns true.
-        var navNotifType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavNotification");
-        if (navNotifType != null)
-        {
-            foreach (var m in navNotifType.GetMethods(
-                         BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
-            {
-                if (m.Name != "ALSend" && m.Name != "ALRecall") continue;
-                if (m.GetParameters().Length != 1) continue;
-                Hook(m, nameof(NavNotification_ALSendOrRecall), $"NavNotification.{m.Name}");
-            }
-        }
-    }
-
-    // ── NavDialog patches — PAGE-REPORT-CLUSTERS §5 ─────────────────────────────────────
-
-    private static void ApplyNavDialogPatches(Assembly navNcl)
-    {
-        var navDialogType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavDialog");
-        if (navDialogType == null)
-        {
-            Console.Error.WriteLine("[BcRuntime] NavDialog NOT FOUND — skipping StrMenu/Confirm hooks");
-            return;
-        }
-
-        var patchType = typeof(AlRunnerV2.Patches.DialogPatches);
-        int hooked = 0;
-
-        foreach (var m in navDialogType.GetMethods(
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly))
-        {
-            var ps = m.GetParameters();
-            if (m.Name == "ALStrMenu")
-            {
-                // Distinguish overloads by (a) presence of NavSession first param and
-                // (b) whether defaultNumber (Int32) is present.
-                bool hasSession = ps.Length > 0 && ps[0].ParameterType.Name == "NavSession";
-                bool hasDefault = ps.Any(p => p.ParameterType == typeof(int));
-
-                string replName = (hasSession, hasDefault, ps.Length) switch
-                {
-                    (false, false, _) => nameof(AlRunnerV2.Patches.DialogPatches.NavDialog_ALStrMenu_2),
-                    (true,  false, _) => nameof(AlRunnerV2.Patches.DialogPatches.NavDialog_ALStrMenu_S2),
-                    (false, true, 3)  => nameof(AlRunnerV2.Patches.DialogPatches.NavDialog_ALStrMenu_3),
-                    (true,  true, 4) when ps[3].ParameterType == typeof(Guid)
-                                      => nameof(AlRunnerV2.Patches.DialogPatches.NavDialog_ALStrMenu_S3),
-                    (false, true, _)  => nameof(AlRunnerV2.Patches.DialogPatches.NavDialog_ALStrMenu_4),
-                    (true,  true, _)  => nameof(AlRunnerV2.Patches.DialogPatches.NavDialog_ALStrMenu_S4),
-                };
-                var repl = patchType.GetMethod(replName, BindingFlags.Public | BindingFlags.Static);
-                if (repl != null)
-                {
-                    JmpHook.Apply(m, repl, $"NavDialog.ALStrMenu/{ps.Length}");
-                    hooked++;
-                }
-            }
-            else if (m.Name == "ALConfirm")
-            {
-                bool hasSession = ps.Length > 0 && ps[0].ParameterType.Name == "NavSession";
-                bool hasValues  = ps.Any(p => p.ParameterType.IsArray);
-
-                string replName = (hasSession, hasValues) switch
-                {
-                    (false, false) => nameof(AlRunnerV2.Patches.DialogPatches.NavDialog_ALConfirm_2),
-                    (true,  false) => nameof(AlRunnerV2.Patches.DialogPatches.NavDialog_ALConfirm_S2),
-                    (false, true)  => nameof(AlRunnerV2.Patches.DialogPatches.NavDialog_ALConfirm_4),
-                    (true,  true)  => nameof(AlRunnerV2.Patches.DialogPatches.NavDialog_ALConfirm_S4),
-                };
-                var repl = patchType.GetMethod(replName, BindingFlags.Public | BindingFlags.Static);
-                if (repl != null)
-                {
-                    JmpHook.Apply(m, repl, $"NavDialog.ALConfirm/{ps.Length}");
-                    hooked++;
-                }
-            }
-        }
-
-        Console.Error.WriteLine($"[BcRuntime] NavDialog: {hooked} methods hooked (StrMenu + Confirm)");
     }
 
     private static void HookProperty(Type t, string propName, bool isStatic, string replacementName)

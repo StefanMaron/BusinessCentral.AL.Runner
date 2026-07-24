@@ -53,19 +53,10 @@ public static class NavRecordIdPatches
             return;
         }
 
-        var repl = typeof(NavRecordIdPatches).GetMethod(nameof(NavRecordId_get_CollationAwareStringComparer),
-            BindingFlags.Public | BindingFlags.Static);
-        if (repl == null) return;
-
-        try
-        {
-            JmpHook.Apply(getter, repl, "NavRecordId.get_CollationAwareStringComparer");
-            Console.Error.WriteLine("[NavRecordIdPatches] hooked NavRecordId.get_CollationAwareStringComparer");
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"[NavRecordIdPatches] hook failed: {ex.Message}");
-        }
+        // NavRecordId.get_CollationAwareStringComparer is Cecil-owned (see NclCecilRewrite.cs)
+        // — its Cecil body calls NavRecordId_get_CollationAwareStringComparer below, which
+        // reads _cachedComparer built above. `getter` is resolved above only to confirm the
+        // property still exists on this Ncl build.
     }
 
     private static object BuildComparer(Assembly navNcl)

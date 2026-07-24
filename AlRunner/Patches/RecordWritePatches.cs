@@ -68,93 +68,11 @@ public static partial class BcRuntime
         else
             Console.Error.WriteLine("[BcRuntime] WARN: _skeletonSession is null — DAS not injected");
 
-        var recordHandleType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecordHandle");
-        if (recordHandleType != null)
-        {
-            var createTargetRec = recordHandleType.GetMethod("CreateTarget",
-                BindingFlags.NonPublic | BindingFlags.Instance,
-                null, Type.EmptyTypes, null);
-            if (createTargetRec != null)
-                Hook(createTargetRec,
-                    typeof(AlRunnerV2.Patches.RecordPatches).GetMethod("NavRecordHandle_CreateTarget",
-                        BindingFlags.Public | BindingFlags.Static)!,
-                    "NavRecordHandle.CreateTarget");
-        }
+        // NavRecordHandle.CreateTarget, NavSession.get_DataAccessSource, NavSession.get_Database,
+        // DataAccessSource.GetDataAccessForTable, TempTableDataProvider.ctor,
+        // TempTableDataProvider.CalcNumeric, and NavDatabase.get_CollationAwareStringComparer
+        // are all Cecil-owned (see NclCecilRewrite.cs).
 
-        // NavSession.DataAccessSource getter — return skeleton DataAccessSource backed by in-memory store.
-        // NavSession.Database getter — return skeleton NavDatabase (real Database => Tenant.Database NREs).
-        var sessType2 = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavSession");
-        if (sessType2 != null)
-        {
-            var dasProp = sessType2.GetProperty("DataAccessSource",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (dasProp?.GetGetMethod(true) != null)
-                Hook(dasProp.GetGetMethod(true)!,
-                    typeof(AlRunnerV2.Patches.RecordPatches).GetMethod("NavSession_get_DataAccessSource",
-                        BindingFlags.Public | BindingFlags.Static)!,
-                    "NavSession.get_DataAccessSource");
-
-            var dbProp = sessType2.GetProperty("Database",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (dbProp?.GetGetMethod(true) != null)
-                Hook(dbProp.GetGetMethod(true)!,
-                    typeof(AlRunnerV2.Patches.RecordPatches).GetMethod("NavSession_get_Database",
-                        BindingFlags.Public | BindingFlags.Static)!,
-                    "NavSession.get_Database");
-        }
-
-        // DataAccessSource.GetDataAccessForTable — always route to CreateTempDataAccess (in-memory).
-        var dasType2 = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.DataAccessSource");
-        if (dasType2 != null)
-        {
-            var gdaft = dasType2.GetMethod("GetDataAccessForTable",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (gdaft != null)
-                Hook(gdaft,
-                    typeof(AlRunnerV2.Patches.RecordPatches).GetMethod("NavDataAccessSource_GetDataAccessForTable",
-                        BindingFlags.Public | BindingFlags.Static)!,
-                    "DataAccessSource.GetDataAccessForTable");
-        }
-
-        // TempTableDataProvider.ctor — navSession.Database.CollationAwareStringComparer NREs on skeleton session.
-        // Replace with manual field injection to bypass the Database access.
-        var ttdpType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.TempTableDataProvider");
-        if (ttdpType != null)
-        {
-            var sessT = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavSession");
-            var nclMetaT = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetaTable");
-            var ttdpCtor = ttdpType.GetConstructor(
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-                null, new[] { sessT!, nclMetaT! }, null);
-            if (ttdpCtor != null)
-                Hook(ttdpCtor,
-                    typeof(AlRunnerV2.Patches.RecordPatches).GetMethod("TempTableDataProviderCtorReplacement",
-                        BindingFlags.Public | BindingFlags.Static)!,
-                    "TempTableDataProvider.ctor");
-
-            // CalcNumeric — the real override throws NotSupportedException; our replacement
-            // iterates in-memory rows via the private Filter() method to compute count/sum/avg.
-            var ttdpCalcNumeric = ttdpType.GetMethod("CalcNumeric",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (ttdpCalcNumeric != null)
-                Hook(ttdpCalcNumeric,
-                    typeof(AlRunnerV2.Patches.RecordPatches).GetMethod("TempTableDataProvider_CalcNumeric",
-                        BindingFlags.Public | BindingFlags.Static)!,
-                    "TempTableDataProvider.CalcNumeric");
-        }
-
-        // NavDatabase.CollationAwareStringComparer getter — return OrdinalIgnoreCase comparer.
-        var navDbType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavDatabase");
-        if (navDbType != null)
-        {
-            var collProp = navDbType.GetProperty("CollationAwareStringComparer",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (collProp?.GetGetMethod(true) != null)
-                Hook(collProp.GetGetMethod(true)!,
-                    typeof(AlRunnerV2.Patches.RecordPatches).GetMethod("NavDatabase_get_CollationAwareStringComparer",
-                        BindingFlags.Public | BindingFlags.Static)!,
-                    "NavDatabase.get_CollationAwareStringComparer");
-        }
         // NavRecord.Dispose(bool) — NREs when RequiredSessionId != NavCurrentThread.Session.Id
         var navRecordType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord");
         if (navRecordType != null)
@@ -177,19 +95,8 @@ public static partial class BcRuntime
                 AlRunnerV2.Infrastructure.JmpHook.Apply(endInit, replNoOp, "NavRecord.EndInitialization()");
                 Console.Error.WriteLine("[BcRuntime] NavRecord.EndInitialization() hooked → NoOp");
             }
-            var disposeMethod = navRecordType.GetMethod("Dispose",
-                BindingFlags.NonPublic | BindingFlags.Instance, null,
-                new[] { typeof(bool) }, null);
-            if (disposeMethod != null)
-                Hook(disposeMethod, nameof(NoOp2), "NavRecord.Dispose(bool)");
-
-            // IsGlobalTriggerImplemented — checks Session.SystemCodeunitFactory.GlobalTriggers which
-            // NREs on skeleton session. Return false: no global triggers in headless mode.
-            var isGlobalTrigger = navRecordType.GetMethod("IsGlobalTriggerImplemented",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            Console.Error.WriteLine($"[BcRuntime] IsGlobalTriggerImplemented found: {isGlobalTrigger != null} {isGlobalTrigger}");
-            if (isGlobalTrigger != null)
-                Hook(isGlobalTrigger, nameof(ReturnFalse2), "NavRecord.IsGlobalTriggerImplemented");
+            // NavRecord.Dispose(bool) and NavRecord.IsGlobalTriggerImplemented are Cecil-owned
+            // (see NclCecilRewrite.cs).
 
             // NOTE: NavRecord.get_ALReadPermission / get_ALWritePermission / get_ALReadConsistency
             // and ALAddLoadFields / ALSetBaseLoadFields / AddLoadFields hooks are disabled —
@@ -293,108 +200,21 @@ public static partial class BcRuntime
             var renameAsync4 = navRecordType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
                 .FirstOrDefault(m => m.Name == "RenameAsync" && m.GetParameters().Length == 4);
         }
-        // RecordLink.MoveLinksAsync(NavRecord, NavRecord) — called by NavRecord.RenameAsync after
-        // the rename commit to move record-link rows from old PK to new PK. Calls
-        // RecordLink.IsRecordLinkTableLocked(ITreeObject) which NREs on the skeleton session
-        // (no real lock-tracking infrastructure). No-op is safe in headless mode: there are no
-        // record links to move, and the rename itself has already committed before this call.
-        var recordLinkType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.RecordLink");
-        if (recordLinkType != null)
-        {
-            var moveLinks = recordLinkType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
-                .FirstOrDefault(m => m.Name == "MoveLinksAsync" && m.GetParameters().Length == 2);
-            if (moveLinks != null)
-                Hook(moveLinks, nameof(ReturnValueTask2), "RecordLink.MoveLinksAsync(NavRecord,NavRecord)");
-        }
-        // NavRecord.UpdateReferencesOnRenameAsync(List<...>, NavRecord) — called by RenameAsync to
-        // cascade PK changes to related tables. Calls NCLMetaTable.GetReferencingRelations() →
-        // ComputeReferencingRelations(NavAppGroup,...) which NREs because the skeleton session has
-        // no real AppGroup-aware metadata catalog. No-op is safe in headless mode: skeleton tables
-        // have no foreign-key references to cascade.
-        if (navRecordType != null)
-        {
-            var updateRefs = navRecordType.GetMethods(BindingFlags.NonPublic | BindingFlags.Instance)
-                .FirstOrDefault(m => m.Name == "UpdateReferencesOnRenameAsync" && m.GetParameters().Length == 2);
-            if (updateRefs != null)
-                Hook(updateRefs, nameof(ReturnValueTask3), "NavRecord.UpdateReferencesOnRenameAsync");
-        }
-        // NavManagementTasks.CopyCompany(String, String) — full body walks multiple
-        // NavRecord instances in table 2000000006 (Company) and performs DataAccess operations
-        // that NRE on the skeleton. AL tests in the CopyCompany cluster only assert
-        // Assert.IsTrue(true,...) — they need the call to NOT throw, not actual copy behavior.
-        // No-op is safe for headless mode: no real DB to copy.
-        var mgmtTasksType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavManagementTasks");
-        if (mgmtTasksType != null)
-        {
-            var copyCompany = mgmtTasksType.GetMethods(
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)
-                .FirstOrDefault(m => m.Name == "CopyCompany"
-                    && m.GetParameters() is { } ps
-                    && ps.Length >= 2
-                    && ps[^2].ParameterType == typeof(string)
-                    && ps[^1].ParameterType == typeof(string));
-            if (copyCompany != null)
-            {
-                Console.Error.WriteLine($"[BcRuntime] NavManagementTasks.CopyCompany: isStatic={copyCompany.IsStatic}, return={copyCompany.ReturnType.Name}, params={copyCompany.GetParameters().Length}");
-                // Pick shim based on total slot count (static: slots=params; instance: slots=params+1).
-                var slotCount = copyCompany.GetParameters().Length + (copyCompany.IsStatic ? 0 : 1);
-                var shimName = copyCompany.ReturnType == typeof(void) ? slotCount switch
-                {
-                    2 => nameof(NoOp2),
-                    3 => nameof(NoOp3),
-                    4 => nameof(NoOp4),
-                    5 => nameof(NoOp5),
-                    _ => nameof(NoOp3)
-                } : slotCount switch  // ValueTask or Task return
-                {
-                    2 => nameof(ReturnValueTask2),
-                    3 => nameof(ReturnValueTask3),
-                    4 => nameof(ReturnValueTask4),
-                    5 => nameof(ReturnValueTask5),
-                    _ => nameof(ReturnValueTask3)
-                };
-                Hook(copyCompany, shimName, "NavManagementTasks.CopyCompany");
-                Console.Error.WriteLine($"[BcRuntime] NavManagementTasks.CopyCompany hooked → {shimName}");
-            }
-        }
+        // RecordLink.MoveLinksAsync(NavRecord,NavRecord) and NavRecord.UpdateReferencesOnRenameAsync
+        // are Cecil-owned (see NclCecilRewrite.cs).
 
-        // NCLMetaApplicationObject.CheckApplicationObjectIsValid — validates app-group ID matches.
-        // Fails on skeleton session because tenant is null. No-op is safe: headless mode doesn't
-        // do hot-reload or app-group switching, so stale-object detection has no value here.
-        var nclMetaAppObjType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetaApplicationObject");
-        if (nclMetaAppObjType != null)
-        {
-            var checkValid = nclMetaAppObjType.GetMethod("CheckApplicationObjectIsValid",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (checkValid != null)
-                Hook(checkValid, nameof(NoOp2), "NCLMetaApplicationObject.CheckApplicationObjectIsValid");
+        // NavManagementTasks.CopyCompany, NCLMetaApplicationObject.CheckApplicationObjectIsValid,
+        // and NCLMetaApplicationObject.get_ApplicationObjectClrType are all Cecil-owned (see
+        // NclCecilRewrite.cs).
 
-            // get_ApplicationObjectClrType — does lock(nclMetaObjectCLRTypeContainer) which NREs
-            // when the container is null (our CreateFromMetaTable-built tables don't have it set).
-            // Replace with a dynamic lookup in loaded assemblies: Record{ID} in BusinessApplication namespace.
-            var getClrType = nclMetaAppObjType.GetProperty("ApplicationObjectClrType",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetGetMethod(true);
-            if (getClrType != null)
-                Hook(getClrType,
-                    typeof(AlRunnerV2.Patches.RecordPatches).GetMethod("NCLMetaApplicationObject_get_ApplicationObjectClrType",
-                        BindingFlags.Public | BindingFlags.Static)!,
-                    "NCLMetaApplicationObject.get_ApplicationObjectClrType");
-        }
-
-        // RecordImplementation.VerifyPermissions — calls NavSession.GetPermissionSet → Permissions field
-        // NREs on skeleton session (no real security infrastructure). No-op is safe in headless mode.
+        // RecordImplementation.VerifyPermissions, .VerifySecurityFiltersOnRecordAsync,
+        // .VerifySecurityFiltersAsync, and .get_IsOpen are Cecil-owned (see NclCecilRewrite.cs).
+        // .InternalFindRecordWithoutCheckingValuesAsync is also Cecil-owned there, but it calls
+        // straight through to RecordImpl_InternalFindRecordWithoutCheckingValuesAsync below, so
+        // the field/method lookups that helper depends on still need to be resolved here.
         var recImplType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.RecordImplementation");
         if (recImplType != null)
         {
-            // Find the 2-arg private instance VerifyPermissions(PermissionMask, bool).
-            var verifyPerms = recImplType.GetMethods(BindingFlags.NonPublic | BindingFlags.Instance)
-                .FirstOrDefault(m => m.Name == "VerifyPermissions" && m.GetParameters().Length == 2);
-            if (verifyPerms != null)
-                Hook(verifyPerms, nameof(NoOp3), "RecordImplementation.VerifyPermissions");
-
-            // InternalFindRecordWithoutCheckingValuesAsync — replace with a thin call that hits
-            // dataAccess.TryGetByPrimaryKeyAsync and bypasses the NRE-prone fallback branch
-            // (Session.CurrentMethodScope.ApplicationObject is null on the skeleton root scope).
             _fRecordImplementationDataAccess = recImplType.GetField("dataAccess",
                 BindingFlags.NonPublic | BindingFlags.Instance);
             _fRecordImplementationMutableRecordBuffer = recImplType.GetField("mutableRecordBuffer",
@@ -411,44 +231,6 @@ public static partial class BcRuntime
             {
                 _pMrbResultResult = mrbResultType.GetProperty("Result");
                 _pMrbResultRecordBuffer = mrbResultType.GetProperty("RecordBuffer");
-            }
-            var internalFind = recImplType.GetMethods(BindingFlags.NonPublic | BindingFlags.Instance)
-                .FirstOrDefault(m => m.Name == "InternalFindRecordWithoutCheckingValuesAsync"
-                                     && m.GetParameters().Length == 4);
-            if (internalFind != null && _fRecordImplementationDataAccess != null
-                && _mDataAccessTryGetByPrimaryKeyAsync != null && _pMrbResultResult != null)
-                Hook(internalFind, nameof(RecordImpl_InternalFindRecordWithoutCheckingValuesAsync),
-                    "RecordImplementation.InternalFindRecordWithoutCheckingValuesAsync");
-
-            // VerifySecurityFiltersOnRecordAsync(IRecordBuffer, FilterFieldDictionary, bool, bool)
-            // — called from InternalFindRecordWithoutCheckingValuesAsync; NREs through Session
-            // permission infrastructure. No-op (returns completed ValueTask).
-            foreach (var m in recImplType.GetMethods(BindingFlags.NonPublic | BindingFlags.Instance)
-                .Where(m => m.Name == "VerifySecurityFiltersOnRecordAsync"))
-            {
-                var p = m.GetParameters().Length;
-                Hook(m, p switch {
-                    2 => nameof(ReturnValueTask3),  // self + 2 args
-                    3 => nameof(ReturnValueTask4),
-                    4 => nameof(ReturnValueTask5),
-                    _ => nameof(ReturnValueTask3)
-                }, $"RecordImplementation.VerifySecurityFiltersOnRecordAsync/{p}");
-            }
-            // VerifySecurityFiltersAsync(MutableRecordBuffer, SecurityFilterType) — write-path equivalent.
-            var verifySecAsync = recImplType.GetMethods(BindingFlags.NonPublic | BindingFlags.Instance)
-                .FirstOrDefault(m => m.Name == "VerifySecurityFiltersAsync" && m.GetParameters().Length == 2);
-            if (verifySecAsync != null)
-                Hook(verifySecAsync, nameof(ReturnValueTask3), "RecordImplementation.VerifySecurityFiltersAsync");
-
-            // RecordImplementation.get_IsOpen — diagnose null tree.
-            // IsOpen = !base.IsDisposed && initialized. base.IsDisposed = tree.IsDisposed.
-            // If tree is null, NRE here (inlined into ThrowIfRecordStaleOrNotOpen).
-            var getIsOpen = recImplType.GetProperty("IsOpen",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetGetMethod(true);
-            if (getIsOpen != null)
-            {
-                Console.Error.WriteLine($"[BcRuntime] RecordImplementation.IsOpen found: {getIsOpen}");
-                Hook(getIsOpen, nameof(ReturnTrue), "RecordImplementation.get_IsOpen");
             }
         }
 
@@ -478,62 +260,14 @@ public static partial class BcRuntime
             else
                 Console.Error.WriteLine("[BcRuntime] WARNING: NavServerEventSource.mutex field not found — trappable-error logging may mask real exceptions");
 
-            var getLog = navServerEventSourceType.GetProperty("Log",
-                BindingFlags.Public | BindingFlags.Static)?.GetGetMethod(true);
-            if (getLog != null)
-                Hook(getLog, nameof(NavServerEventSource_get_Log), "NavServerEventSource.get_Log");
-
-            // No-op every event-write method on the type — they all dereference the (uninit)
-            // EventSource internals which would NRE. Cheap belt-and-braces compared to chasing
-            // each one individually as new tests hit them.
-            // 10-arg specific (WritePermissionUncheckedEvent already has its own typed no-op).
-            var writePerm = navServerEventSourceType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                .FirstOrDefault(m => m.Name == "WritePermissionUncheckedEvent" && m.GetParameters().Length == 10);
-            if (writePerm != null)
-                Hook(writePerm, nameof(NavServerEventSource_WritePermissionUncheckedEvent),
-                    "NavServerEventSource.WritePermissionUncheckedEvent");
+            // NavServerEventSource.get_Log and .WritePermissionUncheckedEvent are Cecil-owned
+            // (see NclCecilRewrite.cs) — get_Log's Cecil body reads _skeletonNavServerEventSource
+            // populated above.
         }
 
-        // NavSession.get_SortingProperties — Database.SqlSortingProperties path. Belt-and-suspenders
-        // hook in case the skeleton Database's pre-poked sqlSortingProperties field is bypassed
-        // by JIT inlining of the chained property accesses.
-        if (sessType != null)
-        {
-            var getSortingProps = sessType.GetProperty("SortingProperties",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetGetMethod(true);
-            if (getSortingProps != null)
-                Hook(getSortingProps,
-                    typeof(AlRunnerV2.Patches.RecordPatches).GetMethod(
-                        nameof(AlRunnerV2.Patches.RecordPatches.NavSession_get_SortingProperties),
-                        BindingFlags.Public | BindingFlags.Static)!,
-                    "NavSession.get_SortingProperties");
-        }
-
-        // SequentialUuidCreator.NativeMethods.NewSequentialId — P/Invokes rpcrt4.dll (Windows only).
-        // Replace with Guid.NewGuid() on all platforms.
-        var seqUuidCreator = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.Data.SequentialUuidCreator+NativeMethods");
-        if (seqUuidCreator != null)
-        {
-            var newSeqId = seqUuidCreator.GetMethod("NewSequentialId",
-                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static);
-            var newSeqIdRepl = typeof(AlRunnerV2.Patches.RecordPatches).GetMethod(
-                nameof(AlRunnerV2.Patches.RecordPatches.NewSequentialId_Replacement),
-                BindingFlags.Public | BindingFlags.Static);
-            if (newSeqId != null && newSeqIdRepl != null)
-                Hook(newSeqId, newSeqIdRepl, "SequentialUuidCreator.NewSequentialId");
-        }
-
-        // TempTableStatistics.ReportIncrementChange — tries to call NavEnvironment.PerformanceCounterSetter
-        // which is null on our skeleton. No-op: temp table statistics are not needed in headless mode.
-        var tTempStats = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.TempTableStatistics");
-        if (tTempStats != null)
-        {
-            var reportChange = tTempStats.GetMethod("ReportIncrementChange",
-                BindingFlags.NonPublic | BindingFlags.Instance,
-                null, new[] { typeof(int), typeof(int), typeof(int) }, null);
-            if (reportChange != null)
-                Hook(reportChange, nameof(NoOp4), "TempTableStatistics.ReportIncrementChange");
-        }
+        // NavSession.get_SortingProperties, SequentialUuidCreator.NativeMethods.NewSequentialId,
+        // and TempTableStatistics.ReportIncrementChange are all Cecil-owned (see
+        // NclCecilRewrite.cs).
 
         // NavTextBuilder.ALInsert(DataError, int, string) — BC v28+: position 0 = prepend
         // (equivalent to position 1). BC v27 throws for position=0.

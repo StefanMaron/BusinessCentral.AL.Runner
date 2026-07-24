@@ -415,50 +415,8 @@ public static partial class BcRuntime
             }
         }
 
-        // 5. Populate cache hook target — NCLMetaApplicationObject.Populate is called
-        //    from NCLMetadata.GetMetaApplicationObjectInternal when the cache entry's
-        //    `metadataLoaded` flag is false. Our hand-built NCLMetaTable instances have
-        //    no NCLObjectXmlMetadataLoader / MetaObjectCache backing, so the original
-        //    Populate would NRE inside LoadTableMetadata. Replace it with a no-op:
-        //    the cache populator already FieldPokes everything we need (fields, keys).
-        //    Field-poking metadataLoaded=true alone is not enough — JIT inlines the
-        //    MetadataLoaded getter and the runtime sometimes still drops into Populate
-        //    along the lock-retry path; hooking the method body short-circuits that.
-        var nclAppObjType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetaApplicationObject");
-        if (nclAppObjType != null)
-        {
-            var populate = nclAppObjType.GetMethod("Populate",
-                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance,
-                null, Type.EmptyTypes, null);
-            if (populate != null)
-            {
-                JmpHook.Apply(populate,
-                    typeof(BcRuntime).GetMethod(nameof(BcRuntime.NoOp_OneArg),
-                        BindingFlags.Public | BindingFlags.Static)!,
-                    "NCLMetaApplicationObject.Populate");
-                Console.Error.WriteLine("[BcRuntime] NCLMetaApplicationObject.Populate hooked → NoOp");
-            }
-
-            // CompileAndLoadClrObject — same story as Populate. Original calls
-            // `nclMetaObjectCLRTypeContainer.ApplicationObjectClrType = LoadClrType();`
-            // which NREs (container is null on hand-built metas; LoadClrType walks
-            // ObjectLoader which is null). The downstream property getter
-            // ApplicationObjectClrType is already JMP-hooked
-            // (NCLMetaApplicationObject_get_ApplicationObjectClrType) to look up
-            // Record{ID} from the loaded test assembly directly, so making this a
-            // no-op is safe.
-            var compileLoad = nclAppObjType.GetMethod("CompileAndLoadClrObject",
-                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance,
-                null, Type.EmptyTypes, null);
-            if (compileLoad != null)
-            {
-                JmpHook.Apply(compileLoad,
-                    typeof(BcRuntime).GetMethod(nameof(BcRuntime.NoOp_OneArg),
-                        BindingFlags.Public | BindingFlags.Static)!,
-                    "NCLMetaApplicationObject.CompileAndLoadClrObject");
-                Console.Error.WriteLine("[BcRuntime] NCLMetaApplicationObject.CompileAndLoadClrObject hooked → NoOp");
-            }
-        }
+        // 5. NCLMetaApplicationObject.Populate and .CompileAndLoadClrObject are Cecil-owned
+        //    (see NclCecilRewrite.cs).
 
         // 6. Inject skeleton SystemTenant into the real Tenants collection.
         var tenantsProp = envType.GetProperty("Tenants",
