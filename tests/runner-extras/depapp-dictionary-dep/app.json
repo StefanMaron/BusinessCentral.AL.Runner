@@ -1,0 +1,25 @@
+{
+  "id": "c7d8e9f0-1a2b-4c3d-9e4f-5a6b7c8d9e01",
+  "name": "DepApp Dictionary Dep",
+  "publisher": "AL Runner",
+  "version": "25.8.43.0",
+  "brief": "Dependency half of the dep-app Dictionary reproducer: uses AL Dictionaries entirely inside its own codeunit.",
+  "description": "NavObjectDictionary<TKey,TValue>.get_Target lazily builds its backing SharedNavObjectDictionary by chaining base.Tree.Session.Company.SharedObjects, and throws ArgumentNullException (Parameter 'parent') when SharedObjects is null. The runner's replacement helper is registered per closed instantiation discovered by scanning ONE assembly — the app under test — so a Dictionary used inside a DEPENDENCY app is never covered. This app is that dependency: every Dictionary here lives and dies inside its own codeunit, so nothing in the consuming bundle can make its instantiations discoverable.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [
+    {
+      "from": 61840,
+      "to": 61849
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

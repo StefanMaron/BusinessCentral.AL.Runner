@@ -1269,6 +1269,55 @@ public static class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Rewrote NavObjectList`1.get_Target → BcRuntime.NavObjectList_get_Target helper");
         }
 
+        // NavObjectDictionary<TKey,TValue>.get_Target — the sibling of the NavObjectList
+        // case immediately above, and the last of the get_Target family still on the old
+        // per-closed-instantiation JmpHook path (AsyncStateMachineSpike.
+        // ApplyNavObjectDictionaryGetTargetHooks). That path has two structural holes:
+        //   1. it goes through JmpHook, which is disabled by default (Cecil-only), so it
+        //      no-ops entirely unless AL_RUNNER_ENABLE_JMPHOOK=1;
+        //   2. it installs one hook per CLOSED instantiation, discovered by scanning the
+        //      fields and properties of a SINGLE assembly (the app under test) — so a
+        //      dictionary that only ever appears as a method local, or that lives in a
+        //      dependency assembly (DependencyLoader never calls SetTestAssembly), is
+        //      never covered. Reference-type instantiations can still be covered by
+        //      accident because the CLR shares one __Canon body across all ref/ref
+        //      instantiations; value-type ones get their own body and cannot be.
+        // Rewriting the OPEN generic's body closes both holes at once and is exactly what
+        // the NavObjectList block above already does — same problem, same shape, same
+        // helper contract. The helper resolves <TKey,TValue> reflectively from the
+        // receiver, so one rewrite serves every instantiation.
+        {
+            var navObjectDictType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavObjectDictionary`2")
+                ?? throw new InvalidOperationException("NavObjectDictionary`2 not found in Ncl — shape changed");
+            var sharedNavObjectDictType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.SharedNavObjectDictionary`2")
+                ?? throw new InvalidOperationException("SharedNavObjectDictionary`2 not found in Ncl — shape changed");
+            var getTargetMethod = navObjectDictType.Methods
+                .FirstOrDefault(m => m.Name == "get_Target" && m.Parameters.Count == 0)
+                ?? throw new InvalidOperationException("NavObjectDictionary<TKey,TValue>.get_Target not found");
+
+            var helperMethodInfo = typeof(AlRunnerV2.BcRuntime).GetMethod(
+                nameof(AlRunnerV2.BcRuntime.NavObjectDictionary_get_Target),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("BcRuntime.NavObjectDictionary_get_Target not found");
+            var helperRef = asm.MainModule.ImportReference(helperMethodInfo);
+
+            var sharedDictBound = new GenericInstanceType(sharedNavObjectDictType);
+            sharedDictBound.GenericArguments.Add(navObjectDictType.GenericParameters[0]);
+            sharedDictBound.GenericArguments.Add(navObjectDictType.GenericParameters[1]);
+
+            var body = getTargetMethod.Body;
+            body.Instructions.Clear();
+            body.Variables.Clear();
+            body.ExceptionHandlers.Clear();
+            var il = body.GetILProcessor();
+            il.Append(il.Create(OpCodes.Ldarg_0));
+            il.Append(il.Create(OpCodes.Call, helperRef));
+            il.Append(il.Create(OpCodes.Castclass, sharedDictBound));
+            il.Append(il.Create(OpCodes.Ret));
+            body.MaxStackSize = 1;
+            Console.Error.WriteLine("[Cecil] Rewrote NavObjectDictionary`2.get_Target → BcRuntime.NavObjectDictionary_get_Target helper");
+        }
+
         // ALCompiler.DotNetToNavOutStream — marshals a NavDotNet-wrapped .NET Stream into
         // a NavOutStream. Real body wraps the stream in a NavStreamProvider parented to
         //     parentOfResult.Tree.Session.Company.SharedObjects

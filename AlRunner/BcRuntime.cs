@@ -234,13 +234,13 @@ public static partial class BcRuntime
         // (its app.json resourceFolders are where the app's resource bytes live).
         AlRunnerV2.Patches.NavAppResourcePatches.RegisterTestAssembly(asm);
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        // (B) Spike: enumerate closed NavObjectDictionary`2 instantiations now that
-        //     the test assembly is loaded and its closed generic types are in the AppDomain.
-        var navNcl = AppDomain.CurrentDomain.GetAssemblies()
-            .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
-        if (navNcl != null)
-            ApplyNavObjectDictionaryGetTargetHooks(navNcl, asm);
-        AlRunnerV2.PerfTrace.Log($"SetTestAssembly.ApplyNavObjectDictionaryGetTargetHooks {sw.ElapsedMilliseconds}ms");
+        // NavObjectDictionary`2.get_Target used to be hooked here, per closed
+        // instantiation, once the test assembly's generic types were in the AppDomain.
+        // It is now rewritten once on the open generic by NclCecilRewrite, so there is
+        // nothing assembly-specific left to do — which also fixes the two cases the
+        // scan could never reach: dictionaries in dependency assemblies (never passed
+        // to SetTestAssembly) and dictionaries that are only method locals (not
+        // discoverable as a field or property type).
         // Hook XmlPort{ID}.InitializeComponent() overrides in the test assembly.
         // The BC-generated InitializeComponent calls EndInitialization() which may be
         // inlined by the JIT into the caller — hooking EndInitialization() in NCL is

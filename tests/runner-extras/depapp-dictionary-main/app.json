@@ -1,0 +1,32 @@
+{
+  "id": "c7d8e9f0-1a2b-4c3d-9e4f-5a6b7c8d9e02",
+  "name": "DepApp Dictionary Main",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Companion of depapp-dictionary-dep: pins AL Dictionary behaviour when the codeunit lives in a SOURCE-COMPILED dependency.",
+  "description": "Written to reproduce the Pageworks cluster of 8 failures — ArgumentNullException (Parameter 'parent') out of SharedNavObjectDictionary..ctor, reached from a dep-app codeunit — and it does NOT reproduce it: all four cases passed before the NavObjectDictionary Cecil rewrite landed. So 'the dictionary lives in a dependency' is not by itself the trigger; a source-compiled dependency like this one works fine, while Pageworks' failing dependency is a PRECOMPILED .app. The distinguishing factor was never isolated, and this suite is deliberately not claimed as coverage of that cluster. It is kept as a regression pin for the dependency path that does work, across three distinct closed instantiations plus a negative case, so that a future change to the get_Target rewrite or to dep-app session wiring fails loudly here. The value-type instantiation is the one worth keeping deliberately: reference-type instantiations can be covered incidentally through CLR __Canon body sharing, value-type ones cannot.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "c7d8e9f0-1a2b-4c3d-9e4f-5a6b7c8d9e01",
+      "name": "DepApp Dictionary Dep",
+      "publisher": "AL Runner",
+      "version": "25.8.43.0"
+    }
+  ],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [
+    {
+      "from": 61850,
+      "to": 61859
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
