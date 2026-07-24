@@ -2189,6 +2189,21 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
             });
         if (prebuilt != null)
         {
+            // ...but only while that .app is not STALE. It is matched on AppId alone, so a
+            // months-old package in a project's .alpackages would otherwise beat the source
+            // directory the user passed on the command line — surfacing as a wall of bogus
+            // AL0791 / AL0185 diagnostics against source that is perfectly valid, with only
+            // the "[layered] ... skipping in-process synthesis" line above to explain it.
+            var prebuiltUtc = File.GetLastWriteTimeUtc(prebuilt);
+            var newestSourceUtc = AlRunnerV2.Infrastructure.PrebuiltShadowCheck.NewestAlSourceUtc(implPath);
+            if (AlRunnerV2.Infrastructure.PrebuiltShadowCheck.SourceIsNewer(prebuiltUtc, newestSourceUtc))
+            {
+                Console.WriteLine($"[layered] {implId.Name} {implId.Version} has a prebuilt symbol package " +
+                    $"({Path.GetFileName(prebuilt)}) but it is STALE (source modified {newestSourceUtc:u} > " +
+                    $"package {prebuiltUtc:u}) — synthesizing from source instead.");
+                continue; // keep implPath: build it from source
+            }
+
             Console.WriteLine($"[layered] {implId.Name} {implId.Version} already has a prebuilt symbol package " +
                 $"({Path.GetFileName(prebuilt)}) — skipping in-process synthesis.");
             implPaths.Remove(implPath);
