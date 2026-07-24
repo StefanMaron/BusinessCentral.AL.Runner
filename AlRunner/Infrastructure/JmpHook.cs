@@ -4,6 +4,7 @@
 // .NET 8 lays out method entries as one of three precode shapes; we follow them through
 // to the actual JIT'd code so the JMP lands in the right place when the original was
 // already JIT-compiled before we hooked it.
+using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -76,10 +77,55 @@ internal static class JmpHook
         return true; // Cecil-only everywhere — the JmpHook layer is removed from the default path.
     }
 
+    // Orphaned-hook audit. With the JmpHook layer off (the default), a Hook(...) call site is a
+    // silent no-op unless the target has actually been migrated to a Cecil IL rewrite. A patch
+    // owned by NEITHER mechanism simply vanishes — BC's unpatched body runs and typically NREs
+    // deep inside Ncl with no runner frame on the stack to point back at the missing patch
+    // (this is how the Pageworks NavTestPageBase.ALGoToRecord cluster presented). The remaining
+    // migration debt is accepted, but it must be MEASURABLE rather than invisible: record every
+    // such call site so `AL_RUNNER_HOOK_AUDIT=1` can name them, along with the CecilOwned key
+    // the migration has to add.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _orphaned = new();
+
+    /// <summary>Hook call sites owned by neither JmpHook (disabled) nor a Cecil rewrite.</summary>
+    public static System.Collections.Generic.IReadOnlyCollection<string> OrphanedHooks
+        => _orphaned.Keys.OrderBy(k => k, System.StringComparer.Ordinal).ToArray();
+
+    /// <summary>Clears the orphan audit (test seam).</summary>
+    public static void ResetOrphanAudit() => _orphaned.Clear();
+
+    private static readonly bool _audit =
+        Environment.GetEnvironmentVariable("AL_RUNNER_HOOK_AUDIT") == "1";
+
+    /// <summary>
+    /// Writes the orphaned-hook audit to stderr. Call once after patch install. No-op unless
+    /// <c>AL_RUNNER_HOOK_AUDIT=1</c> — the debt is known, so this is diagnostics, not a warning
+    /// on every run.
+    /// </summary>
+    public static void ReportOrphanedHooks()
+    {
+        if (!_audit) return;
+        var orphans = OrphanedHooks;
+        Console.Error.WriteLine(
+            $"[hook-audit] {orphans.Count} registered patch(es) owned by neither JmpHook (disabled) nor Cecil:");
+        foreach (var o in orphans) Console.Error.WriteLine($"[hook-audit]   {o}");
+        Console.Error.Flush();
+    }
+
     public static void Apply(MethodBase original, MethodInfo replacement, string name)
     {
         LastAttempt = name;
-        if (_disabled) { if (_trace) TraceLine($"[JmpHook] SKIP (disabled) {name}"); return; }
+        if (_disabled)
+        {
+            // Cecil-owned => the method IS patched, just by the other mechanism. Anything else
+            // is an orphan: record it (with its Cecil key) instead of vanishing silently.
+            string key;
+            try { key = NclCecilRewrite.Key(original); } catch { key = "<unresolvable-key>"; }
+            if (!NclCecilRewrite.CecilOwned.Contains(key))
+                _orphaned.TryAdd($"{name}  [{key}]", 0);
+            if (_trace) TraceLine($"[JmpHook] SKIP (disabled) {name}");
+            return;
+        }
         // Cecil-owned skip: a method migrated to a Cecil IL rewrite must be owned by
         // EXACTLY ONE mechanism. Installing a JmpHook on top of the Cecil body recreates
         // the coexistence double-dispatch spin. The registry lives in NclCecilRewrite and

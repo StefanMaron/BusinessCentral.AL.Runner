@@ -509,6 +509,12 @@ public static partial class BcRuntime
         Console.Error.Flush();
         try { System.IO.File.AppendAllText(Path.Combine(Path.GetTempPath(), "al-runner-startup.log"), ready + "\n"); } catch { }
 
+        // Patch install is complete, so the orphan set is final: every Hook(...) site that is
+        // owned by neither the (disabled) JmpHook layer nor a Cecil rewrite. Those patches are
+        // silently absent at runtime — BC's unpatched body runs instead. AL_RUNNER_HOOK_AUDIT=1
+        // names them so the remaining JmpHook→Cecil migration debt is measurable.
+        AlRunnerV2.Infrastructure.JmpHook.ReportOrphanedHooks();
+
         // Wire FirstChanceException-based AL call-stack capture now that patches are live
         // and _skeletonSession is initialised. This must happen after all hooks so that
         // NavException type lookup succeeds and CurrentMethodScope reflection is valid.
