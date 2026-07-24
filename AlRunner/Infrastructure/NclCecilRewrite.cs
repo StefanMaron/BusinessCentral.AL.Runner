@@ -849,6 +849,33 @@ public static class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Rewrote NavTestPageBase.LoadMetadata → return null (skip MetadataProvider)");
         }
 
+        // 7. NavTestPageBase.Close() — prepend a flush of the row started by TestPage.New().
+        //    BC's Close() drives the real client's "commit the row you are standing on" step,
+        //    but it never calls back into ITestPage.Close(), so LiveNavTestPage never learned
+        //    the page was closing and silently dropped the pending row (the AL test then saw
+        //    Count = 0 after New() + SetValue + Close()). Prepend rather than replace: the rest
+        //    of Close()'s body still runs, so disposal state stays exactly as BC left it.
+        {
+            var closeMethod = navTestPageBaseType.Methods
+                .FirstOrDefault(m => m.Name == "Close" && m.Parameters.Count == 0 && m.HasBody)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NavTestPageBase.Close() not found — Ncl shape changed; do not commit");
+
+            var flushMi = typeof(AlRunnerV2.BcRuntime).GetMethod(
+                nameof(AlRunnerV2.BcRuntime.NavTestPageBase_FlushPendingNewRow),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] BcRuntime.NavTestPageBase_FlushPendingNewRow not found");
+
+            var body = closeMethod.Body;
+            var il = body.GetILProcessor();
+            var first = body.Instructions[0];
+            il.InsertBefore(first, il.Create(OpCodes.Ldarg_0));
+            il.InsertBefore(first, il.Create(OpCodes.Call, asm.MainModule.ImportReference(flushMi)));
+            if (body.MaxStackSize < 1) body.MaxStackSize = 1;
+            Console.Error.WriteLine("[Cecil] Prepended pending-new-row flush to NavTestPageBase.Close");
+        }
+
         // 6. NavTestPageBase.ALGoToRecord(DataError, NavRecord) — delegate to
         //    BcRuntime.NavTestPageBase_ALGoToRecord, which resolves the page's SourceTable
         //    primary key and positions the backing LiveNavTestPage on the matching row.

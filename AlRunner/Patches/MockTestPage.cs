@@ -34,7 +34,7 @@ internal class MockITestPage : ITestPage
     // IsOpened() = false so NavTestPageBase.Open() "already open" guard passes.
     public virtual bool IsOpened()  => false;
     public virtual void Close()     { }
-    public void Dispose()   { }
+    public virtual void Dispose()   { }
 
     public virtual ITestField GetField(int id)
     {
@@ -54,7 +54,7 @@ internal class MockITestPage : ITestPage
     public ITestAction        GetBuiltInAction(FormResult formResult)                   => new MockITestAction();
     public ITestFilter        GetDataItemFilter(string id)                              => this;
     public void               SetSelection(bool value)                                  { }
-    public void               InsertEmptyRow(bool beforeCurrent)                        { }
+    public virtual void       InsertEmptyRow(bool beforeCurrent)                        { }
     public virtual bool       MoveNext()                                                => false;
     public virtual bool       MovePrevious()                                            => false;
     public virtual bool       MoveFirst()                                               => false;
@@ -75,7 +75,7 @@ internal class MockITestPage : ITestPage
     public string     Caption              => string.Empty;
     public int        PageId               => 0;
     public Guid       FormHandle           => Guid.Empty;
-    public bool       Creatable            => false;
+    public virtual bool Creatable          => false;
     public bool       IsExpanded           => false;
     public bool       RuntimeEditable      => true;
 
@@ -108,15 +108,52 @@ internal sealed class LiveNavTestPage : MockITestPage
     private readonly NavRecord _record;
     private readonly IReadOnlyDictionary<int, int> _controlIdToFieldNo;
     private readonly Dictionary<int, LiveNavTestField> _fields = new();
+    private readonly bool _creatable;
 
     public LiveNavTestPage(NavRecord record, IReadOnlyDictionary<int, int> controlIdToFieldNo)
+        : this(record, controlIdToFieldNo, creatable: true) { }
+
+    public LiveNavTestPage(NavRecord record, IReadOnlyDictionary<int, int> controlIdToFieldNo, bool creatable)
     {
         _record = record;
         _controlIdToFieldNo = controlIdToFieldNo;
+        _creatable = creatable;
     }
 
+    // BC's NavTestPageBase.New() consults Creatable before inserting. The base mock returns
+    // false (it has no backing record to insert into), but a LIVE test page does — so the
+    // answer must come from the page's declared InsertAllowed rather than a hardcoded false,
+    // which denied every TestPage.New() regardless of the page under test.
+    public override bool Creatable => _creatable;
+
     public override bool IsOpened() => false;
-    public override void Close() { }
+
+    // TestPage.New() reaches ITestPage.InsertEmptyRow. BC's client model is "start a blank
+    // row now, persist it once the cursor leaves it (or the page closes)" — the SetValue
+    // calls in between write into the record buffer. The base mock no-ops, which silently
+    // dropped every insert made through a TestPage; a LIVE page has a real record, so it
+    // must initialise the buffer and remember to flush it.
+    private bool _pendingNewRow;
+
+    public override void InsertEmptyRow(bool beforeCurrent)
+    {
+        FlushPendingNewRow();   // starting a second row persists the first
+        _record.ALInit();
+        _pendingNewRow = true;
+    }
+
+    internal void FlushPendingNewRow()
+    {
+        if (!_pendingNewRow) return;
+        _pendingNewRow = false;
+        _record.ALInsertAsync(DataError.TrapError, false, false).GetAwaiter().GetResult();
+    }
+
+    // BC routes TestPage teardown through both Close() and Dispose() depending on whether
+    // the AL test calls Close() explicitly or lets the variable go out of scope. Flush on
+    // both so a New() is never silently discarded.
+    public override void Close() => FlushPendingNewRow();
+    public override void Dispose() => FlushPendingNewRow();
 
     public override ITestField GetField(int id)
     {
@@ -126,10 +163,12 @@ internal sealed class LiveNavTestPage : MockITestPage
         return field;
     }
 
-    public override bool MoveFirst() => _record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult();
-    public override bool MoveLast() => _record.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult();
-    public override bool MoveNext() => _record.ALNextAsync().GetAwaiter().GetResult() != 0;
-    public override bool MovePrevious() => _record.ALNextAsync(-1).GetAwaiter().GetResult() != 0;
+    // Every cursor move leaves the in-progress new row, so it must be persisted first —
+    // otherwise navigating away from a New() silently discards it.
+    public override bool MoveFirst() { FlushPendingNewRow(); return _record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult(); }
+    public override bool MoveLast() { FlushPendingNewRow(); return _record.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult(); }
+    public override bool MoveNext() { FlushPendingNewRow(); return _record.ALNextAsync().GetAwaiter().GetResult() != 0; }
+    public override bool MovePrevious() { FlushPendingNewRow(); return _record.ALNextAsync(-1).GetAwaiter().GetResult() != 0; }
 
     public override object? GetBookmark() => _record.ALGetPosition();
 

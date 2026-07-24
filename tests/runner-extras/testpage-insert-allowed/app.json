@@ -1,0 +1,25 @@
+{
+  "id": "b4c5d6e7-8f90-4a1b-8c2d-3e4f5a6b7c81",
+  "name": "Runner Extras - TestPage InsertAllowed",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves TestPage.New() inserts a row on an insertable page, and still throws on a page declaring InsertAllowed = false.",
+  "description": "Reproduces the second layer of the Pageworks TestPage cluster (8 tests). The runner's ITestPage implementation hardcoded Creatable => false, so BC's New() ALWAYS threw NavInsertDeniedPermissionException ('New method failed because Insert is not allowed. Page = , Id = 0') regardless of the page's actual InsertAllowed property — a silent fake that makes every insert-through-TestPage test fail. RED (before the fix): New() on an ordinary page throws. GREEN (after the fix): Creatable reflects the page's parsed InsertAllowed (defaulting to true), so New() inserts, and a page that genuinely declares InsertAllowed = false still refuses.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [
+    {
+      "from": 61820,
+      "to": 61829
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

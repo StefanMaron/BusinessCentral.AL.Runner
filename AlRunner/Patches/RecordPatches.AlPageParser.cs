@@ -26,6 +26,13 @@ public static partial class RecordPatches
         @"\bSourceTable\s*=\s*(?:""([^""]+)""|([A-Za-z_]\w*))\s*;",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    // `InsertAllowed = false;` — AL's default when the property is absent is TRUE, so only
+    // an explicit `false` needs matching. Drives ITestPage.Creatable, which BC's
+    // NavTestPageBase.New() checks before inserting.
+    private static readonly Regex RxPageInsertAllowed = new(
+        @"\bInsertAllowed\s*=\s*(true|false)\s*;",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     private static readonly Regex RxPageField = new(
         @"\bfield\s*\(\s*(?:""([^""]+)""|([A-Za-z_]\w*))\s*;\s*Rec\.(?:""([^""]+)""|([A-Za-z_]\w*))",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -50,7 +57,8 @@ public static partial class RecordPatches
             var pageText = SliceObjectText(text, m.Index);
             var sourceTableName = TryReadSourceTableName(pageText);
             _parsedPages[id] = new ParsedPage(id, name, IsExtension: false,
-                sourceTableName, ParsePageFieldBindings(id, pageText));
+                sourceTableName, ParsePageFieldBindings(id, pageText),
+                InsertAllowed: TryReadInsertAllowed(pageText));
         }
 
         // `pageextension N "Name" extends "Base"` — pageextensions
@@ -59,8 +67,24 @@ public static partial class RecordPatches
             if (!int.TryParse(m.Groups[1].Value, out int id)) continue;
             var name = m.Groups[2].Success ? m.Groups[2].Value : m.Groups[3].Value;
             _parsedPages[id] = new ParsedPage(id, name, IsExtension: true,
-                SourceTableName: string.Empty, ControlIdToFieldName: new Dictionary<int, string>());
+                SourceTableName: string.Empty, ControlIdToFieldName: new Dictionary<int, string>(),
+                InsertAllowed: TryReadInsertAllowed(SliceObjectText(text, m.Index)));
         }
+    }
+
+    /// <summary>
+    /// Whether the page permits inserts (AL's <c>InsertAllowed</c>, default TRUE when the
+    /// property is absent). Drives ITestPage.Creatable, which BC's NavTestPageBase.New()
+    /// checks before inserting. Unknown pages default to true — same as AL.
+    /// </summary>
+    internal static bool GetInsertAllowedForPage(int pageId)
+        => !_parsedPages.TryGetValue(pageId, out var page) || page.InsertAllowed;
+
+    private static bool TryReadInsertAllowed(string pageText)
+    {
+        var m = RxPageInsertAllowed.Match(pageText);
+        // Absent => AL's default, which is true.
+        return !m.Success || !string.Equals(m.Groups[1].Value, "false", StringComparison.OrdinalIgnoreCase);
     }
 
     internal static int GetSourceTableIdForPage(int pageId)
@@ -136,4 +160,5 @@ internal record ParsedPage(
     string Name,
     bool IsExtension,
     string SourceTableName,
-    IReadOnlyDictionary<int, string> ControlIdToFieldName);
+    IReadOnlyDictionary<int, string> ControlIdToFieldName,
+    bool InsertAllowed = true);

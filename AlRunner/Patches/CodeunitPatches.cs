@@ -328,7 +328,8 @@ public static partial class BcRuntime
         {
             self, metaTable, false, null, null, SecurityFiltering.Ignored
         });
-        return new LiveNavTestPage(record, RecordPatches.GetPageControlFieldMap(pageId));
+        return new LiveNavTestPage(record, RecordPatches.GetPageControlFieldMap(pageId),
+            RecordPatches.GetInsertAllowedForPage(pageId));
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -364,6 +365,22 @@ public static partial class BcRuntime
 
         var values = pkFields.Select(fieldNo => (object)record.GetFieldValue(fieldNo)).ToArray();
         return testPage.FindRowFromTableFieldValues(pkFields, values, forward: true);
+    }
+
+    /// <summary>
+    /// Persists a row started by TestPage.New() that has not been left yet. BC's
+    /// NavTestPageBase.Close() drives the real client's "commit the row you are standing on"
+    /// step, but it never calls back into ITestPage.Close(), so the runner's LiveNavTestPage
+    /// never learned the page was closing and silently dropped the pending row. Cecil prepends
+    /// a call to this helper onto NavTestPageBase.Close().
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void NavTestPageBase_FlushPendingNewRow(object self)
+    {
+        if (self == null) return;
+        var testPageField = FindInstanceField(self.GetType(), "testPage");
+        if (testPageField?.GetValue(self) is LiveNavTestPage live)
+            live.FlushPendingNewRow();
     }
 
     private static int GetPageIdFromTestPage(object self)
