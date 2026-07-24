@@ -1,0 +1,25 @@
+{
+  "id": "b4c5d6e7-8f90-4a1b-8c2d-3e4f5a6b7c82",
+  "name": "Runner Extras - AL Dictionary target cell",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Regression pin: AL Dictionary semantics in a first-party test app, as a method local and as a global.",
+  "description": "NavObjectDictionary<TKey,TValue>.get_Target lazily builds its backing SharedNavObjectDictionary by chaining base.Tree.Session.Company.SharedObjects; when that chain yields null the real body throws ArgumentNullException (Parameter 'parent'). Pageworks hits exactly that in a 7-test cluster. These tests were written to reproduce it from a first-party test app and DO NOT — every case here passes against BC's own unpatched get_Target, which proves the session/company/SharedObjects chain IS correctly wired for codeunits in the app under test. That is a useful negative result, so the suite is kept as a regression pin: it locks in working Dictionary semantics (add, get, count, containskey, remove, key-not-found error, two different closed instantiations) for the path that works, and narrows the real gap to whatever differs in the failing path. Do not read a pass here as coverage of the Pageworks cluster.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [
+    {
+      "from": 61830,
+      "to": 61839
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
