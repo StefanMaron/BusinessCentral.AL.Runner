@@ -91,8 +91,15 @@ internal static class JmpHook
     public static System.Collections.Generic.IReadOnlyCollection<string> OrphanedHooks
         => _orphaned.Keys.OrderBy(k => k, System.StringComparer.Ordinal).ToArray();
 
+    // Hook call sites for methods ALREADY owned by a Cecil rewrite — provably inert.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _redundant = new();
+
+    /// <summary>Hook call sites that are dead code because Cecil already owns the method.</summary>
+    public static System.Collections.Generic.IReadOnlyCollection<string> RedundantHooks
+        => _redundant.Keys.OrderBy(k => k, System.StringComparer.Ordinal).ToArray();
+
     /// <summary>Clears the orphan audit (test seam).</summary>
-    public static void ResetOrphanAudit() => _orphaned.Clear();
+    public static void ResetOrphanAudit() { _orphaned.Clear(); _redundant.Clear(); }
 
     private static readonly bool _audit =
         Environment.GetEnvironmentVariable("AL_RUNNER_HOOK_AUDIT") == "1";
@@ -109,6 +116,11 @@ internal static class JmpHook
         Console.Error.WriteLine(
             $"[hook-audit] {orphans.Count} registered patch(es) owned by neither JmpHook (disabled) nor Cecil:");
         foreach (var o in orphans) Console.Error.WriteLine($"[hook-audit]   {o}");
+
+        var redundant = RedundantHooks;
+        Console.Error.WriteLine(
+            $"[hook-audit] {redundant.Count} registration(s) redundant (Cecil already owns the method) — safe to delete:");
+        foreach (var r in redundant) Console.Error.WriteLine($"[hook-audit]   REDUNDANT {r}");
         Console.Error.Flush();
     }
 
@@ -121,7 +133,9 @@ internal static class JmpHook
             // is an orphan: record it (with its Cecil key) instead of vanishing silently.
             string key;
             try { key = NclCecilRewrite.Key(original); } catch { key = "<unresolvable-key>"; }
-            if (!NclCecilRewrite.CecilOwned.Contains(key))
+            if (NclCecilRewrite.CecilOwned.Contains(key))
+                _redundant.TryAdd($"{name}  [{key}]", 0);   // dead code: Cecil already owns it
+            else
                 _orphaned.TryAdd($"{name}  [{key}]", 0);
             if (_trace) TraceLine($"[JmpHook] SKIP (disabled) {name}");
             return;
@@ -133,6 +147,11 @@ internal static class JmpHook
         // though RewriteNcl does not re-run here.
         if (NclCecilRewrite.CecilOwned.Contains(NclCecilRewrite.Key(original)))
         {
+            // Redundant registration: the method is already fully owned by a Cecil rewrite, so
+            // this Hook(...) call site is provably inert dead code and can be deleted with zero
+            // behaviour change. (Contrast with the ORPHAN set above, which looks equally inert
+            // but is a patch that is *supposed* to act and silently does not.)
+            _redundant.TryAdd($"{name}  [{NclCecilRewrite.Key(original)}]", 0);
             TraceLine($"[JmpHook] SKIP (Cecil owns) {name}");
             return;
         }
