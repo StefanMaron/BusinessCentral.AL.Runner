@@ -152,7 +152,14 @@ internal sealed class LiveNavTestPage : MockITestPage
 
         var original = _record.ALGetPosition();
         var hasCurrent = !string.IsNullOrEmpty(original);
-        var hasRow = hasCurrent || (forward ? MoveFirst() : MoveLast());
+
+        // Scan the WHOLE rowset, always starting from the first (or last, when searching
+        // backward) row — never from wherever the page happens to be positioned. `forward`
+        // is a direction, not "resume from the cursor": BC's client locates the requested
+        // row anywhere in the rowset. Starting at the current row silently failed to find
+        // any row BEHIND the cursor, so navigating C -> A returned false even though A is
+        // on the page (tests/runner-extras/testpage-gotorecord GoToRecord_MovesBetweenRows).
+        var hasRow = forward ? MoveFirst() : MoveLast();
 
         while (hasRow)
         {

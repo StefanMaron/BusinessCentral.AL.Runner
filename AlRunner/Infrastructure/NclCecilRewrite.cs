@@ -71,6 +71,10 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle::CreateTarget/0",
         "Microsoft.Dynamics.Nav.Runtime.NavRecordHandle::CreateTarget/0",
         "Microsoft.Dynamics.Nav.Runtime.NavTestPageHandle::CreateTarget/0",
+        // NavTestPageBase.ALGoToRecord — migrated off the (disabled) JmpHook layer onto the
+        // Cecil rewrite in step 6 of the TestPage cluster. Registering it here makes the
+        // legacy JmpHook a no-op so the two mechanisms cannot coexist on this method.
+        "Microsoft.Dynamics.Nav.Runtime.NavTestPageBase::ALGoToRecord/2",
         "Microsoft.Dynamics.Nav.Runtime.NavFormHandle::CreateTarget/0",
         "Microsoft.Dynamics.Nav.Runtime.NavReportHandle::CreateTarget/0",
         "Microsoft.Dynamics.Nav.Runtime.NavQueryHandle::CreateTarget/0",
@@ -843,6 +847,39 @@ public static class NclCecilRewrite
             il.Emit(OpCodes.Ldnull);
             il.Emit(OpCodes.Ret);
             Console.Error.WriteLine("[Cecil] Rewrote NavTestPageBase.LoadMetadata → return null (skip MetadataProvider)");
+        }
+
+        // 6. NavTestPageBase.ALGoToRecord(DataError, NavRecord) — delegate to
+        //    BcRuntime.NavTestPageBase_ALGoToRecord, which resolves the page's SourceTable
+        //    primary key and positions the backing LiveNavTestPage on the matching row.
+        //
+        //    This replacement already existed, but only as a Hook(...) registration — i.e.
+        //    on the JmpHook layer, which is OFF by default (Cecil-only). It was therefore a
+        //    silent no-op and BC's own ALGoToRecord body ran instead, NREing on the runner's
+        //    skeleton state (14 Pageworks tests; see tests/runner-extras/testpage-gotorecord).
+        //    Migrating it here makes the patch actually take effect, and the CecilOwned entry
+        //    makes the legacy JmpHook skip it so the two mechanisms can never coexist.
+        {
+            var goToRecord = navTestPageBaseType.Methods
+                .FirstOrDefault(m => m.Name == "ALGoToRecord" && m.Parameters.Count == 2 && m.HasBody)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NavTestPageBase.ALGoToRecord(2) not found — Ncl shape changed; do not commit");
+
+            var helperMi = typeof(AlRunnerV2.BcRuntime).GetMethod(
+                nameof(AlRunnerV2.BcRuntime.NavTestPageBase_ALGoToRecord),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] BcRuntime.NavTestPageBase_ALGoToRecord not found");
+
+            // Shape guard: the helper forwards (this, arg0, arg1) positionally, so a change
+            // in either signature must fail loudly at rewrite time rather than produce
+            // invalid IL that only crashes at runtime.
+            if (goToRecord.ReturnType.FullName != "System.Boolean" || helperMi.ReturnType != typeof(bool))
+                throw new InvalidOperationException(
+                    "[Cecil] ALGoToRecord/helper return type is not Boolean — Ncl shape changed; do not commit");
+
+            ReplaceBodyWithHelper(asm.MainModule, goToRecord, helperMi);
+            Console.Error.WriteLine("[Cecil] Rewrote NavTestPageBase.ALGoToRecord → BcRuntime.NavTestPageBase_ALGoToRecord");
         }
 
 

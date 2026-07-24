@@ -1,0 +1,25 @@
+{
+  "id": "c7d8e9f0-1a2b-4c3d-9e4f-5a6b7c8d9e10",
+  "name": "Runner Extras - TestPage GoToRecord",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves TestPage.GoToRecord(Rec) positions the test page on the requested row instead of throwing NullReferenceException inside BC's own NavTestPageBase.ALGoToRecord body.",
+  "description": "Reproduces the Pageworks TestPage cluster (14 tests). The runner registers a replacement for NavTestPageBase.ALGoToRecord via Hook(...), but Hook() routes into the JmpHook layer, which is DISABLED by default (Cecil-only). ALGoToRecord was never migrated to a Cecil IL rewrite, so the registration was a silent no-op and BC's unpatched body ran instead — NREing on the runner's skeleton state with no runner frame on the stack. RED (before the fix): GoToRecord throws NullReferenceException. GREEN (after the fix, ALGoToRecord migrated to Cecil): GoToRecord positions the page on the requested row and the page's field values match that row. A negative test proves a record that is filtered out is NOT navigated to.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [
+    {
+      "from": 61810,
+      "to": 61819
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
