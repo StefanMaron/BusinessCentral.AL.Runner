@@ -1192,6 +1192,7 @@ public sealed class BcCompiler
         // SymbolReference.json, and register that file so TryGetQuerySymbol finds them.
         // Gated on the bundle actually declaring a query, so the common (no-query)
         // bundle pays nothing.
+        LastBundleQuerySymbolsPath = null;
         if (caught == null && (emitResult?.Success ?? false) && BundleDeclaresQuery(alFiles))
         {
             try { EmitAndRegisterBundleQuerySymbols(compilation, moduleName); }
@@ -1209,13 +1210,42 @@ public sealed class BcCompiler
 
     // Cheap text probe: does any source file declare an AL `query` object? Avoids
     // building the (non-trivial) ModuleDefinition for the 99% of bundles with none.
-    private static bool BundleDeclaresQuery(IEnumerable<string> alFiles)
+    /// <summary>
+    /// Path of the SymbolReference.json written by the most recent emit whose bundle
+    /// declared a query, or null. The caller copies it next to the AL-output cache DLL
+    /// so a later cache HIT — which skips Emit entirely — can replay the query symbols.
+    /// </summary>
+    public static string? LastBundleQuerySymbolsPath { get; private set; }
+
+    /// <summary>
+    /// True when any of the given paths declares a `query &lt;id&gt;` object. Accepts both
+    /// .al FILES (the emit path passes those) and DIRECTORIES (the cache path passes
+    /// suite roots, which are recursed for *.al). Anything unreadable is reported
+    /// loudly rather than swallowed: a false negative here silently costs a bundle its
+    /// query metadata on every cache HIT.
+    /// </summary>
+    public static bool BundleDeclaresQuery(IEnumerable<string> paths)
     {
         var rx = new System.Text.RegularExpressions.Regex(
             @"(^|\n)\s*query\s+\d+\s", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        foreach (var f in alFiles)
+        foreach (var p in paths)
         {
-            try { if (rx.IsMatch(File.ReadAllText(f))) return true; } catch { }
+            try
+            {
+                if (Directory.Exists(p))
+                {
+                    foreach (var f in Directory.EnumerateFiles(p, "*.al", SearchOption.AllDirectories))
+                        if (rx.IsMatch(File.ReadAllText(f))) return true;
+                }
+                else if (File.Exists(p) && rx.IsMatch(File.ReadAllText(p)))
+                {
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[BcCompiler] query-declaration probe failed for {p}: {ex.Message}");
+            }
         }
         return false;
     }
@@ -1275,6 +1305,7 @@ public sealed class BcCompiler
         using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
             SymbolJsonWriter.WriteSymbolJson(compilation, fs);
         AlRunnerV2.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(path);
+        LastBundleQuerySymbolsPath = path;
     }
 
     /// <summary>

@@ -883,12 +883,21 @@ foreach (var bundle in bundles)
         string? cacheKey = null;
         string? cachePath = null;
         string? sidecarPath = null;
+        string? querySidecarPath = null;
+        // A bundle declaring an AL query also needs its query-symbols sidecar: the
+        // MetaQuery design is built from the compilation's SymbolReference, which only
+        // emit produces. Serving a HIT without it leaves NCLMetaQuery null and every
+        // query Find NREs inside BC's NavQuery.ValidateTablesNotVirtual.
+        bool bundleDeclaresQuery = BcCompiler.BundleDeclaresQuery(allPaths);
         if (alCacheDir != null)
         {
             cacheKey = ComputeAlCacheKey(allPaths, moduleName, ordered: GetOrderedDepIds(bucketRoot, packageCacheDirs));
             cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
-            sidecarPath = Path.Combine(alCacheDir, cacheKey + ".enum-registry.json");
-            if (File.Exists(cachePath) && File.Exists(sidecarPath))
+            sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunnerV2.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
+            querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunnerV2.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
+            if (AlRunnerV2.Infrastructure.AlCacheSidecars.IsCompleteEntry(
+                    File.Exists(cachePath), File.Exists(sidecarPath),
+                    bundleDeclaresQuery, File.Exists(querySidecarPath)))
             {
                 try { cachedBytes = File.ReadAllBytes(cachePath); }
                 catch (Exception ex)
@@ -899,7 +908,8 @@ foreach (var bundle in bundles)
             }
             else if (File.Exists(cachePath))
             {
-                Console.Error.WriteLine($"  [cache] DLL present but sidecar missing — treating as MISS ({sidecarPath})");
+                var missing = !File.Exists(sidecarPath) ? sidecarPath : querySidecarPath;
+                Console.Error.WriteLine($"  [cache] DLL present but sidecar missing — treating as MISS ({missing})");
             }
         }
 
@@ -913,7 +923,14 @@ foreach (var bundle in bundles)
             // pre-Load is cheap insurance against any module-cctor that
             // touches enum metadata.
             int replayed = 0;
-            try { replayed = LoadEnumRegistrySidecar(sidecarPath!); }
+            try
+            {
+                replayed = LoadEnumRegistrySidecar(sidecarPath!);
+                // Query symbols: same story, different side effect. Registering the
+                // sidecar is what lets RecordPatches build a real NCLMetaQuery.
+                if (bundleDeclaresQuery)
+                    AlRunnerV2.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(querySidecarPath!);
+            }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"  [cache] sidecar replay failed for {sidecarPath}: {ex.Message} — falling through to MISS");
@@ -1022,6 +1039,12 @@ foreach (var bundle in bundles)
                             // emit just populated. Without this, cache HIT replays the DLL
                             // but leaves the registry empty → enum tests fail.
                             int written = SaveEnumRegistrySidecar(sidecarPath!);
+                            // Same for the query symbols emit just serialized — without
+                            // this the next HIT has no MetaQuery design (see
+                            // AlCacheSidecars).
+                            var qsrc = BcCompiler.LastBundleQuerySymbolsPath;
+                            if (qsrc != null && File.Exists(qsrc))
+                                File.Copy(qsrc, querySidecarPath!, overwrite: true);
                             Console.Error.WriteLine($"  [cache] WROTE key={cacheKey} path={cachePath} ({assemblyBytes.Length} bytes, {written} enum entries → sidecar)");
                         }
                         catch (Exception ex)
@@ -1510,19 +1533,26 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         // AL-output cache: HIT short-circuits Emit+Compile, like the normal loop.
         byte[]? assemblyBytes = null;
         bool cached = false;
-        string? cacheKey = null, cachePath = null, sidecarPath = null;
+        string? cacheKey = null, cachePath = null, sidecarPath = null, querySidecarPath = null;
+        // See AlCacheSidecars: a query bundle without its query-symbols sidecar must MISS.
+        bool bundleDeclaresQuery = BcCompiler.BundleDeclaresQuery(allPaths);
         if (alCacheDir != null)
         {
             cacheKey = ComputeAlCacheKey(allPaths, moduleName,
                 ordered: GetOrderedDepIds(bucketRoot, effectivePkgDirs));
             cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
-            sidecarPath = Path.Combine(alCacheDir, cacheKey + ".enum-registry.json");
-            if (File.Exists(cachePath) && File.Exists(sidecarPath))
+            sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunnerV2.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
+            querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunnerV2.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
+            if (AlRunnerV2.Infrastructure.AlCacheSidecars.IsCompleteEntry(
+                    File.Exists(cachePath), File.Exists(sidecarPath),
+                    bundleDeclaresQuery, File.Exists(querySidecarPath)))
             {
                 try
                 {
                     var bytes = File.ReadAllBytes(cachePath);
                     LoadEnumRegistrySidecar(sidecarPath);
+                    if (bundleDeclaresQuery)
+                        AlRunnerV2.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(querySidecarPath);
                     assemblyBytes = bytes;
                     cached = true;
                 }
@@ -1572,6 +1602,9 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 {
                     File.WriteAllBytes(cachePath, assemblyBytes);
                     SaveEnumRegistrySidecar(sidecarPath!);
+                    var qsrc = BcCompiler.LastBundleQuerySymbolsPath;
+                    if (qsrc != null && File.Exists(qsrc))
+                        File.Copy(qsrc, querySidecarPath!, overwrite: true);
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"  [cache] write failed: {ex.Message}"); }
             }
