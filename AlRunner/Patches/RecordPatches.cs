@@ -123,6 +123,7 @@ public static partial class RecordPatches
         _parsedReportExtensions.Clear();
         _parsedQueries.Clear();
         _parsedXmlPorts.Clear();
+        _parsedObjectDecls.Clear();
         _metaFormCache.Clear();
         _metaReportCache.Clear();
         _metaQueryCache.Clear();
@@ -150,6 +151,7 @@ public static partial class RecordPatches
                 TryParseReportFile(text);
                 TryParseQueryFile(text);
                 TryParseXmlPortFile(text);
+                TryParseObjectDeclFile(text);
             }
             PopulateNclMetadataCache();
         }
@@ -322,6 +324,9 @@ public static partial class RecordPatches
         ParseAllReportSources();
         ParseAllQuerySources();
         ParseAllXmlPortSources();
+        // Codeunits / enums / *extension objects — (id, name) only, for AllObj
+        // (2000000038). See RecordPatches.AlObjectDeclParser.cs.
+        ParseAllObjectDeclSources();
 
         // NCL-internal system tables (RecordLink=2000000068, Field=2000000041, …)
         // live as AL source embedded in Microsoft.BusinessCentral.SystemApp.dll's
@@ -1037,6 +1042,25 @@ public static partial class RecordPatches
                         "field-virtual-table — DataAccessSource has no skeleton session; see docs/scope.md");
                 PopulateFieldVirtualTable(fieldDa, table, session);
                 return fieldDa;
+            }
+
+            // ── AllObj system virtual table (2000000038) ─────────────────────────────────
+            // Also virtual on the service tier (AllObjDataProvider computes rows from
+            // NCLMetadata.GetSnapshotOfAllObjects, whose body we Cecil-neuter because it
+            // NREs on the skeleton NCLMetadata). Routed to the same in-memory store as
+            // every other table, but POPULATED with one row per object the runner knows
+            // about, so AllObj.Get(<type>, <id>) and filtered iteration answer truthfully
+            // instead of always returning nothing.
+            // See RecordPatches.AllObjVirtualTable.cs.
+            if (IsAllObjVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var allObjDa))
+                {
+                    var createdAllObj = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    allObjDa = perTable.GetOrAdd(tableId, createdAllObj);
+                }
+                PopulateAllObjVirtualTable(allObjDa, table);
+                return allObjDa;
             }
 
             if (perTable.TryGetValue(tableId, out var cached))

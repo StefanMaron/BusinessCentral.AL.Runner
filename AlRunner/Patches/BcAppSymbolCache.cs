@@ -10,10 +10,42 @@ namespace AlRunnerV2.Patches;
 internal static partial class BcAppSymbolCache
 {
     // v3: added Queries to the parsed payload (generic NCLMetaQuery builder).
-    private const int CacheVersion = 3;
+    // v4: added Objects — the flat (kind, id, name) inventory that feeds the AllObj
+    //     system virtual table (2000000038). See RecordPatches.AllObjVirtualTable.cs.
+    private const int CacheVersion = 4;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
 
-    internal sealed record AppSymbols(List<ParsedTable> Tables, List<EnumSymbol> Enums, List<QuerySymbol> Queries);
+    internal sealed record AppSymbols(List<ParsedTable> Tables, List<EnumSymbol> Enums, List<QuerySymbol> Queries,
+        List<ObjectSymbol> Objects);
+
+    /// <summary>
+    /// Flat (AL object kind, id, name) tuple for one application object declared by a
+    /// dependency .app. Read straight off the SymbolReference.json object arrays, which
+    /// carry <c>Id</c> + <c>Name</c> for every kind — including the Codeunits / Pages /
+    /// Reports / XmlPorts the typed parsing above deliberately ignores. The only consumer
+    /// is the AllObj virtual table, which needs nothing but these three values.
+    /// </summary>
+    internal sealed record ObjectSymbol(string Kind, int Id, string Name);
+
+    // SymbolReference.json container name → the AllObj "Object Type" option name the
+    // objects inside it map to. Matched against the live option string by name, so a
+    // container whose kind this BC version's AllObj does not list is simply dropped.
+    private static readonly (string Container, string Kind)[] ObjectContainers =
+    {
+        ("Tables", "Table"),
+        ("Codeunits", "Codeunit"),
+        ("Pages", "Page"),
+        ("Reports", "Report"),
+        ("XmlPorts", "XMLport"),
+        ("Queries", "Query"),
+        ("EnumTypes", "Enum"),
+        ("TableExtensions", "TableExtension"),
+        ("PageExtensions", "PageExtension"),
+        ("ReportExtensions", "ReportExtension"),
+        ("EnumExtensionTypes", "EnumExtension"),
+        ("PermissionSets", "PermissionSet"),
+        ("PermissionSetExtensions", "PermissionSetExtension"),
+    };
     internal sealed record EnumSymbol(int Id, string Name, List<string> Options, List<int> Indexes, List<List<int>> Implementations);
 
     // Parsed query SymbolReference.json shape. A query is a tree of dataitems; the root
@@ -33,7 +65,8 @@ internal static partial class BcAppSymbolCache
     internal sealed record QueryColumnSymbol(int Id, string Name, string SourceColumn, string? Caption);
 
     private sealed record CachePayload(long Length, long LastWriteUtcTicks,
-        List<ParsedTable> Tables, List<EnumSymbol> Enums, List<QuerySymbol> Queries);
+        List<ParsedTable> Tables, List<EnumSymbol> Enums, List<QuerySymbol> Queries,
+        List<ObjectSymbol>? Objects);
 
     /// <summary>
     /// Parse a loose <c>SymbolReference.json</c> file (the raw module JSON, NOT a .app
@@ -47,9 +80,11 @@ internal static partial class BcAppSymbolCache
         var tables = new Dictionary<int, ParsedTable>();
         var enums = new Dictionary<int, EnumSymbol>();
         var queries = new Dictionary<int, QuerySymbol>();
+        var objects = new Dictionary<(string, int), ObjectSymbol>();
         using var doc = JsonDocument.Parse(File.ReadAllText(jsonPath));
-        VisitSymbolContainer(doc.RootElement, tables, enums, queries);
-        return new AppSymbols(tables.Values.ToList(), enums.Values.ToList(), queries.Values.ToList());
+        VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects);
+        return new AppSymbols(tables.Values.ToList(), enums.Values.ToList(), queries.Values.ToList(),
+            objects.Values.ToList());
     }
 
     internal static AppSymbols Get(string appPath)
@@ -86,7 +121,8 @@ internal static partial class BcAppSymbolCache
                 || payload.Length != appInfo.Length
                 || payload.LastWriteUtcTicks != appInfo.LastWriteTimeUtc.Ticks)
                 return null;
-            return new AppSymbols(payload.Tables, payload.Enums, payload.Queries ?? new List<QuerySymbol>());
+            return new AppSymbols(payload.Tables, payload.Enums, payload.Queries ?? new List<QuerySymbol>(),
+                payload.Objects ?? new List<ObjectSymbol>());
         }
         catch (Exception ex)
         {
@@ -100,7 +136,7 @@ internal static partial class BcAppSymbolCache
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
-            var payload = new CachePayload(appInfo.Length, appInfo.LastWriteTimeUtc.Ticks, symbols.Tables, symbols.Enums, symbols.Queries);
+            var payload = new CachePayload(appInfo.Length, appInfo.LastWriteTimeUtc.Ticks, symbols.Tables, symbols.Enums, symbols.Queries, symbols.Objects);
             File.WriteAllText(cachePath, JsonSerializer.Serialize(payload));
         }
         catch (Exception ex)
@@ -114,16 +150,34 @@ internal static partial class BcAppSymbolCache
         var tables = new Dictionary<int, ParsedTable>();
         var enums = new Dictionary<int, EnumSymbol>();
         var queries = new Dictionary<int, QuerySymbol>();
+        var objects = new Dictionary<(string, int), ObjectSymbol>();
         foreach (var json in ReadSymbolReferences(appPath))
         {
             using var doc = JsonDocument.Parse(json);
-            VisitSymbolContainer(doc.RootElement, tables, enums, queries);
+            VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects);
         }
-        return new AppSymbols(tables.Values.ToList(), enums.Values.ToList(), queries.Values.ToList());
+        return new AppSymbols(tables.Values.ToList(), enums.Values.ToList(), queries.Values.ToList(),
+            objects.Values.ToList());
     }
 
-    private static void VisitSymbolContainer(JsonElement container, Dictionary<int, ParsedTable> tables, Dictionary<int, EnumSymbol> enums, Dictionary<int, QuerySymbol> queries)
+    private static void VisitSymbolContainer(JsonElement container, Dictionary<int, ParsedTable> tables, Dictionary<int, EnumSymbol> enums, Dictionary<int, QuerySymbol> queries, Dictionary<(string, int), ObjectSymbol> objects)
     {
+        // Flat (kind, id, name) sweep for AllObj. Independent of the typed parsing below
+        // so a kind we do not model in depth still shows up as an existing object.
+        foreach (var (containerName, kind) in ObjectContainers)
+        {
+            if (!container.TryGetProperty(containerName, out var arr) || arr.ValueKind != JsonValueKind.Array)
+                continue;
+            foreach (var el in arr.EnumerateArray())
+            {
+                if (!el.TryGetProperty("Id", out var idProp) || !idProp.TryGetInt32(out var objId) || objId <= 0)
+                    continue;
+                var objName = el.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() : null;
+                if (string.IsNullOrEmpty(objName)) continue;
+                objects.TryAdd((kind, objId), new ObjectSymbol(kind, objId, objName));
+            }
+        }
+
         if (container.TryGetProperty("Tables", out var tableArray) && tableArray.ValueKind == JsonValueKind.Array)
         {
             foreach (var table in tableArray.EnumerateArray())
@@ -157,7 +211,7 @@ internal static partial class BcAppSymbolCache
         if (container.TryGetProperty("Namespaces", out var namespaces) && namespaces.ValueKind == JsonValueKind.Array)
         {
             foreach (var ns in namespaces.EnumerateArray())
-                VisitSymbolContainer(ns, tables, enums, queries);
+                VisitSymbolContainer(ns, tables, enums, queries, objects);
         }
     }
 

@@ -187,8 +187,33 @@ public static partial class RecordPatches
         }
     }
 
+    /// <summary>
+    /// Bind the NCLMetaTable.AllFields accessors off the instance's OWN type.
+    ///
+    /// These handles used to be bound exclusively by EnsureFieldVirtualTableReflection,
+    /// i.e. only once the Field virtual table (2000000041) had been touched. Any other
+    /// caller of <see cref="GetAllFields"/> that ran FIRST therefore saw two null handles
+    /// and got a null result that was indistinguishable from "this metatable genuinely has
+    /// no fields" — which is exactly how the AllObj populate path came to report
+    /// 'AllObj metatable has no field 1' during a dependency install trigger. Binding here,
+    /// lazily and from the instance, removes the ordering dependency entirely.
+    /// </summary>
+    private static void EnsureNclMetaTableAllFieldsReflection(NCLMetaTable meta)
+    {
+        if (_pNclMetaTableAllFields != null || _fNclMetaTableAllFields != null) return;
+        var tNclMetaTable = meta.GetType();
+        _pNclMetaTableAllFields = tNclMetaTable.GetProperty("AllFields",
+            BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
+        _fNclMetaTableAllFields = tNclMetaTable.GetField("<AllFields>k__BackingField",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        if (_pNclMetaTableAllFields == null && _fNclMetaTableAllFields == null)
+            throw new InvalidOperationException(
+                $"NCLMetaTable.AllFields not found on {tNclMetaTable.FullName} — BC metadata shape changed");
+    }
+
     private static IEnumerable<NCLMetaField>? GetAllFields(NCLMetaTable meta)
     {
+        EnsureNclMetaTableAllFieldsReflection(meta);
         var arr = (_pNclMetaTableAllFields?.GetValue(meta) ?? _fNclMetaTableAllFields?.GetValue(meta)) as Array;
         if (arr == null) return null;
         var list = new List<NCLMetaField>(arr.Length);
