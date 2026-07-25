@@ -1,0 +1,25 @@
+{
+  "id": "d8e9f0a1-2b3c-4d5e-9f60-7a8b9c0d1e05",
+  "name": "Runner Extras - var Codeunit out-parameter across an interface call",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves a `var Result: Codeunit \"Temp Blob\"` filled by an interface implementation is observable in the CALLER's variable.",
+  "description": "BC's report custom-merger contract is served by ISV renderers shaped like `Backend := Enum::X::NativePdf; Backend.Render(RenderContext, TempBlobResult);` where the interface declares `procedure Render(var RenderContext: Codeunit …; var Result: Codeunit \"Temp Blob\")`. The produced document is returned ENTIRELY through that by-var Codeunit out-parameter — nothing is returned by value. If the runner dispatches the interface call but hands the implementation a COPY of the codeunit, the implementation writes its bytes into the copy, the caller's Temp Blob stays empty, and NOTHING is raised: the report then copies zero bytes into the platform's document stream and SaveAs writes an empty PDF (measured on Pageworks: the merger reaches its CopyStream with srcLen=0). This suite pins the by-var Codeunit contract for both a direct call and an interface dispatch, with a negative control so it cannot pass vacuously.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [
+    {
+      "from": 61910,
+      "to": 61929
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
