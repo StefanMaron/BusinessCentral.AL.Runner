@@ -71,7 +71,6 @@ public static partial class RecordPatches
     private static MethodInfo? _mTtdpInsert;            // TempTableDataProvider.Insert(int, MutableRecordBuffer, InsertOptions, out ReadOnlyRecordBuffer)
     private static ConstructorInfo? _ctorMutableFromReadOnly; // MutableRecordBuffer(ReadOnlyRecordBuffer)
     private static object? _insertOptionsNone;
-    private static PropertyInfo? _pNclMetaTableTableName;
 
     // Per-(temp-provider) set of source TableNos already populated into that store,
     // so repeated accesses only top up newly-built tables (idempotent, no dup rows).
@@ -148,7 +147,12 @@ public static partial class RecordPatches
         if (allFields == null) return;
 
         var navTableNo = _mNavIntegerCreate!.Invoke(null, new object[] { srcMeta.TableId })!;
-        var tableName = (string?)(_pNclMetaTableTableName?.GetValue(srcMeta)) ?? string.Empty;
+        // NCLMetaTable.TableName is a compile-time-known property on the statically referenced
+        // Ncl type — read it directly. It used to go through a reflection handle bound only by
+        // EnsureFieldVirtualTableReflection, where a failed bind degraded silently to "" (every
+        // Field row would have reported an empty TableName rather than failing). No handle, no
+        // ordering dependency, no silent default.
+        var tableName = srcMeta.TableName ?? string.Empty;
         // tableNameField defined length is 30 in BC; CreateTruncated(30, name) matches the
         // service tier (it truncates to the Field table's "TableName" column length).
         var navTableName = _mNavTextCreateTrunc!.Invoke(null, new object[] { 30, tableName })!;
@@ -302,8 +306,6 @@ public static partial class RecordPatches
             BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
         _fNclMetaTableAllFields = tNclMetaTable.GetField("<AllFields>k__BackingField",
             BindingFlags.NonPublic | BindingFlags.Instance);
-        _pNclMetaTableTableName = tNclMetaTable.GetProperty("TableName",
-            BindingFlags.Public | BindingFlags.Instance);
 
         var tTtdp = nclAsm.GetType(rt + "TempTableDataProvider")!;
         _mTtdpInsert = tTtdp.GetMethods(BindingFlags.Public | BindingFlags.Instance)
