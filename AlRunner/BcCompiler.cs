@@ -1511,7 +1511,15 @@ public sealed class BcCompiler
             // time by NavReportSync.StubInitializeMetadata to build a REAL MetaReport
             // so BC's report execution chain runs on genuine metadata.
             if (symbol is NavCA.IReportTypeSymbol reportSym && !string.IsNullOrEmpty(metadata))
+            {
                 AlReportMetadataRegistry.Register(reportSym.Id, metadata);
+                // The emitted metadata XML's <Layouts> block carries only
+                // Name/Caption/Summary — the layout's Type, MimeType and
+                // LayoutFile live on the compiler's own ReportLayoutSymbol.
+                // Capture those so the "Report Layout List" virtual table
+                // (2000000234) can be populated with real per-layout values.
+                CaptureReportLayouts(reportSym, metadata);
+            }
 
             if (Environment.GetEnvironmentVariable("BCCOMPILER_TRACE") == "1")
                 Console.Error.WriteLine($"  emit[{AddCalls}]: {symbol.Name}");
@@ -1522,6 +1530,122 @@ public sealed class BcCompiler
                 var fname = string.Concat(symbol.Name.Select(c => char.IsLetterOrDigit(c) ? c : '_')) + ".cs";
                 File.WriteAllText(Path.Combine(dir, fname), src);
             }
+        }
+
+        /// <summary>
+        /// Capture the report's <c>rendering { layout(Name) { … } }</c> declarations.
+        ///
+        /// The AL compiler models each one as a <c>ReportLayoutSymbol</c> member of the
+        /// report symbol, carrying <c>LayoutType</c> (RDLC/Word/Excel/Custom),
+        /// <c>MimeType</c> and <c>LayoutFile</c>. None of those three survive into the
+        /// emitted runtime metadata XML (whose &lt;Layouts&gt; block has only
+        /// Name/Caption/Summary), so they are read off the symbol here — the only place
+        /// they are available — and merged with the Caption/Summary the XML does carry.
+        ///
+        /// <c>ReportLayoutSymbol</c> lives in the compiler's internal Symbols namespace
+        /// (the public <c>IReportLayoutSymbol</c> exposes nothing), hence reflection.
+        /// Every step is defensive: a report whose layouts cannot be read registers no
+        /// layouts and behaves exactly as it did before this capture existed.
+        /// </summary>
+        private static void CaptureReportLayouts(NavCA.IReportTypeSymbol reportSym, string metadataXml)
+        {
+            try
+            {
+                if (reportSym is not NavCA.IContainerSymbol container) return;
+                var captions = ParseLayoutCaptionsFromMetadata(metadataXml);
+                foreach (var member in container.GetMembers())
+                {
+                    var t = member.GetType();
+                    if (t.Name != "ReportLayoutSymbol" && t.BaseType?.Name != "ReportLayoutSymbol") continue;
+
+                    string name = member.Name ?? string.Empty;
+                    if (string.IsNullOrEmpty(name)) continue;
+
+                    var layoutType = ReadSymbolProp(member, "LayoutType")?.ToString() ?? string.Empty;
+                    var mimeType = ReadSymbolProp(member, "MimeType") as string ?? string.Empty;
+                    var layoutFile = ReadSymbolProp(member, "LayoutFile") as string ?? string.Empty;
+                    var resolved = ResolveLayoutFilePath(member, layoutFile);
+
+                    captions.TryGetValue(name, out var cs);
+                    AlReportLayoutRegistry.Register(new AlReportLayoutInfo(
+                        ReportId: reportSym.Id,
+                        Name: name,
+                        LayoutType: layoutType,
+                        MimeType: mimeType,
+                        LayoutFile: layoutFile,
+                        ResolvedPath: resolved,
+                        Caption: cs.Caption ?? string.Empty,
+                        Summary: cs.Summary ?? string.Empty));
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[BcCompiler] report-layout capture failed for report {reportSym.Id}: {ex.Message}");
+            }
+        }
+
+        private static object? ReadSymbolProp(object target, string propertyName)
+        {
+            var p = target.GetType().GetProperty(propertyName,
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
+                | System.Reflection.BindingFlags.Instance);
+            return p?.GetValue(target);
+        }
+
+        /// <summary>
+        /// Turn the layout's app-root-relative <c>LayoutFile</c> into an absolute path by
+        /// walking up from the declaring .al file to the directory holding app.json (the
+        /// AL project root, which is what LayoutFile is relative to). Returns "" when the
+        /// file cannot be located — the layout is still registered, and the consumer
+        /// decides how to fail if content is ever demanded.
+        /// </summary>
+        private static string ResolveLayoutFilePath(object layoutSymbol, string layoutFile)
+        {
+            if (string.IsNullOrWhiteSpace(layoutFile)) return string.Empty;
+            try
+            {
+                var loc = ReadSymbolProp(layoutSymbol, "FilepathSyntaxLocation");
+                var declPath = loc == null ? null : (ReadSymbolProp(loc, "SourceTree") is object tree
+                    ? ReadSymbolProp(tree, "FilePath") as string
+                    : null);
+                if (string.IsNullOrEmpty(declPath)) return string.Empty;
+
+                var rel = layoutFile.Replace('\\', '/').TrimStart('.', '/');
+                var dir = Path.GetDirectoryName(Path.GetFullPath(declPath));
+                while (!string.IsNullOrEmpty(dir))
+                {
+                    if (File.Exists(Path.Combine(dir, "app.json")))
+                    {
+                        var candidate = Path.Combine(dir, rel.Replace('/', Path.DirectorySeparatorChar));
+                        return File.Exists(candidate) ? Path.GetFullPath(candidate) : string.Empty;
+                    }
+                    dir = Path.GetDirectoryName(dir);
+                }
+            }
+            catch { /* best effort — absence is handled by the consumer */ }
+            return string.Empty;
+        }
+
+        /// <summary>Name → (Caption, Summary) from the emitted metadata XML's &lt;Layouts&gt; block.</summary>
+        private static Dictionary<string, (string? Caption, string? Summary)> ParseLayoutCaptionsFromMetadata(string metadataXml)
+        {
+            var map = new Dictionary<string, (string?, string?)>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                var doc = System.Xml.Linq.XDocument.Parse(metadataXml);
+                var layouts = doc.Root?.Element("Layouts");
+                if (layouts == null) return map;
+                foreach (var l in layouts.Elements("Layout"))
+                {
+                    var n = l.Element("Name")?.Value;
+                    if (string.IsNullOrEmpty(n)) continue;
+                    map[n] = (
+                        l.Element("CaptionML")?.Elements("Caption").FirstOrDefault()?.Value,
+                        l.Element("SummaryML")?.Elements("Summary").FirstOrDefault()?.Value);
+                }
+            }
+            catch { /* metadata shape drift must not break the compile */ }
+            return map;
         }
 
         /// <summary>

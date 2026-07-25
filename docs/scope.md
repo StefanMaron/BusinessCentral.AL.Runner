@@ -117,6 +117,22 @@ tier with SQL Server.
 | `Report.RunRequestPage(...)` | No UI tier — request-page dialog can't be rendered or driven. Throws OOS at the sync wrapper before entering `RunReportAsync`. |
 | Static `Report.Run(id, ...)` / `Report.RunModal(id, ...)` | In-process construction from a metadata id is not yet wired; throws OOS with the reportId in the message. Construct the report as an AL variable and call instance `Run()` instead — that path executes triggers. |
 
+**Layout *selection* is in scope; layout *content* is not.** A report's
+`rendering { layout(Name) { Type; MimeType; LayoutFile; … } }` declarations are
+captured at compile time and published into the "Report Layout List" system
+virtual table (2000000234), which is where BC's own by-name resolution looks. So
+`ReportLayoutSelection.SetTempLayoutSelectedName('<LayoutName>')` resolves the
+named layout through BC's unmodified code path, and the resolved layout's
+`Type` drives the processor fork exactly as on a real tier (an undeclared name
+still raises BC's own `NavNCLReportNoLayoutException`). What those rows do **not**
+carry is the layout's *bytes*: the media-id columns hold the same empty GUID an
+application-provided layout row carries on a real tier, where the bytes are
+fetched separately from the published app package
+(`ReportLayout.FetchLayoutFromApplication`). The runner has no app package for a
+source-compiled report, so a renderer that demands the layout content — including
+a custom document merger reading `LayoutData` — gets nothing. Rendering itself is
+out of scope; only selection/resolution is supported.
+
 Instance `report.Run()` / `report.RunModal()` on an AL variable **does** run: the
 runner JmpHooks the sync wrapper into `NavReportSync.SyncRun`, which reflectively
 invokes `OnInitReport` → `OnPreReport` → per-DataItem `OnPreDataItem` / `OnPostDataItem`

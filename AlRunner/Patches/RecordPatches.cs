@@ -1063,6 +1063,24 @@ public static partial class RecordPatches
                 return allObjDa;
             }
 
+            // ── Report Layout List system virtual table (2000000234) ─────────────────────
+            // Virtual on the service tier too (its rows are the layouts every published
+            // app declares, plus tenant layouts). BC's own by-name layout resolution
+            // (ReportLayoutSelection.GetLayoutByNameAndAppIDAsync) reads exactly this
+            // table, so populating it from the compiler-captured `rendering { layout(…) }`
+            // declarations makes selection-by-name work through BC's own code path.
+            // See RecordPatches.ReportLayoutListVirtualTable.cs.
+            if (IsReportLayoutListVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var layoutDa))
+                {
+                    var createdLayout = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    layoutDa = perTable.GetOrAdd(tableId, createdLayout);
+                }
+                PopulateReportLayoutListVirtualTable(layoutDa, table);
+                return layoutDa;
+            }
+
             if (perTable.TryGetValue(tableId, out var cached))
             {
                 return cached;

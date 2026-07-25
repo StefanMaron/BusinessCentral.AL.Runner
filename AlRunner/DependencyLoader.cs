@@ -231,6 +231,11 @@ public sealed class DependencyLoader
             ".cache", "al-runner", "compiled-deps");
         var cachedDll = Path.Combine(cacheDir, cacheKey + ".dll");
         var reportSidecar = Path.Combine(cacheDir, cacheKey + ".report-metadata.json");
+        // Sibling sidecar for the dep's `rendering { layout(...) }` declarations —
+        // without it a cache HIT would leave the Report Layout List virtual table
+        // (2000000234) empty for this dep's reports and layout-by-name selection
+        // would fail only on warm runs.
+        var reportLayoutSidecar = Path.Combine(cacheDir, cacheKey + ".report-layouts.json");
         if (File.Exists(cachedDll))
         {
             try
@@ -241,6 +246,8 @@ public sealed class DependencyLoader
                 int replayedReports = 0;
                 if (File.Exists(reportSidecar))
                     replayedReports = AlReportMetadataRegistry.LoadSidecar(reportSidecar);
+                if (File.Exists(reportLayoutSidecar))
+                    AlReportLayoutRegistry.LoadSidecar(reportLayoutSidecar);
                 Console.Error.WriteLine(
                     $"[deps] source-cache HIT: {m.Name} v{m.Version} key={cacheKey[..12]} ({cachedBytes.Length} bytes, {replayedReports} report-metadata entries)");
                 return Assembly.Load(cachedBytes);
@@ -337,6 +344,7 @@ public sealed class DependencyLoader
             var ownReportIds = AlReportMetadataRegistry.Ids
                 .Where(i => !reportIdsBeforeEmit.Contains(i)).ToArray();
             int sidecarCount = AlReportMetadataRegistry.SaveSidecar(reportSidecar, ownReportIds);
+            AlReportLayoutRegistry.SaveSidecar(reportLayoutSidecar, ownReportIds);
             Console.Error.WriteLine(
                 $"[deps] source-cache WROTE: {m.Name} v{m.Version} key={cacheKey[..12]} ({compile.AssemblyBytes!.Length} bytes, {sidecarCount} report-metadata entries)");
         }

@@ -1,0 +1,25 @@
+{
+  "id": "c4d5e6f7-8a9b-4c0d-9e1f-2a3b4c5d6e88",
+  "name": "Runner Extras - Report Layout By Name",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves a report layout selected BY NAME (ReportLayoutSelection.SetTempLayoutSelectedName) resolves to the declared layout instead of failing with NavNCLReportNoLayoutException.",
+  "description": "A report declaring two named rendering layouts of different Type (RDLC default + Custom non-default). The suite asserts (a) the Report Layout List system virtual table (2000000231) lists BOTH declared layouts with their real Name / Layout Format / MIME Type, and reports nothing for an undeclared name; (b) selecting the non-default Custom layout by name drives the render down a DIFFERENT processor fork than the RDLC default, which is the observable proof that the NAME (not just the report default) decided the layout; (c) selecting an undeclared name still fails loudly. Rendering itself is out of scope - the assertions stop at layout resolution.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [
+    {
+      "from": 61870,
+      "to": 61899
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

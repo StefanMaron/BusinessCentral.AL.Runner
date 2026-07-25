@@ -354,6 +354,7 @@ public static partial class BcRuntime
         _alEnumCache.Clear();
         AlEnumMetadataRegistry.Clear();
         AlReportMetadataRegistry.Clear();
+        AlReportLayoutRegistry.Clear();
         NavReportSync.ResetMetadataCache();
         // Sibling patch classes with their own bundle-derived state.
         AlRunnerV2.Patches.RecordPatches.ResetForReload();

@@ -1,0 +1,125 @@
+// AlReportLayoutRegistry — the per-report `rendering { layout(Name) { … } }`
+// declarations, captured from the AL compiler's own ReportLayoutSymbol at emit
+// time.
+//
+// WHY A SEPARATE REGISTRY FROM AlReportMetadataRegistry
+//   The runtime metadata XML that Compilation.Emit hands the ModuleOutputter
+//   carries a <Layouts> block, but only Name / LayoutFriendlyName / Caption /
+//   Summary — NOT the layout's Type, NOT its MimeType, and not the layout file.
+//   (Verified by dumping the emitted XML for a two-layout report.) Those three
+//   live on the compiler's ReportLayoutSymbol, so we read them there.
+//
+// WHAT CONSUMES IT
+//   RecordPatches.ReportLayoutListVirtualTable populates the "Report Layout
+//   List" system virtual table (2000000234) from these rows, which is exactly
+//   where BC's OWN by-name resolution looks
+//   (ReportLayoutSelection.GetLayoutByNameAndAppIDAsync filters that table by
+//   Report ID + Name + App ID and hands the row to ReportLayout.Create).
+//   Populating it means the real BC layout-selection code path runs unmodified.
+//
+// CACHE PARITY
+//   Like the report-metadata registry, entries are persisted to a sidecar so a
+//   compile-cache HIT replays exactly what the emit would have registered.
+
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+
+namespace AlRunnerV2;
+
+/// <summary>One `layout(Name) { … }` declaration inside a report's `rendering` block.</summary>
+public sealed record AlReportLayoutInfo(
+    int ReportId,
+    string Name,
+    /// <summary>RDLC | Word | Excel | Custom — the AL `Type` property, verbatim.</summary>
+    string LayoutType,
+    /// <summary>The AL `MimeType` property, or "" when not declared.</summary>
+    string MimeType,
+    /// <summary>The AL `LayoutFile` property as written (app-root-relative).</summary>
+    string LayoutFile,
+    /// <summary>Absolute path the LayoutFile resolved to, or "" if it could not be resolved.</summary>
+    string ResolvedPath,
+    string Caption,
+    string Summary);
+
+public static class AlReportLayoutRegistry
+{
+    private static readonly ConcurrentDictionary<int, List<AlReportLayoutInfo>> _byReportId = new();
+
+    public static void Register(AlReportLayoutInfo layout)
+    {
+        if (layout.ReportId <= 0 || string.IsNullOrEmpty(layout.Name)) return;
+        if (Environment.GetEnvironmentVariable("ALRUNNER_REPORT_LAYOUT_TRACE") == "1")
+            Console.Error.WriteLine($"[ReportLayout] register {layout.ReportId} '{layout.Name}' type={layout.LayoutType} mime='{layout.MimeType}' file='{layout.LayoutFile}' resolved='{layout.ResolvedPath}' caption='{layout.Caption}'");
+        var list = _byReportId.GetOrAdd(layout.ReportId, static _ => new List<AlReportLayoutInfo>());
+        lock (list)
+        {
+            var existing = list.FindIndex(l => string.Equals(l.Name, layout.Name, StringComparison.OrdinalIgnoreCase));
+            if (existing >= 0) list[existing] = layout;
+            else list.Add(layout);
+        }
+    }
+
+    public static IReadOnlyList<AlReportLayoutInfo> Get(int reportId)
+    {
+        if (!_byReportId.TryGetValue(reportId, out var list)) return Array.Empty<AlReportLayoutInfo>();
+        lock (list) return list.ToArray();
+    }
+
+    public static int[] Ids => _byReportId.Keys.ToArray();
+
+    public static int Count => _byReportId.Values.Sum(l => { lock (l) return l.Count; });
+
+    public static void Clear() => _byReportId.Clear();
+
+    /// <summary>All registered layouts, flattened (diagnostics + sidecar writers).</summary>
+    public static AlReportLayoutInfo[] Snapshot()
+        => _byReportId.Values
+            .SelectMany(l => { lock (l) return l.ToArray(); })
+            .OrderBy(l => l.ReportId).ThenBy(l => l.Name, StringComparer.Ordinal)
+            .ToArray();
+
+    // ── Sidecar (compile-cache parity) ────────────────────────────────────────
+
+    public static int SaveSidecar(string path) => SaveSidecar(path, _byReportId.Keys);
+
+    public static int SaveSidecar(string path, IEnumerable<int> onlyReportIds)
+    {
+        var idSet = new HashSet<int>(onlyReportIds);
+        var rows = Snapshot().Where(l => idSet.Contains(l.ReportId)).ToArray();
+        File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(new { layouts = rows }));
+        return rows.Length;
+    }
+
+    /// <summary>Replay a sidecar. Throws on corrupt JSON — callers treat that as cache MISS.</summary>
+    public static int LoadSidecar(string path)
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path));
+        if (!doc.RootElement.TryGetProperty("layouts", out var arr)
+            || arr.ValueKind != System.Text.Json.JsonValueKind.Array)
+            throw new InvalidDataException("report-layouts.json: missing 'layouts' array");
+        return LoadFromJsonArray(arr);
+    }
+
+    /// <summary>Replay from an already-parsed JSON array (shared with the al-out enum sidecar).</summary>
+    public static int LoadFromJsonArray(System.Text.Json.JsonElement arr)
+    {
+        int n = 0;
+        foreach (var e in arr.EnumerateArray())
+        {
+            Register(new AlReportLayoutInfo(
+                ReportId: e.GetProperty("ReportId").GetInt32(),
+                Name: e.GetProperty("Name").GetString() ?? string.Empty,
+                LayoutType: e.GetProperty("LayoutType").GetString() ?? string.Empty,
+                MimeType: e.GetProperty("MimeType").GetString() ?? string.Empty,
+                LayoutFile: e.GetProperty("LayoutFile").GetString() ?? string.Empty,
+                ResolvedPath: e.GetProperty("ResolvedPath").GetString() ?? string.Empty,
+                Caption: e.GetProperty("Caption").GetString() ?? string.Empty,
+                Summary: e.GetProperty("Summary").GetString() ?? string.Empty));
+            n++;
+        }
+        return n;
+    }
+}

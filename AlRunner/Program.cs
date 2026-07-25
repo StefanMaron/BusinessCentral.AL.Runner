@@ -3128,7 +3128,10 @@ static string ComputeAlCacheKey(
     //    v3: enum sidecar includes interface implementation codeunit ids.
     //    v4: sidecar also carries the AlReportMetadataRegistry (per-report
     //        runtime metadata XML) so cache HIT replays real report metadata.
-    WriteLine("schema:v4");
+    //    v5: sidecar also carries the AlReportLayoutRegistry (per-report
+    //        `rendering { layout(...) }` declarations) so cache HIT replays the
+    //        rows behind the Report Layout List virtual table (2000000234).
+    WriteLine("schema:v5");
 
     // 1. Runner assembly fingerprint — any rewriter / polyfill / patch change
     //    in the runner forces a cache miss.
@@ -3210,6 +3213,10 @@ static int SaveEnumRegistrySidecar(string path)
                 id = i,
                 xml = AlReportMetadataRegistry.TryGet(i, out var x) ? x : string.Empty,
             }).ToArray(),
+        // v5: per-report rendering-layout declarations captured from the AL
+        // compiler's ReportLayoutSymbol — replayed on cache HIT so layout
+        // selection by name keeps working on a warm cache.
+        reportLayouts = AlReportLayoutRegistry.Snapshot(),
     };
     var json = System.Text.Json.JsonSerializer.Serialize(dto, new System.Text.Json.JsonSerializerOptions
     {
@@ -3276,6 +3283,12 @@ static int LoadEnumRegistrySidecar(string path)
                 e.GetProperty("id").GetInt32(),
                 e.GetProperty("xml").GetString() ?? string.Empty);
         }
+    }
+    // v5: replay per-report rendering-layout declarations.
+    if (doc.RootElement.TryGetProperty("reportLayouts", out var layoutArr)
+        && layoutArr.ValueKind == System.Text.Json.JsonValueKind.Array)
+    {
+        AlReportLayoutRegistry.LoadFromJsonArray(layoutArr);
     }
     return count;
 }
