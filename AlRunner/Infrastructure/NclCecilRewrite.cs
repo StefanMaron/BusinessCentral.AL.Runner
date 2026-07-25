@@ -18,7 +18,7 @@ namespace AlRunnerV2.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 122;
+    private const int CACHE_VERSION = 123;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -4050,6 +4050,40 @@ public static class NclCecilRewrite
                 body.MaxStackSize = 6;
             }
             Console.Error.WriteLine("[Cecil] Rewrote ReportLayoutSelection.GetLayoutSelections → empty; TryGetSelectedLayoutOrDefault → NavReportSync.ResolveDefaultReportModel default-format layout (was: virtual-table 2000000233/234/231 NRE)");
+        }
+
+        // §report-layout-hydration — complete the layout objects the runner hands to
+        // report rendering. A Type=Custom layout can never reach BC's own content lookup
+        // (FetchLayoutFromApplication is gated on Format <= 1, i.e. RDLC/Word), and the
+        // §report-layout-selection rewrite above synthesises a default layout with EMPTY
+        // media, so the custom-render path feeds the AL document merger an empty template
+        // and a payload whose layoutmimetype is "". See ReportLayoutHydration for the full
+        // reasoning, including why this hooks ReportLayout itself rather than
+        // ReportResultSet (they are different instances — measured).
+        {
+            var rlT = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.Report.ReportLayout")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] Report.ReportLayout not found — Ncl shape changed; do not commit");
+
+            void PrependProbe(string methodName, string helperName)
+            {
+                var m = rlT.Methods.FirstOrDefault(mm => mm.Name == methodName && mm.HasBody)
+                    ?? throw new InvalidOperationException(
+                        $"[Cecil] ReportLayout.{methodName} not found — Ncl shape changed; do not commit");
+                var mi = typeof(AlRunnerV2.Patches.ReportLayoutHydration).GetMethod(
+                    helperName, BindingFlags.Public | BindingFlags.Static)
+                    ?? throw new InvalidOperationException($"[Cecil] ReportLayoutHydration.{helperName} not found");
+                var b = m.Body;
+                var il2 = b.GetILProcessor();
+                var first2 = b.Instructions[0];
+                il2.InsertBefore(first2, il2.Create(OpCodes.Ldarg_0));
+                il2.InsertBefore(first2, il2.Create(OpCodes.Call, asm.MainModule.ImportReference(mi)));
+                if (b.MaxStackSize < 1) b.MaxStackSize = 1;
+            }
+
+            PrependProbe("get_LayoutStream", nameof(AlRunnerV2.Patches.ReportLayoutHydration.HydrateLayoutStream));
+            PrependProbe("CalculateMimetype", nameof(AlRunnerV2.Patches.ReportLayoutHydration.HydrateMimetype));
+            Console.Error.WriteLine("[Cecil] Prepended layout hydration to ReportLayout.get_LayoutStream + CalculateMimetype");
         }
 
         // NavMethodScope.RegisterCancellationToken — root-scope early-return.
