@@ -1,0 +1,25 @@
+{
+  "id": "d8e9f0a1-2b3c-4d5e-9f60-7a8b9c0d1e03",
+  "name": "Runner Extras - Integer virtual table",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves the Integer system virtual table (2000000026) yields rows, so `dataitem(X; Integer)` report datasets are not silently empty.",
+  "description": "The Integer metatable is parsed out of the platform package, so it exists — but nothing provides rows, so every Record Integer is empty. Real BC exposes one row per value of Number across the full signed-integer range, and `dataitem(Name; Integer)` with a DataItemTableView filter is THE standard idiom for a synthetic report dataset (28 of Pageworks' 29 test reports use it). With zero rows the report body never executes: SaveAs completes successfully, writes nothing, raises no error, and any `asserterror` around it fails with 'An error was expected inside an ASSERTERROR statement' — a silent wrong answer rather than a loud one. This suite pins the AL surface that matters: a const filter yielding exactly one row, a range filter yielding a counted set in order, iteration reading Number, and negative cases (an empty range finds nothing; a provider that answers true to everything fails here).",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [
+    {
+      "from": 61880,
+      "to": 61889
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

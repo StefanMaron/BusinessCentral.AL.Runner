@@ -1063,6 +1063,23 @@ public static partial class RecordPatches
                 return allObjDa;
             }
 
+            // ── Integer system virtual table (2000000026) ────────────────────────────────
+            // Virtual on the service tier (IntegerDataProvider computes rows per Number on
+            // demand). Routed to the same in-memory store as every other table and populated
+            // over a bounded window, so `dataitem(X; Integer)` report datasets and plain
+            // `Record Integer` iteration yield rows instead of silently yielding nothing.
+            // See RecordPatches.IntegerVirtualTable.cs.
+            if (IsIntegerVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var integerDa))
+                {
+                    var createdInteger = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    integerDa = perTable.GetOrAdd(tableId, createdInteger);
+                }
+                PopulateIntegerVirtualTable(integerDa, table);
+                return integerDa;
+            }
+
             // ── Report Layout List system virtual table (2000000234) ─────────────────────
             // Virtual on the service tier too (its rows are the layouts every published
             // app declares, plus tenant layouts). BC's own by-name layout resolution
