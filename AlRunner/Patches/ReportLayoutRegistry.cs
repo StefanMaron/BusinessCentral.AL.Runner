@@ -57,10 +57,41 @@ public static class AlReportLayoutRegistry
         lock (list)
         {
             var existing = list.FindIndex(l => string.Equals(l.Name, layout.Name, StringComparison.OrdinalIgnoreCase));
-            if (existing >= 0) list[existing] = layout;
+            if (existing >= 0) list[existing] = Merge(list[existing], layout);
             else list.Add(layout);
         }
     }
+
+    /// <summary>
+    /// Combines two registrations of the SAME layout, preferring a populated value over
+    /// an empty one on every field.
+    ///
+    /// The same report layout is registered more than once per run — once per compilation
+    /// that can see the report. Those passes are not equally informed: a pass compiling
+    /// the app from source resolves LayoutFile to an absolute path, while a pass that sees
+    /// the app only through its symbols has no source tree, so
+    /// <c>ReportLayoutSymbol.FilepathSyntaxLocation</c> yields nothing and ResolvedPath
+    /// comes back "". A last-writer-wins replace therefore let the poorer pass ERASE the
+    /// resolved path (observed: report 71179675 registered with a real path, then again
+    /// with ""), leaving the runtime unable to load the layout's bytes at all.
+    ///
+    /// Merging is safe because both registrations describe the same declaration: they can
+    /// only disagree by one of them not knowing a value. A real value never overwrites a
+    /// different real value — later wins only where it actually has something to say.
+    /// </summary>
+    internal static AlReportLayoutInfo Merge(AlReportLayoutInfo existing, AlReportLayoutInfo incoming) =>
+        new(
+            ReportId: incoming.ReportId,
+            Name: incoming.Name,
+            LayoutType: Prefer(existing.LayoutType, incoming.LayoutType),
+            MimeType: Prefer(existing.MimeType, incoming.MimeType),
+            LayoutFile: Prefer(existing.LayoutFile, incoming.LayoutFile),
+            ResolvedPath: Prefer(existing.ResolvedPath, incoming.ResolvedPath),
+            Caption: Prefer(existing.Caption, incoming.Caption),
+            Summary: Prefer(existing.Summary, incoming.Summary));
+
+    private static string Prefer(string existing, string incoming) =>
+        string.IsNullOrEmpty(incoming) ? existing : incoming;
 
     public static IReadOnlyList<AlReportLayoutInfo> Get(int reportId)
     {
