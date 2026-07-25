@@ -41,6 +41,47 @@ codeunit 61902 "EVO Tests"
     end;
 
     [Test]
+    procedure JsonObjectParameter_ReachesTheSubscriberWithItsContent()
+    var
+        Publisher: Codeunit "EVO Publisher";
+        Payload: JsonObject;
+        Seen: Text;
+    begin
+        // BC's merger gate is `ObjectPayload.Get('layoutmimetype', Token)`. If the
+        // runner forwards an EMPTY JsonObject to the subscriber, every ISV renderer
+        // declines and the platform emits nothing — with no error anywhere.
+        Payload.Add('layoutmimetype', 'reportlayout/pageworks');
+
+        Seen := Publisher.PublishPayload(Payload);
+
+        if Seen = '<KEY-NOT-FOUND>' then
+            Error('The subscriber received a JsonObject WITHOUT the publisher''s key — payload content is not forwarded across event dispatch.');
+        if Seen <> 'reportlayout/pageworks' then
+            Error('The subscriber read "%1" from the forwarded payload, expected "reportlayout/pageworks".', Seen);
+    end;
+
+    [Test]
+    procedure SubscriberError_PropagatesToThePublishersCaller()
+    var
+        Publisher: Codeunit "EVO Publisher";
+        TempBlob: Codeunit "Temp Blob";
+        DocumentStream: OutStream;
+    begin
+        // An error raised INSIDE a subscriber must reach the code that raised the
+        // event. If the runner's dispatch swallows it, the publisher continues as
+        // though no subscriber objected: IsHandled stays false, nothing is produced,
+        // and the caller sees an empty result instead of the real diagnostic — a
+        // silent wrong answer, and exactly the shape of the empty-PDF cluster (the
+        // ISV renderer's AbortWithFindings path ends in Error()).
+        TempBlob.CreateOutStream(DocumentStream);
+
+        asserterror Publisher.Publish('raise', DocumentStream);
+
+        if StrPos(GetLastErrorText(), 'SUBSCRIBER-RAISED-THIS') = 0 then
+            Error('Expected the subscriber''s own error to reach the publisher''s caller, got: "%1"', GetLastErrorText());
+    end;
+
+    [Test]
     procedure DeclinedSubscriber_LeavesStreamEmptyAndUnhandled()
     var
         Publisher: Codeunit "EVO Publisher";

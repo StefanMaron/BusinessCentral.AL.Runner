@@ -34,6 +34,9 @@ public static partial class BcRuntime
         catch (Exception ex)
         {
             var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+            if (Environment.GetEnvironmentVariable("ALRUNNER_DISPATCH_TRACE") == "1")
+                Console.Error.WriteLine(
+                    $"[DispatchRethrow] {inner.GetType().Name}: {inner.Message}\nCALLER CHAIN:\n{Environment.StackTrace}");
             throw inner;
         }
         return default;
@@ -65,6 +68,8 @@ public static partial class BcRuntime
         if (subs == null || subs.Count == 0) return;
         Interlocked.Increment(ref _dispatchFiredCount);
         if (!_firstFireLogged) { _firstFireLogged = true; Console.Error.WriteLine($"[Dispatch] first FIRE: {declName}.{eventMethodName} → {subs.Count} subs"); }
+        if (Environment.GetEnvironmentVariable("ALRUNNER_DISPATCH_TRACE") == "1")
+            Console.Error.WriteLine($"[Dispatch] FIRE {declName}.{eventMethodName} → {subs.Count} subs");
 
         // Publisher application object (NavCodeunit) — for NavCodeunitHandle.Target lookup of subscriber instances.
         var navMethodScopeType = AppDomain.CurrentDomain.GetAssemblies()
@@ -86,7 +91,14 @@ public static partial class BcRuntime
         {
             if (!seen.Add(SubscriberAlIdentity(sub))) continue;
             try { InvokeOneSubscriber(publisherScope, scopeType, pubObj, sub); }
-            catch (TargetInvocationException tie) { throw tie.InnerException ?? tie; }
+            catch (TargetInvocationException tie)
+            {
+                if (Environment.GetEnvironmentVariable("ALRUNNER_DISPATCH_TRACE") == "1")
+                    Console.Error.WriteLine(
+                        $"[DispatchThrow] {declName}.{eventMethodName} subscriber threw: "
+                        + $"{(tie.InnerException ?? tie).GetType().Name}: {(tie.InnerException ?? tie).Message}");
+                throw tie.InnerException ?? tie;
+            }
         }
     }
 
@@ -182,8 +194,64 @@ public static partial class BcRuntime
             var fld = scopeType.GetField(p.Name!,
                 BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
             args[i] = CoerceArg(fld?.GetValue(publisherScope), p.ParameterType);
+            if (Environment.GetEnvironmentVariable("ALRUNNER_DISPATCH_TRACE") == "1"
+                && subscriberMethod.Name.Contains("CustomDocumentMerger", StringComparison.OrdinalIgnoreCase))
+            {
+                string repr;
+                try { repr = args[i]?.ToString() ?? "null"; } catch { repr = "<unreadable>"; }
+                if (repr.Length > 160) repr = repr.Substring(0, 160) + "…";
+                Console.Error.WriteLine(
+                    $"[DispatchArg] {subscriberMethod.DeclaringType!.Name}.{subscriberMethod.Name} "
+                    + $"param '{p.Name}' ({p.ParameterType.Name}) field={(fld == null ? "MISSING" : fld.Name)} value={repr.Replace("\n", " ")}");
+            }
         }
-        subscriberMethod.Invoke(subscriberInstance, args);
+        ObserveAsyncResult(subscriberMethod.Invoke(subscriberInstance, args), subscriberMethod);
+    }
+
+    /// <summary>
+    /// Observe an AL subscriber's return value when it is a Task/ValueTask.
+    ///
+    /// AL subscribers are NOT always emitted as synchronous methods: BC emits an async
+    /// state machine whenever the body needs one (the System App's
+    /// ReportManagement.OnCustomDocumentMergerEx is one). An exception raised inside such a
+    /// body is CAPTURED BY THE STATE MACHINE and surfaced on the returned task — it does not
+    /// propagate out of MethodInfo.Invoke. Discarding that task therefore discarded the
+    /// error: the publisher continued as if the subscriber had succeeded, and the AL author
+    /// saw a silent wrong answer instead of their own Error().
+    ///
+    /// Measured: an ISV report renderer raised
+    /// "LF-XML: The template is not well-formed XML" from inside the custom document merger;
+    /// the platform went on to hand the caller an EMPTY document and Report.SaveAs reported
+    /// success, so the test failed later with a misleading "Not a native PDF" instead of the
+    /// real diagnostic.
+    ///
+    /// Blocking here is correct for this runtime: the runner drives AL synchronously (see
+    /// NavReportSync and the OnRunEventAsync rewrite), so these tasks are already complete
+    /// or complete inline. GetAwaiter().GetResult() also rethrows the ORIGINAL exception
+    /// rather than an AggregateException, which is what AL callers must observe.
+    /// </summary>
+    public static void ObserveAsyncResult(object? result, MethodInfo subscriberMethod)
+    {
+        switch (result)
+        {
+            case null:
+                return;
+            case Task t:
+                t.GetAwaiter().GetResult();
+                return;
+            case ValueTask vt:
+                vt.GetAwaiter().GetResult();
+                return;
+        }
+
+        var ty = result.GetType();
+        if (ty.IsGenericType && ty.GetGenericTypeDefinition() == typeof(ValueTask<>))
+        {
+            var asTask = ty.GetMethod("AsTask", BindingFlags.Public | BindingFlags.Instance)
+                ?? throw new InvalidOperationException(
+                    $"[Dispatch] ValueTask<T>.AsTask not found while observing {subscriberMethod.Name} — BC/runtime shape changed.");
+            ((Task)asTask.Invoke(result, null)!).GetAwaiter().GetResult();
+        }
     }
 
     /// <summary>

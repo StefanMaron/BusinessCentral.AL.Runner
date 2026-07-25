@@ -17,8 +17,11 @@ codeunit 61901 "EVO Subscriber"
     begin
         if IsHandled then
             exit;
-        if PayloadTag <> 'render' then
+        if not (PayloadTag in ['render', 'raise']) then
             exit;
+
+        if PayloadTag = 'raise' then
+            Error('SUBSCRIBER-RAISED-THIS');
 
         TempBlobResult.CreateOutStream(ResultOutStream);
         ResultOutStream.WriteText('RENDERED-BY-SUBSCRIBER');
@@ -26,5 +29,18 @@ codeunit 61901 "EVO Subscriber"
         TempBlobResult.CreateInStream(ResultInStream);
         CopyStream(DocumentStream, ResultInStream);
         IsHandled := true;
+    end;
+
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"EVO Publisher", 'OnProbePayload', '', true, true)]
+    local procedure OnProbePayload(ObjectPayload: JsonObject; var SeenMimetype: Text)
+    var
+        MimeToken: JsonToken;
+    begin
+        // Mirrors IsPageworksLayout: read one key out of the forwarded JsonObject.
+        if not ObjectPayload.Get('layoutmimetype', MimeToken) then begin
+            SeenMimetype := '<KEY-NOT-FOUND>';
+            exit;
+        end;
+        SeenMimetype := MimeToken.AsValue().AsText();
     end;
 }

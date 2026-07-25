@@ -32,6 +32,32 @@ enum 61910 "IVC Backend Type" implements "IVC Backend"
 }
 
 /// <summary>Helper so the test can read a Temp Blob back as text.</summary>
+/// <summary>
+/// Reproduces the ISV PDF writer's actual prologue: Clear() the by-var result
+/// codeunit, then open its stream with an explicit TextEncoding. Both of those
+/// sit between the caller's variable and the bytes.
+/// </summary>
+codeunit 61914 "IVC Clearing Impl"
+{
+    procedure ProduceAfterClear(var Result: Codeunit "Temp Blob"; Payload: Text)
+    var
+        ResultOutStream: OutStream;
+    begin
+        Clear(Result);
+        Result.CreateOutStream(ResultOutStream);
+        ResultOutStream.WriteText(Payload);
+    end;
+
+    procedure ProduceWithEncoding(var Result: Codeunit "Temp Blob"; Payload: Text)
+    var
+        ResultOutStream: OutStream;
+    begin
+        Clear(Result);
+        Result.CreateOutStream(ResultOutStream, TextEncoding::Windows);
+        ResultOutStream.WriteText(Payload);
+    end;
+}
+
 codeunit 61912 "IVC Reader"
 {
     procedure ReadAll(var Blob: Codeunit "Temp Blob") Contents: Text

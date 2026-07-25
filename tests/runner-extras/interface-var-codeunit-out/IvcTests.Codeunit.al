@@ -74,6 +74,45 @@ codeunit 61913 "IVC Tests"
     end;
 
     [Test]
+    procedure ClearOnAVarCodeunitParameter_DoesNotDetachTheCallersInstance()
+    var
+        Impl: Codeunit "IVC Clearing Impl";
+        Blob: Codeunit "Temp Blob";
+        Reader: Codeunit "IVC Reader";
+        Actual: Text;
+    begin
+        // Real BC: Clear(Result) resets the instance IN PLACE, so the caller keeps
+        // observing the same object and sees everything written afterwards. If the
+        // runner instead rebinds the local to a FRESH instance, every subsequent
+        // write lands somewhere the caller cannot see — and nothing is raised.
+        // This is the exact prologue of the ISV PDF writer's Finish():
+        //     Clear(ResultBlob); ResultBlob.CreateOutStream(...); Write...
+        Impl.ProduceAfterClear(Blob, 'PRODUCED-AFTER-CLEAR');
+
+        Actual := Reader.ReadAll(Blob);
+        if Actual <> 'PRODUCED-AFTER-CLEAR' then
+            Error('After Clear() on a var Codeunit parameter the caller sees "%1", expected "PRODUCED-AFTER-CLEAR" — Clear detached the parameter from the caller''s instance, so the produced bytes are lost silently.', Actual);
+    end;
+
+    [Test]
+    procedure CreateOutStreamWithTextEncoding_StillReachesTheCaller()
+    var
+        Impl: Codeunit "IVC Clearing Impl";
+        Blob: Codeunit "Temp Blob";
+        Reader: Codeunit "IVC Reader";
+        Actual: Text;
+    begin
+        // The writer opens its stream as CreateOutStream(Stream, TextEncoding::Windows).
+        // Pinned separately so an unimplemented encoding overload cannot hide behind
+        // the plain one.
+        Impl.ProduceWithEncoding(Blob, 'PRODUCED-WINDOWS-ENCODED');
+
+        Actual := Reader.ReadAll(Blob);
+        if Actual <> 'PRODUCED-WINDOWS-ENCODED' then
+            Error('CreateOutStream(.., TextEncoding::Windows) on a var Codeunit parameter yielded "%1", expected "PRODUCED-WINDOWS-ENCODED".', Actual);
+    end;
+
+    [Test]
     procedure UntouchedTempBlob_IsEmpty()
     var
         Blob: Codeunit "Temp Blob";

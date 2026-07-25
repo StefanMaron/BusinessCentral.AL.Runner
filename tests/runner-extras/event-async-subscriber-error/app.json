@@ -1,0 +1,25 @@
+{
+  "id": "d8e9f0a1-2b3c-4d5e-9f60-7a8b9c0d1e06",
+  "name": "Runner Extras - error raised inside an async-emitted subscriber",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves an Error() raised in a subscriber that itself raises an event reaches the original publisher's caller instead of being silently discarded.",
+  "description": "AL subscribers are not always emitted as synchronous methods — BC emits an async state machine whenever the body needs one, and a subscriber that RAISES ANOTHER EVENT always does (its body awaits RunEventAsync). An exception raised underneath such a subscriber is captured by the state machine and surfaced on its returned task; a dispatcher that discards that task discards the error. The publisher then continues as though the subscriber had succeeded. Measured on a real ISV report renderer: the AL author's own 'LF-XML: The template is not well-formed XML' error was thrown, dropped, and the platform handed the caller an EMPTY PDF while Report.SaveAs reported success — the test then failed with a misleading 'Not a native PDF'. This is the exact two-level topology of that chain (platform trigger codeunit → System App ReportManagement → ISV subscriber), reduced to first-party AL.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [
+    {
+      "from": 61930,
+      "to": 61949
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
