@@ -147,6 +147,17 @@ public static partial class RecordPatches
             if (meta != null)
                 return meta;
         }
+        else if (objectType == ObjectType.Page)
+        {
+            // Reached from NavForm.GetMasterPage -> MetadataProvider.GetMasterPage when a
+            // page is actually driven (the TestPage path). Serve the page's NCLMetaForm
+            // with its REAL parsed control tree where the runner compiled the page itself,
+            // and the skeleton otherwise — a skeleton is still better than "no such page"
+            // for the lookup-only callers that were the only ones reaching here before.
+            var meta = EnsureRealPageMetadata(objectId) ?? _metaFormCache.GetOrAdd(objectId, BuildNCLMetaForm);
+            if (meta != null)
+                return meta;
+        }
         else if (objectType == ObjectType.Query)
         {
             // Precompiled / BaseApp-internal queries reach the engine via

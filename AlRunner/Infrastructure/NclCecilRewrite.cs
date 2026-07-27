@@ -445,51 +445,153 @@ public static class NclCecilRewrite
         if (navFormType == null)
             throw new InvalidOperationException("NavForm type not found in Ncl.dll — Ncl shape changed; do not commit");
 
+        // GetMasterPage is GUARDED, not replaced. Its real body asks
+        // NavGlobal.MetadataProvider for the page's MasterPage, which is the page's parsed
+        // control tree — the thing a TestPage needs and the thing a flat "return default"
+        // makes permanently unavailable. Callers that were happy with the default (the
+        // report request-page chain) still get it; only forms the runner opted in run the
+        // real lookup. Same rationale as the form-init trio below; see RunnerFormInit.cs.
+        var shouldRunFormInitRef = asm.MainModule.ImportReference(
+            typeof(AlRunnerV2.Patches.RunnerFormInit).GetMethod(
+                nameof(AlRunnerV2.Patches.RunnerFormInit.ShouldRunRealFormInit),
+                BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "RunnerFormInit.ShouldRunRealFormInit not found — do not commit"));
+
         int getMasterPageRewroteCount = 0;
         foreach (var method in navFormType.Methods.Where(mm => mm.Name == "GetMasterPage").ToList())
         {
             var returnType = method.ReturnType;
-            Console.Error.WriteLine($"[Cecil] Rewriting {method.FullName} → return null/default (ReturnType={returnType.FullName}, IsValueType={returnType.IsValueType})");
-
             if (returnType.FullName.StartsWith("System.Threading.Tasks.Task`"))
                 throw new InvalidOperationException($"GetMasterPage returns Task<T> ({returnType.FullName}) — cannot safely emit default; do not commit");
 
+            GuardWithDefaultReturn(asm.MainModule, method, shouldRunFormInitRef);
+            getMasterPageRewroteCount++;
+        }
+        if (getMasterPageRewroteCount == 0)
+            throw new InvalidOperationException("GetMasterPage method not found in NavForm — Ncl shape changed; do not commit");
+        Console.Error.WriteLine($"[Cecil] Guarded {getMasterPageRewroteCount} GetMasterPage overload(s) → real lookup only for runner-opted-in forms");
+
+        // MetadataProvider.GetRelativeHelpUrl(pageId) → "".
+        //
+        // Reached from GetMasterPage -> GetMasterPageUnsolved -> GetMergedMasterPage on
+        // EVERY masterpage merge, so it sits directly in front of the page path this work
+        // opens up. Its body opens system table 2000000198 (page documentation) via
+        // `new NavRecord(session, 2000000198, …)`, which NREs here because the runner has
+        // no metadata for that table.
+        //
+        // Returning the empty string is not a silent fake: it is what BC itself produces
+        // for a tenant with no page-documentation rows, and the runner genuinely has none
+        // (no help server, no tenant help configuration — see docs/scope.md). The value is
+        // a UI help link with no AL-observable surface, so nothing an AL test can assert
+        // changes. If table 2000000198 ever gets real metadata here, delete this and let
+        // BC's own body run — it will then answer the same way for the same reason.
+        var metadataProviderType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.XmlMetadata.MetadataProvider")
+            ?? throw new InvalidOperationException("MetadataProvider type not found in Ncl.dll — Ncl shape changed; do not commit");
+        int helpUrlRewroteCount = 0;
+        foreach (var method in metadataProviderType.Methods.Where(mm => mm.Name == "GetRelativeHelpUrl" && mm.HasBody).ToList())
+        {
+            if (method.ReturnType.FullName != "System.String")
+                throw new InvalidOperationException(
+                    $"GetRelativeHelpUrl returns {method.ReturnType.FullName}, expected System.String — do not commit");
             var body = method.Body;
             body.Instructions.Clear();
             body.Variables.Clear();
             body.ExceptionHandlers.Clear();
             var il = body.GetILProcessor();
-
-            if (!returnType.IsValueType)
-            {
-                il.Append(il.Create(OpCodes.Ldnull));
-                il.Append(il.Create(OpCodes.Ret));
-                body.MaxStackSize = 1;
-            }
-            else if (returnType.FullName is "System.Int32" or "System.Boolean" or "System.Byte"
-                                         or "System.Int16" or "System.Int64" or "System.Char")
-            {
-                il.Append(il.Create(OpCodes.Ldc_I4_0));
-                il.Append(il.Create(OpCodes.Ret));
-                body.MaxStackSize = 1;
-            }
-            else
-            {
-                // ValueTask<T>, ValueTuple<...>, or other value types → default(T) via initobj
-                var local = new VariableDefinition(asm.MainModule.ImportReference(returnType));
-                body.Variables.Add(local);
-                body.InitLocals = true;
-                il.Append(il.Create(OpCodes.Ldloca_S, local));
-                il.Append(il.Create(OpCodes.Initobj, asm.MainModule.ImportReference(returnType)));
-                il.Append(il.Create(OpCodes.Ldloc_0));
-                il.Append(il.Create(OpCodes.Ret));
-                body.MaxStackSize = 1;
-            }
-            getMasterPageRewroteCount++;
+            il.Append(il.Create(OpCodes.Ldstr, string.Empty));
+            il.Append(il.Create(OpCodes.Ret));
+            body.MaxStackSize = 1;
+            helpUrlRewroteCount++;
         }
-        if (getMasterPageRewroteCount == 0)
-            throw new InvalidOperationException("GetMasterPage method not found in NavForm — Ncl shape changed; do not commit");
-        Console.Error.WriteLine($"[Cecil] Rewrote {getMasterPageRewroteCount} GetMasterPage overload(s) → return null/default");
+        if (helpUrlRewroteCount == 0)
+            throw new InvalidOperationException("MetadataProvider.GetRelativeHelpUrl not found — Ncl shape changed; do not commit");
+        Console.Error.WriteLine($"[Cecil] Rewrote {helpUrlRewroteCount} GetRelativeHelpUrl overload(s) → \"\" (no tenant help data in the runner)");
+
+        // MetadataProvider.VersionNumber(NavTenant) → 0.
+        //
+        // The last step of GetMasterPageUnsolved: stamp the merged MasterPage with the
+        // tenant's metadata version, which the client uses to decide whether its CACHED
+        // page metadata is stale. It NREs on the skeleton tenant, and it is the only thing
+        // standing between the page path and a fully merged MasterPage.
+        //
+        // The runner has one process, no client-side metadata cache and no tenant metadata
+        // versioning, so there is nothing for the stamp to invalidate and no AL surface
+        // that can read it. 0 is the "no version recorded" value BC itself carries before a
+        // tenant has been versioned.
+        int versionNumberRewroteCount = 0;
+        foreach (var method in metadataProviderType.Methods.Where(mm => mm.Name == "VersionNumber" && mm.HasBody).ToList())
+        {
+            if (method.ReturnType.FullName != "System.Int64")
+                throw new InvalidOperationException(
+                    $"VersionNumber returns {method.ReturnType.FullName}, expected System.Int64 — do not commit");
+            var body = method.Body;
+            body.Instructions.Clear();
+            body.Variables.Clear();
+            body.ExceptionHandlers.Clear();
+            var il = body.GetILProcessor();
+            il.Append(il.Create(OpCodes.Ldc_I4_0));
+            il.Append(il.Create(OpCodes.Conv_I8));
+            il.Append(il.Create(OpCodes.Ret));
+            body.MaxStackSize = 1;
+            versionNumberRewroteCount++;
+        }
+        if (versionNumberRewroteCount == 0)
+            throw new InvalidOperationException("MetadataProvider.VersionNumber not found — Ncl shape changed; do not commit");
+        Console.Error.WriteLine($"[Cecil] Rewrote {versionNumberRewroteCount} VersionNumber overload(s) → 0 (no tenant metadata versioning in the runner)");
+
+        // NavPageDataPersonalizationHelper.LoadPageDataPersonalization<T>(...) → default(T).
+        //
+        // Reached from MergePageAndTable -> SolveDefaultFilterColumnProperty. It opens the
+        // per-user page-personalization system table, which the runner has no metadata for,
+        // so `new NavRecord(...)` NREs.
+        //
+        // User personalization is out of scope by construction: the runner has no user
+        // profile, no personalization store and no UI to produce one. default(T) is exactly
+        // what BC returns for a user who has never personalized the page, which is every
+        // user here — so the merged page keeps its AL-declared layout, which is what an AL
+        // test is asserting about in the first place.
+        var personalizationHelperType = asm.MainModule.GetType(
+            "Microsoft.Dynamics.Nav.Runtime.NavPageDataPersonalizationHelper");
+        if (personalizationHelperType != null)
+        {
+            int personalizationRewroteCount = 0;
+            foreach (var method in personalizationHelperType.Methods
+                .Where(mm => mm.Name == "LoadPageDataPersonalization" && mm.HasBody).ToList())
+            {
+                var body = method.Body;
+                body.Instructions.Clear();
+                body.Variables.Clear();
+                body.ExceptionHandlers.Clear();
+                var il = body.GetILProcessor();
+                var retType = method.ReturnType;
+                if (retType.FullName == "System.Void")
+                    il.Append(il.Create(OpCodes.Ret));
+                else if (!retType.IsValueType && !retType.IsGenericParameter)
+                {
+                    il.Append(il.Create(OpCodes.Ldnull));
+                    il.Append(il.Create(OpCodes.Ret));
+                }
+                else
+                {
+                    // Generic parameter or value type — default(T) via initobj.
+                    var local = new VariableDefinition(retType);
+                    body.Variables.Add(local);
+                    body.InitLocals = true;
+                    il.Append(il.Create(OpCodes.Ldloca_S, local));
+                    il.Append(il.Create(OpCodes.Initobj, retType));
+                    il.Append(il.Create(OpCodes.Ldloc_S, local));
+                    il.Append(il.Create(OpCodes.Ret));
+                }
+                body.MaxStackSize = 1;
+                personalizationRewroteCount++;
+            }
+            if (personalizationRewroteCount == 0)
+                throw new InvalidOperationException(
+                    "NavPageDataPersonalizationHelper.LoadPageDataPersonalization not found — Ncl shape changed; do not commit");
+            Console.Error.WriteLine(
+                $"[Cecil] Rewrote {personalizationRewroteCount} LoadPageDataPersonalization overload(s) → default (no user personalization in the runner)");
+        }
 
         // NavForm.RequiresExecutePermissionCheck(MasterPage) → return false
         // GetMasterPage() now returns null/default, so its callers pass null into this method,
@@ -3555,6 +3657,37 @@ public static class NclCecilRewrite
                 vepCount++;
             }
             Console.Error.WriteLine($"[Cecil] Rewrote {vepCount} NavSession.VerifyExecutePermission overload(s) → no-op");
+
+            // Same session, same reason, the bool half: HasExecutePermission /
+            // HasCachedExecutePermissions / the per-company variants. Nothing reached these
+            // until the page path did — MergePageAndTable -> GetTableMetadata ->
+            // TranslateCaptionClassOnMetaTableFields asks whether the session may execute
+            // the object before translating its caption class, and it NREs on the same null
+            // permission cache the void overloads above were neutered for. The skeleton runs
+            // as SUPER, so `true` is the same answer the void overloads already imply by
+            // never throwing; returning false here would instead silently drop captions.
+            int hepCount = 0;
+            foreach (var m in (navSessionT?.Methods ?? Enumerable.Empty<MethodDefinition>())
+                .Where(mm => (mm.Name == "HasExecutePermission"
+                              || mm.Name == "HasCachedExecutePermissions"
+                              || mm.Name == "HasExecutePermissionForCompany"
+                              || mm.Name == "HasExecutePermissionForAllCompanies")
+                    && mm.HasBody && mm.ReturnType.FullName == "System.Boolean").ToList())
+            {
+                var body = m.Body;
+                body.Instructions.Clear();
+                body.ExceptionHandlers.Clear();
+                body.Variables.Clear();
+                var il = body.GetILProcessor();
+                il.Append(il.Create(OpCodes.Ldc_I4_1));
+                il.Append(il.Create(OpCodes.Ret));
+                body.MaxStackSize = 1;
+                hepCount++;
+            }
+            if (hepCount == 0)
+                throw new InvalidOperationException(
+                    "NavSession.HasExecutePermission overloads not found — Ncl shape changed; do not commit");
+            Console.Error.WriteLine($"[Cecil] Rewrote {hepCount} NavSession.Has*ExecutePermission* overload(s) → true (skeleton session runs as SUPER)");
         }
 
         // SessionTransactionExtensions.SetRecordConsistent / SetRecordInconsistent → no-op.
@@ -4312,29 +4445,99 @@ public static class NclCecilRewrite
                             $"otPage={objectTypePageValue})");
                     }
 
+                    // TRUNCATE rather than rebuild. The original ctor is, in order:
+                    //   1. ~9 pure field initialisers (sourceExpressions, uiParts,
+                    //      selections, pageCaption, the trigger maps, the background-task
+                    //      dictionaries, pageExtensions, parameterSet, ParentFormHandle) —
+                    //      all `newobj Dictionary/List` or Empty constants, none of which
+                    //      can throw or touch session state;
+                    //   2. the base ctor call and `this.masterPage = masterPage`;
+                    //   3. a tail that DOES touch skeleton state — NavCurrentThread
+                    //      personalization ids, Session.NavAppGroup (NavExtensionMetrics),
+                    //      SetSourceTable and an awaited SyncTempTableWithSourceTableAsync.
+                    //
+                    // Only (3) was ever the problem. Rebuilding the body from scratch also
+                    // discarded (1), which left `sourceExpressions` null forever — and that
+                    // dictionary is the whole control -> value binding table a page
+                    // publishes, so no TestPage could ever resolve a control bound to
+                    // anything but a Rec field. Keeping BC's own instructions up to and
+                    // including the masterPage store, then returning, is a strict superset
+                    // of what the rebuild produced and adds no call the rebuild avoided.
                     var body = navFormCtor5.Body;
-                    body.Instructions.Clear();
-                    body.Variables.Clear();
-                    body.ExceptionHandlers.Clear();
+                    var instructions = body.Instructions;
+
+                    // Cut structurally, at the first `base.Session` read: everything before
+                    // it is session-free (field initialisers, the base ctor, masterPage,
+                    // personalizationId, handle, formId, UpdatePropagation) and everything
+                    // from it on is the part that actually needs a real session — the
+                    // NavExtensionMetrics construction off Session.NavAppGroup, then
+                    // SetSourceTable and the awaited SyncTempTableWithSourceTableAsync.
+                    // A fixed instruction index or a "stop after masterPage" rule would be
+                    // guessing; this one states the actual criterion.
+                    int sessionAt = -1;
+                    for (int i = 0; i < instructions.Count; i++)
+                        if (instructions[i].OpCode == OpCodes.Call
+                            && instructions[i].Operand is MethodReference sessRef
+                            && sessRef.Name == "get_Session"
+                            && sessRef.DeclaringType.FullName == "Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase")
+                        { sessionAt = i; break; }
+                    if (sessionAt < 0)
+                        throw new InvalidOperationException(
+                            "NavForm 5-arg ctor rewrite: no NavApplicationObjectBase.get_Session call found to cut at — Ncl shape changed, do not commit");
+
+                    // The cut has to land on a STATEMENT boundary, not merely before the
+                    // session read: `ldarg.0` for the next store already sits on the stack
+                    // by then, and truncating there leaves the evaluation stack unbalanced
+                    // at `ret` — which the CLR rejects with InvalidProgramException rather
+                    // than anything that points at the cause. So simulate the stack depth
+                    // and cut at the last instruction before the session read where it is
+                    // back to zero.
+                    int depth = 0, cut = -1;
+                    for (int i = 0; i < sessionAt; i++)
+                    {
+                        depth += StackDelta(instructions[i]);
+                        if (depth < 0)
+                            throw new InvalidOperationException(
+                                $"NavForm 5-arg ctor rewrite: stack simulation went negative at IL_{instructions[i].Offset:x4} — do not commit");
+                        if (depth == 0) cut = i;
+                    }
+                    if (cut < 0)
+                        throw new InvalidOperationException(
+                            "NavForm 5-arg ctor rewrite: no stack-neutral cut point before the session read — do not commit");
+
+                    int masterPageAt = -1;
+                    for (int i = 0; i <= cut; i++)
+                        if (instructions[i].OpCode == OpCodes.Stfld
+                            && ReferenceEquals(instructions[i].Operand, masterPageFld))
+                        { masterPageAt = i; break; }
+                    if (masterPageAt < 0)
+                        throw new InvalidOperationException(
+                            "NavForm 5-arg ctor rewrite: the masterPage store is not inside the kept prefix — do not commit");
+
+                    // The kept prefix contains one branch (the ?? on the personalization
+                    // id). Truncating is only safe if every branch target stays inside it.
+                    var kept = new HashSet<Instruction>();
+                    for (int i = 0; i <= cut; i++) kept.Add(instructions[i]);
+                    for (int i = 0; i <= cut; i++)
+                    {
+                        if (instructions[i].Operand is Instruction target && !kept.Contains(target))
+                            throw new InvalidOperationException(
+                                "NavForm 5-arg ctor rewrite: a kept instruction branches past the cut — do not commit");
+                        if (instructions[i].Operand is Instruction[] targets && targets.Any(x => !kept.Contains(x)))
+                            throw new InvalidOperationException(
+                                "NavForm 5-arg ctor rewrite: a kept switch branches past the cut — do not commit");
+                    }
+
                     var il = body.GetILProcessor();
-
-                    // base(parent, new ApplicationObjectId(Page, objectId), staticMetadata)
-                    il.Append(il.Create(OpCodes.Ldarg_0));
-                    il.Append(il.Create(OpCodes.Ldarg_1));                       // parent
-                    il.Append(il.Create(OpCodes.Ldc_I4, objectTypePageValue));   // ObjectType.Page
-                    il.Append(il.Create(OpCodes.Ldarg_2));                       // objectId (int)
-                    il.Append(il.Create(OpCodes.Newobj, appObjIdNewobj));
-                    il.Append(il.Create(OpCodes.Ldarg_S, navFormCtor5.Parameters[4])); // staticMetadata
-                    il.Append(il.Create(OpCodes.Call, baseCtorRef));
-
-                    // this.masterPage = masterPage
-                    il.Append(il.Create(OpCodes.Ldarg_0));
-                    il.Append(il.Create(OpCodes.Ldarg_3));                       // masterPage
-                    il.Append(il.Create(OpCodes.Stfld, masterPageFld));
-
+                    while (instructions.Count > cut + 1)
+                        il.Remove(instructions[instructions.Count - 1]);
+                    body.ExceptionHandlers.Clear();
                     il.Append(il.Create(OpCodes.Ret));
-                    body.MaxStackSize = 4;
-                    Console.Error.WriteLine("[Cecil] Rewrote NavForm 5-arg private ctor → null-safe minimal init (skip Session.NavAppGroup, formId, personalizationId, etc.)");
+                    Console.Error.WriteLine(
+                        $"[Cecil] Truncated NavForm 5-arg private ctor before its first base.Session read "
+                        + $"({cut + 2} of {instructions.Count} instructions kept: field initialisers, base ctor, "
+                        + "masterPage, personalizationId, handle, formId; dropped the Session.NavAppGroup / "
+                        + "SetSourceTable tail)");
                 }
                 else
                 {
@@ -6483,4 +6686,123 @@ public static class NclCecilRewrite
             Console.Error.WriteLine($"[Cecil] VERIFY: {m.Name}({sig}) IL len={il?.Length} bytes={(il==null?"<null>":string.Join(" ", il.Take(20).Select(b => b.ToString("X2"))))}");
         }
     }
+    /// <summary>
+    /// Net evaluation-stack change of one instruction, for finding a statement boundary to
+    /// truncate a method body at. Only as general as it needs to be — Varpop/Varpush are
+    /// resolved from the call's own signature, and anything genuinely ambiguous throws
+    /// rather than guessing, because a wrong answer here shows up as a bare
+    /// InvalidProgramException at JIT time with nothing pointing back at this code.
+    /// </summary>
+    private static int StackDelta(Instruction ins)
+    {
+        var op = ins.OpCode;
+        int pop = 0, push = 0;
+
+        switch (op.StackBehaviourPop)
+        {
+            case StackBehaviour.Pop0: pop = 0; break;
+            case StackBehaviour.Pop1:
+            case StackBehaviour.Popi:
+            case StackBehaviour.Popref: pop = 1; break;
+            case StackBehaviour.Pop1_pop1:
+            case StackBehaviour.Popi_pop1:
+            case StackBehaviour.Popi_popi:
+            case StackBehaviour.Popi_popi8:
+            case StackBehaviour.Popi_popr4:
+            case StackBehaviour.Popi_popr8:
+            case StackBehaviour.Popref_pop1:
+            case StackBehaviour.Popref_popi: pop = 2; break;
+            case StackBehaviour.Popi_popi_popi:
+            case StackBehaviour.Popref_popi_popi:
+            case StackBehaviour.Popref_popi_popi8:
+            case StackBehaviour.Popref_popi_popr4:
+            case StackBehaviour.Popref_popi_popr8:
+            case StackBehaviour.Popref_popi_popref:
+            case StackBehaviour.PopAll: pop = 0; break;   // only `leave`; not present in a kept prefix
+            case StackBehaviour.Varpop:
+                if (ins.Operand is MethodReference callee)
+                {
+                    pop = callee.Parameters.Count;
+                    if (callee.HasThis && op != OpCodes.Newobj) pop++;
+                }
+                else if (op == OpCodes.Ret) pop = 0;
+                else throw new InvalidOperationException($"StackDelta: unsupported Varpop on {op}");
+                break;
+            default: throw new InvalidOperationException($"StackDelta: unsupported pop behaviour {op.StackBehaviourPop} on {op}");
+        }
+
+        switch (op.StackBehaviourPush)
+        {
+            case StackBehaviour.Push0: push = 0; break;
+            case StackBehaviour.Push1:
+            case StackBehaviour.Pushi:
+            case StackBehaviour.Pushi8:
+            case StackBehaviour.Pushr4:
+            case StackBehaviour.Pushr8:
+            case StackBehaviour.Pushref: push = 1; break;
+            case StackBehaviour.Push1_push1: push = 2; break;
+            case StackBehaviour.Varpush:
+                if (ins.Operand is MethodReference m2)
+                    push = m2.ReturnType.FullName == "System.Void" ? 0 : 1;
+                else throw new InvalidOperationException($"StackDelta: unsupported Varpush on {op}");
+                break;
+            default: throw new InvalidOperationException($"StackDelta: unsupported push behaviour {op.StackBehaviourPush} on {op}");
+        }
+
+        if (op == OpCodes.Newobj) push = 1;
+        return push - pop;
+    }
+
+    /// <summary>
+    /// Prepend `if (!RunnerFormInit.ShouldRunRealFormInit(this)) return default;` to an
+    /// instance method, keeping its original body for the opted-in case. Used where the
+    /// runner previously REPLACED a NavForm body with a default return: callers that were
+    /// fine with the default still get exactly that, byte for byte, and only a form the
+    /// runner is deliberately driving runs BC's real code.
+    /// </summary>
+    private static void GuardWithDefaultReturn(ModuleDefinition module, MethodDefinition method, MethodReference guardRef)
+    {
+        var body = method.Body;
+        var il = body.GetILProcessor();
+        var original = body.Instructions[0];
+        var returnType = method.ReturnType;
+
+        var prologue = new List<Instruction>
+        {
+            il.Create(OpCodes.Ldarg_0),
+            il.Create(OpCodes.Call, guardRef),
+            il.Create(OpCodes.Brtrue, original),
+        };
+
+        if (returnType.FullName == "System.Void")
+            prologue.Add(il.Create(OpCodes.Ret));
+        else if (!returnType.IsValueType)
+        {
+            prologue.Add(il.Create(OpCodes.Ldnull));
+            prologue.Add(il.Create(OpCodes.Ret));
+        }
+        else if (returnType.FullName is "System.Int32" or "System.Boolean" or "System.Byte"
+                                     or "System.Int16" or "System.Int64" or "System.Char")
+        {
+            prologue.Add(il.Create(OpCodes.Ldc_I4_0));
+            prologue.Add(il.Create(OpCodes.Ret));
+        }
+        else
+        {
+            // ValueTask<T> / ValueTuple<...> / other value types → default(T). The local is
+            // appended to the ORIGINAL locals, so it must be addressed by reference rather
+            // than by the index-0 assumption that a cleared body could get away with.
+            var local = new VariableDefinition(module.ImportReference(returnType));
+            body.Variables.Add(local);
+            body.InitLocals = true;
+            prologue.Add(il.Create(OpCodes.Ldloca_S, local));
+            prologue.Add(il.Create(OpCodes.Initobj, module.ImportReference(returnType)));
+            prologue.Add(il.Create(OpCodes.Ldloc_S, local));
+            prologue.Add(il.Create(OpCodes.Ret));
+        }
+
+        foreach (var ins in prologue) il.InsertBefore(original, ins);
+        body.MaxStackSize = Math.Max(body.MaxStackSize, 2);
+    }
+
 }
