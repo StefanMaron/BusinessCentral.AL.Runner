@@ -84,8 +84,12 @@ public sealed class TestExecutor
         // reset wipes the store instead of rolling back to the committed
         // install-seeded baseline real BC restores.
         var seedSw = System.Diagnostics.Stopwatch.StartNew();
+        // A TestExecutor instance is reused across bundles. Discard the preceding bundle's
+        // final test mutations before creating this bundle's committed installation baseline.
+        AlRunnerV2.Patches.RecordPatches.ResetPerTestState();
         InstallTriggerRunner.SetTestAssembly(assembly);
         InstallTriggerRunner.RunAll();
+        AlRunnerV2.Patches.RecordPatches.CaptureInstallBaseline();
         PerfTrace.Log($"TestExecutor.InitialInstallSeed {seedSw.ElapsedMilliseconds}ms");
 
         long scanMs = 0, instMs = 0, dispMs = 0, methodsMs = 0, disposeMs = 0, methodLoopMs = 0;   // PERF attribution accumulators
@@ -113,13 +117,8 @@ public sealed class TestExecutor
             if (Isolation == TestIsolation.Codeunit)
             {
                 var resetSw = System.Diagnostics.Stopwatch.StartNew();
-                AlRunnerV2.Patches.RecordPatches.ResetPerTestState();
-                var resetMs = resetSw.ElapsedMilliseconds;
-                resetSw.Restart();
-                // Restore the install-seeded baseline the reset just wiped
-                // (real BC's rollback preserves committed install seeding).
-                InstallTriggerRunner.RunAll();
-                PerfTrace.Log($"TestExecutor.CodeunitBoundary {t.Name} reset={resetMs}ms installSeed={resetSw.ElapsedMilliseconds}ms t={totalSw.ElapsedMilliseconds}ms");
+                AlRunnerV2.Patches.RecordPatches.RestoreInstallBaseline();
+                PerfTrace.Log($"TestExecutor.CodeunitBoundary {t.Name} restore={resetSw.ElapsedMilliseconds}ms t={totalSw.ElapsedMilliseconds}ms");
             }
 
             object? instance;
@@ -264,9 +263,7 @@ public sealed class TestExecutor
         // reset (if any) happens at codeunit boundaries instead.
         if (Isolation == TestIsolation.Test)
         {
-            AlRunnerV2.Patches.RecordPatches.ResetPerTestState();
-            // Restore the install-seeded baseline (see Run for why).
-            InstallTriggerRunner.RunAll();
+            AlRunnerV2.Patches.RecordPatches.RestoreInstallBaseline();
         }
         // Clear any AL call stack captured from a previous test on this thread.
         AlRunnerV2.Infrastructure.AlCallStackCapture.Clear();

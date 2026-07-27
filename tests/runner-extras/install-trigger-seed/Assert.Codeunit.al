@@ -9,6 +9,12 @@ codeunit 60713 "ITS Assert"
             Error('Assert.AreEqual failed. Expected:<%1>. Actual:<%2>. %3', Expected, Actual, Msg);
     end;
 
+    procedure IsTrue(Condition: Boolean; Msg: Text)
+    begin
+        if not Condition then
+            Error('Assert.IsTrue failed. %1', Msg);
+    end;
+
     procedure IsFalse(Condition: Boolean; Msg: Text)
     begin
         if Condition then

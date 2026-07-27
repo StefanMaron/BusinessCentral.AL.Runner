@@ -63,6 +63,17 @@ public static partial class BcRuntime
     // AutoIncrement: tableId → AI fieldNo; tableId → last assigned counter value
     private static readonly ConcurrentDictionary<int, int>  _aiFieldIds  = new();
     private static readonly ConcurrentDictionary<int, long> _aiCounters  = new();
+
+    internal static IReadOnlyDictionary<int, long> CaptureAutoIncrementBaseline()
+        => new Dictionary<int, long>(_aiCounters);
+
+    internal static void RestoreAutoIncrementBaseline(IReadOnlyDictionary<int, long>? baseline)
+    {
+        _aiCounters.Clear();
+        if (baseline == null) return;
+        foreach (var pair in baseline)
+            _aiCounters[pair.Key] = pair.Value;
+    }
     private static FieldInfo? _fRecordImplementationDataAccess;          // RecordImplementation.dataAccess
     private static FieldInfo? _fRecordImplementationMutableRecordBuffer; // RecordImplementation.mutableRecordBuffer
     private static MethodInfo? _mDataAccessTryGetByPrimaryKeyAsync;

@@ -53,6 +53,25 @@ public static class RecordLinkPatches
         }
     }
 
+    internal static object CaptureInstallBaseline()
+    {
+        lock (_lock)
+            return (_links.ToDictionary(pair => pair.Key, pair => pair.Value.ToList()), _nextId);
+    }
+
+    internal static void RestoreInstallBaseline(object? snapshot)
+    {
+        lock (_lock)
+        {
+            _links.Clear();
+            _nextId = 0;
+            if (snapshot is not ValueTuple<Dictionary<NavRecordId, List<Entry>>, int> state) return;
+            foreach (var pair in state.Item1)
+                _links[pair.Key] = pair.Value.ToList();
+            _nextId = state.Item2;
+        }
+    }
+
     // TEMPORARY (memory-census diagnostic) — total link entries across all records.
     // See MemoryCensus.cs.
     internal static int CensusEntryCount()

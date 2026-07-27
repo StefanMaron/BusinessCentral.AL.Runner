@@ -55,6 +55,16 @@ public static class TenantStoragePatches
 
     public static void ResetForTest() => _store.Clear();
 
+    internal static object CaptureInstallBaseline() => _store.ToArray();
+
+    internal static void RestoreInstallBaseline(object? snapshot)
+    {
+        _store.Clear();
+        if (snapshot is not KeyValuePair<string, Entry>[] entries) return;
+        foreach (var entry in entries)
+            _store[entry.Key] = entry.Value;
+    }
+
     // TEMPORARY (memory-census diagnostic) — total stored entries. See MemoryCensus.cs.
     internal static int CensusEntryCount() => _store.Count;
 

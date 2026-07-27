@@ -129,6 +129,10 @@ public static partial class RecordPatches
         _metaQueryCache.Clear();
         _metaXmlPortCache.Clear();
         _sourceDirs.Clear();
+        _installBaseline = null;
+        _isolatedStorageBaseline = null;
+        _recordLinkBaseline = null;
+        _autoIncrementBaseline = null;
         // Drop the in-memory table rows so an edited re-run starts clean instead of
         // seeing Inserts from the previous run (which would e.g. throw "already exists").
         _dataAccessByTable.Clear();
