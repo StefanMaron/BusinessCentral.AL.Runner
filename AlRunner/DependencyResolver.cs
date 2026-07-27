@@ -163,10 +163,28 @@ public sealed class DependencyResolver
 
         foreach (var c in candidates)
         {
-            if (c.Manifest.Version >= dep.Version)
+            if (c.Manifest.Version < dep.Version) continue;
+            if (best.Manifest == null || c.Manifest.Version > best.Manifest.Version)
             {
-                if (best.Manifest == null || c.Manifest.Version > best.Manifest.Version)
-                    best = c;
+                best = c;
+                continue;
+            }
+            // Same version, two packages. Version alone cannot separate them, so the old
+            // `>` comparison left the winner decided by index order — i.e. by which cache
+            // dir happened to be scanned first. A workspace .alpackages normally holds the
+            // SYMBOL-ONLY dev package of System Application / Base Application while the
+            // executable R2R package lives in the provisioned package cache; picking the
+            // symbol-only copy makes every codeunit in that app unresolvable at runtime,
+            // and NavCodeunitHandle_CreateTarget then substitutes a NoOpCodeunit for the
+            // system id range — so the first procedure call dies with the cryptic
+            // "Function ID N was called. The object with ID 0 does not have a member with
+            // that ID." Prefer the package that can actually execute. Version stays the
+            // primary key (checked above), so this never overrides minimum-version
+            // semantics — it only settles a tie.
+            if (c.Manifest.Version == best.Manifest.Version
+                && AppLoader.IsR2R(c.Path) && !AppLoader.IsR2R(best.Path))
+            {
+                best = c;
             }
         }
 

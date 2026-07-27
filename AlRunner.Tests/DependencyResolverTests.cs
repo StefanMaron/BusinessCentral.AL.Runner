@@ -330,7 +330,137 @@ public sealed class DependencyResolverTests : IDisposable
         File.WriteAllBytes(Path.Combine(dir, fileName), MakeMinimalApp(appId, name, publisher, version));
     }
 
+    // ── Part N: same-version tie-break — an executable (R2R) package must win ──
+    //
+    // Root cause: SelectBestVersion only promoted a candidate on `>` (strictly higher
+    // version), so two packages of the SAME app at the SAME version were decided by
+    // index order — i.e. by which --package-cache / .alpackages dir was scanned first.
+    // A workspace's .alpackages typically holds the SYMBOL-ONLY dev package for
+    // System Application / Base Application; the R2R runtime package lives in the
+    // provisioned package cache. When the symbol-only copy won, every codeunit in that
+    // app became unresolvable at runtime and NavCodeunitHandle_CreateTarget silently
+    // substituted a NoOpCodeunit for the system range — so the first procedure call on
+    // e.g. Codeunit "Environment Information" died with the cryptic
+    // "Function ID N was called. The object with ID 0 does not have a member with that ID."
+    // Measured on Pageworks 2026-07-27: the install trigger of every bundle aborted, so
+    // the whole suite reported 0 tests run.
+
+    /// <summary>
+    /// Symbol-only package indexed FIRST, R2R package (same AppId, same version) second.
+    /// The resolver must bind to the R2R package — the one that can actually execute.
+    /// </summary>
+    [Fact]
+    public void SameVersion_R2RChosenOverSymbolOnly_WhenSymbolOnlyIndexedFirst()
+    {
+        var appId = "cccccccc-0000-0000-0000-000000000001";
+        var symDir = MakeDir("sym-first");
+        var r2rDir = MakeDir("r2r-second");
+
+        WriteApp(symDir, "SysApp_symbols.app", appId, "System Application", "Microsoft",
+            "28.2.50931.51111", r2r: false);
+        WriteApp(r2rDir, "SysApp_runtime.app", appId, "System Application", "Microsoft",
+            "28.2.50931.51111", r2r: true);
+
+        var resolver = new DependencyResolver(new[] { symDir, r2rDir });
+        var dep = new DependencyRef(Guid.Parse(appId), "System Application", "Microsoft",
+            new Version(28, 0, 0, 0));
+
+        var result = resolver.Resolve(new[] { dep });
+
+        Assert.Single(result);
+        Assert.Equal("SysApp_runtime.app", Path.GetFileName(result[0].AppPath));
+        Assert.True(AppLoader.IsR2R(result[0].AppPath));
+    }
+
+    /// <summary>
+    /// Mirror image: R2R indexed first. Still the R2R package — the tie-break must not
+    /// merely flip the order preference.
+    /// </summary>
+    [Fact]
+    public void SameVersion_R2RChosenOverSymbolOnly_WhenR2RIndexedFirst()
+    {
+        var appId = "cccccccc-0000-0000-0000-000000000002";
+        var r2rDir = MakeDir("r2r-first");
+        var symDir = MakeDir("sym-second");
+
+        WriteApp(r2rDir, "SysApp_runtime.app", appId, "System Application", "Microsoft",
+            "28.2.50931.51111", r2r: true);
+        WriteApp(symDir, "SysApp_symbols.app", appId, "System Application", "Microsoft",
+            "28.2.50931.51111", r2r: false);
+
+        var resolver = new DependencyResolver(new[] { r2rDir, symDir });
+        var dep = new DependencyRef(Guid.Parse(appId), "System Application", "Microsoft",
+            new Version(28, 0, 0, 0));
+
+        var result = resolver.Resolve(new[] { dep });
+
+        Assert.Single(result);
+        Assert.Equal("SysApp_runtime.app", Path.GetFileName(result[0].AppPath));
+    }
+
+    /// <summary>
+    /// The tie-break is a TIE-break only: a strictly higher symbol-only version still
+    /// beats a lower R2R one, because version is the primary key (BC minimum-version
+    /// semantics). Guards against "prefer R2R" being applied across versions.
+    /// </summary>
+    [Fact]
+    public void HigherSymbolOnlyVersion_StillBeats_LowerR2RVersion()
+    {
+        var appId = "cccccccc-0000-0000-0000-000000000003";
+        var dir = MakeDir("mixed");
+
+        WriteApp(dir, "Lib_v28_1_r2r.app", appId, "Tests-TestLibraries", "Microsoft",
+            "28.1.49838.50794", r2r: true);
+        WriteApp(dir, "Lib_v28_2_sym.app", appId, "Tests-TestLibraries", "Microsoft",
+            "28.2.50931.51111", r2r: false);
+
+        var resolver = new DependencyResolver(new[] { dir });
+        var dep = new DependencyRef(Guid.Parse(appId), "Tests-TestLibraries", "Microsoft",
+            new Version(28, 0, 0, 0));
+
+        var result = resolver.Resolve(new[] { dep });
+
+        Assert.Single(result);
+        Assert.Equal(new Version(28, 2, 50931, 51111), result[0].Manifest.Version);
+        Assert.Equal("Lib_v28_2_sym.app", Path.GetFileName(result[0].AppPath));
+    }
+
+    /// <summary>
+    /// Negative direction: when the ONLY candidate is symbol-only, resolution must still
+    /// succeed with that package (the runner falls back to service-tier DLL dispatch) —
+    /// the tie-break must not turn "no R2R available" into an unresolved dependency.
+    /// </summary>
+    [Fact]
+    public void SymbolOnlyAlone_StillResolves_WhenNoR2RCandidateExists()
+    {
+        var appId = "cccccccc-0000-0000-0000-000000000004";
+        var dir = MakeDir("sym-only");
+
+        WriteApp(dir, "SysApp_symbols.app", appId, "System Application", "Microsoft",
+            "28.2.50931.51111", r2r: false);
+
+        var resolver = new DependencyResolver(new[] { dir });
+        var dep = new DependencyRef(Guid.Parse(appId), "System Application", "Microsoft",
+            new Version(28, 0, 0, 0));
+
+        var result = resolver.Resolve(new[] { dep });
+
+        Assert.Single(result);
+        Assert.Equal("SysApp_symbols.app", Path.GetFileName(result[0].AppPath));
+        Assert.False(AppLoader.IsR2R(result[0].AppPath));
+    }
+
+    private static void WriteApp(string dir, string fileName,
+        string appId, string name, string publisher, string version, bool r2r)
+    {
+        File.WriteAllBytes(Path.Combine(dir, fileName),
+            MakeMinimalApp(appId, name, publisher, version, r2r));
+    }
+
     private static byte[] MakeMinimalApp(string appId, string name, string publisher, string version)
+        => MakeMinimalApp(appId, name, publisher, version, r2r: false);
+
+    private static byte[] MakeMinimalApp(string appId, string name, string publisher, string version, bool r2r)
     {
         var xml = $"""
             <?xml version="1.0" encoding="utf-8"?>
@@ -344,8 +474,15 @@ public sealed class DependencyResolverTests : IDisposable
         using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
         {
             var entry = zip.CreateEntry("NavxManifest.xml");
-            using var es = entry.Open();
-            es.Write(Encoding.UTF8.GetBytes(xml));
+            using (var es = entry.Open())
+                es.Write(Encoding.UTF8.GetBytes(xml));
+            if (r2r)
+            {
+                // AppLoader.IsR2R only looks for a publishedartifacts/*.dll entry.
+                var dll = zip.CreateEntry("publishedartifacts/" + name + ".dll");
+                using var ds = dll.Open();
+                ds.Write(new byte[] { 0x4D, 0x5A });
+            }
         }
         var zipBytes = ms.ToArray();
 
