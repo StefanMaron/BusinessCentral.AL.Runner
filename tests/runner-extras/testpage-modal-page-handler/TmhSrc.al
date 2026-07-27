@@ -6,6 +6,7 @@ table 61920 "TMH Row"
     {
         field(1; "No."; Code[20]) { }
         field(2; Descr; Text[50]) { }
+        field(3; Picked; Text[50]) { }
     }
 
     keys
@@ -52,6 +53,27 @@ page 61921 "TMH Host"
             {
                 field("No."; Rec."No.") { ApplicationArea = All; }
                 field(Descr; Rec.Descr) { ApplicationArea = All; }
+
+                // A LOOKUP-mode modal, which closes with LookupOK rather than OK. The
+                // `<> Action::LookupOK` gate is the documented AL idiom for a lookup and
+                // is what makes this field a regression test rather than a duplicate of
+                // the action-driven RunModal above.
+                field(Picked; Rec.Picked)
+                {
+                    ApplicationArea = All;
+                    Lookup = true;
+
+                    trigger OnLookup(var Text: Text): Boolean
+                    var
+                        Modal: Page "TMH Modal";
+                    begin
+                        Modal.LookupMode(true);
+                        if Modal.RunModal() <> Action::LookupOK then
+                            exit(false);
+                        Text := 'PICKED';
+                        exit(true);
+                    end;
+                }
             }
         }
     }

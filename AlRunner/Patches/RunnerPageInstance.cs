@@ -52,6 +52,16 @@ internal sealed class RunnerPageInstance
     internal object Form => _form;
 
     /// <summary>
+    /// Whether the AL opened this page as a LOOKUP (<c>Picker.LookupMode(true)</c>), which
+    /// decides whether its closing built-in actions are OK/Cancel or LookupOK/LookupCancel.
+    /// Read off BC's own NavForm.LookupMode, so it reflects whatever the AL actually set.
+    /// </summary>
+    internal bool LookupMode
+        => _form.GetType()
+            .GetProperty("LookupMode", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
+            .GetValue(_form) is true;
+
+    /// <summary>
     /// Build and initialise the AL page object for <paramref name="pageId"/>, bound to
     /// <paramref name="record"/>. Returns null when the page has no compiled type or no
     /// real metadata — never a half-initialised instance, because a page whose source

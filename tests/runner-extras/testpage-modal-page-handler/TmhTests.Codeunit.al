@@ -124,6 +124,54 @@ codeunit 61925 "TMH Tests"
             'a refused modal page must not have let the calling AL record a result');
     end;
 
+    // Positive: a modal opened as a LOOKUP must close with LookupOK, so AL gated on
+    // `RunModal() <> Action::LookupOK` takes the accept branch and the trigger's `var Text`
+    // reaches the field.
+    //
+    // NavTestPageBase.GetBuiltInAction(OK) is FindBuiltInAction(FormResult.OK,
+    // FormResult.LookupOK): it asks the client for OK and only tries LookupOK when the
+    // client answers NULL. The runner answered every result with an action, so OK always
+    // matched, a lookup page closed as plain OK, and the AL above took the `exit(false)`
+    // branch even though the handler had invoked OK — the field stayed blank with no error
+    // anywhere. Six Pageworks tests failed exactly this way.
+    [Test]
+    [HandlerFunctions('OkHandler')]
+    procedure LookupModeModalClosesWithLookupOkAndValueReachesTheField()
+    var
+        Row: Record "TMH Row";
+        Host: TestPage "TMH Host";
+    begin
+        SeedRows();
+
+        Host.OpenEdit();
+        Host.First();
+        Host.Picked.Lookup();
+
+        Assert.IsTrue(Row.Get('HANDLER'), 'the [ModalPageHandler] must have run for a lookup-mode modal');
+        Assert.AreEqual('PICKED', Host.Picked.Value(),
+            'the OnLookup trigger''s var Text must reach the field, which only happens when RunModal reported LookupOK');
+        Host.Close();
+    end;
+
+    // Negative: a cancelling handler must NOT read back as LookupOK. Without this, mapping
+    // every close to LookupOK would pass the test above — the mirror of the bug it fixes.
+    [Test]
+    [HandlerFunctions('CancelHandler')]
+    procedure LookupModeModalCancelLeavesTheFieldUnchanged()
+    var
+        Host: TestPage "TMH Host";
+    begin
+        SeedRows();
+
+        Host.OpenEdit();
+        Host.First();
+        Host.Picked.Lookup();
+
+        Assert.AreEqual('', Host.Picked.Value(),
+            'a cancelled lookup must leave the field untouched — the OnLookup returned false, so its var Text is discarded');
+        Host.Close();
+    end;
+
     [ModalPageHandler]
     procedure OkHandler(var Modal: TestPage "TMH Modal")
     var

@@ -201,9 +201,40 @@ internal class LiveNavTestPage : MockITestPage
     /// <summary>
     /// The page's built-in OK/Cancel/LookupOK actions. Invoking one records how the page was
     /// closed; the base mock returned a no-op action, which is why Cancel() did nothing.
+    ///
+    /// Returning null for a result the page does not offer is LOAD-BEARING, not defensive.
+    /// NavTestPageBase.GetBuiltInAction(OK) is implemented as
+    /// FindBuiltInAction(FormResult.OK, FormResult.LookupOK): it asks the client for OK
+    /// first and only falls through to LookupOK when the client answers NULL. Answering
+    /// every result with an action made that fallthrough unreachable, so a page opened as a
+    /// lookup still closed with plain OK — and AL that gates on the documented
+    /// `if Picker.RunModal() <> Action::LookupOK then exit(false)` took the cancel branch
+    /// even though the handler had picked a row and invoked OK.
     /// </summary>
     public override ITestAction GetBuiltInAction(FormResult formResult)
-        => new RecordingBuiltInAction(this, formResult);
+    {
+        if (!Offers(formResult)) return null!;
+        return new RecordingBuiltInAction(this, formResult);
+    }
+
+    /// <summary>
+    /// Whether this page has the given built-in action at all. A page opened as a lookup
+    /// closes with LookupOK/LookupCancel and has no plain OK/Cancel, and vice versa —
+    /// exactly the distinction BC's own fallback pair encodes. Results outside those two
+    /// pairs (Yes/No, Print, …) are left alone: this is about lookup-vs-normal closing,
+    /// not a claim about which other built-ins a page has.
+    /// </summary>
+    private bool Offers(FormResult formResult)
+    {
+        if (_page == null) return true;
+        bool lookup = _page.LookupMode;
+        return formResult switch
+        {
+            FormResult.OK or FormResult.Cancel => !lookup,
+            FormResult.LookupOK or FormResult.LookupCancel => lookup,
+            _ => true,
+        };
+    }
 
     private sealed class RecordingBuiltInAction : ITestAction
     {
