@@ -1156,6 +1156,34 @@ public static partial class BcRuntime
                     var sessRootTree = createRoot.Invoke(null, new object[] { _skeletonSession });
                     FieldPoke.SetInstance(_fTreeObjTree, _skeletonSession, sessRootTree);
                 }
+                {
+                    var sessRootTree = _fTreeObjTree.GetValue(_skeletonSession);
+
+                    // TreeHandler.session is assigned ONLY in the `parent != null` branch of
+                    // the ctor (`session = parentHandler.session ?? (hostObject as NavSession)`),
+                    // and CreateTreeRoot constructs the root with parent == null. So a root
+                    // planted this way has a null session field, and because every child
+                    // inherits parentHandler.session, `Tree.Session` was null for the WHOLE
+                    // tree — including NavTestExecution, whose modal-page dispatch does
+                    // `new NavScope(base.Tree.Session)` and got ArgumentNullException(parent).
+                    //
+                    // The root's host object IS the session, which is precisely the value
+                    // BC's own ctor would have computed for it (the `?? (hostObject as
+                    // NavSession)` fallback). Set it so the tree can answer what session it
+                    // belongs to.
+                    // Walk the hierarchy: `session` is private on the TreeHandler BASE class,
+                    // and GetField on the concrete TreeObjectHandler does not return private
+                    // members of base types.
+                    FieldInfo? fHandlerSession = null;
+                    for (var wt = sessRootTree!.GetType(); wt != null && fHandlerSession == null; wt = wt.BaseType)
+                        fHandlerSession = wt.GetField("session", BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (fHandlerSession != null && fHandlerSession.GetValue(sessRootTree) == null)
+                        FieldPoke.SetInstance(fHandlerSession, sessRootTree, _skeletonSession);
+                    else if (fHandlerSession == null)
+                        Console.Error.WriteLine(
+                            "[BcRuntime] TreeHandler.session field NOT FOUND — Tree.Session stays null, "
+                            + "modal-page handler dispatch will fail");
+                }
             }
         }
 

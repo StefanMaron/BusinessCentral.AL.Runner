@@ -1,0 +1,20 @@
+{
+  "id": "8f21c60d-47ae-4b93-a5d2-16e0b7f38c94",
+  "name": "Runner Extras - TestPage modal page handler",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves a page opened with RunModal from AL is routed to the test's [ModalPageHandler], and that the handler's OK/Cancel reaches the calling AL.",
+  "description": "AL that opens a modal page under test is answered by the test codeunit's ModalPageHandler. BC routes this through NavTestExecution.FindPageType, which reads form.MasterPage.PageProperties.PageType — and MasterPage was null for any form the runner had not itself built, so every modal page raised a NullReferenceException instead of reaching its handler. Thirty Pageworks tests declare HandlerFunctions. The negatives matter: a handler that cancels must make the calling AL see Cancel rather than OK, and a modal page with no declared handler must raise BC's own missing-handler error rather than silently returning a default result.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [{ "from": 61920, "to": 61939 }],
+  "runtime": "14.0",
+  "features": []
+}

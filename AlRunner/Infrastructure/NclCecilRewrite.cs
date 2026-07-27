@@ -458,6 +458,13 @@ public static class NclCecilRewrite
             ?? throw new InvalidOperationException(
                 "RunnerFormInit.ShouldRunRealFormInit not found — do not commit"));
 
+        var shouldResolveMasterPageRef = asm.MainModule.ImportReference(
+            typeof(AlRunnerV2.Patches.RunnerFormInit).GetMethod(
+                nameof(AlRunnerV2.Patches.RunnerFormInit.ShouldResolveMasterPage),
+                BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "RunnerFormInit.ShouldResolveMasterPage not found — do not commit"));
+
         int getMasterPageRewroteCount = 0;
         foreach (var method in navFormType.Methods.Where(mm => mm.Name == "GetMasterPage").ToList())
         {
@@ -465,7 +472,10 @@ public static class NclCecilRewrite
             if (returnType.FullName.StartsWith("System.Threading.Tasks.Task`"))
                 throw new InvalidOperationException($"GetMasterPage returns Task<T> ({returnType.FullName}) — cannot safely emit default; do not commit");
 
-            GuardWithDefaultReturn(asm.MainModule, method, shouldRunFormInitRef);
+            // Guarded by ShouldResolveMasterPage, which is WIDER than the form-init opt-in:
+            // it also covers a page BC opens on AL's own behalf (SomePage.RunModal()), whose
+            // instance the runner never sees. See RunnerFormInit.
+            GuardWithDefaultReturn(asm.MainModule, method, shouldResolveMasterPageRef);
             getMasterPageRewroteCount++;
         }
         if (getMasterPageRewroteCount == 0)

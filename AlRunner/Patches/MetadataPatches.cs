@@ -53,11 +53,27 @@ public static partial class BcRuntime
     /// exactly this — no method body is rewritten. See .claude/rules/precompiled-dll-respect.md.
     /// </summary>
     public static void EnterTestExecutionScope(object testCodeunitInstance)
+        => EnterTestExecutionScope(testCodeunitInstance, null);
+
+    /// <summary>
+    /// As above, and additionally mirrors BC's EnterTestMethod by poking
+    /// <c>executingTestMethod</c> / <c>executingTestAttr</c> for <paramref name="testMethod"/>.
+    ///
+    /// Those two are what NavTestExecution.FindHandler reads: it takes the handler NAMES from
+    /// <c>executingTestAttr.Handlers</c> (the AL compiler puts [HandlerFunctions(...)] there)
+    /// and resolves each against <c>executingTestMethod.DeclaringType</c>. With both null it
+    /// returns null immediately, so TestHandleModalForm answered "not handled" and BC fell
+    /// through to the real client callback — which does not exist here. A modal page opened
+    /// from AL therefore never reached its [ModalPageHandler]; thirty Pageworks tests declare
+    /// HandlerFunctions.
+    /// </summary>
+    public static void EnterTestExecutionScope(object testCodeunitInstance, MethodInfo? testMethod)
     {
         if (_testExecutionInstance == null || _fExecutingTestCodeUnit == null) return;
         try
         {
             FieldPoke.SetInstance(_fExecutingTestCodeUnit, _testExecutionInstance, testCodeunitInstance);
+            SetExecutingTestMethod(testMethod);
             if (!_testTenantEnvironmentTypeSet && _mSetTestTenantEnvironmentType != null)
             {
                 _mSetTestTenantEnvironmentType.Invoke(null, new object[] { true });
@@ -81,11 +97,89 @@ public static partial class BcRuntime
     public static void LeaveTestExecutionScope()
     {
         if (_testExecutionInstance == null || _fExecutingTestCodeUnit == null) return;
-        try { FieldPoke.SetInstance(_fExecutingTestCodeUnit, _testExecutionInstance, null); }
+        try
+        {
+            SetExecutingTestMethod(null);
+            FieldPoke.SetInstance(_fExecutingTestCodeUnit, _testExecutionInstance, null);
+        }
         catch (Exception ex)
         {
             var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
             Console.Error.WriteLine($"[BcRuntime] LeaveTestExecutionScope: failed ({inner.GetType().Name}: {inner.Message})");
+        }
+    }
+
+    private static System.Reflection.FieldInfo? _fExecutingTestMethod;
+    private static System.Reflection.FieldInfo? _fExecutingTestAttr;
+    private static bool _executingTestMethodFieldsResolved;
+
+    /// <summary>
+    /// Poke NavTestExecution's executingTestMethod/executingTestAttr — BC's own EnterTestMethod
+    /// (and LeaveTestMethod, when <paramref name="testMethod"/> is null). The attribute is read
+    /// off the method itself: the AL compiler emits [HandlerFunctions('A,B')] as
+    /// NavTestAttribute.Handlers, so nothing here parses or re-derives the handler list.
+    /// </summary>
+    private static void SetExecutingTestMethod(MethodInfo? testMethod)
+    {
+        if (_testExecutionInstance == null) return;
+        if (!_executingTestMethodFieldsResolved)
+        {
+            _executingTestMethodFieldsResolved = true;
+            var t = _testExecutionInstance.GetType();
+            _fExecutingTestMethod = t.GetField("executingTestMethod", BindingFlags.NonPublic | BindingFlags.Instance);
+            _fExecutingTestAttr = t.GetField("executingTestAttr", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (_fExecutingTestMethod == null || _fExecutingTestAttr == null)
+                Console.Error.WriteLine(
+                    "[BcRuntime] NavTestExecution.executingTestMethod/executingTestAttr NOT FOUND — "
+                    + "[HandlerFunctions] dispatch will not work");
+        }
+        if (_fExecutingTestMethod == null || _fExecutingTestAttr == null) return;
+
+        object? attr = null;
+        if (testMethod != null)
+            attr = testMethod.GetCustomAttributes(inherit: false)
+                .FirstOrDefault(a => _fExecutingTestAttr.FieldType.IsInstanceOfType(a));
+
+        FieldPoke.SetInstance(_fExecutingTestMethod, _testExecutionInstance, testMethod);
+        FieldPoke.SetInstance(_fExecutingTestAttr, _testExecutionInstance, attr);
+
+        // BC's own seam: InitHandlers copies executingTestAttr.Handlers into the
+        // executingHandlers worklist that FindHandler consumes (each match is struck off via
+        // RemoveHandlerName). Without it that worklist is null and the first successful
+        // handler lookup NREs inside RemoveHandlerName. Calling BC's method rather than
+        // poking the string keeps the list format BC's business, not ours.
+        if (testMethod != null) InvokeTestExecutionMethod("InitHandlers");
+    }
+
+    /// <summary>
+    /// BC's check that every handler a test DECLARED actually ran (NavTestExecution.
+    /// TestHandlers, which throws NavNCLUnexecutedUIHandlerException naming the leftovers).
+    ///
+    /// NOT called yet. Wiring it revealed three al-language corpus tests that declare a
+    /// Confirm/Notification handler the runner never dispatches to — they pass today only
+    /// because the unconsumed handler goes unnoticed. Those are real gaps in a different
+    /// subsystem (dialog dispatch, not page dispatch); turning them into hard errors before
+    /// that subsystem exists would just make the corpus gate noisy. Call this once
+    /// Confirm/Notification/StrMenu handlers are dispatched.
+    /// </summary>
+    public static void CheckAllHandlersConsumed() => InvokeTestExecutionMethod("TestHandlers");
+
+    private static void InvokeTestExecutionMethod(string name)
+    {
+        if (_testExecutionInstance == null) return;
+        var method = _testExecutionInstance.GetType()
+            .GetMethod(name, BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
+        if (method == null)
+        {
+            Console.Error.WriteLine($"[BcRuntime] NavTestExecution.{name} NOT FOUND — Ncl shape changed");
+            return;
+        }
+        try { method.Invoke(_testExecutionInstance, null); }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            // BC's own diagnostic (e.g. "handler was not executed") — it is the test's
+            // outcome, so it must reach the test rather than be reported as runner noise.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
         }
     }
 
@@ -393,6 +487,27 @@ public static partial class BcRuntime
                 else
                 {
                     _testExecutionInstance = testExecution;
+
+                    // This NavTestExecution's own TreeHandler captured `session` at
+                    // construction from its parent handler, which was the session root — and
+                    // that root is built by CreateTreeRoot with parent == null, the one ctor
+                    // path that never assigns `session`. So Tree.Session was null here even
+                    // after the root itself was fixed, and NavTestExecution's modal-page
+                    // dispatch (`new NavScope(base.Tree.Session)`) threw
+                    // ArgumentNullException(parent) before any handler could run.
+                    var treeProp = testExecution.GetType().GetProperty("Tree",
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                    var handler = treeProp?.GetValue(testExecution);
+                    // Walk the hierarchy: `session` is a private field of the TreeHandler
+                    // BASE class, and GetField on the concrete TreeObjectHandler does not
+                    // return private members of base types — which is why an earlier version
+                    // of this poke silently did nothing at all.
+                    FieldInfo? fHandlerSession = null;
+                    for (var wt = handler?.GetType(); wt != null && fHandlerSession == null; wt = wt.BaseType)
+                        fHandlerSession = wt.GetField("session", BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (fHandlerSession != null && fHandlerSession.GetValue(handler) == null)
+                        FieldPoke.SetInstance(fHandlerSession, handler!, _skeletonSession);
+
                     var testExecType = testExecution.GetType(); // Microsoft.Dynamics.Nav.Runtime.NavTestExecution
                     _fExecutingTestCodeUnit = testExecType.GetField("executingTestCodeUnit", BindingFlags.NonPublic | BindingFlags.Instance);
                     if (_fExecutingTestCodeUnit == null)

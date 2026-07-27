@@ -63,4 +63,36 @@ public static class RunnerFormInit
         try { return form != null && _realInitForms.TryGetValue(form, out _); }
         catch { return false; }
     }
+
+    /// <summary>
+    /// Cecil-injected guard on NavForm.GetMasterPage specifically — deliberately WIDER than
+    /// ShouldRunRealFormInit.
+    ///
+    /// The instance opt-in above covers pages the runner itself constructs for a TestPage.
+    /// It does not cover a page BC opens on AL's own behalf — `SomePage.RunModal()` inside a
+    /// trigger — because the runner never sees that instance. Such a form got a null
+    /// MasterPage, and BC's modal-page handler dispatch reads
+    /// form.MasterPage.PageProperties.PageType (NavTestExecution.FindPageType) before it
+    /// looks up a handler, so every modal page raised a NullReferenceException instead of
+    /// reaching its [ModalPageHandler]. Thirty Pageworks tests declare HandlerFunctions.
+    ///
+    /// The condition is "the runner compiled this page, so it HAS metadata to build a real
+    /// MasterPage from" — which is exactly when the lookup can succeed. A page with no
+    /// captured XML still returns null, as before, rather than throwing from the loader.
+    ///
+    /// Request pages stay excluded: that is the path the original blanket no-op existed to
+    /// protect, it is keyed by report rather than page id, and nothing here needs it.
+    /// </summary>
+    public static bool ShouldResolveMasterPage(object form)
+    {
+        try
+        {
+            if (form == null) return false;
+            if (ShouldRunRealFormInit(form)) return true;
+            if (form is not Microsoft.Dynamics.Nav.Runtime.NavForm navForm) return false;
+            if (navForm.IsRequestPage) return false;
+            return AlPageMetadataRegistry.TryGet(navForm.FormId, out _);
+        }
+        catch { return false; }
+    }
 }

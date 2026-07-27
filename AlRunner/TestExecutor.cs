@@ -271,7 +271,7 @@ public sealed class TestExecutor
         // NavTestExecution.EnterTestCodeunit/LeaveTestCodeunit) — see BcRuntime.EnterTestExecutionScope
         // for why: it's what makes NavTenantSettingsHelper.IsSandbox()/IsProduction() (Codeunit 457
         // "Environment Information") report a sandbox during test execution, exactly like real BC.
-        BcRuntime.EnterTestExecutionScope(instance);
+        BcRuntime.EnterTestExecutionScope(instance, m);
         try
         {
             var args = m.GetParameters().Length == 0 ? Array.Empty<object>() : null;

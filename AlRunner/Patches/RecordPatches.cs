@@ -770,6 +770,50 @@ public static partial class RecordPatches
                 Activator.CreateInstance(tDialogRegistry, nonPublic: true));
         }
 
+        // The skeleton company has no Tree: it was produced by GetUninitializedObject, so it
+        // never ran TreeObject's ctor and was never parented to anything. NavCompany.
+        // RegisterFormInternal builds `new NavFormHandle(this, form)` with the COMPANY as
+        // parent, and TreeHandler's ctor throws InvalidOperationException("Parent.Tree cannot
+        // be null") for a parent with no tree — so registering a form (which BC does before
+        // dispatching a modal page to its handler) failed outright.
+        //
+        // Parenting it to the session is where a real BC server puts it, and going through
+        // BC's own CreateTreeHandler means the handler computes its own `session` from the
+        // parent exactly as it would there.
+        var fTreeObjTree = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.TreeObject")?
+            .GetField("tree", BindingFlags.NonPublic | BindingFlags.Instance);
+        if (fTreeObjTree != null && fTreeObjTree.GetValue(skeletonCompany) == null)
+        {
+            var createHandler = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.TreeHandler")?
+                .GetMethod("CreateTreeHandler", BindingFlags.Public | BindingFlags.Static);
+            if (createHandler != null)
+            {
+                var companyTree = createHandler.Invoke(null, new[] { skeletonSession, skeletonCompany });
+                AlRunnerV2.Infrastructure.FieldPoke.SetInstance(fTreeObjTree, skeletonCompany, companyTree!);
+            }
+            else
+            {
+                Console.Error.WriteLine(
+                    "[RecordPatches] TreeHandler.CreateTreeHandler NOT FOUND — the skeleton company keeps "
+                    + "a null Tree and RegisterForm will throw");
+            }
+        }
+
+        // registeredForms — same class of gap as openedDialogRegistry above: allocated by
+        // NavCompany's ctor (`registeredForms = new Dictionary<Guid, NavFormHandle>()`),
+        // which GetUninitializedObject skips. BC's modal-page dispatch registers the form
+        // before showing it and unregisters it in a finally, so `lock (registeredForms)`
+        // threw ArgumentNullException from inside Monitor.Enter — surfacing to AL as a bare
+        // "Value cannot be null." on the RunModal line, naming nothing.
+        //
+        // A real empty dictionary is the faithful value: a company that has no open forms
+        // is exactly the runner's state, and BC populates and drains it itself from here on.
+        var fRegisteredForms = tNavCompany.GetField("registeredForms",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        if (fRegisteredForms != null && fRegisteredForms.GetValue(skeletonCompany) == null)
+            fRegisteredForms.SetValue(skeletonCompany,
+                Activator.CreateInstance(fRegisteredForms.FieldType));
+
         // Inject factory into NavCompany.SystemCodeunitFactory auto-property backing field.
         var fFactory = tNavCompany.GetField("<SystemCodeunitFactory>k__BackingField",
             BindingFlags.NonPublic | BindingFlags.Instance);
@@ -785,7 +829,30 @@ public static partial class RecordPatches
             BindingFlags.NonPublic | BindingFlags.Instance);
         if (tTrackChanges != null && fTrackChanges != null && fTrackChanges.GetValue(skeletonCompany) == null)
         {
-            var trackChanges = RuntimeHelpers.GetUninitializedObject(tTrackChanges);
+            // Prefer BC's REAL ctor, `NavTrackChanges(NavCompany parent)`. It parents the
+            // object into the tree and allocates `trackedChanges`, both of which are now
+            // required: NavCompany.RegisterFormInternal calls RegisterFormTableChanges, which
+            // does `lock (trackedChanges)` with no null guard — unlike TrackChange, which is
+            // why the GetUninitializedObject shell below was sufficient until form
+            // registration started happening. It only became constructible once the company
+            // itself got a Tree (above); before that its base ctor would have thrown.
+            object? trackChanges = null;
+            var realCtor = tTrackChanges.GetConstructor(
+                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance,
+                binder: null, types: new[] { tNavCompany }, modifiers: null);
+            if (realCtor != null)
+            {
+                try { trackChanges = realCtor.Invoke(new[] { skeletonCompany }); }
+                catch (Exception ex)
+                {
+                    var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+                    Console.Error.WriteLine(
+                        $"[RecordPatches] NavTrackChanges ctor failed ({inner.GetType().Name}: {inner.Message}) "
+                        + "— falling back to an uninitialized shell; form registration will throw");
+                }
+            }
+            // Fallback keeps the previous behaviour rather than leaving the field null.
+            trackChanges ??= RuntimeHelpers.GetUninitializedObject(tTrackChanges);
             fTrackChanges.SetValue(skeletonCompany, trackChanges);
         }
     }
