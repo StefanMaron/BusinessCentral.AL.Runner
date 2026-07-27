@@ -579,6 +579,10 @@ public static partial class BcRuntime
             ?? throw new InvalidOperationException("NavEnvironment not found");
         _navEnvironmentType = envType;
 
+        // Without this, every page's merged MasterPage arrives with its whole control tree
+        // removed — see MetadataProviderElementRemoval.cs.
+        AlRunnerV2.Patches.MetadataProviderElementRemoval.Apply(navNcl);
+
         // NavEnvironment.cctor — replace WindowsIdentity-touching init
         Hook(envType.TypeInitializer!, nameof(NavEnvironmentCctorReplacement), "NavEnvironment..cctor");
         HookProperty(envType, "ServiceAccount", true, nameof(GetServiceAccountReplacement));

@@ -144,26 +144,63 @@ internal sealed class RunnerPageInstance
 
     /// <summary>
     /// The control's OptionCaption list, split on ',', or null when the control declares
-    /// none. An Option control's captions live on the PAGE CONTROL (ControlDefinition.
-    /// OptionCaption), not on the option's own metadata — NCLOptionMetadata carries only
-    /// the member names — and a TestPage sets an option by its caption, which is what the
-    /// user sees. Read from BC's own parsed control definitions.
+    /// none. An Option control's captions live on the PAGE CONTROL, not on the option's
+    /// own metadata (NCLOptionMetadata carries only the member names), and a TestPage sets
+    /// an option by its caption, which is what the user sees.
+    ///
+    /// Read from <c>OptionCaptionML</c> rather than the plain <c>OptionCaption</c> sibling:
+    /// the AL compiler emits the caption as a multi-language attribute
+    /// (<c>OptionCaptionML="ENU=Fields,Blocks,Images,Fonts,Custom Fields,Labels"</c> in the
+    /// emit-captured page metadata XML), and ML is the form BC resolves per language. BC's
+    /// merge does also fill the plain OptionCaption, so both would answer today — ML is the
+    /// one that stays correct for a non-ENU session.
+    ///
+    /// GetText resolves the session language and falls back to 1033 on its own, so the
+    /// runner does not reimplement BC's language selection. BC's own indexed lookup does
+    /// the control search — ControlDefinitions is a flat FindAll over the master page, so
+    /// nesting (a control inside a repeater) needs no special handling here.
     /// </summary>
     internal string[]? TryGetOptionCaptions(int controlId)
     {
-        var helper = ReadProperty(_form, "MetadataHelper");
-        if (helper == null) return null;
-        if (ReadProperty(helper, "ControlDefinitions") is not System.Collections.IEnumerable definitions) return null;
-
-        foreach (var definition in definitions)
+        var trace = Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "2";
+        var helper = _form is NavForm form ? form.MetadataHelper : null;
+        if (helper == null)
         {
-            if (definition == null) continue;
-            if (ReadProperty(definition, "ID") is not int id || id != controlId) continue;
-            var caption = ReadProperty(definition, "OptionCaption") as string;
-            if (string.IsNullOrEmpty(caption)) return null;
-            return caption.Split(',');
+            if (trace) Console.Out.WriteLine($"[option-captions] control {controlId}: no MetadataHelper ({_form.GetType().Name})");
+            return null;
         }
-        return null;
+        if (!helper.TryGetControlDefinitionById(controlId, out var definition) || definition == null)
+        {
+            if (trace)
+            {
+                Console.Out.WriteLine($"[option-captions] control {controlId}: not among the master page's control definitions");
+                var mp = ((NavForm)_form).MasterPage;
+                Console.Out.WriteLine($"[option-captions]   masterPage={(mp == null ? "NULL" : $"ID={mp.ID} {mp.GetType().Name}")}");
+                if (mp != null)
+                    Console.Out.WriteLine(
+                        $"[option-captions]   contentArea.Controls={mp.ContentArea?.Controls?.Count}"
+                        + $" removedControls={mp.RemovedControls?.Count}");
+                // ControlDefinitions is internal to Ncl, hence reflection for the dump only.
+                var defs = ReadProperty(helper, "ControlDefinitions");
+                Console.Out.WriteLine($"[option-captions]   ControlDefinitions={(defs == null ? "NULL" : defs.GetType().Name)}");
+                foreach (var d in defs as System.Collections.IEnumerable ?? Array.Empty<object>())
+                    Console.Out.WriteLine($"[option-captions]   have {d?.GetType().Name} ID={ReadProperty(d!, "ID")} Name={ReadProperty(d!, "Name")}");
+            }
+            return null;
+        }
+        if (trace)
+            Console.Out.WriteLine(
+                $"[option-captions] control {controlId} ({definition.Name}): OptionCaption='{definition.OptionCaption}' "
+                + $"OptionCaptionML='{definition.OptionCaptionML?.GetText(1033)}'");
+
+        // 1033 rather than a session lookup: the runner's skeleton session has a
+        // zero-initialized culture, so HelperShims.NavSession_GlobalLanguage_1033 already
+        // pins the whole runtime to en-US. Asking the session here would either return that
+        // same 1033 or throw. GetText also treats 1033 as its own fallback, so a page that
+        // somehow carried only a non-ENU caption set would still resolve.
+        var captions = definition.OptionCaptionML?.GetText(1033);
+        if (string.IsNullOrEmpty(captions)) return null;
+        return captions.Split(',');
     }
 
     /// <summary>BC's key convention for a control's source expression.</summary>

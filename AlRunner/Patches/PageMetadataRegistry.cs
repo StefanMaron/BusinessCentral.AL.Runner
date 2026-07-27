@@ -41,8 +41,14 @@ public static class AlPageMetadataRegistry
     {
         if (pageId <= 0 || string.IsNullOrEmpty(metadataXml)) return;
         _xmlById[pageId] = metadataXml;
-        if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "1")
+        var trace = Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA");
+        if (trace == "1" || trace == "2")
             Console.Out.WriteLine($"[page-metadata] registered page {pageId} ({metadataXml.Length} chars of metadata XML)");
+        // "2" dumps the XML itself — the only way to see what the AL compiler actually
+        // emits for a control property (OptionCaption, Editable, …) as opposed to what
+        // BC's parsed object model happens to expose.
+        if (trace == "2")
+            Console.Out.WriteLine($"[page-metadata] page {pageId} XML:\n{metadataXml}");
     }
 
     public static bool TryGet(int pageId, out string metadataXml)

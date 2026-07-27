@@ -119,6 +119,67 @@ codeunit 61992 "PGV Tests"
             'writing the page variable must not have been persisted into row A');
     end;
 
+    // Positive: an Option control is set by its CAPTION, not by its member name. Asserting
+    // on Format(SelectedKind) — written by OnValidate and read from outside the page —
+    // proves the caption resolved to the right ORDINAL. A runner that stashed the string
+    // 'Blocks', or that matched captions against member names positionally by accident,
+    // would not produce 'Block' here.
+    [Test]
+    procedure OptionControl_SetByCaptionResolvesToTheRightMember()
+    var
+        Row: Record "PGV Row";
+        PgvList: TestPage "PGV List";
+    begin
+        SeedRows();
+
+        PgvList.OpenEdit();
+        PgvList.KindSelector.SetValue('Blocks');
+        PgvList.Close();
+
+        Assert.IsTrue(Row.Get('KIND'), 'the option control''s OnValidate trigger must have run');
+        Assert.AreEqual('Block', Row.Descr,
+            'the caption ''Blocks'' must resolve to option member Block, not to its own text');
+    end;
+
+    // Positive: a caption whose position differs from the member it names. 'Custom Fields'
+    // is caption #5 and must select member Custom — the case that catches an off-by-one or
+    // a member-name-only lookup, since no member is called 'Custom Fields'.
+    [Test]
+    procedure OptionControl_MultiWordCaptionResolvesToItsMember()
+    var
+        Row: Record "PGV Row";
+        PgvList: TestPage "PGV List";
+    begin
+        SeedRows();
+
+        PgvList.OpenEdit();
+        PgvList.KindSelector.SetValue('Custom Fields');
+        PgvList.Close();
+
+        Assert.IsTrue(Row.Get('KIND'), 'the option control''s OnValidate trigger must have run');
+        Assert.AreEqual('Custom', Row.Descr,
+            'the multi-word caption ''Custom Fields'' must resolve to option member Custom');
+    end;
+
+    // Negative: a value that is neither a caption nor a member name must be refused, not
+    // silently coerced to the first member (ordinal 0), which would make every typo in a
+    // test look like a pass.
+    [Test]
+    procedure OptionControl_RejectsAValueThatIsNeitherCaptionNorMember()
+    var
+        Row: Record "PGV Row";
+        PgvList: TestPage "PGV List";
+    begin
+        SeedRows();
+
+        PgvList.OpenEdit();
+        asserterror PgvList.KindSelector.SetValue('Sprockets');
+        Assert.ExpectedError('Sprockets');
+
+        Assert.IsFalse(Row.Get('KIND'),
+            'a rejected value must not have run OnValidate, i.e. must not have been assigned at all');
+    end;
+
     // Negative: page state is per-instance. A second page starts with its variable at the
     // AL default, not at whatever the previous instance left behind.
     [Test]

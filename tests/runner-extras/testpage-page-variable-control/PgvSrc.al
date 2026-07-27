@@ -55,6 +55,32 @@ page 61990 "PGV List"
                     end;
                 end;
             }
+            // An Option control bound to a page variable, whose CAPTIONS differ from its
+            // member names — the exact shape of Pageworks' KindSelector/SelectedKind. A
+            // TestPage sets an option by what the user sees (the caption, 'Blocks'), not
+            // by the member name ('Block'), so resolving it needs the control's
+            // OptionCaption list and not just the option's own metadata.
+            field(KindSelector; SelectedKind)
+            {
+                ApplicationArea = All;
+                Caption = 'Kind';
+                OptionCaption = 'Fields,Blocks,Images,Fonts,Custom Fields,Labels';
+
+                trigger OnValidate()
+                var
+                    Echo: Record "PGV Row";
+                begin
+                    if not Echo.Get('KIND') then begin
+                        Echo.Init();
+                        Echo."No." := 'KIND';
+                        Echo.Descr := Format(SelectedKind);
+                        Echo.Insert();
+                    end else begin
+                        Echo.Descr := Format(SelectedKind);
+                        Echo.Modify();
+                    end;
+                end;
+            }
             repeater(Rows)
             {
                 field("No."; Rec."No.")
@@ -71,4 +97,5 @@ page 61990 "PGV List"
 
     var
         SelectedMode: Text[30];
+        SelectedKind: Option Field,Block,Image,Font,Custom,Label;
 }
