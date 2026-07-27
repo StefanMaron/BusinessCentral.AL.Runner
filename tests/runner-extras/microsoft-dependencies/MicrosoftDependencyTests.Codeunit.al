@@ -263,4 +263,50 @@ codeunit 61001 "Microsoft Dependency Tests"
             'FindFirst must succeed on the FlowField-filtered Purchase Line set.');
     end;
 
+    // ── Report metadata for a PRECOMPILED dependency's report ────────────────
+    //
+    // Report.WordXmlPart is a pure metadata call: it returns the report's data-item /
+    // column schema, reached through MetadataProvider.GetReportMetadata ->
+    // NCLMetaReport.LoadMetadata -> INCLObjectXmlMetadataLoader.GetMetaObjectXmlMetadata.
+    // That loader answers from the EMIT registry, which only ever holds reports the runner
+    // source-compiled — so report 1306, which lives in the precompiled Base Application,
+    // had no entry and the call threw RunnerOutOfScopeException("not-yet-implemented").
+    //
+    // RED (before the fix): the positive test below dies on that out-of-scope throw.
+    // GREEN: DependencyReportMetadata reconstructs the metadata document from the .app's
+    // own SymbolReference.json (data items, columns, types) plus the report's AL source
+    // read back out of the same .app for the column source expressions the symbol file
+    // omits — so BC parses a real MetaReport and the schema names the report's data item.
+    [Test]
+    procedure DependencyReport_WordXmlPart_ReturnsRealDataItemSchema()
+    var
+        SchemaXml: Text;
+    begin
+        // [WHEN] The schema of report 1306 ("Standard Sales - Invoice") is requested. It is
+        // declared by Base Application, which the runner loads precompiled and never
+        // source-compiles, so nothing captured its metadata at emit time.
+        SchemaXml := Report.WordXmlPart(1306, true);
+
+        // [THEN] A real schema comes back naming the report's own data item. Asserting a
+        // CONCRETE data-item name is what makes this test non-vacuous: an implementation
+        // that returned an empty-but-well-formed document (the tempting silent fallback)
+        // would satisfy "non-empty" and still fail here.
+        Assert.IsTrue(SchemaXml <> '',
+            'Report.WordXmlPart on a precompiled-dependency report must return its schema, not an empty text.');
+        Assert.Contains(SchemaXml, 'Header',
+            'Report 1306''s schema must name its "Header" data item — proving the data-item tree was reconstructed, not stubbed out empty.');
+    end;
+
+    // Negative: a report id no dependency declares at all must still fail loudly. Without
+    // this, the fix above could have been implemented as "answer every report with an empty
+    // document", which would turn every unknown-report bug into a silent success.
+    [Test]
+    procedure UnknownReport_WordXmlPart_StillFailsLoudly()
+    var
+        SchemaXml: Text;
+    begin
+        asserterror SchemaXml := Report.WordXmlPart(99999999, true);
+        Assert.Contains(GetLastErrorText(), '99999999',
+            'A report id no loaded dependency declares must raise a real error naming the id, not return an empty schema.');
+    end;
 }

@@ -21,7 +21,10 @@ internal static partial class BcAppSymbolCache
     //     stays valid and silently replays the old result.
     // v7: Objects carry their Caption property, feeding the AllObjWithCaption system
     //     virtual table (2000000058). See RecordPatches.AllObjWithCaptionVirtualTable.cs.
-    private const int CacheVersion = 7;
+    // v8: Reports carry their per-data-item Columns and their ReferenceSourceFileName,
+    //     which together let DependencyReportMetadata synthesize the runtime metadata XML
+    //     a precompiled dependency's report ships no compiled form of.
+    private const int CacheVersion = 8;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
 
     internal sealed record AppSymbols(List<ParsedTable> Tables, List<EnumSymbol> Enums, List<QuerySymbol> Queries,
@@ -34,12 +37,27 @@ internal static partial class BcAppSymbolCache
     /// </summary>
     internal sealed record ReportSymbol(
         int Id, string Name, string? Caption, bool ProcessingOnly, bool UseRequestPage,
-        string? WordMergeDataItem, List<ReportDataItemSymbol> DataItems);
+        string? WordMergeDataItem, List<ReportDataItemSymbol> DataItems,
+        // Path of the report's AL source INSIDE the .app's embedded src/ tree, as the
+        // symbol file states it. The runtime metadata synthesizer uses it to read back
+        // that ONE file for the column source expressions the symbol file omits — see
+        // DependencyReportMetadata.cs.
+        string? ReferenceSourceFileName = null);
 
     /// <summary>One entry of a report's data-item tree, flattened in declaration order.</summary>
     internal sealed record ReportDataItemSymbol(
         int Id, string Name, string RelatedTable, int Indentation,
-        string? DataItemTableView, string? RequestFilterFields);
+        string? DataItemTableView, string? RequestFilterFields,
+        List<ReportColumnSymbol>? Columns = null);
+
+    /// <summary>
+    /// One <c>column(Name; SourceExpr)</c> of a report data item, as SymbolReference.json
+    /// states it. The symbol file carries the compiler-assigned <c>Id</c>, the column
+    /// <c>Name</c> and its resolved <c>TypeName</c> — but NOT the source expression, which
+    /// only the AL source has. That gap is why the synthesizer reads the report's own
+    /// source file back out of the .app rather than inventing an expression.
+    /// </summary>
+    internal sealed record ReportColumnSymbol(int Id, string Name, string? TypeName);
 
     /// <summary>
     /// Flat (AL object kind, id, name, caption) tuple for one application object declared
@@ -286,8 +304,12 @@ internal static partial class BcAppSymbolCache
         var dataItems = new List<ReportDataItemSymbol>();
         CollectReportDataItems(report, indentation: 0, dataItems);
 
+        var referenceSourceFileName = report.TryGetProperty("ReferenceSourceFileName", out var rsf)
+            ? rsf.GetString()
+            : null;
+
         return new ReportSymbol(reportId, name, caption, processingOnly, useRequestPage,
-            wordMergeDataItem, dataItems);
+            wordMergeDataItem, dataItems, referenceSourceFileName);
     }
 
     /// <summary>
@@ -331,9 +353,41 @@ internal static partial class BcAppSymbolCache
             props.TryGetValue("DataItemTableView", out var tableView);
             props.TryGetValue("RequestFilterFields", out var filterFields);
 
-            into.Add(new ReportDataItemSymbol(dataItemId, name, relatedTable, indent, tableView, filterFields));
+            into.Add(new ReportDataItemSymbol(dataItemId, name, relatedTable, indent, tableView, filterFields,
+                ParseReportColumns(di)));
             CollectReportDataItems(di, indent + 1, into);
         }
+    }
+
+    /// <summary>
+    /// A report data item's <c>Columns</c> array. Each entry states the compiler-assigned
+    /// <c>Id</c>, the AL column <c>Name</c> and a <c>TypeDefinition</c> — the resolved AL
+    /// type of the column's expression (e.g. <c>Code[20]</c>, <c>Decimal</c>). Only the
+    /// leading type name is kept: the length suffix is a property of the expression's
+    /// result, not of the report metadata's FieldType vocabulary.
+    /// </summary>
+    private static List<ReportColumnSymbol> ParseReportColumns(JsonElement dataItem)
+    {
+        var result = new List<ReportColumnSymbol>();
+        if (!dataItem.TryGetProperty("Columns", out var arr) || arr.ValueKind != JsonValueKind.Array)
+            return result;
+        foreach (var col in arr.EnumerateArray())
+        {
+            var name = col.TryGetProperty("Name", out var n) ? n.GetString() : null;
+            if (string.IsNullOrEmpty(name)) continue;
+            int id = col.TryGetProperty("Id", out var idProp) && idProp.TryGetInt32(out var i) ? i : 0;
+
+            string? typeName = null;
+            if (col.TryGetProperty("TypeDefinition", out var td)
+                && td.TryGetProperty("Name", out var tn))
+            {
+                typeName = tn.GetString();
+                var bracket = typeName?.IndexOf('[');
+                if (bracket is > 0) typeName = typeName!.Substring(0, bracket.Value);
+            }
+            result.Add(new ReportColumnSymbol(id, name!, typeName));
+        }
+        return result;
     }
 
     private static QuerySymbol? TryParseQuerySymbol(JsonElement query)
@@ -577,6 +631,58 @@ internal static partial class BcAppSymbolCache
             foreach (var json in ReadSymbolReferencesFromBytes(ms.ToArray()))
                 yield return json;
         }
+    }
+
+    /// <summary>
+    /// Read ONE AL source file out of a dependency .app's embedded <c>src/</c> tree.
+    ///
+    /// A published .app carries the app's full AL source, but a Base-Application-sized one
+    /// holds ~8000 files — reading the tree to answer a question about a single object is
+    /// why the report symbol parsing deliberately never did it. This is the targeted form:
+    /// SymbolReference.json states each report's own <c>ReferenceSourceFileName</c>, so the
+    /// caller already knows the one entry it wants and this opens exactly that.
+    ///
+    /// The stated path is app-root-relative (<c>src/Foo/Bar.Report.al</c>) while the zip
+    /// nests it under its own prefix (<c>src/src/Foo/Bar.Report.al</c>), so entries are
+    /// matched on suffix. Returns null when the app ships no source for it — a symbols-only
+    /// .app is a legitimate shape, not an error.
+    /// </summary>
+    internal static string? TryReadSourceFile(string appPath, string referenceSourceFileName)
+    {
+        if (string.IsNullOrEmpty(referenceSourceFileName)) return null;
+        var wanted = referenceSourceFileName.Replace('\\', '/').TrimStart('/');
+        try
+        {
+            return TryReadSourceFromBytes(File.ReadAllBytes(appPath), wanted);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                $"[BcAppSymbolCache] source read failed for {Path.GetFileName(appPath)}!{wanted}: {ex.Message}");
+            return null;
+        }
+    }
+
+    private static string? TryReadSourceFromBytes(byte[] bytes, string wanted)
+    {
+        using var zip = OpenZipFromNavx(bytes);
+        var entry = zip.Entries.FirstOrDefault(e =>
+            e.FullName.Replace('\\', '/').EndsWith(wanted, StringComparison.OrdinalIgnoreCase));
+        if (entry != null)
+        {
+            using var s = entry.Open();
+            using var reader = new StreamReader(s, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            return reader.ReadToEnd();
+        }
+
+        // R2R wrapper .app: the real package (with its src/ tree) is nested one level in.
+        var nested = zip.Entries.FirstOrDefault(e =>
+            e.FullName.EndsWith(".app", StringComparison.OrdinalIgnoreCase) && !e.FullName.Contains('/'));
+        if (nested == null) return null;
+        using var ns = nested.Open();
+        using var ms = new MemoryStream();
+        ns.CopyTo(ms);
+        return TryReadSourceFromBytes(ms.ToArray(), wanted);
     }
 
     private static ZipArchive OpenZipFromNavx(byte[] bytes)

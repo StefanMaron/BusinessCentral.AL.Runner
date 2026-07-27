@@ -72,11 +72,20 @@ public sealed class RunnerXmlMetadataLoader : INCLObjectXmlMetadataLoader
             && AlPageMetadataRegistry.TryGet(objectId.ObjectNumber, out var pageXml))
             return Wrap(pageXml, $"runner-page-{objectId.ObjectNumber}");
 
+        // Reports living in a PRECOMPILED dependency .app: never source-compiled, so the
+        // emit registry above will never hold them. Their shape is still fully stated by
+        // the .app itself (SymbolReference.json + the embedded AL source), so reconstruct
+        // the metadata document from those rather than refuse — see
+        // DependencyReportMetadata.cs for exactly what is read and what is left unstated.
+        if (objectId.ObjectType == ObjectType.Report
+            && RecordPatches.TryBuildDependencyReportMetadata(objectId.ObjectNumber) is { } depXml)
+            return Wrap(depXml, $"runner-dep-report-{objectId.ObjectNumber}");
+
         throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
             $"INCLObjectXmlMetadataLoader.GetMetaObjectXmlMetadata({objectId.ObjectType} {objectId.ObjectNumber})",
-            "not-yet-implemented — no emit-captured metadata XML for this object " +
-            "(only reports and pages the runner source-compiled are served; " +
-            "precompiled-dependency reports use NavReportSync's separate stub-metadata path)");
+            "not-yet-implemented — no metadata XML for this object: it was not source-compiled " +
+            "by the runner, and no loaded dependency .app declares it " +
+            "(only reports and pages are served)");
     }
 
     private static NCLObjectXmlMetadata Wrap(string xml, string metadataHash)
