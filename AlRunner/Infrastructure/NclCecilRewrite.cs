@@ -82,16 +82,10 @@ public static class NclCecilRewrite
         // NavApplicationObjectBase..ctor keystone (Batch 4) — the 3-arg
         // (ITreeObject, ApplicationObjectId, NCLStaticMetadata) ctor.
         "Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase::.ctor/3",
-        // NavDialog.ALStrMenu / ALConfirm (Batch 5 — in-memory shim; no re-entrancy).
-        // All overloads by param count. Migrated from NoInlining+JmpHook to body rewrite.
-        "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALStrMenu/2",
-        "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALStrMenu/3",
-        "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALStrMenu/4",
-        "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALStrMenu/5",
-        "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALConfirm/2",
-        "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALConfirm/3",
-        "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALConfirm/4",
-        "Microsoft.Dynamics.Nav.Runtime.NavDialog::ALConfirm/5",
+        // NavDialog.ALStrMenu / ALConfirm are NO LONGER owned here — BC's own bodies
+        // dispatch to session.TestExecution.TestHandleConfirm / TestHandleStrMenu, which is
+        // precisely the [ConfirmHandler] / [StrMenuHandler] routing an AL test declares.
+        // See the removed Batch 5 block below for what replacing them cost.
         // NavDialog.ALOpenAsync<T> / ALUpdateAsync (Batch 5 — headless progress-dialog no-op).
         // Instance methods; Key arity excludes `this`. Owned by the Cecil body rewrite so the
         // legacy ALUpdateAsync JmpHook block in BcRuntime auto-skips (no coexistence spin).
@@ -1272,173 +1266,20 @@ public static class NclCecilRewrite
             }
         }
 
-        // ── Batch 5: NavDialog.ALStrMenu / ALConfirm → Cecil body rewrites ─────────────
+        // ── NavDialog.ALStrMenu / ALConfirm: BC's own bodies, deliberately ─────────────
         //
-        // These static methods were previously: (a) marked NoInlining in Cecil to prevent
-        // R2R inlining into call sites, then (b) JmpHook'd to DialogPatches helpers.
-        // New approach: rewrite IL bodies directly — ALConfirm always returns false,
-        // ALStrMenu without a default-number param returns 0, ALStrMenu with a default-
-        // number param returns that param. No service-tier call, no re-entrancy.
-        // Registered in CecilOwned so JmpHooks auto-skip. Token-safe: uses only
-        // constants and ldarg — no new typeRef/memberRef imports.
-        {
-            var navDialogCecilType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavDialog");
-            if (navDialogCecilType != null)
-            {
-                int navDialogRewrote = 0;
-                foreach (var m in navDialogCecilType.Methods
-                    .Where(m => (m.Name == "ALStrMenu" || m.Name == "ALConfirm") && m.HasBody && m.IsStatic))
-                {
-                    var body = m.Body;
-                    body.Instructions.Clear();
-                    body.Variables.Clear();
-                    body.ExceptionHandlers.Clear();
-                    var il = body.GetILProcessor();
-
-                    if (m.Name == "ALConfirm")
-                    {
-                        // → return false
-                        il.Append(il.Create(OpCodes.Ldc_I4_0));
-                        il.Append(il.Create(OpCodes.Ret));
-                        body.MaxStackSize = 1;
-                    }
-                    else // ALStrMenu
-                    {
-                        // Find the Int32 defaultNumber param (if present).
-                        // IL-arg index = param index (static method, no `this`).
-                        int? defaultArgIdx = null;
-                        for (int i = 0; i < m.Parameters.Count; i++)
-                        {
-                            if (m.Parameters[i].ParameterType.FullName == "System.Int32")
-                            { defaultArgIdx = i; break; }
-                        }
-                        if (defaultArgIdx.HasValue)
-                        {
-                            // → return defaultNumber (load the int param by index)
-                            il.Append(il.Create(OpCodes.Ldarg, defaultArgIdx.Value));
-                            il.Append(il.Create(OpCodes.Ret));
-                            body.MaxStackSize = 1;
-                        }
-                        else
-                        {
-                            // No defaultNumber → return 0 (no selection)
-                            il.Append(il.Create(OpCodes.Ldc_I4_0));
-                            il.Append(il.Create(OpCodes.Ret));
-                            body.MaxStackSize = 1;
-                        }
-                    }
-                    navDialogRewrote++;
-                }
-                Console.Error.WriteLine($"[Cecil] Batch 5: rewrote {navDialogRewrote} NavDialog.ALStrMenu/ALConfirm overload(s) → inline const/arg body");
-
-                // ── NavDialog.ALOpenAsync<T> / ALUpdateAsync → headless no-op ─────────────
-                //
-                // A BC `Dialog.Open`/`Dialog.Update` opens/refreshes a progress (status) window.
-                // In a HEADLESS test run there is no client UI and no client callback, so the
-                // real body NREs: every path through ALOpenAsync dereferences `base.Tree.Session`,
-                // and the dialog's tree-root session is not wired for an AL Dialog variable created
-                // during a field-OnValidate trigger (TreeHandler.session resolves to null), so the
-                // very first `IsWebServiceClientRequest(base.Tree.Session)` → `session.ClientConnectionType`
-                // throws NullReferenceException (verified against the RS Document-Approvals path:
-                // Codeunit131101.EnableWorkflow → Record1501.Enabled_a45_OnValidate → ALOpenAsync).
-                //
-                // FAITHFULNESS (loud-failures audit): a progress window carries NO return value the
-                // business logic branches on — it is pure display state. Real BC already no-ops the
-                // ENTIRE method for non-UI sessions (the `IsWebServiceClientRequest(...) → return
-                // default(ValueTask)` early-out at the top of the real body). Returning a completed
-                // default ValueTask is therefore observably equivalent to BC's own behaviour for a
-                // callback-less session: the AL code after Dialog.Open runs identically whether or
-                // not a window appeared. This is NOT a silent fake — it is the same code path BC
-                // takes when there is no UI. CONFIRM/STRMENU (which DO return a user choice the logic
-                // branches on) are handled separately above (ALConfirm/ALStrMenu) and route to the
-                // test's handler contract; they are explicitly NOT covered here.
-                //
-                // BOOKKEEPING: the dialog's own `isOpen` flag must stay consistent so that a
-                // subsequent Dialog.Update / Dialog.Close does not throw NavNCLDialogException
-                // ("the operation failed because the dialog box is not open"). We therefore
-                // rewrite ALOpenAsync to set isOpen=true and ALClose to set isOpen=false before
-                // returning — pure in-object state, no session/UI deref. This is the same flag
-                // BC's real bodies maintain; we keep it without the UI callback. ALUpdateAsync
-                // is a plain no-op (it only refreshes the window).
-                //
-                // Token-safe: only initobj on the method's own ValueTask return type (already
-                // referenced) and ldfld/stfld on the dialog's own bool `isOpen` field — no new
-                // typeRef/memberRef imports.
-                var isOpenField = navDialogCecilType.Fields.FirstOrDefault(f => f.Name == "isOpen")
-                    ?? throw new InvalidOperationException(
-                        "NavDialog.isOpen field not found in Ncl — shape changed; do not commit");
-
-                int navDialogAsyncRewrote = 0;
-                foreach (var m in navDialogCecilType.Methods
-                    .Where(m => (m.Name == "ALOpenAsync" || m.Name == "ALUpdateAsync")
-                                && m.HasBody && !m.IsStatic))
-                {
-                    var ret = m.ReturnType;
-                    // Only rewrite the value-type ValueTask returns (ALOpenAsync<T>, ALUpdateAsync*).
-                    if (!ret.IsValueType
-                        || !ret.FullName.StartsWith("System.Threading.Tasks.ValueTask"))
-                        continue;
-
-                    var body = m.Body;
-                    body.Instructions.Clear();
-                    body.Variables.Clear();
-                    body.ExceptionHandlers.Clear();
-                    var il = body.GetILProcessor();
-
-                    // ALOpenAsync only: `this.isOpen = true;`
-                    if (m.Name == "ALOpenAsync")
-                    {
-                        il.Append(il.Create(OpCodes.Ldarg_0));
-                        il.Append(il.Create(OpCodes.Ldc_I4_1));
-                        il.Append(il.Create(OpCodes.Stfld, isOpenField));
-                    }
-
-                    var local = new VariableDefinition(asm.MainModule.ImportReference(ret));
-                    body.Variables.Add(local);
-                    body.InitLocals = true;
-                    il.Append(il.Create(OpCodes.Ldloca_S, local));
-                    il.Append(il.Create(OpCodes.Initobj, asm.MainModule.ImportReference(ret)));
-                    il.Append(il.Create(OpCodes.Ldloc_0));
-                    il.Append(il.Create(OpCodes.Ret));
-                    body.MaxStackSize = 2;
-                    navDialogAsyncRewrote++;
-                }
-                if (navDialogAsyncRewrote == 0)
-                    throw new InvalidOperationException(
-                        "NavDialog.ALOpenAsync/ALUpdateAsync not found in Ncl — shape changed; do not commit");
-
-                // ALClose() — `this.isOpen = false; return;` (skip every base.Tree.Session deref
-                // / ClientCallback.DialogClose / Company.UnregisterOpenDialog, all of which NRE
-                // on the headless skeleton). Void parameterless instance method.
-                int navDialogCloseRewrote = 0;
-                foreach (var m in navDialogCecilType.Methods
-                    .Where(m => m.Name == "ALClose" && m.HasBody && !m.IsStatic
-                                && m.Parameters.Count == 0
-                                && m.ReturnType.FullName == "System.Void"))
-                {
-                    var body = m.Body;
-                    body.Instructions.Clear();
-                    body.Variables.Clear();
-                    body.ExceptionHandlers.Clear();
-                    var il = body.GetILProcessor();
-                    il.Append(il.Create(OpCodes.Ldarg_0));
-                    il.Append(il.Create(OpCodes.Ldc_I4_0));
-                    il.Append(il.Create(OpCodes.Stfld, isOpenField));
-                    il.Append(il.Create(OpCodes.Ret));
-                    body.MaxStackSize = 2;
-                    navDialogCloseRewrote++;
-                }
-                if (navDialogCloseRewrote == 0)
-                    throw new InvalidOperationException(
-                        "NavDialog.ALClose() not found in Ncl — shape changed; do not commit");
-
-                Console.Error.WriteLine($"[Cecil] Batch 5: rewrote {navDialogAsyncRewrote} NavDialog.ALOpenAsync/ALUpdateAsync + {navDialogCloseRewrote} ALClose overload(s) → headless no-op (isOpen bookkeeping preserved)");
-            }
-            else
-            {
-                Console.Error.WriteLine("[Cecil] WARNING: NavDialog not found in Ncl — batch 5 dialog skipped");
-            }
-        }
+        // These were rewritten to constants — ALConfirm returned false, ALStrMenu returned
+        // its default. That is a silent fake of the kind loud-failures.md forbids, and it
+        // made a test lie rather than fail: the al-language corpus test
+        // Confirm_Question_HandlerRepliesFalse asserts Confirm() is false, and passed because
+        // the constant happened to match, while its declared [ConfirmHandler] never ran.
+        //
+        // BC's real bodies already do the right thing:
+        //     if (session.TestExecution.TestHandleConfirm(message, ref confirmation)) return confirmation;
+        //     return session.ClientCallback.DialogConfirm(...);
+        // The first line IS the handler dispatch an AL test declares with [HandlerFunctions];
+        // the second refuses loudly when no handler was declared, which is exactly the error
+        // real BC raises for an unhandled dialog. Replacing the body removed both.
 
         // ── Universal codeunit-event subscriber dispatch ──────────────────────────────────
         // Per feedback_event_dispatch_must_be_universal.md, codeunit IntegrationEvent /
@@ -6312,10 +6153,15 @@ public static class NclCecilRewrite
             // ── NavNotification.ALSend / ALRecall (Batch 8) ─────────────────────
             // Real body reaches the absent notification-dispatch layer → NRE. Helper
             // populates NotificationInfo.Id (mirror) and returns true.
-            foreach (var notifName in new[] { "ALSend", "ALRecall" })
-                ReplaceBodyWithHelper(nclMod,
-                    ByParams(Rt + "NavNotification", notifName, "DataError"),
-                    H(helperShims, "NavNotification_ALSendOrRecall"));
+            // Send and Recall route to DIFFERENT handler types, so they cannot share a helper:
+            // the AL test declares [SendNotificationHandler] or [RecallNotificationHandler] and
+            // BC picks by NavHandlerType.
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavNotification", "ALSend", "DataError"),
+                H(helperShims, "NavNotification_ALSend"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavNotification", "ALRecall", "DataError"),
+                H(helperShims, "NavNotification_ALRecall"));
 
             // ── FlowField CalcFieldsAsync(2)/(3) — already Cecil-body-rewritten above
             //    (see ~line 1751). FlowFieldPatches.Register additionally JmpHook.Apply's

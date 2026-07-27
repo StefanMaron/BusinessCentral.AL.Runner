@@ -301,6 +301,54 @@ internal sealed class RunnerPageInstance
     }
 
     /// <summary>
+    /// Run the control's OnLookup trigger.
+    ///
+    /// Like OnAction and unlike OnValidate, a missing trigger is NOT benign: the test asked
+    /// for the lookup to happen. A control with no OnLookup gets its lookup from a TableRelation
+    /// (BC opens the related table's list page), which the runner cannot stand up, so it
+    /// refuses by name — doing nothing silently is what let a test compare two empty strings
+    /// and call it a pass.
+    /// </summary>
+    /// <summary>
+    /// Run the control's OnLookup trigger and return the value it selected, or null when the
+    /// trigger declined (returned false) — BC's lookup contract: the text the trigger wrote
+    /// back replaces the field's value only if it returned true, which is how "the user
+    /// cancelled the lookup" is expressed.
+    ///
+    /// The AL compiler emits <c>trigger OnLookup(var Text: Text): Boolean</c> as a method
+    /// taking <c>ByRef&lt;NavText&gt;</c> and returning bool, so unlike OnValidate/OnAction
+    /// this one is NOT parameterless — matching only zero-arity methods is why it read as
+    /// "the control declares no OnLookup trigger" for a control that plainly declares one.
+    ///
+    /// A control with genuinely no OnLookup gets its lookup from a TableRelation, which would
+    /// open the related table's list page; the runner cannot stand that up, so it refuses by
+    /// name rather than doing nothing — doing nothing let a test invoke a lookup, observe no
+    /// change, and compare two empty strings successfully.
+    /// </summary>
+    internal NavText? RaiseOnLookup(int controlId, NavText current)
+    {
+        var trigger = FindTrigger(controlId, "_OnLookup", "OnLookup", arity: 1)
+            ?? throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage lookup on control {controlId} (page {_pageId})",
+                "testpage-lookup — the control declares no OnLookup trigger, so its lookup comes "
+                + "from a TableRelation and would open the related table's list page, which the "
+                + "runner cannot stand up. See docs/scope.md");
+
+        var value = current;
+        var byRef = new ByRef<NavText>(() => value, v => value = v);
+
+        object? result;
+        try { result = trigger.Invoke(_form, new object?[] { byRef }); }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+            throw; // unreachable
+        }
+
+        return result is true ? value : null;
+    }
+
+    /// <summary>
     /// The page method carrying the trigger for <paramref name="memberId"/>.
     ///
     /// The AL compiler emits triggers as <c>{MemberName}_a{n}{suffix}</c> on the page class,
@@ -310,13 +358,13 @@ internal sealed class RunnerPageInstance
     /// Matching a control on its source expression's Name does not work: that is the bound
     /// VARIABLE's name (SelectedMode), not the control's (Mode), and they routinely differ.
     /// </summary>
-    private MethodInfo? FindTrigger(int memberId, string suffix, string surface)
+    private MethodInfo? FindTrigger(int memberId, string suffix, string surface, int arity = 0)
     {
         MethodInfo? match = null;
         foreach (var m in _form.GetType()
             .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
         {
-            if (m.GetParameters().Length != 0) continue;
+            if (m.GetParameters().Length != arity) continue;
             if (!m.Name.EndsWith(suffix, StringComparison.Ordinal)) continue;
 
             var memberName = MemberNameFromTriggerMethod(m.Name, suffix);

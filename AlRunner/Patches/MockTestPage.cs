@@ -332,7 +332,7 @@ internal class LiveNavTestPage : MockITestPage
         if (_controlIdToFieldNo.TryGetValue(id, out var tableFieldNo))
         {
             if (!_fields.TryGetValue(tableFieldNo, out var field))
-                _fields[tableFieldNo] = field = new LiveNavTestField(_record, tableFieldNo);
+                _fields[tableFieldNo] = field = new LiveNavTestField(_record, tableFieldNo, _page, id);
             return field;
         }
 
@@ -466,11 +466,20 @@ internal sealed class LiveNavTestField : ITestField
 {
     private readonly NavRecord _record;
     private readonly int _fieldNo;
+    // The page behind the control, when there is one. A Rec-bound control still has an
+    // OnLookup trigger on the page, and that trigger is the only thing Lookup() can run.
+    private readonly RunnerPageInstance? _page;
+    private readonly int _controlId;
 
     public LiveNavTestField(NavRecord record, int fieldNo)
+        : this(record, fieldNo, page: null, controlId: 0) { }
+
+    public LiveNavTestField(NavRecord record, int fieldNo, RunnerPageInstance? page, int controlId)
     {
         _record = record;
         _fieldNo = fieldNo;
+        _page = page;
+        _controlId = controlId;
     }
 
     public string Value
@@ -495,8 +504,27 @@ internal sealed class LiveNavTestField : ITestField
 
     public string GetValidationError(int index) => string.Empty;
     public void Activate() { }
-    public void Lookup() { }
-    public void Lookup(NavDataSet dataSet) { }
+
+    /// <summary>
+    /// Run the control's OnLookup trigger — the AL a user's F4 would run. The base mock does
+    /// nothing, which let a test invoke a lookup, observe no change, and compare two empty
+    /// strings successfully.
+    /// </summary>
+    public void Lookup()
+    {
+        if (_page == null)
+            throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage lookup on field {_fieldNo}",
+                "testpage-lookup — no AL page object was built for this page, so its OnLookup "
+                + "trigger cannot be reached. See docs/scope.md");
+
+        // BC's contract: the trigger writes the selection back and returns true; a false
+        // return means the user cancelled and the field keeps its value.
+        var picked = _page.RaiseOnLookup(_controlId, NavText.Create(Value));
+        if (picked != null) Value = picked.ToString();
+    }
+
+    public void Lookup(NavDataSet dataSet) => Lookup();
     public void AssistEdit() { }
     public void Drilldown() { }
     public void Invoke() { }
@@ -643,8 +671,13 @@ internal sealed class PageVariableTestField : ITestField
 
     public string GetValidationError(int index) => string.Empty;
     public void Activate() { }
-    public void Lookup() { }
-    public void Lookup(NavDataSet dataSet) { }
+    /// <summary>Run the control's OnLookup trigger — see LiveNavTestField.Lookup.</summary>
+    public void Lookup()
+    {
+        var picked = _page.RaiseOnLookup(_controlId, NavText.Create(Value));
+        if (picked != null) Value = picked.ToString();
+    }
+    public void Lookup(NavDataSet dataSet) => Lookup();
     public void AssistEdit() { }
     public void Drilldown() { }
     public void Invoke() { }
@@ -674,6 +707,7 @@ internal sealed class MockITestField : ITestField
 
     public string GetValidationError(int index)   => string.Empty;
     public void   Activate()                      { }
+
     public void   Lookup()                        { }
     public void   Lookup(NavDataSet dataSet)      { }
     public void   AssistEdit()                    { }

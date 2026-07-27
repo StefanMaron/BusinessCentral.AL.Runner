@@ -176,40 +176,72 @@ public static partial class BcRuntime
         => new System.ValueTuple<System.Guid, string>(System.Guid.Empty, "STANDALONE");
 
     /// <summary>
-    /// Replacement for <c>NavNotification.ALSend(DataError)</c> and
-    /// <c>NavNotification.ALRecall(DataError)</c>. The real body NREs at
-    /// <c>session.Diagnostics.SendTraceTag(...)</c> (Diagnostics is null on the
-    /// skeleton session) and even past that calls <c>SendLocalNotification</c> /
-    /// <c>SendGlobalNotification</c> which require the notification dispatch layer
-    /// (handlers, AddIn host) that the runner does not have.
+    /// Replacement for <c>NavNotification.ALSend(DataError)</c> / <c>ALRecall(DataError)</c>.
     ///
-    /// Faithful behavior preserved: <c>NotificationInfo.Id</c> is populated with
-    /// a fresh Guid if empty (mirrors the real ALSend body). Returns true to
-    /// mean "operation completed". Tests that observe a <c>[SendNotificationHandler]</c>
-    /// being invoked will still fail (visibly, at the AL assertion) — that
-    /// dispatch layer is out of scope and tracked separately.
+    /// BC's real body opens with <c>session.Diagnostics.SendTraceTag(...)</c>, which NREs on
+    /// the skeleton session, so the body cannot simply be left alone the way ALConfirm and
+    /// ALStrMenu now are. What it must NOT skip is the line just after that:
+    ///     if (session.TestExecution.RedirectNotificationOperationToTestHandler(this, type))
+    ///         return true;
+    /// That IS the [SendNotificationHandler] / [RecallNotificationHandler] dispatch an AL test
+    /// declares, and skipping it meant a declared handler never ran — the test then passed
+    /// only because nothing noticed, which is what BC's own unexecuted-handler check exists to
+    /// catch.
+    ///
+    /// When no handler is declared the redirect returns false and BC would go on to the real
+    /// notification dispatch layer, which the runner has no equivalent for. BC's own answer
+    /// inside a test run is to swallow it (<c>return executingTestRunner != null</c>), so that
+    /// is what happens here: an unhandled notification is not an error, unlike an unhandled
+    /// Message or Confirm. NotificationInfo.Id is populated first, mirroring the real body.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    public static bool NavNotification_ALSendOrRecall(object self, object errorLevel)
+    public static bool NavNotification_ALSend(object self, object errorLevel)
+        => RedirectNotification(self, "SendNotification");
+
+    /// <summary>See <see cref="NavNotification_ALSend"/> — same contract, recall handler.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool NavNotification_ALRecall(object self, object errorLevel)
+        => RedirectNotification(self, "RecallNotification");
+
+    private static bool RedirectNotification(object self, string handlerTypeName)
+    {
+        PopulateNotificationId(self);
+        try
+        {
+            var session = AlRunnerV2.BcRuntime.SkeletonSession;
+            var testExecution = session?.GetType()
+                .GetProperty("TestExecution", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
+                .GetValue(session);
+            var redirect = testExecution?.GetType().GetMethod("RedirectNotificationOperationToTestHandler",
+                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
+            if (redirect == null) return true;
+
+            var handlerType = Enum.Parse(redirect.GetParameters()[1].ParameterType, handlerTypeName);
+            redirect.Invoke(testExecution, new[] { self, handlerType });
+        }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            // An Error() inside the AL handler is the handler's own outcome, not runner noise.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+        }
+        return true;
+    }
+
+    private static void PopulateNotificationId(object self)
     {
         try
         {
             var notifInfoProp = self.GetType().GetProperty("NotificationInfo",
                 BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
             var info = notifInfoProp?.GetValue(self);
-            if (info != null)
-            {
-                var idProp = info.GetType().GetProperty("Id");
-                if (idProp != null && idProp.CanRead && idProp.CanWrite)
-                {
-                    var current = (System.Guid)(idProp.GetValue(info) ?? System.Guid.Empty);
-                    if (current == System.Guid.Empty)
-                        idProp.SetValue(info, System.Guid.NewGuid());
-                }
-            }
+            if (info == null) return;
+            var idProp = info.GetType().GetProperty("Id");
+            if (idProp == null || !idProp.CanRead || !idProp.CanWrite) return;
+            var current = (System.Guid)(idProp.GetValue(info) ?? System.Guid.Empty);
+            if (current == System.Guid.Empty)
+                idProp.SetValue(info, System.Guid.NewGuid());
         }
-        catch { /* best-effort Id population */ }
-        return true;
+        catch { /* best-effort Id population, exactly as the real body's mirror */ }
     }
 
     /// <summary>

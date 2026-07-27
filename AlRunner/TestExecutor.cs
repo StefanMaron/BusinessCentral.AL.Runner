@@ -289,6 +289,10 @@ public sealed class TestExecutor
                     $"TIMEOUT after {(int)timeout.TotalSeconds}s", null, sw.Elapsed, alStack, displayName);
             }
             invokeResult.Exception?.Throw();
+            // The body succeeded — now BC's own check that every handler the test DECLARED was
+            // actually consumed. A handler procedure that no [HandlerFunctions] names is not in
+            // the list and is never an error; a declared one whose dialog never came up is.
+            BcRuntime.CheckAllHandlersConsumed();
             PerfTrace.Log($"TestExecutor.RunOne PASS {codeunit}.{m.Name} {sw.ElapsedMilliseconds}ms");
             return new TestResult(codeunit, m.Name, TestOutcome.Pass, null, null, sw.Elapsed,
                 null, displayName);

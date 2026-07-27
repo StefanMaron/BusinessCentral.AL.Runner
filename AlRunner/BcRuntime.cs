@@ -14,6 +14,9 @@ public static partial class BcRuntime
     private static bool _applied;
     private static Type? _navEnvironmentType;
     private static object? _skeletonSession;
+
+    /// <summary>The skeleton NavSession every runner-side patch reaches BC through.</summary>
+    internal static object? SkeletonSession => _skeletonSession;
     private static Microsoft.Dynamics.Nav.Runtime.NavMethodScope? _skeletonRootScope;
     public static Microsoft.Dynamics.Nav.Runtime.ITreeObject? RootTreeStub;
 
