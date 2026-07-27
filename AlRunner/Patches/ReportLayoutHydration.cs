@@ -57,6 +57,7 @@ public static class ReportLayoutHydration
     private static FieldInfo? _fLayoutStream;
     private static FieldInfo? _fMimetypeBacking;
     private static PropertyInfo? _pReportId;
+    private static PropertyInfo? _pName;
     private static bool _bound;
 
     /// <summary>
@@ -76,7 +77,7 @@ public static class ReportLayoutHydration
             // already been stored — still nothing to render, so treat it as unset.
             if (current != null && current.Length > 0) return;
 
-            var info = SingleDeclaredLayout(layout);
+            var info = DeclaredLayoutFor(layout);
             if (info == null || string.IsNullOrEmpty(info.ResolvedPath)) return;
 
             if (!File.Exists(info.ResolvedPath))
@@ -113,7 +114,7 @@ public static class ReportLayoutHydration
 
             if (!string.IsNullOrEmpty(_fMimetypeBacking!.GetValue(layout) as string)) return;
 
-            var info = SingleDeclaredLayout(layout);
+            var info = DeclaredLayoutFor(layout);
             if (info == null || string.IsNullOrEmpty(info.MimeType)) return;
 
             _fMimetypeBacking.SetValue(layout, info.MimeType);
@@ -129,15 +130,47 @@ public static class ReportLayoutHydration
     }
 
     /// <summary>
-    /// The report's declared layout, but only when there is exactly one. A multi-layout
-    /// report is selected BY NAME through virtual table 2000000234 (see the
-    /// report-layout-byname suite); if BC picked one of several it already knows more
-    /// than we do, and guessing here could serve the wrong template.
+    /// The report's declared layout that this <c>ReportLayout</c> instance stands for.
+    ///
+    /// Matched BY NAME first. BC states which layout it selected on the instance itself —
+    /// <c>ReportLayout.Name</c>, set from the Report Layout List (2000000234) row that
+    /// GetLayoutByNameAndAppIDAsync found for a
+    /// <c>SetTempLayoutSelectedName('Foo')</c> selection — so this reads BC's own answer
+    /// rather than guessing.
+    ///
+    /// This method previously returned null for ANY report declaring more than one layout,
+    /// on the reasoning that picking one of several could serve the wrong template. That
+    /// was the right caution and the wrong conclusion: it meant a multi-layout report was
+    /// never hydrated at all, so a by-name selection rendered from an EMPTY stream and the
+    /// AL merger reported "LF-XML: The template is not well-formed XML: 'Root element is
+    /// missing'". Nine Pageworks tests failed exactly this way; the same reports'
+    /// unnamed/default renders passed, which is what made it look like a layout-content bug
+    /// rather than a layout-identity one.
+    ///
+    /// The no-guessing rule still holds: with no usable name and several declared layouts,
+    /// this yields null and leaves BC's own resolution untouched.
     /// </summary>
-    private static AlReportLayoutInfo? SingleDeclaredLayout(object layout)
+    private static AlReportLayoutInfo? DeclaredLayoutFor(object layout)
     {
         var reportId = (int)_pReportId!.GetValue(layout)!;
         var declared = AlReportLayoutRegistry.Get(reportId);
+        if (declared.Count == 0) return null;
+
+        // Name match first — but ONLY as an addition. BC sets Name for its own reasons and
+        // it does not always correspond to a declared layout (a default/placeholder
+        // selection, a runtime-registered template, a tenant override). Treating a
+        // non-matching name as "not ours" removed hydration the single-layout rule below
+        // was already providing correctly, and cost 59 Pageworks tests — so a failed name
+        // match must fall through, never short-circuit.
+        var name = _pName!.GetValue(layout) as string;
+        if (!string.IsNullOrEmpty(name))
+            foreach (var candidate in declared)
+                if (string.Equals(candidate.Name, name, StringComparison.OrdinalIgnoreCase))
+                    return candidate;
+
+        // No usable name. Unambiguous only when the report declares one layout; with
+        // several, which one BC meant is genuinely unknown and guessing could serve the
+        // wrong template.
         return declared.Count == 1 ? declared[0] : null;
     }
 
@@ -156,6 +189,9 @@ public static class ReportLayoutHydration
         _pReportId = layoutType.GetProperty("ReportId", Any)
             ?? throw new InvalidOperationException(
                 "[ReportLayout] ReportLayout.ReportId not found — BC metadata shape changed.");
+        _pName = layoutType.GetProperty("Name", Any)
+            ?? throw new InvalidOperationException(
+                "[ReportLayout] ReportLayout.Name not found — BC metadata shape changed.");
 
         _bound = true;
     }

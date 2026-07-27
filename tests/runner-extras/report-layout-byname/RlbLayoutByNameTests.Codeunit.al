@@ -152,6 +152,42 @@ codeunit 61873 "RLB Layout By Name Tests"
         ReportLayoutSelection.ClearTempLayoutSelected();
     end;
 
+    // Positive, and the observable the fork test above cannot reach: the SELECTED layout's
+    // own CONTENT must reach the merger.
+    //
+    // RED (before): for a report declaring more than one layout, layout hydration was
+    // skipped entirely — the rule was "hydrate only when the report declares exactly one
+    // layout", on the reasoning that picking one of several might serve the wrong template.
+    // A by-name selection therefore resolved the right layout IDENTITY and handed the
+    // renderer an EMPTY stream. Every assertion in this suite still passed, because none of
+    // them looked at the content; the failure surfaced only in the ISV's own AL as
+    // "LF-XML: The template is not well-formed XML: 'Root element is missing.'".
+    //
+    // GREEN: hydration matches the declared layout by the NAME BC itself put on the
+    // ReportLayout instance, so a multi-layout report is served its selected layout's bytes.
+    [Test]
+    procedure SelectByName_CustomLayoutContentReachesTheMerger()
+    var
+        ReportLayoutSelection: Record "Report Layout Selection";
+        BlobRec: Record "RLB Sample";
+        Capture: Codeunit "RLB Merger Capture";
+        OutStr: OutStream;
+    begin
+        SeedSample();
+        Capture.ClearCapture();
+        BlobRec."Blob Data".CreateOutStream(OutStr);
+
+        ReportLayoutSelection.SetTempLayoutSelectedName(LayoutTwoTok);
+        Report.SaveAs(Report::"RLB Fixture Report", '', ReportFormat::Pdf, OutStr);
+        ReportLayoutSelection.ClearTempLayoutSelected();
+
+        // RlbLayoutTwo.rlblayout's entire content. Asserting the actual body — not merely
+        // that something non-empty arrived — is what distinguishes "the selected layout's
+        // bytes" from "some default template".
+        Assert.Contains(Capture.CapturedTemplate(), 'RLB-CUSTOM-LAYOUT-BODY',
+            'the merger must receive the by-name-selected Custom layout''s own content; an empty template here is the multi-layout hydration gap');
+    end;
+
     // Negative: an undeclared name must still fail loudly with BC's own
     // no-valid-layout error. This is the guard against "resolve to the default
     // whenever the name is not found", which would make the positive test above
