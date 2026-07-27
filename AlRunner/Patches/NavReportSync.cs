@@ -483,7 +483,15 @@ public static class NavReportSync
         if (reportId <= 0) return null;
         return _realMetaCache.GetOrAdd(reportId, static id =>
         {
-            if (!AlReportMetadataRegistry.TryGet(id, out var xml)) return null;
+            // Emit-captured XML first (reports the runner compiled). Failing that, a report
+            // declared by a precompiled dependency: its metadata is reconstructable from the
+            // .app's own SymbolReference.json + embedded AL source (DependencyReportMetadata).
+            // Without this second source the report falls through to the legacy stub, which
+            // stamps ProcessingOnly — and BC then refuses SaveAs on it entirely
+            // ("Report N is a processing-only report"), even though the real report renders.
+            if (!AlReportMetadataRegistry.TryGet(id, out var xml))
+                xml = AlRunnerV2.Patches.RecordPatches.TryBuildDependencyReportMetadata(id);
+            if (string.IsNullOrEmpty(xml)) return null;
             try
             {
                 var typesAsm = AppDomain.CurrentDomain.GetAssemblies()
