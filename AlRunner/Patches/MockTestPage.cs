@@ -50,7 +50,7 @@ internal class MockITestPage : ITestPage
         return a;
     }
 
-    public ITestPart          GetPart(int id)                                           => new MockITestPart();
+    public virtual ITestPart  GetPart(int id)                                           => new MockITestPart();
     public ITestAction        GetBuiltInAction(FormResult formResult)                   => new MockITestAction();
     public ITestFilter        GetDataItemFilter(string id)                              => this;
     public void               SetSelection(bool value)                                  { }
@@ -73,7 +73,7 @@ internal class MockITestPage : ITestPage
     public FormResult FormResult           => FormResult.OK;
     public string     Name                 => string.Empty;
     public string     Caption              => string.Empty;
-    public int        PageId               => 0;
+    public virtual int PageId            => 0;
     public Guid       FormHandle           => Guid.Empty;
     public virtual bool Creatable          => false;
     public bool       IsExpanded           => false;
@@ -103,7 +103,7 @@ internal class MockITestPage : ITestPage
     }
 }
 
-internal sealed class LiveNavTestPage : MockITestPage
+internal class LiveNavTestPage : MockITestPage
 {
     private readonly NavRecord _record;
     private readonly IReadOnlyDictionary<int, int> _controlIdToFieldNo;
@@ -115,6 +115,12 @@ internal sealed class LiveNavTestPage : MockITestPage
     // resolve, which is all this class could ever do before.
     private readonly RunnerPageInstance? _page;
 
+    // The ITreeObject every NavRecord on this page is constructed under, and the page's own
+    // id — both needed to build a subpage part, which is another page over another table.
+    private readonly object? _owner;
+    private readonly int _pageId;
+    private readonly Dictionary<int, ITestPart> _parts = new();
+
     public LiveNavTestPage(NavRecord record, IReadOnlyDictionary<int, int> controlIdToFieldNo)
         : this(record, controlIdToFieldNo, creatable: true, page: null) { }
 
@@ -123,11 +129,93 @@ internal sealed class LiveNavTestPage : MockITestPage
 
     public LiveNavTestPage(NavRecord record, IReadOnlyDictionary<int, int> controlIdToFieldNo, bool creatable,
         RunnerPageInstance? page)
+        : this(record, controlIdToFieldNo, creatable, page, owner: null, pageId: 0) { }
+
+    public LiveNavTestPage(NavRecord record, IReadOnlyDictionary<int, int> controlIdToFieldNo, bool creatable,
+        RunnerPageInstance? page, object? owner, int pageId)
     {
         _record = record;
         _controlIdToFieldNo = controlIdToFieldNo;
         _creatable = creatable;
         _page = page;
+        _owner = owner;
+        _pageId = pageId;
+    }
+
+    internal NavRecord Record => _record;
+
+    // BC reports these in NavInsertDeniedPermissionException and friends. Answering 0/""
+    // (the mock's values) is what produced "Insert is not allowed. Page = , Id = 0" — an
+    // error that named no page at all.
+    public override int PageId => _pageId;
+
+    /// <summary>
+    /// The subpage part hosted by <paramref name="controlId"/>, driven live over its own
+    /// source table with the SubPageLink applied.
+    ///
+    /// Previously this handed back a bare MockITestPart whose Creatable is false, so BC's
+    /// NavTestPageBase.ALNew() — which consults TestPage.Creatable — refused every insert
+    /// made through a part with "New method failed because Insert is not allowed.
+    /// Page = , Id = 0". A part that cannot be built now refuses by NAME rather than
+    /// answering as an empty page that silently reports no rows and accepts no inserts.
+    /// </summary>
+    public override ITestPart GetPart(int controlId)
+    {
+        if (_parts.TryGetValue(controlId, out var cached)) return cached;
+
+        var definition = _page?.TryGetPartDefinition(controlId)
+            ?? throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage part {controlId} (page {_pageId})",
+                "testpage-part — the runner could not resolve this control to a subpage part"
+                + (_page == null
+                    ? "; no AL page object was built for the hosting page, so its part definitions "
+                      + "are unavailable — see AlPageMetadataRegistry"
+                    : "; the hosting page's metadata declares no part with this control id")
+                + ". See docs/scope.md");
+
+        var partPageId = definition.PagePartID;
+        var built = _owner == null ? null : TestPageFactory.TryBuild(_owner, partPageId, out _);
+        if (built == null)
+            throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage part {controlId} → page {partPageId}",
+                "testpage-part — the part's own page could not be driven live "
+                + "(no source table, or no runtime record type for it). See docs/scope.md");
+
+        var part = new LiveNavTestPart(
+            built.Record, RecordPatches.GetPageControlFieldMap(partPageId),
+            RecordPatches.GetInsertAllowedForPage(partPageId), built.Page, _owner!, partPageId,
+            parentRecord: _record, links: SubPageLinks(definition, partPageId));
+        _parts[controlId] = part;
+        return part;
+    }
+
+    /// <summary>
+    /// The SubPageLink as (part field, parent field) pairs. Only FilterType.FIELD is a
+    /// SubPageLink in the AL sense (<c>SubPageLink = ReportId = field(ReportId)</c>); CONST
+    /// and FILTER links are a different, unimplemented shape and refuse loudly rather than
+    /// silently leaving the part unfiltered — an unfiltered part shows other rows' children,
+    /// which is a wrong answer, not a missing one.
+    /// </summary>
+    private static (int PartFieldNo, int ParentFieldNo)[] SubPageLinks(
+        Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition definition, int partPageId)
+    {
+        var links = new List<(int, int)>();
+        foreach (var link in definition.SubFormLink ?? new List<Microsoft.Dynamics.Nav.Types.Metadata.FilterDefinition>())
+        {
+            if (link.FilterType != Microsoft.Dynamics.Nav.Types.Metadata.FilterType.FIELD)
+                throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                    $"TestPage part → page {partPageId} SubPageLink ({link.FilterType})",
+                    $"testpage-part-link — only FilterType.FIELD SubPageLinks are implemented; "
+                    + $"this part links field {link.FieldID} by {link.FilterType} '{link.FilterValue}'. "
+                    + "See docs/scope.md");
+            if (!int.TryParse(link.FilterValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parentFieldNo))
+                throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                    $"TestPage part → page {partPageId} SubPageLink",
+                    $"testpage-part-link — a FIELD link's value must be the parent's field number, "
+                    + $"but this one is '{link.FilterValue}'. See docs/scope.md");
+            links.Add((link.FieldID, parentFieldNo));
+        }
+        return links.ToArray();
     }
 
     // BC's NavTestPageBase.New() consults Creatable before inserting. The base mock returns
@@ -136,7 +224,23 @@ internal sealed class LiveNavTestPage : MockITestPage
     // which denied every TestPage.New() regardless of the page under test.
     public override bool Creatable => _creatable;
 
-    public override bool IsOpened() => false;
+    // Whether BC has opened this page. Set by the Cecil-rewritten NavTestPage.Open (via
+    // RunnerTestPageState) and cleared on close.
+    //
+    // This has to be real state rather than a constant, because BOTH of BC's guards read
+    // it and they want opposite answers at different moments:
+    //   NavTestPageBase.Open()  throws NavTestPageAlreadyOpenException when it is true
+    //   NavTestPageBase.Close() forwards to this class ONLY when it is true
+    // In BC the two never conflict, because the page is attached during Open. The runner
+    // attaches at construction (NavTestPageHandle.CreateTarget) and NclCecilRewrite keeps
+    // that attachment across InternalClear, so a constant false silently disabled Close —
+    // a row started with New() was then never persisted at Close, only at Dispose, which
+    // is after the test's assertions have already read the table. See RunnerTestPageState.
+    private bool _opened;
+
+    internal void MarkOpened() => _opened = true;
+
+    public override bool IsOpened() => _opened;
 
     // TestPage.New() reaches ITestPage.InsertEmptyRow. BC's client model is "start a blank
     // row now, persist it once the cursor leaves it (or the page closes)" — the SetValue
@@ -162,8 +266,17 @@ internal sealed class LiveNavTestPage : MockITestPage
     // BC routes TestPage teardown through both Close() and Dispose() depending on whether
     // the AL test calls Close() explicitly or lets the variable go out of scope. Flush on
     // both so a New() is never silently discarded.
-    public override void Close() => FlushPendingNewRow();
-    public override void Dispose() => FlushPendingNewRow();
+    //
+    // Parts flush with their host: an AL test closes the CARD, never the part, so a row
+    // started with Card.Lines.New() has no other moment at which it could be persisted.
+    public override void Close() { FlushParts(); FlushPendingNewRow(); _opened = false; }
+    public override void Dispose() { FlushParts(); FlushPendingNewRow(); }
+
+    private void FlushParts()
+    {
+        foreach (var part in _parts.Values)
+            if (part is LiveNavTestPage live) live.FlushPendingNewRow();
+    }
 
     public override ITestField GetField(int id)
     {
@@ -202,11 +315,13 @@ internal sealed class LiveNavTestPage : MockITestPage
     }
 
     // Every cursor move leaves the in-progress new row, so it must be persisted first —
-    // otherwise navigating away from a New() silently discards it.
-    public override bool MoveFirst() { FlushPendingNewRow(); return _record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult(); }
-    public override bool MoveLast() { FlushPendingNewRow(); return _record.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult(); }
-    public override bool MoveNext() { FlushPendingNewRow(); return _record.ALNextAsync().GetAwaiter().GetResult() != 0; }
-    public override bool MovePrevious() { FlushPendingNewRow(); return _record.ALNextAsync(-1).GetAwaiter().GetResult() != 0; }
+    // otherwise navigating away from a New() silently discards it. Parts flush too: moving
+    // the parent re-links every part to a different row, so a row started in a part must be
+    // persisted while the link that stamped its key is still the current one.
+    public override bool MoveFirst() { FlushParts(); FlushPendingNewRow(); return _record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult(); }
+    public override bool MoveLast() { FlushParts(); FlushPendingNewRow(); return _record.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult(); }
+    public override bool MoveNext() { FlushParts(); FlushPendingNewRow(); return _record.ALNextAsync().GetAwaiter().GetResult() != 0; }
+    public override bool MovePrevious() { FlushParts(); FlushPendingNewRow(); return _record.ALNextAsync(-1).GetAwaiter().GetResult() != 0; }
 
     public override object? GetBookmark() => _record.ALGetPosition();
 
@@ -537,4 +652,66 @@ internal sealed class MockITestPart : MockITestPage, ITestPart
 {
     public bool Enabled => true;
     public bool Visible => true;
+}
+
+/// <summary>
+/// A subpage part driven live: its own page over its own source table, showing only the
+/// rows the SubPageLink selects for the parent's CURRENT row.
+///
+/// The link is re-applied before every operation rather than once at construction, because
+/// NavTestPageBase caches parts for the life of the page: a filter applied once would go
+/// stale the moment the AL test moved the parent to another row, and the part would then
+/// show the previous row's children — a wrong answer that no assertion in the part itself
+/// could distinguish from a right one.
+/// </summary>
+internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
+{
+    private readonly NavRecord _parentRecord;
+    private readonly (int PartFieldNo, int ParentFieldNo)[] _links;
+
+    public LiveNavTestPart(NavRecord record, IReadOnlyDictionary<int, int> controlIdToFieldNo, bool creatable,
+        RunnerPageInstance? page, object owner, int pageId,
+        NavRecord parentRecord, (int PartFieldNo, int ParentFieldNo)[] links)
+        : base(record, controlIdToFieldNo, creatable, page, owner, pageId)
+    {
+        _parentRecord = parentRecord;
+        _links = links;
+    }
+
+    public bool Enabled => true;
+    public bool Visible => true;
+
+    /// <summary>Filter the part's rowset to the parent's current row.</summary>
+    private void ApplyLink()
+    {
+        foreach (var (partFieldNo, parentFieldNo) in _links)
+        {
+            var parentValue = _parentRecord.GetFieldValue(parentFieldNo);
+            Record.ALSetRange(partFieldNo, parentValue);
+        }
+    }
+
+    public override bool MoveFirst() { ApplyLink(); return base.MoveFirst(); }
+    public override bool MoveLast() { ApplyLink(); return base.MoveLast(); }
+    public override bool MoveNext() { ApplyLink(); return base.MoveNext(); }
+    public override bool MovePrevious() { ApplyLink(); return base.MovePrevious(); }
+
+    public override bool FindRowFromTableFieldValues(int[] fieldNos, object[] values, bool forward)
+    {
+        ApplyLink();
+        return base.FindRowFromTableFieldValues(fieldNos, values, forward);
+    }
+
+    /// <summary>
+    /// Start a new row already carrying the parent's key. BC stamps the linked fields onto
+    /// the new record, which is why an AL test never sets them — asserting that the link
+    /// field arrived without being written is how the test proves the link ran at all.
+    /// </summary>
+    public override void InsertEmptyRow(bool beforeCurrent)
+    {
+        ApplyLink();
+        base.InsertEmptyRow(beforeCurrent);
+        foreach (var (partFieldNo, parentFieldNo) in _links)
+            Record.SetFieldValue(partFieldNo, _parentRecord.GetFieldValue(parentFieldNo));
+    }
 }

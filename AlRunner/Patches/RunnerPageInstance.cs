@@ -203,6 +203,25 @@ internal sealed class RunnerPageInstance
         return captions.Split(',');
     }
 
+    /// <summary>
+    /// The page's definition for a subpage PART control, or null when the control id is not
+    /// a part on this page.
+    ///
+    /// A part is not a ControlDefinition — the AL compiler emits it as an
+    /// <c>InfopartPageDefinition</c> carrying the hosted page's id in <c>PagePartID</c> and
+    /// the SubPageLink as a <c>SubFormLink</c> list of FilterDefinitions — so it is reached
+    /// through MetadataHelper.InfoPartDefinitions rather than through the control lookup.
+    /// </summary>
+    internal Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition? TryGetPartDefinition(int controlId)
+    {
+        if (_form is not NavForm form) return null;
+        foreach (var definition in form.MetadataHelper.InfoPartDefinitions)
+            if (definition is Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition part
+                && part.ID == controlId)
+                return part;
+        return null;
+    }
+
     /// <summary>BC's key convention for a control's source expression.</summary>
     internal static string SourceExpressionKey(int controlId) => "Control" + controlId;
 

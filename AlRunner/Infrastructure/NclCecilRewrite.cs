@@ -889,9 +889,21 @@ public static class NclCecilRewrite
             il.Append(il.Create(OpCodes.Ldarg_0));
             il.Append(il.Create(OpCodes.Ldarg_1));
             il.Append(il.Create(OpCodes.Call, asm.MainModule.ImportReference(baseOpenMethod)));
+            // ...then tell the attached page it is open. BC would learn this by attaching
+            // the page here (from ClientSession.CreatePage); the runner attaches at
+            // construction instead, so "open" has to be recorded explicitly — otherwise
+            // NavTestPageBase.Close() never forwards and a New() is never persisted.
+            // See RunnerTestPageState.
+            il.Append(il.Create(OpCodes.Ldarg_0));
+            il.Append(il.Create(OpCodes.Call, asm.MainModule.ImportReference(
+                typeof(AlRunnerV2.Patches.RunnerTestPageState).GetMethod(
+                    nameof(AlRunnerV2.Patches.RunnerTestPageState.MarkOpened),
+                    BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "RunnerTestPageState.MarkOpened not found — do not commit"))));
             il.Append(il.Create(OpCodes.Ret));
             body.MaxStackSize = 2;
-            Console.Error.WriteLine("[Cecil] Rewrote NavTestPage.Open → call NavTestPageBase.Open; ret  (skip ClientSession.CreatePage)");
+            Console.Error.WriteLine("[Cecil] Rewrote NavTestPage.Open → NavTestPageBase.Open + MarkOpened  (skip ClientSession.CreatePage)");
         }
 
         // 3. CheckPageOpened — replace body with `ret` (no-op).

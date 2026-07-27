@@ -308,38 +308,15 @@ public static partial class BcRuntime
         // what a control bound to a page VARIABLE (rather than to a Rec field) resolves
         // through. Null for a page the runner did not compile itself (no captured
         // metadata XML); such a page keeps the record-only behaviour below.
-        var realMeta = RecordPatches.EnsureRealPageMetadata(pageId);
-        if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "1")
-            Console.Out.WriteLine($"[page-metadata] TestPage page {pageId}: realMetadata={(realMeta != null ? "yes" : "no")}");
-
-        var tableId = RecordPatches.GetSourceTableIdForPage(pageId);
-        if (tableId == 0)
-            return new MockITestPage();
-
-        var metaTable = RecordPatches.GetOrBuildNCLMetaTable(tableId);
-        var recordType = RecordPatches.FindRecordType(tableId);
-        if (metaTable == null || recordType == null)
+        var built = TestPageFactory.TryBuild(self, pageId, out var why);
+        if (built == null)
         {
-            Console.Error.WriteLine($"[TestPage] Page {pageId}: source table {tableId} not ready; using navigation mock.");
+            Console.Error.WriteLine($"[TestPage] {why}; using navigation mock.");
             return new MockITestPage();
         }
 
-        var ctor = recordType.GetConstructors()
-            .FirstOrDefault(c => c.GetParameters().Length == 6);
-        if (ctor == null)
-        {
-            Console.Error.WriteLine($"[TestPage] Page {pageId}: Record{tableId} has no 6-arg constructor; using navigation mock.");
-            return new MockITestPage();
-        }
-
-        var record = (NavRecord)ctor.Invoke(new object?[]
-        {
-            self, metaTable, false, null, null, SecurityFiltering.Ignored
-        });
-        // Build the live AL page object where we can; null keeps the record-only behaviour.
-        var page = RunnerPageInstance.TryCreate(self, pageId, record);
-        return new LiveNavTestPage(record, RecordPatches.GetPageControlFieldMap(pageId),
-            RecordPatches.GetInsertAllowedForPage(pageId), page);
+        return new LiveNavTestPage(built.Record, RecordPatches.GetPageControlFieldMap(pageId),
+            RecordPatches.GetInsertAllowedForPage(pageId), built.Page, self, pageId);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
