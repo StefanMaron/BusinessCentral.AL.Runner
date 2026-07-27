@@ -142,6 +142,30 @@ internal sealed class RunnerPageInstance
     internal object? TryGetSourceExpression(int controlId)
         => _sourceExpressions[SourceExpressionKey(controlId)];
 
+    /// <summary>
+    /// The control's OptionCaption list, split on ',', or null when the control declares
+    /// none. An Option control's captions live on the PAGE CONTROL (ControlDefinition.
+    /// OptionCaption), not on the option's own metadata — NCLOptionMetadata carries only
+    /// the member names — and a TestPage sets an option by its caption, which is what the
+    /// user sees. Read from BC's own parsed control definitions.
+    /// </summary>
+    internal string[]? TryGetOptionCaptions(int controlId)
+    {
+        var helper = ReadProperty(_form, "MetadataHelper");
+        if (helper == null) return null;
+        if (ReadProperty(helper, "ControlDefinitions") is not System.Collections.IEnumerable definitions) return null;
+
+        foreach (var definition in definitions)
+        {
+            if (definition == null) continue;
+            if (ReadProperty(definition, "ID") is not int id || id != controlId) continue;
+            var caption = ReadProperty(definition, "OptionCaption") as string;
+            if (string.IsNullOrEmpty(caption)) return null;
+            return caption.Split(',');
+        }
+        return null;
+    }
+
     /// <summary>BC's key convention for a control's source expression.</summary>
     internal static string SourceExpressionKey(int controlId) => "Control" + controlId;
 

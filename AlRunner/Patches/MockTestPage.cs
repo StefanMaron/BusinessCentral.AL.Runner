@@ -410,12 +410,22 @@ internal sealed class PageVariableTestField : ITestField
         // declared option set is allowed to have.
         var options = ReadNonPublic<string[]>(metadata, "Options") ?? Array.Empty<string>();
         var ordinals = ReadNonPublic<int[]>(metadata, "OrdinalValues");
+
+        int Ordinal(int index) => ordinals != null && index < ordinals.Length ? ordinals[index] : index;
+
+        // A TestPage sets an option by what the user sees, i.e. the control's OptionCaption,
+        // which is NOT the option's member names (Pageworks: captions
+        // "Fields,Blocks,Images,…" over members [Field, Block, Image, …]). Captions first,
+        // then members — the caption is what AL test code is written against.
+        var captions = _page.TryGetOptionCaptions(_controlId);
+        if (captions != null)
+            for (var i = 0; i < captions.Length; i++)
+                if (OptionNamesEqual(captions[i], value))
+                    return NavOption.Create(metadata, Ordinal(i));
+
         for (var i = 0; i < options.Length; i++)
-        {
-            if (!OptionNamesEqual(options[i], value)) continue;
-            var ordinal = ordinals != null && i < ordinals.Length ? ordinals[i] : i;
-            return NavOption.Create(metadata, ordinal);
-        }
+            if (OptionNamesEqual(options[i], value))
+                return NavOption.Create(metadata, Ordinal(i));
 
         // A bare number is a legal way to set an option, and unambiguous.
         if (int.TryParse(value, System.Globalization.NumberStyles.Integer,
@@ -426,7 +436,11 @@ internal sealed class PageVariableTestField : ITestField
         throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
             $"TestPage SetValue (control {_controlId})",
             $"testpage-option-value — '{value}' is not one of the option's values "
-            + $"[{string.Join(", ", options)}]. See docs/scope.md");
+            + $"[{string.Join(", ", options)}]"
+            + (_page.TryGetOptionCaptions(_controlId) is { } caps
+                ? $" nor one of its captions [{string.Join(", ", caps)}]"
+                : " (the control declares no OptionCaption)")
+            + ". See docs/scope.md");
     }
 
     private static T? ReadNonPublic<T>(object target, string name) where T : class
