@@ -100,7 +100,13 @@ internal sealed class RunnerPageInstance
             // registers the source expressions. Driving those three individually registers
             // every expression twice ("An item with the same key has already been added.
             // Key: Control1167935535"), because InitializeFromMetadata has already run them.
-            Invoke(form, "SetSourceTable", new object?[] { record, true });
+            // clone: FALSE — the page must share the TestPage's cursor, not copy it. BC
+            // clones because a real page owns a cursor separate from whatever the caller
+            // passed; here the two are the same thing, and cloning gave the page its own
+            // unpositioned record. The page's AL then read a blank Rec: an OnAction that
+            // stamps Rec."No." wrote "" however the test had navigated. BC uses clone:false
+            // itself where the caller's record IS the page's (NavForm line ~3704).
+            Invoke(form, "SetSourceTable", new object?[] { record, false });
 
             var expressions = ReadProperty(form, "SourceExpressions") as System.Collections.IDictionary;
             if (expressions == null)
@@ -251,28 +257,68 @@ internal sealed class RunnerPageInstance
     /// </summary>
     internal void RaiseOnValidate(int controlId)
     {
-        System.Reflection.MethodInfo? match = null;
+        var trigger = FindTrigger(controlId, "_OnValidate", "OnValidate");
+        // A control with no OnValidate simply has no such method, which is not an error.
+        if (trigger != null) Invoke(trigger);
+    }
+
+    /// <summary>
+    /// Run the action's OnAction trigger.
+    ///
+    /// Unlike OnValidate, a missing trigger is NOT benign here: the AL test asked for the
+    /// action to happen. An action with no OnAction is one whose effect is RunObject (open
+    /// another page/report), which the runner cannot perform, so it refuses by name rather
+    /// than doing nothing — silently doing nothing is what made an unrun action surface one
+    /// step later as an assertion about its missing effect.
+    /// </summary>
+    internal void RaiseOnAction(int actionId)
+    {
+        var trigger = FindTrigger(actionId, "_OnAction", "OnAction")
+            ?? throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage action {actionId} on page {_pageId}",
+                "testpage-action — the page declares no OnAction trigger for this action. An "
+                + "action whose effect is RunObject (opening another page or report) cannot be "
+                + "performed here. See docs/scope.md");
+        Invoke(trigger);
+    }
+
+    /// <summary>
+    /// The page method carrying the trigger for <paramref name="memberId"/>.
+    ///
+    /// The AL compiler emits triggers as <c>{MemberName}_a{n}{suffix}</c> on the page class,
+    /// carrying the NAME but not the id. The member is identified by RE-DERIVING BC's own id
+    /// from each candidate's name — <c>IdSpace.GetMemberId(pageId, name)</c>, i.e. abs(FNV-1a
+    /// over the UTF-16 bytes of pageId + name) — and comparing it to the id being driven.
+    /// Matching a control on its source expression's Name does not work: that is the bound
+    /// VARIABLE's name (SelectedMode), not the control's (Mode), and they routinely differ.
+    /// </summary>
+    private MethodInfo? FindTrigger(int memberId, string suffix, string surface)
+    {
+        MethodInfo? match = null;
         foreach (var m in _form.GetType()
             .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
         {
             if (m.GetParameters().Length != 0) continue;
-            if (!m.Name.EndsWith("_OnValidate", StringComparison.Ordinal)) continue;
+            if (!m.Name.EndsWith(suffix, StringComparison.Ordinal)) continue;
 
-            var controlName = ControlNameFromTriggerMethod(m.Name);
-            if (controlName == null) continue;
-            if (MemberId(_pageId, controlName) != controlId) continue;
+            var memberName = MemberNameFromTriggerMethod(m.Name, suffix);
+            if (memberName == null) continue;
+            if (MemberId(_pageId, memberName) != memberId) continue;
 
             if (match != null)
                 throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
-                    $"TestPage OnValidate (control {controlId})",
-                    $"testpage-onvalidate — both '{match.Name}' and '{m.Name}' on "
-                    + $"{_form.GetType().Name} resolve to control {controlId}; the runner cannot "
+                    $"TestPage {surface} (member {memberId})",
+                    $"testpage-{surface.ToLowerInvariant()} — both '{match.Name}' and '{m.Name}' on "
+                    + $"{_form.GetType().Name} resolve to member {memberId}; the runner cannot "
                     + "tell which trigger belongs to it. See docs/scope.md");
             match = m;
         }
-        if (match == null) return;
+        return match;
+    }
 
-        try { match.Invoke(_form, null); }
+    private void Invoke(MethodInfo trigger)
+    {
+        try { trigger.Invoke(_form, null); }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
             // An Error() inside the AL trigger is the trigger's own outcome, not a runner
@@ -285,9 +331,8 @@ internal sealed class RunnerPageInstance
     /// "Mode_a45_OnValidate" -> "Mode". Returns null when the name does not carry the
     /// compiler's <c>_a{digits}_</c> disambiguator, rather than guessing at a split point.
     /// </summary>
-    private static string? ControlNameFromTriggerMethod(string methodName)
+    private static string? MemberNameFromTriggerMethod(string methodName, string suffix)
     {
-        const string suffix = "_OnValidate";
         var head = methodName.Substring(0, methodName.Length - suffix.Length);
         var lastUnderscore = head.LastIndexOf('_');
         if (lastUnderscore <= 0) return null;

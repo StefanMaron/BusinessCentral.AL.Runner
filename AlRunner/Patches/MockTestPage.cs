@@ -43,7 +43,7 @@ internal class MockITestPage : ITestPage
         return f;
     }
 
-    public ITestAction GetAction(int id)
+    public virtual ITestAction GetAction(int id)
     {
         if (!_actions.TryGetValue(id, out var a))
             _actions[id] = a = new MockITestAction();
@@ -187,6 +187,22 @@ internal class LiveNavTestPage : MockITestPage
             parentRecord: _record, links: SubPageLinks(definition, partPageId));
         _parts[controlId] = part;
         return part;
+    }
+
+    private readonly Dictionary<int, ITestAction> _liveActions = new();
+
+    /// <summary>
+    /// The page action for <paramref name="actionId"/>, wired to the page's own OnAction
+    /// trigger. The base mock returns a MockITestAction whose Invoke() is a literal no-op,
+    /// so an invoked action silently did nothing and the test failed a step later
+    /// complaining about the missing effect rather than about the action.
+    /// </summary>
+    public override ITestAction GetAction(int actionId)
+    {
+        if (_page == null) return base.GetAction(actionId);
+        if (!_liveActions.TryGetValue(actionId, out var action))
+            _liveActions[actionId] = action = new LiveNavTestAction(_page, actionId);
+        return action;
     }
 
     /// <summary>
@@ -641,6 +657,30 @@ internal sealed class MockITestAction : ITestAction
     public void Invoke()         { }
     public bool Visible          => true;
     public bool Enabled          => true;
+}
+
+/// <summary>
+/// A page action driven live: Invoke() runs the page's own OnAction trigger, on the page
+/// instance the TestPage is driving, so the trigger sees the current row.
+///
+/// Visible/Enabled still answer true unconditionally — those are AL expressions evaluated
+/// per row and are a separate, still-open gap; this class does not claim to have closed it.
+/// </summary>
+internal sealed class LiveNavTestAction : ITestAction
+{
+    private readonly RunnerPageInstance _page;
+    private readonly int _actionId;
+
+    public LiveNavTestAction(RunnerPageInstance page, int actionId)
+    {
+        _page = page;
+        _actionId = actionId;
+    }
+
+    public void Invoke() => _page.RaiseOnAction(_actionId);
+
+    public bool Visible => true;
+    public bool Enabled => true;
 }
 
 /// <summary>
