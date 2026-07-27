@@ -124,6 +124,7 @@ public static partial class RecordPatches
         _parsedQueries.Clear();
         _parsedXmlPorts.Clear();
         _parsedObjectDecls.Clear();
+        _parsedObjectCaptions.Clear();
         _metaFormCache.Clear();
         _metaReportCache.Clear();
         _metaQueryCache.Clear();
@@ -156,6 +157,7 @@ public static partial class RecordPatches
                 TryParseQueryFile(text);
                 TryParseXmlPortFile(text);
                 TryParseObjectDeclFile(text);
+                TryParseObjectCaptionFile(text);
             }
             PopulateNclMetadataCache();
         }
@@ -331,6 +333,9 @@ public static partial class RecordPatches
         // Codeunits / enums / *extension objects — (id, name) only, for AllObj
         // (2000000038). See RecordPatches.AlObjectDeclParser.cs.
         ParseAllObjectDeclSources();
+        // Caption property of every source object of any kind, for AllObjWithCaption
+        // (2000000058). See RecordPatches.AlObjectCaptionParser.cs.
+        ParseAllObjectCaptionSources();
 
         // NCL-internal system tables (RecordLink=2000000068, Field=2000000041, …)
         // live as AL source embedded in Microsoft.BusinessCentral.SystemApp.dll's
@@ -1065,6 +1070,24 @@ public static partial class RecordPatches
                 }
                 PopulateAllObjVirtualTable(allObjDa, table);
                 return allObjDa;
+            }
+
+            // ── AllObjWithCaption system virtual table (2000000058) ──────────────────────
+            // AllObj plus the Object Caption column, virtual for the same reason, and the
+            // documented way for AL to render an object's caption (lookup pages bound to
+            // it, TableRelation, and lookup(...) CalcFormula FlowFields). Same rows and
+            // same key as AllObj — the inventory is literally shared, so the two tables
+            // cannot disagree about which objects exist.
+            // See RecordPatches.AllObjWithCaptionVirtualTable.cs.
+            if (IsAllObjWithCaptionVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var allObjCaptionDa))
+                {
+                    var createdAllObjCaption = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    allObjCaptionDa = perTable.GetOrAdd(tableId, createdAllObjCaption);
+                }
+                PopulateAllObjWithCaptionVirtualTable(allObjCaptionDa, table);
+                return allObjCaptionDa;
             }
 
             // ── Integer system virtual table (2000000026) ────────────────────────────────

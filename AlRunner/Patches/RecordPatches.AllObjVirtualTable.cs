@@ -107,8 +107,9 @@ public static partial class RecordPatches
         var ordinals = EnsureAllObjObjectTypeOrdinals(allObjMetaTable);
         var done = _aovPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<(int, int), byte>());
 
-        foreach (var (kind, id, name) in EnumerateKnownAlObjects())
-        {
+        foreach (var (kind, id, name, _) in EnumerateKnownAlObjects())
+        {   // AllObj has no caption column; the shared inventory carries one for
+            // AllObjWithCaption (2000000058), which reads the same rows.
             if (id <= 0) continue;
             if (!ordinals.TryGetValue(NormalizeObjectTypeName(kind), out var typeOrdinal))
                 // This AL object kind has no column in THIS BC version's AllObj option
@@ -125,33 +126,44 @@ public static partial class RecordPatches
     /// Every AL object the runner has a real (kind, id, name) for: source-parsed objects
     /// of the app under test and of any source-compiled dependency, plus objects listed in
     /// the SymbolReference.json of every registered precompiled dependency .app.
+    ///
+    /// <c>Caption</c> is null when the object declares none — AL's own default caption is
+    /// then the object name, applied by the consumer (AllObjWithCaption) so that "not
+    /// declared" and "declared as the name" stay distinguishable here. AllObj itself has
+    /// no caption column and ignores it.
     /// </summary>
-    private static IEnumerable<(string Kind, int Id, string Name)> EnumerateKnownAlObjects()
+    private static IEnumerable<(string Kind, int Id, string Name, string? Caption)> EnumerateKnownAlObjects()
     {
         foreach (var t in _parsedTables.Values)
-            yield return ("Table", t.TableId, t.TableName);
+            yield return ("Table", t.TableId, t.TableName, SourceCaptionFor("Table", t.TableId));
         foreach (var p in _parsedPages.Values)
-            yield return (p.IsExtension ? "PageExtension" : "Page", p.Id, p.Name);
+        {
+            var kind = p.IsExtension ? "PageExtension" : "Page";
+            yield return (kind, p.Id, p.Name, SourceCaptionFor(kind, p.Id));
+        }
         foreach (var r in _parsedReports.Values)
-            yield return ("Report", r.Id, r.Name);
+            yield return ("Report", r.Id, r.Name, r.Caption);
         foreach (var r in _parsedReportExtensions.Values)
-            yield return ("ReportExtension", r.Id, r.Name);
+            yield return ("ReportExtension", r.Id, r.Name, SourceCaptionFor("ReportExtension", r.Id));
         foreach (var q in _parsedQueries.Values)
-            yield return (q.IsExtension ? "QueryExtension" : "Query", q.Id, q.Name);
+        {
+            var kind = q.IsExtension ? "QueryExtension" : "Query";
+            yield return (kind, q.Id, q.Name, SourceCaptionFor(kind, q.Id));
+        }
         foreach (var x in _parsedXmlPorts.Values)
-            yield return ("XMLport", x.Id, x.Name);
+            yield return ("XMLport", x.Id, x.Name, SourceCaptionFor("XMLport", x.Id));
         // Codeunits / enums / *extension kinds — see RecordPatches.AlObjectDeclParser.cs.
         foreach (var d in _parsedObjectDecls.Values)
-            yield return (d.Kind, d.Id, d.Name);
+            yield return (d.Kind, d.Id, d.Name, SourceCaptionFor(d.Kind, d.Id));
         // Enums registered by the emit pipeline and by dependency .app scans.
         foreach (var e in AlEnumMetadataRegistry.Snapshot())
-            yield return ("Enum", e.Id, e.Name);
+            yield return ("Enum", e.Id, e.Name, SourceCaptionFor("Enum", e.Id));
         // Precompiled dependency .app objects (BaseApp / SystemApp / ISV apps).
         foreach (var o in EnumerateBcAppObjects())
             yield return o;
     }
 
-    private static IEnumerable<(string Kind, int Id, string Name)> EnumerateBcAppObjects()
+    private static IEnumerable<(string Kind, int Id, string Name, string? Caption)> EnumerateBcAppObjects()
     {
         foreach (var appPath in _bcAppPaths.ToArray())
         {
@@ -167,7 +179,7 @@ public static partial class RecordPatches
                 continue;
             }
             foreach (var o in objects)
-                yield return (o.Kind, o.Id, o.Name);
+                yield return (o.Kind, o.Id, o.Name, o.Caption);
         }
     }
 

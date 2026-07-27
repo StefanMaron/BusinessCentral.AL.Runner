@@ -19,7 +19,9 @@ internal static partial class BcAppSymbolCache
     //     RelatedTable. Any parse CHANGE needs a bump, not just a shape change — the
     //     on-disk payload is keyed on this, so a v5 cache written by the buggy parse
     //     stays valid and silently replays the old result.
-    private const int CacheVersion = 6;
+    // v7: Objects carry their Caption property, feeding the AllObjWithCaption system
+    //     virtual table (2000000058). See RecordPatches.AllObjWithCaptionVirtualTable.cs.
+    private const int CacheVersion = 7;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
 
     internal sealed record AppSymbols(List<ParsedTable> Tables, List<EnumSymbol> Enums, List<QuerySymbol> Queries,
@@ -40,13 +42,18 @@ internal static partial class BcAppSymbolCache
         string? DataItemTableView, string? RequestFilterFields);
 
     /// <summary>
-    /// Flat (AL object kind, id, name) tuple for one application object declared by a
-    /// dependency .app. Read straight off the SymbolReference.json object arrays, which
-    /// carry <c>Id</c> + <c>Name</c> for every kind — including the Codeunits / Pages /
-    /// Reports / XmlPorts the typed parsing above deliberately ignores. The only consumer
-    /// is the AllObj virtual table, which needs nothing but these three values.
+    /// Flat (AL object kind, id, name, caption) tuple for one application object declared
+    /// by a dependency .app. Read straight off the SymbolReference.json object arrays,
+    /// which carry <c>Id</c> + <c>Name</c> for every kind — including the Codeunits /
+    /// Pages / Reports / XmlPorts the typed parsing above deliberately ignores. Consumed
+    /// by the AllObj (2000000038) and AllObjWithCaption (2000000058) virtual tables.
+    ///
+    /// <c>Caption</c> is null when the object declares no Caption property; AL's own
+    /// default caption is then the object name, and applying that default is the
+    /// consumer's job so the "not stated" and "stated as the name" cases stay distinct
+    /// here.
     /// </summary>
-    internal sealed record ObjectSymbol(string Kind, int Id, string Name);
+    internal sealed record ObjectSymbol(string Kind, int Id, string Name, string? Caption = null);
 
     // SymbolReference.json container name → the AllObj "Object Type" option name the
     // objects inside it map to. Matched against the live option string by name, so a
@@ -197,7 +204,8 @@ internal static partial class BcAppSymbolCache
                     continue;
                 var objName = el.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() : null;
                 if (string.IsNullOrEmpty(objName)) continue;
-                objects.TryAdd((kind, objId), new ObjectSymbol(kind, objId, objName));
+                SymbolProperties(el).TryGetValue("Caption", out var objCaption);
+                objects.TryAdd((kind, objId), new ObjectSymbol(kind, objId, objName, objCaption));
             }
         }
 
