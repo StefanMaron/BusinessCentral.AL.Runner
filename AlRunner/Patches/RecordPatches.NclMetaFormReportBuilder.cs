@@ -112,12 +112,24 @@ public static partial class RecordPatches
         try
         {
             // (loader, id, appGroup, depOrder=-1, alNamespace="")
+            //
+            // loader = RunnerMetaApplicationObjectLoader.Instance for the same reason the
+            // report builder passes it: NCLMetaForm.LoadMetadata() -> GetMetadataFromLoader()
+            // -> ObjectLoader.XmlMetadataLoader.GetMetaObjectXmlMetadata(...) dereferences it,
+            // and a null loader NREs there. It answers from AlPageMetadataRegistry — the
+            // emit-captured page metadata XML — so the page gets its REAL control tree.
             var meta = _mCreateEmptyNCLMetaForm.Invoke(null,
-                new object?[] { null, pageId, _baseAppGroup, -1, string.Empty });
+                new object?[] { RunnerMetaApplicationObjectLoader.Instance, pageId, _baseAppGroup, -1, string.Empty });
 
-            // Mark metadataLoaded=true on the freshly-built skeleton so the
-            // shared NCLMetaApplicationObject.Populate path is skipped (in
-            // addition to the JMP-hook NoOp installed in §O).
+            // Mark metadataLoaded=true on the freshly-built skeleton so the shared
+            // NCLMetaApplicationObject.Populate path is skipped (in addition to the
+            // JMP-hook NoOp installed in §O).
+            //
+            // This still happens unconditionally, and deliberately: this builder runs at
+            // Register() time, BEFORE the compile that captures page metadata XML, so
+            // "does this page have metadata?" is always false here and deciding on it
+            // would be deciding on a value that is not yet knowable. Pages are opted into
+            // a REAL metadata load later and on demand, by EnsureRealPageMetadata below.
             EnsureCachePopulatorReflection();
             if (meta != null && _fNCLMetaAppObjMetadataLoaded != null)
                 AlRunnerV2.Infrastructure.FieldPoke.SetInstance(_fNCLMetaAppObjMetadataLoaded, meta, true);

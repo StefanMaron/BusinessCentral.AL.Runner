@@ -3174,7 +3174,10 @@ static string ComputeAlCacheKey(
     //    v5: sidecar also carries the AlReportLayoutRegistry (per-report
     //        `rendering { layout(...) }` declarations) so cache HIT replays the
     //        rows behind the Report Layout List virtual table (2000000234).
-    WriteLine("schema:v5");
+    //    v6: sidecar also carries the AlPageMetadataRegistry (per-page runtime
+    //        metadata XML) so cache HIT replays the real page control tree that
+    //        NCLMetaForm.LoadMetadata() builds from it.
+    WriteLine("schema:v6");
 
     // 1. Runner assembly fingerprint — any rewriter / polyfill / patch change
     //    in the runner forces a cache miss.
@@ -3260,6 +3263,17 @@ static int SaveEnumRegistrySidecar(string path)
         // compiler's ReportLayoutSymbol — replayed on cache HIT so layout
         // selection by name keeps working on a warm cache.
         reportLayouts = AlReportLayoutRegistry.Snapshot(),
+        // v6: per-page runtime metadata XML captured from emit — replayed on cache
+        // HIT so NCLMetaForm.LoadMetadata() still builds a real control tree on a
+        // warm run. Emit only fires on a MISS; anything captured there and not
+        // persisted here is silently gone on the next run.
+        pageMetadata = AlPageMetadataRegistry.Ids
+            .OrderBy(i => i)
+            .Select(i => new
+            {
+                id = i,
+                xml = AlPageMetadataRegistry.TryGet(i, out var x) ? x : string.Empty,
+            }).ToArray(),
     };
     var json = System.Text.Json.JsonSerializer.Serialize(dto, new System.Text.Json.JsonSerializerOptions
     {
@@ -3332,6 +3346,17 @@ static int LoadEnumRegistrySidecar(string path)
         && layoutArr.ValueKind == System.Text.Json.JsonValueKind.Array)
     {
         AlReportLayoutRegistry.LoadFromJsonArray(layoutArr);
+    }
+    // v6: replay per-page runtime metadata XML.
+    if (doc.RootElement.TryGetProperty("pageMetadata", out var pageArr)
+        && pageArr.ValueKind == System.Text.Json.JsonValueKind.Array)
+    {
+        foreach (var e in pageArr.EnumerateArray())
+        {
+            AlPageMetadataRegistry.Register(
+                e.GetProperty("id").GetInt32(),
+                e.GetProperty("xml").GetString() ?? string.Empty);
+        }
     }
     return count;
 }

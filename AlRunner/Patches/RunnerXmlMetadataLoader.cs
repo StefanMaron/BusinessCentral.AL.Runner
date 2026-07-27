@@ -55,23 +55,35 @@ public sealed class RunnerXmlMetadataLoader : INCLObjectXmlMetadataLoader
 {
     public NCLObjectXmlMetadata GetMetaObjectXmlMetadata(ApplicationObjectId objectId, NavAppGroup appGroup)
     {
+        // MetadataHash is a cache-invalidation key only (the real
+        // NCLObjectXmlMetadataLoader hashes the app's own object summary); a stable
+        // per-object string is faithful enough since the runner has no
+        // republish/versioning concept to invalidate against.
         if (objectId.ObjectType == ObjectType.Report
-            && AlReportMetadataRegistry.TryGet(objectId.ObjectNumber, out var xml))
-        {
-            var doc = new System.Xml.XmlDocument();
-            doc.LoadXml(xml);
-            // MetadataHash is a cache-invalidation key only (the real
-            // NCLObjectXmlMetadataLoader hashes the app's own object summary);
-            // a stable per-report string is faithful enough since the runner
-            // has no republish/versioning concept to invalidate against.
-            return new NCLObjectXmlMetadata(doc, NavText.Create($"runner-report-{objectId.ObjectNumber}"));
-        }
+            && AlReportMetadataRegistry.TryGet(objectId.ObjectNumber, out var reportXml))
+            return Wrap(reportXml, $"runner-report-{objectId.ObjectNumber}");
+
+        // Pages: the same emit-captured metadata XML, feeding NCLMetaForm.LoadMetadata()
+        // so the page gets its real control tree instead of an empty skeleton. That tree
+        // is what NavForm registers its source expressions from, and therefore the only
+        // route by which a TestPage control bound to a page variable (rather than to a
+        // Rec field) can resolve to anything at all.
+        if (objectId.ObjectType == ObjectType.Page
+            && AlPageMetadataRegistry.TryGet(objectId.ObjectNumber, out var pageXml))
+            return Wrap(pageXml, $"runner-page-{objectId.ObjectNumber}");
 
         throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
             $"INCLObjectXmlMetadataLoader.GetMetaObjectXmlMetadata({objectId.ObjectType} {objectId.ObjectNumber})",
             "not-yet-implemented — no emit-captured metadata XML for this object " +
-            "(only reports the runner source-compiled are served; precompiled-dependency " +
-            "reports use NavReportSync's separate stub-metadata path)");
+            "(only reports and pages the runner source-compiled are served; " +
+            "precompiled-dependency reports use NavReportSync's separate stub-metadata path)");
+    }
+
+    private static NCLObjectXmlMetadata Wrap(string xml, string metadataHash)
+    {
+        var doc = new System.Xml.XmlDocument();
+        doc.LoadXml(xml);
+        return new NCLObjectXmlMetadata(doc, NavText.Create(metadataHash));
     }
 
     public NCLObjectXmlMetadata GetSystemTableMetaObjectXmlMetadataFromApplicationDatabase(ApplicationObjectId objectId) =>
@@ -109,17 +121,50 @@ public sealed class RunnerMetaApplicationObjectLoader : INCLMetaApplicationObjec
             "INCLMetaApplicationObjectLoader.MetadataCache",
             "not-yet-implemented — runner metadata loader only serves report metadata XML");
 
-    public IMetaObjectCache MetaObjectCache =>
-        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
-            "INCLMetaApplicationObjectLoader.MetaObjectCache",
-            "not-yet-implemented — runner metadata loader only serves report metadata XML");
+    // BC's OWN MetaObjectCache, constructed over our XML loader. NCLMetaForm's page path
+    // does NOT go through XmlMetadataLoader the way the report path does — it calls
+    // ObjectLoader.MetaObjectCache.GetMetaPage(id, appGroup), which is what turns the
+    // metadata XML into a real MetaPageDefinition. MetaObjectCache's only constructor
+    // dependency is an INCLObjectXmlMetadataLoader, which is exactly what we already have,
+    // so the parsing is BC's rather than a reimplementation of it.
+    //
+    // Resolved by reflection because MetaObjectCache is internal to Ncl. Built lazily and
+    // once: it is a cache, so a fresh instance per call would defeat its purpose.
+    private IMetaObjectCache? _metaObjectCache;
+    private readonly object _metaObjectCacheLock = new();
+
+    public IMetaObjectCache MetaObjectCache
+    {
+        get
+        {
+            if (_metaObjectCache != null) return _metaObjectCache;
+            lock (_metaObjectCacheLock)
+            {
+                if (_metaObjectCache != null) return _metaObjectCache;
+                var type = typeof(NCLMetadata).Assembly
+                    .GetType("Microsoft.Dynamics.Nav.Runtime.MetaObjectCache")
+                    ?? throw new InvalidOperationException(
+                        "MetaObjectCache type not found in Ncl — BC metadata shape changed");
+                var ctor = type.GetConstructor(
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
+                        | System.Reflection.BindingFlags.Instance,
+                    binder: null, types: new[] { typeof(INCLObjectXmlMetadataLoader), typeof(bool) },
+                    modifiers: null)
+                    ?? throw new InvalidOperationException(
+                        "MetaObjectCache(INCLObjectXmlMetadataLoader, bool) ctor not found — BC metadata shape changed");
+                _metaObjectCache = (IMetaObjectCache)ctor.Invoke(new object?[] { XmlMetadataLoader, false });
+                return _metaObjectCache;
+            }
+        }
+    }
 
     public INavAppClrTypeRetriever AppClrTypeRetriever =>
         throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
             "INCLMetaApplicationObjectLoader.AppClrTypeRetriever",
             "not-yet-implemented — runner metadata loader only serves report metadata XML");
 
-    // Single shared instance — the loader is stateless (every call re-resolves
-    // against AlReportMetadataRegistry, which is itself the source of truth).
+    // Single shared instance. The XML loader half is stateless (every call re-resolves
+    // against the registries, which are the source of truth); the MetaObjectCache half is
+    // deliberately NOT — it is BC's own cache and must be shared to be one.
     public static readonly RunnerMetaApplicationObjectLoader Instance = new();
 }

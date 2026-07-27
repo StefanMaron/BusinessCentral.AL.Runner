@@ -1552,6 +1552,14 @@ public sealed class BcCompiler
                 CaptureReportLayouts(reportSym, metadata);
             }
 
+            // Same capture for pages. NCLMetaForm.LoadMetadata() parses this XML into a
+            // real MetaForm with the page's full control tree — without it the runner's
+            // NCLMetaForm is a skeleton with no controls, which is why a TestPage control
+            // bound to anything but a Rec field has nowhere to resolve to.
+            // See AlPageMetadataRegistry.cs (and the cache-HIT sidecar it documents).
+            if (symbol is NavCA.IPageTypeSymbol pageSym && !string.IsNullOrEmpty(metadata))
+                AlPageMetadataRegistry.Register(pageSym.Id, metadata);
+
             if (Environment.GetEnvironmentVariable("BCCOMPILER_TRACE") == "1")
                 Console.Error.WriteLine($"  emit[{AddCalls}]: {symbol.Name}");
             if (Environment.GetEnvironmentVariable("BCCOMPILER_DUMP_CS") == "1")

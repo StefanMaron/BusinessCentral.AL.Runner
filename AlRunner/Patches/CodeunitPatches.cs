@@ -304,6 +304,14 @@ public static partial class BcRuntime
         var idProp = objId.GetType().GetProperty("ObjectNumber",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
         var pageId = idProp?.GetValue(objId) is int value ? value : 0;
+        // Opt this page into a real metadata load — its parsed control tree, which is
+        // what a control bound to a page VARIABLE (rather than to a Rec field) resolves
+        // through. Null for a page the runner did not compile itself (no captured
+        // metadata XML); such a page keeps the record-only behaviour below.
+        var realMeta = RecordPatches.EnsureRealPageMetadata(pageId);
+        if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "1")
+            Console.Out.WriteLine($"[page-metadata] TestPage page {pageId}: realMetadata={(realMeta != null ? "yes" : "no")}");
+
         var tableId = RecordPatches.GetSourceTableIdForPage(pageId);
         if (tableId == 0)
             return new MockITestPage();
