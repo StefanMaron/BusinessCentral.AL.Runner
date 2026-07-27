@@ -12,11 +12,32 @@ internal static partial class BcAppSymbolCache
     // v3: added Queries to the parsed payload (generic NCLMetaQuery builder).
     // v4: added Objects — the flat (kind, id, name) inventory that feeds the AllObj
     //     system virtual table (2000000038). See RecordPatches.AllObjVirtualTable.cs.
-    private const int CacheVersion = 4;
+    // v5: added Reports — caption / ProcessingOnly / UseRequestPage / data-item tree,
+    //     feeding the Report Metadata (2000000139) and Report Data Items (2000000203)
+    //     virtual tables. See RecordPatches.ReportMetadataVirtualTable.cs.
+    // v6: report data items now have their #appId# module qualifier stripped from
+    //     RelatedTable. Any parse CHANGE needs a bump, not just a shape change — the
+    //     on-disk payload is keyed on this, so a v5 cache written by the buggy parse
+    //     stays valid and silently replays the old result.
+    private const int CacheVersion = 6;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
 
     internal sealed record AppSymbols(List<ParsedTable> Tables, List<EnumSymbol> Enums, List<QuerySymbol> Queries,
-        List<ObjectSymbol> Objects);
+        List<ObjectSymbol> Objects, List<ReportSymbol> Reports);
+
+    /// <summary>
+    /// A precompiled dependency's report, as far as SymbolReference.json states it. Feeds
+    /// the Report Metadata / Report Data Items virtual tables for reports the runner never
+    /// compiles (Base Application, System Application, ISV apps).
+    /// </summary>
+    internal sealed record ReportSymbol(
+        int Id, string Name, string? Caption, bool ProcessingOnly, bool UseRequestPage,
+        string? WordMergeDataItem, List<ReportDataItemSymbol> DataItems);
+
+    /// <summary>One entry of a report's data-item tree, flattened in declaration order.</summary>
+    internal sealed record ReportDataItemSymbol(
+        int Id, string Name, string RelatedTable, int Indentation,
+        string? DataItemTableView, string? RequestFilterFields);
 
     /// <summary>
     /// Flat (AL object kind, id, name) tuple for one application object declared by a
@@ -66,7 +87,7 @@ internal static partial class BcAppSymbolCache
 
     private sealed record CachePayload(long Length, long LastWriteUtcTicks,
         List<ParsedTable> Tables, List<EnumSymbol> Enums, List<QuerySymbol> Queries,
-        List<ObjectSymbol>? Objects);
+        List<ObjectSymbol>? Objects, List<ReportSymbol>? Reports);
 
     /// <summary>
     /// Parse a loose <c>SymbolReference.json</c> file (the raw module JSON, NOT a .app
@@ -81,10 +102,11 @@ internal static partial class BcAppSymbolCache
         var enums = new Dictionary<int, EnumSymbol>();
         var queries = new Dictionary<int, QuerySymbol>();
         var objects = new Dictionary<(string, int), ObjectSymbol>();
+        var reports = new Dictionary<int, ReportSymbol>();
         using var doc = JsonDocument.Parse(File.ReadAllText(jsonPath));
-        VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects);
+        VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports);
         return new AppSymbols(tables.Values.ToList(), enums.Values.ToList(), queries.Values.ToList(),
-            objects.Values.ToList());
+            objects.Values.ToList(), reports.Values.ToList());
     }
 
     internal static AppSymbols Get(string appPath)
@@ -122,7 +144,7 @@ internal static partial class BcAppSymbolCache
                 || payload.LastWriteUtcTicks != appInfo.LastWriteTimeUtc.Ticks)
                 return null;
             return new AppSymbols(payload.Tables, payload.Enums, payload.Queries ?? new List<QuerySymbol>(),
-                payload.Objects ?? new List<ObjectSymbol>());
+                payload.Objects ?? new List<ObjectSymbol>(), payload.Reports ?? new List<ReportSymbol>());
         }
         catch (Exception ex)
         {
@@ -136,7 +158,7 @@ internal static partial class BcAppSymbolCache
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
-            var payload = new CachePayload(appInfo.Length, appInfo.LastWriteTimeUtc.Ticks, symbols.Tables, symbols.Enums, symbols.Queries, symbols.Objects);
+            var payload = new CachePayload(appInfo.Length, appInfo.LastWriteTimeUtc.Ticks, symbols.Tables, symbols.Enums, symbols.Queries, symbols.Objects, symbols.Reports);
             File.WriteAllText(cachePath, JsonSerializer.Serialize(payload));
         }
         catch (Exception ex)
@@ -151,16 +173,17 @@ internal static partial class BcAppSymbolCache
         var enums = new Dictionary<int, EnumSymbol>();
         var queries = new Dictionary<int, QuerySymbol>();
         var objects = new Dictionary<(string, int), ObjectSymbol>();
+        var reports = new Dictionary<int, ReportSymbol>();
         foreach (var json in ReadSymbolReferences(appPath))
         {
             using var doc = JsonDocument.Parse(json);
-            VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects);
+            VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports);
         }
         return new AppSymbols(tables.Values.ToList(), enums.Values.ToList(), queries.Values.ToList(),
-            objects.Values.ToList());
+            objects.Values.ToList(), reports.Values.ToList());
     }
 
-    private static void VisitSymbolContainer(JsonElement container, Dictionary<int, ParsedTable> tables, Dictionary<int, EnumSymbol> enums, Dictionary<int, QuerySymbol> queries, Dictionary<(string, int), ObjectSymbol> objects)
+    private static void VisitSymbolContainer(JsonElement container, Dictionary<int, ParsedTable> tables, Dictionary<int, EnumSymbol> enums, Dictionary<int, QuerySymbol> queries, Dictionary<(string, int), ObjectSymbol> objects, Dictionary<int, ReportSymbol> reports)
     {
         // Flat (kind, id, name) sweep for AllObj. Independent of the typed parsing below
         // so a kind we do not model in depth still shows up as an existing object.
@@ -208,10 +231,100 @@ internal static partial class BcAppSymbolCache
             }
         }
 
+        if (container.TryGetProperty("Reports", out var reportArray) && reportArray.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var r in reportArray.EnumerateArray())
+            {
+                var parsed = TryParseReportSymbol(r);
+                if (parsed != null && !reports.ContainsKey(parsed.Id))
+                    reports[parsed.Id] = parsed;
+            }
+        }
+
         if (container.TryGetProperty("Namespaces", out var namespaces) && namespaces.ValueKind == JsonValueKind.Array)
         {
             foreach (var ns in namespaces.EnumerateArray())
-                VisitSymbolContainer(ns, tables, enums, queries, objects);
+                VisitSymbolContainer(ns, tables, enums, queries, objects, reports);
+        }
+    }
+
+    /// <summary>
+    /// Parse one entry of a SymbolReference.json <c>Reports</c> array into the subset the
+    /// Report Metadata (2000000139) / Report Data Items (2000000203) virtual tables expose.
+    /// This is the ONLY route to a precompiled dependency's report shape: an R2R app ships
+    /// no metadata XML, and its 8000-file embedded <c>src/</c> is far too expensive to parse
+    /// for this. The symbol file carries the data verbatim (Id, Name, Caption property, the
+    /// full DataItems tree with per-item RelatedTable and Indentation), so nothing is
+    /// inferred here — a shape the symbol file does not state is left null/absent for the
+    /// caller to default, never invented.
+    /// </summary>
+    private static ReportSymbol? TryParseReportSymbol(JsonElement report)
+    {
+        if (!report.TryGetProperty("Id", out var idProp) || !idProp.TryGetInt32(out var reportId) || reportId <= 0)
+            return null;
+        var name = report.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() : null;
+        if (string.IsNullOrEmpty(name)) return null;
+
+        var props = SymbolProperties(report);
+        props.TryGetValue("Caption", out var caption);
+        props.TryGetValue("WordMergeDataItem", out var wordMergeDataItem);
+        // AL defaults: ProcessingOnly false, UseRequestPage true. The symbol file only
+        // states a property when the AL source declared it.
+        bool processingOnly = props.TryGetValue("ProcessingOnly", out var po)
+            && (po == "1" || string.Equals(po, "true", StringComparison.OrdinalIgnoreCase));
+        bool useRequestPage = !(props.TryGetValue("UseRequestPage", out var urp)
+            && (urp == "0" || string.Equals(urp, "false", StringComparison.OrdinalIgnoreCase)));
+
+        var dataItems = new List<ReportDataItemSymbol>();
+        CollectReportDataItems(report, indentation: 0, dataItems);
+
+        return new ReportSymbol(reportId, name, caption, processingOnly, useRequestPage,
+            wordMergeDataItem, dataItems);
+    }
+
+    /// <summary>
+    /// A SymbolReference.json object reference is <c>#&lt;appIdNoHyphens&gt;#&lt;Name&gt;</c>
+    /// whenever it crosses a module boundary, and a plain name within one. A report data
+    /// item bound to a table from another module (System's Integer / Company / AllObj,
+    /// which is most of them) therefore arrives qualified; leaving the prefix on makes the
+    /// table unresolvable and silently drops the report. Same rule as TargetObject on a
+    /// tableextension — see BcAppSymbolCache.TableExtensions.cs.
+    /// </summary>
+    private static string? StripModuleQualifier(string? reference)
+    {
+        if (string.IsNullOrEmpty(reference) || reference[0] != '#') return reference;
+        var secondHash = reference.IndexOf('#', 1);
+        return secondHash >= 0 ? reference.Substring(secondHash + 1) : reference;
+    }
+
+    /// <summary>
+    /// Flatten a report's data-item tree in declaration order. Nested data items live under
+    /// each item's own <c>DataItems</c>; the symbol file also carries an explicit
+    /// <c>Indentation</c> on nested entries, which is preferred when present so our depth
+    /// count can never disagree with the compiler's own.
+    /// </summary>
+    private static void CollectReportDataItems(JsonElement container, int indentation, List<ReportDataItemSymbol> into)
+    {
+        if (!container.TryGetProperty("DataItems", out var arr) || arr.ValueKind != JsonValueKind.Array)
+            return;
+        foreach (var di in arr.EnumerateArray())
+        {
+            var name = di.TryGetProperty("Name", out var n) ? n.GetString() : null;
+            var relatedTable = StripModuleQualifier(
+                di.TryGetProperty("RelatedTable", out var rt) ? rt.GetString() : null);
+            if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(relatedTable)) continue;
+
+            int indent = di.TryGetProperty("Indentation", out var ind) && ind.TryGetInt32(out var iv)
+                ? iv
+                : indentation;
+            int dataItemId = di.TryGetProperty("Id", out var diId) && diId.TryGetInt32(out var idv) ? idv : 0;
+
+            var props = SymbolProperties(di);
+            props.TryGetValue("DataItemTableView", out var tableView);
+            props.TryGetValue("RequestFilterFields", out var filterFields);
+
+            into.Add(new ReportDataItemSymbol(dataItemId, name, relatedTable, indent, tableView, filterFields));
+            CollectReportDataItems(di, indent + 1, into);
         }
     }
 

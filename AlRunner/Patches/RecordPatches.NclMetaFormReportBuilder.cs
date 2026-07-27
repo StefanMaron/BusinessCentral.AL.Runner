@@ -135,7 +135,15 @@ public static partial class RecordPatches
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static object? BuildNCLMetaReport(int reportId)
     {
-        if (!_parsedReports.TryGetValue(reportId, out var parsed)) return null;
+        // Existence check only — nothing below reads the parsed source. It covers every
+        // report the runner knows about, INCLUDING ones that live in a precompiled
+        // dependency: a Base Application report needs this skeleton just as much as one we
+        // compiled, and until now it never got one. (That gap was masked: the AL report
+        // parser used to match prose in doc comments, so `/// ... report 1306 "Standard
+        // Sales - Invoice": ...` fabricated a _parsedReports entry for 1306 and this
+        // builder happened to accept it. Tightening the parser removed the accident and
+        // exposed the real gap — hence the widened check here.)
+        if (!KnownReportIdSet().Contains(reportId)) return null;
         EnsureFormReportReflection();
         if (_mCreateEmptyNCLMetaReport == null) return null;
 

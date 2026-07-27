@@ -87,7 +87,10 @@ public static partial class RecordPatches
         // once per bundle before any AL test code executes, so every report-metadata AL
         // surface gets a real receiver regardless of test order.
         AlRunnerV2.BcRuntime.EnsureMetadataProviderSeeded();
-        PopulateOneObjectType(arr, objectTypeReport, _parsedReports.Keys.ToArray(),
+        // Every report the runner knows exists, not just the source-parsed ones — a report
+        // in a precompiled dependency (Base Application 1306, say) reaches
+        // NCLMetadata.GetMetaApplicationObject through exactly the same AL surfaces.
+        PopulateOneObjectType(arr, objectTypeReport, KnownReportIds(),
             id => _metaReportCache.GetOrAdd(id, BuildNCLMetaReport), "Report");
 
         // Queries — same shape, ObjectType=9, factory takes ApplicationObjectId.

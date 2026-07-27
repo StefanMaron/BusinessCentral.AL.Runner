@@ -1098,6 +1098,34 @@ public static partial class RecordPatches
                 return layoutDa;
             }
 
+            // ── Report Metadata (2000000139) / Report Data Items (2000000203) ────────────
+            // Virtual on the service tier too: their rows are computed from the metadata of
+            // every published report. They are the documented way for AL to discover a
+            // report's caption, request-page flag and dataset shape without running it, and
+            // an empty store makes every such lookup answer "no such report" / "no data
+            // items". See RecordPatches.ReportMetadataVirtualTable.cs.
+            if (IsReportMetadataVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var reportMetaDa))
+                {
+                    var createdReportMeta = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    reportMetaDa = perTable.GetOrAdd(tableId, createdReportMeta);
+                }
+                PopulateReportMetadataVirtualTable(reportMetaDa, table);
+                return reportMetaDa;
+            }
+
+            if (IsReportDataItemsVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var reportDiDa))
+                {
+                    var createdReportDi = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    reportDiDa = perTable.GetOrAdd(tableId, createdReportDi);
+                }
+                PopulateReportDataItemsVirtualTable(reportDiDa, table);
+                return reportDiDa;
+            }
+
             if (perTable.TryGetValue(tableId, out var cached))
             {
                 return cached;
