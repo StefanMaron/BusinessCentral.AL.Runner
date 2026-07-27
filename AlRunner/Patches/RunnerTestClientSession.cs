@@ -1,0 +1,104 @@
+// RunnerTestClientSession — the ITestClientSession BC's test harness expects a client to
+// provide.
+//
+// WHERE IT IS USED
+//   NavTestExecution.TestHandleModalForm pushes a delegate that builds the NavTestPage the
+//   AL [ModalPageHandler] receives:
+//       new NavTestPage(..., TestClientProxy<ITestPage>.Proxy(
+//           testClientSession.GetPage(runRequest.Data.FormHandle)))
+//   Real BC gets that session by Assembly.Load-ing the TestPageClient, which does not exist
+//   in the runner — so testClientSession stayed null and the delegate NRE'd the moment the
+//   dispatch reached it.
+//
+// WHAT GetPage RETURNS
+//   The page BC already opened. The form is live and registered under the handle, so the
+//   page under test is that form's own record and control tree — not a second instance
+//   built alongside it. Handing back a fresh page would let the handler drive one object
+//   while the AL that called RunModal observes another.
+using System.Reflection;
+using Microsoft.Dynamics.Nav.Runtime;
+using Microsoft.Dynamics.Nav.Types;
+using Microsoft.Dynamics.Nav.Types.Metadata;
+
+namespace AlRunnerV2.Patches;
+
+public sealed class RunnerTestClientSession : ITestClientSession
+{
+    private readonly object _session;
+
+    public RunnerTestClientSession(object session) => _session = session;
+
+    /// <summary>
+    /// The live page for a form BC registered under <paramref name="formHandle"/>.
+    /// </summary>
+    public ITestPage GetPage(Guid formHandle, bool forClose = false)
+    {
+        var form = RegisteredForm(formHandle)
+            ?? throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage modal page (handle {formHandle})",
+                "testpage-modal — no form is registered under this handle, so the runner cannot "
+                + "hand the [ModalPageHandler] the page it is being asked to drive. "
+                + "See docs/scope.md");
+
+        var pageId = PageIdOf(form);
+        var record = ReadProperty(form, "SourceTable") as NavRecord
+            ?? throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage modal page {pageId}",
+                "testpage-modal — the modal form has no source table bound, so there is no record "
+                + "for the handler to read or write. See docs/scope.md");
+
+        return new AlRunnerV2.LiveNavTestPage(
+            record,
+            RecordPatches.GetPageControlFieldMap(pageId),
+            RecordPatches.GetInsertAllowedForPage(pageId),
+            RunnerPageInstance.Adopt(form, pageId),
+            _session,
+            pageId);
+    }
+
+    private object? RegisteredForm(Guid handle)
+    {
+        var company = ReadProperty(_session, "Company");
+        var getRegisteredForm = company?.GetType().GetMethod("GetRegisteredForm",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            binder: null, types: new[] { typeof(Guid) }, modifiers: null);
+        try { return getRegisteredForm?.Invoke(company, new object[] { handle }); }
+        catch (TargetInvocationException) { return null; }
+    }
+
+    private static int PageIdOf(object form)
+        => ReadProperty(form, "ObjectId") is { } objectId
+           && ReadProperty(objectId, "ObjectNumber") is int number
+            ? number
+            : 0;
+
+    private static object? ReadProperty(object target, string name)
+        => target.GetType()
+            .GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
+            .GetValue(target);
+
+    // ── The rest of the client-session surface ────────────────────────────────
+    // Nothing in the runner's dispatch path reaches these. They refuse by name rather than
+    // answering with a default, which would make a test that used one silently wrong.
+
+    public ITestPage CreatePage(int id, ViewMode mode) =>
+        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            $"ITestClientSession.CreatePage({id})",
+            "testpage-modal — the runner builds a TestPage through NavTestPageHandle.CreateTarget, "
+            + "not through the client session (NavTestPage.Open is rewritten to skip this). "
+            + "See docs/scope.md");
+
+    public bool ActivatePage(Guid formHandle, bool refresh) =>
+        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            "ITestClientSession.ActivatePage",
+            "testpage-modal — page activation is a client-window concept with no in-process "
+            + "equivalent here. See docs/scope.md");
+
+    /// <summary>Always 0: the runner keeps no window list — BC tracks open forms itself,
+    /// on NavCompany.registeredForms, which is what every code path here consults.</summary>
+    public int OpenFormsCount => 0;
+
+    public bool SaveDataOnDispose { get; set; }
+
+    public void Dispose() { }
+}

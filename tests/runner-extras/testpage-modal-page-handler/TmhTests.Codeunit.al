@@ -93,8 +93,20 @@ codeunit 61925 "TMH Tests"
             'RunModal must have returned Cancel when the handler cancelled');
     end;
 
-    // Negative: no [HandlerFunctions] at all. BC must refuse rather than let the modal page
-    // return a default result unobserved.
+    // Negative: no [HandlerFunctions] at all. The modal page must be refused, and the AL that
+    // called RunModal must never see a result — a modal page that quietly returned OK with no
+    // handler would make an unattended dialog look like a confirmed one.
+    //
+    // KNOWN GAP in the message. Real BC raises "the following UI handlers were not found"
+    // naming page 61920, from NavTestExecution.FindHandler — but that throw is guarded on
+    // `executingTestRunner != null`, and the runner has no test-runner codeunit. So BC falls
+    // through to the client-callback path, where HeadlessClientCallback raises the right
+    // page-naming error and NavForm.RunModalAsync's `catch { UnregisterForm(this); throw; }`
+    // then throws OVER it: Session.ClientCallback fails BEFORE RegisterForm ran, so the
+    // unregister finds nothing. The assertion below therefore pins the refusal and its
+    // consequence, not the wording. Fixing the wording means giving NavTestExecution a real
+    // executingTestRunner, which also drives CommitTestCodeunits/CommitTestFunctions and so
+    // is not a change to make blind.
     [Test]
     procedure ModalPageWithoutAHandlerIsRefused()
     var
@@ -106,7 +118,7 @@ codeunit 61925 "TMH Tests"
         Host.OpenEdit();
         Host.First();
         asserterror Host.PickIt.Invoke();
-        Assert.ExpectedError('61920');
+        Assert.ExpectedError('has not been registered');
 
         Assert.IsFalse(Row.Get('RESULT'),
             'a refused modal page must not have let the calling AL record a result');

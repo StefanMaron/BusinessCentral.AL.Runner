@@ -51,7 +51,7 @@ internal class MockITestPage : ITestPage
     }
 
     public virtual ITestPart  GetPart(int id)                                           => new MockITestPart();
-    public ITestAction        GetBuiltInAction(FormResult formResult)                   => new MockITestAction();
+    public virtual ITestAction GetBuiltInAction(FormResult formResult)                  => new MockITestAction();
     public ITestFilter        GetDataItemFilter(string id)                              => this;
     public void               SetSelection(bool value)                                  { }
     public virtual void       InsertEmptyRow(bool beforeCurrent)                        { }
@@ -70,7 +70,7 @@ internal class MockITestPage : ITestPage
     public bool               Expand(bool doExpand)                                     => false;
 
     public int        ValidationErrorCount => 0;
-    public FormResult FormResult           => FormResult.OK;
+    public virtual FormResult FormResult   => FormResult.OK;
     public string     Name                 => string.Empty;
     public string     Caption              => string.Empty;
     public virtual int PageId            => 0;
@@ -187,6 +187,38 @@ internal class LiveNavTestPage : MockITestPage
             parentRecord: _record, links: SubPageLinks(definition, partPageId));
         _parts[controlId] = part;
         return part;
+    }
+
+    // How the page was closed. BC's RunHandlerWithException reads this off the page right
+    // after a [ModalPageHandler] returns, and it is what RunModal() reports back to the AL
+    // that opened the page. The mock answers a constant OK, so a handler that cancelled was
+    // indistinguishable from one that confirmed — every AL `if RunModal() = Action::OK`
+    // took the OK branch regardless.
+    private FormResult _formResult = FormResult.OK;
+
+    public override FormResult FormResult => _formResult;
+
+    /// <summary>
+    /// The page's built-in OK/Cancel/LookupOK actions. Invoking one records how the page was
+    /// closed; the base mock returned a no-op action, which is why Cancel() did nothing.
+    /// </summary>
+    public override ITestAction GetBuiltInAction(FormResult formResult)
+        => new RecordingBuiltInAction(this, formResult);
+
+    private sealed class RecordingBuiltInAction : ITestAction
+    {
+        private readonly LiveNavTestPage _page;
+        private readonly FormResult _result;
+
+        internal RecordingBuiltInAction(LiveNavTestPage page, FormResult result)
+        {
+            _page = page;
+            _result = result;
+        }
+
+        public void Invoke() => _page._formResult = _result;
+        public bool Visible => true;
+        public bool Enabled => true;
     }
 
     private readonly Dictionary<int, ITestAction> _liveActions = new();

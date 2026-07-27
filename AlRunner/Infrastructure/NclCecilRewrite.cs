@@ -931,6 +931,129 @@ public static class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Rewrote NavTestPageBase.CheckPageOpened → no-op (ret)");
         }
 
+        // 3b. NavTestExecution.TestHandleModalForm — replace the CLIENT callback with the
+        //     runner's own dispatch.
+        //
+        //     BC finds the test's [ModalPageHandler], pushes a delegate that will run it onto
+        //     dialogHandlerStack, then asks the client to run the form modally:
+        //         ldarg.0
+        //         call    NavTestExecution::get_ServiceConnection()
+        //         callvirt IService::get_CallbackHandler()
+        //         call    TestClientProxy<IClientCallbackHandler>::Proxy(!0)
+        //         ldloc   <display class> ; ldfld runRequest
+        //         callvirt IClientContract::FormRunModal(FormRunModalRequest)
+        //     A real client opens the page and calls back into ShowDialog, which pops that
+        //     delegate. Here the call reached BC's HeadlessClientCallback, whose entire job is
+        //     to refuse — so no modal page ever reached its handler.
+        //
+        //     Dropping the three middle instructions leaves `ldarg.0` (the NavTestExecution)
+        //     where the callback receiver was, so the stack arriving at the call is exactly
+        //     [NavTestExecution][FormRunModalRequest] — the signature of the replacement,
+        //     which performs the step the client would have caused using BC's own ShowDialog
+        //     and SetLastFormResult. Satisfying this one call through a real IService
+        //     implementation would mean ~130 members that exist only to throw.
+        {
+            var navTestExecutionType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavTestExecution")
+                ?? throw new InvalidOperationException("NavTestExecution type not found in Ncl — do not commit");
+            var method = navTestExecutionType.Methods
+                .FirstOrDefault(m => m.Name == "TestHandleModalForm" && m.HasBody)
+                ?? throw new InvalidOperationException("NavTestExecution.TestHandleModalForm not found — do not commit");
+
+            var il = method.Body.GetILProcessor();
+            var call = method.Body.Instructions.FirstOrDefault(i =>
+                (i.OpCode == OpCodes.Callvirt || i.OpCode == OpCodes.Call)
+                && i.Operand is MethodReference mr && mr.Name == "FormRunModal"
+                && mr.Parameters.Count == 1)
+                ?? throw new InvalidOperationException(
+                    "TestHandleModalForm has no FormRunModal call — Ncl shape changed; do not commit");
+
+            // Walk back over the receiver chain: Proxy, get_CallbackHandler, get_ServiceConnection.
+            var toRemove = new List<Instruction>();
+            for (var cursor = call.Previous; cursor != null && toRemove.Count < 8; cursor = cursor.Previous)
+            {
+                if (cursor.Operand is not MethodReference m2) continue;
+                if (m2.Name is "Proxy" or "get_CallbackHandler" or "get_ServiceConnection")
+                {
+                    toRemove.Add(cursor);
+                    if (m2.Name == "get_ServiceConnection") break;
+                }
+            }
+            if (toRemove.Count != 3)
+                throw new InvalidOperationException(
+                    $"TestHandleModalForm receiver chain shape changed (matched {toRemove.Count} of 3) — do not commit");
+
+            foreach (var ins in toRemove) il.Remove(ins);
+
+            var replacement = asm.MainModule.ImportReference(
+                typeof(AlRunnerV2.Patches.RunnerModalDispatch).GetMethod(
+                    nameof(AlRunnerV2.Patches.RunnerModalDispatch.FormRunModal),
+                    BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("RunnerModalDispatch.FormRunModal not found — do not commit"));
+            il.Replace(call, il.Create(OpCodes.Call, replacement));
+
+            Console.Error.WriteLine(
+                "[Cecil] Rewrote NavTestExecution.TestHandleModalForm client callback → RunnerModalDispatch.FormRunModal");
+
+            // NavSession.SetServerFormRequestData — called by TestHandleModalForm just BEFORE
+            // the dispatch above, and its real body throws NotSupportedException outright when
+            // there is no service connection. See RunnerModalDispatch for why setting
+            // FormHandle is the whole of what this process needs from it.
+            var navSessionType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavSession")
+                ?? throw new InvalidOperationException("NavSession type not found in Ncl — do not commit");
+            var setData = navSessionType.Methods
+                .FirstOrDefault(m => m.Name == "SetServerFormRequestData" && m.Parameters.Count == 3 && m.HasBody)
+                ?? throw new InvalidOperationException(
+                    "NavSession.SetServerFormRequestData(3) not found — Ncl shape changed; do not commit");
+            var setDataBody = setData.Body;
+            setDataBody.Instructions.Clear();
+            setDataBody.Variables.Clear();
+            setDataBody.ExceptionHandlers.Clear();
+            var setDataIl = setDataBody.GetILProcessor();
+            setDataIl.Append(setDataIl.Create(OpCodes.Ldarg_0));
+            setDataIl.Append(setDataIl.Create(OpCodes.Ldarg_1));
+            setDataIl.Append(setDataIl.Create(OpCodes.Ldarg_2));
+            setDataIl.Append(setDataIl.Create(OpCodes.Box, setData.Parameters[1].ParameterType));
+            setDataIl.Append(setDataIl.Create(OpCodes.Ldarg_3));
+            setDataIl.Append(setDataIl.Create(OpCodes.Call, asm.MainModule.ImportReference(
+                typeof(AlRunnerV2.Patches.RunnerModalDispatch).GetMethod(
+                    nameof(AlRunnerV2.Patches.RunnerModalDispatch.SetServerFormRequestData),
+                    BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "RunnerModalDispatch.SetServerFormRequestData not found — do not commit"))));
+            setDataIl.Append(setDataIl.Create(OpCodes.Ret));
+            setDataBody.MaxStackSize = 4;
+            Console.Error.WriteLine(
+                "[Cecil] Rewrote NavSession.SetServerFormRequestData → RunnerModalDispatch (no service connection here)");
+
+            // Strip TestClientProxy<T>.Proxy(T) from NavTestExecution and its compiler-generated
+            // closures, the same way step 4 does for NavTestPageBase.
+            //
+            // Proxy wraps the value in the TestPageClient's dispatcher, which needs a UI session
+            // ("The UISessionManager was expected to be initialized"). The runner hands BC a real
+            // in-process ITestPage that needs no marshalling, so removing the call leaves exactly
+            // that value on the stack — which is the argument Proxy was given.
+            int proxyStripped = 0;
+            foreach (var proxyHost in new[] { navTestExecutionType }.Concat(navTestExecutionType.NestedTypes))
+            {
+                foreach (var m in proxyHost.Methods.Where(mm => mm.HasBody))
+                {
+                    var mIl = m.Body.GetILProcessor();
+                    foreach (var ins in m.Body.Instructions
+                        .Where(i => i.Operand is MethodReference pr
+                                    && pr.Name == "Proxy"
+                                    && pr.DeclaringType.Name.StartsWith("TestClientProxy", StringComparison.Ordinal))
+                        .ToList())
+                    {
+                        mIl.Remove(ins);
+                        proxyStripped++;
+                    }
+                }
+            }
+            Console.Error.WriteLine(
+                $"[Cecil] Stripped {proxyStripped} TestClientProxy.Proxy call(s) from NavTestExecution "
+                + "(the runner's ITestPage is in-process; no client dispatcher exists)");
+        }
+
         // 4. Remove TestClientProxy<T>.Proxy(T) call from all NavTestPageBase methods that use it.
         //    Removing the call leaves the raw ITest* value on the stack in the right place.
         {

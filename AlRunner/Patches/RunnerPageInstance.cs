@@ -141,6 +141,24 @@ internal sealed class RunnerPageInstance
     }
 
     /// <summary>
+    /// Wrap a NavForm BC already built and initialised — a page opened from AL with
+    /// RunModal, which the runner never constructed and so cannot have marked or driven.
+    ///
+    /// Unlike TryCreate this does NOT initialise anything: the form is already live, and
+    /// re-running SetSourceTable would re-register every source expression ("An item with the
+    /// same key has already been added"). A form whose expressions were never registered (the
+    /// runner's init guard did not admit it) yields an empty binding table, so Rec-bound
+    /// controls still resolve and page-variable ones refuse by name — which is the same
+    /// answer TryCreate gives for a page it could not build.
+    /// </summary>
+    internal static RunnerPageInstance Adopt(object form, int pageId)
+    {
+        var expressions = ReadProperty(form, "SourceExpressions") as System.Collections.IDictionary
+                          ?? new System.Collections.Hashtable();
+        return new RunnerPageInstance(form, pageId, expressions);
+    }
+
+    /// <summary>
     /// The page's binding for a control id, or null when the control is not one the page
     /// publishes a source expression for (Rec-bound controls are resolved by the caller
     /// against the record instead).

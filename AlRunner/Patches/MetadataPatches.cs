@@ -508,6 +508,20 @@ public static partial class BcRuntime
                     if (fHandlerSession != null && fHandlerSession.GetValue(handler) == null)
                         FieldPoke.SetInstance(fHandlerSession, handler!, _skeletonSession);
 
+                    // The test client session BC would have Assembly.Load-ed from the
+                    // TestPageClient. Its GetPage is what hands the AL [ModalPageHandler] the
+                    // page BC just opened; left null, BC's own pushed dialog delegate NREs the
+                    // instant a modal page is dispatched. See RunnerTestClientSession.
+                    var fTestClientSession = testExecution.GetType()
+                        .GetField("testClientSession", BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (fTestClientSession != null)
+                        FieldPoke.SetInstance(fTestClientSession, testExecution,
+                            new AlRunnerV2.Patches.RunnerTestClientSession(_skeletonSession!));
+                    else
+                        Console.Error.WriteLine(
+                            "[BcRuntime] NavTestExecution.testClientSession NOT FOUND — modal-page "
+                            + "handler dispatch will fail");
+
                     var testExecType = testExecution.GetType(); // Microsoft.Dynamics.Nav.Runtime.NavTestExecution
                     _fExecutingTestCodeUnit = testExecType.GetField("executingTestCodeUnit", BindingFlags.NonPublic | BindingFlags.Instance);
                     if (_fExecutingTestCodeUnit == null)
