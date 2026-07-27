@@ -188,8 +188,45 @@ public static partial class BcRuntime
             // Rethrow untrappable errors; swallow trappable NavBaseExceptions.
             if (ex is Microsoft.Dynamics.Nav.Types.Exceptions.NavBaseException nbe && !nbe.UntrappableError)
                 return false;
+            if (IsPermanentOutOfScope(ex, out var oos)) { ReportOosTrappedByTryFunction(oos!); return false; }
             throw;
         }
+    }
+
+    /// <summary>
+    /// True when <paramref name="ex"/> is a RunnerOutOfScopeException for a surface that
+    /// is PERMANENTLY out of scope (SMTP, external HTTP, an Azure Key Vault, …) rather
+    /// than one that is in scope but not yet built (reason "not-yet-implemented").
+    ///
+    /// The distinction decides whether an AL [TryFunction] may trap it. A permanently
+    /// out-of-scope surface does not exist in the runner's world at all — and a real BC
+    /// environment that also lacks it raises a trappable error there, so the AL author's
+    /// TryFunction sees `false`. Trapping it is therefore FAITHFUL, not a silent default:
+    /// it reproduces the observable BC outcome. A "not-yet-implemented" surface is the
+    /// opposite — it is a runner gap, and swallowing it would turn the gap into a green
+    /// test that lies (see .claude/rules/loud-failures.md), so it keeps propagating.
+    /// </summary>
+    private static bool IsPermanentOutOfScope(Exception ex, out AlRunnerV2.Infrastructure.RunnerOutOfScopeException? oos)
+    {
+        oos = ex as AlRunnerV2.Infrastructure.RunnerOutOfScopeException;
+        return oos != null
+            && !oos.Reason.StartsWith("not-yet-implemented", StringComparison.Ordinal);
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _oosTrapReported = new();
+
+    /// <summary>
+    /// Never silent: print one loud, named line per distinct (api, reason) the first time a
+    /// TryFunction absorbs it, so the surface a test quietly did without is always visible in
+    /// the run output even though the test itself legitimately continues.
+    /// </summary>
+    private static void ReportOosTrappedByTryFunction(AlRunnerV2.Infrastructure.RunnerOutOfScopeException oos)
+    {
+        if (!_oosTrapReported.TryAdd($"{oos.Api} {oos.Reason}", 0)) return;
+        Console.Error.WriteLine(
+            $"[oos-in-try] {oos.Api} — {oos.Reason} — reached inside an AL [TryFunction]; " +
+            $"returning false, which is what real BC does in an environment that also lacks " +
+            $"this surface. Reported once per surface.");
     }
 
     /// <summary>
@@ -215,6 +252,12 @@ public static partial class BcRuntime
         {
             if (ex is Microsoft.Dynamics.Nav.Types.Exceptions.NavBaseException nbe && !nbe.UntrappableError)
                 return new System.Threading.Tasks.ValueTask<bool>(false);
+            // Same permanent-OOS trap as TryInvoke — see IsPermanentOutOfScope.
+            if (IsPermanentOutOfScope(ex, out var oos))
+            {
+                ReportOosTrappedByTryFunction(oos!);
+                return new System.Threading.Tasks.ValueTask<bool>(false);
+            }
             throw;
         }
     }

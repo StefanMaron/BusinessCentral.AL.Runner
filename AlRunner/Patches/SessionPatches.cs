@@ -27,6 +27,75 @@ public static partial class BcRuntime
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static object? TreeHandler_get_Session(object self) => _skeletonSession;
 
+    /// <summary>
+    /// Build the ClientSettings (BC's "regional settings": ShortDatePattern, LongTimePattern,
+    /// separators, …) that the skeleton session should carry.
+    ///
+    /// Why this is needed at all: the skeleton NavSession comes from
+    /// RuntimeHelpers.GetUninitializedObject, so its <c>cultureSettings</c> field is
+    /// <c>default(ClientSettings)</c> — every string property null. ClientSettings is a
+    /// STRUCT, so BC's own guard in NavSessionOrDefaultProvider
+    /// (<c>session?.RegionalSettings ?? DefaultRegionalSettings</c>) can never fire: the
+    /// property is not null, it is merely empty. DateTimeParsingHelper.CreateExactDateTimePatterns
+    /// then does <c>longTimePattern.Replace(...)</c> and NREs, which took out every AL
+    /// <c>Evaluate()</c> into a Date/Time/DateTime.
+    ///
+    /// Faithful: this is BC's OWN construction path for a session-less default — see
+    /// NavSessionOrDefaultProvider.AppInitFallbackValues, which does exactly
+    /// <c>default(ClientSettings).Refresh(culture, culture)</c>. InvariantCulture is used as
+    /// the culture so the patterns agree with the rest of the skeleton, which already reports
+    /// InvariantCulture from <see cref="NavSession_get_Culture"/> and InvariantFormatSettings
+    /// from <see cref="NavSession_SyncFormatSettings"/>.
+    ///
+    /// Returns the BOXED struct (ready for FieldInfo.SetValue), or null if the type/method
+    /// cannot be resolved.
+    /// </summary>
+    public static object? BuildSkeletonRegionalSettings()
+    {
+        var clientSettingsType = AppDomain.CurrentDomain.GetAssemblies()
+            .Select(a => a.GetType("Microsoft.Dynamics.Nav.Types.ClientSettings"))
+            .FirstOrDefault(t => t != null);
+        if (clientSettingsType == null) return null;
+
+        var refresh = clientSettingsType.GetMethod("Refresh",
+            BindingFlags.Public | BindingFlags.Instance,
+            null, new[] { typeof(CultureInfo), typeof(CultureInfo) }, null);
+        if (refresh == null) return null;
+
+        // Boxing the default struct once and invoking Refresh on the box mutates that box —
+        // which is exactly what we then plant in the session's field.
+        var boxed = Activator.CreateInstance(clientSettingsType);
+        if (boxed == null) return null;
+        refresh.Invoke(boxed, new object[] { CultureInfo.InvariantCulture, CultureInfo.InvariantCulture });
+        return boxed;
+    }
+
+    /// <summary>
+    /// Plant <see cref="BuildSkeletonRegionalSettings"/> into the skeleton session's
+    /// <c>cultureSettings</c> field. Writes the field directly rather than going through the
+    /// public setter, because <c>set_RegionalSettings</c> also calls CheckConnectionIsOpen()
+    /// and the tenant/format-settings refresh chain, all of which NRE on the skeleton.
+    /// The setter's own validation (every pattern non-null) is what this value satisfies.
+    /// </summary>
+    internal static void SeedSkeletonRegionalSettings(Type sessionType, object session)
+    {
+        var value = BuildSkeletonRegionalSettings();
+        if (value == null)
+        {
+            Console.Error.WriteLine(
+                "[BcRuntime] WARN: could not build skeleton ClientSettings — AL Evaluate() " +
+                "into Date/Time/DateTime will NRE in DateTimeParsingHelper.");
+            return;
+        }
+        var f = sessionType.GetField("cultureSettings", BindingFlags.NonPublic | BindingFlags.Instance);
+        if (f == null)
+        {
+            Console.Error.WriteLine("[BcRuntime] WARN: NavSession.cultureSettings field not found.");
+            return;
+        }
+        AlRunnerV2.Infrastructure.FieldPoke.SetInstance(f, session, value);
+    }
+
     private static object? _baseAppGroup;
 
     /// <summary>

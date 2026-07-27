@@ -116,15 +116,25 @@ bool showPass = Environment.GetEnvironmentVariable("AL_RUNNER_FAILURES_ONLY") !=
 
 // AL_RUNNER_TRACE_NRE=1 — log every first-chance NullReferenceException with its
 // full stack trace before it gets swallowed by AL `asserterror` / test machinery.
-if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_NRE") == "1")
+// AL_RUNNER_TRACE_NRE=2 additionally prints Environment.StackTrace — at first
+// chance the exception's OWN trace holds only the throwing frame, which names the
+// crashing method but never the BC caller that led there (the caller chain is what
+// identifies the missing skeleton state). Costly, so it stays behind the "2" level.
 {
-    AppDomain.CurrentDomain.FirstChanceException += (s, e) =>
+    var traceNre = Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_NRE");
+    if (traceNre == "1" || traceNre == "2")
     {
-        if (e.Exception is NullReferenceException or ArgumentNullException)
+        bool withCallers = traceNre == "2";
+        AppDomain.CurrentDomain.FirstChanceException += (s, e) =>
         {
-            Console.Error.WriteLine($"[FCE-NRE] {e.Exception}");
-        }
-    };
+            if (e.Exception is NullReferenceException or ArgumentNullException)
+            {
+                Console.Error.WriteLine($"[FCE-NRE] {e.Exception}");
+                if (withCallers)
+                    Console.Error.WriteLine($"[FCE-NRE] callers:\n{Environment.StackTrace}");
+            }
+        };
+    }
 }
 
 // ── --precompile subcommand ────────────────────────────────────────────────

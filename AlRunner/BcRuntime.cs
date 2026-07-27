@@ -701,6 +701,12 @@ public static partial class BcRuntime
         if (aoType != null && sessType != null)
         {
             _skeletonSession = RuntimeHelpers.GetUninitializedObject(sessType);
+            // GetUninitializedObject leaves cultureSettings = default(ClientSettings) — a
+            // struct whose every pattern string is null. Because it is a struct, BC's own
+            // "no session → use the default" fallback can never fire (see
+            // SeedSkeletonRegionalSettings), so every AL Evaluate() into a Date/Time/DateTime
+            // NRE'd inside DateTimeParsingHelper. Seed it the way BC seeds its own default.
+            SeedSkeletonRegionalSettings(sessType, _skeletonSession!);
             HookProperty(aoType, "Session", false, nameof(GetSessionReplacement));
 
             // Plant the skeleton session into RootTreeStub's TreeHandler.session field.
