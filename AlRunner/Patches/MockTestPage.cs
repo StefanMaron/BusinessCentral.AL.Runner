@@ -181,7 +181,7 @@ internal sealed class LiveNavTestPage : MockITestPage
         if (expression != null)
         {
             if (!_pageVariableFields.TryGetValue(id, out var pageField))
-                _pageVariableFields[id] = pageField = new PageVariableTestField(_page!, expression);
+                _pageVariableFields[id] = pageField = new PageVariableTestField(_page!, expression, id);
             return pageField;
         }
 
@@ -365,11 +365,13 @@ internal sealed class PageVariableTestField : ITestField
 {
     private readonly RunnerPageInstance _page;
     private readonly object _expression;
+    private readonly int _controlId;
 
-    public PageVariableTestField(RunnerPageInstance page, object expression)
+    public PageVariableTestField(RunnerPageInstance page, object expression, int controlId)
     {
         _page = page;
         _expression = expression;
+        _controlId = controlId;
     }
 
     public string Value
@@ -377,12 +379,74 @@ internal sealed class PageVariableTestField : ITestField
         get => Convert.ToString(ObjectValue, CultureInfo.InvariantCulture) ?? string.Empty;
         set
         {
-            RunnerPageInstance.SetValue(_expression, ALCompiler.ToNavValue(value));
-            _page.RaiseOnValidate(_expression);
+            RunnerPageInstance.SetValue(_expression, ToBoundValue(value));
+            _page.RaiseOnValidate(_controlId);
         }
     }
 
     public object? ObjectValue => LiveNavTestPage.Unwrap(RunnerPageInstance.GetValue(_expression));
+
+    /// <summary>
+    /// Convert the string a test wrote into the NavValue the binding actually holds.
+    /// AL's TestPage SetValue is string-typed for every control, so the target type has to
+    /// come from the binding, not from the caller — writing a NavText into an Option
+    /// binding throws deep inside the page's own generated setter
+    /// ("Unable to cast object of type 'NavText' to type 'NavOption'"), which says nothing
+    /// about the value that was wrong.
+    /// </summary>
+    private NavValue ToBoundValue(string value)
+    {
+        var current = RunnerPageInstance.GetValue(_expression);
+        if (current is not NavOption option) return ALCompiler.ToNavValue(value);
+
+        var metadata = option.NavOptionMetadata
+            ?? throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage SetValue (control {_controlId})",
+                "testpage-option-value — the control is bound to an Option with no option "
+                + "metadata, so a value cannot be resolved by name. See docs/scope.md");
+
+        // Options / OrdinalValues are internal to Ncl — read them reflectively rather than
+        // re-deriving the option set from OptionString, which would lose the ordinal gaps a
+        // declared option set is allowed to have.
+        var options = ReadNonPublic<string[]>(metadata, "Options") ?? Array.Empty<string>();
+        var ordinals = ReadNonPublic<int[]>(metadata, "OrdinalValues");
+        for (var i = 0; i < options.Length; i++)
+        {
+            if (!OptionNamesEqual(options[i], value)) continue;
+            var ordinal = ordinals != null && i < ordinals.Length ? ordinals[i] : i;
+            return NavOption.Create(metadata, ordinal);
+        }
+
+        // A bare number is a legal way to set an option, and unambiguous.
+        if (int.TryParse(value, System.Globalization.NumberStyles.Integer,
+                CultureInfo.InvariantCulture, out var literal)
+            && (ordinals == null || ordinals.Contains(literal)))
+            return NavOption.Create(metadata, literal);
+
+        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            $"TestPage SetValue (control {_controlId})",
+            $"testpage-option-value — '{value}' is not one of the option's values "
+            + $"[{string.Join(", ", options)}]. See docs/scope.md");
+    }
+
+    private static T? ReadNonPublic<T>(object target, string name) where T : class
+    {
+        for (var t = target.GetType(); t != null; t = t.BaseType)
+        {
+            var pi = t.GetProperty(name, System.Reflection.BindingFlags.Public
+                | System.Reflection.BindingFlags.NonPublic
+                | System.Reflection.BindingFlags.Instance
+                | System.Reflection.BindingFlags.DeclaredOnly);
+            if (pi != null) return pi.GetValue(target) as T;
+        }
+        return null;
+    }
+
+    // AL option names are compared ignoring case and spacing, the same way the runner
+    // compares object and field names elsewhere ("Custom Fields" vs "CustomFields").
+    private static bool OptionNamesEqual(string left, string right)
+        => string.Equals(left.Replace(" ", string.Empty), right.Replace(" ", string.Empty),
+            StringComparison.OrdinalIgnoreCase);
 
     public string Name => Caption;
     public string Caption => _expression.GetType()

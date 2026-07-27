@@ -14,19 +14,18 @@
 //
 // WHAT THIS DOES
 //   Constructs the compiled Page{id} (a real NavForm subclass carrying the page's AL
-//   triggers as methods), opts it into BC's real initialisation (RunnerFormInit), and runs
-//   the three initialisation steps that matter:
+//   triggers as methods), opts it into BC's real initialisation (RunnerFormInit), and calls
+//   SetSourceTable — which is BC's own front door: it funnels through EnsureMetadataLoaded
+//   -> InitializeFromMetadata, binding the record, resolving controls against the source
+//   table and running the page's own OnMetadataLoaded, the step that registers the source
+//   expressions.
 //
-//     SetSourceTable(record, true)        bind the page to the TestPage's record
-//     SetFieldsFromControlsMetadata()     resolve controls against the source table
-//     OnMetadataLoaded()                  the page's OWN generated method — this is what
-//                                         registers the source expressions
-//
-//   NOT NavForm.InitializeFromMetadata, which wraps those three in steps the runner cannot
-//   satisfy (UpdateAllowedOperationsFromPermissions / customization-control expressions /
-//   currency-column registration all reach for service-tier state) and NREs before
-//   reaching them. Calling the three directly is not a shortcut around BC's logic — it is
-//   BC's logic, minus the parts that need a service tier.
+//   Driving those sub-steps individually is NOT an option, and the failure is instructive:
+//   SetSourceTable already triggers them, so calling them again registers every expression
+//   twice ("An item with the same key has already been added. Key: Control1167935535").
+//   The service-tier state InitializeFromMetadata needs on the way (permissions, designer
+//   customizations, tenant personalization) is handled where it belongs — in
+//   NclCecilRewrite, once, for every caller — not by tiptoeing around the method here.
 //
 // SCOPE
 //   Only pages the runner compiled itself have the metadata to build a control tree from
@@ -40,11 +39,13 @@ namespace AlRunnerV2.Patches;
 internal sealed class RunnerPageInstance
 {
     private readonly object _form;
+    private readonly int _pageId;
     private readonly System.Collections.IDictionary _sourceExpressions;
 
-    private RunnerPageInstance(object form, System.Collections.IDictionary sourceExpressions)
+    private RunnerPageInstance(object form, int pageId, System.Collections.IDictionary sourceExpressions)
     {
         _form = form;
+        _pageId = pageId;
         _sourceExpressions = sourceExpressions;
     }
 
@@ -93,9 +94,13 @@ internal sealed class RunnerPageInstance
             // RegisterSourceExpression, …) check this and no-op for anyone else.
             RunnerFormInit.MarkRealInit(form);
 
+            // ONE call. SetSourceTable funnels through NavForm.EnsureMetadataLoaded ->
+            // InitializeFromMetadata, which binds the record, resolves the controls against
+            // the source table and runs the page's own OnMetadataLoaded — the step that
+            // registers the source expressions. Driving those three individually registers
+            // every expression twice ("An item with the same key has already been added.
+            // Key: Control1167935535"), because InitializeFromMetadata has already run them.
             Invoke(form, "SetSourceTable", new object?[] { record, true });
-            Invoke(form, "SetFieldsFromControlsMetadata", Array.Empty<object?>());
-            Invoke(form, "OnMetadataLoaded", Array.Empty<object?>());
 
             var expressions = ReadProperty(form, "SourceExpressions") as System.Collections.IDictionary;
             if (expressions == null)
@@ -109,7 +114,7 @@ internal sealed class RunnerPageInstance
                 Console.Out.WriteLine(
                     $"[RunnerPageInstance] page {pageId}: built, {expressions.Count} source expression(s): "
                     + string.Join(", ", expressions.Keys.Cast<object>().Select(k => k?.ToString())));
-            return new RunnerPageInstance(form, expressions);
+            return new RunnerPageInstance(form, pageId, expressions);
         }
         catch (Exception ex)
         {
@@ -153,38 +158,82 @@ internal sealed class RunnerPageInstance
             .Invoke(expression, new object?[] { value });
 
     /// <summary>
-    /// Run the control's OnValidate trigger, if it declares one. The AL compiler emits it
-    /// as <c>{ControlName}_a{n}_OnValidate</c> on the page class; the control name comes
-    /// from the source expression itself rather than from re-parsing the AL, so this
-    /// tracks whatever the compiler actually emitted. A control with no OnValidate simply
-    /// has no such method, which is not an error.
+    /// Run the control's OnValidate trigger, if it declares one.
+    ///
+    /// The AL compiler emits it as <c>{ControlName}_a{n}_OnValidate</c> on the page class.
+    /// The control is identified by RE-DERIVING BC's own control id from each candidate's
+    /// name — <c>IdSpace.GetMemberId(pageId, controlName)</c>, i.e. abs(FNV-1a over the
+    /// UTF-16 bytes of pageId + name) — and comparing it to the id being set. Matching on
+    /// the source expression's Name instead does not work: that is the bound VARIABLE's
+    /// name (SelectedMode), not the control's (Mode), and they are routinely different.
+    ///
+    /// A control with no OnValidate simply has no such method, which is not an error.
     /// </summary>
-    internal void RaiseOnValidate(object expression)
+    internal void RaiseOnValidate(int controlId)
     {
-        var controlName = ReadProperty(expression, "Name") as string;
-        if (string.IsNullOrEmpty(controlName)) return;
+        System.Reflection.MethodInfo? match = null;
+        foreach (var m in _form.GetType()
+            .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+        {
+            if (m.GetParameters().Length != 0) continue;
+            if (!m.Name.EndsWith("_OnValidate", StringComparison.Ordinal)) continue;
 
-        var prefix = controlName + "_";
-        var candidates = _form.GetType()
-            .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            .Where(m => m.GetParameters().Length == 0
-                     && m.Name.EndsWith("_OnValidate", StringComparison.Ordinal)
-                     && m.Name.StartsWith(prefix, StringComparison.Ordinal))
-            .ToList();
-        if (candidates.Count == 0) return;
-        if (candidates.Count > 1)
-            throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
-                $"TestPage OnValidate ({controlName})",
-                $"testpage-onvalidate — {candidates.Count} methods match '{prefix}*_OnValidate' on "
-                + $"{_form.GetType().Name}; the runner cannot tell which trigger belongs to this "
-                + "control. See docs/scope.md");
+            var controlName = ControlNameFromTriggerMethod(m.Name);
+            if (controlName == null) continue;
+            if (MemberId(_pageId, controlName) != controlId) continue;
 
-        try { candidates[0].Invoke(_form, null); }
+            if (match != null)
+                throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                    $"TestPage OnValidate (control {controlId})",
+                    $"testpage-onvalidate — both '{match.Name}' and '{m.Name}' on "
+                    + $"{_form.GetType().Name} resolve to control {controlId}; the runner cannot "
+                    + "tell which trigger belongs to it. See docs/scope.md");
+            match = m;
+        }
+        if (match == null) return;
+
+        try { match.Invoke(_form, null); }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
             // An Error() inside the AL trigger is the trigger's own outcome, not a runner
             // failure — rethrow it unwrapped so the AL stack survives.
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+        }
+    }
+
+    /// <summary>
+    /// "Mode_a45_OnValidate" -> "Mode". Returns null when the name does not carry the
+    /// compiler's <c>_a{digits}_</c> disambiguator, rather than guessing at a split point.
+    /// </summary>
+    private static string? ControlNameFromTriggerMethod(string methodName)
+    {
+        const string suffix = "_OnValidate";
+        var head = methodName.Substring(0, methodName.Length - suffix.Length);
+        var lastUnderscore = head.LastIndexOf('_');
+        if (lastUnderscore <= 0) return null;
+        var disambiguator = head.Substring(lastUnderscore + 1);
+        if (disambiguator.Length < 2 || disambiguator[0] != 'a') return null;
+        for (var i = 1; i < disambiguator.Length; i++)
+            if (!char.IsDigit(disambiguator[i])) return null;
+        return head.Substring(0, lastUnderscore);
+    }
+
+    /// <summary>
+    /// BC's IdSpace.GetMemberId(ancestorObjectId, name): abs of the FNV-1a hash of
+    /// <c>ancestorObjectId.ToString(InvariantCulture) + name</c> over its UTF-16 BYTES
+    /// (not its chars — hashing chars gives different, wrong ids), with int.MinValue
+    /// mapped to int.MaxValue because it has no positive counterpart.
+    /// </summary>
+    internal static int MemberId(int ancestorObjectId, string name)
+    {
+        var text = ancestorObjectId.ToString(System.Globalization.CultureInfo.InvariantCulture) + name;
+        var bytes = System.Text.Encoding.Unicode.GetBytes(text);
+        unchecked
+        {
+            uint hash = 2166136261u;
+            foreach (var b in bytes) hash = (hash ^ b) * 16777619u;
+            var signed = (int)hash;
+            return signed == int.MinValue ? int.MaxValue : Math.Abs(signed);
         }
     }
 

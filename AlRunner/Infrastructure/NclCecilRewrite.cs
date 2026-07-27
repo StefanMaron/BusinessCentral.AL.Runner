@@ -3732,6 +3732,80 @@ public static class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Rewrote NavSession.NCLMetadata → NavGlobal.NCLMetadata (skeleton session has no SystemTenant)");
         }
 
+        // NavForm.UpdateAllowedOperationsFromPermissions() → no-op.
+        //
+        // The last fault on the page-initialisation path: InitializeFromMetadata calls it to
+        // narrow the page's insert/modify/delete flags by the SESSION'S PERMISSIONS, and it
+        // NREs on the skeleton's permission state. Note that it is reached even when a caller
+        // only wants SetSourceTable — that method funnels through EnsureMetadataLoaded, so
+        // there is no way to bind a record to a page without passing through here.
+        //
+        // Same justification as the Has*ExecutePermission* rewrites just above: the skeleton
+        // session runs as SUPER, so permissions can only ever WIDEN nothing and NARROW
+        // nothing. Skipping the narrowing leaves the page with the operations its AL actually
+        // declared (InsertAllowed / ModifyAllowed / DeleteAllowed), which is what an AL test
+        // asserts against — and what the runner's own TestPage.Creatable already reads from
+        // the parsed page properties.
+        {
+            var navFormT2 = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.NavForm")
+                ?? throw new InvalidOperationException("NavForm type not found — do not commit");
+            int uaoCount = 0;
+            foreach (var m in navFormT2.Methods
+                .Where(mm => mm.Name == "UpdateAllowedOperationsFromPermissions" && mm.HasBody
+                          && mm.ReturnType.FullName == "System.Void").ToList())
+            {
+                var body = m.Body;
+                body.Instructions.Clear();
+                body.Variables.Clear();
+                body.ExceptionHandlers.Clear();
+                body.GetILProcessor().Append(body.GetILProcessor().Create(OpCodes.Ret));
+                body.MaxStackSize = 0;
+                uaoCount++;
+            }
+            if (uaoCount == 0)
+                throw new InvalidOperationException(
+                    "NavForm.UpdateAllowedOperationsFromPermissions not found — Ncl shape changed; do not commit");
+            Console.Error.WriteLine(
+                $"[Cecil] Rewrote {uaoCount} NavForm.UpdateAllowedOperationsFromPermissions overload(s) → no-op (skeleton session runs as SUPER)");
+        }
+
+        // NavForm.RegisterExpressionsFromCustomizationControls() → no-op.
+        //
+        // Immediately after the above on the same path. It walks the controls a DESIGNER or
+        // profile customization added on top of the AL-declared page and registers source
+        // expressions for them; it NREs because the skeleton has no customization store.
+        //
+        // The runner has no page designer, no profiles and no personalization (the same
+        // reason LoadPageDataPersonalization returns default above), so there are no
+        // customization controls to register — an empty set is not an approximation of the
+        // real answer here, it IS the real answer. The AL-declared controls are registered
+        // separately, by the page's own OnMetadataLoaded.
+        {
+            var navFormT3 = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.NavForm")
+                ?? throw new InvalidOperationException("NavForm type not found — do not commit");
+            int recCount = 0;
+            foreach (var m in navFormT3.Methods
+                .Where(mm => mm.Name == "RegisterExpressionsFromCustomizationControls" && mm.HasBody
+                          && mm.Parameters.Count == 0
+                          && mm.ReturnType.FullName == "System.Void").ToList())
+            {
+                var body = m.Body;
+                body.Instructions.Clear();
+                body.Variables.Clear();
+                body.ExceptionHandlers.Clear();
+                body.GetILProcessor().Append(body.GetILProcessor().Create(OpCodes.Ret));
+                body.MaxStackSize = 0;
+                recCount++;
+            }
+            if (recCount == 0)
+                throw new InvalidOperationException(
+                    "NavForm.RegisterExpressionsFromCustomizationControls() not found — Ncl shape changed; do not commit");
+            Console.Error.WriteLine(
+                $"[Cecil] Rewrote {recCount} NavForm.RegisterExpressionsFromCustomizationControls overload(s) → no-op (no page designer / profiles / personalization in the runner)");
+        }
+
         // SessionTransactionExtensions.SetRecordConsistent / SetRecordInconsistent → no-op.
         // These extension methods mark a record's transaction-consistency state via the
         // session's DataAccessSource, which is null on the skeleton session. The posting
