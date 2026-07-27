@@ -4354,6 +4354,25 @@ public static class NclCecilRewrite
                 .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.NavForm");
             if (navFormT != null)
             {
+                // These bodies are no longer DELETED, they are GUARDED. Emptying them was
+                // safe only while no page was ever driven: RegisterSourceExpression is how a
+                // page publishes its control -> value bindings, so a blanket no-op leaves
+                // NavForm.SourceExpressions permanently null and makes a control bound to a
+                // page variable (rather than to a Rec field) unresolvable — which is the
+                // TestPage cluster. See RunnerFormInit.cs.
+                //
+                // The injected prologue is:
+                //     if (!RunnerFormInit.ShouldRunRealFormInit(this)) return;
+                //     <original body>
+                // so every caller that used to get an immediate `ret` still does, byte for
+                // byte, and only forms the runner explicitly opted in run for real.
+                var shouldRunRef = asm.MainModule.ImportReference(
+                    typeof(AlRunnerV2.Patches.RunnerFormInit).GetMethod(
+                        nameof(AlRunnerV2.Patches.RunnerFormInit.ShouldRunRealFormInit),
+                        BindingFlags.Public | BindingFlags.Static)
+                    ?? throw new InvalidOperationException(
+                        "RunnerFormInit.ShouldRunRealFormInit not found — do not commit"));
+
                 int rewrites = 0;
                 foreach (var m in navFormT.Methods)
                 {
@@ -4366,15 +4385,17 @@ public static class NclCecilRewrite
                     // NEVER rewrite an async ValueTask body (CoreCLR segfault risk).
                     if (m.ReturnType.FullName.StartsWith("System.Threading.Tasks.ValueTask")) continue;
                     var body = m.Body;
-                    body.Instructions.Clear();
-                    body.Variables.Clear();
-                    body.ExceptionHandlers.Clear();
                     var il = body.GetILProcessor();
-                    il.Append(il.Create(OpCodes.Ret));
-                    body.MaxStackSize = 0;
+                    var first = body.Instructions[0];
+                    var ret = il.Create(OpCodes.Ret);
+                    il.InsertBefore(first, il.Create(OpCodes.Ldarg_0));
+                    il.InsertBefore(first, il.Create(OpCodes.Call, shouldRunRef));
+                    il.InsertBefore(first, il.Create(OpCodes.Brtrue, first));
+                    il.InsertBefore(first, ret);
+                    body.MaxStackSize = Math.Max(body.MaxStackSize, 2);
                     rewrites++;
                 }
-                Console.Error.WriteLine($"[Cecil] Rewrote {rewrites} NavForm form-init method(s) (CallInitComponentExt/InitializeForm/RegisterSourceExpression) → no-op (headless: never observed via AL on ProcessingOnly path)");
+                Console.Error.WriteLine($"[Cecil] Guarded {rewrites} NavForm form-init method(s) (CallInitComponentExt/InitializeForm/RegisterSourceExpression) → real body only for runner-opted-in forms");
             }
         }
 
