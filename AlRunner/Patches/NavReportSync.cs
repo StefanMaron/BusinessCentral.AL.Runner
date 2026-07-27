@@ -226,6 +226,209 @@ public static class NavReportSync
     /// Replacement for NavReport.Run() / RunModal(). Invoked from Cecil-rewritten
     /// IL — the instance is the same NavReport the AL code constructed and holds.
     /// </summary>
+    /// <summary>
+    /// Replacement for every sync <c>NavReport.RunRequestPage</c> overload.
+    ///
+    /// WHY IT IS NOW IN SCOPE
+    /// RunRequestPage was refused as "request-page UI rendering requires service tier". That
+    /// conflated two different things. Rendering a request page for a HUMAN needs a client;
+    /// running one under test does not — BC dispatches it to the test's own
+    /// [RequestPageHandler] and never draws anything. AL that calls RunRequestPage to CAPTURE
+    /// PARAMETERS (the documented way to obtain a report's RequestPageParameters XML) is
+    /// therefore ordinary in-scope AL, and refusing it made every such test unrunnable while
+    /// its declared handler sat unexecuted.
+    ///
+    /// HOW
+    /// BC's real body awaits RunReportAsync, which NREs on the skeleton session — the same
+    /// reason Run/RunModal are rewritten to SyncRun. But the request page itself is just a
+    /// NavForm, and running it modally lands in NavTestExecution.TestHandleModalForm, which
+    /// already branches on <c>form.IsRequestPage</c> to build a NavTestRequestPage and invoke
+    /// the handler. That path is wired (see RunnerModalDispatch), so the request page runs
+    /// through BC's own handler dispatch rather than anything reimplemented here.
+    ///
+    /// The parameters string returned is BC's own <c>GetReportParameters()</c> off the report
+    /// instance, after the handler has had its chance to set filters — so a handler that
+    /// changes a filter is reflected, which is the entire point of the call.
+    ///
+    /// <param name="navReportOrNull">The report instance for the instance overloads; null for
+    /// the static (by-id) overloads, which construct one.</param>
+    /// </summary>
+    public static string SyncRunRequestPage(object? navReportOrNull, int reportId, string? parameters)
+    {
+        var report = navReportOrNull ?? CreateReportForRequestPage(reportId);
+        if (report == null)
+            throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                $"NavReport.RunRequestPage({reportId})",
+                "not-yet-implemented — the runner could not construct report " + reportId +
+                " to run its request page. See docs/scope.md");
+
+        RunRequestPageForHandler(report, parameters);
+
+        var getParams = report.GetType().GetMethod("GetReportParameters",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null, types: Type.EmptyTypes, modifiers: null)
+            ?? throw new InvalidOperationException(
+                "NavReport.GetReportParameters not found — Ncl shape changed; do not commit");
+        return Invoke(getParams, report, Array.Empty<object?>()) as string ?? string.Empty;
+    }
+
+    /// <summary>
+    /// The NCLMetaReport for a report id, via BC's own NavGlobal.NCLMetadata — which the
+    /// runner already populates (see RecordPatches.NclMetadataCachePopulator). Returns null
+    /// when BC does not know the report, so the caller refuses by name rather than
+    /// constructing something meaningless.
+    /// </summary>
+    private static object? GetNclMetaReportById(int reportId)
+    {
+        var navNcl = AppDomain.CurrentDomain.GetAssemblies()
+            .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
+        var navGlobal = navNcl?.GetType("Microsoft.Dynamics.Nav.Runtime.NavGlobal");
+        var nclMeta = navGlobal?.GetProperty("NCLMetadata", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+        if (nclMeta == null) return null;
+        // Shape-tolerant: BC declares GetMetaReportById(int, bool requireCompiled, int
+        // appGroupId) with optionals, and the exact arity has moved between versions. Pick the
+        // narrowest overload and fill the rest with their documented defaults —
+        // requireCompiled:false, because a runner-compiled report has no "compiled" flag set
+        // and requiring one is exactly what makes the lookup come back empty here.
+        var getMeta = nclMeta.GetType().GetMethods(
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .Where(m => m.Name == "GetMetaReportById"
+                        && m.GetParameters().Length >= 1
+                        && m.GetParameters()[0].ParameterType == typeof(int)
+                        && m.GetParameters().Skip(1).All(pi =>
+                            pi.ParameterType == typeof(bool) || pi.ParameterType == typeof(int)))
+            .OrderBy(m => m.GetParameters().Length)
+            .FirstOrDefault();
+        if (getMeta == null) return null;
+
+        var args = getMeta.GetParameters()
+            .Select((pi, i) => i == 0 ? (object)reportId
+                             : pi.ParameterType == typeof(bool) ? false : (object)0)
+            .ToArray();
+        try { return getMeta.Invoke(nclMeta, args); }
+        catch (TargetInvocationException) { return null; }
+    }
+
+    /// <summary>Construct the report instance the static RunRequestPage overloads work on.</summary>
+    private static object? CreateReportForRequestPage(int reportId)
+    {
+        var meta = GetNclMetaReportById(reportId);
+        if (meta == null) return null;
+        var parent = BcRuntime.SkeletonSession;
+        return CreateReportInstance(meta, parent!, skipRestoreSavedReportSettings: true);
+    }
+
+    /// <summary>
+    /// Run the report's request page so its [RequestPageHandler] fires. BC's own
+    /// TestHandleModalForm does the dispatch; all this does is get the form there.
+    ///
+    /// A report that declares no request page has nothing to run — that is not an error, the
+    /// parameters are simply whatever the report already carries.
+    /// </summary>
+    private static void RunRequestPageForHandler(object report, string? parameters)
+    {
+        var pRequestPage = FindProperty(report.GetType(), "RequestOptionsPage");
+        if (pRequestPage == null) return;
+        object? requestPage;
+        try { requestPage = pRequestPage.GetValue(report); }
+        catch (TargetInvocationException) { return; }
+        if (requestPage == null) return;
+
+        if (parameters != null)
+            TrySetParameterSet(requestPage, parameters);
+
+        // Register the form before running it. BC's own RunModalAsync registers it on the
+        // way in, but the runner's synchronous path reaches TestHandleModalForm without that
+        // having happened — and the handler dispatch resolves the page it hands the
+        // [RequestPageHandler] by looking the handle up in NavCompany.registeredForms
+        // (RunnerTestClientSession.GetPage). Unregistered, that lookup fails with
+        // "A page with the specified handle has not been registered."
+        TryRegisterForm(requestPage);
+
+        var runModal = requestPage.GetType().GetMethod("RunModal",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null, types: Type.EmptyTypes, modifiers: null);
+        if (runModal == null) return;
+        try
+        {
+            Invoke(runModal, requestPage, Array.Empty<object?>());
+        }
+        catch (Exception ex) when (ex.GetType().Name == "NavNCLCallbackNotAllowedException")
+        {
+            // KNOWN GAP, measured. Everything up to here works: the report is constructed, the
+            // request page is built and registered. Running it modally then reaches
+            // NavSession.ClientCallback — `ClientCallbackOrNull ?? throw
+            // NavNCLCallbackNotAllowedException` — BEFORE BC's test-execution interception
+            // (NavTestExecution.TestHandleModalForm, which already knows how to build a
+            // NavTestRequestPage and invoke the handler; see RunnerModalDispatch).
+            //
+            // So the remaining work is routing, not dispatch: the skeleton session needs a
+            // client callback (or the request-page run needs to enter through whatever path
+            // consults TestExecution first). Verified NOT to be a TryFunction interaction —
+            // it reproduces identically from a plain test body.
+            //
+            // Re-thrown by name so this reads as a runner boundary rather than as a bare BC
+            // exception with no indication of which surface failed.
+            throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                "NavReport.RunRequestPage",
+                "request-page-dispatch — the request page was built but could not be routed to "
+                + "the test's [RequestPageHandler]: the skeleton session exposes no client "
+                + "callback, and NavSession.ClientCallback throws before "
+                + "NavTestExecution.TestHandleModalForm is consulted. See docs/scope.md");
+        }
+    }
+
+    /// <summary>Register a form with the skeleton company, ignoring an already-registered one.</summary>
+    private static void TryRegisterForm(object form)
+    {
+        var session = BcRuntime.SkeletonSession;
+        var company = session?.GetType()
+            .GetProperty("Company", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?
+            .GetValue(session);
+        var register = company?.GetType().GetMethod("RegisterForm",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        if (register == null) return;
+        try { register.Invoke(company, new[] { form }); }
+        catch (TargetInvocationException) { /* already registered — that is fine */ }
+    }
+
+    private static void TrySetParameterSet(object requestPage, string parameters)
+    {
+        var p = FindProperty(requestPage.GetType(), "ParameterSet");
+        if (p == null || !p.CanWrite) return;
+        var navTextType = AppDomain.CurrentDomain.GetAssemblies()
+            .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Types")?
+            .GetType("Microsoft.Dynamics.Nav.Types.NavText");
+        var navTextCreate = navTextType?.GetMethod(
+            "Create", BindingFlags.Public | BindingFlags.Static,
+            binder: null, types: new[] { typeof(string) }, modifiers: null);
+        if (navTextCreate == null) return;
+        try { p.SetValue(requestPage, navTextCreate.Invoke(null, new object?[] { parameters })); }
+        catch (TargetInvocationException) { /* a report that rejects a parameter set keeps its own */ }
+    }
+
+    private static PropertyInfo? FindProperty(Type? t, string name)
+    {
+        for (; t != null; t = t.BaseType)
+        {
+            var p = t.GetProperty(name,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+            if (p != null) return p;
+        }
+        return null;
+    }
+
+    /// <summary>Invoke, surfacing the AL handler's own Error() rather than a reflection wrapper.</summary>
+    private static object? Invoke(MethodInfo method, object target, object?[] args)
+    {
+        try { return method.Invoke(target, args); }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+            throw; // unreachable
+        }
+    }
+
     public static void SyncRun(object navReport)
     {
         if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_IC") == "1")

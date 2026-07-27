@@ -3896,6 +3896,12 @@ public static class NclCecilRewrite
                 .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.NavReport");
             var ioeCtor = asm.MainModule.ImportReference(
                 typeof(InvalidOperationException).GetConstructor(new[] { typeof(string) })!);
+            var syncRunRequestPageRef = asm.MainModule.ImportReference(
+                typeof(AlRunnerV2.NavReportSync).GetMethod(
+                    nameof(AlRunnerV2.NavReportSync.SyncRunRequestPage),
+                    new[] { typeof(object), typeof(int), typeof(string) })
+                ?? throw new InvalidOperationException(
+                    "NavReportSync.SyncRunRequestPage(object,int,string) not found — do not commit"));
             // NavNCLDialogException is the AL Error() carrier; ctor takes (PrivacyClassification, string).
             // Resolving cross-assembly type refs here is brittle (Diagnostic enum lives in
             // Microsoft.Dynamics.Nav.Diagnostic.dll) — InvalidOperationException is caught by AL
@@ -4044,20 +4050,67 @@ public static class NclCecilRewrite
                         body.MaxStackSize = 0;
                         reportRewrites++;
                     }
-                    // RunRequestPage (any sync overload returning string) → throw OOS.
+                    // RunRequestPage (any sync overload returning string) →
+                    // NavReportSync.SyncRunRequestPage(selfOrNull, reportId, parameters).
+                    //
+                    // This used to throw out-of-scope on the grounds that a request page needs
+                    // a client to draw it. Under test it does not: BC dispatches it to the
+                    // test's own [RequestPageHandler] via TestHandleModalForm and renders
+                    // nothing. AL calling RunRequestPage to capture a report's
+                    // RequestPageParameters XML is ordinary in-scope AL, and refusing it left
+                    // the declared handler unexecuted — which is itself a failure by BC's own
+                    // unexecuted-handler check.
+                    //
+                    // Four shapes exist; each is mapped to the one managed entry point:
+                    //   static   (int)            -> (null, arg0, null)
+                    //   static   (int, string)    -> (null, arg0, arg1)
+                    //   instance ()               -> (this, 0,    null)
+                    //   instance (string)         -> (this, 0,    arg0)
                     else if (method.Name == "RunRequestPage"
                         && method.ReturnType.FullName == "System.String")
                     {
+                        var rpParams = method.Parameters;
+                        bool isStatic = method.IsStatic;
+                        // Only the shapes above are understood. Anything else keeps the old
+                        // loud refusal rather than being silently mis-wired.
+                        bool known =
+                            (isStatic && rpParams.Count == 1 && rpParams[0].ParameterType.FullName == "System.Int32")
+                            || (isStatic && rpParams.Count == 2 && rpParams[0].ParameterType.FullName == "System.Int32"
+                                && rpParams[1].ParameterType.FullName == "System.String")
+                            || (!isStatic && rpParams.Count == 0)
+                            || (!isStatic && rpParams.Count == 1 && rpParams[0].ParameterType.FullName == "System.String");
+
                         var body = method.Body;
                         body.Instructions.Clear();
                         body.ExceptionHandlers.Clear();
                         body.Variables.Clear();
                         var il = body.GetILProcessor();
-                        il.Append(il.Create(OpCodes.Ldstr,
-                            "out-of-scope: NavReport.RunRequestPage (request-page UI rendering requires service tier)"));
-                        il.Append(il.Create(OpCodes.Newobj, ioeCtor));
-                        il.Append(il.Create(OpCodes.Throw));
-                        body.MaxStackSize = 1;
+
+                        if (!known)
+                        {
+                            il.Append(il.Create(OpCodes.Ldstr,
+                                "out-of-scope: NavReport.RunRequestPage (unrecognised overload shape)"));
+                            il.Append(il.Create(OpCodes.Newobj, ioeCtor));
+                            il.Append(il.Create(OpCodes.Throw));
+                            body.MaxStackSize = 1;
+                        }
+                        else
+                        {
+                            // arg 1: the report instance, or null for the static overloads
+                            if (isStatic) il.Append(il.Create(OpCodes.Ldnull));
+                            else il.Append(il.Create(OpCodes.Ldarg_0));
+                            // arg 2: the report id (0 for the instance overloads — the
+                            // instance already IS the report, so no lookup is needed)
+                            if (isStatic) il.Append(il.Create(OpCodes.Ldarg_0));
+                            else il.Append(il.Create(OpCodes.Ldc_I4_0));
+                            // arg 3: the parameters string, when the overload carries one
+                            if (isStatic && rpParams.Count == 2) il.Append(il.Create(OpCodes.Ldarg_1));
+                            else if (!isStatic && rpParams.Count == 1) il.Append(il.Create(OpCodes.Ldarg_1));
+                            else il.Append(il.Create(OpCodes.Ldnull));
+                            il.Append(il.Create(OpCodes.Call, syncRunRequestPageRef));
+                            il.Append(il.Create(OpCodes.Ret));
+                            body.MaxStackSize = 3;
+                        }
                         reportRewrites++;
                     }
                     // SaveAs* sync wrappers now call through to the real SaveAsAsync
