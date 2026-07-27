@@ -108,16 +108,26 @@ internal sealed class LiveNavTestPage : MockITestPage
     private readonly NavRecord _record;
     private readonly IReadOnlyDictionary<int, int> _controlIdToFieldNo;
     private readonly Dictionary<int, LiveNavTestField> _fields = new();
+    private readonly Dictionary<int, PageVariableTestField> _pageVariableFields = new();
     private readonly bool _creatable;
+    // The live AL page object, when the runner could build one. Null for a page it did not
+    // compile (no metadata to build a control tree from) — then only Rec-bound controls
+    // resolve, which is all this class could ever do before.
+    private readonly RunnerPageInstance? _page;
 
     public LiveNavTestPage(NavRecord record, IReadOnlyDictionary<int, int> controlIdToFieldNo)
-        : this(record, controlIdToFieldNo, creatable: true) { }
+        : this(record, controlIdToFieldNo, creatable: true, page: null) { }
 
     public LiveNavTestPage(NavRecord record, IReadOnlyDictionary<int, int> controlIdToFieldNo, bool creatable)
+        : this(record, controlIdToFieldNo, creatable, page: null) { }
+
+    public LiveNavTestPage(NavRecord record, IReadOnlyDictionary<int, int> controlIdToFieldNo, bool creatable,
+        RunnerPageInstance? page)
     {
         _record = record;
         _controlIdToFieldNo = controlIdToFieldNo;
         _creatable = creatable;
+        _page = page;
     }
 
     // BC's NavTestPageBase.New() consults Creatable before inserting. The base mock returns
@@ -157,10 +167,38 @@ internal sealed class LiveNavTestPage : MockITestPage
 
     public override ITestField GetField(int id)
     {
-        var tableFieldNo = ToTableFieldNo(id);
-        if (!_fields.TryGetValue(tableFieldNo, out var field))
-            _fields[tableFieldNo] = field = new LiveNavTestField(_record, tableFieldNo);
-        return field;
+        // A control bound to a Rec field resolves against the record, as before.
+        if (_controlIdToFieldNo.TryGetValue(id, out var tableFieldNo))
+        {
+            if (!_fields.TryGetValue(tableFieldNo, out var field))
+                _fields[tableFieldNo] = field = new LiveNavTestField(_record, tableFieldNo);
+            return field;
+        }
+
+        // Otherwise it may be bound to a page VARIABLE — resolvable only through the page's
+        // own binding table (NavForm.SourceExpressions).
+        var expression = _page?.TryGetSourceExpression(id);
+        if (expression != null)
+        {
+            if (!_pageVariableFields.TryGetValue(id, out var pageField))
+                _pageVariableFields[id] = pageField = new PageVariableTestField(_page!, expression);
+            return pageField;
+        }
+
+        // Neither. Historically `id` was handed to the record as a FIELD NUMBER, which
+        // produced "The supplied field number '<hash>' cannot be found in the '<table>'
+        // table" — a control-name hash reported as a missing field, blaming the table for
+        // the runner's own inability to resolve the control. Say what actually happened.
+        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            $"TestPage control {id}",
+            "testpage-control-binding — this control is bound neither to a field of the page's "
+            + $"source table nor to a page variable the runner could resolve (table "
+            + $"{_record.MetaTable?.TableName ?? "?"}"
+            + (_page == null
+                ? "; no AL page object was built for this page, so page-variable-bound controls "
+                  + "cannot be resolved — see AlPageMetadataRegistry"
+                : "; the page object has no source expression for this control id")
+            + "). See docs/scope.md");
     }
 
     // Every cursor move leaves the in-progress new row, so it must be persisted first —
@@ -182,8 +220,9 @@ internal sealed class LiveNavTestPage : MockITestPage
     public override object[] GetTableFieldValues(int[] fieldIds)
         => fieldIds.Select(fieldNo => ReadClientObject(fieldNo) ?? string.Empty).ToArray();
 
-    public override bool FindRowFromControlFieldValue(int fieldId, object value, bool forward)
-        => FindRowFromTableFieldValues(new[] { ToTableFieldNo(fieldId) }, new[] { value }, forward);
+    // The only ITestPage entry point that genuinely receives a CONTROL id.
+    public override bool FindRowFromControlFieldValue(int controlId, object value, bool forward)
+        => FindRowFromTableFieldValues(new[] { ControlIdToTableFieldNo(controlId) }, new[] { value }, forward);
 
     public override bool FindRowFromTableFieldValues(int[] fieldNos, object[] values, bool forward)
     {
@@ -210,14 +249,34 @@ internal sealed class LiveNavTestPage : MockITestPage
         return false;
     }
 
-    public override void SetFilter(int fieldId, string filterValue)
-        => _record.ALSetFilter(ToTableFieldNo(fieldId), filterValue);
+    // ITestFilter.SetFilter/GetFilter are handed a TABLE FIELD NUMBER, not a control id:
+    // AL's `TestPage.Filter.SetFilter(Field, ...)` resolves the field reference itself and
+    // BC passes the field number straight through. Routing these through the control map
+    // was wrong in both directions — it would mistranslate a field number that happens to
+    // collide with a control id, and it rejected small, perfectly valid field numbers as
+    // "not a control" (Pageworks SetFilter(3, …) on PageworksPartial).
+    public override void SetFilter(int fieldNo, string filterValue)
+        => _record.ALSetFilter(fieldNo, filterValue);
 
-    public override string GetFilter(int fieldId)
-        => _record.ALGetFilter(ToTableFieldNo(fieldId));
+    public override string GetFilter(int fieldNo)
+        => _record.ALGetFilter(fieldNo);
 
-    private int ToTableFieldNo(int id)
-        => _controlIdToFieldNo.TryGetValue(id, out var fieldNo) ? fieldNo : id;
+    /// <summary>
+    /// Resolve a CONTROL id to the source-table field it is bound to. A control bound to a
+    /// page variable is not in the rowset and cannot be used to locate a row, so this
+    /// refuses rather than passing the control id through as a field number — which is
+    /// what produced "field number '&lt;hash&gt;' cannot be found", blaming the table for
+    /// the runner's own inability to resolve the control.
+    /// </summary>
+    private int ControlIdToTableFieldNo(int controlId)
+    {
+        if (_controlIdToFieldNo.TryGetValue(controlId, out var fieldNo)) return fieldNo;
+        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            $"TestPage control {controlId} used to locate a row",
+            "testpage-control-binding — this control is not bound to a field of the page's "
+            + $"source table ({_record.MetaTable?.TableName ?? "?"}), so it cannot be used to "
+            + "locate a row. See docs/scope.md");
+    }
 
     private bool Matches(int[] fieldNos, object[] values)
     {
@@ -290,6 +349,66 @@ internal sealed class LiveNavTestField : ITestField
     {
         return _record.MetaTable.TryGetFieldByNo(_fieldNo, out var field) ? field.FieldNavType : null;
     }
+}
+
+/// <summary>
+/// A TestPage field over a control bound to a PAGE VARIABLE rather than to a source-table
+/// field. Reads and writes go through the page's own source expression — BC's binding, not
+/// a runner-side copy — so the value lives on the page instance exactly where the AL
+/// declared it, and a second page instance starts with its own.
+///
+/// Writing also runs the control's OnValidate trigger, because that is what setting a
+/// value on a page does; a setter that skipped it would let a test observe the value it
+/// just wrote while none of the page's AL had run.
+/// </summary>
+internal sealed class PageVariableTestField : ITestField
+{
+    private readonly RunnerPageInstance _page;
+    private readonly object _expression;
+
+    public PageVariableTestField(RunnerPageInstance page, object expression)
+    {
+        _page = page;
+        _expression = expression;
+    }
+
+    public string Value
+    {
+        get => Convert.ToString(ObjectValue, CultureInfo.InvariantCulture) ?? string.Empty;
+        set
+        {
+            RunnerPageInstance.SetValue(_expression, ALCompiler.ToNavValue(value));
+            _page.RaiseOnValidate(_expression);
+        }
+    }
+
+    public object? ObjectValue => LiveNavTestPage.Unwrap(RunnerPageInstance.GetValue(_expression));
+
+    public string Name => Caption;
+    public string Caption => _expression.GetType()
+        .GetProperty("Name", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+        ?.GetValue(_expression) as string ?? string.Empty;
+
+    public NavType FieldType => NavType.Text;
+    public int ValidationErrorCount => 0;
+    public long LastUsedValidationErrorId => 0;
+    public long MaxValidationErrorId => 0;
+    public int OptionCount => 0;
+    public bool Enabled => true;
+    public bool Editable => true;
+    public bool Visible => true;
+    public bool HideValue => false;
+    public bool ShowMandatory => false;
+
+    public string GetValidationError(int index) => string.Empty;
+    public void Activate() { }
+    public void Lookup() { }
+    public void Lookup(NavDataSet dataSet) { }
+    public void AssistEdit() { }
+    public void Drilldown() { }
+    public void Invoke() { }
+    public string ValueToString(object? value) => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+    public string GetOption(int index) => string.Empty;
 }
 
 /// <summary>Minimal ITestField implementation — all reads return safe defaults.</summary>

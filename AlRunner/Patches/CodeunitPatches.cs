@@ -336,8 +336,10 @@ public static partial class BcRuntime
         {
             self, metaTable, false, null, null, SecurityFiltering.Ignored
         });
+        // Build the live AL page object where we can; null keeps the record-only behaviour.
+        var page = RunnerPageInstance.TryCreate(self, pageId, record);
         return new LiveNavTestPage(record, RecordPatches.GetPageControlFieldMap(pageId),
-            RecordPatches.GetInsertAllowedForPage(pageId));
+            RecordPatches.GetInsertAllowedForPage(pageId), page);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

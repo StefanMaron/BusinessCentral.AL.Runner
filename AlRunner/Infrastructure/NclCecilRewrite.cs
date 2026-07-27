@@ -3690,6 +3690,48 @@ public static class NclCecilRewrite
             Console.Error.WriteLine($"[Cecil] Rewrote {hepCount} NavSession.Has*ExecutePermission* overload(s) → true (skeleton session runs as SUPER)");
         }
 
+        // NavSession.NCLMetadata → NavGlobal.NCLMetadata.
+        //
+        // The real body is `this.SystemTenant.NCLMetadata`, and SystemTenant is null on the
+        // skeleton session, so any BC code reaching the metadata cache THROUGH THE SESSION
+        // NREs — while the identical code reaching it through NavGlobal works fine. That
+        // asymmetry is invisible until something takes the session route, which is what
+        // NavForm.InitializeFromMetadata does (`base.Session.NCLMetadata.GetMetaTableById`).
+        //
+        // There is exactly one metadata cache in the runner — NavGlobal's, the one every
+        // other patch populates and reads — so routing the session property to it is not a
+        // substitute, it is the same object BC would have handed back had the tenant been
+        // wired. Single-tenant by construction (see docs/scope.md), so there is no second
+        // cache this could pick the wrong one of.
+        {
+            var navSessionT2 = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.NavSession")
+                ?? throw new InvalidOperationException("NavSession type not found — do not commit");
+            var navGlobalT = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.NavGlobal")
+                ?? throw new InvalidOperationException("NavGlobal type not found — do not commit");
+            var globalGetter = navGlobalT.Methods
+                .FirstOrDefault(mm => mm.Name == "get_NCLMetadata" && mm.IsStatic && mm.Parameters.Count == 0)
+                ?? throw new InvalidOperationException("NavGlobal.get_NCLMetadata not found — do not commit");
+            var sessionGetter = navSessionT2.Methods
+                .FirstOrDefault(mm => mm.Name == "get_NCLMetadata" && mm.HasBody && mm.Parameters.Count == 0)
+                ?? throw new InvalidOperationException("NavSession.get_NCLMetadata not found — do not commit");
+            if (sessionGetter.ReturnType.FullName != globalGetter.ReturnType.FullName)
+                throw new InvalidOperationException(
+                    $"NCLMetadata getter return types differ ({sessionGetter.ReturnType.FullName} vs "
+                    + $"{globalGetter.ReturnType.FullName}) — do not commit");
+
+            var body = sessionGetter.Body;
+            body.Instructions.Clear();
+            body.Variables.Clear();
+            body.ExceptionHandlers.Clear();
+            var il = body.GetILProcessor();
+            il.Append(il.Create(OpCodes.Call, globalGetter));
+            il.Append(il.Create(OpCodes.Ret));
+            body.MaxStackSize = 1;
+            Console.Error.WriteLine("[Cecil] Rewrote NavSession.NCLMetadata → NavGlobal.NCLMetadata (skeleton session has no SystemTenant)");
+        }
+
         // SessionTransactionExtensions.SetRecordConsistent / SetRecordInconsistent → no-op.
         // These extension methods mark a record's transaction-consistency state via the
         // session's DataAccessSource, which is null on the skeleton session. The posting
