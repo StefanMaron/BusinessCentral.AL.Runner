@@ -27,12 +27,34 @@ public static partial class BcRuntime
     // per-test rollback does not allow.
     private static readonly ConcurrentDictionary<int, Microsoft.Dynamics.Nav.Runtime.NavCodeunit> _singleInstanceCache = new();
 
+    // Session-rooted handles that exist ONLY to hold a reference on each cached SingleInstance
+    // codeunit. BC refcounts a codeunit instance through the handles that point at it:
+    // TreeObjectReferenceHandler.SetReferenceTarget/Dispose call
+    // InternalRemoveReferenceDisposeIfLast, which DISPOSES the instance the moment the count
+    // reaches zero. The dictionary above is a plain C# reference and is invisible to that
+    // count, so as soon as the last AL variable naming the codeunit went out of scope, BC
+    // disposed the instance we were still caching. A disposed tree is not an error the next
+    // caller sees — NavApplicationObjectBaseHandle.Target returns NULL for a disposed tree
+    // instead of rebuilding — so every global record handle on the codeunit silently read back
+    // null and the next access NRE'd with no message inside BC (measured: Base App codeunit
+    // 347 "Auto Format".GetGLSetup; `tree=DISPOSED` logged immediately before the NRE).
+    // Real BC does not hit zero because the session itself holds a SingleInstance codeunit;
+    // this handle is that reference, and it is parented on the session so it lives exactly as
+    // long as the cache entry does.
+    private static readonly ConcurrentDictionary<int, Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle> _singleInstanceKeepAlive = new();
+
     /// <summary>
     /// Drop every cached SingleInstance codeunit instance. Must run at the per-test-isolation
     /// boundary (see RecordPatches.ResetPerTestState) so SingleInstance field state does not
     /// leak across tests, mirroring real BC's per-test transaction rollback.
     /// </summary>
-    public static void ResetSingleInstanceCache() => _singleInstanceCache.Clear();
+    public static void ResetSingleInstanceCache()
+    {
+        // Release the keep-alive references first: dropping them is what lets BC's refcount
+        // fall to zero and dispose the instances, which is the per-test cleanup real BC does.
+        _singleInstanceKeepAlive.Clear();
+        _singleInstanceCache.Clear();
+    }
 
     // Fallback cache: report ID → skeleton NCLMetaReport built via CreateEmptyNCLMetaReport
     // when NavGlobal.NCLMetadata.GetMetaReportById returns null or throws.
@@ -204,6 +226,32 @@ public static partial class BcRuntime
     }
 
     /// <summary>
+    /// <summary>
+    /// Take a session-rooted reference on a cached SingleInstance codeunit so BC's own
+    /// refcount can never fall to zero and dispose it — see _singleInstanceKeepAlive.
+    /// NavCodeunitHandle(ITreeObject, NavCodeunit) assigns Target, which is what calls
+    /// InternalAddReference; that is the whole point of using a real handle here rather than
+    /// poking the counter.
+    /// </summary>
+    private static void KeepSingleInstanceAlive(int id, Microsoft.Dynamics.Nav.Runtime.NavCodeunit instance)
+    {
+        if (_singleInstanceKeepAlive.ContainsKey(id)) return;
+        if (_skeletonSession is not Microsoft.Dynamics.Nav.Runtime.ITreeObject sessionParent)
+            return;
+
+        var ctor = typeof(Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle).GetConstructor(
+            new[] { typeof(Microsoft.Dynamics.Nav.Runtime.ITreeObject),
+                    typeof(Microsoft.Dynamics.Nav.Runtime.NavCodeunit) });
+        if (ctor == null)
+            throw new InvalidOperationException(
+                "NavCodeunitHandle(ITreeObject, NavCodeunit) not found — a cached SingleInstance " +
+                "codeunit cannot be kept alive, and BC would dispose it as soon as the last AL " +
+                "variable naming it goes out of scope.");
+
+        _singleInstanceKeepAlive[id] =
+            (Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle)ctor.Invoke(new object[] { sessionParent, instance });
+    }
+
     /// Replacement for NavCodeunitHandle.CreateTarget().
     /// Bypasses NavGlobal.NCLMetadata by looking up the compiled codeunit class directly
     /// from the loaded assembly and constructing it via the 1-arg ITreeObject ctor.
@@ -256,7 +304,24 @@ public static partial class BcRuntime
         // its instance fields persist across calls, matching real BC's one-instance-per-session
         // contract for SingleInstance=true codeunits.
         if (instance.IsSingleInstance)
+        {
+            // Rebuild it parented on the SESSION rather than on the caller's handle. The handle
+            // belongs to whichever AL scope happened to resolve this codeunit first; when that
+            // scope's tree is disposed the cascade takes every descendant with it, including
+            // the codeunit we are about to cache for the rest of the test. A reference alone
+            // does not save it — a cascading parent Dispose ignores refcounts — so the instance
+            // has to live outside that subtree, which is where BC keeps a SingleInstance
+            // codeunit anyway (NavCodeunitHandle.CreateTarget parents on base.Tree.Session).
+            // Only SingleInstance codeunits are re-rooted: a per-call codeunit SHOULD die with
+            // its scope, and session-rooting them all was measured to cost a test.
+            if (_skeletonSession is Microsoft.Dynamics.Nav.Runtime.ITreeObject sessionParent)
+                instance = (Microsoft.Dynamics.Nav.Runtime.NavCodeunit)ctor.Invoke(new object[] { sessionParent });
+            if (id == 151)
+                AlRunnerV2.BcRuntime.PrimeCodeunit151Instance(instance);
+
             _singleInstanceCache[id] = instance;
+            KeepSingleInstanceAlive(id, instance);
+        }
 
         return instance;
     }
