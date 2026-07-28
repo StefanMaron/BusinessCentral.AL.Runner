@@ -120,6 +120,16 @@ public static partial class RecordPatches
         lock (_bcTableIndexLock)
         {
             if (_bcMissCache.Contains(tableId)) return false;
+
+            // Platform tables first: no .app can supply them (they have neither symbols nor
+            // AL source), so scanning for them only ever produces a miss. See
+            // RecordPatches.PlatformMediaTables.
+            if (BuiltInPlatformTable(tableId) is { } builtIn)
+            {
+                _parsedTables[tableId] = builtIn;
+                return true;
+            }
+
             EnsureBcSymbolTableIndex();
             if (_bcSymbolTableIndex != null && _bcSymbolTableIndex.TryGetValue(tableId, out var symbolEntry))
             {
