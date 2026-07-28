@@ -335,7 +335,10 @@ public static class NavReportSync
         var getParamsArgs = getParams.GetParameters().Length == 0
             ? Array.Empty<object?>()
             : new object?[] { true };
-        return Invoke(getParams, report, getParamsArgs) as string ?? string.Empty;
+        var result = Invoke(getParams, report, getParamsArgs) as string ?? string.Empty;
+        if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_RP") == "1")
+            Console.Error.WriteLine($"[NavReportSync] RunRequestPage({reportId}) confirmed={confirmed} params={result}");
+        return result;
     }
 
     /// <summary>Set NavReport's private <c>success</c> flag (see SyncRunRequestPage).</summary>

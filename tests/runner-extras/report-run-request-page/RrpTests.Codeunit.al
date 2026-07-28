@@ -105,4 +105,52 @@ codeunit 62012 "RRP Tests"
         LogRec.Log('rp-cancel');
         RequestPage.Cancel().Invoke();
     end;
+
+    [Test]
+    [HandlerFunctions('DatasetReportRequestPageHandler')]
+    procedure CapturedParameters_ReplayThroughSaveAs_FilterTheDataset()
+    var
+        Parameters: Text;
+        TempBlob: Codeunit "Temp Blob";
+        DatasetOutStream: OutStream;
+        DatasetInStream: InStream;
+        Dataset: Text;
+        Line: Text;
+        Ok: Boolean;
+    begin
+        // The whole point of capturing parameters: hand them back to Report.SaveAs so the
+        // report runs headlessly under the filter the handler chose. Pinning the round trip
+        // here rather than only the capture, because a parameters string that SaveAs then
+        // refuses (or silently ignores) is worth exactly nothing to a caller.
+        Seed();
+
+        Parameters := Report.RunRequestPage(Report::"RRP Dataset Report");
+        if Parameters = '' then
+            Error('RunRequestPage returned no parameters to replay.');
+
+        TempBlob.CreateOutStream(DatasetOutStream);
+        Ok := Report.SaveAs(Report::"RRP Dataset Report", Parameters, ReportFormat::Xml, DatasetOutStream);
+        if not Ok then
+            Error('Report.SaveAs refused to run the report with the captured parameters: %1', Parameters);
+
+        TempBlob.CreateInStream(DatasetInStream);
+        while not DatasetInStream.EOS() do begin
+            DatasetInStream.ReadText(Line);
+            Dataset += Line;
+        end;
+
+        if Dataset = '' then
+            Error('Report.SaveAs wrote an empty dataset even though it reported success.');
+        if StrPos(Dataset, 'first') = 0 then
+            Error('The filtered-in row "first" is missing from the dataset: %1', CopyStr(Dataset, 1, 400));
+        if StrPos(Dataset, 'second') > 0 then
+            Error('The row "second" should have been filtered OUT by the replayed parameters, but the dataset contains it: %1', CopyStr(Dataset, 1, 400));
+    end;
+
+    [RequestPageHandler]
+    procedure DatasetReportRequestPageHandler(var RequestPage: TestRequestPage "RRP Dataset Report")
+    begin
+        RequestPage.Rows.SetFilter("Entry No.", '1');
+        RequestPage.OK().Invoke();
+    end;
 }

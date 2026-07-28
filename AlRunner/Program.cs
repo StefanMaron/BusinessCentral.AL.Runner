@@ -536,7 +536,13 @@ if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_FCE") is "1" or "2")
     {
         var ex = e.Exception;
         var n = ex.GetType().Name;
-        if (n.Contains("Report") || n.Contains("NullReference") || n.Contains("NavNCL") || n.Contains("InvalidOperation"))
+        // Every Nav* type, not a hand-picked list of families. The list used to name only
+        // NavNCL* / *Report* / NullReference / InvalidOperation, which silently hid whole
+        // exception families — NavTestFieldException, NavControlException, NavCSide* — and
+        // those are exactly the ones BC swallows internally (Report.SaveAs catches
+        // NavBaseException and returns false). A trace that cannot see the exception the
+        // caller is trying to explain is worse than no trace: it reads as "nothing threw".
+        if (n.StartsWith("Nav") || n.Contains("Report") || n.Contains("NullReference") || n.Contains("InvalidOperation"))
         {
             var st = ex.StackTrace ?? "";
             if (fceFull)

@@ -116,3 +116,57 @@ report 62010 "RRP Request Page Report"
         exit(RowCount);
     end;
 }
+
+/// Same request page, but a report that produces a DATASET — so the parameters a handler
+/// produced can be replayed through Report.SaveAs(id, paramsXml, Xml, stream) and the
+/// filter's effect observed in the output. That replay is the documented way to run a
+/// report headlessly with filters a user chose earlier, and it is what a caller does with
+/// what RunRequestPage handed back.
+report 62011 "RRP Dataset Report"
+{
+    Caption = 'RRP Dataset Report';
+    UsageCategory = ReportsAndAnalysis;
+    ApplicationArea = All;
+    DefaultRenderingLayout = RrpLayout;
+
+    dataset
+    {
+        dataitem(Rows; "RRP Row")
+        {
+            column(EntryNo; "Entry No.") { }
+            column(RowName; Name) { }
+        }
+    }
+
+    rendering
+    {
+        layout(RrpLayout)
+        {
+            Type = RDLC;
+            LayoutFile = './RrpLayout.rdl';
+            Caption = 'RRP layout';
+        }
+    }
+
+    requestpage
+    {
+        layout
+        {
+            area(Content)
+            {
+                group(Options)
+                {
+                    field(EchoText; EchoText)
+                    {
+                        ApplicationArea = All;
+                        Caption = 'Echo Text';
+                        ToolTip = 'Unused; present so the request page has a control.';
+                    }
+                }
+            }
+        }
+    }
+
+    var
+        EchoText: Text[50];
+}
