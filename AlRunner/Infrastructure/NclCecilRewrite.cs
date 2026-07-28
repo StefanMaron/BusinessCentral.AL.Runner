@@ -5587,6 +5587,45 @@ public static class NclCecilRewrite
                 FindNclMethod(nclMod, Rt + "NavRecordId", "get_CollationAwareStringComparer", 0),
                 H(navRecordIdP, "NavRecordId_get_CollationAwareStringComparer"));
 
+            // ── NavDialog progress dialog: no-op, exactly as BC does headless ─────────────
+            //
+            // Dialog.Open / Update / Close have no AL-observable effect on data — they drive a
+            // window. BC itself already skips the whole body for a non-interactive caller:
+            //     if (IsWebServiceClientRequest(base.Tree.Session)) return default(ValueTask);
+            // which is precisely the runner's situation, so a no-op here is BC's own answer for
+            // this case rather than a substitution of one. (Confirm/StrMenu are NOT no-oped — see
+            // the note above: those carry a real answer and route to the test's handler.)
+            //
+            // These were listed as Cecil-owned but their rewrite block had been removed, so
+            // nothing replaced them AND the legacy JmpHook auto-skipped on the ownership claim.
+            // The original body then NRE'd at its first instruction on a null base.Tree, taking
+            // out every AL path that opens a progress window — including Base App codeunit 2
+            // "Company-Initialize", which is why the runner's company had no Company Information.
+            {
+                var navDialog = nclMod.GetType(Rt + "NavDialog")
+                    ?? throw new InvalidOperationException("[Cecil] NavDialog not found in Ncl — shape changed");
+
+                var alOpenAsync = navDialog.Methods.FirstOrDefault(m =>
+                    m.Name == "ALOpenAsync" && m.HasBody && m.HasThis && m.Parameters.Count == 3)
+                    ?? throw new InvalidOperationException("[Cecil] NavDialog.ALOpenAsync/3 not found — do not commit");
+                ReplaceBodyWithHelper(nclMod, alOpenAsync, H(helperShims, "ReturnValueTask4"));
+
+                int dialogNoOps = 1;
+                foreach (var m in navDialog.Methods.Where(m =>
+                             m.Name == "ALUpdateAsync" && m.HasBody && m.HasThis && m.Parameters.Count <= 2))
+                {
+                    ReplaceBodyWithHelper(nclMod, m,
+                        H(helperShims, m.Parameters.Count switch
+                        {
+                            0 => "ReturnValueTask2",   // +1 for `this`; shim arity counts it
+                            1 => "ReturnValueTask2",
+                            _ => "ReturnValueTask3",
+                        }));
+                    dialogNoOps++;
+                }
+                Console.Error.WriteLine($"[Cecil] NavDialog: {dialogNoOps} progress-dialog method(s) → headless no-op");
+            }
+
             // ── NavRecord no-ops (Dispose / IsGlobalTriggerImplemented / UpdateRefs) ──
             // Dispose(bool) → NoOp2; IsGlobalTriggerImplemented(Triggers) → ReturnFalse2;
             // UpdateReferencesOnRenameAsync(List,NavRecord) instance overload → ReturnValueTask3.

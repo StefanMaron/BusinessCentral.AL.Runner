@@ -78,6 +78,7 @@ public static partial class BcRuntime
             _aiCounters[pair.Key] = pair.Value;
     }
     private static FieldInfo? _fRecordImplementationDataAccess;          // RecordImplementation.dataAccess
+    private static FieldInfo? _fRecordImplementationMetaTable;          // RecordImplementation.metaTable
     private static FieldInfo? _fRecordImplementationMutableRecordBuffer; // RecordImplementation.mutableRecordBuffer
     private static MethodInfo? _mDataAccessTryGetByPrimaryKeyAsync;
     private static PropertyInfo? _pMrbResultResult;     // MutableRecordBufferResult<bool>.Result

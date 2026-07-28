@@ -1,0 +1,20 @@
+{
+  "id": "b2c3d4e5-6f70-4819-a2b3-c4d5e6f70819",
+  "name": "Runner Extras - Record.Get on a missing row",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Pins that Get/GetBySystemId raise when the row is missing and the return value is not consumed, and return false when it is.",
+  "description": "AL decides Get's failure mode from whether the caller consumes the return value: `if Rec.Get(x) then` traps and yields false, while a bare `Rec.Get(x);` statement raises 'The <table> does not exist. Identification fields and values: ...'. The corpus covers only the first form. A runner that silently succeeds on the second hands the caller a blank or stale record and every downstream assertion then tests the wrong thing.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [ { "from": 62060, "to": 62069 } ],
+  "runtime": "14.0",
+  "features": []
+}

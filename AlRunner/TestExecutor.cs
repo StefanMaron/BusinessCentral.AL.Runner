@@ -87,8 +87,13 @@ public sealed class TestExecutor
         // A TestExecutor instance is reused across bundles. Discard the preceding bundle's
         // final test mutations before creating this bundle's committed installation baseline.
         AlRunnerV2.Patches.RecordPatches.ResetPerTestState();
+        CompanyInitializer.ResetForNewBundle();
         InstallTriggerRunner.SetTestAssembly(assembly);
         InstallTriggerRunner.RunAll();
+        // Install triggers do not create a company's baseline rows — company CREATION does,
+        // via codeunit 2 "Company-Initialize". Run it before the baseline snapshot so its rows
+        // (Company Information, Source Code Setup, …) are part of what every test is restored to.
+        CompanyInitializer.EnsureCompanyInitialized();
         AlRunnerV2.Patches.RecordPatches.CaptureInstallBaseline();
         PerfTrace.Log($"TestExecutor.InitialInstallSeed {seedSw.ElapsedMilliseconds}ms");
 

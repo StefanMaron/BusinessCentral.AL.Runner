@@ -219,6 +219,8 @@ public static partial class BcRuntime
                 BindingFlags.NonPublic | BindingFlags.Instance);
             _fRecordImplementationMutableRecordBuffer = recImplType.GetField("mutableRecordBuffer",
                 BindingFlags.NonPublic | BindingFlags.Instance);
+            _fRecordImplementationMetaTable = recImplType.GetField("metaTable",
+                BindingFlags.NonPublic | BindingFlags.Instance);
             var dataAccessType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.DataAccess");
             if (dataAccessType != null)
             {
@@ -285,6 +287,49 @@ public static partial class BcRuntime
     }
 
     /// <summary>
+    /// BC's own record-not-found exception for a failed primary-key/SystemId lookup, built
+    /// through RecordImplementationHelper so the AL-visible message ("The &lt;table&gt; does not
+    /// exist. Identification fields and values: ...") is BC's, not an approximation of it.
+    /// The original body raised this too; the only thing this replacement still skips is the
+    /// WritePermissionUncheckedEvent telemetry above it, which reads
+    /// Session.CurrentMethodScope.ApplicationObject and NREs on the skeleton root scope.
+    /// </summary>
+    private static Exception BuildRecordNotFoundException(object self, object request)
+    {
+        var nclAsm = typeof(Microsoft.Dynamics.Nav.Runtime.NavRecord).Assembly;
+        var helper = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.RecordImplementationHelper");
+        var metaTable = _fRecordImplementationMetaTable?.GetValue(self);
+        if (helper == null || metaTable == null)
+            throw new InvalidOperationException(
+                "RecordImplementationHelper / RecordImplementation.metaTable not resolvable — a " +
+                "failed Record.Get cannot raise BC's record-not-found error and would silently " +
+                "succeed instead.");
+
+        // RecordIdCacheRequest.RecordId / SystemIdCacheRequest.SystemId — pick whichever this
+        // request carries, mirroring the original body's own two-way branch.
+        foreach (var (propName, argTypeName) in new[]
+                 {
+                     ("RecordId", "Microsoft.Dynamics.Nav.Runtime.NavRecordId"),
+                     ("SystemId", "Microsoft.Dynamics.Nav.Runtime.NavGuid"),
+                 })
+        {
+            var key = request.GetType().GetProperty(propName,
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(request);
+            if (key == null) continue;
+            var argType = nclAsm.GetType(argTypeName);
+            var factory = helper.GetMethod("GetRecordNotFoundException",
+                BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+                binder: null, new[] { metaTable.GetType(), argType! }, modifiers: null);
+            if (factory?.Invoke(null, new[] { metaTable, key }) is Exception ex) return ex;
+        }
+
+        throw new InvalidOperationException(
+            $"Record not found, but the request type {request.GetType().Name} carries neither a " +
+            "RecordId nor a SystemId, so BC's record-not-found error cannot be built. Refusing to " +
+            "report the lookup as successful.");
+    }
+
+    /// <summary>
     /// Replacement for RecordImplementation.InternalFindRecordWithoutCheckingValuesAsync —
     /// thin passthrough that hits dataAccess.TryGetByPrimaryKeyAsync and bypasses the original
     /// body's permission-event/diagnostic args evaluation, which NREs through
@@ -321,9 +366,17 @@ public static partial class BcRuntime
                 _fRecordImplementationMutableRecordBuffer?.SetValue(self, recBuffer);
             }
             if (found) return new System.Threading.Tasks.ValueTask<bool>(true);
-            // Internal find reports presence only; public AL APIs decide whether a
-            // not-found result should become an AL error for their specific surface.
-            return new System.Threading.Tasks.ValueTask<bool>(false);
+
+            // Not found. BC's own body decides the failure mode RIGHT HERE from errorLevel —
+            // nothing downstream re-checks — so returning false unconditionally silently turned
+            // every raising Get into a succeeding one. AL picks the mode at the call site:
+            // `if Rec.Get(x) then` compiles to TrapError and wants false; a bare `Rec.Get(x);`
+            // compiles to ThrowError and must raise, otherwise the caller keeps whatever the
+            // record held before and every later assertion tests something that never happened.
+            if (errorLevel == Microsoft.Dynamics.Nav.Types.DataError.TrapError)
+                return new System.Threading.Tasks.ValueTask<bool>(false);
+
+            throw BuildRecordNotFoundException(self, request);
         }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
