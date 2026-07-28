@@ -128,7 +128,6 @@ public static partial class RecordPatches
     /// </summary>
     public static object DataAccessSource_GetDataAccessForQuery(object self, object queryDefinition)
     {
-        try { System.IO.File.AppendAllText("/tmp/qj-trace.txt", "GetDataAccessForQuery ENTER\n"); } catch { }
         EnsureGetDataAccessForQueryReflection(self);
 
         var includedTables = (System.Collections.IEnumerable)_pQueryDefIncludedTables!.GetValue(queryDefinition)!;
