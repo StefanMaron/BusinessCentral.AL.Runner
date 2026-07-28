@@ -493,7 +493,30 @@ internal class LiveNavTestPage : MockITestPage
     // collide with a control id, and it rejected small, perfectly valid field numbers as
     // "not a control" (Pageworks SetFilter(3, …) on PageworksPartial).
     public override void SetFilter(int fieldNo, string filterValue)
-        => _record.ALSetFilter(fieldNo, filterValue);
+    {
+        _record.ALSetFilter(fieldNo, filterValue);
+        RepositionAfterFilterChange();
+    }
+
+    /// <summary>
+    /// A filter changes which rows the page HAS, so the cursor may no longer be on one of
+    /// them. Left alone, the page keeps answering from a record the filter excludes — and
+    /// that reads as a real, plausible value belonging to the wrong row, so the test fails
+    /// claiming the data is wrong rather than the cursor.
+    ///
+    /// The current row is KEPT when the new filter still admits it, which is what BC's client
+    /// does and what makes "filter, then keep reading here" work. `ALFind("=")` is the probe:
+    /// it re-reads the record at the current primary key UNDER the current filters, so a false
+    /// answer means precisely "this row is no longer on the page".
+    /// </summary>
+    private void RepositionAfterFilterChange()
+    {
+        var position = _record.ALGetPosition();
+        if (!string.IsNullOrEmpty(position)
+            && _record.ALFindAsync(DataError.TrapError, "=").GetAwaiter().GetResult())
+            return;
+        MoveFirst();
+    }
 
     public override string GetFilter(int fieldNo)
         => _record.ALGetFilter(fieldNo);
