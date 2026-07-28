@@ -3888,9 +3888,6 @@ public static class NclCecilRewrite
         //     → throw NavNCLDialogException("out-of-scope: NavReport.RunRequestPage") —
         //       request-page UI rendering requires a service tier.
         //
-        //   DataItemIterator.SetTableView(NavRecord)
-        //     → null-guard `SafeSourceTable` (null on skeleton instances) and record
-        //       SetTableViewUsed = true. Filter is not yet applied to the source — TODO.
         {
             var navReportT = asm.MainModule.Types
                 .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.NavReport");
@@ -4120,39 +4117,21 @@ public static class NclCecilRewrite
                     // there; Xml dataset + application-handled custom layouts run.
                 }
             }
-            // DataItemIterator.SetTableView(NavRecord) — null-guard for skeleton instances.
-            var diiT = asm.MainModule.Types
-                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.DataItemIterator");
-            if (diiT != null)
-            {
-                var setTableViewUsed = diiT.Properties.FirstOrDefault(p => p.Name == "SetTableViewUsed")?.SetMethod;
-                foreach (var method in diiT.Methods.ToList())
-                {
-                    if (!method.HasBody) continue;
-                    var ps = method.Parameters;
-                    if (method.Name == "SetTableView"
-                        && ps.Count == 1
-                        && ps[0].ParameterType.FullName == "Microsoft.Dynamics.Nav.Runtime.NavRecord"
-                        && method.ReturnType.FullName == "System.Void")
-                    {
-                        var body = method.Body;
-                        body.Instructions.Clear();
-                        body.ExceptionHandlers.Clear();
-                        body.Variables.Clear();
-                        var il = body.GetILProcessor();
-                        if (setTableViewUsed != null)
-                        {
-                            il.Append(il.Create(OpCodes.Ldarg_0));
-                            il.Append(il.Create(OpCodes.Ldc_I4_1));
-                            il.Append(il.Create(OpCodes.Call, setTableViewUsed));
-                        }
-                        il.Append(il.Create(OpCodes.Ret));
-                        body.MaxStackSize = 2;
-                        reportRewrites++;
-                    }
-                }
-            }
-            Console.Error.WriteLine($"[Cecil] Rewrote {reportRewrites} NavReport/DataItemIterator method(s) (Run/RunModal→SyncRun; Add→ReportAdd; RunRequestPage→OOS-throw; SetTableView→null-safe)");
+            // DataItemIterator.SetTableView(NavRecord) keeps BC'S OWN BODY.
+            //
+            // It used to be blanked to nothing but `SetTableViewUsed = true`, with a TODO
+            // saying "filter is not yet applied to the source". That TODO was the whole
+            // defect: SetTableView is how Report.SaveAs(…, recordRef) — the overload every
+            // "print this one document" path in AL uses — gets its record filter onto the
+            // matching data item. Dropping it made a document report either refuse to run
+            // ("You must specify one or more filters to avoid accidentally printing all
+            // documents", which is what report 1306 raises) or silently render every row in
+            // the table instead of the one that was asked for.
+            //
+            // BC's own body only touches DataItemIterator state the runner already builds
+            // (dataItems, TableViewRecord, TableViewIsSet), so there is nothing to stand in
+            // for — the original is both correct and sufficient.
+            Console.Error.WriteLine($"[Cecil] Rewrote {reportRewrites} NavReport/DataItemIterator method(s) (Run/RunModal→SyncRun; Add→ReportAdd; RunRequestPage→OOS-throw)");
         }
 
         // §report-processor-factory — the TRUE out-of-scope boundary for report
@@ -6061,6 +6040,47 @@ public static class NclCecilRewrite
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "NavStream", "get_Target", 0),
                 H(helperShims, "NavStream_get_Target"));
+
+            // NavMediaImage.GetImageWithContentHeaderValidation — decide "is this an image"
+            // from the content header instead of System.Drawing, which is unsupported on this
+            // platform. The point is NOT image support: it is that BC's own
+            // "not an image → application/octet-stream" fallback keys off an
+            // ArgumentException inner, and the platform exception is a different type, so
+            // EVERY media write failed — including a report layout, which was never an image.
+            // See MediaPatches.
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "Media.NavMediaImage", "GetImageWithContentHeaderValidation", 1),
+                H(typeof(AlRunnerV2.Patches.MediaPatches), "NavMediaImage_GetImageWithContentHeaderValidation"));
+
+            // NavMediaImage's STATIC state has to go too, not just that one method. Its two
+            // static fields are built from System.Drawing at class-init time:
+            //     ImageTypeCollection = new Dictionary<ImageFormat, string> { … }
+            //     SupportedMimeTypes  = ImageCodecInfo.GetImageDecoders() …
+            // so merely TOUCHING the type throws TypeInitializationException here — which is
+            // unavoidable, because NavMediaFactory.ProcessMediaObject calls
+            // NavMediaImage.IsSupportedMimeType on the way to every non-image branch.
+            // Emptying the class constructor leaves both fields null, so IsSupportedMimeType
+            // is rewritten to answer false — the honest answer on a platform with no image
+            // decoders at all, and the same answer BC's own body would give from an empty
+            // decoder set. Everything that would read the null fields is image-only and is
+            // refused by name before it can be reached (MediaPatches).
+            {
+                var navMediaImageT = nclMod.Types
+                    .FirstOrDefault(t => t.FullName == Rt + "Media.NavMediaImage")
+                    ?? throw new InvalidOperationException(
+                        "[Cecil] type " + Rt + "Media.NavMediaImage not found — Ncl shape changed; do not commit");
+                var cctor = navMediaImageT.Methods.FirstOrDefault(m => m.Name == ".cctor")
+                    ?? throw new InvalidOperationException(
+                        "[Cecil] NavMediaImage has no static constructor — Ncl shape changed; do not commit");
+                cctor.Body.Instructions.Clear();
+                cctor.Body.Variables.Clear();
+                cctor.Body.ExceptionHandlers.Clear();
+                cctor.Body.GetILProcessor().Append(Instruction.Create(OpCodes.Ret));
+                Console.Error.WriteLine("[Cecil] Emptied NavMediaImage..cctor (System.Drawing statics unavailable on this platform)");
+            }
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "Media.NavMediaImage", "IsSupportedMimeType", 1),
+                H(helperShims, "ReturnFalse_1Arg"));
 
             // ── NavRecordRef cluster (Batch 8) — get_Target + open-gates + ALOpen ─
             // get_Target's real body NREs on base.Tree.Session.Company.SharedObjects

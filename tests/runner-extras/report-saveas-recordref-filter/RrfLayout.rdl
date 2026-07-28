@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Report xmlns="http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition">
+  <DataSets>
+    <DataSet Name="DataSet_Result">
+      <Query><CommandText /><DataSourceName>DummyDataSource</DataSourceName></Query>
+      <Fields>
+        <Field Name="EntryNo"><DataField>EntryNo</DataField></Field>
+        <Field Name="RowName"><DataField>RowName</DataField></Field>
+      </Fields>
+    </DataSet>
+  </DataSets>
+  <ReportSections />
+</Report>

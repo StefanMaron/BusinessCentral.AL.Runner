@@ -37,7 +37,13 @@ public static partial class BcRuntime
             if (Environment.GetEnvironmentVariable("ALRUNNER_DISPATCH_TRACE") == "1")
                 Console.Error.WriteLine(
                     $"[DispatchRethrow] {inner.GetType().Name}: {inner.Message}\nCALLER CHAIN:\n{Environment.StackTrace}");
-            throw inner;
+            // Capture().Throw(), not `throw inner` — a bare rethrow RESETS the exception's
+            // stack trace to this line, so every failure raised inside a subscriber (or
+            // inside DispatchCore itself) surfaced as "NullReferenceException at
+            // CodeunitEventDispatch_OnRunEventAsync line 40" and named nothing that could be
+            // acted on. The original frames are what identify the actual defect.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(inner).Throw();
+            throw; // unreachable
         }
         return default;
     }
@@ -103,6 +109,26 @@ public static partial class BcRuntime
     }
 
     /// <summary>
+    /// <paramref name="publisher"/> when its tree is still usable, otherwise the skeleton
+    /// session. Only the tree-parent role is being substituted — the publisher itself is
+    /// still what the subscriber is dispatched for.
+    /// </summary>
+    private static object LiveParentFor(object publisher)
+    {
+        try
+        {
+            var tree = publisher.GetType()
+                .GetProperty("Tree", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
+                .GetValue(publisher);
+            if (tree != null) return publisher;
+        }
+        catch (TargetInvocationException tie) when (tie.InnerException is ObjectDisposedException) { }
+        catch (ObjectDisposedException) { }
+
+        return AlRunnerV2.BcRuntime.SkeletonSession ?? publisher;
+    }
+
+    /// <summary>
     /// Assembly-independent identity of an AL subscriber method: declaring codeunit
     /// id + method name + parameter type NAMES (full CLR identity would differ per
     /// emitted assembly for the same AL code).
@@ -148,7 +174,16 @@ public static partial class BcRuntime
         int subscriberCodeunitId = ExtractCodeunitIdFromTypeName(subscriberClrType);
         if (subscriberCodeunitId == 0) return;
 
-        var handle = _ciNavCodeunitHandleByIdInt!.Invoke(new object?[] { treeObj, subscriberCodeunitId });
+        // The subscriber handle is parented on the PUBLISHER, and a publisher can outlive the
+        // scope it was created in — a SingleInstance codeunit is cached for the whole test, so
+        // by the time it publishes again its original tree may be disposed. Everything that
+        // reads the tree off it then throws ObjectDisposedException("Tree"), which took out
+        // event dispatch for the rest of the run (measured on Base App codeunit 43 publishing
+        // OnGetLanguageIdOrDefault). Parenting on the session instead is what BC's own
+        // "resolve this codeunit in the current session" amounts to, and the session is alive
+        // for exactly as long as dispatch can be running.
+        var handle = _ciNavCodeunitHandleByIdInt!.Invoke(
+            new object?[] { LiveParentFor(treeObj), subscriberCodeunitId });
         var subscriberInstance = _pNavCodeunitHandle_Target!.GetValue(handle);
         if (subscriberInstance == null) return;
 

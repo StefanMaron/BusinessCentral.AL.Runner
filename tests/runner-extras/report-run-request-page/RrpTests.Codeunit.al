@@ -12,12 +12,10 @@
 ///   * handler confirms with OK  -> the handler body ran, the request page really
 ///     opened (its OnOpenPage logged), and the data-item filter the handler set survives
 ///     into the returned parameters XML;
-///   * handler cancels           -> BC returns an empty parameters string, while the
-///     handler still demonstrably ran, so "cancelled" is distinguishable from "never ran".
-///
-/// NOT claimed here: the request page's own OnOpenPage trigger. It does not fire under the
-/// runner (issue: request-page form initialisation is gated off), and asserting it would
-/// make this suite fail for a reason unrelated to handler dispatch.
+///   * handler cancels           -> BC returns an empty parameters string, while the page
+///     still opened and the handler still ran, so "cancelled" is distinguishable from
+///     "never ran".
+
 /// </summary>
 codeunit 62012 "RRP Tests"
 {
@@ -51,6 +49,9 @@ codeunit 62012 "RRP Tests"
 
         Parameters := Report.RunRequestPage(Report::"RRP Request Page Report");
 
+        if LogRec.MarkerCount('rp-open') <> 1 then
+            Error('The request page never opened, so its OnOpenPage never ran: expected exactly 1 rp-open log row, got %1.',
+                LogRec.MarkerCount('rp-open'));
         if LogRec.MarkerCount('rp-handler') <> 1 then
             Error('The [RequestPageHandler] never ran: expected exactly 1 rp-handler log row, got %1.',
                 LogRec.MarkerCount('rp-handler'));
@@ -77,6 +78,9 @@ codeunit 62012 "RRP Tests"
 
         Parameters := Report.RunRequestPage(Report::"RRP Request Page Report");
 
+        if LogRec.MarkerCount('rp-open') <> 1 then
+            Error('The request page never opened, so its OnOpenPage never ran: expected exactly 1 rp-open log row, got %1.',
+                LogRec.MarkerCount('rp-open'));
         if LogRec.MarkerCount('rp-cancel') <> 1 then
             Error('The cancelling [RequestPageHandler] never ran: expected exactly 1 rp-cancel log row, got %1.',
                 LogRec.MarkerCount('rp-cancel'));

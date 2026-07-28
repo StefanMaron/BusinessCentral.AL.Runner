@@ -42,12 +42,33 @@ public static class RunnerModalDispatch
         var handle = FormHandleOf(runRequest);
         var type = testExecution.GetType();
 
+        // Open the page before handing it to the handler. A real client opens the form on the
+        // server as part of this round trip, and opening is what raises the page's OnOpenPage
+        // trigger — the single place an AL page is allowed to initialise the state its
+        // controls and actions then read. Skipping it meant every handler drove a page whose
+        // OnOpenPage had never run, so anything that trigger sets up simply was not there.
+        //
+        // Deliberately NOT wrapped in a catch: OnOpenPage is AL, and an Error() raised there
+        // is a real test failure that must reach the test, not a runner detail to absorb.
+        var form = RegisteredForm(handle);
+        var opened = TryOpenForm(form);
+
         // BC's own ShowDialog: pops dialogHandlerStack and runs the pushed handler delegate,
         // which builds the NavTestPage and invokes the AL [ModalPageHandler].
         var showDialog = type.GetMethod("ShowDialog", BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException(
                 "NavTestExecution.ShowDialog not found — Ncl shape changed; do not commit");
-        var result = Invoke(showDialog, testExecution, new object?[] { handle });
+        object? result;
+        try
+        {
+            result = Invoke(showDialog, testExecution, new object?[] { handle });
+        }
+        finally
+        {
+            // Close only what this method opened, and only through BC's own CloseForm, so the
+            // form leaves the company's registry exactly the way BC would have left it.
+            if (opened) TryCloseForm(form!, result: null);
+        }
 
         // The handler's outcome (OK/Cancel) is what the AL that called RunModal receives.
         // TestHandleModalForm reads it off formResultStack, which SetLastFormResult writes.
@@ -85,6 +106,61 @@ public static class RunnerModalDispatch
             ?? throw new InvalidOperationException(
                 "FormRunData.FormHandle not found — Ncl shape changed; do not commit");
         formHandle.SetValue(data, handle);
+    }
+
+    /// <summary>The NavForm BC registered under <paramref name="handle"/>, or null.</summary>
+    private static object? RegisteredForm(Guid handle)
+    {
+        try
+        {
+            var session = AlRunnerV2.BcRuntime.SkeletonSession;
+            var company = session?.GetType()
+                .GetProperty("Company", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
+                .GetValue(session);
+            var get = company?.GetType().GetMethod("GetRegisteredForm",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                binder: null, types: new[] { typeof(Guid) }, modifiers: null);
+            return get?.Invoke(company, new object[] { handle });
+        }
+        catch (TargetInvocationException) { return null; }
+    }
+
+    /// <summary>
+    /// Open <paramref name="form"/> through BC's own OpenForm (which raises OnOpenPage).
+    /// Returns whether this call is the one that opened it — a form BC already opened must
+    /// not be opened again (NavNCLFormAlreadyOpenedException) nor closed by us.
+    /// </summary>
+    private static bool TryOpenForm(object? form)
+    {
+        if (form == null) return false;
+        var isOpen = form.GetType().GetProperty("IsOpen",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (isOpen?.GetValue(form) is true) return false;
+
+        var openForm = form.GetType().GetMethod("OpenForm",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            binder: null, types: Type.EmptyTypes, modifiers: null);
+        if (openForm == null) return false;
+        Invoke(openForm, form, Array.Empty<object?>());
+        return true;
+    }
+
+    private static void TryCloseForm(object form, object? result)
+    {
+        var closeForm = form.GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .FirstOrDefault(m => m.Name == "CloseForm" && m.GetParameters().Length == 1);
+        if (closeForm == null) return;
+        var formResultType = closeForm.GetParameters()[0].ParameterType;
+        var arg = result != null && formResultType.IsInstanceOfType(result)
+            ? result
+            : Enum.ToObject(formResultType, 0);
+        try { Invoke(closeForm, form, new[] { arg }); }
+        catch (Exception ex)
+        {
+            // Closing is cleanup, not the test's subject: a failure here must not replace the
+            // handler's own outcome, but it must not vanish either.
+            Console.Error.WriteLine($"[RunnerModalDispatch] CloseForm failed: {ex.GetType().Name}: {ex.Message}");
+        }
     }
 
     private static Guid FormHandleOf(object runRequest)
