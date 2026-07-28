@@ -196,6 +196,55 @@ public static class NavReportSync
     /// bare MasterPage (null PageProperties) NREs there. Falls back to a bare
     /// MasterPage if the metadata types cannot be resolved.
     /// </summary>
+    /// <summary>
+    /// The MasterPage to give a report whose metadata carries no request-page definition —
+    /// which is every report whose metadata the runner RECONSTRUCTS from a precompiled
+    /// dependency, since the reconstruction covers data items and columns but not the
+    /// request page.
+    ///
+    /// It matters that this is not simply a blank MasterPage. BC picks the handler for a
+    /// modal form from <c>masterPage.PageProperties.PageType</c>
+    /// (NavTestExecution.FindPageType) and then matches the handler's declared object id
+    /// against <c>form.ObjectId.ObjectNumber</c>, which comes from <c>masterPage.ID</c>. A
+    /// blank MasterPage reports PageType.Card and id 0, so a test's [RequestPageHandler] for
+    /// report N matched nothing and the run fell through to a client callback that headless
+    /// mode cannot serve.
+    ///
+    /// Only those two properties are filled in. Loading BC's real request-page TEMPLATE
+    /// (MetadataProvider.GetMasterPage(PageType.ReportPreview)) was tried first and is worse
+    /// here: it brings the standard request-page controls with it, and NavForm's
+    /// InitializeFromMetadata — which request pages are deliberately not opted into
+    /// (RunnerFormInit) — then NREs walking them. A request page with no controls is the
+    /// honest description of what a reconstructed report's metadata actually contains, and a
+    /// handler that reaches for a control is refused by name in RequestPageTestPage.GetField
+    /// rather than silently answering an empty value.
+    /// </summary>
+    public static object BuildRequestPageStubMasterPage(
+        System.Reflection.Assembly typesAsm, Type masterPageType, int reportId)
+    {
+        var master = BuildEmptyMasterPage(typesAsm, masterPageType);
+        try
+        {
+            masterPageType.GetProperty("ID",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?
+                .SetValue(master, reportId);
+
+            var pageProps = _masterPagePagePropsProp?.GetValue(master);
+            var pPageType = pageProps?.GetType().GetProperty("PageType",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (pageProps != null && pPageType?.CanWrite == true && pPageType.PropertyType.IsEnum
+                && Enum.IsDefined(pPageType.PropertyType, "ReportPreview"))
+                pPageType.SetValue(pageProps, Enum.Parse(pPageType.PropertyType, "ReportPreview"));
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                $"[NavReportSync] could not stamp report {reportId} onto its request-page MasterPage "
+                + $"({ex.GetType().Name}: {ex.Message}) — its [RequestPageHandler] will not be reachable");
+        }
+        return master;
+    }
+
     public static object BuildEmptyMasterPage(System.Reflection.Assembly typesAsm, Type masterPageType)
     {
         var master = Activator.CreateInstance(masterPageType)!;
@@ -262,14 +311,46 @@ public static class NavReportSync
                 "not-yet-implemented — the runner could not construct report " + reportId +
                 " to run its request page. See docs/scope.md");
 
-        RunRequestPageForHandler(report, parameters);
+        var confirmed = RunRequestPageForHandler(report, reportId, parameters);
 
-        var getParams = report.GetType().GetMethod("GetReportParameters",
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-            binder: null, types: Type.EmptyTypes, modifiers: null)
+        // BC's own RunRequestPageAsync reaches GetReportParameters through
+        // RunReportAsync(…, ReportIntent.Parameters, …), which sets NavReport.success when
+        // the request page is confirmed. GetReportParameters returns string.Empty unless it
+        // is set, which is precisely how "the user cancelled" is reported to AL. The runner
+        // drives the request page directly, so it has to record the same fact.
+        SetReportSuccess(report, confirmed);
+
+        // Shape-tolerant: BC declares `GetReportParameters(bool requireSuccess = true)`, so a
+        // Type.EmptyTypes lookup finds nothing — the optional parameter is still a parameter.
+        var getParams = report.GetType().GetMethods(
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            .Where(m => m.Name == "GetReportParameters" && m.ReturnType == typeof(string)
+                        && m.GetParameters().All(pi => pi.ParameterType == typeof(bool)))
+            .OrderBy(m => m.GetParameters().Length)
+            .FirstOrDefault()
             ?? throw new InvalidOperationException(
                 "NavReport.GetReportParameters not found — Ncl shape changed; do not commit");
-        return Invoke(getParams, report, Array.Empty<object?>()) as string ?? string.Empty;
+        // requireSuccess: true — the success flag set just above is what makes a cancelled
+        // request page answer with an empty string, exactly as it does in real BC.
+        var getParamsArgs = getParams.GetParameters().Length == 0
+            ? Array.Empty<object?>()
+            : new object?[] { true };
+        return Invoke(getParams, report, getParamsArgs) as string ?? string.Empty;
+    }
+
+    /// <summary>Set NavReport's private <c>success</c> flag (see SyncRunRequestPage).</summary>
+    private static void SetReportSuccess(object report, bool value)
+    {
+        for (Type? t = report.GetType(); t != null; t = t.BaseType)
+        {
+            var f = t.GetField("success", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+            if (f == null || f.FieldType != typeof(bool)) continue;
+            f.SetValue(report, value);
+            return;
+        }
+        Console.Error.WriteLine(
+            "[NavReportSync] NavReport.success field not found — RunRequestPage will return empty "
+            + "parameters even after the handler confirmed; Ncl shape changed");
     }
 
     /// <summary>
@@ -323,59 +404,75 @@ public static class NavReportSync
     /// TestHandleModalForm does the dispatch; all this does is get the form there.
     ///
     /// A report that declares no request page has nothing to run — that is not an error, the
-    /// parameters are simply whatever the report already carries.
+    /// parameters are simply whatever the report already carries; it counts as confirmed,
+    /// because there was no dialog for anyone to cancel.
+    ///
+    /// Returns whether the page was CONFIRMED (the handler invoked OK), which is what
+    /// decides whether BC hands the caller parameters or an empty string.
     /// </summary>
-    private static void RunRequestPageForHandler(object report, string? parameters)
+    private static bool RunRequestPageForHandler(object report, int reportId, string? parameters)
     {
         var pRequestPage = FindProperty(report.GetType(), "RequestOptionsPage");
-        if (pRequestPage == null) return;
+        if (pRequestPage == null) return true;
         object? requestPage;
         try { requestPage = pRequestPage.GetValue(report); }
-        catch (TargetInvocationException) { return; }
-        if (requestPage == null) return;
+        catch (TargetInvocationException) { return true; }
+        if (requestPage == null) return true;
 
         if (parameters != null)
             TrySetParameterSet(requestPage, parameters);
 
-        // Register the form before running it. BC's own RunModalAsync registers it on the
-        // way in, but the runner's synchronous path reaches TestHandleModalForm without that
-        // having happened — and the handler dispatch resolves the page it hands the
-        // [RequestPageHandler] by looking the handle up in NavCompany.registeredForms
-        // (RunnerTestClientSession.GetPage). Unregistered, that lookup fails with
-        // "A page with the specified handle has not been registered."
-        TryRegisterForm(requestPage);
+        // Register the request-page surface BC's dispatch will ask the client session for
+        // (RunnerTestClientSession.GetPage) — it is keyed by this form, and is also how the
+        // handler's OK/Cancel is read back below.
+        var testPage = AlRunnerV2.Patches.RequestPageTestPage.Bind(requestPage, report, reportId);
+        if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_RP") == "1")
+        {
+            try
+            {
+                var mp = FindProperty(requestPage.GetType(), "MasterPage")?.GetValue(requestPage);
+                var pp = mp == null ? null : FindProperty(mp.GetType(), "PageProperties")?.GetValue(mp);
+                var pt = pp == null ? null : FindProperty(pp.GetType(), "PageType")?.GetValue(pp);
+                var oid = FindProperty(requestPage.GetType(), "ObjectId")?.GetValue(requestPage);
+                Console.Error.WriteLine($"[NavReportSync] RP DIAG report={reportId} form={requestPage.GetType().Name} objectId={oid} masterPage={(mp==null?"null":"ok")} pageType={pt}");
+            }
+            catch (Exception dx) { Console.Error.WriteLine("[NavReportSync] RP DIAG probe failed: " + dx.Message); }
+        }
 
+        // NOTE: do NOT pre-register the form here. BC's TestHandleModalForm registers it
+        // itself on the handler-dispatch path (Company.RegisterForm right before it builds
+        // the FormRunModalRequest); registering first makes that call throw
+        // NavNCLInvalidFormHandleException ("a page with the identical handle has
+        // previously been registered"). An earlier revision did pre-register, because back
+        // then dispatch was never reached and the unregistered-handle lookup was the
+        // visible failure — that is no longer the path taken.
         var runModal = requestPage.GetType().GetMethod("RunModal",
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
             binder: null, types: Type.EmptyTypes, modifiers: null);
-        if (runModal == null) return;
+        if (runModal == null) return true;
         try
         {
             Invoke(runModal, requestPage, Array.Empty<object?>());
         }
         catch (Exception ex) when (ex.GetType().Name == "NavNCLCallbackNotAllowedException")
         {
-            // KNOWN GAP, measured. Everything up to here works: the report is constructed, the
-            // request page is built and registered. Running it modally then reaches
-            // NavSession.ClientCallback — `ClientCallbackOrNull ?? throw
-            // NavNCLCallbackNotAllowedException` — BEFORE BC's test-execution interception
-            // (NavTestExecution.TestHandleModalForm, which already knows how to build a
-            // NavTestRequestPage and invoke the handler; see RunnerModalDispatch).
-            //
-            // So the remaining work is routing, not dispatch: the skeleton session needs a
-            // client callback (or the request-page run needs to enter through whatever path
-            // consults TestExecution first). Verified NOT to be a TryFunction interaction —
-            // it reproduces identically from a plain test body.
-            //
-            // Re-thrown by name so this reads as a runner boundary rather than as a bare BC
-            // exception with no indication of which surface failed.
+            // NavForm.RunModalAsync consults NavTestExecution.TestHandleModalForm first and
+            // only falls through to the client callback — which headless mode cannot serve —
+            // when that answered "not handled". It answers "not handled" when no handler
+            // matched, and the handler it looks for is chosen from
+            // masterPage.PageProperties.PageType. So landing here means the request page was
+            // built without a real MasterPage (see GetRealMetaReport's fallback) or the test
+            // declares no [RequestPageHandler] for this report.
             throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
                 "NavReport.RunRequestPage",
-                "request-page-dispatch — the request page was built but could not be routed to "
-                + "the test's [RequestPageHandler]: the skeleton session exposes no client "
-                + "callback, and NavSession.ClientCallback throws before "
-                + "NavTestExecution.TestHandleModalForm is consulted. See docs/scope.md");
+                "request-page-dispatch — the request page was built but BC found no handler for "
+                + "it, so it fell through to a client callback the runner cannot serve. Either "
+                + "the test declares no [RequestPageHandler] for report " + reportId
+                + ", or the request page has no real MasterPage (run with --verbose: "
+                + "'real request page for report N could not be built'). See docs/scope.md");
         }
+
+        return testPage.Confirmed;
     }
 
     /// <summary>Register a form with the skeleton company, ignoring an already-registered one.</summary>
@@ -724,24 +821,52 @@ public static class NavReportSync
                 args[0] = doc.DocumentElement;
                 for (int i = 1; i < ps2.Length; i++)
                     args[i] = ps2[i].ParameterType == typeof(int) ? 0 : null;
+                // The CreateRequestForm delegate is how MetaReport builds the report's
+                // REQUEST PAGE. Left null (as it was), MetaReport.CreateMasterPage produces
+                // nothing and the code below installed an empty MasterPage instead — which
+                // is what made every [RequestPageHandler] unreachable: BC's handler lookup
+                // (NavTestExecution.FindPageType) switches on
+                // masterPage.PageProperties.PageType, an empty MasterPage reports the
+                // default (a plain page), so TestHandleModalForm looked for a
+                // [ModalPageHandler], found none, answered "not handled", and NavForm fell
+                // through to the client callback that headless mode cannot serve.
+                // Binding BC's own MetadataProvider.CreateRequestPage — the exact delegate
+                // the service tier passes here — gives the genuine request page instead:
+                // PageType.ReportPreview, the DataItem filter controls a handler drives, and
+                // the request-page fields bound to report globals.
+                BindRealCreateRequestForm(ps2, args);
                 var meta = _metaReportCtor.Invoke(args);
 
-                // IC tail safety: Report{N}.InitializeComponent ends with
-                // `RequestOptionsPage = new RequestPage(this, Metadata.RequestFormMetadata)`.
-                // Pre-poke `masterPage` with an empty MasterPage so
-                // EnsureMasterPageLoaded → CreateMasterPage early-returns instead of
-                // building a full request-page master (page UI is out of runner scope).
-                // The MasterPage must carry a minimal PageProperties+SourceObject: the
-                // SaveAs report-information-xml path forces NavForm.InitializeFromMetadata
-                // on this request page, which dereferences
+                // Force the request-page master page NOW rather than on first use, so a
+                // failure to build it is contained here and falls back to the previous
+                // behaviour instead of surfacing from deep inside a report run.
+                //
+                // Fallback shape: an empty MasterPage carrying a minimal
+                // PageProperties+SourceObject. The SaveAs report-information-xml path forces
+                // NavForm.InitializeFromMetadata on the request page, which dereferences
                 // masterPage.PageProperties.SourceObject.* (SaveValues, SourceTable,
-                // PageDataSource). A bare `new MasterPage()` leaves PageProperties null →
-                // NRE. Default-constructed PageProperties/SourceObjectDefinition give the
-                // faithful empty request page (SourceTable=0 → no source table bound).
+                // PageDataSource); a bare `new MasterPage()` leaves PageProperties null → NRE.
                 var tMaster = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MasterPage");
                 var masterField = tMeta.GetField("masterPage", BindingFlags.Instance | BindingFlags.NonPublic);
                 if (tMaster != null && masterField != null && masterField.GetValue(meta) == null)
-                    masterField.SetValue(meta, BuildEmptyMasterPage(typesAsm, tMaster));
+                {
+                    object? built = null;
+                    try
+                    {
+                        built = tMeta.GetProperty("RequestFormMetadata",
+                            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(meta);
+                    }
+                    catch (Exception rex)
+                    {
+                        var rinner = rex is TargetInvocationException rtie ? rtie.InnerException ?? rex : rex;
+                        Console.Error.WriteLine(
+                            $"[NavReportSync] real request page for report {id} could not be built " +
+                            $"({rinner.GetType().Name}: {rinner.Message}) — falling back to an empty MasterPage; " +
+                            "its [RequestPageHandler] will not be reachable");
+                    }
+                    if (built == null && masterField.GetValue(meta) == null)
+                        masterField.SetValue(meta, BuildRequestPageStubMasterPage(typesAsm, tMaster, id));
+                }
 
                 Console.Error.WriteLine($"[NavReportSync] built REAL MetaReport for report {id} from emit-captured metadata XML");
                 return meta;
@@ -753,6 +878,49 @@ public static class NavReportSync
                 return null;
             }
         });
+    }
+
+    /// <summary>
+    /// Fill the <c>MetaReport.CreateRequestForm</c> constructor argument with BC's own
+    /// <c>MetadataProvider.CreateRequestPage</c>.
+    ///
+    /// This is deliberately BC's method rather than anything reimplemented here: it is
+    /// what the service tier itself passes (MetadataProvider.GetReportMetadata →
+    /// CreateMetaReportWithExtensions(CreateRequestPage, …)), and it is the only thing
+    /// that produces a request page with PageType.ReportPreview, the auto-generated
+    /// DataItem filter controls, and the report's own request-page fields.
+    ///
+    /// Silent no-op when the shape cannot be resolved — the caller then keeps the empty
+    /// MasterPage fallback, which is the previous behaviour, and says so on stderr.
+    /// </summary>
+    private static void BindRealCreateRequestForm(ParameterInfo[] ctorParams, object?[] args)
+    {
+        try
+        {
+            var delegateSlot = Array.FindIndex(ctorParams, p => p.ParameterType.Name == "CreateRequestForm");
+            if (delegateSlot < 0) return;
+
+            var nclAsm = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
+            var navGlobal = nclAsm?.GetType("Microsoft.Dynamics.Nav.Runtime.NavGlobal");
+            var provider = navGlobal?.GetProperty("MetadataProvider",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null);
+            if (provider == null) return;
+
+            // MasterPage CreateRequestPage(MetaPageDefinition, MultiLanguage, int) — internal.
+            var create = provider.GetType().GetMethods(
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                .FirstOrDefault(m => m.Name == "CreateRequestPage" && m.GetParameters().Length == 3);
+            if (create == null) return;
+
+            args[delegateSlot] = Delegate.CreateDelegate(ctorParams[delegateSlot].ParameterType, provider, create);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                $"[NavReportSync] could not bind MetadataProvider.CreateRequestPage ({ex.GetType().Name}: {ex.Message}) — " +
+                "request pages will be empty and their [RequestPageHandler] unreachable");
+        }
     }
 
     /// <summary>

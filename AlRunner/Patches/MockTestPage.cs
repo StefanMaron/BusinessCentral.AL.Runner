@@ -52,7 +52,7 @@ internal class MockITestPage : ITestPage
 
     public virtual ITestPart  GetPart(int id)                                           => new MockITestPart();
     public virtual ITestAction GetBuiltInAction(FormResult formResult)                  => new MockITestAction();
-    public ITestFilter        GetDataItemFilter(string id)                              => this;
+    public virtual ITestFilter GetDataItemFilter(string id)                              => this;
     public void               SetSelection(bool value)                                  { }
     public virtual void       InsertEmptyRow(bool beforeCurrent)                        { }
     public virtual bool       MoveNext()                                                => false;
@@ -74,7 +74,7 @@ internal class MockITestPage : ITestPage
     public string     Name                 => string.Empty;
     public string     Caption              => string.Empty;
     public virtual int PageId            => 0;
-    public Guid       FormHandle           => Guid.Empty;
+    public virtual Guid FormHandle         => Guid.Empty;
     public virtual bool Creatable          => false;
     public bool       IsExpanded           => false;
     public bool       RuntimeEditable      => true;

@@ -40,6 +40,15 @@ public sealed class RunnerTestClientSession : ITestClientSession
                 + "hand the [ModalPageHandler] the page it is being asked to drive. "
                 + "See docs/scope.md");
 
+        // A REQUEST page is not a page over a record — it has no source table at all, so the
+        // record check below would refuse it by name for something that is simply not part of
+        // its shape. It gets the request-page surface instead: one filter group per report
+        // data item, plus the built-in OK/Cancel. The binding is registered by whoever ran
+        // the request page (NavReportSync), which is the only place that knows which report
+        // this form belongs to.
+        if (RequestPageTestPage.TryGetFor(form) is { } requestPage)
+            return requestPage;
+
         var pageId = PageIdOf(form);
         var record = ReadProperty(form, "SourceTable") as NavRecord
             ?? throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(

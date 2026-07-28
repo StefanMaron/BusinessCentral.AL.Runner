@@ -171,8 +171,16 @@ public static partial class RecordPatches
                 return meta;
         }
 
-        throw new InvalidOperationException(
-            $"NCLMetadata.GetMetaApplicationObject: no metadata for {objectType} {objectId}");
+        // BC's OWN exception type, not a plain InvalidOperationException. This is not
+        // cosmetic: NCLMetadata.TryGetMetaApplicationObject is implemented as
+        // `try { GetMetaApplicationObject(…) } catch (NavMetadataNotFoundException) { }
+        //  catch (NavNCLArgumentException) { }`, so "the object is not there" is only
+        // answerable as `false` when it arrives as one of those. Throwing a foreign type
+        // turned every optional metadata probe into a hard failure — e.g.
+        // MetadataProvider.ModifyReportRequestPage probes for the report-settings lookup
+        // page (1560) with the Try form, which the runner does not always have, and the
+        // whole request page failed to build instead of simply skipping that control.
+        throw new NavMetadataNotFoundException(objectType, objectId);
     }
 
     public static object NCLMetadata_GetMetaApplicationObjectById(
