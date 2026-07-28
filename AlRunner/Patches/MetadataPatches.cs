@@ -338,10 +338,24 @@ public static partial class BcRuntime
         //      reaches NavTenant.DefaultEncoding; its getter falls into `IsDatabaseInitialized`
         //      (→ database.IsValueCreated) when defaultEncoding is null, which NREs because the
         //      skeleton tenant's `database` LazyEx is null. Pre-setting defaultEncoding short-circuits
-        //      that branch. UTF-8 is BC's own default tenant encoding (TextEncoding.UTF8) — faithful.
+        //      that branch.
+        //
+        //      The VALUE must be a SINGLE-BYTE code page, not UTF-8. This field is what
+        //      TextEncoding::Windows and ::MSDos resolve to — BC seeds it from
+        //      NCLManagedAdapter.SystemCodePageEncoding, i.e. Encoding.GetEncoding(0), the
+        //      host's ANSI code page, which on every Windows service tier BC ships on is
+        //      cp1252. On Linux that same call returns UTF-8, so taking BC's expression
+        //      literally here would be faithful to the CALL and wrong about the ANSWER.
+        //
+        //      The difference is not cosmetic: AL that assembles a binary format byte by
+        //      byte — a PDF content stream, a fixed-width export, anything computing its own
+        //      offsets — depends on one character costing one byte, and UTF-8 silently makes
+        //      an em dash three. Every offset derived from the text is then wrong, far from
+        //      where the encoding was chosen. cp1252 is also what /WinAnsiEncoding means, so
+        //      it is the only answer consistent with the rest of the platform.
         var defaultEncodingField = navTenantType.GetField("defaultEncoding", BindingFlags.NonPublic | BindingFlags.Instance);
         if (defaultEncodingField != null)
-            FieldPoke.SetInstance(defaultEncodingField, _skeletonSystemTenant, System.Text.Encoding.UTF8);
+            FieldPoke.SetInstance(defaultEncodingField, _skeletonSystemTenant, AnsiCodePageEncoding());
         else
             Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: NavTenant.defaultEncoding field NOT FOUND");
 
@@ -567,6 +581,37 @@ public static partial class BcRuntime
         else
         {
             Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: Tenants is null — env ctor likely fell back to skeleton");
+        }
+    }
+
+    /// <summary>
+    /// The tenant's default encoding: the ANSI code page a BC service tier runs on.
+    ///
+    /// .NET Core carries no code pages beyond the Unicode family until
+    /// CodePagesEncodingProvider is registered — which is exactly what BC's own
+    /// NCLManagedAdapter static constructor does before it asks for Encoding.GetEncoding(0).
+    /// Registering it again is harmless (the call is idempotent) and removes the dependency
+    /// on that type having been touched first.
+    ///
+    /// Falls back to Latin-1 rather than UTF-8 if 1252 is somehow unavailable: the property
+    /// that matters to every caller is SINGLE-BYTE, and Latin-1 keeps that invariant while
+    /// UTF-8 breaks it. A wrong glyph in the 0x80..0x9F band is a much smaller lie than a
+    /// character that silently costs three bytes.
+    /// </summary>
+    private static System.Text.Encoding AnsiCodePageEncoding()
+    {
+        try
+        {
+            System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+            return System.Text.Encoding.GetEncoding(1252);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                $"[BcRuntime] cp1252 unavailable ({ex.GetType().Name}); TextEncoding::Windows "
+                + "falls back to Latin-1. Characters in the cp1252 0x80-0x9F block (em dash, "
+                + "euro sign, curly quotes) will not round-trip.");
+            return System.Text.Encoding.Latin1;
         }
     }
 }

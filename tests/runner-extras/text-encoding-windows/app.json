@@ -1,0 +1,20 @@
+{
+  "id": "e5f60718-2a3b-4b42-d5e6-f708192a3b42",
+  "name": "Runner Extras - TextEncoding::Windows is single-byte",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Pins that a stream opened with TextEncoding::Windows writes one byte per representable character, not UTF-8.",
+  "description": "BC resolves TextEncoding::Windows and ::MSDos to the tenant's default encoding, which on a real service tier is the host's ANSI code page — single-byte. AL that builds a binary format byte by byte (a PDF content stream, a fixed-width export, anything computing its own offsets) depends on one character costing one byte. A runner that answers UTF-8 there silently triples the length of every non-ASCII character and every offset computed from it is wrong.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [ { "from": 62100, "to": 62109 } ],
+  "runtime": "14.0",
+  "features": []
+}
