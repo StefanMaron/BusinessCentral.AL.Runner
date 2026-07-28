@@ -116,6 +116,64 @@ codeunit 62112 "TRT Tests"
     end;
 
     [Test]
+    procedure OnOpenPage_RunsBeforeThePageIsRead()
+    var
+        Row: Record "TRT Row";
+        Card: TestPage "TRT Singleton Card";
+    begin
+        Reset();
+
+        Card.OpenEdit();
+
+        // The page had no row to open on; OnOpenPage is what creates and selects one.
+        if Card."No.".Value() <> 'SINGLETON' then
+            Error('The page opened on <%1>, expected SINGLETON — OnOpenPage did not run.',
+                Card."No.".Value());
+        if not Row.Get('SINGLETON') then
+            Error('OnOpenPage did not create the singleton row.');
+
+        Card.Close();
+    end;
+
+    [Test]
+    procedure OnOpenPage_LeavesTheRecordUsableByThePagesOwnActions()
+    var
+        Row: Record "TRT Row";
+        Card: TestPage "TRT Singleton Card";
+    begin
+        Reset();
+
+        Card.OpenEdit();
+        // The real consequence: an action that Modifies the row OnOpenPage fetched. On an
+        // unpositioned record this fails with "the row does not exist" naming a blank key,
+        // which is how the missing trigger actually surfaced.
+        Card.Stamp.Invoke();
+        Card.Close();
+
+        Row.Get('SINGLETON');
+        if Row.Note <> 'stamped' then
+            Error('The action''s Modify did not reach the row: Note is <%1>.', Row.Note);
+    end;
+
+    [Test]
+    procedure OnClosePage_RunsWhenThePageIsClosed()
+    var
+        Echo: Record "TRT Echo";
+        Card: TestPage "TRT Singleton Card";
+    begin
+        Reset();
+
+        Card.OpenEdit();
+        if Echo.Get('CLOSED') then
+            Error('OnClosePage ran before the page was closed.');
+
+        Card.Close();
+
+        if not Echo.Get('CLOSED') then
+            Error('OnClosePage did not run on Close().');
+    end;
+
+    [Test]
     procedure OnAfterGetCurrRecord_RunsWhenTheCursorMoves()
     var
         Row: Record "TRT Row";

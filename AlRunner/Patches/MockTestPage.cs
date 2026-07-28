@@ -339,6 +339,9 @@ internal class LiveNavTestPage : MockITestPage
 
     internal void MarkOpened() => _opened = true;
 
+    /// <summary>Run the page's OnOpenPage — see RunnerTestPageState.MarkOpened.</summary>
+    internal void RaiseOnOpenPage() => _page?.RaiseOnOpenPage();
+
     public override bool IsOpened() => _opened;
 
     // TestPage.New() reaches ITestPage.InsertEmptyRow. BC's client model is "start a blank
@@ -379,7 +382,19 @@ internal class LiveNavTestPage : MockITestPage
     //
     // Parts flush with their host: an AL test closes the CARD, never the part, so a row
     // started with Card.Lines.New() has no other moment at which it could be persisted.
-    public override void Close() { FlushParts(); FlushPendingNewRow(); _opened = false; }
+    public override void Close()
+    {
+        // OnQueryClosePage's veto is the one part of the close sequence the runner cannot
+        // model: BC would leave the page open and hand control back to the user, which has no
+        // meaning in a test that has already asked for the close. Refusing by name beats both
+        // alternatives — closing anyway hides that the page objected, and hanging is worse.
+        if (_page != null && !_page.RaiseOnClosePage(_formResult))
+            throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage page {_pageId} — OnQueryClosePage",
+                "testpage-close-veto — the page's OnQueryClosePage returned false, which in BC "
+                + "leaves the page open awaiting the user. See docs/scope.md");
+        FlushParts(); FlushPendingNewRow(); _opened = false;
+    }
     public override void Dispose() { FlushParts(); FlushPendingNewRow(); }
 
     private void FlushParts()

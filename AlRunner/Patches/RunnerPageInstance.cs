@@ -460,6 +460,34 @@ internal sealed class RunnerPageInstance
     }
 
     /// <summary>
+    /// Run the page's OnOpenPage trigger.
+    ///
+    /// This is where a page establishes what it is looking at before anyone reads it — a
+    /// singleton buffer fetched or created for the current user, a filter narrowed to the
+    /// caller's context, derived state computed once. Skipping it left the page's record
+    /// unpositioned and blank, so the first thing the page's own AL did with it (a Modify,
+    /// a Validate) failed against a row that was never fetched — and the error named a
+    /// missing record rather than a trigger that never ran.
+    /// </summary>
+    internal void RaiseOnOpenPage()
+        => InvokeRecordTrigger("OnOpenPage", Type.EmptyTypes, Array.Empty<object>());
+
+    /// <summary>
+    /// Run the page's OnQueryClosePage / OnClosePage triggers, in BC's order. OnQueryClosePage
+    /// returning false vetoes the close, which is how a page refuses to be dismissed with
+    /// unsaved work; NavForm's base returns true, so a page declaring none closes normally.
+    /// </summary>
+    internal bool RaiseOnClosePage(Microsoft.Dynamics.Nav.Types.FormResult closeAction)
+    {
+        if (InvokeRecordTrigger("OnQueryClosePage",
+                new[] { typeof(Microsoft.Dynamics.Nav.Types.FormResult) },
+                new object[] { closeAction }) is false)
+            return false;
+        InvokeRecordTrigger("OnClosePage", Type.EmptyTypes, Array.Empty<object>());
+        return true;
+    }
+
+    /// <summary>
     /// Run the page's OnNewRecord trigger — the one that seeds the defaults a blank record
     /// does not have (<c>Rec.Validate(Scope, Scope::Tenant)</c> and friends). Skipping it
     /// does not fail where the mistake is: the row still inserts, just carrying the field
