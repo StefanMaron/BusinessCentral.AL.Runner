@@ -452,10 +452,53 @@ internal sealed class RunnerPageInstance
     /// </summary>
     internal void RaiseOnAfterGetRecord()
     {
-        var trigger = _form.GetType().GetMethod("OnAfterGetRecord",
+        InvokeRecordTrigger("OnAfterGetRecord", Type.EmptyTypes, Array.Empty<object>());
+        // OnAfterGetRecord does NOT re-fire for a record the page already fetched, so a page
+        // that must refresh derived state on every move puts it here instead. Both are part
+        // of "a row became current", so both belong on the same path.
+        InvokeRecordTrigger("OnAfterGetCurrRecord", Type.EmptyTypes, Array.Empty<object>());
+    }
+
+    /// <summary>
+    /// Run the page's OnNewRecord trigger — the one that seeds the defaults a blank record
+    /// does not have (<c>Rec.Validate(Scope, Scope::Tenant)</c> and friends). Skipping it
+    /// does not fail where the mistake is: the row still inserts, just carrying the field
+    /// defaults instead of the page's, and the test complains about a value.
+    /// </summary>
+    internal void RaiseOnNewRecord(bool belowXRec)
+        => InvokeRecordTrigger("OnNewRecord", new[] { typeof(bool) }, new object[] { belowXRec });
+
+    /// <summary>
+    /// Run the page's OnInsertRecord trigger and report whether the insert may proceed.
+    ///
+    /// The return value is the point of the trigger — it is the page's veto. NavForm's own
+    /// base implementation returns true, so a page that declares none still inserts, and no
+    /// separate "has a trigger" test is needed.
+    /// </summary>
+    internal bool RaiseOnInsertRecord(bool belowXRec)
+        => InvokeRecordTrigger("OnInsertRecord", new[] { typeof(bool) }, new object[] { belowXRec })
+           is not false;
+
+    /// <summary>
+    /// Invoke a page record trigger by name. The AL compiler emits these as overrides of
+    /// NavForm's own protected virtuals, so reflection finds the base declaration and virtual
+    /// dispatch reaches the page's override; a page that declares none lands on NavForm's
+    /// implementation, which is the correct no-op/true.
+    /// </summary>
+    private object? InvokeRecordTrigger(string name, Type[] parameterTypes, object[] arguments)
+    {
+        var trigger = _form.GetType().GetMethod(name,
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-            binder: null, types: Type.EmptyTypes, modifiers: null);
-        if (trigger != null) Invoke(trigger);
+            binder: null, types: parameterTypes, modifiers: null);
+        if (trigger == null) return null;
+        try { return trigger.Invoke(_form, arguments); }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            // An Error() inside the trigger is the trigger's own outcome, not a runner
+            // failure — rethrow it unwrapped so the AL stack survives.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+            throw; // unreachable
+        }
     }
 
     /// <summary>

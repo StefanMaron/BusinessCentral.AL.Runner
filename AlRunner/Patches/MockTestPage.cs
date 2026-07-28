@@ -252,7 +252,22 @@ internal class LiveNavTestPage : MockITestPage
             _result = result;
         }
 
-        public void Invoke() => _page._formResult = _result;
+        /// <summary>
+        /// Closing the page IS the commit point of the new-record flow. AL writes
+        /// <c>Card.OpenNew(); Card.Name.SetValue(…); Card.OK().Invoke();</c> and then reads
+        /// the table — so a row persisted only at Close/Dispose does not exist yet for every
+        /// assertion in between, and the test reports a missing row rather than a late one.
+        /// Cancel is the other half: it must abandon the row, not merely record a result.
+        /// </summary>
+        public void Invoke()
+        {
+            _page._formResult = _result;
+            if (_result is FormResult.Cancel or FormResult.LookupCancel)
+                _page.DiscardPendingNewRow();
+            else
+                _page.FlushPendingNewRow();
+        }
+
         public bool Visible => true;
         public bool Enabled => true;
     }
@@ -338,14 +353,25 @@ internal class LiveNavTestPage : MockITestPage
         FlushPendingNewRow();   // starting a second row persists the first
         _record.ALInit();
         _pendingNewRow = true;
+        // The page's own defaults for a brand-new row. ALInit gives the FIELD defaults, which
+        // for an enum is member 0 — routinely the opposite of what the page intends.
+        _page?.RaiseOnNewRecord(!beforeCurrent);
     }
 
     internal void FlushPendingNewRow()
     {
         if (!_pendingNewRow) return;
         _pendingNewRow = false;
+        // OnInsertRecord is the page's last word before the row exists, and its RETURN VALUE
+        // is a veto — a page can refuse the insert outright. Running it and discarding the
+        // answer would be worse than not running it: the row lands anyway, but now it also
+        // carries whatever the trigger wrote on its way to saying no.
+        if (_page != null && !_page.RaiseOnInsertRecord(false)) return;
         _record.ALInsertAsync(DataError.TrapError, false, false).GetAwaiter().GetResult();
     }
+
+    /// <summary>Abandon an in-progress new row without writing it — how Cancel closes.</summary>
+    internal void DiscardPendingNewRow() => _pendingNewRow = false;
 
     // BC routes TestPage teardown through both Close() and Dispose() depending on whether
     // the AL test calls Close() explicitly or lets the variable go out of scope. Flush on

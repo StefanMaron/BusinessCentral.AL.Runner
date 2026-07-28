@@ -893,12 +893,16 @@ public static class NclCecilRewrite
             il.Append(il.Create(OpCodes.Ldarg_0));
             il.Append(il.Create(OpCodes.Ldarg_1));
             il.Append(il.Create(OpCodes.Call, asm.MainModule.ImportReference(baseOpenMethod)));
-            // ...then tell the attached page it is open. BC would learn this by attaching
-            // the page here (from ClientSession.CreatePage); the runner attaches at
-            // construction instead, so "open" has to be recorded explicitly — otherwise
-            // NavTestPageBase.Close() never forwards and a New() is never persisted.
+            // ...then tell the attached page it is open, AND which mode it opened in. BC
+            // would learn "open" by attaching the page here (from ClientSession.CreatePage);
+            // the runner attaches at construction instead, so it has to be recorded
+            // explicitly — otherwise NavTestPageBase.Close() never forwards and a New() is
+            // never persisted. The ViewMode goes with it because ALOpenNew() is nothing but
+            // Open(ViewMode.Create): the blank row it starts is the client's doing, so
+            // without the mode an OpenNew() was indistinguishable from an OpenEdit().
             // See RunnerTestPageState.
             il.Append(il.Create(OpCodes.Ldarg_0));
+            il.Append(il.Create(OpCodes.Ldarg_1));
             il.Append(il.Create(OpCodes.Call, asm.MainModule.ImportReference(
                 typeof(AlRunnerV2.Patches.RunnerTestPageState).GetMethod(
                     nameof(AlRunnerV2.Patches.RunnerTestPageState.MarkOpened),
@@ -5623,6 +5627,18 @@ public static class NclCecilRewrite
                         }));
                     dialogNoOps++;
                 }
+
+                // ALClose belongs with them. Its own body checks BC's "is the dialog open"
+                // state, which Open no longer sets now that Open is a no-op — so leaving Close
+                // real turned a silent NRE into a loud "The operation failed because the dialog
+                // box is not open." on the very next line of any AL that opens a progress
+                // window. Open and Close are one no-op or neither.
+                var alClose = navDialog.Methods.FirstOrDefault(m =>
+                    m.Name == "ALClose" && m.HasBody && m.HasThis && m.Parameters.Count == 0)
+                    ?? throw new InvalidOperationException("[Cecil] NavDialog.ALClose/0 not found — do not commit");
+                ReplaceBodyWithHelper(nclMod, alClose, H(helperShims, "NoOp_OneArg"));
+                dialogNoOps++;
+
                 Console.Error.WriteLine($"[Cecil] NavDialog: {dialogNoOps} progress-dialog method(s) → headless no-op");
             }
 

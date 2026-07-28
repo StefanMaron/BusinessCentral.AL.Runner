@@ -39,16 +39,25 @@ public static class RunnerTestPageState
     /// Mark the ITestPage attached to <paramref name="navTestPage"/> as open. Called from
     /// the rewritten NavTestPage.Open, immediately after NavTestPageBase.Open has run its
     /// already-open guard. Must never throw — it runs inside BC's own IL.
+    ///
+    /// <paramref name="viewMode"/> is what distinguishes OpenNew() from OpenEdit():
+    /// <c>ALOpenNew()</c> is nothing but <c>Open(ViewMode.Create)</c>, and in BC the row it
+    /// starts comes from the client the runner deliberately does not have. So the row has to
+    /// be started here — otherwise OpenNew() opened an ordinary page positioned on nothing,
+    /// every SetValue went into a record that was never inserted, and the test read a table
+    /// with no new row in it.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void MarkOpened(object navTestPage)
+    public static void MarkOpened(object navTestPage, Microsoft.Dynamics.Nav.Types.Metadata.ViewMode viewMode)
     {
         try
         {
             if (navTestPage == null) return;
             _testPageField ??= FindTestPageField(navTestPage.GetType());
-            if (_testPageField?.GetValue(navTestPage) is LiveNavTestPage live)
-                live.MarkOpened();
+            if (_testPageField?.GetValue(navTestPage) is not LiveNavTestPage live) return;
+            live.MarkOpened();
+            if (viewMode == Microsoft.Dynamics.Nav.Types.Metadata.ViewMode.Create)
+                live.InsertEmptyRow(beforeCurrent: true);
         }
         catch { /* a page that cannot be marked simply behaves as it did before */ }
     }

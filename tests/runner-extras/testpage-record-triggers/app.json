@@ -1,0 +1,20 @@
+{
+  "id": "f6071829-3b4c-4c53-e6f7-08192a3b4c53",
+  "name": "Runner Extras - TestPage record triggers",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Pins that a page's OnNewRecord / OnInsertRecord / OnAfterGetCurrRecord run, and that the built-in OK persists the new row.",
+  "description": "The standard AL new-record flow is TestPage.OpenNew(), set a few fields, OK().Invoke(). Everything that makes the resulting row correct lives in the page's record triggers — OnNewRecord seeds the defaults a blank record does not have, OnInsertRecord gets the last word before the persist. A runner that skips them inserts a record the page would never have produced, and the test fails complaining about a field value rather than about the trigger that was never run.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [ { "from": 62110, "to": 62119 } ],
+  "runtime": "14.0",
+  "features": []
+}
