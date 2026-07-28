@@ -77,7 +77,7 @@ internal class MockITestPage : ITestPage
     public virtual Guid FormHandle         => Guid.Empty;
     public virtual bool Creatable          => false;
     public bool       IsExpanded           => false;
-    public bool       RuntimeEditable      => true;
+    public virtual bool RuntimeEditable    => true;
 
     // ── ITestFilter (inherited via ITestPage) ─────────────────────────────
 
@@ -148,6 +148,11 @@ internal class LiveNavTestPage : MockITestPage
     // (the mock's values) is what produced "Insert is not allowed. Page = , Id = 0" — an
     // error that named no page at all.
     public override int PageId => _pageId;
+
+    // TestPage.Editable() reaches here (NavTestPage.ALEditable => TestPage.RuntimeEditable).
+    // A constant true made every `CurrPage.Editable(false)` invisible to the test that was
+    // written to check it.
+    public override bool RuntimeEditable => _page?.PageEditable ?? true;
 
     /// <summary>
     /// The subpage part hosted by <paramref name="controlId"/>, driven live over its own
@@ -397,10 +402,22 @@ internal class LiveNavTestPage : MockITestPage
     // otherwise navigating away from a New() silently discards it. Parts flush too: moving
     // the parent re-links every part to a different row, so a row started in a part must be
     // persisted while the link that stamped its key is still the current one.
-    public override bool MoveFirst() { FlushParts(); FlushPendingNewRow(); return _record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult(); }
-    public override bool MoveLast() { FlushParts(); FlushPendingNewRow(); return _record.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult(); }
-    public override bool MoveNext() { FlushParts(); FlushPendingNewRow(); return _record.ALNextAsync().GetAwaiter().GetResult() != 0; }
-    public override bool MovePrevious() { FlushParts(); FlushPendingNewRow(); return _record.ALNextAsync(-1).GetAwaiter().GetResult() != 0; }
+    public override bool MoveFirst() { FlushParts(); FlushPendingNewRow(); return Loaded(_record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult()); }
+    public override bool MoveLast() { FlushParts(); FlushPendingNewRow(); return Loaded(_record.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult()); }
+    public override bool MoveNext() { FlushParts(); FlushPendingNewRow(); return Loaded(_record.ALNextAsync().GetAwaiter().GetResult() != 0); }
+    public override bool MovePrevious() { FlushParts(); FlushPendingNewRow(); return Loaded(_record.ALNextAsync(-1).GetAwaiter().GetResult() != 0); }
+
+    /// <summary>
+    /// A row just became the page's current row — run the page's OnAfterGetRecord, exactly
+    /// as BC does after every load. That trigger is where a page derives its per-row state
+    /// (the variable behind <c>Editable = …</c>, <c>CurrPage.Editable(…)</c>), so skipping it
+    /// froze every page at whatever state its first row left behind.
+    /// </summary>
+    private bool Loaded(bool found)
+    {
+        if (found) _page?.RaiseOnAfterGetRecord();
+        return found;
+    }
 
     public override object? GetBookmark() => _record.ALGetPosition();
 
@@ -408,7 +425,7 @@ internal class LiveNavTestPage : MockITestPage
     {
         if (bookmark is not string position || string.IsNullOrEmpty(position)) return false;
         _record.ALSetPosition(position);
-        return true;
+        return Loaded(true);
     }
 
     public override object[] GetTableFieldValues(int[] fieldIds)
@@ -439,7 +456,7 @@ internal class LiveNavTestPage : MockITestPage
             hasRow = forward ? MoveNext() : MovePrevious();
         }
 
-        if (hasCurrent) _record.ALSetPosition(original);
+        if (hasCurrent) { _record.ALSetPosition(original); Loaded(true); }
         return false;
     }
 
@@ -527,9 +544,15 @@ internal sealed class LiveNavTestField : ITestField
     public long MaxValidationErrorId => 0;
     public object? ObjectValue => LiveNavTestPage.Unwrap(_record.GetFieldValue(_fieldNo));
     public int OptionCount => 0;
-    public bool Enabled => true;
-    public bool Editable => true;
-    public bool Visible => true;
+
+    // The control's declared state, not a constant. `Editable = false` / `Editable = SomeVar`
+    // is how a page protects rows it does not own, so answering true unconditionally made
+    // every test of that protection pass no matter what the page said. Falls back to true
+    // only when there is no page object to ask — the record-only mode, which has no control
+    // metadata at all and never claimed to model these.
+    public bool Enabled  => _page?.ControlEnabled(_controlId) ?? true;
+    public bool Editable => _page?.ControlEditable(_controlId) ?? true;
+    public bool Visible  => _page?.ControlVisible(_controlId) ?? true;
     public bool HideValue => false;
     public bool ShowMandatory => false;
 
@@ -694,9 +717,12 @@ internal sealed class PageVariableTestField : ITestField
     public long LastUsedValidationErrorId => 0;
     public long MaxValidationErrorId => 0;
     public int OptionCount => 0;
-    public bool Enabled => true;
-    public bool Editable => true;
-    public bool Visible => true;
+
+    // See LiveNavTestField — a control bound to a page variable declares the same properties
+    // as one bound to a record field, and they are read the same way.
+    public bool Enabled  => _page.ControlEnabled(_controlId);
+    public bool Editable => _page.ControlEditable(_controlId);
+    public bool Visible  => _page.ControlVisible(_controlId);
     public bool HideValue => false;
     public bool ShowMandatory => false;
 
@@ -760,8 +786,9 @@ internal sealed class MockITestAction : ITestAction
 /// A page action driven live: Invoke() runs the page's own OnAction trigger, on the page
 /// instance the TestPage is driving, so the trigger sees the current row.
 ///
-/// Visible/Enabled still answer true unconditionally — those are AL expressions evaluated
-/// per row and are a separate, still-open gap; this class does not claim to have closed it.
+/// Visible/Enabled come from the action's own declared properties, which are constants or
+/// expressions evaluated against the page's live state — so an action gated on the current
+/// row (<c>Enabled = RowEditable</c>) reports differently as the cursor moves.
 /// </summary>
 internal sealed class LiveNavTestAction : ITestAction
 {
@@ -776,8 +803,8 @@ internal sealed class LiveNavTestAction : ITestAction
 
     public void Invoke() => _page.RaiseOnAction(_actionId);
 
-    public bool Visible => true;
-    public bool Enabled => true;
+    public bool Visible => _page.ActionVisible(_actionId);
+    public bool Enabled => _page.ActionEnabled(_actionId);
 }
 
 /// <summary>

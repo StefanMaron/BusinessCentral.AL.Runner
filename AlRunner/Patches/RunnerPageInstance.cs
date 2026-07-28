@@ -176,6 +176,85 @@ internal sealed class RunnerPageInstance
     internal object? TryGetSourceExpression(int controlId)
         => _sourceExpressions[SourceExpressionKey(controlId)];
 
+    // ── control / action state properties (Editable, Enabled, Visible) ─────────────────
+    //
+    // A page states its read-only contract in these properties: `Editable = false` on a
+    // control that is never writable, `Editable = SomeVar` on one that depends on the row.
+    // The AL compiler emits both into the page metadata as the SAME attribute — a string
+    // that is either the literal "true"/"false" or the NAME of a registered expression:
+    //
+    //   Editable="false"
+    //   Editable="p62090p62090RowEditable"   <Expression Name="p62090p62090RowEditable"
+    //                                          SourceExpression="RowEditable" … />
+    //
+    // so resolving one is "parse the literal, else look the name up in the page's own
+    // binding table". The expression is live — reading it now returns whatever the page's
+    // AL last assigned, which is what makes a per-row property follow the cursor.
+
+    /// <summary>
+    /// The page's own editability, as <c>CurrPage.Editable(…)</c> leaves it. Separate from
+    /// any control's property: a page can be read-only while a control declares itself
+    /// editable, and BC shows the field read-only regardless.
+    /// </summary>
+    internal bool PageEditable => _form is not NavForm form || form.Editable;
+
+    /// <summary>Editable for a data-bound control, combined with the page's own state.</summary>
+    internal bool ControlEditable(int controlId)
+        => PageEditable && EvaluateProperty(ControlDefinition(controlId)?.Editable, "Editable", controlId);
+
+    internal bool ControlEnabled(int controlId)
+        => EvaluateProperty(ControlDefinition(controlId)?.Enabled, "Enabled", controlId);
+
+    internal bool ControlVisible(int controlId)
+        => EvaluateProperty(ControlDefinition(controlId)?.Visible, "Visible", controlId);
+
+    internal bool ActionEnabled(int actionId)
+        => EvaluateProperty(ActionDefinition(actionId)?.Enabled, "Enabled", actionId);
+
+    internal bool ActionVisible(int actionId)
+        => EvaluateProperty(ActionDefinition(actionId)?.Visible, "Visible", actionId);
+
+    private Microsoft.Dynamics.Nav.Types.Metadata.ControlDefinition? ControlDefinition(int controlId)
+        => _form is NavForm form && form.MetadataHelper.TryGetControlDefinitionById(controlId, out var d) ? d : null;
+
+    private Microsoft.Dynamics.Nav.Types.Metadata.ActionCommonPropsDefinition? ActionDefinition(int actionId)
+        => _form is NavForm form && form.MetadataHelper.TryGetCommonActionDefinitionById(actionId, out var d) ? d : null;
+
+    /// <summary>
+    /// Resolve one of the boolean control properties. Absent means the AL declared none, and
+    /// the AL default for all three is true.
+    /// </summary>
+    private bool EvaluateProperty(string? raw, string propertyName, int elementId)
+    {
+        if (string.IsNullOrEmpty(raw)) return true;
+
+        // The literal arrives in more than one spelling: the emitted XML carries "true" /
+        // "false" on controls and actions and "1" / "0" in the page's Properties block, and
+        // BC's own metadata merge normalises an ABSENT property to "True" / "False". An
+        // AL identifier cannot collide with these, so case-insensitive matching is safe.
+        if (string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase) || raw == "1") return true;
+        if (string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase) || raw == "0") return false;
+
+        var expression = _sourceExpressions[raw];
+        if (expression == null)
+            // Loudly, not true-by-default: this property IS the page's read-only contract,
+            // and answering "editable" for one we could not evaluate makes every test of
+            // that contract unfailable. Naming the expression is what makes the gap fixable.
+            throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage page {_pageId} element {elementId} — {propertyName}",
+                $"testpage-control-property — the property is bound to expression '{raw}', which "
+                + "the page publishes no binding for, so its value cannot be evaluated. "
+                + "See docs/scope.md");
+
+        var value = GetValue(expression);
+        return value?.ClientObject is bool b
+            ? b
+            : throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage page {_pageId} element {elementId} — {propertyName}",
+                $"testpage-control-property — expression '{raw}' evaluated to "
+                + $"'{value?.ClientObject ?? "null"}', which is not a Boolean. See docs/scope.md");
+    }
+
     /// <summary>
     /// The control's OptionCaption list, split on ',', or null when the control declares
     /// none. An Option control's captions live on the PAGE CONTROL, not on the option's
@@ -356,6 +435,27 @@ internal sealed class RunnerPageInstance
         }
 
         return result is true ? value : null;
+    }
+
+    /// <summary>
+    /// Run the page's own OnAfterGetRecord trigger.
+    ///
+    /// BC fires it every time the page loads a row, and it is where a page computes the
+    /// per-row state its control properties then read (<c>RowEditable := not Rec.Locked</c>,
+    /// <c>CurrPage.Editable(…)</c>). Never firing it left that state at its default for the
+    /// whole life of the page, so every row looked like the first one — and a page whose
+    /// read-only rule lives entirely in this trigger behaved as if it had no rule at all.
+    ///
+    /// Unlike an action's OnAction, a page with no OnAfterGetRecord is the common case and
+    /// not an error. The trigger is a plain parameterless method named for the trigger
+    /// itself, not a member trigger, so it carries no <c>_a{n}_</c> disambiguator.
+    /// </summary>
+    internal void RaiseOnAfterGetRecord()
+    {
+        var trigger = _form.GetType().GetMethod("OnAfterGetRecord",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            binder: null, types: Type.EmptyTypes, modifiers: null);
+        if (trigger != null) Invoke(trigger);
     }
 
     /// <summary>
