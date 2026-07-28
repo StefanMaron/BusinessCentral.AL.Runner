@@ -6025,8 +6025,13 @@ public static class NclCecilRewrite
             // NavSession getter cluster — every one of these reads skeleton state that is
             // null/zeroed because the runner never builds a real tenant/DB/culture stack:
             //   get_NavAppGroup            — tenant.NavAppGroup NREs (tenant null); return NavAppGroup.BaseGroup.
-            //   get_LocalLanguageNoFallback — globalLanguageStack null; return -1 (use default).
-            //   get_IsLocalLanguage        — globalLanguageStack.Count NREs; return false (skeleton uses InvariantCulture).
+            // NOTE: get_LocalLanguageNoFallback / get_LocalFormatRegion / get_IsLocalLanguage
+            // used to be replaced here too, because they read globalLanguageStack /
+            // globalFormatRegionStack, which GetUninitializedObject left null on the skeleton
+            // session. Those stacks are now planted for real (BcRuntime), so the replacements
+            // are gone: they answered "no language override" unconditionally, which meant a
+            // report that set CurrReport.Language / CurrReport.FormatRegion read its own value
+            // back as the session default / empty string.
             //   GetSecurityFilters         — Database.SecurityAndLicense NREs; return null (RecordImplementation treats null as "no filtering").
             //   PushDynamicCaptionStack    — language-stack manipulation NREs; return false (bool caller falls through to the sync FieldCaption path).
             //   SyncFormatSettings         — cultureSettings null; return new FormatSettings().
@@ -6034,15 +6039,6 @@ public static class NclCecilRewrite
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "NavSession", "get_NavAppGroup", 0),
                 H(helperShims, "NavSession_NavAppGroup"));
-            ReplaceBodyWithHelper(nclMod,
-                FindNclMethod(nclMod, Rt + "NavSession", "get_LocalLanguageNoFallback", 0),
-                H(helperShims, "NavSession_LocalLanguageNoFallback"));
-            ReplaceBodyWithHelper(nclMod,
-                FindNclMethod(nclMod, Rt + "NavSession", "get_LocalFormatRegion", 0),
-                H(helperShims, "NavSession_LocalFormatRegion"));
-            ReplaceBodyWithHelper(nclMod,
-                FindNclMethod(nclMod, Rt + "NavSession", "get_IsLocalLanguage", 0),
-                H(helperShims, "ReturnFalse_1Arg"));
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavSession", "GetSecurityFilters",
                          "Int32", "Int32", "SecurityFilterType", "NavApplicationObjectBase", "NavApplicationObjectBase"),

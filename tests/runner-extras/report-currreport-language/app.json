@@ -1,0 +1,20 @@
+{
+  "id": "c5d6e7f8-9a0b-4c1d-8e2f-3a4b5c6d7e8f",
+  "name": "Runner Extras - CurrReport.Language / FormatRegion",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Pins that a report may set CurrReport.Language and CurrReport.FormatRegion from its own triggers.",
+  "description": "Setting CurrReport.Language mid-run is ordinary AL — the Base App does it per customer in Standard Sales - Invoice. It routes through NavReport's update-language action into ReportLocalLanguageScope.UpdateLanguage, which reads the session's language and format state. Those live on stacks the skeleton session left null, so the assignment threw a bare NullReferenceException from inside BC rather than doing anything. These tests pin the assignment as executable and the value as readable back.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [ { "from": 62020, "to": 62029 } ],
+  "runtime": "14.0",
+  "features": []
+}

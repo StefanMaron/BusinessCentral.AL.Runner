@@ -1062,6 +1062,38 @@ public static partial class BcRuntime
                 }
             }
 
+            // globalLanguageStack / globalFormatRegionStack — `private readonly List<…> = new()`
+            // on NavSession, so GetUninitializedObject leaves both null.
+            //
+            // They are the session's own language/format-region stacks, and BC pushes onto
+            // them whenever AL sets CurrReport.Language or CurrReport.FormatRegion: the
+            // assignment routes into Report.ReportLocalLanguageScope.UpdateLanguage, which
+            // calls Session.PushLocalLanguage / PushLocalFormatRegion. Null stacks made that
+            // a bare NullReferenceException raised from inside BC — so a report that switches
+            // language per record (which every Base App document report does; Standard Sales -
+            // Invoice sets it from the customer's language code) did not merely ignore the
+            // request, it died mid-run.
+            //
+            // Planting real empty lists is the faithful fix rather than a patched getter:
+            // BC's own push/pop/read logic then runs unchanged, so a language set by AL is
+            // the language AL reads back, and it is popped at the right scope boundary.
+            foreach (var stackFieldName in new[] { "globalLanguageStack", "globalFormatRegionStack" })
+            {
+                var stackField = sessType.GetField(stackFieldName, BindingFlags.NonPublic | BindingFlags.Instance);
+                if (stackField == null || stackField.GetValue(_skeletonSession) != null) continue;
+                try
+                {
+                    FieldPoke.SetInstance(stackField, _skeletonSession!,
+                        Activator.CreateInstance(stackField.FieldType)!);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine(
+                        $"[BcRuntime] WARN: {stackFieldName} populate failed: {ex.GetType().Name}: {ex.Message} — "
+                        + "AL that sets CurrReport.Language/FormatRegion will NRE");
+                }
+            }
+
             // VerifyExecutePermission overloads → no-op
             foreach (var m in sessType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
                 .Where(m => m.Name == "VerifyExecutePermission" && m.ReturnType == typeof(void)))
