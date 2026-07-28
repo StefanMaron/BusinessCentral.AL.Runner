@@ -265,7 +265,7 @@ internal class LiveNavTestPage : MockITestPage
             if (_result is FormResult.Cancel or FormResult.LookupCancel)
                 _page.DiscardPendingNewRow();
             else
-                _page.FlushPendingNewRow();
+                _page.FlushRow();
         }
 
         public bool Visible => true;
@@ -374,7 +374,41 @@ internal class LiveNavTestPage : MockITestPage
     }
 
     /// <summary>Abandon an in-progress new row without writing it — how Cancel closes.</summary>
-    internal void DiscardPendingNewRow() => _pendingNewRow = false;
+    internal void DiscardPendingNewRow() { _pendingNewRow = false; _pendingModify = false; }
+
+    // The same client model as _pendingNewRow, for the other half of editing: a SetValue on an
+    // EXISTING row writes into the record buffer, and the row is persisted when the cursor
+    // leaves it or the page closes.
+    //
+    // Without this, every edit a TestPage made to an existing row was silently discarded. That
+    // is worse than it sounds: the page keeps answering with the value that was set, so a test
+    // that writes a field and reads it back through the page PASSES, and only a test that goes
+    // to the table notices. Tests of the first shape were green while asserting nothing.
+    private bool _pendingModify;
+
+    /// <summary>A control wrote to the record. Called by the field, which owns no page state.</summary>
+    internal void MarkEdited()
+    {
+        // A new row is already going to be written by FlushPendingNewRow; marking it modified
+        // as well would try to Modify a row that does not exist yet.
+        if (!_pendingNewRow) _pendingModify = true;
+    }
+
+    internal void FlushPendingModify()
+    {
+        if (!_pendingModify) return;
+        _pendingModify = false;
+        // OnModifyRecord vetoes exactly as OnInsertRecord does.
+        if (_page != null && !_page.RaiseOnModifyRecord()) return;
+        // ThrowError, not TrapError: a Modify that cannot be performed is something the user of
+        // a real client would be told about. Trapping it turned "this page is not positioned on
+        // a row" into an edit that appeared to succeed and quietly went nowhere.
+        _record.ALModifyAsync(DataError.ThrowError, true).GetAwaiter().GetResult();
+    }
+
+    // Order matters at every flush point: an in-progress new row is finished by an Insert, an
+    // edited existing row by a Modify, and only one of the two is ever pending.
+    private void FlushRow() { FlushPendingNewRow(); FlushPendingModify(); }
 
     // BC routes TestPage teardown through both Close() and Dispose() depending on whether
     // the AL test calls Close() explicitly or lets the variable go out of scope. Flush on
@@ -393,14 +427,14 @@ internal class LiveNavTestPage : MockITestPage
                 $"TestPage page {_pageId} — OnQueryClosePage",
                 "testpage-close-veto — the page's OnQueryClosePage returned false, which in BC "
                 + "leaves the page open awaiting the user. See docs/scope.md");
-        FlushParts(); FlushPendingNewRow(); _opened = false;
+        FlushParts(); FlushRow(); _opened = false;
     }
-    public override void Dispose() { FlushParts(); FlushPendingNewRow(); }
+    public override void Dispose() { FlushParts(); FlushRow(); }
 
     private void FlushParts()
     {
         foreach (var part in _parts.Values)
-            if (part is LiveNavTestPage live) live.FlushPendingNewRow();
+            if (part is LiveNavTestPage live) live.FlushRow();
     }
 
     public override ITestField GetField(int id)
@@ -409,7 +443,8 @@ internal class LiveNavTestPage : MockITestPage
         if (_controlIdToFieldNo.TryGetValue(id, out var tableFieldNo))
         {
             if (!_fields.TryGetValue(tableFieldNo, out var field))
-                _fields[tableFieldNo] = field = new LiveNavTestField(_record, tableFieldNo, _page, id);
+                _fields[tableFieldNo] = field =
+                    new LiveNavTestField(_record, tableFieldNo, _page, id, MarkEdited);
             return field;
         }
 
@@ -443,10 +478,10 @@ internal class LiveNavTestPage : MockITestPage
     // otherwise navigating away from a New() silently discards it. Parts flush too: moving
     // the parent re-links every part to a different row, so a row started in a part must be
     // persisted while the link that stamped its key is still the current one.
-    public override bool MoveFirst() { FlushParts(); FlushPendingNewRow(); return Loaded(_record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult()); }
-    public override bool MoveLast() { FlushParts(); FlushPendingNewRow(); return Loaded(_record.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult()); }
-    public override bool MoveNext() { FlushParts(); FlushPendingNewRow(); return Loaded(_record.ALNextAsync().GetAwaiter().GetResult() != 0); }
-    public override bool MovePrevious() { FlushParts(); FlushPendingNewRow(); return Loaded(_record.ALNextAsync(-1).GetAwaiter().GetResult() != 0); }
+    public override bool MoveFirst() { FlushParts(); FlushRow(); return Loaded(_record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult()); }
+    public override bool MoveLast() { FlushParts(); FlushRow(); return Loaded(_record.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult()); }
+    public override bool MoveNext() { FlushParts(); FlushRow(); return Loaded(_record.ALNextAsync().GetAwaiter().GetResult() != 0); }
+    public override bool MovePrevious() { FlushParts(); FlushRow(); return Loaded(_record.ALNextAsync(-1).GetAwaiter().GetResult() != 0); }
 
     /// <summary>
     /// A row just became the page's current row — run the page's OnAfterGetRecord, exactly
@@ -574,6 +609,134 @@ internal class LiveNavTestPage : MockITestPage
     }
 }
 
+/// <summary>
+/// Option values as a TestPage sees them: member NAMES going in, a member name coming back out.
+///
+/// AL's TestPage API is string-typed for every control — <c>Field.SetValue('Sum')</c>,
+/// <c>Field.Value()</c> — so the option's member table is the only thing that can turn that
+/// string into the ordinal the record stores, and back. Without it a write puts a NavText into
+/// an Option and dies inside BC's own setter ("The value \"Sum\" can't be evaluated into type
+/// Option"), and a read answers with the bare ordinal, which no AL test is written against.
+///
+/// Shared by the Rec-bound field and the page-variable-bound field. It was originally written
+/// for the latter only, which is exactly the shape of bug worth avoiding here: the two kinds of
+/// control look identical in AL, so a test author has no way to know that one of them resolves
+/// option names and the other does not.
+/// </summary>
+internal static class TestPageOptionValue
+{
+    /// <summary>Turn the string a test wrote into the NavOption the binding holds.</summary>
+    internal static NavValue Resolve(NavOption current, string value, string[]? captions, string context)
+    {
+        var metadata = current.NavOptionMetadata
+            ?? throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                context,
+                "testpage-option-value — the control is bound to an Option with no option "
+                + "metadata, so a value cannot be resolved by name. See docs/scope.md");
+
+        var options = Members(metadata);
+        var ordinals = Ordinals(metadata);
+
+        // A TestPage sets an option by what the user sees, i.e. the control's OptionCaption,
+        // which is NOT the option's member names (Pageworks: captions
+        // "Fields,Blocks,Images,…" over members [Field, Block, Image, …]). Captions first,
+        // then members — the caption is what AL test code is written against.
+        if (captions != null)
+            for (var i = 0; i < captions.Length; i++)
+                if (OptionNamesEqual(captions[i], value))
+                    return NavOption.Create(metadata, OrdinalAt(ordinals, i));
+
+        for (var i = 0; i < options.Length; i++)
+            if (OptionNamesEqual(options[i], value))
+                return NavOption.Create(metadata, OrdinalAt(ordinals, i));
+
+        // A bare number is a legal way to set an option, and unambiguous.
+        if (int.TryParse(value, System.Globalization.NumberStyles.Integer,
+                CultureInfo.InvariantCulture, out var literal)
+            && (ordinals == null || ordinals.Contains(literal)))
+            return NavOption.Create(metadata, literal);
+
+        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            context,
+            $"testpage-option-value — '{value}' is not one of the option's values "
+            + $"[{string.Join(", ", options)}]"
+            + (captions != null
+                ? $" nor one of its captions [{string.Join(", ", captions)}]"
+                : " (the control declares no OptionCaption)")
+            + ". See docs/scope.md");
+    }
+
+    /// <summary>
+    /// The text a test reads back. Deliberately the same spelling <see cref="Resolve"/> accepts
+    /// first, so <c>SetValue(Value())</c> is a no-op — a page whose read and write disagreed
+    /// about captions-vs-members would let a test copy a value from one field to another and
+    /// silently write a different member.
+    /// </summary>
+    internal static string? Display(NavOption option, string[]? captions)
+    {
+        var metadata = option.NavOptionMetadata;
+        if (metadata == null) return null;
+
+        var index = IndexOfOrdinal(metadata, option.Value);
+        if (index < 0) return null;
+
+        if (captions != null && index < captions.Length) return captions[index];
+        var options = Members(metadata);
+        return index < options.Length ? options[index] : null;
+    }
+
+    /// <summary>The number of members, for AL that walks an option set rather than naming one.</summary>
+    internal static int Count(NavOption option)
+        => option.NavOptionMetadata is { } metadata ? Members(metadata).Length : 0;
+
+    /// <summary>The member at a position, in the same spelling <see cref="Display"/> uses.</summary>
+    internal static string MemberAt(NavOption option, int index, string[]? captions)
+    {
+        if (captions != null && index >= 0 && index < captions.Length) return captions[index];
+        if (option.NavOptionMetadata is not { } metadata) return string.Empty;
+        var options = Members(metadata);
+        return index >= 0 && index < options.Length ? options[index] : string.Empty;
+    }
+
+    // Options / OrdinalValues are internal to Ncl — read them reflectively rather than
+    // re-deriving the option set from OptionString, which would lose the ordinal gaps a
+    // declared option set is allowed to have.
+    private static string[] Members(object metadata)
+        => ReadNonPublic<string[]>(metadata, "Options") ?? Array.Empty<string>();
+
+    private static int[]? Ordinals(object metadata) => ReadNonPublic<int[]>(metadata, "OrdinalValues");
+
+    private static int OrdinalAt(int[]? ordinals, int index)
+        => ordinals != null && index < ordinals.Length ? ordinals[index] : index;
+
+    private static int IndexOfOrdinal(object metadata, int ordinal)
+    {
+        var ordinals = Ordinals(metadata);
+        if (ordinals == null)
+            return ordinal >= 0 && ordinal < Members(metadata).Length ? ordinal : -1;
+        return Array.IndexOf(ordinals, ordinal);
+    }
+
+    private static T? ReadNonPublic<T>(object target, string name) where T : class
+    {
+        for (var t = target.GetType(); t != null; t = t.BaseType)
+        {
+            var pi = t.GetProperty(name, System.Reflection.BindingFlags.Public
+                | System.Reflection.BindingFlags.NonPublic
+                | System.Reflection.BindingFlags.Instance
+                | System.Reflection.BindingFlags.DeclaredOnly);
+            if (pi != null) return pi.GetValue(target) as T;
+        }
+        return null;
+    }
+
+    // AL option names are compared ignoring case and spacing, the same way the runner
+    // compares object and field names elsewhere ("Custom Fields" vs "CustomFields").
+    private static bool OptionNamesEqual(string left, string right)
+        => string.Equals(left.Replace(" ", string.Empty), right.Replace(" ", string.Empty),
+            StringComparison.OrdinalIgnoreCase);
+}
+
 internal sealed class LiveNavTestField : ITestField
 {
     private readonly NavRecord _record;
@@ -583,22 +746,51 @@ internal sealed class LiveNavTestField : ITestField
     private readonly RunnerPageInstance? _page;
     private readonly int _controlId;
 
-    public LiveNavTestField(NavRecord record, int fieldNo)
-        : this(record, fieldNo, page: null, controlId: 0) { }
+    // Told when this field writes, so the page can persist the row at the moment BC would.
+    // The field itself owns no page state and must not: a part's fields belong to the part's
+    // page, not to the card the test is holding.
+    private readonly Action? _onEdited;
 
-    public LiveNavTestField(NavRecord record, int fieldNo, RunnerPageInstance? page, int controlId)
+    public LiveNavTestField(NavRecord record, int fieldNo)
+        : this(record, fieldNo, page: null, controlId: 0, onEdited: null) { }
+
+    public LiveNavTestField(NavRecord record, int fieldNo, RunnerPageInstance? page, int controlId,
+        Action? onEdited)
     {
         _record = record;
         _fieldNo = fieldNo;
         _page = page;
         _controlId = controlId;
+        _onEdited = onEdited;
     }
 
     public string Value
     {
-        get => Convert.ToString(ObjectValue, CultureInfo.InvariantCulture) ?? string.Empty;
-        set => _record.SetFieldValue(_fieldNo, ALCompiler.ToNavValue(value));
+        // An option field answers with its MEMBER NAME, not the ordinal it stores. Returning the
+        // ordinal made every comparison against a member name fail while looking like a data
+        // problem ("expected <Mid>, got <0>") rather than a missing option table.
+        get => (CurrentOption() is { } option
+                   ? TestPageOptionValue.Display(option, OptionCaptions())
+                   : null)
+               ?? Convert.ToString(ObjectValue, CultureInfo.InvariantCulture)
+               ?? string.Empty;
+        set
+        {
+            _record.SetFieldValue(_fieldNo, CurrentOption() is { } option
+                ? TestPageOptionValue.Resolve(option, value, OptionCaptions(),
+                    $"TestPage SetValue (field {_fieldNo})")
+                : ALCompiler.ToNavValue(value));
+            _onEdited?.Invoke();
+        }
     }
+
+    // The stored NavValue, not the unwrapped ClientObject — the option metadata rides on the
+    // NavOption itself, and unwrapping it to an int is what loses the member table.
+    private NavOption? CurrentOption() => _record.GetFieldValue(_fieldNo) as NavOption;
+
+    // Record-only mode has no control to carry an OptionCaption, so members are all there is.
+    private string[]? OptionCaptions()
+        => _page != null && _controlId != 0 ? _page.TryGetOptionCaptions(_controlId) : null;
 
     public string Name => Caption;
     public string Caption => TryGetMetaFieldName() ?? $"Field {_fieldNo}";
@@ -607,7 +799,7 @@ internal sealed class LiveNavTestField : ITestField
     public long LastUsedValidationErrorId => 0;
     public long MaxValidationErrorId => 0;
     public object? ObjectValue => LiveNavTestPage.Unwrap(_record.GetFieldValue(_fieldNo));
-    public int OptionCount => 0;
+    public int OptionCount => CurrentOption() is { } option ? TestPageOptionValue.Count(option) : 0;
 
     // The control's declared state, not a constant. `Editable = false` / `Editable = SomeVar`
     // is how a page protects rows it does not own, so answering true unconditionally made
@@ -647,7 +839,14 @@ internal sealed class LiveNavTestField : ITestField
     public void Drilldown() { }
     public void Invoke() { }
     public string ValueToString(object? value) => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
-    public string GetOption(int index) => string.Empty;
+
+    // AL that walks an option set (building a picker, asserting the members a field offers) got
+    // an empty string for every index, which reads as "this option has blank members" rather
+    // than as an unimplemented accessor.
+    public string GetOption(int index)
+        => CurrentOption() is { } option
+            ? TestPageOptionValue.MemberAt(option, index, OptionCaptions())
+            : string.Empty;
 
     private string? TryGetMetaFieldName()
     {
@@ -704,72 +903,10 @@ internal sealed class PageVariableTestField : ITestField
     /// about the value that was wrong.
     /// </summary>
     private NavValue ToBoundValue(string value)
-    {
-        var current = RunnerPageInstance.GetValue(_expression);
-        if (current is not NavOption option) return ALCompiler.ToNavValue(value);
-
-        var metadata = option.NavOptionMetadata
-            ?? throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
-                $"TestPage SetValue (control {_controlId})",
-                "testpage-option-value — the control is bound to an Option with no option "
-                + "metadata, so a value cannot be resolved by name. See docs/scope.md");
-
-        // Options / OrdinalValues are internal to Ncl — read them reflectively rather than
-        // re-deriving the option set from OptionString, which would lose the ordinal gaps a
-        // declared option set is allowed to have.
-        var options = ReadNonPublic<string[]>(metadata, "Options") ?? Array.Empty<string>();
-        var ordinals = ReadNonPublic<int[]>(metadata, "OrdinalValues");
-
-        int Ordinal(int index) => ordinals != null && index < ordinals.Length ? ordinals[index] : index;
-
-        // A TestPage sets an option by what the user sees, i.e. the control's OptionCaption,
-        // which is NOT the option's member names (Pageworks: captions
-        // "Fields,Blocks,Images,…" over members [Field, Block, Image, …]). Captions first,
-        // then members — the caption is what AL test code is written against.
-        var captions = _page.TryGetOptionCaptions(_controlId);
-        if (captions != null)
-            for (var i = 0; i < captions.Length; i++)
-                if (OptionNamesEqual(captions[i], value))
-                    return NavOption.Create(metadata, Ordinal(i));
-
-        for (var i = 0; i < options.Length; i++)
-            if (OptionNamesEqual(options[i], value))
-                return NavOption.Create(metadata, Ordinal(i));
-
-        // A bare number is a legal way to set an option, and unambiguous.
-        if (int.TryParse(value, System.Globalization.NumberStyles.Integer,
-                CultureInfo.InvariantCulture, out var literal)
-            && (ordinals == null || ordinals.Contains(literal)))
-            return NavOption.Create(metadata, literal);
-
-        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
-            $"TestPage SetValue (control {_controlId})",
-            $"testpage-option-value — '{value}' is not one of the option's values "
-            + $"[{string.Join(", ", options)}]"
-            + (_page.TryGetOptionCaptions(_controlId) is { } caps
-                ? $" nor one of its captions [{string.Join(", ", caps)}]"
-                : " (the control declares no OptionCaption)")
-            + ". See docs/scope.md");
-    }
-
-    private static T? ReadNonPublic<T>(object target, string name) where T : class
-    {
-        for (var t = target.GetType(); t != null; t = t.BaseType)
-        {
-            var pi = t.GetProperty(name, System.Reflection.BindingFlags.Public
-                | System.Reflection.BindingFlags.NonPublic
-                | System.Reflection.BindingFlags.Instance
-                | System.Reflection.BindingFlags.DeclaredOnly);
-            if (pi != null) return pi.GetValue(target) as T;
-        }
-        return null;
-    }
-
-    // AL option names are compared ignoring case and spacing, the same way the runner
-    // compares object and field names elsewhere ("Custom Fields" vs "CustomFields").
-    private static bool OptionNamesEqual(string left, string right)
-        => string.Equals(left.Replace(" ", string.Empty), right.Replace(" ", string.Empty),
-            StringComparison.OrdinalIgnoreCase);
+        => RunnerPageInstance.GetValue(_expression) is NavOption option
+            ? TestPageOptionValue.Resolve(option, value, _page.TryGetOptionCaptions(_controlId),
+                $"TestPage SetValue (control {_controlId})")
+            : ALCompiler.ToNavValue(value);
 
     public string Name => Caption;
     public string Caption => _expression.GetType()

@@ -508,6 +508,14 @@ internal sealed class RunnerPageInstance
            is not false;
 
     /// <summary>
+    /// The page's last word before an EDIT to an existing row is written — the counterpart of
+    /// OnInsertRecord, and a veto in exactly the same way. A page that stamps a "last modified
+    /// by" field or refuses to save a row in a closed period does it here.
+    /// </summary>
+    internal bool RaiseOnModifyRecord()
+        => InvokeRecordTrigger("OnModifyRecord", Type.EmptyTypes, Array.Empty<object>()) is not false;
+
+    /// <summary>
     /// Invoke a page record trigger by name. The AL compiler emits these as overrides of
     /// NavForm's own protected virtuals, so reflection finds the base declaration and virtual
     /// dispatch reaches the page's override; a page that declares none lands on NavForm's
