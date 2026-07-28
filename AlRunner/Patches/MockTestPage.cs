@@ -776,10 +776,22 @@ internal sealed class LiveNavTestField : ITestField
                ?? string.Empty;
         set
         {
-            _record.SetFieldValue(_fieldNo, CurrentOption() is { } option
+            var navValue = CurrentOption() is { } option
                 ? TestPageOptionValue.Resolve(option, value, OptionCaptions(),
                     $"TestPage SetValue (field {_fieldNo})")
-                : ALCompiler.ToNavValue(value));
+                : ALCompiler.ToNavValue(value);
+
+            // Setting a field on a page is a VALIDATE, not an assignment. That is what fills in
+            // the caption when a user picks an id, and what lets a field refuse a value outright.
+            // A raw SetFieldValue stored what the test wrote — so the field itself read back
+            // correctly and every field DERIVED from it stayed empty, which made the test fail
+            // pointing at the derived field, the one place the defect was not.
+            _record.ALValidateAsync(_fieldNo, navValue, null).GetAwaiter().GetResult();
+
+            // Then the control's own OnValidate, which is a second and independent trigger: the
+            // table field's runs first, the page's after it.
+            if (_page != null && _controlId != 0) _page.RaiseOnValidate(_controlId);
+
             _onEdited?.Invoke();
         }
     }
