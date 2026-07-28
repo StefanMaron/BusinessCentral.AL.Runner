@@ -95,4 +95,26 @@ public static class RunnerFormInit
         }
         catch { return false; }
     }
+
+    /// <summary>
+    /// Cecil-injected guard on NavForm.RegisterSourceExpression — as wide as
+    /// ShouldResolveMasterPage, and for the same reason.
+    ///
+    /// The instance opt-in is too narrow here for exactly the case it was designed around.
+    /// A page AL opens with <c>SomePage.RunModal()</c> is an instance the runner never
+    /// constructed, so it is never marked — yet the test's [ModalPageHandler] is handed a
+    /// TestPage over that very form and is expected to drive it. Registration is what
+    /// publishes a page's control -> value bindings, so without it the binding table is
+    /// empty and EVERY control bound to a page variable rather than a Rec field is
+    /// unresolvable on a modal page. That is how a mode selector above a picker's list —
+    /// ordinary AL, and what Pageworks' InsertPicker does — surfaced as an out-of-scope
+    /// control id inside a handler.
+    ///
+    /// Widening only this one of the three guarded methods is deliberate. Registration is a
+    /// pure "record this binding" step against a MasterPage the wider gate has already
+    /// admitted; InitializeForm and CallInitializeComponentExtensionMethod are the ones that
+    /// reach into skeleton-session state, and they stay on the narrow instance opt-in.
+    /// Request pages stay excluded — that is the path the original blanket no-op protected.
+    /// </summary>
+    public static bool ShouldRegisterSourceExpressions(object form) => ShouldResolveMasterPage(form);
 }

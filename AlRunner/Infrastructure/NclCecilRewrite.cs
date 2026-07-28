@@ -4714,14 +4714,28 @@ public static class NclCecilRewrite
                     ?? throw new InvalidOperationException(
                         "RunnerFormInit.ShouldRunRealFormInit not found — do not commit"));
 
+                // RegisterSourceExpression gets a WIDER guard than the other two. A page AL
+                // opens with RunModal is an instance the runner never constructed and so
+                // never marked — yet the test's [ModalPageHandler] is handed a TestPage over
+                // that form and must drive it. Registration is what publishes the control ->
+                // value bindings, so on the narrow gate every page-variable-bound control on
+                // a modal page was unresolvable. See RunnerFormInit.ShouldRegisterSourceExpressions.
+                var shouldRegisterRef = asm.MainModule.ImportReference(
+                    typeof(AlRunnerV2.Patches.RunnerFormInit).GetMethod(
+                        nameof(AlRunnerV2.Patches.RunnerFormInit.ShouldRegisterSourceExpressions),
+                        BindingFlags.Public | BindingFlags.Static)
+                    ?? throw new InvalidOperationException(
+                        "RunnerFormInit.ShouldRegisterSourceExpressions not found — do not commit"));
+
                 int rewrites = 0;
                 foreach (var m in navFormT.Methods)
                 {
                     if (!m.HasBody) continue;
                     bool target = false;
+                    var guardRef = shouldRunRef;
                     if (m.Name == "CallInitializeComponentExtensionMethod" && m.Parameters.Count == 0) target = true;
                     else if (m.Name == "InitializeForm" && m.Parameters.Count == 0 && m.ReturnType.FullName == "System.Void") target = true;
-                    else if (m.Name == "RegisterSourceExpression") target = true;
+                    else if (m.Name == "RegisterSourceExpression") { target = true; guardRef = shouldRegisterRef; }
                     if (!target) continue;
                     // NEVER rewrite an async ValueTask body (CoreCLR segfault risk).
                     if (m.ReturnType.FullName.StartsWith("System.Threading.Tasks.ValueTask")) continue;
@@ -4730,7 +4744,7 @@ public static class NclCecilRewrite
                     var first = body.Instructions[0];
                     var ret = il.Create(OpCodes.Ret);
                     il.InsertBefore(first, il.Create(OpCodes.Ldarg_0));
-                    il.InsertBefore(first, il.Create(OpCodes.Call, shouldRunRef));
+                    il.InsertBefore(first, il.Create(OpCodes.Call, guardRef));
                     il.InsertBefore(first, il.Create(OpCodes.Brtrue, first));
                     il.InsertBefore(first, ret);
                     body.MaxStackSize = Math.Max(body.MaxStackSize, 2);

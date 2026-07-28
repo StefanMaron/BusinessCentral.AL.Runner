@@ -172,6 +172,77 @@ codeunit 61925 "TMH Tests"
         Host.Close();
     end;
 
+    // Positive: a handler can drive a control bound to the modal page's own VARIABLE.
+    //
+    // A page AL opens with RunModal is not the instance the runner constructed, so it never
+    // got BC's real form initialisation — and RegisterSourceExpression is the step that
+    // publishes a page's control -> value bindings. Without it the binding table is empty
+    // and every page-variable control on a modal page is unresolvable, which is how
+    // Pageworks' InsertPicker "KindSelector" surfaced as an out-of-scope control id.
+    [Test]
+    [HandlerFunctions('VarsHandler')]
+    procedure ModalPageHandler_CanDriveAPageVariableControl()
+    var
+        Echo: Record "TMH Row";
+        Host: TestPage "TMH Host";
+    begin
+        SeedRows();
+
+        Host.OpenEdit();
+        Host.First();
+        Host.PickWithVars.Invoke();
+        Host.Close();
+
+        Assert.IsTrue(Echo.Get('MODE'),
+            'the handler set the page-variable control, so the page''s OnValidate must have run');
+        Assert.AreEqual('Blocks', Echo.Descr,
+            'the OnValidate must see the value the handler wrote to the page variable');
+    end;
+
+    // Negative: the Rec-bound control on the same modal page must keep working. It resolves
+    // through the record and never needed the binding table, so a fix aimed at page
+    // variables must not disturb it.
+    //
+    // The handler positions the cursor itself rather than relying on the page opening on a
+    // row. Whether a modal page arrives pre-positioned is a separate question from whether
+    // its Rec-bound controls resolve, and this test is about the second one.
+    [Test]
+    [HandlerFunctions('VarsHandler')]
+    procedure ModalPageHandler_RecBoundControlOnTheSamePageStillResolves()
+    var
+        Echo: Record "TMH Row";
+        Host: TestPage "TMH Host";
+    begin
+        SeedRows();
+
+        Host.OpenEdit();
+        Host.First();
+        Host.PickWithVars.Invoke();
+        Host.Close();
+
+        Assert.IsTrue(Echo.Get('RECBOUND'),
+            'the handler read the Rec-bound control on the modal page');
+        Assert.AreEqual('Alpha', Echo.Descr,
+            'the Rec-bound control must read the current row''s value');
+    end;
+
+    [ModalPageHandler]
+    procedure VarsHandler(var Modal: TestPage "TMH Modal Vars")
+    var
+        Stamp: Record "TMH Row";
+    begin
+        Modal.Mode.SetValue('Blocks');
+
+        Modal.First();
+        Stamp.Init();
+        Stamp."No." := 'RECBOUND';
+        Stamp.Descr := CopyStr(Modal.Descr.Value(), 1, MaxStrLen(Stamp.Descr));
+        if not Stamp.Insert() then
+            Stamp.Modify();
+
+        Modal.OK().Invoke();
+    end;
+
     [ModalPageHandler]
     procedure OkHandler(var Modal: TestPage "TMH Modal")
     var
