@@ -130,6 +130,17 @@ bool showPass = Environment.GetEnvironmentVariable("AL_RUNNER_FAILURES_ONLY") !=
             if (e.Exception is NullReferenceException or ArgumentNullException)
             {
                 Console.Error.WriteLine($"[FCE-NRE] {e.Exception}");
+                // BC's DLLs ship without PDBs, so the managed trace above names the method
+                // but gives no position inside it — and a method like NavRecord.InsertAsync
+                // dereferences a dozen different fields. The IL offset is the only thing that
+                // says WHICH one, and it maps straight onto `ilspycmd --il` output.
+                foreach (var f in new System.Diagnostics.StackTrace(e.Exception, false).GetFrames())
+                {
+                    var m = f.GetMethod();
+                    if (m == null) continue;
+                    Console.Error.WriteLine(
+                        $"[FCE-NRE]   IL_{f.GetILOffset():X4}  {m.DeclaringType?.FullName}.{m.Name}");
+                }
                 if (withCallers)
                     Console.Error.WriteLine($"[FCE-NRE] callers:\n{Environment.StackTrace}");
             }

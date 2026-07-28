@@ -278,6 +278,26 @@ public static partial class RecordPatches
                 ?.SetValue(sqlDbProps, true);
             fSqlDbProps.SetValue(_skeletonDatabase, sqlDbProps);
         }
+        // companyTokens — BC's own NavDatabase ctor does `companyTokens = new CompanyTokens(this)`,
+        // and GetUninitializedObject skips it. Anything that maps a company token back to a name
+        // (NavMedia.MediaExists → Database.CompanyTokens.Get(ParentCompanyToken), and every other
+        // company-scoped platform-table read) then NREs on the null. Build the real type through
+        // its real constructor so its own field initializers run: companyNames starts as
+        // { string.Empty }, i.e. token 0 == the runner's single unnamed company, which is exactly
+        // what the rest of the runner uses (RecordImplementation.GetActiveCompany returns "").
+        var fCompanyTokens = _tNavDatabase.GetField("companyTokens",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        var tCompanyTokens = _tNavDatabase.Assembly.GetType("Microsoft.Dynamics.Nav.Runtime.CompanyTokens");
+        if (fCompanyTokens != null && tCompanyTokens != null)
+        {
+            var ctorCompanyTokens = tCompanyTokens.GetConstructor(
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                binder: null, new[] { _tNavDatabase }, modifiers: null);
+            if (ctorCompanyTokens != null)
+                AlRunnerV2.Infrastructure.FieldPoke.SetInstance(fCompanyTokens, _skeletonDatabase,
+                    ctorCompanyTokens.Invoke(new[] { _skeletonDatabase }));
+        }
+
         Console.Error.WriteLine($"[RecordPatches] Skeleton NavDatabase built: {_skeletonDatabase.GetType().Name}");
 
         // DataAccessSource fields to poke when creating skeleton

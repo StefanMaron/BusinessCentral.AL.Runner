@@ -121,6 +121,20 @@ public static class EventSubscriberPatches
     public static object? CreateTableTriggerEventHandler()
     {
         if (_reflectionFailed) return null;
+        // Self-initialize rather than depend on Register() having been called first.
+        // The platform tables (2000000xxx) are built during runtime bring-up, BEFORE
+        // Register runs, so an ordering dependency here silently handed every one of them
+        // a null tableTriggerEventHandler — and NavRecord.InsertAsync calls
+        // metaTable.TableTriggerEventHandler.OnBeforeInsertEventAsync unconditionally once
+        // IsEventSubscribed says yes, so the null surfaced as a bare NRE deep inside BC.
+        // BC itself never leaves this field null (NCLMetaTable.Populate always assigns one).
+        if (_ciNavTableTriggerEventHandler == null)
+        {
+            var navNcl = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
+            if (navNcl == null) return null;
+            Register(navNcl);
+        }
         if (_ciNavTableTriggerEventHandler == null) return null;
         try { return _ciNavTableTriggerEventHandler.Invoke(null); }
         catch (Exception ex)
