@@ -152,13 +152,15 @@ public static partial class BcRuntime
 
     /// <summary>
     /// Stack-walk version of <see cref="GetCallerModuleAppInfoFor"/> for use from the
-    /// Cecil patch on <c>ALNavApp.ALGetCallerModuleInfo</c> in precompiled deps. Finds
-    /// the first registered AL assembly on the stack (the "current" / "self" module —
-    /// the precompiled dep that invoked GetCallerModuleInfo), then returns the first
-    /// DIFFERENT registered assembly above it (the true "caller").
+    /// Cecil patch on <c>ALNavApp.ALGetCallerModuleInfo</c> in precompiled deps.
+    /// Prefers the faithful method-scope walk; the assembly stack-walk is the fallback
+    /// for when the scope chain is not populated.
     /// </summary>
     public static (Guid AppId, string Name, string Publisher, string Version) GetCallerModuleFromCallStack()
     {
+        var immediate = TryGetImmediateCallerModule();
+        if (immediate != null) return immediate.Value;
+
         try
         {
             var trace = new System.Diagnostics.StackTrace(fNeedFileInfo: false);
@@ -177,6 +179,62 @@ public static partial class BcRuntime
         return _currentBundleInfo;
     }
 
+    /// <summary>
+    /// <c>NavApp.GetCallerModuleInfo</c>, faithful to BC's own rule.
+    ///
+    /// BC's <c>ALGetCallerModuleInfo</c> calls
+    /// <c>GetCallingAppId(Guid.Empty, excludeCurrentMethod: true)</c>, which walks the
+    /// method-scope chain, skips EXACTLY ONE scope, then breaks on the very next stack
+    /// frame. So the answer is the module of the IMMEDIATE caller — BC never walks past
+    /// frames that happen to belong to the same app.
+    ///
+    /// The runner used to answer "the nearest frame from a DIFFERENT registered
+    /// assembly". That differs precisely when an app calls into itself through another of
+    /// its own objects: BC says "this app", the runner said "whoever called this app".
+    /// Measured consequence — an ISV registry keyed on <c>GetCallerModuleInfo().Id()</c>
+    /// wrote one asset row per calling app instead of one row for itself, so a later name
+    /// lookup found two owners, reported the name AMBIGUOUS, and surfaced as a
+    /// font-variant error nowhere near this call.
+    ///
+    /// BC's own scope chain cannot be used here: the runner leaves
+    /// <c>session.CurrentMethodScope</c> at the RootMethodScope for source-compiled AL
+    /// (measured), so the rule is applied to the managed stack instead. One AL method can
+    /// occupy several managed frames — the AL emit adds a compiler-generated
+    /// <c>&lt;Method&gt;_Scope__…</c> frame object nested in the same type — so those are
+    /// folded away to keep "one frame per AL method invocation".
+    ///
+    /// Returns null when fewer than two AL frames are on the stack (a top-level AL entry
+    /// such as an install trigger), leaving the existing fallback in place.
+    /// </summary>
+    private static (Guid AppId, string Name, string Publisher, string Version)? TryGetImmediateCallerModule()
+    {
+        try
+        {
+            var trace = new System.Diagnostics.StackTrace(fNeedFileInfo: false);
+            Assembly? currentAlFrame = null;
+            for (int i = 0; i < trace.FrameCount; i++)
+            {
+                var type = trace.GetFrame(i)?.GetMethod()?.DeclaringType;
+                var asm = type?.Assembly;
+                if (asm == null || !_moduleInfoByAssembly.ContainsKey(asm)) continue;
+                // The polyfill shim is compiled INTO each AL assembly, so its frames pass
+                // the assembly test above while being runner plumbing, not AL. Counting
+                // them shifts the whole walk by one and yields the callee as its own caller.
+                if (type!.Namespace != null
+                    && type.Namespace.StartsWith("AlRunnerV2Shim", StringComparison.Ordinal)) continue;
+                // Same AL method, not a caller: fold away the emitted scope frame object.
+                if (type.Name.Contains("_Scope", StringComparison.Ordinal)) continue;
+
+                if (currentAlFrame == null) { currentAlFrame = asm; continue; }
+                // BC breaks on the FIRST frame after the skipped one — even when it
+                // belongs to the same app. Do not keep searching for a foreign one.
+                return _moduleInfoByAssembly[asm];
+            }
+        }
+        catch { /* fall back */ }
+        return null;
+    }
+
     /// <summary>Module info by AppId across every registered assembly (deps + bundle),
     /// for NavApp.GetModuleInfo(moduleId). Null when the id is unknown.</summary>
     public static (Guid AppId, string Name, string Publisher, string Version)? TryGetModuleInfoByAppId(Guid moduleId)
@@ -189,14 +247,18 @@ public static partial class BcRuntime
     }
 
     /// <summary>
-    /// NavApp.GetCallerModuleInfo semantics: the module of the nearest stack frame
-    /// belonging to a DIFFERENT registered AL assembly than <paramref name="self"/>
-    /// (real BC walks method scopes past the current app). Falls back to
-    /// <paramref name="self"/>'s own info when no foreign AL frame is on the stack
-    /// (e.g. a test calling directly into its own app).
+    /// NavApp.GetCallerModuleInfo semantics: the module of the IMMEDIATE caller — see
+    /// <see cref="TryGetCallerModuleFromMethodScopes"/> for BC's own rule and why
+    /// "nearest DIFFERENT assembly" was wrong. The assembly stack-walk below remains as
+    /// the fallback for when the method-scope chain is not populated; it still answers
+    /// the nearest foreign module, which is correct whenever the immediate caller really
+    /// is a different app (the common cross-module case).
     /// </summary>
     public static (Guid AppId, string Name, string Publisher, string Version) GetCallerModuleAppInfoFor(Assembly self)
     {
+        var immediate = TryGetImmediateCallerModule();
+        if (immediate != null) return immediate.Value;
+
         try
         {
             var trace = new System.Diagnostics.StackTrace(fNeedFileInfo: false);
