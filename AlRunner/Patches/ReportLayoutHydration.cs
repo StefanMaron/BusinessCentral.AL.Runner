@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 
@@ -153,7 +154,15 @@ public static class ReportLayoutHydration
     private static AlReportLayoutInfo? DeclaredLayoutFor(object layout)
     {
         var reportId = (int)_pReportId!.GetValue(layout)!;
-        var declared = AlReportLayoutRegistry.Get(reportId);
+        return Choose(AlReportLayoutRegistry.Get(reportId), _pName!.GetValue(layout) as string);
+    }
+
+    /// <summary>
+    /// The resolution rule itself, separated from the BC reflection so it can be tested
+    /// directly. See <see cref="DeclaredLayoutFor"/> for what <paramref name="name"/> is.
+    /// </summary>
+    internal static AlReportLayoutInfo? Choose(IReadOnlyList<AlReportLayoutInfo> declared, string? name)
+    {
         if (declared.Count == 0) return null;
 
         // Name match first — but ONLY as an addition. BC sets Name for its own reasons and
@@ -162,16 +171,36 @@ public static class ReportLayoutHydration
         // non-matching name as "not ours" removed hydration the single-layout rule below
         // was already providing correctly, and cost 59 Pageworks tests — so a failed name
         // match must fall through, never short-circuit.
-        var name = _pName!.GetValue(layout) as string;
         if (!string.IsNullOrEmpty(name))
             foreach (var candidate in declared)
                 if (string.Equals(candidate.Name, name, StringComparison.OrdinalIgnoreCase))
                     return candidate;
 
-        // No usable name. Unambiguous only when the report declares one layout; with
-        // several, which one BC meant is genuinely unknown and guessing could serve the
-        // wrong template.
-        return declared.Count == 1 ? declared[0] : null;
+        // No usable name — this is the report's DEFAULT layout render (a plain
+        // Report.SaveAs with no SetTempLayoutSelectedName). One declared layout is
+        // unambiguous on its own.
+        if (declared.Count == 1) return declared[0];
+
+        // With several, the answer is NOT a guess: AL requires any report using the
+        // `rendering` syntax to declare `DefaultRenderingLayout`, and the compile-time
+        // capture records which layout that names. Resolving to it is reading the AL
+        // author's own declaration, exactly as a live tier would.
+        //
+        // This branch used to return null. That left the default render with a null
+        // layout stream, so BC's custom-merge path handed the AL subscriber an EMPTY
+        // template and the render produced a zero-page document — measured as 15 failing
+        // Pageworks tests ("Expected at least 3 pages, got 0"), every one of them on the
+        // default-layout path while its by-name siblings passed.
+        AlReportLayoutInfo? theDefault = null;
+        foreach (var candidate in declared)
+        {
+            if (!candidate.IsDefault) continue;
+            // AL cannot express two defaults; seeing two means the capture is wrong, and
+            // ambiguous is still ambiguous. Fall back to no-guessing rather than pick one.
+            if (theDefault != null) return null;
+            theDefault = candidate;
+        }
+        return theDefault;
     }
 
     private static void Bind(Type layoutType)

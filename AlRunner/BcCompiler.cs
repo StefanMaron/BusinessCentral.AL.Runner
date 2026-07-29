@@ -1592,6 +1592,7 @@ public sealed class BcCompiler
             {
                 if (reportSym is not NavCA.IContainerSymbol container) return;
                 var captions = ParseLayoutCaptionsFromMetadata(metadataXml);
+                var defaultLayoutName = ReadDefaultRenderingLayoutName(reportSym);
                 foreach (var member in container.GetMembers())
                 {
                     var t = member.GetType();
@@ -1599,6 +1600,7 @@ public sealed class BcCompiler
 
                     string name = member.Name ?? string.Empty;
                     if (string.IsNullOrEmpty(name)) continue;
+
 
                     var layoutType = ReadSymbolProp(member, "LayoutType")?.ToString() ?? string.Empty;
                     var mimeType = ReadSymbolProp(member, "MimeType") as string ?? string.Empty;
@@ -1614,7 +1616,8 @@ public sealed class BcCompiler
                         LayoutFile: layoutFile,
                         ResolvedPath: resolved,
                         Caption: cs.Caption ?? string.Empty,
-                        Summary: cs.Summary ?? string.Empty));
+                        Summary: cs.Summary ?? string.Empty,
+                        IsDefault: IsDefaultLayout(name, defaultLayoutName)));
                 }
             }
             catch (Exception ex)
@@ -1622,6 +1625,51 @@ public sealed class BcCompiler
                 Console.Error.WriteLine($"[BcCompiler] report-layout capture failed for report {reportSym.Id}: {ex.Message}");
             }
         }
+
+        /// <summary>
+        /// Which layout the report declares as <c>DefaultRenderingLayout</c>, or "" when it
+        /// cannot be read. AL requires the property on every report using the
+        /// <c>rendering</c> syntax ("Reports that use the rendering syntax must also define
+        /// the DefaultRenderingLayout property"), so this is normally present — it is what a
+        /// plain <c>Report.SaveAs</c> with no explicit layout selection renders through.
+        ///
+        /// It is NOT a CLR property on the report symbol, and <c>ReportLayoutSymbol</c> has
+        /// no <c>IsDefaultLayout</c> flag (both verified by dumping the symbol surface).
+        /// It lives in the symbol's AL property bag, so the walk is
+        /// <c>Properties</c> → the entry named <c>DefaultRenderingLayout</c> →
+        /// <c>Property</c> (BoundProperty) → <c>PropertyValue</c>
+        /// (BoundMemberReferencePropertyValue) → <c>ValueText</c>, which holds the layout
+        /// name as written.
+        ///
+        /// Absence is not an error: the consumer keeps its no-guessing behaviour and simply
+        /// declines to hydrate a multi-layout report, exactly as before this existed.
+        /// </summary>
+        private static string ReadDefaultRenderingLayoutName(NavCA.IReportTypeSymbol reportSym)
+        {
+            if (ReadSymbolProp(reportSym, "Properties") is not System.Collections.IEnumerable bag)
+                return string.Empty;
+
+            foreach (var entry in bag)
+            {
+                if (entry == null) continue;
+                if (!string.Equals(ReadSymbolProp(entry, "Name") as string,
+                        "DefaultRenderingLayout", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var bound = ReadSymbolProp(entry, "Property");
+                var value = bound == null ? null : ReadSymbolProp(bound, "PropertyValue");
+                var text = value == null ? null : ReadSymbolProp(value, "ValueText") as string;
+                if (!string.IsNullOrWhiteSpace(text)) return text!;
+            }
+            return string.Empty;
+        }
+
+        /// <summary>
+        /// Whether this layout is the one the report names in <c>DefaultRenderingLayout</c>.
+        /// </summary>
+        private static bool IsDefaultLayout(string layoutName, string defaultLayoutName) =>
+            !string.IsNullOrEmpty(defaultLayoutName)
+            && string.Equals(defaultLayoutName, layoutName, StringComparison.OrdinalIgnoreCase);
 
         private static object? ReadSymbolProp(object target, string propertyName)
         {

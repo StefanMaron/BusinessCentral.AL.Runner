@@ -42,7 +42,14 @@ public sealed record AlReportLayoutInfo(
     /// <summary>Absolute path the LayoutFile resolved to, or "" if it could not be resolved.</summary>
     string ResolvedPath,
     string Caption,
-    string Summary);
+    string Summary,
+    /// <summary>
+    /// True when the report names this layout in its <c>DefaultRenderingLayout</c>
+    /// property. AL requires every report using the <c>rendering</c> syntax to declare
+    /// one, so this is what a plain <c>Report.SaveAs</c> with no explicit
+    /// <c>SetTempLayoutSelectedName</c> selection renders through.
+    /// </summary>
+    bool IsDefault = false);
 
 public static class AlReportLayoutRegistry
 {
@@ -88,7 +95,11 @@ public static class AlReportLayoutRegistry
             LayoutFile: Prefer(existing.LayoutFile, incoming.LayoutFile),
             ResolvedPath: Prefer(existing.ResolvedPath, incoming.ResolvedPath),
             Caption: Prefer(existing.Caption, incoming.Caption),
-            Summary: Prefer(existing.Summary, incoming.Summary));
+            Summary: Prefer(existing.Summary, incoming.Summary),
+            // Same "later wins only where it has something to say" rule: a pass that
+            // could not read DefaultRenderingLayout reports false for every layout, and
+            // must not un-mark a default an informed pass already established.
+            IsDefault: existing.IsDefault || incoming.IsDefault);
 
     private static string Prefer(string existing, string incoming) =>
         string.IsNullOrEmpty(incoming) ? existing : incoming;
@@ -148,7 +159,13 @@ public static class AlReportLayoutRegistry
                 LayoutFile: e.GetProperty("LayoutFile").GetString() ?? string.Empty,
                 ResolvedPath: e.GetProperty("ResolvedPath").GetString() ?? string.Empty,
                 Caption: e.GetProperty("Caption").GetString() ?? string.Empty,
-                Summary: e.GetProperty("Summary").GetString() ?? string.Empty));
+                Summary: e.GetProperty("Summary").GetString() ?? string.Empty,
+                // Optional: sidecars written before IsDefault existed simply have no
+                // default marker. Both cache keys hash the runner assembly, so such a
+                // sidecar is already unreachable from a runner carrying this code —
+                // tolerating it here just keeps a hand-copied cache from throwing.
+                IsDefault: e.TryGetProperty("IsDefault", out var d)
+                           && d.ValueKind == System.Text.Json.JsonValueKind.True));
             n++;
         }
         return n;
