@@ -194,9 +194,12 @@ string? alCacheDir = Path.Combine(
     ".cache", "al-runner", "al-out");
 // Test isolation mode — default matches BC's "Test Runner - Isol. Codeunit" (130450).
 var isolation = AlRunnerV2.TestIsolation.Codeunit;
-// --strict: exit with non-zero code if any test fails or a bucket fails to compile/execute.
-// Default (no --strict): exit 0 regardless of test failures so callers can parse JSON output.
-bool strictExitCode = false;
+// Exit non-zero if any test fails or a bucket fails to compile/execute — matches v1/main
+// semantics so CI shell loops (`&&`, `set -e`, GitHub Actions step failure) work by exit
+// code alone, same as before. --no-strict-exit opts back into the old always-0 behaviour
+// for tooling that only wants to parse the JSON output regardless of outcome. --strict is
+// kept as a no-op alias (it's now the default) so existing invocations don't break.
+bool strictExitCode = true;
 // --test PATTERN: substring filter applied to "Codeunit.Method" — case-insensitive.
 string? testFilter = null;
 // --watch: stay resident with warm dependencies and re-run IN-PROCESS on every .al
@@ -244,7 +247,8 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--verbose") { AlRunnerV2.Log.Verbose = true; continue; }
     if (args[i] == "--show-pass") { showPass = true; continue; }   // no-op (default in v2); kept for v1 back-compat
     if (args[i] == "--failures-only" || args[i] == "--quiet") { showPass = false; continue; }
-    if (args[i] == "--strict") { strictExitCode = true; continue; }
+    if (args[i] == "--strict") { strictExitCode = true; continue; }  // no-op: default since the v2 cut
+    if (args[i] == "--no-strict-exit") { strictExitCode = false; continue; }
     if ((args[i] == "--test" || args[i] == "--filter") && i + 1 < args.Length) { testFilter = args[++i]; continue; }
     if (args[i] == "--preprocessor-symbols" && i + 1 < args.Length)
     {
@@ -1516,9 +1520,8 @@ if (outPath != null)
     Console.WriteLine($"Classification → {outPath}");
 }
 
-// --strict: exit non-zero if anything failed. Matches v1 semantics so CI shell
-// loops can `set -e` against the run command. Default exit is 0 regardless,
-// so tooling that consumes the JSON can keep parsing across bundles.
+// Exit non-zero if anything failed — the default since the v2 cut, matching main/v1.
+// --no-strict-exit restores the old always-0 behaviour for JSON-only consumers.
 if (strictExitCode)
 {
     int failed = 0, errored = 0, compileFail = 0, execFail = 0;
@@ -2062,9 +2065,9 @@ static void PrintGuide(TextWriter w)
     w.WriteLine("    al-runner --test MyFeature_Posts_Correctly MyApp.Test");
     w.WriteLine();
     w.WriteLine("  Machine-readable outcome for a CI gate or a scripted caller:");
-    w.WriteLine("    al-runner --strict --quiet --out results.json MyApp.Test");
+    w.WriteLine("    al-runner --quiet --out results.json MyApp.Test");
     w.WriteLine("    exit 0 = all passed | 1 = a test failed | 2 = could not execute | 3 = could not compile");
-    w.WriteLine("    Without --strict the process always exits 0 so the JSON can be parsed regardless.");
+    w.WriteLine("    Pass --no-strict-exit to always exit 0 and parse the JSON regardless of outcome.");
     w.WriteLine();
     w.WriteLine("  Some apps require AL preprocessor symbols to compile outside their normal");
     w.WriteLine("  environment (key-vault bypasses, local-dev switches). Check the app's own");
@@ -2309,13 +2312,14 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("  --show-pass             Accepted for v1 back-compat; PASS lines are on by default");
     w.WriteLine("                          in v2.");
     w.WriteLine("  --verbose               Show internal [Component] diagnostic logs.");
-    w.WriteLine("  --strict                Exit non-zero if anything failed.  Exit codes:");
+    w.WriteLine("  --strict                Accepted for back-compat; this is the default since the v2");
+    w.WriteLine("                          cut. Exit codes:");
     w.WriteLine("                            0  all tests passed");
     w.WriteLine("                            1  at least one test FAILED or ERRORED");
     w.WriteLine("                            2  a bundle could not execute (process-level error)");
     w.WriteLine("                            3  a bundle could not compile");
-    w.WriteLine("                          Without --strict the runner always exits 0 so callers can");
-    w.WriteLine("                          parse the JSON regardless of test outcomes.");
+    w.WriteLine("  --no-strict-exit        Always exit 0 regardless of test outcome, so callers can");
+    w.WriteLine("                          parse the JSON output without the process failing the step.");
     w.WriteLine("  --dump-csharp DIR       Write the intermediate C# emitted by BC's Compilation.Emit");
     w.WriteLine("                          (one .cs file per AL object) under DIR/<moduleName>/.");
     w.WriteLine("                          Useful for diagnosing codegen issues.");
