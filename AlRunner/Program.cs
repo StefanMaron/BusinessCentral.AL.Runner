@@ -951,6 +951,15 @@ foreach (var bundle in bundles)
         // quarantined under tests/excluded/ with a RUNNER-GAP-*.md note.
         var appGroups = BuildAppGroups(suites, bucketRoot, bundleAbs);
         var loadedAssemblies = new List<Assembly>();
+        // SetTestAssembly re-runs its full body (incl. NavAppResourcePatches.RegisterTestAssembly)
+        // on every call whose asm differs from whatever _currentTestAssembly currently holds —
+        // which is true for EVERY app the first time the run loop below reaches it, since
+        // _currentTestAssembly still holds the LAST app loaded. Without re-pointing
+        // SetCurrentBundleDir at that call too, the run loop overwrites every app's resource
+        // dir with whichever suite happened to load last. Track it per assembly so both call
+        // sites (load loop, run loop) can set the right one immediately before calling
+        // SetTestAssembly.
+        var suiteDirByAssembly = new Dictionary<Assembly, string>();
 
         // Ordered dep ids feed every app's cache key but depend only on the bucket root
         // and the package caches — both loop-invariant. Resolving them inside the loop
@@ -1215,6 +1224,15 @@ foreach (var bundle in bundles)
             // a later app's tables "wired" before that app's own assembly has loaded,
             // permanently skipping their real wiring — see BcRuntime.SetTestAssembly's
             // doc comment. It runs exactly once below, after every app has loaded.
+            // NavApp.GetResource resolves against whatever dir SetCurrentBundleDir last
+            // saw, and SetTestAssembly's call to NavAppResourcePatches.RegisterTestAssembly
+            // reads it synchronously — so this must be set to THIS app's own suite dir
+            // before SetTestAssembly runs, the same requirement as the module-identity
+            // fix below. Without it every app in the bundle resolved resources against
+            // whichever dir the bundle-level SetBundleInfoFromAppJson last saw (often
+            // none, for a multi-app tree with no app.json at its root), and
+            // NavApp.GetResource threw "could not be found in app ''" for every app.
+            AlRunnerV2.Patches.NavAppResourcePatches.SetCurrentBundleDir(appGroup.SuiteDir);
             BcRuntime.SetTestAssembly(asm, wireFieldTriggers: false);
             // Register THIS app's identity, not the bundle's. RegisterTestAssemblyInfo
             // reads the current bundle info, which stays "Unknown" whenever the bundle
@@ -1231,6 +1249,7 @@ foreach (var bundle in bundles)
             BcRuntime.RegisterTestAssemblyInfo(asm);
             registerSw.Stop();
             AlRunnerV2.PerfTrace.Log($"RegisterTestAssemblyInfo {rel}/{moduleName} {registerSw.ElapsedMilliseconds}ms");
+            suiteDirByAssembly[asm] = appGroup.SuiteDir;
             loadedAssemblies.Add(asm);
         }
         } // ── end per-app emit/compile/load loop ────────────────────────────────
@@ -1247,6 +1266,11 @@ foreach (var bundle in bundles)
             IReadOnlyList<TestResult> tests;
             try
             {
+                // Re-point the resource dir at THIS app before SetTestAssembly, which
+                // re-runs its full body (including the resource-dir registration) here
+                // too — see suiteDirByAssembly's declaration for why.
+                if (suiteDirByAssembly.TryGetValue(asm, out var suiteDir))
+                    AlRunnerV2.Patches.NavAppResourcePatches.SetCurrentBundleDir(suiteDir);
                 BcRuntime.SetTestAssembly(asm, wireFieldTriggers: false);
                 BcRuntime.OosHooksActive = true;
                 var execSw = System.Diagnostics.Stopwatch.StartNew();
@@ -3572,7 +3596,8 @@ static List<AlRunnerV2.AppGroup> BuildAppGroups(List<string> suites, string? buc
             Publisher: id.Publisher,
             Version: id.Version,
             Paths: paths,
-            DependsOn: id.Dependencies.Select(d => d.AppId).ToList());
+            DependsOn: id.Dependencies.Select(d => d.AppId).ToList(),
+            SuiteDir: Path.GetFullPath(suite));
         identified.Add((group, id.AppId));
     }
 
@@ -3603,7 +3628,8 @@ static List<AlRunnerV2.AppGroup> BuildAppGroups(List<string> suites, string? buc
             ModuleName: $"V2_{Path.GetFileName(bundleAbs)}",
             AppId: null, Publisher: null, Version: null,
             Paths: orphanPaths.Distinct().ToList(),
-            DependsOn: Array.Empty<Guid>()));
+            DependsOn: Array.Empty<Guid>(),
+            SuiteDir: Path.GetFullPath(bundleAbs)));
 
     return groups;
 }

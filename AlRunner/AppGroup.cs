@@ -17,10 +17,18 @@ namespace AlRunnerV2;
 /// AppIds this app declares. Only siblings inside the same bundle affect emit order;
 /// dependencies on external apps are resolved from the package cache as before.
 /// </param>
+/// <param name="SuiteDir">
+/// The directory containing this app's own app.json — NOT the same as Paths (which
+/// may be src/test subdirectories). NavApp.GetResource resolves a resourceFolders
+/// entry relative to this dir; it must be set per app the same way AppId/Publisher/
+/// Version are, or every app in a multi-app bundle resolves resources against
+/// whichever dir the bundle-level SetCurrentBundleDir last saw.
+/// </param>
 public sealed record AppGroup(
     string ModuleName,
     Guid? AppId,
     string? Publisher,
     Version? Version,
     List<string> Paths,
-    IReadOnlyList<Guid> DependsOn);
+    IReadOnlyList<Guid> DependsOn,
+    string SuiteDir);
