@@ -36,6 +36,15 @@ if (args.Length == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "he
     return args.Length == 0 ? 2 : 0;
 }
 
+// The agent-facing operating manual. Advertised by CLAUDE.md and the
+// al-runner-workflow skill; handled here (before the R2R re-exec and any BC type
+// load) so it is instant and works on a machine with no artifacts provisioned.
+if (args[0] == "--guide")
+{
+    PrintGuide(Console.Out);
+    return 0;
+}
+
 if (args[0] == "--version")
 {
     var asmVer = typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown";
@@ -331,19 +340,34 @@ if (artifactPathArg != null)
 // as a clear message instead of a deep failure. All of this stays overridable.
 if (bcVersionArg == null && artifactPathArg == null)
 {
-    var engineMajor = AlRunnerV2.Infrastructure.BcArtifacts.EngineMajor(AppContext.BaseDirectory);
-    if (engineMajor != null)
+    // The BUILT version (4-part, baked in at compile time) — not Ncl.dll's assembly
+    // version, whose minor is always 0. Falls back to the Ncl major if the attribute is
+    // missing (e.g. an older build), which restores the previous major-only behaviour.
+    var engineVersion = AlRunnerV2.Infrastructure.BcArtifacts.EngineBuiltVersion()
+        ?? AlRunnerV2.Infrastructure.BcArtifacts.EngineVersion(AppContext.BaseDirectory);
+    var engineMajor = engineVersion?.Major;
+    if (engineVersion != null && engineMajor != null)
     {
-        bcVersionArg = engineMajor.Value.ToString();
+        // Prefer the engine's OWN major.minor. Latest-in-major used to win here, which
+        // silently selected a minor the engine was not built for — measured at -45 passing
+        // / +42 failing / +3 errors on Pageworks. See BcArtifacts.DefaultVersionPrefix.
+        bcVersionArg = AlRunnerV2.Infrastructure.BcArtifacts.DefaultVersionPrefix(
+            engineVersion, AlRunnerV2.Infrastructure.BcArtifacts.ArtifactsRootDir);
+
+        var engineMajorMinor = $"{engineVersion.Major}.{engineVersion.Minor}";
+        if (bcVersionArg == engineMajorMinor)
+            Console.Error.WriteLine($"[bc] no --bc-version given — selecting BC {engineMajorMinor}.x, " +
+                $"matching the engine this binary was built for ({engineVersion}). Override with --bc-version.");
+        else
+            Console.Error.WriteLine($"[bc] warning: no cached BC {engineMajorMinor}.x — this binary's engine was " +
+                $"built for {engineVersion}, so a different minor is a KNOWN-DEGRADED configuration " +
+                $"(measured: dozens of extra failures from engine/artifact minor skew). Falling back to the " +
+                $"latest cached {engineMajor}.x. Fix with: al-runner provision --bc-version {engineMajorMinor}");
+
         var projMajor = TryDeriveBcMajorFromProject(bundles);
         if (projMajor != null && projMajor != engineMajor.Value.ToString())
             Console.Error.WriteLine($"[bc] warning: project app.json targets BC major {projMajor} but this " +
-                $"runner build supports major {engineMajor} (cross-major needs a matching runner build). " +
-                $"Selecting latest cached {engineMajor}.x — override with --bc-version if a {projMajor}.x " +
-                $"runner is available.");
-        else
-            Console.Error.WriteLine($"[bc] no --bc-version given — selecting latest cached BC {engineMajor}.x " +
-                $"(runner engine major). Override with --bc-version.");
+                $"runner build supports major {engineMajor} (cross-major needs a matching runner build).");
     }
 }
 // ── Provisioning (opt-in): `provision` subcommand or --auto-provision. Resolves the
@@ -776,6 +800,31 @@ foreach (var bundle in bundles)
                 var resolver = new DependencyResolver(resolverDirs);
                 var ordered = resolver.Resolve(roots);
                 Console.WriteLine($"  [{rel}] resolved {ordered.Count} dep(s)");
+                // Under --verbose, name the package that actually WON for each
+                // dependency, with the file it came from. Resolution picks by highest
+                // version across every scanned dir, so a symbols-only .app can outrank
+                // the code-bearing copy of a *different* package in the same family and
+                // the run then dies at execution with "object with ID 0". A count alone
+                // cannot show that; the winning path can. See --guide (DEPENDENCIES).
+                if (AlRunnerV2.Log.Verbose)
+                    foreach (var (m, appPath) in ordered)
+                        Console.WriteLine($"    [dep] {m.Publisher}/{m.Name} {m.Version}  <- {appPath}");
+                // Verbose-only, deliberately. MEASURED 2026-07-29: on the known-good
+                // Pageworks configuration this fires for 7 MS test-toolkit packages
+                // (Library Assert, Test Runner, Any, …) whose symbols-only 28.2 copies in
+                // the test bundle's .alpackages outrank the code-bearing 28.1 ones — and
+                // that run scores 1041P/35F/0E. So "symbols-only won" is NOT on its own
+                // evidence of a broken set, and promoting it to an always-on warning would
+                // put 12 lines of noise on every healthy run.
+                //
+                // It is still the right thing to look at when execution dies with an
+                // object-ID-0 MissingMethod, which is why it is retained and printed under
+                // --verbose. Making it a reliable failure signal needs the open question
+                // answered first: why does the healthy run tolerate a symbols-only winner?
+                // Until then this is evidence to weigh, not a verdict.
+                if (AlRunnerV2.Log.Verbose)
+                    foreach (var d in resolver.Diagnostics)
+                        Console.Error.WriteLine(d);
                 // Compiler sees only non-workspace dirs in its .app scanner; the
                 // synthetic workspace dirs are registered as symbols.json-only
                 // sources via SetExtraSymbolDirs (called AFTER SetResolvedDeps,
@@ -1855,16 +1904,219 @@ static string SanitiseFilename(string name)
     return sb.ToString();
 }
 
+// ── --guide ───────────────────────────────────────────────────────────────────
+// Written for an automated caller that has the binary and nothing else: no repo
+// checkout, no handoff notes, no prior session. It answers, in order, the four
+// questions such a caller gets wrong: what this runner can actually do, how to
+// invoke it against a real app, where dependencies come from, and what the
+// common failure signatures mean. Keep it self-contained — the moment an agent
+// has to go read docs/ or a HANDOFF file to form a correct invocation, this
+// guide has failed at its job.
+static void PrintGuide(TextWriter w)
+{
+    w.WriteLine("al-runner — AGENT GUIDE");
+    w.WriteLine("Operating manual for automated callers. For the flag reference, use --help.");
+    w.WriteLine();
+
+    w.WriteLine("CAPABILITY — read this before diagnosing any failure");
+    w.WriteLine("  al-runner executes complete AL test suites in-process: it compiles AL from");
+    w.WriteLine("  source and/or loads precompiled .app packages, applies its BC runtime patches,");
+    w.WriteLine("  and runs every [Test] method. It routinely runs suites in the 1,000+ test");
+    w.WriteLine("  range (the al-language corpus and large third-party suites) against BC 28.x.");
+    w.WriteLine();
+    w.WriteLine("  Therefore: if a run does not produce test results, the overwhelmingly likely");
+    w.WriteLine("  cause is a BAD INVOCATION or an INCOMPLETE DEPENDENCY SET — not a missing");
+    w.WriteLine("  runner capability. Do NOT report \"al-runner cannot run this suite\" unless the");
+    w.WriteLine("  limitation is named in docs/limitations.md. A clean compile does NOT prove the");
+    w.WriteLine("  dependency set is runnable (see DEPENDENCIES below); it proves only that");
+    w.WriteLine("  symbols resolved.");
+    w.WriteLine();
+
+    w.WriteLine("INVOCATION — the shortest correct command lines");
+    w.WriteLine("  Run one bundle (a dir containing app.json, or any dir below one):");
+    w.WriteLine("    al-runner <bundle-dir>");
+    w.WriteLine();
+    w.WriteLine("  Run an app together with its separate test app — the usual real-world shape.");
+    w.WriteLine("  Pass BOTH dirs; they run sequentially and aggregate into one summary:");
+    w.WriteLine("    al-runner --package-cache <deps-dir> MyApp MyApp.Test");
+    w.WriteLine();
+    w.WriteLine("  Pin the BC version explicitly whenever the machine has more than one:");
+    w.WriteLine("    al-runner --bc-version 28.2 --package-cache <deps-dir> MyApp MyApp.Test");
+    w.WriteLine();
+    w.WriteLine("  Narrow to one test while debugging (substring match on Codeunit.Method):");
+    w.WriteLine("    al-runner --test MyFeature_Posts_Correctly MyApp.Test");
+    w.WriteLine();
+    w.WriteLine("  Machine-readable outcome for a CI gate or a scripted caller:");
+    w.WriteLine("    al-runner --strict --quiet --out results.json MyApp.Test");
+    w.WriteLine("    exit 0 = all passed | 1 = a test failed | 2 = could not execute | 3 = could not compile");
+    w.WriteLine("    Without --strict the process always exits 0 so the JSON can be parsed regardless.");
+    w.WriteLine();
+    w.WriteLine("  Some apps require AL preprocessor symbols to compile outside their normal");
+    w.WriteLine("  environment (key-vault bypasses, local-dev switches). Check the app's own");
+    w.WriteLine("  documentation for these — omitting a required one produces real, correct");
+    w.WriteLine("  test failures that look like runner bugs:");
+    w.WriteLine("    al-runner --define SOME_LOCAL_DEV MyApp MyApp.Test");
+    w.WriteLine();
+
+    w.WriteLine("DEPENDENCIES — where packages come from, and the trap");
+    w.WriteLine("  Dependencies declared in app.json are resolved, in order, from:");
+    w.WriteLine("    1. every --package-cache DIR you pass (repeatable)");
+    w.WriteLine("    2. the bundle's own .alpackages/");
+    w.WriteLine("    3. ~/.bcartifacts.cache");
+    w.WriteLine("    4. ~/.local/share/al-runner/artifacts   (the BC artifact cache)");
+    w.WriteLine();
+    w.WriteLine("  THE TRAP: a .app package may carry SYMBOLS ONLY (type/method signatures, no");
+    w.WriteLine("  compiled bodies) or it may be CODE-BEARING. The AL compiler needs only symbols,");
+    w.WriteLine("  so a symbols-only dependency compiles perfectly cleanly and then fails at");
+    w.WriteLine("  RUNTIME the moment its code is called. \"0 compile errors\" is therefore NOT");
+    w.WriteLine("  evidence that the dependency set is correct.");
+    w.WriteLine();
+    w.WriteLine("  HOW THE WINNER IS PICKED — and how NOT to check it. Resolution takes the");
+    w.WriteLine("  HIGHEST VERSION of each package across ALL scanned directories combined. So a");
+    w.WriteLine("  higher-versioned symbols-only copy outranks the code-bearing one, and the loser");
+    w.WriteLine("  is never mentioned anywhere in the output.");
+    w.WriteLine();
+    w.WriteLine("  CALIBRATION: this happens on healthy configurations too — a test bundle's own");
+    w.WriteLine("  .alpackages routinely holds small symbols-only copies that outrank code-bearing");
+    w.WriteLine("  ones, on runs that pass completely. So \"a symbols-only package won\" is EVIDENCE");
+    w.WriteLine("  TO WEIGH, not a verdict. --verbose lists them as [dep] note: lines. Treat them as");
+    w.WriteLine("  the first place to look when execution fails, not as proof of the cause.");
+    w.WriteLine();
+    w.WriteLine("    Do NOT conclude \"shadowing is ruled out\" by hashing or swapping the ONE");
+    w.WriteLine("    package named in the error. The package that failed is usually not the");
+    w.WriteLine("    package that was shadowed — a test library dies because something it depends");
+    w.WriteLine("    on resolved to a symbols-only copy. Checking one file proves nothing about");
+    w.WriteLine("    the other hundred.");
+    w.WriteLine();
+    w.WriteLine("    Instead, make it mechanical — re-run with --verbose and read the [dep] lines:");
+    w.WriteLine("      [dep] <Publisher>/<Name> <Version>  <- /path/to/the/winning.app");
+    w.WriteLine("    That is the resolved set. Check the path and version of each dependency that");
+    w.WriteLine("    is actually on the failing call's path, not just the one that threw.");
+    w.WriteLine();
+    w.WriteLine("  VERSION SKEW ACROSS A FAMILY. When a workspace's .alpackages reference two");
+    w.WriteLine("  different minors of the same platform family, stage BOTH minors in the");
+    w.WriteLine("  dependency directory. Supplying only the higher one lets a symbols-only copy");
+    w.WriteLine("  win over the code-bearing package the app actually needs at runtime. Test");
+    w.WriteLine("  toolkit libraries and platform apps are frequently on DIFFERENT minors than");
+    w.WriteLine("  the app under test — that is normal and must be preserved, not normalised.");
+    w.WriteLine();
+    w.WriteLine("  WHICH BC VERSION TO PASS. Do NOT infer it from the app under test. The runner");
+    w.WriteLine("  selects within the major its ENGINE was built against, and one engine build");
+    w.WriteLine("  spans the minors of that major — a 28.1-built engine runs 28.2 business logic");
+    w.WriteLine("  correctly. So the right --bc-version is the one whose service-tier artifacts");
+    w.WriteLine("  are present for this engine, which is NOT necessarily the version stamped on");
+    w.WriteLine("  the app's dependencies. `--bc-version 28.1` while the app references 28.2");
+    w.WriteLine("  packages is a normal, working configuration, not a mismatch to \"fix\".");
+    w.WriteLine("  Attributing a runtime failure to \"the engine's BC-X.Y patch set\" without");
+    w.WriteLine("  knowing which version was actually selected is a guess. NOTE: the runner does");
+    w.WriteLine("  not currently print its selection, so pass --bc-version explicitly rather than");
+    w.WriteLine("  relying on the default — leaving it off can silently change test outcomes.");
+    w.WriteLine();
+    w.WriteLine("  BC artifacts are never downloaded silently. Obtain them explicitly:");
+    w.WriteLine("    al-runner provision <bundle-dir>     # provision for that project's version, then exit");
+    w.WriteLine("    al-runner --auto-provision <dirs>    # provision on demand, then continue the run");
+    w.WriteLine("  The engine must be built against the same BC MINOR as the target artifacts");
+    w.WriteLine("  (28.1 vs 28.2 matters; a major-only match is not sufficient).");
+    w.WriteLine();
+
+    w.WriteLine("PRE-FLIGHT — do these before concluding anything about a failure");
+    w.WriteLine("  1. al-runner --version");
+    w.WriteLine("  2. Confirm the artifact version you are running against resolves as intended");
+    w.WriteLine("     (pass --bc-version explicitly rather than relying on \"latest in cache\").");
+    w.WriteLine("  3. Re-run the failing case alone with --test <name> --verbose. --verbose turns");
+    w.WriteLine("     on the internal [Component] logs that name the failing subsystem.");
+    w.WriteLine("  4. Re-run with --no-cache once. Compiled output is cached by default, and a few");
+    w.WriteLine("     defect classes only appear on a cache HIT (or only on a MISS).");
+    w.WriteLine();
+
+    w.WriteLine("TROUBLESHOOTING — failure signature, meaning, action");
+    w.WriteLine();
+    w.WriteLine("  \"NavNCLMissingMethodException: Function ID <n> was called. The object with");
+    w.WriteLine("   ID 0 does not have a member with that ID.\"");
+    w.WriteLine("      Meaning: the call resolved against a module whose AL objects have no IDs —");
+    w.WriteLine("      i.e. a symbols-only package won over a code-bearing one, or a module's");
+    w.WriteLine("      emit did not complete. Object ID 0 is the tell. This is a RESOLUTION");
+    w.WriteLine("      failure. It does NOT mean the runner is missing a native/platform method:");
+    w.WriteLine("      the named function is ordinary AL in some dependency, and the runner");
+    w.WriteLine("      failed to find the code for it — it is not an unimplemented intrinsic.");
+    w.WriteLine("      Action: re-run with --verbose and read the [dep] lines to see which .app");
+    w.WriteLine("      won for every dependency on the failing path (see DEPENDENCIES above);");
+    w.WriteLine("      stage every minor the workspace references; re-run with --no-cache. This");
+    w.WriteLine("      is a dependency/invocation problem far more often than a runner gap.");
+    w.WriteLine();
+    w.WriteLine("  Failure inside an install trigger (OnInstallAppPerCompany/PerDatabase)");
+    w.WriteLine("      Install triggers are implemented and do run — a large suite exercising the");
+    w.WriteLine("      MS test toolkit fires them on every run. A failure here is therefore about");
+    w.WriteLine("      the dependency set you supplied, not about trigger support being absent.");
+    w.WriteLine("      Apply the ID-0 checklist above.");
+    w.WriteLine();
+    w.WriteLine("  \"RunnerOutOfScopeException: <api> — <reason>\"");
+    w.WriteLine("      Meaning: WORKING AS INTENDED. The test touched a surface the runner");
+    w.WriteLine("      deliberately does not emulate (SMTP, outbound HTTP, printing, external");
+    w.WriteLine("      file I/O, web-service publishing). The runner throws loudly rather than");
+    w.WriteLine("      returning a fake value that would make a green test lie.");
+    w.WriteLine("      Action: see docs/scope.md. This is not a bug and not a gap.");
+    w.WriteLine();
+    w.WriteLine("  Could not resolve dependency / unresolved symbol at compile time");
+    w.WriteLine("      Action: add the missing .app's directory via --package-cache.");
+    w.WriteLine();
+    w.WriteLine("  Artifact version not found");
+    w.WriteLine("      Action: the runner never auto-downloads. Run `al-runner provision`, or pass");
+    w.WriteLine("      --auto-provision, or point --artifact-path at an existing artifact root.");
+    w.WriteLine();
+    w.WriteLine("  Compile succeeds, tests still do not run");
+    w.WriteLine("      Action: read the DEPENDENCIES trap above. Compilation validates symbols");
+    w.WriteLine("      only; it says nothing about whether the code is present to execute.");
+    w.WriteLine();
+
+    w.WriteLine("OUTPUT NOTES");
+    w.WriteLine("  Console output written from inside a test is captured by the runner, not");
+    w.WriteLine("  echoed live — a probe that writes to stdout will appear to produce nothing.");
+    w.WriteLine("  Write diagnostics to a FILE instead.");
+    w.WriteLine("  In --server mode stdout carries ONLY the JSON protocol; all logs go to stderr.");
+    w.WriteLine();
+
+    w.WriteLine("REPORTING A RUNNER GAP");
+    w.WriteLine("  Only after PRE-FLIGHT and TROUBLESHOOTING have been worked through, and the");
+    w.WriteLine("  behaviour is not described in docs/limitations.md or docs/scope.md. A gap");
+    w.WriteLine("  report needs a minimal runnable AL reproducer and the exact failing assertion");
+    w.WriteLine("  or diagnostic. Do not guess at a cause, and do not silently work around it.");
+    w.WriteLine();
+    w.WriteLine("  Before filing, you must be able to answer all of:");
+    w.WriteLine("    - Which BC version did the run actually select? (--verbose)");
+    w.WriteLine("    - What is the full resolved dependency set, with winning paths? ([dep] lines)");
+    w.WriteLine("    - Does it still fail with --no-cache?");
+    w.WriteLine("    - Is the mechanism you are naming consistent with the error? (\"unimplemented");
+    w.WriteLine("      native method\" does not explain an object-ID-0 resolution failure.)");
+    w.WriteLine("  A report that names a cause the evidence does not support is worse than none:");
+    w.WriteLine("  it sends someone to fix a subsystem that was never involved.");
+    w.WriteLine();
+
+    w.WriteLine("FURTHER READING");
+    w.WriteLine("  --help                       full flag reference");
+    w.WriteLine("  docs/limitations.md          the real architectural limits");
+    w.WriteLine("  docs/scope.md                in-scope vs out-of-scope-by-design surfaces");
+    w.WriteLine("  docs/server-mode.md          the --server JSON-RPC protocol");
+    w.WriteLine("  docs/subsystems.md           subsystem map");
+}
+
 static void PrintHelp(TextWriter w)
 {
     w.WriteLine("al-runner — run Business Central AL unit tests in-process.");
     w.WriteLine();
     w.WriteLine("USAGE");
     w.WriteLine("  al-runner [OPTIONS] <bundle-dir>...");
+    w.WriteLine("  al-runner provision [<bundle-dir>]");
     w.WriteLine("  al-runner --server [--package-cache PATH ...] [--cache DIR]");
     w.WriteLine("  al-runner --precompile <input.app> --out <output.dll> [--package-cache PATH ...]");
+    w.WriteLine("  al-runner --emit-app <bundleDir> <outPath> [--package-cache PATH ...]");
+    w.WriteLine("  al-runner --guide      (operating manual for automated callers)");
     w.WriteLine("  al-runner --version");
     w.WriteLine("  al-runner --help");
+    w.WriteLine();
+    w.WriteLine("Agents and scripted callers should start with --guide: it covers correct");
+    w.WriteLine("invocation against a real app + test app, where dependencies are resolved from,");
+    w.WriteLine("and what the common runtime failure signatures actually mean.");
     w.WriteLine();
     w.WriteLine("A <bundle-dir> is a folder that either contains an app.json (a single AL");
     w.WriteLine("package) or sits below one — the bucket root is auto-detected by climbing the");
@@ -1898,6 +2150,10 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                          platform/ + w1/), bypassing the cache scan. Its version");
     w.WriteLine("                          is read from the dir name or the contained Ncl.dll.");
     w.WriteLine("                          Mutually exclusive with --bc-version.");
+    w.WriteLine("  --auto-provision        Download the BC artifacts for the project's version if");
+    w.WriteLine("                          they are missing, then continue the run. The runner never");
+    w.WriteLine("                          downloads without this flag (or the `provision`");
+    w.WriteLine("                          subcommand) — a missing artifact otherwise fails loud.");
     w.WriteLine("  --package-cache PATH    Extra directory to scan for .app dependencies");
     w.WriteLine("                          (repeatable). Default scan: ~/.bcartifacts.cache,");
     w.WriteLine("                          ~/.local/share/al-runner/artifacts, and bundle .alpackages/.");
@@ -1950,9 +2206,16 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                          Useful for diagnosing codegen issues.");
     w.WriteLine();
     w.WriteLine("SUBCOMMANDS");
+    w.WriteLine("  provision [<bundle-dir>] Download and install the BC artifacts matching the");
+    w.WriteLine("                          project's version, then exit without running tests.");
+    w.WriteLine("                          This is the supported way to obtain artifacts on a");
+    w.WriteLine("                          fresh machine.");
     w.WriteLine("  --precompile <input.app> --out <output.dll> [--package-cache PATH ...]");
     w.WriteLine("                          Compile a single .app to a managed DLL without running");
     w.WriteLine("                          tests. Useful for pre-warming caches.");
+    w.WriteLine("  --emit-app <bundleDir> <outPath> [--package-cache PATH ...]");
+    w.WriteLine("                          Compile a bundle dir and emit it as a .app package");
+    w.WriteLine("                          in-process, without running tests.");
     w.WriteLine();
     w.WriteLine("ENVIRONMENT");
     w.WriteLine("  AL_RUNNER_VERBOSE=1          Same as --verbose.");
@@ -1969,6 +2232,13 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("  # Run the al-language corpus");
     w.WriteLine("  al-runner tests/al-language/tests/al-language");
     w.WriteLine();
+    w.WriteLine("  # Run a real app together with its separate test app (the usual shape).");
+    w.WriteLine("  # Pass BOTH bundle dirs; dependencies resolve from --package-cache.");
+    w.WriteLine("  al-runner --bc-version 28.2 --package-cache ./deps MyApp MyApp.Test");
+    w.WriteLine();
+    w.WriteLine("  # Provision BC artifacts on a fresh machine, then run");
+    w.WriteLine("  al-runner provision MyApp");
+    w.WriteLine();
     w.WriteLine("  # Run one specific test");
     w.WriteLine("  al-runner --test Record_Insert_DuplicateKey_Throws tests/al-language/tests/al-language");
     w.WriteLine();
@@ -1982,9 +2252,12 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("  al-runner --precompile MyExtension_1.0.0.0.app --out MyExtension.dll");
     w.WriteLine();
     w.WriteLine("NOT YET IN V2 (see docs/v1-to-v2-migration.md)");
-    w.WriteLine("  --server                Debug-adapter-protocol server (was DapServer.cs in v1).");
-    w.WriteLine("                          Needs an AL→C# source map BC's emit pipeline does not");
-    w.WriteLine("                          currently expose; tracked as a separate workstream.");
+    w.WriteLine("  Nothing in this section is accepted as a flag; each entry is a v1 capability");
+    w.WriteLine("  with no v2 equivalent yet. Everything documented above IS implemented.");
+    w.WriteLine("  (debug adapter)         v1's DAP debug server (DapServer.cs). Needs an AL→C#");
+    w.WriteLine("                          source map BC's emit pipeline does not currently expose;");
+    w.WriteLine("                          tracked as a separate workstream. Distinct from the");
+    w.WriteLine("                          JSON-RPC daemon in EXECUTION above, which is supported.");
     w.WriteLine("  --coverage              Cobertura coverage output. v1 instrumented its Roslyn");
     w.WriteLine("                          rewrite pass to count method hits; v2 has no rewrite pass.");
     w.WriteLine("                          A Cecil-based implementation is feasible (2-4 d) but not");
@@ -1997,6 +2270,8 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                          dropped — v2 loads the full dep set directly.");
     w.WriteLine();
     w.WriteLine("DOCUMENTATION");
+    w.WriteLine("  al-runner --guide            operating manual: correct invocation against a real");
+    w.WriteLine("                               app, dependency resolution, failure signatures");
     w.WriteLine("  docs/v1-to-v2-migration.md  flag-by-flag migration matrix");
     w.WriteLine("  docs/expectations.md         out-of-scope test declarations");
     w.WriteLine("  docs/scope.md                runtime scope (in-scope vs OOS-by-design)");
@@ -2886,6 +3161,13 @@ static IEnumerable<string> DefaultPackageCacheDirs()
     var symRoot = Path.Combine(home, ".local", "share", "al-runner", "symbols");
     var symLatest = SelectVersionDirOrNull(symRoot, mmPrefix);
     if (symLatest != null) yield return symLatest;
+
+    // The provisioned MS test toolkit for the SELECTED version (see
+    // EnsureTestToolkitProvisioned). Scanned by default so a test bundle whose app.json
+    // depends on Library Assert / Test Runner / Any resolves them without --package-cache.
+    var testApps = Path.Combine(AlRunnerV2.Infrastructure.BcArtifacts.ArtifactsRootDir,
+        sel.ToString(), "test-apps");
+    if (Directory.Exists(testApps)) yield return testApps;
 }
 
 // Highest version-named child of <root> matching <versionPrefix> (System.Version sort),
@@ -3047,17 +3329,50 @@ static int RunProvisioning(string? bcVersionArg, string? artifactPathArg,
     var serviceTierDir = AlRunnerV2.Infrastructure.BcArtifacts.ArtifactDirFor(full);
     var report = AlRunnerV2.Infrastructure.ProvisioningCheck.Check(full, serviceTierDir);
     if (report.Ok)
-    {
         Console.Error.WriteLine($"[provision] BC {full} engine artifacts already complete at {serviceTierDir}.");
-        provisionedVersion = full;
-        return 0;
-    }
-
-    if (!AlRunnerV2.Infrastructure.ProvisioningCheck.AutoProvision(full, serviceTierDir))
+    else if (!AlRunnerV2.Infrastructure.ProvisioningCheck.AutoProvision(full, serviceTierDir))
         return 1;
+
+    EnsureTestToolkitProvisioned(full);
     provisionedVersion = full;
     return 0;
 }
+
+// The MS test toolkit (Any, Library Assert, Library Variable Storage, Test Runner,
+// Tests-TestLibraries, Permissions Mock, System Application Test Library) is what every
+// test bundle's app.json actually depends on, but it ships in the platform artifact rather
+// than with the engine closure. Without it a test app resolves those deps to whatever
+// symbols-only copies its own .alpackages happen to hold and dies at runtime — so the user
+// had to hand-assemble a package dir with no command that could produce one.
+// Provisioned into <artifacts>/<version>/test-apps/, which DefaultPackageCacheDirs scans,
+// so a provisioned machine needs no --package-cache for the toolkit at all.
+static void EnsureTestToolkitProvisioned(string fullVersion)
+{
+    var dir = TestAppsDirFor(fullVersion);
+    if (Directory.Exists(dir) && Directory.EnumerateFiles(dir, "*.app").Any())
+    {
+        Console.Error.WriteLine($"[provision] test toolkit already present at {dir}.");
+        return;
+    }
+    Console.Error.WriteLine($"[provision] fetching the MS test toolkit for BC {fullVersion} → {dir}");
+    try
+    {
+        var rc = AlRunner.Provisioning.ArtifactDownloader.TestApps(
+            fullVersion, dir, m => Console.Error.WriteLine($"[provision] {m}"));
+        if (rc != 0)
+            Console.Error.WriteLine(
+                $"[provision] warning: could not fetch the test toolkit for BC {fullVersion}. " +
+                $"Test bundles depending on Library Assert / Test Runner / Any will need " +
+                $"--package-cache <dir-with-those-apps>.");
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[provision] warning: test-toolkit download failed: {ex.Message}");
+    }
+}
+
+static string TestAppsDirFor(string fullVersion)
+    => Path.Combine(AlRunnerV2.Infrastructure.BcArtifacts.ArtifactsRootDir, fullVersion, "test-apps");
 
 static void SetBundleInfoFromAppJson(string appJsonPath)
 {
@@ -3194,7 +3509,10 @@ static string ComputeAlCacheKey(
     //    v6: sidecar also carries the AlPageMetadataRegistry (per-page runtime
     //        metadata XML) so cache HIT replays the real page control tree that
     //        NCLMetaForm.LoadMetadata() builds from it.
-    WriteLine("schema:v6");
+    //    v7: report-layout rows carry IsDefault (the report's DefaultRenderingLayout),
+    //        without which a cache HIT could not resolve a multi-layout report's
+    //        default-layout render and hydrated nothing.
+    WriteLine("schema:v7");
 
     // 1. Runner assembly fingerprint — any rewriter / polyfill / patch change
     //    in the runner forces a cache miss.
@@ -3404,21 +3722,45 @@ static IReadOnlyList<string> GetOrderedDepIds(string? bucketRoot, IReadOnlyList<
 
 static IEnumerable<string> EnumerateSuites(string root)
 {
+    // Root first: a directory that is itself one app (app.json at its root, or a
+    // src//test/ split) is ONE bucket, however many category sub-directories it
+    // holds. This is the al-language corpus shape — checking the root before
+    // descending is what keeps the corpus a single compile unit.
     if (LooksLikeSuite(root)) { yield return Path.GetFullPath(root); yield break; }
+
+    // Otherwise the root is a container of suites. Descend, but stop at the first
+    // suite on each branch: a suite's own sub-directories are part of that suite,
+    // never separate buckets.
     bool found = false;
-    foreach (var d in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories))
-        if (LooksLikeSuite(d))
-        {
-            found = true;
-            yield return Path.GetFullPath(d);
-        }
-    // Flat bundle: no src/test sub-structure but .al files exist (e.g. a standalone
-    // test library with its own app.json and category sub-directories). Treat the
-    // whole root as one compilation + test unit.
+    foreach (var d in EnumerateSuitesBelow(root))
+    {
+        found = true;
+        yield return d;
+    }
+
+    // Flat bundle: no app.json and no src//test/ anywhere, but .al files exist.
+    // Treat the whole root as one compilation + test unit.
     if (!found && Directory.EnumerateFiles(root, "*.al", SearchOption.AllDirectories).Any())
         yield return Path.GetFullPath(root);
 }
 
+static IEnumerable<string> EnumerateSuitesBelow(string dir)
+{
+    foreach (var child in Directory.EnumerateDirectories(dir))
+    {
+        if (LooksLikeSuite(child))
+            yield return Path.GetFullPath(child);
+        else
+            foreach (var nested in EnumerateSuitesBelow(child))
+                yield return nested;
+    }
+}
+
+// A directory is a suite if it declares its own app (app.json) or uses the
+// src//test/ split. The app.json clause is what makes flat suites — app.json plus
+// .al files, no sub-structure, the shape every tests/runner-extras suite uses —
+// enumerate individually instead of collapsing into one bundle (#1623, #1638).
 static bool LooksLikeSuite(string dir)
-    => Directory.Exists(Path.Combine(dir, "test"))
+    => File.Exists(Path.Combine(dir, "app.json"))
+    || Directory.Exists(Path.Combine(dir, "test"))
     || Directory.Exists(Path.Combine(dir, "src"));
