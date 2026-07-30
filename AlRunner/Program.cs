@@ -952,6 +952,11 @@ foreach (var bundle in bundles)
         var appGroups = BuildAppGroups(suites, bucketRoot, bundleAbs);
         var loadedAssemblies = new List<Assembly>();
 
+        // Ordered dep ids feed every app's cache key but depend only on the bucket root
+        // and the package caches — both loop-invariant. Resolving them inside the loop
+        // re-scanned the package caches once per app.
+        var orderedDepIds = GetOrderedDepIds(bucketRoot, packageCacheDirs);
+
         foreach (var appGroup in appGroups)
         {
         var allPaths = appGroup.Paths;
@@ -1167,7 +1172,13 @@ foreach (var bundle in bundles)
             loadSw.Stop();
             AlRunnerV2.PerfTrace.Log($"test assembly load {rel}/{moduleName} {loadSw.ElapsedMilliseconds}ms");
             var registerSw = System.Diagnostics.Stopwatch.StartNew();
-            BcRuntime.SetTestAssembly(asm);
+            // wireFieldTriggers:false — WireFieldTriggerHandlersAll walks EVERY table
+            // registered so far, not just this assembly's. Calling it here, per app,
+            // would re-walk the same growing table set on every load AND (worse) mark
+            // a later app's tables "wired" before that app's own assembly has loaded,
+            // permanently skipping their real wiring — see BcRuntime.SetTestAssembly's
+            // doc comment. It runs exactly once below, after every app has loaded.
+            BcRuntime.SetTestAssembly(asm, wireFieldTriggers: false);
             // Register THIS app's identity, not the bundle's. RegisterTestAssemblyInfo
             // reads the current bundle info, which stays "Unknown" whenever the bundle
             // root has no app.json of its own (every multi-app tree, tests/runner-extras
@@ -1187,13 +1198,19 @@ foreach (var bundle in bundles)
         }
         } // ── end per-app emit/compile/load loop ────────────────────────────────
 
+        // Every app's assembly is now in the AppDomain, so this single walk resolves
+        // every table's Record CLR type in one pass — including tables belonging to
+        // apps that loaded LATER than the app that first registered their NCLMetaTable
+        // (pre-registration adds every suite's src/ up front, before any app emits).
+        AlRunnerV2.Patches.RecordPatches.WireFieldTriggerHandlersAll();
+
         foreach (var asm in loadedAssemblies)
         {
             var rt = System.Diagnostics.Stopwatch.StartNew();
             IReadOnlyList<TestResult> tests;
             try
             {
-                BcRuntime.SetTestAssembly(asm);
+                BcRuntime.SetTestAssembly(asm, wireFieldTriggers: false);
                 BcRuntime.OosHooksActive = true;
                 var execSw = System.Diagnostics.Stopwatch.StartNew();
                 tests = executor.Run(asm);

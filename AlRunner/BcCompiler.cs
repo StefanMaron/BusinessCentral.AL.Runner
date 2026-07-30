@@ -570,11 +570,19 @@ public sealed class BcCompiler
         if (deps != null)
             foreach (var t in deps.OrderBy(x => x.AppPath, StringComparer.Ordinal))
                 parts.Add("D:" + t.AppPath + "@" + t.Manifest.Version);
-        // The loader must be rebuilt whenever the excluded-self-app changes: a loader built
-        // while excluding dep A's own .app must not be reused unfiltered (or filtered for
-        // dep A) when the current compile is dep B's own Tier-3 source compile — each dep's
-        // own .app needs to be absent ONLY from ITS OWN compile's loader.
-        parts.Add("E:" + (excludeAppId?.ToString() ?? "<none>"));
+        // NOTE: the excluded-self-app is deliberately NOT part of the signature. The
+        // packageDirs passed here are already DeduplicateAppPackageDirs' OUTPUT, which
+        // fully encodes the exclusion: when the excluded AppId is actually present in the
+        // scan set the result is a staging dir whose name is a hash of the exact picked-app
+        // set (so dep A's and dep B's loaders get different signatures), and when it is
+        // absent the input dirs are returned unchanged (so the loader really is identical).
+        //
+        // Signing on the raw AppId instead made the signature change on every identity
+        // switch even when the scan set did not, which rebuilt the expensive loader
+        // (filesystem scan + symbol warm, ~800ms) once per app. That was invisible while a
+        // bundle compiled as a single module; emitting one module per app.json made it fire
+        // 68 times on tests/runner-extras and took the run from 23s to 110s.
+        _ = excludeAppId;
         return string.Join("\n", parts);
     }
 

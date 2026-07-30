@@ -302,9 +302,28 @@ public static partial class BcRuntime
             && asm.GetName().Name == cur.GetName().Name;
     }
 
-    public static void SetTestAssembly(Assembly asm)
+    /// <param name="wireFieldTriggers">
+    /// Whether to run RecordPatches.WireFieldTriggerHandlersAll — a full walk of every
+    /// table registered so far, not just this assembly's. Every caller that loads and
+    /// runs exactly one assembly per invocation should leave this true (the default;
+    /// matches the original single-call behaviour). A caller loading MULTIPLE
+    /// assemblies before any of them runs (bundled mode: one module per app.json,
+    /// see AppGroup) must pass false at each per-assembly call and invoke
+    /// WireFieldTriggerHandlersAll itself exactly once after every assembly has
+    /// loaded. Calling it once per assembly there was both slower — O(apps x
+    /// table-count) since each call re-walks the same growing table set — and wrong:
+    /// a table whose owning app hasn't loaded yet resolves to nothing on an early
+    /// call, and (before this fix) got marked wired anyway, permanently skipping the
+    /// real wiring once that app's assembly did load.
+    /// </param>
+    public static void SetTestAssembly(Assembly asm, bool wireFieldTriggers = true)
     {
-        if (_currentTestAssembly == asm) return;
+        if (_currentTestAssembly == asm)
+        {
+            if (wireFieldTriggers)
+                AlRunnerV2.Patches.RecordPatches.WireFieldTriggerHandlersAll();
+            return;
+        }
         _currentTestAssembly = asm;
         _codeunitTypeCache.Clear();
         // NavApp.GetResource: bind this emitted assembly to the current bundle dir
@@ -332,9 +351,12 @@ public static partial class BcRuntime
         // class. The NCLMetaTable was built during AddSourceDir (before AL emit), so
         // the Record CLR type didn't exist yet — we delay wiring to here, the first
         // point at which the AL-emitted Record types are loaded into the AppDomain.
-        sw.Restart();
-        AlRunnerV2.Patches.RecordPatches.WireFieldTriggerHandlersAll();
-        AlRunnerV2.PerfTrace.Log($"SetTestAssembly.WireFieldTriggerHandlersAll {sw.ElapsedMilliseconds}ms");
+        if (wireFieldTriggers)
+        {
+            sw.Restart();
+            AlRunnerV2.Patches.RecordPatches.WireFieldTriggerHandlersAll();
+            AlRunnerV2.PerfTrace.Log($"SetTestAssembly.WireFieldTriggerHandlersAll {sw.ElapsedMilliseconds}ms");
+        }
 
         // Enum field-option metadata fix-up: the AlEnumMetadataRegistry is
         // populated only by BcCompiler.Emit, which runs after AddSourceDir.

@@ -622,11 +622,26 @@ public static partial class RecordPatches
         PrewarmRecordTypeCache();
         foreach (var kvp in _metaTableCache)
         {
-            if (kvp.Value is NCLMetaTable mt)
-            {
-                WireFieldTriggerHandlers(mt, kvp.Key);
+            // Skip tables already SUCCESSFULLY wired by a previous call.
+            // WireFieldTriggerHandlersAll used to run once per bundle (one
+            // SetTestAssembly call); emitting one module per app.json (see AppGroup)
+            // now calls it once per app against the SAME growing _metaTableCache, so
+            // an unconditional re-wire made this O(apps x cache-size) — measured at
+            // 689ms average x 118 calls = 81s of a 111s run on tests/runner-extras (68
+            // apps). This guard is the same one WireFieldTriggerHandlersForTable
+            // already uses for its lazy per-table path.
+            //
+            // MUST check success, not just attempt: pre-registration walks every
+            // suite's src/ up front, so _metaTableCache already holds tables for
+            // suites whose assembly hasn't loaded yet when an EARLIER suite's
+            // WireFieldTriggerHandlersAll runs. WireFieldTriggerHandlers silently
+            // no-ops (FindRecordType returns null) for those — marking them wired
+            // anyway would permanently skip the real wiring once that suite's own
+            // assembly does load. Only a table whose type actually resolved is
+            // recorded, so later calls retry the rest.
+            if (_fieldTriggersWiredTables.ContainsKey(kvp.Key)) continue;
+            if (kvp.Value is NCLMetaTable mt && WireFieldTriggerHandlers(mt, kvp.Key))
                 _fieldTriggersWiredTables.TryAdd(kvp.Key, 1);
-            }
         }
     }
 
@@ -646,8 +661,13 @@ public static partial class RecordPatches
     internal static void WireFieldTriggerHandlersForTable(int tableId, object metaTableObj)
     {
         if (metaTableObj is not NCLMetaTable mt) return;
-        if (!_fieldTriggersWiredTables.TryAdd(tableId, 1)) return; // already wired
-        WireFieldTriggerHandlers(mt, tableId);
+        if (_fieldTriggersWiredTables.ContainsKey(tableId)) return; // already wired
+        // Called from the record-materialisation path, where the table's own Record
+        // CLR type is expected to already be loaded — but only record success (see
+        // WireFieldTriggerHandlersAll) so a stale/premature call cannot permanently
+        // block a later, correct one.
+        if (WireFieldTriggerHandlers(mt, tableId))
+            _fieldTriggersWiredTables.TryAdd(tableId, 1);
     }
 
     // Single AppDomain walk that finds every NavRecord-derived "Record<N>" type and bulk-populates
@@ -680,7 +700,15 @@ public static partial class RecordPatches
         }
     }
 
-    private static void WireFieldTriggerHandlers(NCLMetaTable built, int tableId)
+    // Returns whether wiring actually resolved the table's Record CLR type — NOT just
+    // whether the call completed. FindRecordType returning null (the table's own
+    // assembly is not loaded into the AppDomain yet) is the common case for a suite
+    // wired before its own module has loaded: pre-registration walks every suite's
+    // src/ up front, so WireFieldTriggerHandlersAll for app #1 also sees tables that
+    // belong to app #50, whose assembly hasn't loaded. The caller must NOT record a
+    // false "wired" for that case, or the real wiring (once the assembly does load)
+    // is silently skipped by the wired-tables guard.
+    private static bool WireFieldTriggerHandlers(NCLMetaTable built, int tableId)
     {
         try
         {
@@ -688,10 +716,10 @@ public static partial class RecordPatches
             if (_tFieldTriggerHandlerAttr == null || _tFieldTriggerType == null
                 || _tFieldTriggerHandler1 == null || _tEventTriggerData == null
                 || _fEventTriggerDataValueBacking == null)
-                return;
+                return false;
 
             var recordType = FindRecordType(tableId);
-            if (recordType == null) return;
+            if (recordType == null) return false;
 
             // Map fieldNo -> (validateMethod, lookupMethod)
             var byField = new Dictionary<int, (MethodInfo? validate, MethodInfo? lookup)>();
@@ -712,7 +740,11 @@ public static partial class RecordPatches
                     byField[fieldNo] = pair;
                 }
             }
-            if (byField.Count == 0) return;
+            // recordType WAS resolved even if it declares no field triggers — that is a
+            // real, complete result (nothing to wire), not a "try again later" case.
+            // Preserves prior behaviour exactly: WireExtensionValidateHandlers was
+            // (and still is) only reached below, after this early return.
+            if (byField.Count == 0) return true;
 
             // For each field with handler(s): build EventTriggerData, set ValidateHandler/LookupHandler,
             // poke onto NCLMetaField.EventTriggerDataValue backing field.
@@ -743,10 +775,12 @@ public static partial class RecordPatches
             }
 
             WireExtensionValidateHandlers(built, tableId);
+            return true;
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[RecordPatches] WireFieldTriggerHandlers({tableId}) failed: {ex.GetType().Name}: {ex.Message}");
+            return false;
         }
     }
 
