@@ -166,6 +166,50 @@ public static class Reporter
         }
     }
 
+    // v1-shaped per-test JSON to stdout (--output-json), distinct from
+    // WriteClassification's failure-classification file (--out). capturedValues/
+    // iterations fields from v1 are intentionally omitted — those need a shared
+    // Cecil-instrumentation prerequisite that doesn't exist yet, tracked separately.
+    public static string SerializeJsonOutput(IReadOnlyList<BucketResult> buckets, int exitCode)
+    {
+        var tests = buckets
+            .Where(b => b.Stage == BucketStage.Ran)
+            .SelectMany(b => b.Tests)
+            .ToList();
+
+        var compileErrors = buckets
+            .Where(b => b.Stage == BucketStage.CompileFailed)
+            .ToDictionary(
+                b => Path.GetFileName(b.BucketPath),
+                b => b.CompileErrors.ToList());
+
+        var output = new
+        {
+            tests = tests.Select(t => new
+            {
+                name = $"{t.Codeunit}.{t.Method}",
+                status = t.Outcome.ToString().ToLowerInvariant(),
+                durationMs = (long)t.Duration.TotalMilliseconds,
+                message = t.Message,
+                stackTrace = (t.AlCallStack ?? t.FullException)?.TrimEnd(),
+            }),
+            passed = tests.Count(t => t.Outcome == TestOutcome.Pass),
+            failed = tests.Count(t => t.Outcome == TestOutcome.Fail),
+            errors = tests.Count(t => t.Outcome == TestOutcome.Error),
+            total = tests.Count,
+            exitCode,
+            compilationErrors = compileErrors.Count > 0
+                ? compileErrors.Select(kvp => new { file = kvp.Key, errors = kvp.Value })
+                : null,
+        };
+
+        return JsonSerializer.Serialize(output, new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+        });
+    }
+
     public static void WriteClassification(IReadOnlyList<BucketResult> buckets, string path)
     {
         var failures = new List<object>();

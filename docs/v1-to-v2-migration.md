@@ -40,6 +40,8 @@ allowed and forbidden.
 | `--failures-only` / `--quiet` | (no flag — was default) | ✓ | New v2 opt-out to suppress PASS lines. |
 | `--strict` | ✓ | accepted (no-op) | Same exit-code convention (0 / 1 / 2 / 3), but strict exit is now v2's default — matching v1. `--no-strict-exit` opts back into always-exit-0 for tooling that only wants to parse the JSON output. |
 | `--test PATTERN` / `--filter PATTERN` | ✓ | ✓ | Substring match on `Codeunit.Method`. |
+| `--output-json` | ✓ | ✓ | v1-shaped per-test `status: pass/fail/error` JSON to stdout, distinct from `--out`'s failure-classification JSON. `capturedValues`/`iterations` fields omitted — those need a shared Cecil-instrumentation prerequisite, tracked separately. |
+| `--output-junit PATH` | ✓ | ✓ | JUnit XML report, grouped by codeunit as `<testsuite>`. |
 | `--dump-csharp DIR` | ✓ | ✓ | v2 dumps BC `Compilation.Emit`'s intermediate C# per AL object. |
 | `--precompile <in> --out <out>` | ✓ | ✓ | Same. |
 | `--bundled` / `--per-suite` | (n/a) | ✓ | v2's pipeline mode toggle. Default `--bundled`. |
@@ -55,8 +57,6 @@ typical "compile and run AL tests" workflow.
 |---|---|---|
 | DAP debug adapter | v1's `DapServer.cs`. Needs an AL→C# source map BC's `Compilation.Emit` does not currently expose — without that, breakpoints would land on C# lines, not AL. Distinct from `--server`, the JSON-RPC daemon, which IS implemented (see below). | 1-2 wk (research-heavy) |
 | `--coverage` (cobertura XML) | v1 hooked the Roslyn rewriter to inject hit-counters. v2 has no rewrite pass on AL output. A Cecil post-pass over the emitted DLL is feasible. | 2-4 d |
-| `--junit PATH` | Self-contained add; reformatting the existing `Reporter` state into JUnit XML. | <1 d |
-| `--output-json PATH` | v1-shaped per-test `status: pass/fail/error` JSON, distinct from `--out`'s failure-classification JSON. | <1 d |
 | `--stubs DIR` | v1's stub-merge path. v2 loads real MS DLLs in-process so the original use case mostly evaporates, but the "extra source roots" capability still has value for partial extensions. | <1 d |
 | Telemetry / crash reporter | v1's `TelemetryReporter.cs` phoned home to App Insights. `tools/telemetry-triage/` still exists. Needs a secret-handling decision before re-enabling. | 1 d |
 

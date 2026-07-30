@@ -176,6 +176,10 @@ if (args[0] == "--emit-app")
 // turns on the printed block without writing a file). See --help.
 string? outPath = null;
 bool printClassification = false;
+// --output-json: replace the normal text output with v1-shaped per-test JSON on stdout.
+// --output-junit PATH: additionally write a JUnit XML report — independent of --output-json.
+bool outputJson = false;
+string? outputJunitPath = null;
 var bundles = new List<string>();
 var packageCacheArgs = new List<string>();
 // Bundled mode is the canonical fast path (5-7× faster, parity-verified across
@@ -237,6 +241,8 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--artifact-path" && i + 1 < args.Length) { artifactPathArg = args[++i]; continue; }
     if (args[i] == "--out" && i + 1 < args.Length) { outPath = args[++i]; printClassification = true; continue; }
     if (args[i] == "--classify") { printClassification = true; continue; }
+    if (args[i] == "--output-json") { outputJson = true; continue; }
+    if (args[i] == "--output-junit" && i + 1 < args.Length) { outputJunitPath = args[++i]; continue; }
     if (args[i] == "--package-cache" && i + 1 < args.Length) { packageCacheArgs.Add(args[++i]); continue; }
     if (args[i] == "--per-suite") { bundledMode = false; continue; }
     if (args[i] == "--bundled") { bundledMode = true; continue; }
@@ -1510,19 +1516,10 @@ else
 }
 } // end while(true) watch loop
 
-Reporter.PrintPerTest(results, Console.Out, showPass);
-if (printClassification)
-    Reporter.PrintFailureClassification(results, Console.Out);
-Reporter.PrintSummary(results, Console.Out);
-if (outPath != null)
-{
-    Reporter.WriteClassification(results, outPath);
-    Console.WriteLine($"Classification → {outPath}");
-}
-
-// Exit non-zero if anything failed — the default since the v2 cut, matching main/v1.
-// --no-strict-exit restores the old always-0 behaviour for JSON-only consumers.
-if (strictExitCode)
+// Computed once regardless of --no-strict-exit: needed both as the process exit code
+// and as the "exitCode" field in --output-json, which reports the real outcome even
+// when the process itself exits 0 for JSON-only consumers.
+int computedExitCode = 0;
 {
     int failed = 0, errored = 0, compileFail = 0, execFail = 0;
     foreach (var b in results)
@@ -1535,11 +1532,36 @@ if (strictExitCode)
             else if (t.Outcome == TestOutcome.Error) errored++;
         }
     }
-    if (compileFail > 0) return 3;       // compile errors
-    if (execFail > 0) return 2;          // bucket-level execution error
-    if (failed + errored > 0) return 1;  // at least one test failed
+    computedExitCode = compileFail > 0 ? 3       // compile errors
+        : execFail > 0 ? 2                       // bucket-level execution error
+        : (failed + errored > 0 ? 1 : 0);        // at least one test failed
 }
-return 0;
+
+if (outputJson)
+{
+    Console.WriteLine(Reporter.SerializeJsonOutput(results, computedExitCode));
+}
+else
+{
+    Reporter.PrintPerTest(results, Console.Out, showPass);
+    if (printClassification)
+        Reporter.PrintFailureClassification(results, Console.Out);
+    Reporter.PrintSummary(results, Console.Out);
+}
+if (outPath != null)
+{
+    Reporter.WriteClassification(results, outPath);
+    Console.WriteLine($"Classification → {outPath}");
+}
+if (outputJunitPath != null)
+{
+    JUnitReport.WriteJUnit(outputJunitPath, results);
+    if (!outputJson) Console.WriteLine($"JUnit XML → {outputJunitPath}");
+}
+
+// Exit non-zero if anything failed — the default since the v2 cut, matching main/v1.
+// --no-strict-exit restores the old always-0 behaviour for JSON-only consumers.
+return strictExitCode ? computedExitCode : 0;
 
 // ── --server loop ──────────────────────────────────────────────────────────────
 // Non-static so it captures the warm pipeline objects (emitter/assembler/executor/
@@ -2306,6 +2328,12 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                          classification is a runner-development diagnostic.");
     w.WriteLine("  --classify              Print the FAILURE CLASSIFICATION block without writing");
     w.WriteLine("                          a JSON file.");
+    w.WriteLine("  --output-json           Replace the normal text output with per-test JSON on");
+    w.WriteLine("                          stdout (status: pass/fail/error, message, stackTrace,");
+    w.WriteLine("                          durationMs, exitCode). Distinct from --out's failure-");
+    w.WriteLine("                          classification JSON.");
+    w.WriteLine("  --output-junit PATH     Write a JUnit XML report to PATH, grouped by codeunit.");
+    w.WriteLine("                          Independent of --output-json — works with either mode.");
     w.WriteLine("  --failures-only, --quiet");
     w.WriteLine("                          Print only FAIL/ERROR per-test lines. Default prints both");
     w.WriteLine("                          PASS and FAIL with stack traces (matches v1).");
@@ -2361,8 +2389,11 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("  # Run one specific test");
     w.WriteLine("  al-runner --test Record_Insert_DuplicateKey_Throws tests/al-language/tests/al-language");
     w.WriteLine();
-    w.WriteLine("  # CI: strict exit, quiet, JUnit-friendly JSON path");
-    w.WriteLine("  al-runner --strict --quiet --out ci-results.json tests/al-language/tests/al-language");
+    w.WriteLine("  # CI: JUnit report for the test-results tab, strict exit by default");
+    w.WriteLine("  al-runner --output-junit ci-results.xml tests/al-language/tests/al-language");
+    w.WriteLine();
+    w.WriteLine("  # Machine-readable per-test JSON for a scripted caller");
+    w.WriteLine("  al-runner --output-json tests/al-language/tests/al-language");
     w.WriteLine();
     w.WriteLine("  # Dump the C# for a debugging session");
     w.WriteLine("  al-runner --dump-csharp /tmp/al-csharp tests/runner-extras/oos-reports");
@@ -2370,23 +2401,21 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("  # Pre-compile an .app to a managed DLL");
     w.WriteLine("  al-runner --precompile MyExtension_1.0.0.0.app --out MyExtension.dll");
     w.WriteLine();
-    w.WriteLine("NOT YET IN V2 (see docs/v1-to-v2-migration.md)");
-    w.WriteLine("  Nothing in this section is accepted as a flag; each entry is a v1 capability");
-    w.WriteLine("  with no v2 equivalent yet. Everything documented above IS implemented.");
+    w.WriteLine("NOT YET IMPLEMENTED (see docs/v1-to-v2-migration.md)");
+    w.WriteLine("  Nothing in this section is accepted as a flag. Everything documented above IS");
+    w.WriteLine("  implemented.");
     w.WriteLine("  (debug adapter)         v1's DAP debug server (DapServer.cs). Needs an AL→C#");
-    w.WriteLine("                          source map BC's emit pipeline does not currently expose;");
-    w.WriteLine("                          tracked as a separate workstream. Distinct from the");
-    w.WriteLine("                          JSON-RPC daemon in EXECUTION above, which is supported.");
-    w.WriteLine("  --coverage              Cobertura coverage output. v1 instrumented its Roslyn");
-    w.WriteLine("                          rewrite pass to count method hits; v2 has no rewrite pass.");
-    w.WriteLine("                          A Cecil-based implementation is feasible (2-4 d) but not");
-    w.WriteLine("                          yet built.");
-    w.WriteLine("  --junit PATH            JUnit-XML output. Self-contained add (~80 LOC).");
-    w.WriteLine("  --stubs DIR             v1's stub-merge path. v2 loads real MS DLLs so the");
+    w.WriteLine("                          source map the compile pipeline does not currently");
+    w.WriteLine("                          expose; tracked as a separate workstream. Distinct from");
+    w.WriteLine("                          the JSON-RPC daemon in EXECUTION above, which IS supported.");
+    w.WriteLine("  --coverage              Cobertura coverage output. There is currently no rewrite");
+    w.WriteLine("                          pass over emitted AL output to instrument; a Cecil-based");
+    w.WriteLine("                          implementation is feasible (2-4 d) but not yet built.");
+    w.WriteLine("  --stubs DIR             v1's stub-merge path. Real MS DLLs load in-process so the");
     w.WriteLine("                          original use case mostly evaporated; still possible to");
     w.WriteLine("                          add as an extra source-root merge if needed.");
-    w.WriteLine("  --extract-deps          v1's dep-slicer (DepExtractor.cs, ~121 KB). Likely to be");
-    w.WriteLine("                          dropped — v2 loads the full dep set directly.");
+    w.WriteLine("  --extract-deps          v1's dep-slicer (DepExtractor.cs, ~121 KB). Likely to stay");
+    w.WriteLine("                          dropped — the full dep set loads directly instead.");
     w.WriteLine();
     w.WriteLine("DOCUMENTATION");
     w.WriteLine("  al-runner --guide            operating manual: correct invocation against a real");
