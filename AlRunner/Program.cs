@@ -936,17 +936,32 @@ foreach (var bundle in bundles)
 
     if (bundledMode)
     {
-        // ── Bundled mode (default): ONE Emit + ONE Compile + ONE Run across
-        // all suites. 5-7× faster than per-suite, parity-verified on all 4
-        // sub-buckets. Suites whose AL hits BC emit bugs or bundled-only
-        // strictness checks are quarantined under tests/excluded/ with a
-        // RUNNER-GAP-*.md note explaining the gap.
-        var allPaths = new List<string>();
-        foreach (var suite in suites)
-            allPaths.AddRange(CollectSuitePaths(suite, bucketRoot));
-        allPaths = allPaths.Distinct().ToList();
+        // ── Bundled mode (default): ONE process, ONE runtime init, ONE test run
+        // across all suites — but ONE EMITTED MODULE PER app.json.
+        //
+        // This used to be one Emit + one Compile over every suite's .al files
+        // merged together. That is 5-7× faster than isolating each suite in its
+        // own process (measured 23s vs 180s over 68 suites), and the speed is why
+        // it stays the default — but merging also collapsed every app into a
+        // single synthetic identity, so any suite asserting its OWN identity saw
+        // the wrong one. Emitting per app.json keeps the single-process speed and
+        // restores per-app identity, resources and install-trigger seeding.
+        //
+        // Suites whose AL hits BC emit bugs or bundled-only strictness checks are
+        // quarantined under tests/excluded/ with a RUNNER-GAP-*.md note.
+        var appGroups = BuildAppGroups(suites, bucketRoot, bundleAbs);
+        var loadedAssemblies = new List<Assembly>();
 
-        var moduleName = $"V2_{Path.GetFileName(bundleAbs)}";
+        foreach (var appGroup in appGroups)
+        {
+        var allPaths = appGroup.Paths;
+        var moduleName = appGroup.ModuleName;
+
+        // Compile THIS app under its own app.json identity, overriding the
+        // bundle-level identity set before the suite loop. This is what makes
+        // NavApp.GetCurrentModuleInfo, NavApp.GetResource and install-trigger
+        // seeding resolve per app instead of per bundle.
+        BcCompiler.SetCurrentAppIdentity(appGroup.AppId, appGroup.Publisher, appGroup.Version);
 
         // ── AL-output cache check (Spike B keystone) ───────────────────────
         // Sidecar `<key>.enum-registry.json` carries the AlEnumMetadataRegistry
@@ -1142,21 +1157,43 @@ foreach (var bundle in bundles)
         // originally forced watch to spawn a child process is now closed), so
         // watch keeps the deps warm and re-runs in ~seconds instead of re-paying
         // a child process's startup + runtime dep load on every save.
+        // Load and register each module as it is built, but do NOT run yet: the
+        // test run happens once, after every app in the bundle is loaded, so that
+        // an app can call into a sibling it depends on.
         if (assemblyBytes != null)
+        {
+            var loadSw = System.Diagnostics.Stopwatch.StartNew();
+            var asm = Assembly.Load(assemblyBytes);
+            loadSw.Stop();
+            AlRunnerV2.PerfTrace.Log($"test assembly load {rel}/{moduleName} {loadSw.ElapsedMilliseconds}ms");
+            var registerSw = System.Diagnostics.Stopwatch.StartNew();
+            BcRuntime.SetTestAssembly(asm);
+            // Register THIS app's identity, not the bundle's. RegisterTestAssemblyInfo
+            // reads the current bundle info, which stays "Unknown" whenever the bundle
+            // root has no app.json of its own (every multi-app tree, tests/runner-extras
+            // included) — so point it at the app being loaded first. This feeds both the
+            // per-assembly module registry behind NavApp.GetCurrentModuleInfo and the AL
+            // call-stack frame decoration.
+            if (appGroup.AppId is { } gid)
+                BcRuntime.SetCurrentBundleInfo(
+                    gid,
+                    appGroup.ModuleName,
+                    appGroup.Publisher ?? "Unknown",
+                    (appGroup.Version ?? new Version(1, 0, 0, 0)).ToString());
+            BcRuntime.RegisterTestAssemblyInfo(asm);
+            registerSw.Stop();
+            AlRunnerV2.PerfTrace.Log($"RegisterTestAssemblyInfo {rel}/{moduleName} {registerSw.ElapsedMilliseconds}ms");
+            loadedAssemblies.Add(asm);
+        }
+        } // ── end per-app emit/compile/load loop ────────────────────────────────
+
+        foreach (var asm in loadedAssemblies)
         {
             var rt = System.Diagnostics.Stopwatch.StartNew();
             IReadOnlyList<TestResult> tests;
             try
             {
-                var loadSw = System.Diagnostics.Stopwatch.StartNew();
-                var asm = Assembly.Load(assemblyBytes);
-                loadSw.Stop();
-                AlRunnerV2.PerfTrace.Log($"test assembly load {rel} {loadSw.ElapsedMilliseconds}ms");
-                var registerSw = System.Diagnostics.Stopwatch.StartNew();
                 BcRuntime.SetTestAssembly(asm);
-                BcRuntime.RegisterTestAssemblyInfo(asm);
-                registerSw.Stop();
-                AlRunnerV2.PerfTrace.Log($"RegisterTestAssemblyInfo {rel} {registerSw.ElapsedMilliseconds}ms");
                 BcRuntime.OosHooksActive = true;
                 var execSw = System.Diagnostics.Stopwatch.StartNew();
                 tests = executor.Run(asm);
@@ -3453,6 +3490,70 @@ static IEnumerable<DependencyRef> ReadDependencies(string appJsonPath)
 // When a bucket root is supplied, also include `<bucketRoot>/_shared/` so AL
 // files at the bucket level (e.g. an Assert.Codeunit.al that satisfies a
 // dependency without a runtime DLL) compile into every suite.
+/// <summary>
+/// Groups the enumerated suites into one AppGroup per app.json, ordered so that an
+/// app comes after every sibling it depends on (a sibling's symbols must exist
+/// before the app referencing it compiles). Suites without an app.json cannot carry
+/// an identity of their own and are merged into one fallback module named after the
+/// bundle, which is the pre-existing behaviour for that shape.
+/// </summary>
+static List<AlRunnerV2.AppGroup> BuildAppGroups(List<string> suites, string? bucketRoot, string bundleAbs)
+{
+    var groups = new List<AlRunnerV2.AppGroup>();
+    var identified = new List<(AlRunnerV2.AppGroup Group, Guid Id)>();
+    var orphanPaths = new List<string>();
+
+    foreach (var suite in suites)
+    {
+        var paths = CollectSuitePaths(suite, bucketRoot);
+        var appJson = Path.Combine(suite, "app.json");
+        var id = File.Exists(appJson)
+            ? AlRunnerV2.Infrastructure.InProcessAppPackager.ReadIdentity(appJson)
+            : null;
+        if (id == null) { orphanPaths.AddRange(paths); continue; }
+
+        var group = new AlRunnerV2.AppGroup(
+            ModuleName: id.Name,
+            AppId: id.AppId,
+            Publisher: id.Publisher,
+            Version: id.Version,
+            Paths: paths,
+            DependsOn: id.Dependencies.Select(d => d.AppId).ToList());
+        identified.Add((group, id.AppId));
+    }
+
+    // Topological order over sibling dependencies only. Dependencies on apps outside
+    // this bundle are resolved from the package cache as before and are ignored here.
+    var siblingIds = identified.Select(t => t.Id).ToHashSet();
+    var emitted = new HashSet<Guid>();
+    var remaining = new List<(AlRunnerV2.AppGroup Group, Guid Id)>(identified);
+    while (remaining.Count > 0)
+    {
+        // Take every app whose sibling dependencies are already emitted. If none
+        // qualify the graph has a cycle — emit the rest in declaration order rather
+        // than looping forever; BC will report the unresolved reference loudly.
+        var ready = remaining
+            .Where(t => t.Group.DependsOn.All(d => !siblingIds.Contains(d) || emitted.Contains(d)))
+            .ToList();
+        if (ready.Count == 0) ready = remaining.ToList();
+        foreach (var t in ready)
+        {
+            groups.Add(t.Group);
+            emitted.Add(t.Id);
+            remaining.Remove(t);
+        }
+    }
+
+    if (orphanPaths.Count > 0)
+        groups.Add(new AlRunnerV2.AppGroup(
+            ModuleName: $"V2_{Path.GetFileName(bundleAbs)}",
+            AppId: null, Publisher: null, Version: null,
+            Paths: orphanPaths.Distinct().ToList(),
+            DependsOn: Array.Empty<Guid>()));
+
+    return groups;
+}
+
 static List<string> CollectSuitePaths(string suite, string? bucketRoot = null)
 {
     var all = new List<string>();
