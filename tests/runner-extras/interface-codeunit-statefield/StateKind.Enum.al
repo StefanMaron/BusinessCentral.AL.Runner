@@ -4,7 +4,7 @@
 /// ALCompiler.ToInterface(NavOption, interfaceIndex) — the exact runner path
 /// that previously disposed the implementing codeunit handle.
 /// </summary>
-enum 60200 "State Kind ICS" implements "IState Provider ICS"
+enum 63200 "State Kind ICS" implements "IState Provider ICS"
 {
     Extensible = false;
 

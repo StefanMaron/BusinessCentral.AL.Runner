@@ -1,7 +1,7 @@
 /// <summary>
 /// Plain stateful codeunit stored in a List of [Codeunit] by the tests.
 /// </summary>
-codeunit 60700 "LCS Stateful"
+codeunit 63700 "LCS Stateful"
 {
     var
         StoredValue: Integer;

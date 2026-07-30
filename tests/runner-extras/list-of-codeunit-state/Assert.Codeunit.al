@@ -1,7 +1,7 @@
 /// <summary>
 /// Minimal assertion helper for this runner-extras app (own ID range).
 /// </summary>
-codeunit 60701 "LCS Assert"
+codeunit 63701 "LCS Assert"
 {
     procedure AreEqual(Expected: Integer; Actual: Integer; Msg: Text)
     begin

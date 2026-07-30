@@ -4,7 +4,7 @@
 /// the field's allocation in the codeunit's private InitializeComponent(),
 /// which runs only from the codeunit's constructor.
 /// </summary>
-table 60200 "State Rec ICS"
+table 63200 "State Rec ICS"
 {
     DataClassification = SystemMetadata;
 

@@ -5,7 +5,7 @@
 /// reproducer cannot cover, and matches the reported RS pattern (ISV subscriber
 /// on BaseApp "Purchase Header").
 /// </summary>
-codeunit 60310 "Mut Probe Tests XESM"
+codeunit 63310 "Mut Probe Tests XESM"
 {
     Subtype = Test;
 

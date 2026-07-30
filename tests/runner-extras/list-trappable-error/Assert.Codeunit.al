@@ -1,7 +1,7 @@
 /// <summary>
 /// Minimal assertion helper for this runner-extras app (own ID range).
 /// </summary>
-codeunit 60710 "LTE Assert"
+codeunit 63710 "LTE Assert"
 {
     procedure AreEqual(Expected: Integer; Actual: Integer; Msg: Text)
     begin

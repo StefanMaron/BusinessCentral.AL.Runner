@@ -1,4 +1,4 @@
-codeunit 61101 "Crypto Hash Tests"
+codeunit 64101 "Crypto Hash Tests"
 {
     Subtype = Test;
 

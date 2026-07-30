@@ -13,7 +13,7 @@
 /// the interface owns the live codeunit instance, so Probe survives and
 /// GetProbedName() returns 'alive'.
 /// </summary>
-codeunit 60210 "Iface State Tests ICS"
+codeunit 63210 "Iface State Tests ICS"
 {
     Subtype = Test;
 

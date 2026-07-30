@@ -3,7 +3,7 @@
 /// table's field OnAfterValidateEvent and mutates the record by reference —
 /// the cross-app analogue of an ISV subscribing to BaseApp "Purchase Header".
 /// </summary>
-table 60300 "Mut Probe XESM"
+table 63300 "Mut Probe XESM"
 {
     DataClassification = CustomerContent;
 

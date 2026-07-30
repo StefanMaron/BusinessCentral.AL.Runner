@@ -11,7 +11,7 @@
 // real object right where it is created, so logging no-ops cleanly and BC's
 // own NavNCLArgumentOutOfRangeException.CreateGeneric("List") text
 // ("An invalid argument was passed to a 'List' data type method.") surfaces.
-codeunit 60711 "LTE Tests"
+codeunit 63711 "LTE Tests"
 {
     Subtype = Test;
 

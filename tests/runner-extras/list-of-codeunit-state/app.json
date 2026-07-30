@@ -16,8 +16,8 @@
   "application": "28.0.0.0",
   "idRanges": [
     {
-      "from": 60700,
-      "to": 60709
+      "from": 63700,
+      "to": 63709
     }
   ],
   "runtime": "14.0",

@@ -1,7 +1,7 @@
 /// <summary>
 /// Minimal assertion helper for this runner-extras app (own ID range).
 /// </summary>
-codeunit 60500 "Dialog NoOp Assert"
+codeunit 63500 "Dialog NoOp Assert"
 {
     procedure AreEqual(Expected: Integer; Actual: Integer; Msg: Text)
     begin

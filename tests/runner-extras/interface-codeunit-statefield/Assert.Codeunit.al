@@ -2,7 +2,7 @@
 /// Minimal assertion helper for this runner-extras app (own ID range so it
 /// stands alone from the corpus Assert).
 /// </summary>
-codeunit 60250 "Iface Assert ICS"
+codeunit 63250 "Iface Assert ICS"
 {
     procedure AreEqual(Expected: Text; Actual: Text; Msg: Text)
     begin

@@ -1,4 +1,4 @@
-codeunit 61100 "CH Assert"
+codeunit 64100 "CH Assert"
 {
     procedure AreEqualText(Expected: Text; Actual: Text; Msg: Text)
     begin

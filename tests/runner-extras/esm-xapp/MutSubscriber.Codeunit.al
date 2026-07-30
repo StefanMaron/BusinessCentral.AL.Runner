@@ -4,7 +4,7 @@
 /// the sibling dependency app. Mutates the record through the by-reference
 /// var Rec parameter (via a nested var local proc, matching the RS pattern).
 /// </summary>
-codeunit 60360 "Mut Subscriber XESM"
+codeunit 63360 "Mut Subscriber XESM"
 {
     [EventSubscriber(ObjectType::Table, Database::"Mut Probe XESM", OnAfterValidateEvent, 'Trigger Field', false, false)]
     local procedure TriggerField_OnAfterValidate(var Rec: Record "Mut Probe XESM"; var xRec: Record "Mut Probe XESM"; CurrFieldNo: Integer)

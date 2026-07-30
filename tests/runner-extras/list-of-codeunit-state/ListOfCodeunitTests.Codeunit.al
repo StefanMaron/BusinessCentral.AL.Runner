@@ -6,7 +6,7 @@
 // RED (before the fix): L.Get(1, C) throws.
 // GREEN (after the fix): the codeunit instance added in a CALLEE scope is
 // retrieved in the caller scope with its instance state intact.
-codeunit 60702 "LCS Tests"
+codeunit 63702 "LCS Tests"
 {
     Subtype = Test;
 

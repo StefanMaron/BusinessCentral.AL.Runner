@@ -1,4 +1,4 @@
-codeunit 60350 "Mut Assert XESM"
+codeunit 63350 "Mut Assert XESM"
 {
     procedure AreEqual(Expected: Text; Actual: Text; Msg: Text)
     begin

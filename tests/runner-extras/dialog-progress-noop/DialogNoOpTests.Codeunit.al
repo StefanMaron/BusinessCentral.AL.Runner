@@ -13,7 +13,7 @@
 ///   Codeunit131101.EnableWorkflow → Record1501.Enabled_a45_OnValidate → ALOpenAsync
 /// which previously threw NullReferenceException at NavDialog.ALOpenAsync.
 /// </summary>
-codeunit 60501 "Dialog NoOp Tests"
+codeunit 63501 "Dialog NoOp Tests"
 {
     Subtype = Test;
 
