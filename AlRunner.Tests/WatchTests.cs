@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using Xunit;
 
-namespace AlRunnerV2.Tests;
+namespace AlRunner.Tests;
 
 /// <summary>
 /// Proves `--watch` re-runs IN-PROCESS and picks up a source edit on the next

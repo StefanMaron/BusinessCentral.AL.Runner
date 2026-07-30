@@ -1,9 +1,9 @@
 ---
 name: al-runner-workflow
-description: Multi-agent workflow contract for this repo (v2) — orchestrator vs implementation agents, GitHub label state machine, PR lifecycle, the al-language submodule contract, and the expectations-manifest path for OOS-by-design tests. Use when acting as orchestrator/impl-agent without the dedicated sub-agent, when triaging the issue/PR queue manually, or when deciding whether an issue is a runner gap, an OOS-by-design declaration, or a corpus bug to upstream.
+description: Multi-agent workflow contract for this repo — orchestrator vs implementation agents, GitHub label state machine, PR lifecycle, the al-language submodule contract, and the expectations-manifest path for OOS-by-design tests. Use when acting as orchestrator/impl-agent without the dedicated sub-agent, when triaging the issue/PR queue manually, or when deciding whether an issue is a runner gap, an OOS-by-design declaration, or a corpus bug to upstream.
 ---
 
-# Agent workflow (v2)
+# Agent workflow
 
 This repository uses a multi-agent workflow. Agents are identified by GitHub issue / PR labels.
 

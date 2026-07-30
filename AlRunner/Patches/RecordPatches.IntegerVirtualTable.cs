@@ -45,10 +45,10 @@
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using AlRunnerV2.Infrastructure;
+using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {

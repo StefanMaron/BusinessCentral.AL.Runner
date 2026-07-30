@@ -6,7 +6,7 @@
 // one — a flat gcTotalMB across tests is the definitive proof a per-test leak is gone. Leave it in.
 using System.Reflection;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 internal static class MemoryCensus
 {

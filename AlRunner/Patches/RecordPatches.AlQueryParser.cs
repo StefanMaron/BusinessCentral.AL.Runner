@@ -7,7 +7,7 @@
 // throwing NavNCLApplicationObjectNotFoundException for queries.
 using System.Text.RegularExpressions;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {

@@ -1,9 +1,9 @@
 ---
 name: al-runner-architecture
-description: V2 pipeline architecture, the precompiled-DLL contract, the Cecil + JmpHook patch layers, and the key-file map for AlRunner. Use when modifying AlRunner/ source (Program.cs, BcRuntime.cs, BcCompiler.cs, BcAssembler.cs, Patches/, Infrastructure/), debugging compilation/transpilation issues, deciding where to land a new runtime patch, or interpreting non-zero exit codes (1/2/3).
+description: Pipeline architecture, the precompiled-DLL contract, the Cecil + JmpHook patch layers, and the key-file map for AlRunner. Use when modifying AlRunner/ source (Program.cs, BcRuntime.cs, BcCompiler.cs, BcAssembler.cs, Patches/, Infrastructure/), debugging compilation/transpilation issues, deciding where to land a new runtime patch, or interpreting non-zero exit codes (1/2/3).
 ---
 
-# AL Runner architecture (v2)
+# AL Runner architecture
 
 ## Pipeline
 
@@ -47,7 +47,7 @@ When a method NREs on the skeleton runtime:
 
 ## Loud-failures rule
 
-When AL test code reaches a surface the runner cannot faithfully support, throw `AlRunnerV2.Infrastructure.RunnerOutOfScopeException` with the BC API name and a reason from `docs/scope.md` (e.g. `email-smtp`, `http-egress`, `not-yet-implemented`). Never silently return a default — green tests then lie about what was actually executed. Full text in `.claude/rules/loud-failures.md`.
+When AL test code reaches a surface the runner cannot faithfully support, throw `AlRunner.Infrastructure.RunnerOutOfScopeException` with the BC API name and a reason from `docs/scope.md` (e.g. `email-smtp`, `http-egress`, `not-yet-implemented`). Never silently return a default — green tests then lie about what was actually executed. Full text in `.claude/rules/loud-failures.md`.
 
 ## Key files
 

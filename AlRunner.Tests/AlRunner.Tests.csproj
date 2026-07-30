@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsTestProject>true</IsTestProject>
-    <RootNamespace>AlRunnerV2.Tests</RootNamespace>
+    <RootNamespace>AlRunner.Tests</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>

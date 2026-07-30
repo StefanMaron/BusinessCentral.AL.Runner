@@ -33,7 +33,7 @@ using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
 using Microsoft.Dynamics.Nav.Types.Data;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 internal sealed class RequestPageTestPage : MockITestPage
 {
@@ -99,7 +99,7 @@ internal sealed class RequestPageTestPage : MockITestPage
         if (_dataItemFilters.TryGetValue(id, out var cached)) return cached;
 
         var record = FindDataItemRecord(id)
-            ?? throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 $"TestRequestPage data item '{id}' (report {_reportId})",
                 "request-page-dataitem — the report has no data item by that name, so there is "
                 + "no filter group for the [RequestPageHandler] to set. Known data items: "
@@ -111,7 +111,7 @@ internal sealed class RequestPageTestPage : MockITestPage
     }
 
     public override ITestField GetField(int id)
-        => throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+        => throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             $"TestRequestPage control {id} (report {_reportId})",
             "request-page-control — request-page controls bound to report globals are not yet "
             + "resolvable: they need the request page's NavForm.SourceExpressions table, which "

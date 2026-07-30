@@ -1,4 +1,4 @@
-namespace AlRunnerV2.Infrastructure;
+namespace AlRunner.Infrastructure;
 
 /// <summary>
 /// Single source of truth for per-user, cross-platform base paths.

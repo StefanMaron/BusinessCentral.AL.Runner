@@ -8,7 +8,7 @@ using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 internal static class TestPageFactory
 {

@@ -5,7 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 internal static partial class BcAppSymbolCache
 {

@@ -20,7 +20,7 @@ using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
 
-namespace AlRunnerV2.Infrastructure;
+namespace AlRunner.Infrastructure;
 
 /// <summary>
 /// Identity read from a bundle's app.json, used to synthesize a NAVX .app.

@@ -31,7 +31,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>AlRunner.QueryJoin</AssemblyName>
-    <RootNamespace>AlRunnerV2.QueryJoin</RootNamespace>
+    <RootNamespace>AlRunner.QueryJoin</RootNamespace>
     <TieredCompilation>false</TieredCompilation>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <!-- Pure reflection over Ncl types — NO direct Reference to any BC DLL. That is

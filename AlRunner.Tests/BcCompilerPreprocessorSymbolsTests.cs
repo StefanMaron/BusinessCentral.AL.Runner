@@ -8,9 +8,9 @@
 // sites (Emit and EmitDepSymbols) without dropping CLEANSCHEMA1..25.
 
 using Xunit;
-using AlRunnerV2;
+using AlRunner;
 
-namespace AlRunnerV2.Tests;
+namespace AlRunner.Tests;
 
 public sealed class BcCompilerPreprocessorSymbolsTests
 {

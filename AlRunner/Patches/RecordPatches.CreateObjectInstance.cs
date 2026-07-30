@@ -29,7 +29,7 @@ using System.Runtime.CompilerServices;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Runtime.Extensions;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
@@ -116,7 +116,7 @@ public static partial class RecordPatches
             if (onProp?.GetValue(current) is int n && n != 0) return;
 
             var oid = _ctorApplicationObjectId.Invoke(new object?[] { _objectTypeTableEnum, tableId });
-            AlRunnerV2.Infrastructure.FieldPoke.SetInstance(_fObjectIdBacking, rec, oid);
+            AlRunner.Infrastructure.FieldPoke.SetInstance(_fObjectIdBacking, rec, oid);
         }
         catch { /* best-effort: stamping is a safety net, never fatal */ }
     }
@@ -147,7 +147,7 @@ public static partial class RecordPatches
             if (onProp?.GetValue(current) is int n && n != 0) return; // already correct
 
             var oid = _ctorApplicationObjectId.Invoke(new object?[] { _objectTypeTableExtensionEnum, extId });
-            AlRunnerV2.Infrastructure.FieldPoke.SetInstance(_fObjectIdBacking, ext, oid);
+            AlRunner.Infrastructure.FieldPoke.SetInstance(_fObjectIdBacking, ext, oid);
         }
         catch { /* best-effort */ }
     }

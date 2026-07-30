@@ -16,7 +16,7 @@
 // dirs that were searched, so the failure mode is obviously a missing-package
 // problem and not a runner bug.
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public sealed class DependencyResolver
 {
@@ -96,7 +96,7 @@ public sealed class DependencyResolver
             // Throw MissingDependencyException (not InvalidOperationException) so Program.cs can
             // emit ONE loud, actionable "provisioning gap" message and abort before attempting a
             // doomed bundle compile that would produce thousands of misleading AL0185 errors.
-            throw new AlRunnerV2.Infrastructure.MissingDependencyException(
+            throw new AlRunner.Infrastructure.MissingDependencyException(
                 dep.Publisher, dep.Name, dep.Version.ToString(), dep.AppId,
                 _cacheDirs.ToList(),
                 stack.Count > 0

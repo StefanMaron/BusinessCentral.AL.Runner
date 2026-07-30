@@ -28,7 +28,7 @@
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public static class InstallTriggerRunner
 {
@@ -130,7 +130,7 @@ public static class InstallTriggerRunner
             Console.Error.WriteLine(
                 $"[install-trigger] {cu.Type.Name}.{name} ({cu.Type.Assembly.GetName().Name}) threw: " +
                 $"{tex.InnerException.GetType().Name}: {tex.InnerException.Message}");
-            var alStack = AlRunnerV2.Infrastructure.AlCallStackCapture.GetCaptured(tex.InnerException);
+            var alStack = AlRunner.Infrastructure.AlCallStackCapture.GetCaptured(tex.InnerException);
             if (!string.IsNullOrEmpty(alStack))
                 Console.Error.WriteLine($"[install-trigger] AL stack:\n{alStack}");
             else

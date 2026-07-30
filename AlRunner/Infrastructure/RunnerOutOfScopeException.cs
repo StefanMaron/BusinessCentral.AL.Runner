@@ -8,7 +8,7 @@
 // Plain System.Exception (NOT derived from any BC exception type) so AL
 // `asserterror` cannot swallow it. The developer must see the failure.
 
-namespace AlRunnerV2.Infrastructure;
+namespace AlRunner.Infrastructure;
 
 /// <summary>
 /// Thrown by runner patches when AL code reaches a surface that is either:

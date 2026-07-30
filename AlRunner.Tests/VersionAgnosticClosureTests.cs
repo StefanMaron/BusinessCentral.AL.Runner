@@ -24,7 +24,7 @@
 using System.Reflection;
 using Xunit;
 
-namespace AlRunnerV2.Tests;
+namespace AlRunner.Tests;
 
 public sealed class VersionAgnosticClosureTests
 {
@@ -60,7 +60,7 @@ public sealed class VersionAgnosticClosureTests
         // Env-guarded: only assert live resolution when an artifact dir is actually present
         // (e.g. a dev box with BC artifacts downloaded). On a bare CI leg this is a no-op.
         string serviceTierDir;
-        try { serviceTierDir = AlRunnerV2.Infrastructure.BcArtifacts.ServiceTierDir; }
+        try { serviceTierDir = AlRunner.Infrastructure.BcArtifacts.ServiceTierDir; }
         catch { return; }
 
         var probe = Path.Combine(serviceTierDir, "Microsoft.Identity.ServiceEssentials.Core.dll");

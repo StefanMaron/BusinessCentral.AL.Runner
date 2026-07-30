@@ -44,7 +44,7 @@
 
 using Xunit;
 
-namespace AlRunnerV2.Tests;
+namespace AlRunner.Tests;
 
 public sealed class BcCompilerEmitRetryTests : IDisposable
 {
@@ -65,7 +65,7 @@ public sealed class BcCompilerEmitRetryTests : IDisposable
     {
         try
         {
-            var dir = AlRunnerV2.Infrastructure.BcArtifacts.ServiceTierDir;
+            var dir = AlRunner.Infrastructure.BcArtifacts.ServiceTierDir;
             return File.Exists(Path.Combine(dir, "Microsoft.Dynamics.Nav.CodeAnalysis.dll"))
                 && File.Exists(Path.Combine(dir, "Microsoft.Dynamics.Nav.Ncl.dll"));
         }
@@ -80,13 +80,13 @@ public sealed class BcCompilerEmitRetryTests : IDisposable
         // Production (Program.cs) Cecil-rewrites Ncl.dll in-place in the app's own bin
         // dir BEFORE anything touches it, then (on a cold/uncached rewrite only) re-execs
         // once so the child process loads the now-cached, already-rewritten bytes from a
-        // clean start. Do the same here, first thing, before any other AlRunnerV2 type
+        // clean start. Do the same here, first thing, before any other AlRunner type
         // that might resolve Ncl types: with a warm cache (already populated by a prior
         // real run on this machine) this is a plain cached-bytes file copy, not a fresh
         // rewrite, so no re-exec is needed for the test to see a byte-identical DLL.
-        var srcDir = AlRunnerV2.Infrastructure.BcArtifacts.ServiceTierDir;
+        var srcDir = AlRunner.Infrastructure.BcArtifacts.ServiceTierDir;
         var binNcl = Path.Combine(AppContext.BaseDirectory, "Microsoft.Dynamics.Nav.Ncl.dll");
-        AlRunnerV2.Infrastructure.NclCecilRewrite.RewriteInPlace(srcDir, binNcl);
+        AlRunner.Infrastructure.NclCecilRewrite.RewriteInPlace(srcDir, binNcl);
 
         DependencyLoader.EnsureResolverInstalled_Public();
         BcRuntime.EnsureApplied();

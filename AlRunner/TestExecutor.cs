@@ -6,7 +6,7 @@
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public enum TestOutcome { Pass, Fail, Error }
 
@@ -86,7 +86,7 @@ public sealed class TestExecutor
         var seedSw = System.Diagnostics.Stopwatch.StartNew();
         // A TestExecutor instance is reused across bundles. Discard the preceding bundle's
         // final test mutations before creating this bundle's committed installation baseline.
-        AlRunnerV2.Patches.RecordPatches.ResetPerTestState();
+        AlRunner.Patches.RecordPatches.ResetPerTestState();
         CompanyInitializer.ResetForNewBundle();
         InstallTriggerRunner.SetTestAssembly(assembly);
         InstallTriggerRunner.RunAll();
@@ -94,7 +94,7 @@ public sealed class TestExecutor
         // via codeunit 2 "Company-Initialize". Run it before the baseline snapshot so its rows
         // (Company Information, Source Code Setup, …) are part of what every test is restored to.
         CompanyInitializer.EnsureCompanyInitialized();
-        AlRunnerV2.Patches.RecordPatches.CaptureInstallBaseline();
+        AlRunner.Patches.RecordPatches.CaptureInstallBaseline();
         PerfTrace.Log($"TestExecutor.InitialInstallSeed {seedSw.ElapsedMilliseconds}ms");
 
         long scanMs = 0, instMs = 0, dispMs = 0, methodsMs = 0, disposeMs = 0, methodLoopMs = 0;   // PERF attribution accumulators
@@ -112,7 +112,7 @@ public sealed class TestExecutor
             // EventSubscriberPatches.InjectAll. Re-run injection now (idempotent — each
             // subscriber MethodInfo is injected at most once).
             var injectSw = System.Diagnostics.Stopwatch.StartNew();
-            AlRunnerV2.Patches.EventSubscriberPatches.InjectAllUsingStoredLookup();
+            AlRunner.Patches.EventSubscriberPatches.InjectAllUsingStoredLookup();
             injectSw.Stop();
             PerfTrace.Log($"EventSubscriber.InjectAllUsingStoredLookup {t.Name} {injectSw.ElapsedMilliseconds}ms");
 
@@ -122,7 +122,7 @@ public sealed class TestExecutor
             if (Isolation == TestIsolation.Codeunit)
             {
                 var resetSw = System.Diagnostics.Stopwatch.StartNew();
-                AlRunnerV2.Patches.RecordPatches.RestoreInstallBaseline();
+                AlRunner.Patches.RecordPatches.RestoreInstallBaseline();
                 PerfTrace.Log($"TestExecutor.CodeunitBoundary {t.Name} restore={resetSw.ElapsedMilliseconds}ms t={totalSw.ElapsedMilliseconds}ms");
             }
 
@@ -268,10 +268,10 @@ public sealed class TestExecutor
         // reset (if any) happens at codeunit boundaries instead.
         if (Isolation == TestIsolation.Test)
         {
-            AlRunnerV2.Patches.RecordPatches.RestoreInstallBaseline();
+            AlRunner.Patches.RecordPatches.RestoreInstallBaseline();
         }
         // Clear any AL call stack captured from a previous test on this thread.
-        AlRunnerV2.Infrastructure.AlCallStackCapture.Clear();
+        AlRunner.Infrastructure.AlCallStackCapture.Clear();
         // Enter BC's own "in test" scope for the duration of this test (mirrors
         // NavTestExecution.EnterTestCodeunit/LeaveTestCodeunit) — see BcRuntime.EnterTestExecutionScope
         // for why: it's what makes NavTenantSettingsHelper.IsSandbox()/IsProduction() (Codeunit 457
@@ -289,7 +289,7 @@ public sealed class TestExecutor
             if (!invokeResult.Completed)
             {
                 PerfTrace.Log($"TestExecutor.RunOne TIMEOUT {codeunit}.{m.Name} {sw.ElapsedMilliseconds}ms");
-                var alStack = AlRunnerV2.Infrastructure.AlCallStackCapture.CaptureCurrent();
+                var alStack = AlRunner.Infrastructure.AlCallStackCapture.CaptureCurrent();
                 return new TestResult(codeunit, m.Name, TestOutcome.Error,
                     $"TIMEOUT after {(int)timeout.TotalSeconds}s", null, sw.Elapsed, alStack, displayName);
             }
@@ -306,7 +306,7 @@ public sealed class TestExecutor
         {
             var inner = Unwrap(tex);
             PerfTrace.Log($"TestExecutor.RunOne FAIL {codeunit}.{m.Name} {sw.ElapsedMilliseconds}ms {inner.GetType().Name}: {inner.Message}");
-            var alStack = AlRunnerV2.Infrastructure.AlCallStackCapture.GetCaptured(inner);
+            var alStack = AlRunner.Infrastructure.AlCallStackCapture.GetCaptured(inner);
             // BC's Assert.* throws specific exception types for test failures.
             // We can't classify Pass/Fail vs Error perfectly without knowing all of them,
             // so for now: any thrown exception is Fail.
@@ -316,7 +316,7 @@ public sealed class TestExecutor
         catch (Exception ex)
         {
             PerfTrace.Log($"TestExecutor.RunOne ERROR {codeunit}.{m.Name} {sw.ElapsedMilliseconds}ms {ex.GetType().Name}: {ex.Message}");
-            var alStack = AlRunnerV2.Infrastructure.AlCallStackCapture.GetCaptured(ex);
+            var alStack = AlRunner.Infrastructure.AlCallStackCapture.GetCaptured(ex);
             return new TestResult(codeunit, m.Name, TestOutcome.Error,
                 ex.Message, ex.ToString(), sw.Elapsed, alStack, displayName);
         }

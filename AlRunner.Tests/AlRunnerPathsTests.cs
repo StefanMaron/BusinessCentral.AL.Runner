@@ -2,9 +2,9 @@
 // HOME lookup (which was null on Windows, silently disabling cache/artifact discovery).
 
 using Xunit;
-using AlRunnerV2.Infrastructure;
+using AlRunner.Infrastructure;
 
-namespace AlRunnerV2.Tests;
+namespace AlRunner.Tests;
 
 public sealed class AlRunnerPathsTests
 {

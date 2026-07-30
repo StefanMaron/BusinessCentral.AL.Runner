@@ -5,7 +5,7 @@ using System.Reflection.PortableExecutable;
 using System.Runtime.Loader;
 using System.Text.Json;
 
-namespace AlRunnerV2.Infrastructure;
+namespace AlRunner.Infrastructure;
 
 /// <summary>
 /// "DLL-first" dependency-code resolver. Microsoft ships its test toolkit

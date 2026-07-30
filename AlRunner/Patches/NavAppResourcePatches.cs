@@ -35,7 +35,7 @@ using System.Reflection;
 using System.Text;
 using Microsoft.Dynamics.Nav.Types.Exceptions;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static class NavAppResourcePatches
 {

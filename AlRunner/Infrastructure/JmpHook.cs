@@ -9,7 +9,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
-namespace AlRunnerV2.Infrastructure;
+namespace AlRunner.Infrastructure;
 
 internal static class JmpHook
 {

@@ -16,7 +16,7 @@
 // never a silent default. Supported: InnerJoin / LeftOuterJoin over field=field equi-links
 // on stored (non-FlowField) fields. Unsupported (RightOuter/Full/Cross/Apply, Const/
 // Expression links, FlowField links, missing link) → named OOS throw.
-namespace AlRunnerV2.QueryJoin;
+namespace AlRunner.QueryJoin;
 
 using System.Collections;
 using System.Reflection;

@@ -20,7 +20,7 @@ using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
 using Microsoft.Dynamics.Nav.Types.Metadata;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public sealed class RunnerTestClientSession : ITestClientSession
 {
@@ -34,7 +34,7 @@ public sealed class RunnerTestClientSession : ITestClientSession
     public ITestPage GetPage(Guid formHandle, bool forClose = false)
     {
         var form = RegisteredForm(formHandle)
-            ?? throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 $"TestPage modal page (handle {formHandle})",
                 "testpage-modal — no form is registered under this handle, so the runner cannot "
                 + "hand the [ModalPageHandler] the page it is being asked to drive. "
@@ -51,12 +51,12 @@ public sealed class RunnerTestClientSession : ITestClientSession
 
         var pageId = PageIdOf(form);
         var record = ReadProperty(form, "SourceTable") as NavRecord
-            ?? throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 $"TestPage modal page {pageId}",
                 "testpage-modal — the modal form has no source table bound, so there is no record "
                 + "for the handler to read or write. See docs/scope.md");
 
-        return new AlRunnerV2.LiveNavTestPage(
+        return new AlRunner.LiveNavTestPage(
             record,
             RecordPatches.GetPageControlFieldMap(pageId),
             RecordPatches.GetInsertAllowedForPage(pageId),
@@ -91,14 +91,14 @@ public sealed class RunnerTestClientSession : ITestClientSession
     // answering with a default, which would make a test that used one silently wrong.
 
     public ITestPage CreatePage(int id, ViewMode mode) =>
-        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             $"ITestClientSession.CreatePage({id})",
             "testpage-modal — the runner builds a TestPage through NavTestPageHandle.CreateTarget, "
             + "not through the client session (NavTestPage.Open is rewritten to skip this). "
             + "See docs/scope.md");
 
     public bool ActivatePage(Guid formHandle, bool refresh) =>
-        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             "ITestClientSession.ActivatePage",
             "testpage-modal — page activation is a client-window concept with no in-process "
             + "equivalent here. See docs/scope.md");

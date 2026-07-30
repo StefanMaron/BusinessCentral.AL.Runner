@@ -34,7 +34,7 @@ using NavDiag = Microsoft.Dynamics.Nav.CodeAnalysis.Diagnostics;
 using NavSymRef = Microsoft.Dynamics.Nav.CodeAnalysis.SymbolReference;
 using NavDotNet = Microsoft.Dynamics.Nav.CodeAnalysis.DotNet;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public sealed record EmittedSource(string Name, string Code);
 
@@ -245,7 +245,7 @@ public sealed class BcCompiler
     // The service-tier artifacts dir mirrors BcAssembler.ServiceTierDir.
     // It contains the DLLs (XmlTextReader etc.) that BC DotNet interop resolves against.
     internal static readonly string DefaultServiceTierDir =
-        AlRunnerV2.Infrastructure.BcArtifacts.ServiceTierDir;
+        AlRunner.Infrastructure.BcArtifacts.ServiceTierDir;
 
     private static NavDotNet.IDotNetResolverFactory GetOrCreateDotNetFactory()
     {
@@ -868,12 +868,12 @@ public sealed class BcCompiler
         // Identity: use the bundle's REAL app.json identity when set, else a synthetic
         // one. The real identity matters when a dependency grants this app access via
         // internalsVisibleTo — BC matches the grant against the consuming compilation's
-        // appId/publisher, so a synthetic "AlRunnerV2"/deterministic-guid identity would
+        // appId/publisher, so a synthetic "AlRunner"/deterministic-guid identity would
         // fail to match and produce AL0161 on the dep's Access=Internal members.
         var appId = _currentAppId ?? DeterministicGuid(moduleName);
         var compilation = NavCA.Compilation.Create(
             moduleName: moduleName,
-            publisher: _currentPublisher ?? "AlRunnerV2",
+            publisher: _currentPublisher ?? "AlRunner",
             version: _currentVersion ?? new Version(1, 0, 0, 0),
             appId: appId,
             syntaxTrees: trees,
@@ -1040,7 +1040,7 @@ public sealed class BcCompiler
                 var retryTrees = keepIdx.Select(i => originalTrees[i]).ToArray();
                 var retryCompilation = NavCA.Compilation.Create(
                     moduleName: moduleName,
-                    publisher: _currentPublisher ?? "AlRunnerV2",
+                    publisher: _currentPublisher ?? "AlRunner",
                     version: _currentVersion ?? new Version(1, 0, 0, 0),
                     appId: appId,
                     syntaxTrees: retryTrees,
@@ -1312,7 +1312,7 @@ public sealed class BcCompiler
         var path = Path.Combine(dir, safe + ".SymbolReference.json");
         using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
             SymbolJsonWriter.WriteSymbolJson(compilation, fs);
-        AlRunnerV2.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(path);
+        AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(path);
         LastBundleQuerySymbolsPath = path;
     }
 
@@ -1454,13 +1454,13 @@ public sealed class BcCompiler
     private static IEnumerable<string> ResolveSymbolDirs()
     {
         // Cross-platform home (POSIX HOME is null on Windows — see AlRunnerPaths).
-        var home = AlRunnerV2.Infrastructure.AlRunnerPaths.UserHome;
+        var home = AlRunner.Infrastructure.AlRunnerPaths.UserHome;
         if (string.IsNullOrEmpty(home)) yield break;
 
         // Match the process-global selected BC version (BcArtifacts.SelectedVersion) so
         // compile symbols, runtime deps, and the engine all agree. These caches may carry
         // a different patch level than the artifacts tree, so match on major.minor.
-        var sel = AlRunnerV2.Infrastructure.BcArtifacts.SelectedVersion;
+        var sel = AlRunner.Infrastructure.BcArtifacts.SelectedVersion;
         var mmPrefix = $"{sel.Major}.{sel.Minor}";
 
         foreach (var rel in new[] { ".local/share/al-runner/symbols", ".bcartifacts.cache/sandbox" })
@@ -1470,7 +1470,7 @@ public sealed class BcCompiler
             string bestVer;
             try
             {
-                bestVer = AlRunnerV2.Infrastructure.BcArtifacts.SelectArtifactVersionDir(root, mmPrefix);
+                bestVer = AlRunner.Infrastructure.BcArtifacts.SelectArtifactVersionDir(root, mmPrefix);
             }
             catch (InvalidOperationException)
             {
@@ -1751,7 +1751,7 @@ public sealed class BcCompiler
         /// comma-separated list of codeunit ids (e.g. <c>"60201"</c>, or
         /// <c>"60201,60202"</c> for an enum implementing two interfaces) — the
         /// same shape the prebuilt SymbolReference JSON carries, which
-        /// <see cref="AlRunnerV2.Patches.BcAppSymbolCache"/> already parses. Capturing it
+        /// <see cref="AlRunner.Patches.BcAppSymbolCache"/> already parses. Capturing it
         /// here lets enum→interface casts (<c>ALCompiler.ToInterface(NavOption,index)</c>)
         /// resolve the implementing codeunit for enums compiled from source, not
         /// just for prebuilt MS/ISV apps. Without this the runner returned -1 and

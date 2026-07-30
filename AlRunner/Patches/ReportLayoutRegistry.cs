@@ -27,7 +27,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 /// <summary>One `layout(Name) { … }` declaration inside a report's `rendering` block.</summary>
 public sealed record AlReportLayoutInfo(

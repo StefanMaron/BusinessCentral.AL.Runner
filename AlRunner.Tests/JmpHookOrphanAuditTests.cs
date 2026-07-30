@@ -1,6 +1,6 @@
 using System.Linq;
 using System.Reflection;
-using AlRunnerV2.Infrastructure;
+using AlRunner.Infrastructure;
 using Xunit;
 
 namespace AlRunner.Tests;

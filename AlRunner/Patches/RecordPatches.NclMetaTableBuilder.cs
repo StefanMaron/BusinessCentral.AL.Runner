@@ -12,7 +12,7 @@ using System.Collections.Immutable;
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
@@ -151,7 +151,7 @@ public static partial class RecordPatches
             {
                 EnsureCachePopulatorReflection();
                 if (_fNCLMetaAppObjMetadataLoaded != null)
-                    AlRunnerV2.Infrastructure.FieldPoke.SetInstance(_fNCLMetaAppObjMetadataLoaded, built, true);
+                    AlRunner.Infrastructure.FieldPoke.SetInstance(_fNCLMetaAppObjMetadataLoaded, built, true);
 
                 // W-8b A-prime: poke a real NavTableTriggerEventHandler into the
                 // tableTriggerEventHandler field. NCLMetaTable.TableTriggerEventHandler /
@@ -159,14 +159,14 @@ public static partial class RecordPatches
                 // call sites are R2R-inlined into NavRecord.InsertAsync, the inlined code
                 // reads our field. EventSubscriberPatches.InjectAll later attaches per-event
                 // NavEventSubscription objects to its NavEventScope.registeredSubscriptions.
-                var triggerHandler = AlRunnerV2.Patches.EventSubscriberPatches
+                var triggerHandler = AlRunner.Patches.EventSubscriberPatches
                     .CreateTableTriggerEventHandler();
                 if (triggerHandler != null)
                 {
                     var f = built.GetType().GetField("tableTriggerEventHandler",
                         BindingFlags.NonPublic | BindingFlags.Instance);
                     if (f != null)
-                        AlRunnerV2.Infrastructure.FieldPoke.SetInstance(f, built, triggerHandler);
+                        AlRunner.Infrastructure.FieldPoke.SetInstance(f, built, triggerHandler);
                 }
 
                 // Field-level OnValidate/OnLookup trigger wiring is deferred to
@@ -190,7 +190,7 @@ public static partial class RecordPatches
                 // Register any AutoIncrement fields so NavRecord_ALInsertAsync3 assigns counters.
                 foreach (var f in parsed.Fields)
                     if (f.IsAutoIncrement)
-                        AlRunnerV2.BcRuntime.RegisterAutoIncrementField(tableId, f.FieldId);
+                        AlRunner.BcRuntime.RegisterAutoIncrementField(tableId, f.FieldId);
             }
             return built;
         }
@@ -763,15 +763,15 @@ public static partial class RecordPatches
                 {
                     var handler = BuildFieldTriggerHandler(kvp.Value.validate, recordType);
                     if (handler != null)
-                        AlRunnerV2.Infrastructure.FieldPoke.SetInstance(_fValidateHandlerBacking, etd, handler);
+                        AlRunner.Infrastructure.FieldPoke.SetInstance(_fValidateHandlerBacking, etd, handler);
                 }
                 if (kvp.Value.lookup != null && _fLookupHandlerBacking != null)
                 {
                     var handler = BuildFieldTriggerHandler(kvp.Value.lookup, recordType);
                     if (handler != null)
-                        AlRunnerV2.Infrastructure.FieldPoke.SetInstance(_fLookupHandlerBacking, etd, handler);
+                        AlRunner.Infrastructure.FieldPoke.SetInstance(_fLookupHandlerBacking, etd, handler);
                 }
-                AlRunnerV2.Infrastructure.FieldPoke.SetInstance(_fEventTriggerDataValueBacking, metaField, etd);
+                AlRunner.Infrastructure.FieldPoke.SetInstance(_fEventTriggerDataValueBacking, metaField, etd);
             }
 
             WireExtensionValidateHandlers(built, tableId);
@@ -851,7 +851,7 @@ public static partial class RecordPatches
                 _pOnBeforeValidateHandlers.SetValue(etd, ToHandlerList(before));
             if (afterByField.TryGetValue(fieldNo, out var after))
                 _pOnAfterValidateHandlers.SetValue(etd, ToHandlerList(after));
-            AlRunnerV2.Infrastructure.FieldPoke.SetInstance(_fEventTriggerDataValueBacking, metaField, etd);
+            AlRunner.Infrastructure.FieldPoke.SetInstance(_fEventTriggerDataValueBacking, metaField, etd);
         }
     }
 
@@ -1012,7 +1012,7 @@ public static partial class RecordPatches
                 try
                 {
                     var meta = new AlEnumOptionMetadata(entry.Name, entry.Id, entry.Options, entry.Indexes, entry.Implementations);
-                    AlRunnerV2.Infrastructure.FieldPoke.SetInstance(_fNCLMetaFieldFieldOptionMetadata, nclField, meta);
+                    AlRunner.Infrastructure.FieldPoke.SetInstance(_fNCLMetaFieldFieldOptionMetadata, nclField, meta);
                 }
                 catch (Exception ex)
                 {

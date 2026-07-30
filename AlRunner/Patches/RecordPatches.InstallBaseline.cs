@@ -29,7 +29,7 @@ using System.Collections.Concurrent;
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
@@ -60,7 +60,7 @@ public static partial class RecordPatches
                 // RunAll()-per-boundary approach reseeded EVERYTHING, so a quiet `continue`
                 // here is a behaviour change disguised as an optimisation. Say so instead.
                 if (provider.GetType().Name != "TempTableDataProvider")
-                    throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                    throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                         $"install-baseline snapshot (table {tableId})",
                         $"install-baseline — table {tableId} is backed by {provider.GetType().Name}, "
                         + "which the per-codeunit baseline snapshot cannot capture or restore; "

@@ -13,7 +13,7 @@
 // cached package predates that source. Deleting the .app made the same run compile and execute
 // 1076 tests.
 
-namespace AlRunnerV2.Infrastructure;
+namespace AlRunner.Infrastructure;
 
 internal static class PrebuiltShadowCheck
 {

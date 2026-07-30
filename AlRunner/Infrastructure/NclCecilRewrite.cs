@@ -14,7 +14,7 @@ using System.Security.Cryptography;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 
-namespace AlRunnerV2.Infrastructure;
+namespace AlRunner.Infrastructure;
 
 public static class NclCecilRewrite
 {
@@ -340,8 +340,8 @@ public static class NclCecilRewrite
                 && m.Parameters.Count == 1
                 && m.Parameters[0].ParameterType.FullName == "System.Int32"
                 && m.ReturnType.FullName == "Microsoft.Dynamics.Nav.Runtime.NCLOptionMetadata");
-            var helper = typeof(AlRunnerV2.BcRuntime).GetMethod(
-                nameof(AlRunnerV2.BcRuntime.NCLEnumMetadata_CreateByIdAlAware),
+            var helper = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.NCLEnumMetadata_CreateByIdAlAware),
                 BindingFlags.Public | BindingFlags.Static);
             if (createById != null && helper != null)
             {
@@ -381,8 +381,8 @@ public static class NclCecilRewrite
                 && m.Parameters[1].ParameterType.FullName == "Microsoft.Dynamics.Nav.Runtime.NavOption"
                 && m.Parameters[2].ParameterType.FullName == "System.Int32"
                 && m.ReturnType.FullName == "Microsoft.Dynamics.Nav.Runtime.NavInterfaceHandle");
-            var helper = typeof(AlRunnerV2.BcRuntime).GetMethod(
-                nameof(AlRunnerV2.BcRuntime.ALCompiler_ToInterfaceFromOption),
+            var helper = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.ALCompiler_ToInterfaceFromOption),
                 BindingFlags.Public | BindingFlags.Static);
             if (toInterface == null || helper == null)
                 throw new InvalidOperationException("ALCompiler.ToInterface(ITreeObject,NavOption,int) helper rewrite target not found — Ncl shape changed");
@@ -446,15 +446,15 @@ public static class NclCecilRewrite
         // report request-page chain) still get it; only forms the runner opted in run the
         // real lookup. Same rationale as the form-init trio below; see RunnerFormInit.cs.
         var shouldRunFormInitRef = asm.MainModule.ImportReference(
-            typeof(AlRunnerV2.Patches.RunnerFormInit).GetMethod(
-                nameof(AlRunnerV2.Patches.RunnerFormInit.ShouldRunRealFormInit),
+            typeof(AlRunner.Patches.RunnerFormInit).GetMethod(
+                nameof(AlRunner.Patches.RunnerFormInit.ShouldRunRealFormInit),
                 BindingFlags.Public | BindingFlags.Static)
             ?? throw new InvalidOperationException(
                 "RunnerFormInit.ShouldRunRealFormInit not found — do not commit"));
 
         var shouldResolveMasterPageRef = asm.MainModule.ImportReference(
-            typeof(AlRunnerV2.Patches.RunnerFormInit).GetMethod(
-                nameof(AlRunnerV2.Patches.RunnerFormInit.ShouldResolveMasterPage),
+            typeof(AlRunner.Patches.RunnerFormInit).GetMethod(
+                nameof(AlRunner.Patches.RunnerFormInit.ShouldResolveMasterPage),
                 BindingFlags.Public | BindingFlags.Static)
             ?? throw new InvalidOperationException(
                 "RunnerFormInit.ShouldResolveMasterPage not found — do not commit"));
@@ -904,8 +904,8 @@ public static class NclCecilRewrite
             il.Append(il.Create(OpCodes.Ldarg_0));
             il.Append(il.Create(OpCodes.Ldarg_1));
             il.Append(il.Create(OpCodes.Call, asm.MainModule.ImportReference(
-                typeof(AlRunnerV2.Patches.RunnerTestPageState).GetMethod(
-                    nameof(AlRunnerV2.Patches.RunnerTestPageState.MarkOpened),
+                typeof(AlRunner.Patches.RunnerTestPageState).GetMethod(
+                    nameof(AlRunner.Patches.RunnerTestPageState.MarkOpened),
                     BindingFlags.Public | BindingFlags.Static)
                 ?? throw new InvalidOperationException(
                     "RunnerTestPageState.MarkOpened not found — do not commit"))));
@@ -983,8 +983,8 @@ public static class NclCecilRewrite
             foreach (var ins in toRemove) il.Remove(ins);
 
             var replacement = asm.MainModule.ImportReference(
-                typeof(AlRunnerV2.Patches.RunnerModalDispatch).GetMethod(
-                    nameof(AlRunnerV2.Patches.RunnerModalDispatch.FormRunModal),
+                typeof(AlRunner.Patches.RunnerModalDispatch).GetMethod(
+                    nameof(AlRunner.Patches.RunnerModalDispatch.FormRunModal),
                     BindingFlags.Public | BindingFlags.Static)
                 ?? throw new InvalidOperationException("RunnerModalDispatch.FormRunModal not found — do not commit"));
             il.Replace(call, il.Create(OpCodes.Call, replacement));
@@ -1013,8 +1013,8 @@ public static class NclCecilRewrite
             setDataIl.Append(setDataIl.Create(OpCodes.Box, setData.Parameters[1].ParameterType));
             setDataIl.Append(setDataIl.Create(OpCodes.Ldarg_3));
             setDataIl.Append(setDataIl.Create(OpCodes.Call, asm.MainModule.ImportReference(
-                typeof(AlRunnerV2.Patches.RunnerModalDispatch).GetMethod(
-                    nameof(AlRunnerV2.Patches.RunnerModalDispatch.SetServerFormRequestData),
+                typeof(AlRunner.Patches.RunnerModalDispatch).GetMethod(
+                    nameof(AlRunner.Patches.RunnerModalDispatch.SetServerFormRequestData),
                     BindingFlags.Public | BindingFlags.Static)
                 ?? throw new InvalidOperationException(
                     "RunnerModalDispatch.SetServerFormRequestData not found — do not commit"))));
@@ -1106,8 +1106,8 @@ public static class NclCecilRewrite
                 ?? throw new InvalidOperationException(
                     "[Cecil] NavTestPageBase.Close() not found — Ncl shape changed; do not commit");
 
-            var flushMi = typeof(AlRunnerV2.BcRuntime).GetMethod(
-                nameof(AlRunnerV2.BcRuntime.NavTestPageBase_FlushPendingNewRow),
+            var flushMi = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.NavTestPageBase_FlushPendingNewRow),
                 BindingFlags.Public | BindingFlags.Static)
                 ?? throw new InvalidOperationException(
                     "[Cecil] BcRuntime.NavTestPageBase_FlushPendingNewRow not found");
@@ -1137,8 +1137,8 @@ public static class NclCecilRewrite
                 ?? throw new InvalidOperationException(
                     "[Cecil] NavTestPageBase.ALGoToRecord(2) not found — Ncl shape changed; do not commit");
 
-            var helperMi = typeof(AlRunnerV2.BcRuntime).GetMethod(
-                nameof(AlRunnerV2.BcRuntime.NavTestPageBase_ALGoToRecord),
+            var helperMi = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.NavTestPageBase_ALGoToRecord),
                 BindingFlags.Public | BindingFlags.Static)
                 ?? throw new InvalidOperationException(
                     "[Cecil] BcRuntime.NavTestPageBase_ALGoToRecord not found");
@@ -1170,8 +1170,8 @@ public static class NclCecilRewrite
                     .FirstOrDefault(m => m.Name == "get_ALMediaId" && m.Parameters.Count == 0 && m.HasBody);
                 if (alMediaIdGetter != null)
                 {
-                    var helperMi = typeof(AlRunnerV2.Patches.MediaSetPatches).GetMethod(
-                        nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_get_ALMediaId),
+                    var helperMi = typeof(AlRunner.Patches.MediaSetPatches).GetMethod(
+                        nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_get_ALMediaId),
                         BindingFlags.Public | BindingFlags.Static)
                         ?? throw new InvalidOperationException("[Cecil] MediaSetPatches.NavMediaSet_get_ALMediaId not found");
                     ReplaceBodyWithHelper(asm.MainModule, alMediaIdGetter, helperMi);
@@ -1197,7 +1197,7 @@ public static class NclCecilRewrite
             var navMediaSetCecilType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavMediaSet");
             if (navMediaSetCecilType != null)
             {
-                var patchTypeMi = typeof(AlRunnerV2.Patches.MediaSetPatches);
+                var patchTypeMi = typeof(AlRunner.Patches.MediaSetPatches);
                 int mediaSetRewrote = 0;
 
                 // ALInsert(DataError errorLevel, Guid mediaId) → bool
@@ -1205,7 +1205,7 @@ public static class NclCecilRewrite
                     m.Name == "ALInsert" && m.HasBody && m.Parameters.Count == 2);
                 if (mInsert != null)
                 {
-                    var h = patchTypeMi.GetMethod(nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_ALInsert), BindingFlags.Public | BindingFlags.Static)!;
+                    var h = patchTypeMi.GetMethod(nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_ALInsert), BindingFlags.Public | BindingFlags.Static)!;
                     ReplaceBodyWithHelper(asm.MainModule, mInsert, h);
                     mediaSetRewrote++;
                 }
@@ -1215,7 +1215,7 @@ public static class NclCecilRewrite
                     m.Name == "ALRemove" && m.HasBody && m.Parameters.Count == 2);
                 if (mRemove != null)
                 {
-                    var h = patchTypeMi.GetMethod(nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_ALRemove), BindingFlags.Public | BindingFlags.Static)!;
+                    var h = patchTypeMi.GetMethod(nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_ALRemove), BindingFlags.Public | BindingFlags.Static)!;
                     ReplaceBodyWithHelper(asm.MainModule, mRemove, h);
                     mediaSetRewrote++;
                 }
@@ -1225,7 +1225,7 @@ public static class NclCecilRewrite
                     m.Name == "get_ALCount" && m.HasBody && m.Parameters.Count == 0);
                 if (mCount != null)
                 {
-                    var h = patchTypeMi.GetMethod(nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_get_ALCount), BindingFlags.Public | BindingFlags.Static)!;
+                    var h = patchTypeMi.GetMethod(nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_get_ALCount), BindingFlags.Public | BindingFlags.Static)!;
                     ReplaceBodyWithHelper(asm.MainModule, mCount, h);
                     mediaSetRewrote++;
                 }
@@ -1235,7 +1235,7 @@ public static class NclCecilRewrite
                     m.Name == "ALItem" && m.HasBody && m.Parameters.Count == 1);
                 if (mItem != null)
                 {
-                    var h = patchTypeMi.GetMethod(nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_ALItem), BindingFlags.Public | BindingFlags.Static)!;
+                    var h = patchTypeMi.GetMethod(nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_ALItem), BindingFlags.Public | BindingFlags.Static)!;
                     ReplaceBodyWithHelper(asm.MainModule, mItem, h);
                     mediaSetRewrote++;
                 }
@@ -1246,8 +1246,8 @@ public static class NclCecilRewrite
                     var ps = m.Parameters;
                     if (ps.Count < 3 || ps[1].ParameterType.FullName != "System.String") continue;
                     var replName = ps.Count == 3
-                        ? nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_ALImport_File2)
-                        : nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_ALImport_File3);
+                        ? nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_ALImport_File2)
+                        : nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_ALImport_File3);
                     var h = patchTypeMi.GetMethod(replName, BindingFlags.Public | BindingFlags.Static);
                     if (h != null) { ReplaceBodyWithHelper(asm.MainModule, m, h); mediaSetRewrote++; }
                 }
@@ -1257,7 +1257,7 @@ public static class NclCecilRewrite
                     m.Name == "ALExport" && m.HasBody && m.Parameters.Count == 2);
                 if (mExport != null)
                 {
-                    var h = patchTypeMi.GetMethod(nameof(AlRunnerV2.Patches.MediaSetPatches.NavMediaSet_ALExport), BindingFlags.Public | BindingFlags.Static)!;
+                    var h = patchTypeMi.GetMethod(nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_ALExport), BindingFlags.Public | BindingFlags.Static)!;
                     ReplaceBodyWithHelper(asm.MainModule, mExport, h);
                     mediaSetRewrote++;
                 }
@@ -1304,8 +1304,8 @@ public static class NclCecilRewrite
             .FirstOrDefault(m => m.Name == "OnRunEventAsync" && m.Parameters.Count == 0)
             ?? throw new InvalidOperationException("NavMethodScope.OnRunEventAsync() not found — Ncl shape changed");
         {
-            var dispatcherMethod = typeof(AlRunnerV2.BcRuntime).GetMethod(
-                nameof(AlRunnerV2.BcRuntime.CodeunitEventDispatch_OnRunEventAsync),
+            var dispatcherMethod = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.CodeunitEventDispatch_OnRunEventAsync),
                 BindingFlags.Public | BindingFlags.Static)
                 ?? throw new InvalidOperationException("BcRuntime.CodeunitEventDispatch_OnRunEventAsync not found");
             var dispatcherRef = asm.MainModule.ImportReference(dispatcherMethod);
@@ -1338,8 +1338,8 @@ public static class NclCecilRewrite
                 .FirstOrDefault(m => m.Name == "get_Target")
                 ?? throw new InvalidOperationException("NavObjectList<T>.get_Target not found");
 
-            var helperMethodInfo = typeof(AlRunnerV2.BcRuntime).GetMethod(
-                nameof(AlRunnerV2.BcRuntime.NavObjectList_get_Target),
+            var helperMethodInfo = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.NavObjectList_get_Target),
                 BindingFlags.Public | BindingFlags.Static)
                 ?? throw new InvalidOperationException("BcRuntime.NavObjectList_get_Target not found");
             var helperRef = asm.MainModule.ImportReference(helperMethodInfo);
@@ -1387,8 +1387,8 @@ public static class NclCecilRewrite
                 .FirstOrDefault(m => m.Name == "get_Target" && m.Parameters.Count == 0)
                 ?? throw new InvalidOperationException("NavObjectDictionary<TKey,TValue>.get_Target not found");
 
-            var helperMethodInfo = typeof(AlRunnerV2.BcRuntime).GetMethod(
-                nameof(AlRunnerV2.BcRuntime.NavObjectDictionary_get_Target),
+            var helperMethodInfo = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.NavObjectDictionary_get_Target),
                 BindingFlags.Public | BindingFlags.Static)
                 ?? throw new InvalidOperationException("BcRuntime.NavObjectDictionary_get_Target not found");
             var helperRef = asm.MainModule.ImportReference(helperMethodInfo);
@@ -1427,7 +1427,7 @@ public static class NclCecilRewrite
                 m.Name == "DotNetToNavOutStream" && m.Parameters.Count == 2)
                 ?? throw new InvalidOperationException("ALCompiler.DotNetToNavOutStream/2 not found — shape changed");
             ReplaceBodyWithHelper(asm.MainModule, dotNetToNavOutStream,
-                nameof(AlRunnerV2.BcRuntime.ALCompiler_DotNetToNavOutStream));
+                nameof(AlRunner.BcRuntime.ALCompiler_DotNetToNavOutStream));
             Console.Error.WriteLine("[Cecil] Rewrote ALCompiler.DotNetToNavOutStream → BcRuntime helper (skeleton SharedObjects fallback)");
         }
 
@@ -1492,8 +1492,8 @@ public static class NclCecilRewrite
                 if (getTarget != null && getTarget.HasBody)
                 {
                     var sharedHttpType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.SharedNavHttpClient");
-                    var helperMI = typeof(AlRunnerV2.BcRuntime).GetMethod(
-                        nameof(AlRunnerV2.BcRuntime.NavHttpClient_get_Target),
+                    var helperMI = typeof(AlRunner.BcRuntime).GetMethod(
+                        nameof(AlRunner.BcRuntime.NavHttpClient_get_Target),
                         BindingFlags.Public | BindingFlags.Static);
                     if (sharedHttpType != null && helperMI != null)
                     {
@@ -1524,8 +1524,8 @@ public static class NclCecilRewrite
             {
                 var getTarget = httpRespType.Methods.FirstOrDefault(mm => mm.Name == "get_Target");
                 var sharedRespType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.SharedNavHttpResponseMessage");
-                var helperMI = typeof(AlRunnerV2.BcRuntime).GetMethod(
-                    nameof(AlRunnerV2.BcRuntime.NavHttpResponseMessageBase_get_Target),
+                var helperMI = typeof(AlRunner.BcRuntime).GetMethod(
+                    nameof(AlRunner.BcRuntime.NavHttpResponseMessageBase_get_Target),
                     BindingFlags.Public | BindingFlags.Static);
                 if (getTarget != null && getTarget.HasBody && sharedRespType != null && helperMI != null)
                 {
@@ -1654,8 +1654,8 @@ public static class NclCecilRewrite
                     x.Name == "GetPackagedResource" && x.Parameters.Count == 2);
                 if (getPackaged != null)
                 {
-                    var h = typeof(AlRunnerV2.Patches.NavAppResourcePatches).GetMethod(
-                        nameof(AlRunnerV2.Patches.NavAppResourcePatches.ALNavApp_GetPackagedResource),
+                    var h = typeof(AlRunner.Patches.NavAppResourcePatches).GetMethod(
+                        nameof(AlRunner.Patches.NavAppResourcePatches.ALNavApp_GetPackagedResource),
                         BindingFlags.Public | BindingFlags.Static)!;
                     ReplaceBodyWithHelper(asm.MainModule, getPackaged, h);
                     Console.Error.WriteLine("[Cecil] Rewrote ALNavApp.GetPackagedResource → NavAppResourcePatches (owning-app resource lookup)");
@@ -1664,8 +1664,8 @@ public static class NclCecilRewrite
                 {
                     if (!m.ReturnType.FullName.StartsWith("System.Threading.Tasks.Task`1<"))
                         continue;
-                    var h = typeof(AlRunnerV2.Patches.NavAppResourcePatches).GetMethod(
-                        nameof(AlRunnerV2.Patches.NavAppResourcePatches.ALNavApp_ALGetResourceAsTextAsync),
+                    var h = typeof(AlRunner.Patches.NavAppResourcePatches).GetMethod(
+                        nameof(AlRunner.Patches.NavAppResourcePatches.ALNavApp_ALGetResourceAsTextAsync),
                         BindingFlags.Public | BindingFlags.Static)!;
                     ReplaceBodyWithHelper(asm.MainModule, m, h);
                     Console.Error.WriteLine($"[Cecil] Rewrote ALNavApp.{m.Name} → NavAppResourcePatches (skeleton-safe encoding + resource lookup)");
@@ -1688,8 +1688,8 @@ public static class NclCecilRewrite
                     x.Name == "ALGetCurrentModuleInfo" && x.Parameters.Count == 2 && x.IsStatic);
                 if (mCurrent != null)
                 {
-                    var h = typeof(AlRunnerV2.Patches.NavAppModuleInfoPatches).GetMethod(
-                        nameof(AlRunnerV2.Patches.NavAppModuleInfoPatches.ALNavApp_GetCurrentModuleInfo),
+                    var h = typeof(AlRunner.Patches.NavAppModuleInfoPatches).GetMethod(
+                        nameof(AlRunner.Patches.NavAppModuleInfoPatches.ALNavApp_GetCurrentModuleInfo),
                         BindingFlags.Public | BindingFlags.Static)!;
                     ReplaceBodyWithHelper(asm.MainModule, mCurrent, h);
                 }
@@ -1698,8 +1698,8 @@ public static class NclCecilRewrite
                     x.Name == "ALGetCallerModuleInfo" && x.Parameters.Count == 2 && x.IsStatic);
                 if (mCaller != null)
                 {
-                    var h = typeof(AlRunnerV2.Patches.NavAppModuleInfoPatches).GetMethod(
-                        nameof(AlRunnerV2.Patches.NavAppModuleInfoPatches.ALNavApp_GetCallerModuleInfo),
+                    var h = typeof(AlRunner.Patches.NavAppModuleInfoPatches).GetMethod(
+                        nameof(AlRunner.Patches.NavAppModuleInfoPatches.ALNavApp_GetCallerModuleInfo),
                         BindingFlags.Public | BindingFlags.Static)!;
                     ReplaceBodyWithHelper(asm.MainModule, mCaller, h);
                 }
@@ -1722,8 +1722,8 @@ public static class NclCecilRewrite
 
             if (mCsnh != null && asmField != null && ehCatch != null)
             {
-                var helperMi = typeof(AlRunnerV2.Patches.NavDotNetPatches).GetMethod(
-                    nameof(AlRunnerV2.Patches.NavDotNetPatches.ThrowServerInteropOOS),
+                var helperMi = typeof(AlRunner.Patches.NavDotNetPatches).GetMethod(
+                    nameof(AlRunner.Patches.NavDotNetPatches.ThrowServerInteropOOS),
                     BindingFlags.Public | BindingFlags.Static)!;
                 var helperRef = asm.MainModule.ImportReference(helperMi);
                 var il = mCsnh.Body.GetILProcessor();
@@ -1782,8 +1782,8 @@ public static class NclCecilRewrite
 
             if (mCd != null && ehAll != null)
             {
-                var rethrowMi = typeof(AlRunnerV2.Patches.NavDotNetPatches).GetMethod(
-                    nameof(AlRunnerV2.Patches.NavDotNetPatches.RethrowIfRunnerOOS),
+                var rethrowMi = typeof(AlRunner.Patches.NavDotNetPatches).GetMethod(
+                    nameof(AlRunner.Patches.NavDotNetPatches.RethrowIfRunnerOOS),
                     BindingFlags.Public | BindingFlags.Static)!;
                 var rethrowRef = asm.MainModule.ImportReference(rethrowMi);
                 var il = mCd.Body.GetILProcessor();
@@ -1818,7 +1818,7 @@ public static class NclCecilRewrite
             var repoType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.IsolatedStorageRepository");
             if (repoType != null)
             {
-                var tsp = typeof(AlRunnerV2.Patches.TenantStoragePatches);
+                var tsp = typeof(AlRunner.Patches.TenantStoragePatches);
                 void RewriteRepo(string name, int paramCount, string helperName)
                 {
                     var m = repoType.Methods.FirstOrDefault(x => x.Name == name && x.Parameters.Count == paramCount)
@@ -1828,11 +1828,11 @@ public static class NclCecilRewrite
                         ?? throw new InvalidOperationException($"TenantStoragePatches.{helperName} not found");
                     ReplaceBodyWithHelper(asm.MainModule, m, h);
                 }
-                RewriteRepo("Set", 9, nameof(AlRunnerV2.Patches.TenantStoragePatches.Repo_Set));
-                RewriteRepo("Get", 8, nameof(AlRunnerV2.Patches.TenantStoragePatches.Repo_Get));
-                RewriteRepo("Contains", 6, nameof(AlRunnerV2.Patches.TenantStoragePatches.Repo_Contains_6));
-                RewriteRepo("Contains", 5, nameof(AlRunnerV2.Patches.TenantStoragePatches.Repo_Contains_5));
-                RewriteRepo("Delete", 6, nameof(AlRunnerV2.Patches.TenantStoragePatches.Repo_Delete));
+                RewriteRepo("Set", 9, nameof(AlRunner.Patches.TenantStoragePatches.Repo_Set));
+                RewriteRepo("Get", 8, nameof(AlRunner.Patches.TenantStoragePatches.Repo_Get));
+                RewriteRepo("Contains", 6, nameof(AlRunner.Patches.TenantStoragePatches.Repo_Contains_6));
+                RewriteRepo("Contains", 5, nameof(AlRunner.Patches.TenantStoragePatches.Repo_Contains_5));
+                RewriteRepo("Delete", 6, nameof(AlRunner.Patches.TenantStoragePatches.Repo_Delete));
                 Console.Error.WriteLine("[Cecil] Rewrote IsolatedStorageRepository.{Set,Get,Contains×2,Delete} → TenantStoragePatches in-memory store");
             }
 
@@ -1846,7 +1846,7 @@ public static class NclCecilRewrite
             var sysEncType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.ALSystemEncryption");
             if (sysEncType != null)
             {
-                var tsp2 = typeof(AlRunnerV2.Patches.TenantStoragePatches);
+                var tsp2 = typeof(AlRunner.Patches.TenantStoragePatches);
                 void RewriteEnc(string name, int paramCount, string helperName)
                 {
                     var m = sysEncType.Methods.FirstOrDefault(x => x.Name == name && x.Parameters.Count == paramCount)
@@ -1856,10 +1856,10 @@ public static class NclCecilRewrite
                         ?? throw new InvalidOperationException($"TenantStoragePatches.{helperName} not found");
                     ReplaceBodyWithHelper(asm.MainModule, m, h);
                 }
-                RewriteEnc("ALEncrypt", 1, nameof(AlRunnerV2.Patches.TenantStoragePatches.SysEnc_ALEncrypt));
-                RewriteEnc("ALDecrypt", 1, nameof(AlRunnerV2.Patches.TenantStoragePatches.SysEnc_ALDecrypt));
-                RewriteEnc("ALKeyExists", 0, nameof(AlRunnerV2.Patches.TenantStoragePatches.SysEnc_ALKeyExists));
-                RewriteEnc("ALEncryptionEnabled", 0, nameof(AlRunnerV2.Patches.TenantStoragePatches.SysEnc_ALEncryptionEnabled));
+                RewriteEnc("ALEncrypt", 1, nameof(AlRunner.Patches.TenantStoragePatches.SysEnc_ALEncrypt));
+                RewriteEnc("ALDecrypt", 1, nameof(AlRunner.Patches.TenantStoragePatches.SysEnc_ALDecrypt));
+                RewriteEnc("ALKeyExists", 0, nameof(AlRunner.Patches.TenantStoragePatches.SysEnc_ALKeyExists));
+                RewriteEnc("ALEncryptionEnabled", 0, nameof(AlRunner.Patches.TenantStoragePatches.SysEnc_ALEncryptionEnabled));
                 Console.Error.WriteLine("[Cecil] Rewrote ALSystemEncryption.{ALEncrypt,ALDecrypt,ALKeyExists,ALEncryptionEnabled} → in-process AES envelope");
             }
         }
@@ -2027,7 +2027,7 @@ public static class NclCecilRewrite
                 if (alErrorTypeField != null && nclTypeGetter != null && createMethod != null && createMethod.HasBody)
                 {
                     int alErrorEnumValue = (int)alErrorTypeField.Constant;
-                    var helperMi = typeof(AlRunnerV2.BcRuntime).GetMethod(
+                    var helperMi = typeof(AlRunner.BcRuntime).GetMethod(
                         "CreateNavALErrorType",
                         BindingFlags.Public | BindingFlags.Static);
                     var helperRef = asm.MainModule.ImportReference(helperMi);
@@ -2061,7 +2061,7 @@ public static class NclCecilRewrite
                 {
                     var m = recordLinkType.Methods.FirstOrDefault(x => x.Name == mName && x.Parameters.Count == paramCount);
                     if (m == null || !m.HasBody) return;
-                    var helperMi = typeof(AlRunnerV2.BcRuntime).GetMethod(helperName, BindingFlags.Public | BindingFlags.Static);
+                    var helperMi = typeof(AlRunner.BcRuntime).GetMethod(helperName, BindingFlags.Public | BindingFlags.Static);
                     if (helperMi == null) return;
                     var helperRef = asm.MainModule.ImportReference(helperMi);
                     m.Body.Instructions.Clear();
@@ -2074,13 +2074,13 @@ public static class NclCecilRewrite
                     il.Append(il.Create(OpCodes.Ret));
                     Console.Error.WriteLine($"[Cecil] Rewrote RecordLink.{mName}({paramCount}) → {helperName}");
                 }
-                ReplaceWithStaticHelper("AddLinkAsync", nameof(AlRunnerV2.BcRuntime.RecordLink_AddLinkAsync), 3);
-                ReplaceWithStaticHelper("HasLinks", nameof(AlRunnerV2.BcRuntime.RecordLink_HasLinks), 1);
-                ReplaceWithStaticHelper("DeleteLinksAsync", nameof(AlRunnerV2.BcRuntime.RecordLink_DeleteLinksAsync), 1);
-                ReplaceWithStaticHelper("DeleteLinkAsync", nameof(AlRunnerV2.BcRuntime.RecordLink_DeleteLinkAsync), 2);
-                ReplaceWithStaticHelper("CopyLinksAsync", nameof(AlRunnerV2.BcRuntime.RecordLink_CopyLinksAsync), 2);
-                ReplaceWithStaticHelper("MoveLinksAsync", nameof(AlRunnerV2.BcRuntime.RecordLink_MoveLinksAsync), 2);
-                ReplaceWithStaticHelper("TableHasLinks", nameof(AlRunnerV2.BcRuntime.RecordLink_TableHasLinks), 3);
+                ReplaceWithStaticHelper("AddLinkAsync", nameof(AlRunner.BcRuntime.RecordLink_AddLinkAsync), 3);
+                ReplaceWithStaticHelper("HasLinks", nameof(AlRunner.BcRuntime.RecordLink_HasLinks), 1);
+                ReplaceWithStaticHelper("DeleteLinksAsync", nameof(AlRunner.BcRuntime.RecordLink_DeleteLinksAsync), 1);
+                ReplaceWithStaticHelper("DeleteLinkAsync", nameof(AlRunner.BcRuntime.RecordLink_DeleteLinkAsync), 2);
+                ReplaceWithStaticHelper("CopyLinksAsync", nameof(AlRunner.BcRuntime.RecordLink_CopyLinksAsync), 2);
+                ReplaceWithStaticHelper("MoveLinksAsync", nameof(AlRunner.BcRuntime.RecordLink_MoveLinksAsync), 2);
+                ReplaceWithStaticHelper("TableHasLinks", nameof(AlRunner.BcRuntime.RecordLink_TableHasLinks), 3);
             }
         }
 
@@ -2601,8 +2601,8 @@ public static class NclCecilRewrite
                 && m.Parameters[1].ParameterType.GetElementType().FullName == "Microsoft.Dynamics.Nav.Runtime.NCLMetaField")
                 ?? throw new InvalidOperationException("RecordImplementation.CalcFieldsAsync(DataError,NCLMetaField[]) not found");
 
-            var helperMi = typeof(AlRunnerV2.Patches.FlowFieldPatches).GetMethod(
-                nameof(AlRunnerV2.Patches.FlowFieldPatches.RecordImpl_CalcFieldsAsync_2),
+            var helperMi = typeof(AlRunner.Patches.FlowFieldPatches).GetMethod(
+                nameof(AlRunner.Patches.FlowFieldPatches.RecordImpl_CalcFieldsAsync_2),
                 BindingFlags.Public | BindingFlags.Static)
                 ?? throw new InvalidOperationException("FlowFieldPatches.RecordImpl_CalcFieldsAsync_2 not found");
             var helperRef = asm.MainModule.ImportReference(helperMi);
@@ -2644,8 +2644,8 @@ public static class NclCecilRewrite
                 && m.Parameters[2].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean)
                 ?? throw new InvalidOperationException("RecordImplementation.CalcFieldsAsync(DataError,NCLMetaField[],bool) not found");
 
-            var helperMi = typeof(AlRunnerV2.Patches.FlowFieldPatches).GetMethod(
-                nameof(AlRunnerV2.Patches.FlowFieldPatches.RecordImpl_CalcFieldsAsync_3),
+            var helperMi = typeof(AlRunner.Patches.FlowFieldPatches).GetMethod(
+                nameof(AlRunner.Patches.FlowFieldPatches.RecordImpl_CalcFieldsAsync_3),
                 BindingFlags.Public | BindingFlags.Static)
                 ?? throw new InvalidOperationException("FlowFieldPatches.RecordImpl_CalcFieldsAsync_3 not found");
             var helperRef = asm.MainModule.ImportReference(helperMi);
@@ -2686,8 +2686,8 @@ public static class NclCecilRewrite
                 && x.Parameters[0].ParameterType is ArrayType)
                 ?? throw new InvalidOperationException("FlowFieldsHelper.FieldsAndFormulaAreSelfReferencing not found");
 
-            var helperMi = typeof(AlRunnerV2.Patches.FlowFieldPatches).GetMethod(
-                nameof(AlRunnerV2.Patches.FlowFieldPatches.FieldsAndFormulaAreSelfReferencing),
+            var helperMi = typeof(AlRunner.Patches.FlowFieldPatches).GetMethod(
+                nameof(AlRunner.Patches.FlowFieldPatches.FieldsAndFormulaAreSelfReferencing),
                 BindingFlags.Public | BindingFlags.Static)
                 ?? throw new InvalidOperationException("FlowFieldPatches.FieldsAndFormulaAreSelfReferencing not found");
             var helperRef = asm.MainModule.ImportReference(helperMi);
@@ -2719,8 +2719,8 @@ public static class NclCecilRewrite
                 && m.Parameters.Count == 4)
                 ?? throw new InvalidOperationException("RecordImplementation.InternalFindRecordWithoutCheckingValuesAsync not found");
 
-            var helperMi = typeof(AlRunnerV2.BcRuntime).GetMethod(
-                nameof(AlRunnerV2.BcRuntime.RecordImpl_InternalFindRecordWithoutCheckingValuesAsync),
+            var helperMi = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.RecordImpl_InternalFindRecordWithoutCheckingValuesAsync),
                 BindingFlags.Public | BindingFlags.Static)
                 ?? throw new InvalidOperationException("BcRuntime.RecordImpl_InternalFindRecordWithoutCheckingValuesAsync not found");
             var helperRef = asm.MainModule.ImportReference(helperMi);
@@ -2770,7 +2770,7 @@ public static class NclCecilRewrite
                 && m.Parameters[1].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean)
                 ?? throw new InvalidOperationException("DataAccessSource.GetDataAccessForTable(NCLMetaTable, bool) not found");
 
-            var helperMi = typeof(AlRunnerV2.Patches.RecordPatches).GetMethod(
+            var helperMi = typeof(AlRunner.Patches.RecordPatches).GetMethod(
                 "NavDataAccessSource_GetDataAccessForTable",
                 BindingFlags.Public | BindingFlags.Static)
                 ?? throw new InvalidOperationException("RecordPatches.NavDataAccessSource_GetDataAccessForTable not found");
@@ -2809,7 +2809,7 @@ public static class NclCecilRewrite
                 m.Name == "get_SortingProperties" && m.Parameters.Count == 0 && !m.IsStatic)
                 ?? throw new InvalidOperationException("NavSession.get_SortingProperties not found");
 
-            var helperMi = typeof(AlRunnerV2.Patches.RecordPatches).GetMethod(
+            var helperMi = typeof(AlRunner.Patches.RecordPatches).GetMethod(
                 "NavSession_get_SortingProperties",
                 BindingFlags.Public | BindingFlags.Static)
                 ?? throw new InvalidOperationException("RecordPatches.NavSession_get_SortingProperties not found");
@@ -2922,8 +2922,8 @@ public static class NclCecilRewrite
                 && m.Parameters[2].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean)
                 ?? throw new InvalidOperationException("NavRecord.ALInsertAsync(DataError,bool,bool) not found");
 
-            var helperMi = typeof(AlRunnerV2.BcRuntime).GetMethod(
-                nameof(AlRunnerV2.BcRuntime.AssignAutoIncrement),
+            var helperMi = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.AssignAutoIncrement),
                 BindingFlags.Public | BindingFlags.Static)
                 ?? throw new InvalidOperationException("BcRuntime.AssignAutoIncrement not found");
             var helperRef = asm.MainModule.ImportReference(helperMi);
@@ -2956,8 +2956,8 @@ public static class NclCecilRewrite
                 && m.Parameters[2].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean)
                 ?? throw new InvalidOperationException("NavRecord.ALInsertAsync(DataError,bool,bool) not found");
 
-            var helperMi = typeof(AlRunnerV2.BcRuntime).GetMethod(
-                nameof(AlRunnerV2.BcRuntime.StampSystemFieldsOnInsert),
+            var helperMi = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.StampSystemFieldsOnInsert),
                 BindingFlags.Public | BindingFlags.Static)
                 ?? throw new InvalidOperationException("BcRuntime.StampSystemFieldsOnInsert not found");
             var helperRef = asm.MainModule.ImportReference(helperMi);
@@ -2996,8 +2996,8 @@ public static class NclCecilRewrite
             }
             if (alModify != null)
             {
-                var helperMi = typeof(AlRunnerV2.BcRuntime).GetMethod(
-                    nameof(AlRunnerV2.BcRuntime.StampSystemFieldsOnModify),
+                var helperMi = typeof(AlRunner.BcRuntime).GetMethod(
+                    nameof(AlRunner.BcRuntime.StampSystemFieldsOnModify),
                     BindingFlags.Public | BindingFlags.Static)
                     ?? throw new InvalidOperationException("BcRuntime.StampSystemFieldsOnModify not found");
                 var helperRef = asm.MainModule.ImportReference(helperMi);
@@ -3898,8 +3898,8 @@ public static class NclCecilRewrite
             var ioeCtor = asm.MainModule.ImportReference(
                 typeof(InvalidOperationException).GetConstructor(new[] { typeof(string) })!);
             var syncRunRequestPageRef = asm.MainModule.ImportReference(
-                typeof(AlRunnerV2.NavReportSync).GetMethod(
-                    nameof(AlRunnerV2.NavReportSync.SyncRunRequestPage),
+                typeof(AlRunner.NavReportSync).GetMethod(
+                    nameof(AlRunner.NavReportSync.SyncRunRequestPage),
                     new[] { typeof(object), typeof(int), typeof(string) })
                 ?? throw new InvalidOperationException(
                     "NavReportSync.SyncRunRequestPage(object,int,string) not found — do not commit"));
@@ -3934,7 +3934,7 @@ public static class NclCecilRewrite
                         && method.ReturnType.FullName == "System.Void"
                         && method.IsVirtual && !method.IsNewSlot)
                     {
-                        var reportAddInfo = typeof(AlRunnerV2.NavReportSync).GetMethod("ReportAdd",
+                        var reportAddInfo = typeof(AlRunner.NavReportSync).GetMethod("ReportAdd",
                             BindingFlags.Static | BindingFlags.Public)
                             ?? throw new InvalidOperationException("NavReportSync.ReportAdd not found via reflection");
                         var reportAddRef = asm.MainModule.ImportReference(reportAddInfo);
@@ -3977,7 +3977,7 @@ public static class NclCecilRewrite
                         && ps.Count == 0
                         && method.ReturnType.FullName == "System.Void")
                     {
-                        var stubInfo = typeof(AlRunnerV2.NavReportSync).GetMethod("StubInitializeMetadata",
+                        var stubInfo = typeof(AlRunner.NavReportSync).GetMethod("StubInitializeMetadata",
                             BindingFlags.Static | BindingFlags.Public)
                             ?? throw new InvalidOperationException("NavReportSync.StubInitializeMetadata not found via reflection");
                         var stubRef = asm.MainModule.ImportReference(stubInfo);
@@ -4020,7 +4020,7 @@ public static class NclCecilRewrite
                         && method.Parameters.Count == 0
                         && method.ReturnType.FullName == "System.Void")
                     {
-                        var syncRunInfo = typeof(AlRunnerV2.NavReportSync).GetMethod("SyncRun",
+                        var syncRunInfo = typeof(AlRunner.NavReportSync).GetMethod("SyncRun",
                             BindingFlags.Static | BindingFlags.Public)
                             ?? throw new InvalidOperationException("NavReportSync.SyncRun not found via reflection");
                         var syncRunRef = asm.MainModule.ImportReference(syncRunInfo);
@@ -4275,8 +4275,8 @@ public static class NclCecilRewrite
             // Excel). The NCL skeleton only carries the enum default (RDLC) so an
             // in-body GetMetaReportById(reportId).DefaultLayout would misclassify
             // Custom-layout reports as RDLC → wrongly out-of-scope.
-            var resolveMi = typeof(AlRunnerV2.NavReportSync).GetMethod(
-                nameof(AlRunnerV2.NavReportSync.ResolveDefaultReportModel),
+            var resolveMi = typeof(AlRunner.NavReportSync).GetMethod(
+                nameof(AlRunner.NavReportSync.ResolveDefaultReportModel),
                 BindingFlags.Public | BindingFlags.Static)
                 ?? throw new InvalidOperationException("NavReportSync.ResolveDefaultReportModel not found");
             var resolveRef = asm.MainModule.ImportReference(resolveMi);
@@ -4341,7 +4341,7 @@ public static class NclCecilRewrite
                 var m = rlT.Methods.FirstOrDefault(mm => mm.Name == methodName && mm.HasBody)
                     ?? throw new InvalidOperationException(
                         $"[Cecil] ReportLayout.{methodName} not found — Ncl shape changed; do not commit");
-                var mi = typeof(AlRunnerV2.Patches.ReportLayoutHydration).GetMethod(
+                var mi = typeof(AlRunner.Patches.ReportLayoutHydration).GetMethod(
                     helperName, BindingFlags.Public | BindingFlags.Static)
                     ?? throw new InvalidOperationException($"[Cecil] ReportLayoutHydration.{helperName} not found");
                 var b = m.Body;
@@ -4352,8 +4352,8 @@ public static class NclCecilRewrite
                 if (b.MaxStackSize < 1) b.MaxStackSize = 1;
             }
 
-            PrependProbe("get_LayoutStream", nameof(AlRunnerV2.Patches.ReportLayoutHydration.HydrateLayoutStream));
-            PrependProbe("CalculateMimetype", nameof(AlRunnerV2.Patches.ReportLayoutHydration.HydrateMimetype));
+            PrependProbe("get_LayoutStream", nameof(AlRunner.Patches.ReportLayoutHydration.HydrateLayoutStream));
+            PrependProbe("CalculateMimetype", nameof(AlRunner.Patches.ReportLayoutHydration.HydrateMimetype));
             Console.Error.WriteLine("[Cecil] Prepended layout hydration to ReportLayout.get_LayoutStream + CalculateMimetype");
         }
 
@@ -4409,7 +4409,7 @@ public static class NclCecilRewrite
                 m.Name == "CreateObjectInstance" && m.HasBody && m.Parameters.Count == 2
                 && m.Parameters[1].ParameterType.FullName == "System.Boolean")
                 ?? throw new InvalidOperationException("NCLMetaReport.CreateObjectInstance(ITreeObject,bool) not found — Ncl shape changed; do not commit");
-            var helperInfo = typeof(AlRunnerV2.NavReportSync).GetMethod("CreateReportInstance",
+            var helperInfo = typeof(AlRunner.NavReportSync).GetMethod("CreateReportInstance",
                 BindingFlags.Static | BindingFlags.Public)
                 ?? throw new InvalidOperationException("NavReportSync.CreateReportInstance not found via reflection");
             var helperRef = asm.MainModule.ImportReference(helperInfo);
@@ -4708,8 +4708,8 @@ public static class NclCecilRewrite
                 // so every caller that used to get an immediate `ret` still does, byte for
                 // byte, and only forms the runner explicitly opted in run for real.
                 var shouldRunRef = asm.MainModule.ImportReference(
-                    typeof(AlRunnerV2.Patches.RunnerFormInit).GetMethod(
-                        nameof(AlRunnerV2.Patches.RunnerFormInit.ShouldRunRealFormInit),
+                    typeof(AlRunner.Patches.RunnerFormInit).GetMethod(
+                        nameof(AlRunner.Patches.RunnerFormInit.ShouldRunRealFormInit),
                         BindingFlags.Public | BindingFlags.Static)
                     ?? throw new InvalidOperationException(
                         "RunnerFormInit.ShouldRunRealFormInit not found — do not commit"));
@@ -4721,8 +4721,8 @@ public static class NclCecilRewrite
                 // value bindings, so on the narrow gate every page-variable-bound control on
                 // a modal page was unresolvable. See RunnerFormInit.ShouldRegisterSourceExpressions.
                 var shouldRegisterRef = asm.MainModule.ImportReference(
-                    typeof(AlRunnerV2.Patches.RunnerFormInit).GetMethod(
-                        nameof(AlRunnerV2.Patches.RunnerFormInit.ShouldRegisterSourceExpressions),
+                    typeof(AlRunner.Patches.RunnerFormInit).GetMethod(
+                        nameof(AlRunner.Patches.RunnerFormInit.ShouldRegisterSourceExpressions),
                         BindingFlags.Public | BindingFlags.Static)
                     ?? throw new InvalidOperationException(
                         "RunnerFormInit.ShouldRegisterSourceExpressions not found — do not commit"));
@@ -4757,7 +4757,7 @@ public static class NclCecilRewrite
         // Diagnostic prepend (gated by env AL_RUNNER_DIAG_IC=1): print marker at
         // entry of each Ncl method called by Report{N}.InitializeComponent.
         {
-            var diagMi = typeof(AlRunnerV2.NavReportSync).GetMethod("Diag",
+            var diagMi = typeof(AlRunner.NavReportSync).GetMethod("Diag",
                 BindingFlags.Static | BindingFlags.Public);
             if (diagMi != null)
             {
@@ -4914,7 +4914,7 @@ public static class NclCecilRewrite
                     // Re-create the NavReport collection field initializers this body
                     // rewrite drops (reportRecords, reportLabels, extension maps, …).
                     // Report execution (GetReportRecords, label processing) NREs without.
-                    var initCollectionsInfo = typeof(AlRunnerV2.NavReportSync).GetMethod(
+                    var initCollectionsInfo = typeof(AlRunner.NavReportSync).GetMethod(
                         "InitializeNavReportCollections", BindingFlags.Static | BindingFlags.Public)
                         ?? throw new InvalidOperationException("NavReportSync.InitializeNavReportCollections not found");
                     il.Append(il.Create(OpCodes.Ldarg_0));
@@ -5147,8 +5147,8 @@ public static class NclCecilRewrite
             {
                 var getSvcAcct = FindNclMethod(nclMod,
                     "Microsoft.Dynamics.Nav.Runtime.NavEnvironment", "get_ServiceAccount", 0);
-                var helperMi = typeof(AlRunnerV2.BcRuntime).GetMethod(
-                    nameof(AlRunnerV2.BcRuntime.GetServiceAccountReplacement),
+                var helperMi = typeof(AlRunner.BcRuntime).GetMethod(
+                    nameof(AlRunner.BcRuntime.GetServiceAccountReplacement),
                     BindingFlags.Public | BindingFlags.Static)!;
                 var helperRef = nclMod.ImportReference(helperMi);
                 var body = getSvcAcct.Body;
@@ -5167,7 +5167,7 @@ public static class NclCecilRewrite
             //     Both return string — direct forward.
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, "Microsoft.Dynamics.Nav.Runtime.NavEnvironment", "get_ServiceAccountName", 0),
-                nameof(AlRunnerV2.BcRuntime.GetServiceAccountNameReplacement));
+                nameof(AlRunner.BcRuntime.GetServiceAccountNameReplacement));
 
             // 3) NavEnvironment.EmitServerStartupTraceEvents(NavDiagnostics, ServerUserSettings) → void no-op.
             //    Only the static 2-arg overload exists; it emits server-startup telemetry
@@ -5259,7 +5259,7 @@ public static class NclCecilRewrite
                     && m.Parameters[2].ParameterType.FullName == "System.Boolean")
                     ?? throw new InvalidOperationException(
                         $"[Cecil] NavMethodScope 3-arg ctor (NavApplicationObjectBase,MethodScopeFlags,bool) not found — Ncl shape changed; do not commit");
-                ReplaceBodyWithHelper(nclMod, ctor3, nameof(AlRunnerV2.BcRuntime.NavMethodScopeCtorReplacement));
+                ReplaceBodyWithHelper(nclMod, ctor3, nameof(AlRunner.BcRuntime.NavMethodScopeCtorReplacement));
             }
 
             // 2) NavMethodScope.Dispose(bool) → BcRuntime.NavMethodScope_Dispose(object, bool).
@@ -5267,7 +5267,7 @@ public static class NclCecilRewrite
             //    `bool disposing` matches the helper's `bool` param exactly — no boxing.
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, MsType, "Dispose", 1),
-                nameof(AlRunnerV2.BcRuntime.NavMethodScope_Dispose));
+                nameof(AlRunner.BcRuntime.NavMethodScope_Dispose));
 
             // NavMethodScope.AssertError(Action) and NavMethodScope.ProcessException(Exception)
             // — migrated to Cecil in Batch 3. Batch 2 left these JmpHook'd because their Cecil
@@ -5278,16 +5278,16 @@ public static class NclCecilRewrite
             // AssertError(Action): void, `this`→object widening + Action ref param, no box.
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, MsType, "AssertError", 1),
-                nameof(AlRunnerV2.BcRuntime.NavMethodScope_AssertError));
+                nameof(AlRunner.BcRuntime.NavMethodScope_AssertError));
             // ProcessException(Exception): bool return, `this`→object? widening + Exception? param.
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, MsType, "ProcessException", 1),
-                nameof(AlRunnerV2.BcRuntime.NavMethodScope_ProcessException));
+                nameof(AlRunner.BcRuntime.NavMethodScope_ProcessException));
 
             // 3) ALMethodScope.AssignScopeId() → BcRuntime.ALMethodScope_AssignScopeId(object) (no-op).
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, AlMsType, "AssignScopeId", 0),
-                nameof(AlRunnerV2.BcRuntime.ALMethodScope_AssignScopeId));
+                nameof(AlRunner.BcRuntime.ALMethodScope_AssignScopeId));
 
             // 4) NavMethodScope.ThrowStackOverflow — stack-depth check uses a non-NavMethodScope
             //    sentinel and false-positives in the headless harness. JmpHook routes it to a
@@ -5374,14 +5374,14 @@ public static class NclCecilRewrite
             //    Helper returns NavCodeunit, matching the override's return — no cast.
             ReplaceBodyWithHelper(nclMod,
                 CreateTarget0(nclMod, "Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle"),
-                typeof(AlRunnerV2.BcRuntime).GetMethod(
+                typeof(AlRunner.BcRuntime).GetMethod(
                     "NavCodeunitHandle_CreateTarget", BindingFlags.Public | BindingFlags.Static)!);
 
             // 2) NavRecordHandle.CreateTarget() → RecordPatches.NavRecordHandle_CreateTarget(self).
             //    Helper lives on RecordPatches (NOT BcRuntime); returns NavRecord — no cast.
             ReplaceBodyWithHelper(nclMod,
                 CreateTarget0(nclMod, "Microsoft.Dynamics.Nav.Runtime.NavRecordHandle"),
-                typeof(AlRunnerV2.Patches.RecordPatches).GetMethod(
+                typeof(AlRunner.Patches.RecordPatches).GetMethod(
                     "NavRecordHandle_CreateTarget", BindingFlags.Public | BindingFlags.Static)!);
 
             // 3-7) TestPage / Form / Report / Query / XmlPort CreateTarget() →
@@ -5398,7 +5398,7 @@ public static class NclCecilRewrite
             {
                 ReplaceBodyWithHelper(nclMod,
                     CreateTarget0(nclMod, typeFull),
-                    typeof(AlRunnerV2.BcRuntime).GetMethod(
+                    typeof(AlRunner.BcRuntime).GetMethod(
                         helperName, BindingFlags.Public | BindingFlags.Static)!);
             }
         }
@@ -5436,7 +5436,7 @@ public static class NclCecilRewrite
                 ?? throw new InvalidOperationException(
                     $"[Cecil] NavApplicationObjectBase 3-arg ctor (ITreeObject,ApplicationObjectId,NCLStaticMetadata) not found — Ncl shape changed; do not commit");
             ReplaceBodyWithHelper(nclMod, aoCtor,
-                typeof(AlRunnerV2.BcRuntime).GetMethod(
+                typeof(AlRunner.BcRuntime).GetMethod(
                     "NavApplicationObjectBaseCtorReplacement", BindingFlags.Public | BindingFlags.Static)!);
         }
 
@@ -5495,10 +5495,10 @@ public static class NclCecilRewrite
                 cls.GetMethod(name, BindingFlags.Public | BindingFlags.Static)
                 ?? throw new InvalidOperationException($"[Cecil] helper {cls.Name}.{name} not found");
 
-            var recordPatches = typeof(AlRunnerV2.Patches.RecordPatches);
-            var helperShims   = typeof(AlRunnerV2.BcRuntime);          // NoOp*/ReturnValueTask*/ReturnTrue etc are BcRuntime statics
-            var telemetry     = typeof(AlRunnerV2.BcRuntime);          // NavServerEventSource_* are BcRuntime partials too
-            var navRecordIdP  = typeof(AlRunnerV2.Patches.NavRecordIdPatches);
+            var recordPatches = typeof(AlRunner.Patches.RecordPatches);
+            var helperShims   = typeof(AlRunner.BcRuntime);          // NoOp*/ReturnValueTask*/ReturnTrue etc are BcRuntime statics
+            var telemetry     = typeof(AlRunner.BcRuntime);          // NavServerEventSource_* are BcRuntime partials too
+            var navRecordIdP  = typeof(AlRunner.Patches.NavRecordIdPatches);
 
             // ── NCLMetadata lookups (RecordPatches.cs:150-189) ──────────────────
             ReplaceBodyWithHelper(nclMod,
@@ -5844,7 +5844,7 @@ public static class NclCecilRewrite
                         && m.Parameters.Count == 1
                         && m.Parameters[0].ParameterType.FullName == "System.String" && m.HasBody)
                     ?? throw new InvalidOperationException("TempPathHelper..ctor(string) not found — Ncl shape changed; do not commit");
-                var tphHelper = typeof(AlRunnerV2.NavReportSync).GetMethod("TempPathHelper_Ctor",
+                var tphHelper = typeof(AlRunner.NavReportSync).GetMethod("TempPathHelper_Ctor",
                         BindingFlags.Static | BindingFlags.Public)
                     ?? throw new InvalidOperationException("NavReportSync.TempPathHelper_Ctor not found");
                 var tphRef = nclMod.ImportReference(tphHelper);
@@ -6119,7 +6119,7 @@ public static class NclCecilRewrite
             // See MediaPatches.
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "Media.NavMediaImage", "GetImageWithContentHeaderValidation", 1),
-                H(typeof(AlRunnerV2.Patches.MediaPatches), "NavMediaImage_GetImageWithContentHeaderValidation"));
+                H(typeof(AlRunner.Patches.MediaPatches), "NavMediaImage_GetImageWithContentHeaderValidation"));
 
             // NavMediaImage's STATIC state has to go too, not just that one method. Its two
             // static fields are built from System.Drawing at class-init time:
@@ -6163,7 +6163,7 @@ public static class NclCecilRewrite
             // (or vice-versa) reproduced the Batch-7b coexistence spin / NRE. Atomic.
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "NavRecordRef", "get_Target", 0),
-                H(typeof(AlRunnerV2.BcRuntime), "NavRecordRef_get_Target"));
+                H(typeof(AlRunner.BcRuntime), "NavRecordRef_get_Target"));
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavRecordRef", "CheckIsOpenAllowed", "CompilationTarget", "Int32"),
                 H(helperShims, "NoOp3"));
@@ -6172,22 +6172,22 @@ public static class NclCecilRewrite
                 H(helperShims, "ReturnTrue_ThreeArgs"));
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavRecordRef", "ALOpen", "Int32"),
-                H(typeof(AlRunnerV2.BcRuntime), "NavRecordRef_ALOpen_Int"));
+                H(typeof(AlRunner.BcRuntime), "NavRecordRef_ALOpen_Int"));
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavRecordRef", "ALOpen", "Int32", "Boolean"),
-                H(typeof(AlRunnerV2.BcRuntime), "NavRecordRef_ALOpen_IntBool"));
+                H(typeof(AlRunner.BcRuntime), "NavRecordRef_ALOpen_IntBool"));
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavRecordRef", "ALOpen", "Int32", "Boolean", "String"),
-                H(typeof(AlRunnerV2.BcRuntime), "NavRecordRef_ALOpen_IntBoolCompany"));
+                H(typeof(AlRunner.BcRuntime), "NavRecordRef_ALOpen_IntBoolCompany"));
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavRecordRef", "ALOpen", "CompilationTarget", "Int32"),
-                H(typeof(AlRunnerV2.BcRuntime), "NavRecordRef_ALOpen_TargetInt"));
+                H(typeof(AlRunner.BcRuntime), "NavRecordRef_ALOpen_TargetInt"));
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavRecordRef", "ALOpen", "CompilationTarget", "Int32", "Boolean"),
-                H(typeof(AlRunnerV2.BcRuntime), "NavRecordRef_ALOpen_TargetIntBool"));
+                H(typeof(AlRunner.BcRuntime), "NavRecordRef_ALOpen_TargetIntBool"));
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavRecordRef", "ALOpen", "CompilationTarget", "Int32", "Boolean", "String"),
-                H(typeof(AlRunnerV2.BcRuntime), "NavRecordRef_ALOpen_TargetIntBoolCompany"));
+                H(typeof(AlRunner.BcRuntime), "NavRecordRef_ALOpen_TargetIntBoolCompany"));
 
             // ── NavSession.GetPermissionSet (Batch 8) — both 3-arg overloads ─────
             // Real body NREs reaching the skeleton's (null) Permissions object.
@@ -6198,11 +6198,11 @@ public static class NclCecilRewrite
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavSession", "GetPermissionSet",
                          "NavApplicationObjectBase", "Int32", "ApplicationObjectId"),
-                H(typeof(AlRunnerV2.BcRuntime), "NavSession_GetPermissionSet_ByObjectId"));
+                H(typeof(AlRunner.BcRuntime), "NavSession_GetPermissionSet_ByObjectId"));
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavSession", "GetPermissionSet",
                          "NavApplicationObjectBase", "Int32", "IEnumerable`1"),
-                H(typeof(AlRunnerV2.BcRuntime), "NavSession_GetPermissionSet_ByObjectIds"));
+                H(typeof(AlRunner.BcRuntime), "NavSession_GetPermissionSet_ByObjectIds"));
 
             // ── NavCodeunit run path (Batch 8) — DoRunAsync + RunCodeunit ───────
             // DoRunAsync's first line builds a timing scope via
@@ -6212,13 +6212,13 @@ public static class NclCecilRewrite
             // (already CecilOwned, Batch 3) is on the same path → migrate together.
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavCodeunit", "DoRunAsync", "DataError", "NavRecord"),
-                H(typeof(AlRunnerV2.BcRuntime), "NavCodeunit_DoRunAsync"));
+                H(typeof(AlRunner.BcRuntime), "NavCodeunit_DoRunAsync"));
             // RunCodeunit has TWO 3-arg overloads ((DataError,Int32,NavRecord) and
             // (DataError,String,NavRecord)); mirror the JmpHook by targeting only the
             // Int32 one. The String/lower-arity overloads forward into it.
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavCodeunit", "RunCodeunit", "DataError", "Int32", "NavRecord"),
-                H(typeof(AlRunnerV2.BcRuntime), "NavCodeunit_RunCodeunit"));
+                H(typeof(AlRunner.BcRuntime), "NavCodeunit_RunCodeunit"));
 
             // ── Truncate + security-filtering cluster (Batch 8) ─────────────────
             // ValidateTruncateSupport throws NavPermissionException on the skeleton
@@ -6246,7 +6246,7 @@ public static class NclCecilRewrite
             // semantics). Same AL-invoke R2R path as the migrated CreateTarget family.
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavApplicationObjectBase", "TryInvoke", "NavSession", "Action"),
-                H(typeof(AlRunnerV2.BcRuntime), "NavApplicationObjectBase_TryInvoke"));
+                H(typeof(AlRunner.BcRuntime), "NavApplicationObjectBase_TryInvoke"));
 
             // ── NavApplicationObjectBase.TryInvokeAsync — async TryFunction ──────
             // Same skeleton gap as the sync TryInvoke (session.CurrentMethodScope NRE),
@@ -6255,7 +6255,7 @@ public static class NclCecilRewrite
             // NavDotNet.CreateNavServerHandle catch block → RunnerOutOfScopeException.
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavApplicationObjectBase", "TryInvokeAsync", "NavSession", "Func`1"),
-                H(typeof(AlRunnerV2.BcRuntime), "NavApplicationObjectBase_TryInvokeAsync"));
+                H(typeof(AlRunner.BcRuntime), "NavApplicationObjectBase_TryInvokeAsync"));
 
             // ── BitArrayHelpers.Equals (Batch 8) — .NET API drift ───────────────
             // Real body calls GetIntArray which reads the removed private field
@@ -6264,7 +6264,7 @@ public static class NclCecilRewrite
             // FieldLoadInfo.Equals on the SetBaseLoadFields path.)
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "Utility.BitArrayHelpers", "Equals", "BitArray", "BitArray"),
-                H(typeof(AlRunnerV2.BcRuntime), "BitArrayHelpers_Equals"));
+                H(typeof(AlRunner.BcRuntime), "BitArrayHelpers_Equals"));
 
             // ── Event-binding metadata cluster (Batch 8) ────────────────────────
             // NavCodeunit.get_MetaCodeunit + NCLMetaCodeunit.get_IsEventManualBinding.
@@ -6274,10 +6274,10 @@ public static class NclCecilRewrite
             // Reached via Bind/UnbindSubscription. Migrate together (companion getters).
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "NavCodeunit", "get_MetaCodeunit", 0),
-                H(typeof(AlRunnerV2.BcRuntime), "NavCodeunit_get_MetaCodeunit"));
+                H(typeof(AlRunner.BcRuntime), "NavCodeunit_get_MetaCodeunit"));
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "NCLMetaCodeunit", "get_IsEventManualBinding", 0),
-                H(typeof(AlRunnerV2.BcRuntime), "NCLMetaCodeunit_get_IsEventManualBinding"));
+                H(typeof(AlRunner.BcRuntime), "NCLMetaCodeunit_get_IsEventManualBinding"));
 
             // ── ALSystemOperatingSystem GetUrl family (Batch 8) ─────────────────
             // GetUrlCore / ALGetUrl / ALGetUrlInternal (all 7-arg) reach the absent
@@ -6365,7 +6365,7 @@ public static class NclCecilRewrite
     private static void ReplaceBodyWithHelper(
         ModuleDefinition module, MethodDefinition target, string bcRuntimeHelperName)
     {
-        var helperMi = typeof(AlRunnerV2.BcRuntime).GetMethod(
+        var helperMi = typeof(AlRunner.BcRuntime).GetMethod(
             bcRuntimeHelperName, BindingFlags.Public | BindingFlags.Static)
             ?? throw new InvalidOperationException(
                 $"[Cecil] BcRuntime.{bcRuntimeHelperName} not found");

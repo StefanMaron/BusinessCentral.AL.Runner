@@ -10,9 +10,9 @@
 // covers events fired from any loaded DLL (MS BaseApp, SystemApp, ISV, our test bundles).
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using AlRunnerV2.Patches;
+using AlRunner.Patches;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public static partial class BcRuntime
 {
@@ -125,7 +125,7 @@ public static partial class BcRuntime
         catch (TargetInvocationException tie) when (tie.InnerException is ObjectDisposedException) { }
         catch (ObjectDisposedException) { }
 
-        return AlRunnerV2.BcRuntime.SkeletonSession ?? publisher;
+        return AlRunner.BcRuntime.SkeletonSession ?? publisher;
     }
 
     /// <summary>

@@ -23,7 +23,7 @@
 using System.Collections;
 using System.Reflection;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
@@ -53,8 +53,8 @@ public static partial class RecordPatches
             var dir = Path.GetDirectoryName(typeof(RecordPatches).Assembly.Location)!;
             var path = Path.Combine(dir, "AlRunner.QueryJoin.dll");
             _joinAsm = Assembly.LoadFrom(path);
-            _tJoinExecutor = _joinAsm.GetType("AlRunnerV2.QueryJoin.JoinExecutor", throwOnError: true)!;
-            _tJoinContext = _joinAsm.GetType("AlRunnerV2.QueryJoin.JoinContext", throwOnError: true)!;
+            _tJoinExecutor = _joinAsm.GetType("AlRunner.QueryJoin.JoinExecutor", throwOnError: true)!;
+            _tJoinContext = _joinAsm.GetType("AlRunner.QueryJoin.JoinContext", throwOnError: true)!;
             _mIsMultiDataItem = _tJoinExecutor.GetMethod("IsMultiDataItem", BindingFlags.Public | BindingFlags.Static)!;
             _mExecute = _tJoinExecutor.GetMethod("Execute", BindingFlags.Public | BindingFlags.Static)!;
             _joinCtx = BuildJoinContext();
@@ -121,7 +121,7 @@ public static partial class RecordPatches
     private static void Join_Log(string m) => QLog(m);
 
     private static Exception Join_OutOfScope(string api, string reason)
-        => new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(api, reason);
+        => new AlRunner.Infrastructure.RunnerOutOfScopeException(api, reason);
 
     // Produce a typed default NavValue (boxed as object) for an NCLMetaField, matching the
     // field's type — used to fill unmatched LeftOuterJoin child columns. BC projects a
@@ -139,7 +139,7 @@ public static partial class RecordPatches
         _mGetDefaultNavValue ??= tNavValue.GetMethod("GetDefaultNavValue",
             BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static,
             binder: null, types: new[] { tMeta, typeof(bool) }, modifiers: null)
-            ?? throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 "NavQuery (multi-dataitem join)",
                 "query-join-leftouter-default — NavValue.GetDefaultNavValue(INavValueMetadata,bool) " +
                 "not found; cannot mint a typed default for an unmatched LeftOuterJoin child column; " +
@@ -175,7 +175,7 @@ public static partial class RecordPatches
         var queryDef = _tNCLMetaQuery!.GetProperty("QueryDefinition", BindingFlags.Public | BindingFlags.Instance)!
             .GetValue(nclMetaQuery)!;
         if (!_joinSourceByQueryDef.TryGetValue(queryDef, out var dataAccessSource))
-            throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 "NavQuery (multi-dataitem join)",
                 "query-join-no-source — internal: join DataAccessSource was not stashed; see docs/scope.md");
 

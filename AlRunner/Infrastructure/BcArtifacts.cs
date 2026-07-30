@@ -1,4 +1,4 @@
-namespace AlRunnerV2.Infrastructure;
+namespace AlRunner.Infrastructure;
 
 /// <summary>
 /// Single source of truth for the BC service-tier artifact directory and the

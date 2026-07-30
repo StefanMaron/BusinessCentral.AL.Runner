@@ -25,7 +25,7 @@
 using System.Reflection;
 using System.Text.RegularExpressions;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
@@ -68,7 +68,7 @@ public static partial class RecordPatches
             {
                 _bcAppPaths.Add(appPath);
                 foreach (var enumSymbol in BcAppSymbolCache.Get(appPath).Enums)
-                    AlRunnerV2.AlEnumMetadataRegistry.Register(
+                    AlRunner.AlEnumMetadataRegistry.Register(
                         enumSymbol.Id,
                         enumSymbol.Name,
                         enumSymbol.Options.ToArray(),
@@ -99,7 +99,7 @@ public static partial class RecordPatches
             if (string.IsNullOrEmpty(bundleRoot) || !Directory.Exists(bundleRoot)) return;
             foreach (var app in Directory.EnumerateFiles(bundleRoot, "*.app", SearchOption.TopDirectoryOnly))
             {
-                try { if (AlRunnerV2.AppLoader.HasSymbolReference(app)) AddBcAppPath(app); }
+                try { if (AlRunner.AppLoader.HasSymbolReference(app)) AddBcAppPath(app); }
                 catch { /* unreadable .app — skip */ }
             }
         }
@@ -313,7 +313,7 @@ public static partial class RecordPatches
         foreach (var appPath in _bcAppPaths)
         {
             IReadOnlyList<(string Name, string Source)> sources;
-            try { sources = AlRunnerV2.AppLoader.ExtractAl(appPath); }
+            try { sources = AlRunner.AppLoader.ExtractAl(appPath); }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"[RecordPatches] BcAppFallback: ExtractAl failed for {Path.GetFileName(appPath)}: {ex.Message}");

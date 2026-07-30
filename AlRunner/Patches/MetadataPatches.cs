@@ -8,10 +8,10 @@
 // below.
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using AlRunnerV2.Infrastructure;
-using JmpHook = AlRunnerV2.Infrastructure.JmpHook;
+using AlRunner.Infrastructure;
+using JmpHook = AlRunner.Infrastructure.JmpHook;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public static partial class BcRuntime
 {
@@ -530,7 +530,7 @@ public static partial class BcRuntime
                         .GetField("testClientSession", BindingFlags.NonPublic | BindingFlags.Instance);
                     if (fTestClientSession != null)
                         FieldPoke.SetInstance(fTestClientSession, testExecution,
-                            new AlRunnerV2.Patches.RunnerTestClientSession(_skeletonSession!));
+                            new AlRunner.Patches.RunnerTestClientSession(_skeletonSession!));
                     else
                         Console.Error.WriteLine(
                             "[BcRuntime] NavTestExecution.testClientSession NOT FOUND — modal-page "

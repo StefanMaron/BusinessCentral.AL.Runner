@@ -1,8 +1,8 @@
 using System.Reflection;
-using AlRunnerV2.Infrastructure;
+using AlRunner.Infrastructure;
 using Xunit;
 
-namespace AlRunnerV2.Tests;
+namespace AlRunner.Tests;
 
 /// <summary>
 /// Regression guard for the "lost AL call stacks" bug.

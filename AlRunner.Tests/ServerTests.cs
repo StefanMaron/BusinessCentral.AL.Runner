@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Xunit;
 
-namespace AlRunnerV2.Tests;
+namespace AlRunner.Tests;
 
 /// <summary>
 /// End-to-end tests for <c>--server</c> mode: the newline-delimited JSON protocol

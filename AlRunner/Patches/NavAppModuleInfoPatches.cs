@@ -19,7 +19,7 @@
 // left the row at Guid.Empty, and subsequent tests found it at Guid.Empty and
 // re-errored on IsCapabilityRegistered.
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static class NavAppModuleInfoPatches
 {
@@ -31,7 +31,7 @@ public static class NavAppModuleInfoPatches
         Microsoft.Dynamics.Nav.Types.DataError errorLevel,
         Microsoft.Dynamics.Nav.Runtime.ByRef<Microsoft.Dynamics.Nav.Runtime.NavModuleInfo> info)
     {
-        var (appId, name, publisher, version) = AlRunnerV2.BcRuntime.GetCurrentModuleFromCallStack();
+        var (appId, name, publisher, version) = AlRunner.BcRuntime.GetCurrentModuleFromCallStack();
         var navVersion = new Microsoft.Dynamics.Nav.Runtime.NavVersion(version);
         var emptyDeps = Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavModuleDependencyInfo>.Default;
         info.Value = new Microsoft.Dynamics.Nav.Runtime.NavModuleInfo(
@@ -49,7 +49,7 @@ public static class NavAppModuleInfoPatches
         Microsoft.Dynamics.Nav.Types.DataError errorLevel,
         Microsoft.Dynamics.Nav.Runtime.ByRef<Microsoft.Dynamics.Nav.Runtime.NavModuleInfo> info)
     {
-        var (appId, name, publisher, version) = AlRunnerV2.BcRuntime.GetCallerModuleFromCallStack();
+        var (appId, name, publisher, version) = AlRunner.BcRuntime.GetCallerModuleFromCallStack();
         var navVersion = new Microsoft.Dynamics.Nav.Runtime.NavVersion(version);
         var emptyDeps = Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavModuleDependencyInfo>.Default;
         info.Value = new Microsoft.Dynamics.Nav.Runtime.NavModuleInfo(

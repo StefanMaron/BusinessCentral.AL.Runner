@@ -1,4 +1,4 @@
-namespace AlRunnerV2;
+namespace AlRunner;
 
 internal static class PerfTrace
 {

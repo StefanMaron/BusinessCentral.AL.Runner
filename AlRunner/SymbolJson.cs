@@ -4,7 +4,7 @@ using Microsoft.Dynamics.Nav.CodeAnalysis;
 using Microsoft.Dynamics.Nav.CodeAnalysis.Diagnostics;
 using Microsoft.Dynamics.Nav.CodeAnalysis.SymbolReference;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 /// <summary>
 /// Writes a compile-time symbol artifact (<c>&lt;App&gt;.symbols.json</c>) from a BC

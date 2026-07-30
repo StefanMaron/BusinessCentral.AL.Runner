@@ -16,9 +16,9 @@ using System.Reflection;
 using System.Runtime.Loader;
 using System.Security.Cryptography;
 using System.Text;
-using AlRunnerV2.Infrastructure;
+using AlRunner.Infrastructure;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public sealed class DependencyLoader
 {
@@ -75,11 +75,11 @@ public sealed class DependencyLoader
             // Tier-3 source-compile ALWAYS fails with EMIT-ZERO. Skip it entirely and print a
             // loud, actionable provisioning-gap message instead of the cryptic "EMIT-ZERO" error.
             // The runner still functions via service-tier DLL dispatch for these codeunits.
-            if (microsoftSourceOnly && AlRunnerV2.Infrastructure.ProvisioningCheck.IsKnownPlatformRuntimeApp(m.Name))
+            if (microsoftSourceOnly && AlRunner.Infrastructure.ProvisioningCheck.IsKnownPlatformRuntimeApp(m.Name))
             {
-                var bcVer = AlRunnerV2.Infrastructure.BcArtifacts.SelectedVersion.ToString();
+                var bcVer = AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString();
                 Console.Error.WriteLine(
-                    AlRunnerV2.Infrastructure.ProvisioningCheck.BuildPlatformAppMissingR2RMessage(
+                    AlRunner.Infrastructure.ProvisioningCheck.BuildPlatformAppMissingR2RMessage(
                         m.Publisher, m.Name, m.Version.ToString(), path, bcVer));
                 continue;
             }
@@ -92,7 +92,7 @@ public sealed class DependencyLoader
             // the CS-error wall. Faithful per loud-failures: nothing new is silenced — the
             // observable end state (no assembly, lazy service-tier dispatch) is unchanged.
             if (microsoftSourceOnly
-                && AlRunnerV2.Infrastructure.ProvisioningCheck.IsPlatformSymbolOnlySystemApp(m.AppId, m.Publisher, m.Name))
+                && AlRunner.Infrastructure.ProvisioningCheck.IsPlatformSymbolOnlySystemApp(m.AppId, m.Publisher, m.Name))
             {
                 Console.Error.WriteLine(
                     $"[deps] platform symbol app {m.Publisher}_{m.Name} v{m.Version}: known " +
@@ -106,7 +106,7 @@ public sealed class DependencyLoader
             {
                 asm = LoadOne(m, path, bucketRoot);
             }
-            catch (AlRunnerV2.Infrastructure.DependencyLoadException) when (microsoftSourceOnly)
+            catch (AlRunner.Infrastructure.DependencyLoadException) when (microsoftSourceOnly)
             {
                 // Platform symbol-stub app whose runtime is the service-tier DLLs: skip the
                 // source-compile and let runtime codeunit resolution serve real bodies from the
@@ -125,7 +125,7 @@ public sealed class DependencyLoader
                 // Register the assembly's app package so NavApp.GetResource can serve
                 // this app's packaged resources (.app /resources/ part, or the sibling
                 // source dir for source deps packaged into a synthetic workspace .app).
-                AlRunnerV2.Patches.NavAppResourcePatches.RegisterDependencyAssembly(
+                AlRunner.Patches.NavAppResourcePatches.RegisterDependencyAssembly(
                     asm, m.AppId, m.Name, m.Publisher, m.Version.ToString(), path);
                 // Per-assembly module identity: this dep's code sees ITS OWN app info
                 // from NavApp.GetCurrentModuleInfo (real BC's executing-module rule),
@@ -451,7 +451,7 @@ public sealed class DependencyLoader
         // probe below catches every Microsoft.Dynamics.Nav.* assembly request and serves
         // it from the artifact dir.
         // Single source of truth for the artifact dir (tracks AlRunner.csproj's _BCVersion).
-        var serviceTierPath = AlRunnerV2.Infrastructure.BcArtifacts.ServiceTierDir;
+        var serviceTierPath = AlRunner.Infrastructure.BcArtifacts.ServiceTierDir;
         AssemblyLoadContext.Default.Resolving += (ctx, name) =>
         {
             if (name.Name == null) return null;

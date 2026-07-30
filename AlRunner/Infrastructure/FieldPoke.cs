@@ -4,7 +4,7 @@
 using System.Reflection;
 using System.Reflection.Emit;
 
-namespace AlRunnerV2.Infrastructure;
+namespace AlRunner.Infrastructure;
 
 internal static class FieldPoke
 {

@@ -23,9 +23,9 @@
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using AlRunnerV2.Infrastructure;
+using AlRunner.Infrastructure;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public static partial class BcRuntime
 {

@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 
-namespace AlRunnerV2.Tests;
+namespace AlRunner.Tests;
 
 /// <summary>
 /// Helper to start al-runner in --server mode and communicate via stdin/stdout.

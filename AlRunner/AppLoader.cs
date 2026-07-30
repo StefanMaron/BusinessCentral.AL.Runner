@@ -20,7 +20,7 @@ using System.IO.Compression;
 using System.Text;
 using System.Xml.Linq;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public sealed record DependencyRef(Guid AppId, string Name, string Publisher, Version Version, bool Optional = false);
 

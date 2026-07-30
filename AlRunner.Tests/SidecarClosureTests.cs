@@ -12,9 +12,9 @@
 using System;
 using System.Linq;
 using Xunit;
-using AlRunnerV2;
+using AlRunner;
 
-namespace AlRunnerV2.Tests;
+namespace AlRunner.Tests;
 
 public sealed class SidecarClosureTests
 {

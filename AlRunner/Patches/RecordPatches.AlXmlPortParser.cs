@@ -6,7 +6,7 @@
 // throwing NavNCLApplicationObjectNotFoundException for xmlports.
 using System.Text.RegularExpressions;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {

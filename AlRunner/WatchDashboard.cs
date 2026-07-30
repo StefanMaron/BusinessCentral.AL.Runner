@@ -22,7 +22,7 @@ using System.Linq;
 using Spectre.Console;
 using Spectre.Console.Rendering;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 /// <summary>Whether a watch cycle is in flight (compiling + running) or idle, waiting for edits.</summary>
 public enum WatchStatus { Running, Idle }

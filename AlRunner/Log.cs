@@ -6,7 +6,7 @@
 // through.
 using System.Text.RegularExpressions;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public static class Log
 {

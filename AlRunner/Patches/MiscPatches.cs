@@ -4,7 +4,7 @@
 // each have one tiny replacement; rather than spawn a file per area we keep them here.
 using System.Runtime.CompilerServices;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public static partial class BcRuntime
 {
@@ -75,7 +75,7 @@ public static partial class BcRuntime
     public static string ALSystemErrorHandling_get_ALGetLastErrorCallStack()
     {
         // Prefer the AL call stack captured by AlCallStackCapture (FCE-based, accurate frames).
-        var captured = AlRunnerV2.Infrastructure.AlCallStackCapture.GetCaptured();
+        var captured = AlRunner.Infrastructure.AlCallStackCapture.GetCaptured();
         if (!string.IsNullOrEmpty(captured)) return captured;
 
         // Fallback: try the native NavSession.GetLastErrorCallstack method.

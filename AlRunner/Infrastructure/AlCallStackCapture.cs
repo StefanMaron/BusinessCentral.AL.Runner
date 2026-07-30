@@ -13,7 +13,7 @@ using System.Runtime.ExceptionServices;
 using System.Text;
 using Microsoft.Dynamics.Nav.Runtime;
 
-namespace AlRunnerV2.Infrastructure;
+namespace AlRunner.Infrastructure;
 
 public static class AlCallStackCapture
 {

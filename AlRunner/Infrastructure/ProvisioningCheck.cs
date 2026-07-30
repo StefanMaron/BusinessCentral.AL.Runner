@@ -1,6 +1,6 @@
 using AlRunner.Provisioning;
 
-namespace AlRunnerV2.Infrastructure;
+namespace AlRunner.Infrastructure;
 
 /// <summary>
 /// Verifies that the selected BC version's engine artifact closure is COMPLETE, and —
@@ -141,11 +141,11 @@ public static class ProvisioningCheck
                 if (!Directory.Exists(dir)) continue;
                 foreach (var appFile in Directory.EnumerateFiles(dir, "*.app", SearchOption.AllDirectories))
                 {
-                    var m = AlRunnerV2.AppLoader.ReadManifest(appFile);
+                    var m = AlRunner.AppLoader.ReadManifest(appFile);
                     if (m == null) continue;
                     if (!string.Equals(m.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
                     if (!string.Equals(m.Name, platformAppName, StringComparison.OrdinalIgnoreCase)) continue;
-                    found.Add((appFile, m.Version.ToString(), AlRunnerV2.AppLoader.IsR2R(appFile)));
+                    found.Add((appFile, m.Version.ToString(), AlRunner.AppLoader.IsR2R(appFile)));
                 }
             }
 
@@ -241,7 +241,7 @@ public static class ProvisioningCheck
             if (!Directory.Exists(dir)) continue;
             foreach (var appFile in Directory.EnumerateFiles(dir, "*.app", SearchOption.AllDirectories))
             {
-                var m = AlRunnerV2.AppLoader.ReadManifest(appFile);
+                var m = AlRunner.AppLoader.ReadManifest(appFile);
                 if (m == null) continue;
                 if (!string.Equals(m.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
                 if (string.Equals(TestToolkitSentinelApp, m.Name, StringComparison.OrdinalIgnoreCase))
@@ -269,7 +269,7 @@ public static class ProvisioningCheck
             if (!Directory.Exists(dir)) continue;
             foreach (var appFile in Directory.EnumerateFiles(dir, "*.app", SearchOption.AllDirectories))
             {
-                var m = AlRunnerV2.AppLoader.ReadManifest(appFile);
+                var m = AlRunner.AppLoader.ReadManifest(appFile);
                 if (m == null) continue;
                 if (!string.Equals(m.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
                 if (!string.Equals(m.Name, "Base Application", StringComparison.OrdinalIgnoreCase)

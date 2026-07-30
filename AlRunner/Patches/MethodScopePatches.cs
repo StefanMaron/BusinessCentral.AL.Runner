@@ -13,9 +13,9 @@
 // NavNCLDialogException is thrown so AL `asserterror` can trap it.
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using AlRunnerV2.Infrastructure;
+using AlRunner.Infrastructure;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public static partial class BcRuntime
 {

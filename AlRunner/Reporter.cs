@@ -2,7 +2,7 @@
 // and writes a JSON failure-classification file for follow-up parallel work.
 using System.Text.Json;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public enum BucketStage { CompileFailed, ExecuteFailed, Ran }
 
@@ -34,7 +34,7 @@ public static class Reporter
         }
         w.WriteLine();
         w.WriteLine("=================================================================");
-        w.WriteLine("al-runner v2 — test run summary");
+        w.WriteLine("al-runner — test run summary");
         w.WriteLine("=================================================================");
         w.WriteLine($"Buckets:       {buckets.Count} total");
         w.WriteLine($"  ran:         {buckets.Count - compileFailed - execFailed}");
@@ -152,8 +152,8 @@ public static class Reporter
             "System.Threading.Tasks.Task",
             "MoveNext()",
             "System.Runtime.ExceptionServices",
-            "AlRunnerV2.Patches.AsyncStateMachineSpike",
-            "AlRunnerV2.Infrastructure.JmpHook",
+            "AlRunner.Patches.AsyncStateMachineSpike",
+            "AlRunner.Infrastructure.JmpHook",
         };
         int kept = 0;
         foreach (var raw in fullException.Split('\n'))

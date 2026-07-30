@@ -14,7 +14,7 @@
 //   Runner [--out PATH] [--package-cache PATH ...] <bundle-dir>...
 //   Runner --precompile <input.app> --out <output.dll>
 using System.Reflection;
-using AlRunnerV2;
+using AlRunner;
 
 // Diagnostic: AL_RUNNER_DIAG_FIRSTCHANCE=<substring> prints the FULL stack of
 // every first-chance exception whose type name contains the substring (use e.g.
@@ -116,7 +116,7 @@ if (serverMode)
 
 // Output filters must be installed BEFORE any other code prints to Console.
 // Reads AL_RUNNER_VERBOSE env var by default; --verbose flag overrides below.
-AlRunnerV2.Log.Install();
+AlRunner.Log.Install();
 
 // Per-test output mode. Default (V1 parity): print PASS and FAIL lines.
 // Inverted by --failures-only or AL_RUNNER_FAILURES_ONLY=1 for large-corpus runs
@@ -193,7 +193,7 @@ string? alCacheDir = Path.Combine(
     Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
     ".cache", "al-runner", "al-out");
 // Test isolation mode — default matches BC's "Test Runner - Isol. Codeunit" (130450).
-var isolation = AlRunnerV2.TestIsolation.Codeunit;
+var isolation = AlRunner.TestIsolation.Codeunit;
 // Exit non-zero if any test fails or a bucket fails to compile/execute — matches v1/main
 // semantics so CI shell loops (`&&`, `set -e`, GitHub Actions step failure) work by exit
 // code alone, same as before. --no-strict-exit opts back into the old always-0 behaviour
@@ -244,7 +244,7 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--no-cache") { alCacheDir = null; continue; }
     if (args[i] == "--watch") { watchMode = true; continue; }
     if (args[i] == "--server") { continue; }  // handled above (serverMode); consume so it isn't "unknown"
-    if (args[i] == "--verbose") { AlRunnerV2.Log.Verbose = true; continue; }
+    if (args[i] == "--verbose") { AlRunner.Log.Verbose = true; continue; }
     if (args[i] == "--show-pass") { showPass = true; continue; }   // no-op (default in v2); kept for v1 back-compat
     if (args[i] == "--failures-only" || args[i] == "--quiet") { showPass = false; continue; }
     if (args[i] == "--strict") { strictExitCode = true; continue; }  // no-op: default since the v2 cut
@@ -288,9 +288,9 @@ for (int i = 0; i < args.Length; i++)
         var mode = args[++i].ToLowerInvariant();
         isolation = mode switch
         {
-            "codeunit" or "method" => AlRunnerV2.TestIsolation.Codeunit,
-            "test"                 => AlRunnerV2.TestIsolation.Test,
-            "disabled"             => AlRunnerV2.TestIsolation.Disabled,
+            "codeunit" or "method" => AlRunner.TestIsolation.Codeunit,
+            "test"                 => AlRunner.TestIsolation.Test,
+            "disabled"             => AlRunner.TestIsolation.Disabled,
             _ => throw new ArgumentException(
                 $"--isolation: unknown mode '{mode}' (codeunit|test|disabled; 'method' accepted as v1 alias for codeunit)")
         };
@@ -325,7 +325,7 @@ if (artifactPathArg != null)
 {
     try
     {
-        var translated = AlRunnerV2.Infrastructure.BcArtifacts.TryTranslateArtifactPathToVersion(artifactPathArg);
+        var translated = AlRunner.Infrastructure.BcArtifacts.TryTranslateArtifactPathToVersion(artifactPathArg);
         if (translated != null) { bcVersionArg = translated; artifactPathArg = null; }
     }
     catch (InvalidOperationException ex)
@@ -347,16 +347,16 @@ if (bcVersionArg == null && artifactPathArg == null)
     // The BUILT version (4-part, baked in at compile time) — not Ncl.dll's assembly
     // version, whose minor is always 0. Falls back to the Ncl major if the attribute is
     // missing (e.g. an older build), which restores the previous major-only behaviour.
-    var engineVersion = AlRunnerV2.Infrastructure.BcArtifacts.EngineBuiltVersion()
-        ?? AlRunnerV2.Infrastructure.BcArtifacts.EngineVersion(AppContext.BaseDirectory);
+    var engineVersion = AlRunner.Infrastructure.BcArtifacts.EngineBuiltVersion()
+        ?? AlRunner.Infrastructure.BcArtifacts.EngineVersion(AppContext.BaseDirectory);
     var engineMajor = engineVersion?.Major;
     if (engineVersion != null && engineMajor != null)
     {
         // Prefer the engine's OWN major.minor. Latest-in-major used to win here, which
         // silently selected a minor the engine was not built for — measured at -45 passing
         // / +42 failing / +3 errors on Pageworks. See BcArtifacts.DefaultVersionPrefix.
-        bcVersionArg = AlRunnerV2.Infrastructure.BcArtifacts.DefaultVersionPrefix(
-            engineVersion, AlRunnerV2.Infrastructure.BcArtifacts.ArtifactsRootDir);
+        bcVersionArg = AlRunner.Infrastructure.BcArtifacts.DefaultVersionPrefix(
+            engineVersion, AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir);
 
         var engineMajorMinor = $"{engineVersion.Major}.{engineVersion.Minor}";
         if (bcVersionArg == engineMajorMinor)
@@ -390,14 +390,14 @@ if (provisionSubcommand || autoProvision)
 }
 try
 {
-    AlRunnerV2.Infrastructure.BcArtifacts.SelectVersion(bcVersionArg, artifactPathArg);
+    AlRunner.Infrastructure.BcArtifacts.SelectVersion(bcVersionArg, artifactPathArg);
     // Consistency guard: the engine DLLs baked into bin/ are built for a fixed BC
     // major.minor; if the selected version's major.minor differs, dependency symbols
     // and the engine can disagree — fail loud rather than crash deep in BC. Patch-level
     // skew (28.1.x build vs 28.1.y cache) is tolerated.
-    AlRunnerV2.Infrastructure.BcArtifacts.VerifyEngineConsistency(AppContext.BaseDirectory);
-    Console.Error.WriteLine($"[bc] selected BC {AlRunnerV2.Infrastructure.BcArtifacts.SelectedVersion} " +
-        $"({AlRunnerV2.Infrastructure.BcArtifacts.ServiceTierDir})");
+    AlRunner.Infrastructure.BcArtifacts.VerifyEngineConsistency(AppContext.BaseDirectory);
+    Console.Error.WriteLine($"[bc] selected BC {AlRunner.Infrastructure.BcArtifacts.SelectedVersion} " +
+        $"({AlRunner.Infrastructure.BcArtifacts.ServiceTierDir})");
 }
 catch (InvalidOperationException ex)
 {
@@ -411,9 +411,9 @@ catch (InvalidOperationException ex)
 // we do NOT download — we print ONE loud, path-naming report + the one-command fix and
 // stop. (--auto-provision already completed it above, so this only trips on a real gap.)
 {
-    var provReport = AlRunnerV2.Infrastructure.ProvisioningCheck.Check(
-        AlRunnerV2.Infrastructure.BcArtifacts.SelectedVersion.ToString(),
-        AlRunnerV2.Infrastructure.BcArtifacts.ServiceTierDir);
+    var provReport = AlRunner.Infrastructure.ProvisioningCheck.Check(
+        AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString(),
+        AlRunner.Infrastructure.BcArtifacts.ServiceTierDir);
     if (!provReport.Ok)
     {
         Console.Error.WriteLine(provReport.ToDetailedMessage(bundles.Count > 0 ? bundles[0] : null));
@@ -423,19 +423,19 @@ catch (InvalidOperationException ex)
 
 if (alCacheDir != null) Directory.CreateDirectory(alCacheDir);
 Console.WriteLine(serverMode
-    ? "al-runner v2 — server mode (JSON-RPC over stdin/stdout)"
+    ? "al-runner — server mode (JSON-RPC over stdin/stdout)"
     : watchMode
-        ? $"al-runner v2 — watch mode, {bundles.Count} bundle(s) (Ctrl+C to quit)"
-        : $"al-runner v2 — running {bundles.Count} bundle(s)");
+        ? $"al-runner — watch mode, {bundles.Count} bundle(s) (Ctrl+C to quit)"
+        : $"al-runner — running {bundles.Count} bundle(s)");
 
 // Cecil-rewrite Ncl.dll IN-PLACE on the bin path BEFORE CoreCLR's TPA probe
 // resolves it. Must run BEFORE any reference to BcRuntime (whose field metadata
 // triggers Ncl load on class init). Allowed surface per
 // .claude/rules/precompiled-dll-respect.md — Ncl is runtime engine, not BaseApp.
 {
-    var srcDir = AlRunnerV2.Infrastructure.BcArtifacts.ServiceTierDir;
+    var srcDir = AlRunner.Infrastructure.BcArtifacts.ServiceTierDir;
     var binNcl = Path.Combine(AppContext.BaseDirectory, "Microsoft.Dynamics.Nav.Ncl.dll");
-    var didFreshRewrite = AlRunnerV2.Infrastructure.NclCecilRewrite.RewriteInPlace(srcDir, binNcl);
+    var didFreshRewrite = AlRunner.Infrastructure.NclCecilRewrite.RewriteInPlace(srcDir, binNcl);
 
     // A process that performs the Cecil rewrite and then loads the byte-identical
     // rewritten Ncl in-process intermittently dies with BadImageFormatException
@@ -480,14 +480,14 @@ Console.WriteLine($"  package caches: {packageCacheDirs.Count} dir(s)");
 // (--auto-provision downloads the R2R apps and clears the check.)
 if (!provisionSubcommand && packageCacheDirs.Count > 0)
 {
-    var version = AlRunnerV2.Infrastructure.BcArtifacts.SelectedVersion.ToString();
-    var platformReport = AlRunnerV2.Infrastructure.ProvisioningCheck.CheckPlatformApps(
+    var version = AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString();
+    var platformReport = AlRunner.Infrastructure.ProvisioningCheck.CheckPlatformApps(
         version, packageCacheDirs);
     // Test-toolkit apps (Business Foundation Test Libraries, Application Test Library, …)
     // are a SEPARATE artifact set from the w1 platform apps (they live under the
     // `platform` artifact, not `w1`) — a cache can have complete R2R platform apps and
     // still be missing the whole test toolkit, which fails compiling any test bundle.
-    var toolkitPresent = AlRunnerV2.Infrastructure.ProvisioningCheck.TestToolkitPresent(packageCacheDirs);
+    var toolkitPresent = AlRunner.Infrastructure.ProvisioningCheck.TestToolkitPresent(packageCacheDirs);
 
     if (!platformReport.Ok && !autoProvision)
     {
@@ -505,8 +505,8 @@ if (!provisionSubcommand && packageCacheDirs.Count > 0)
         // (b) else derive from whatever platform app IS already present in the cache
         // (only the toolkit is missing); (c) else fall back to the engine's own version.
         var mm = !platformReport.Ok
-            ? AlRunnerV2.Infrastructure.ProvisioningCheck.DeriveProvisionMajorMinor(platformReport, version)
-            : AlRunnerV2.Infrastructure.ProvisioningCheck.DerivePresentPlatformMajorMinor(packageCacheDirs, version);
+            ? AlRunner.Infrastructure.ProvisioningCheck.DeriveProvisionMajorMinor(platformReport, version)
+            : AlRunner.Infrastructure.ProvisioningCheck.DerivePresentPlatformMajorMinor(packageCacheDirs, version);
         var full = AlRunner.Provisioning.ArtifactDownloader.ResolveVersion(
             mm, m => Console.Error.WriteLine($"[provision] {m}"));
         if (full == null)
@@ -529,7 +529,7 @@ if (!provisionSubcommand && packageCacheDirs.Count > 0)
                 return 2;
             }
             // Re-check: never silently continue on a partial/failed provision.
-            platformReport = AlRunnerV2.Infrastructure.ProvisioningCheck.CheckPlatformApps(
+            platformReport = AlRunner.Infrastructure.ProvisioningCheck.CheckPlatformApps(
                 version, packageCacheDirs);
             if (!platformReport.Ok)
             {
@@ -550,7 +550,7 @@ if (!provisionSubcommand && packageCacheDirs.Count > 0)
                 return 2;
             }
             // Re-check: never silently continue on a partial/failed provision.
-            toolkitPresent = AlRunnerV2.Infrastructure.ProvisioningCheck.TestToolkitPresent(packageCacheDirs);
+            toolkitPresent = AlRunner.Infrastructure.ProvisioningCheck.TestToolkitPresent(packageCacheDirs);
             if (!toolkitPresent)
             {
                 Console.Error.WriteLine("[provision] test-toolkit apps still missing after download.");
@@ -600,7 +600,7 @@ if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_FCE") is "1" or "2")
 var t0 = System.Diagnostics.Stopwatch.StartNew();
 BcRuntime.EnsureApplied();
 Console.WriteLine($"BC runtime patches applied ({t0.ElapsedMilliseconds}ms)");
-AlRunnerV2.PerfTrace.Log($"BcRuntime.EnsureApplied {t0.ElapsedMilliseconds}ms");
+AlRunner.PerfTrace.Log($"BcRuntime.EnsureApplied {t0.ElapsedMilliseconds}ms");
 
 var emitter = new BcCompiler();
 var assembler = new BcAssembler();
@@ -747,7 +747,7 @@ results.Clear();
 var savedOut = Console.Out;
 var savedErr = Console.Error;
 bool stdoutSilenced = false;
-if (watchUi && !AlRunnerV2.Log.Verbose)
+if (watchUi && !AlRunner.Log.Verbose)
 {
     // Silence BOTH streams: the diagnostic noise is split across stdout
     // (dep-resolve / suite-count lines) and stderr ([cache] MISS/WROTE lines),
@@ -778,7 +778,7 @@ foreach (var bundle in bundles)
 
     // Forget the previous bundle's install-trigger registrations so a bundle
     // without deps doesn't inherit a sibling bundle's Install codeunits.
-    AlRunnerV2.InstallTriggerRunner.ResetForNewBundle();
+    AlRunner.InstallTriggerRunner.ResetForNewBundle();
 
     // ── per-bucket dep resolution ──────────────────────────────────────────
     var bucketRoot = FindBucketRoot(bundleAbs);
@@ -810,7 +810,7 @@ foreach (var bundle in bundles)
                 // the code-bearing copy of a *different* package in the same family and
                 // the run then dies at execution with "object with ID 0". A count alone
                 // cannot show that; the winning path can. See --guide (DEPENDENCIES).
-                if (AlRunnerV2.Log.Verbose)
+                if (AlRunner.Log.Verbose)
                     foreach (var (m, appPath) in ordered)
                         Console.WriteLine($"    [dep] {m.Publisher}/{m.Name} {m.Version}  <- {appPath}");
                 // Verbose-only, deliberately. MEASURED 2026-07-29: on the known-good
@@ -826,7 +826,7 @@ foreach (var bundle in bundles)
                 // --verbose. Making it a reliable failure signal needs the open question
                 // answered first: why does the healthy run tolerate a symbols-only winner?
                 // Until then this is evidence to weigh, not a verdict.
-                if (AlRunnerV2.Log.Verbose)
+                if (AlRunner.Log.Verbose)
                     foreach (var d in resolver.Diagnostics)
                         Console.Error.WriteLine(d);
                 // Compiler sees only non-workspace dirs in its .app scanner; the
@@ -845,7 +845,7 @@ foreach (var bundle in bundles)
                 Console.WriteLine($"  [{rel}] loaded {loaded.Count} dep assembl(ies)");
                 // Register dep assemblies (dependency order) so their Subtype=Install
                 // codeunit lifecycle triggers fire before this bundle's tests run.
-                AlRunnerV2.InstallTriggerRunner.SetDependencyAssemblies(loaded);
+                AlRunner.InstallTriggerRunner.SetDependencyAssemblies(loaded);
                 // Source-only dependency loading compiles those dependencies through
                 // BcCompiler too, which updates the process-wide reference state. Restore
                 // this bundle's dependency symbols before emitting the bundle itself.
@@ -857,23 +857,23 @@ foreach (var bundle in bundles)
                 // (NAVX zip) for tables defined in compiled BC dependencies — the
                 // case spike-a-baseapp's Currency-init scenario depends on.
                 foreach (var (_, appPath) in ordered)
-                    AlRunnerV2.Patches.RecordPatches.AddBcAppPath(appPath);
+                    AlRunner.Patches.RecordPatches.AddBcAppPath(appPath);
                 // Register any prebuilt bundle-root .app (with SymbolReference.json) so the
                 // generic NCLMetaQuery builder can read this bundle's own query column ids.
-                AlRunnerV2.Patches.RecordPatches.RegisterBundleSymbolApps(bucketRoot);
+                AlRunner.Patches.RecordPatches.RegisterBundleSymbolApps(bucketRoot);
                 // Populate BcRuntime with this bundle's identity for the
                 // NavApp.GetCurrentModuleInfo polyfill shim.
                 SetBundleInfoFromAppJson(appJsonPath);
                 // Compile this bundle under its REAL app.json identity so a dependency's
                 // internalsVisibleTo grant (which names this app) matches — otherwise the
                 // synthetic compile identity fails the grant check (AL0161).
-                var bundleId = AlRunnerV2.Infrastructure.InProcessAppPackager.ReadIdentity(appJsonPath);
+                var bundleId = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJsonPath);
                 if (bundleId != null)
                     BcCompiler.SetCurrentAppIdentity(bundleId.AppId, bundleId.Publisher, bundleId.Version);
                 else
                     BcCompiler.SetCurrentAppIdentity(null, null, null);
             }
-            catch (AlRunnerV2.Infrastructure.DependencyLoadException ex)
+            catch (AlRunner.Infrastructure.DependencyLoadException ex)
             {
                 // DependencyLoadException already printed a [dep-load-fail] line.
                 // Abort immediately with exit 1: running with a broken dependency
@@ -886,14 +886,14 @@ foreach (var bundle in bundles)
                     $"FATAL: dependency compile failed — cannot continue. {ex.Message}");
                 return 1;
             }
-            catch (AlRunnerV2.Infrastructure.MissingDependencyException ex)
+            catch (AlRunner.Infrastructure.MissingDependencyException ex)
             {
                 // A declared dependency is completely absent from every package-cache directory.
                 // Continuing to compile would produce thousands of misleading AL0185 "X is missing"
                 // errors that blame the user's own code. Instead: restore streams, print ONE loud
                 // provisioning-gap message naming the dep + fix commands, and abort.
                 if (stdoutSilenced) { Console.SetOut(savedOut); Console.SetError(savedErr); }
-                var bcVer = AlRunnerV2.Infrastructure.BcArtifacts.SelectedVersion.ToString();
+                var bcVer = AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString();
                 Console.Error.WriteLine();
                 Console.Error.WriteLine(ex.ToDetailedMessage(bcVer));
                 Console.Error.WriteLine();
@@ -924,10 +924,10 @@ foreach (var bundle in bundles)
     {
         var s = Path.Combine(suite, "src");
         if (Directory.Exists(s))
-            AlRunnerV2.Patches.RecordPatches.AddSourceDir(s);
+            AlRunner.Patches.RecordPatches.AddSourceDir(s);
         else if (!Directory.Exists(Path.Combine(suite, "test")))
             // Flat bundle: register the suite root so table parsers can find .al files.
-            AlRunnerV2.Patches.RecordPatches.AddSourceDir(suite);
+            AlRunner.Patches.RecordPatches.AddSourceDir(suite);
     }
 
     var bundleEmit = TimeSpan.Zero;
@@ -1002,9 +1002,9 @@ foreach (var bundle in bundles)
         {
             cacheKey = ComputeAlCacheKey(allPaths, moduleName, ordered: GetOrderedDepIds(bucketRoot, packageCacheDirs));
             cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
-            sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunnerV2.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
-            querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunnerV2.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
-            if (AlRunnerV2.Infrastructure.AlCacheSidecars.IsCompleteEntry(
+            sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
+            querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
+            if (AlRunner.Infrastructure.AlCacheSidecars.IsCompleteEntry(
                     File.Exists(cachePath), File.Exists(sidecarPath),
                     bundleDeclaresQuery, File.Exists(querySidecarPath)))
             {
@@ -1038,7 +1038,7 @@ foreach (var bundle in bundles)
                 // Query symbols: same story, different side effect. Registering the
                 // sidecar is what lets RecordPatches build a real NCLMetaQuery.
                 if (bundleDeclaresQuery)
-                    AlRunnerV2.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(querySidecarPath!);
+                    AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(querySidecarPath!);
             }
             catch (Exception ex)
             {
@@ -1220,7 +1220,7 @@ foreach (var bundle in bundles)
             var loadSw = System.Diagnostics.Stopwatch.StartNew();
             var asm = Assembly.Load(assemblyBytes);
             loadSw.Stop();
-            AlRunnerV2.PerfTrace.Log($"test assembly load {rel}/{moduleName} {loadSw.ElapsedMilliseconds}ms");
+            AlRunner.PerfTrace.Log($"test assembly load {rel}/{moduleName} {loadSw.ElapsedMilliseconds}ms");
             var registerSw = System.Diagnostics.Stopwatch.StartNew();
             // wireFieldTriggers:false — WireFieldTriggerHandlersAll walks EVERY table
             // registered so far, not just this assembly's. Calling it here, per app,
@@ -1236,7 +1236,7 @@ foreach (var bundle in bundles)
             // whichever dir the bundle-level SetBundleInfoFromAppJson last saw (often
             // none, for a multi-app tree with no app.json at its root), and
             // NavApp.GetResource threw "could not be found in app ''" for every app.
-            AlRunnerV2.Patches.NavAppResourcePatches.SetCurrentBundleDir(appGroup.SuiteDir);
+            AlRunner.Patches.NavAppResourcePatches.SetCurrentBundleDir(appGroup.SuiteDir);
             BcRuntime.SetTestAssembly(asm, wireFieldTriggers: false);
             // Register THIS app's identity, not the bundle's. RegisterTestAssemblyInfo
             // reads the current bundle info, which stays "Unknown" whenever the bundle
@@ -1252,7 +1252,7 @@ foreach (var bundle in bundles)
                     (appGroup.Version ?? new Version(1, 0, 0, 0)).ToString());
             BcRuntime.RegisterTestAssemblyInfo(asm);
             registerSw.Stop();
-            AlRunnerV2.PerfTrace.Log($"RegisterTestAssemblyInfo {rel}/{moduleName} {registerSw.ElapsedMilliseconds}ms");
+            AlRunner.PerfTrace.Log($"RegisterTestAssemblyInfo {rel}/{moduleName} {registerSw.ElapsedMilliseconds}ms");
             suiteDirByAssembly[asm] = appGroup.SuiteDir;
             loadedAssemblies.Add(asm);
         }
@@ -1262,7 +1262,7 @@ foreach (var bundle in bundles)
         // every table's Record CLR type in one pass — including tables belonging to
         // apps that loaded LATER than the app that first registered their NCLMetaTable
         // (pre-registration adds every suite's src/ up front, before any app emits).
-        AlRunnerV2.Patches.RecordPatches.WireFieldTriggerHandlersAll();
+        AlRunner.Patches.RecordPatches.WireFieldTriggerHandlersAll();
 
         foreach (var asm in loadedAssemblies)
         {
@@ -1274,13 +1274,13 @@ foreach (var bundle in bundles)
                 // re-runs its full body (including the resource-dir registration) here
                 // too — see suiteDirByAssembly's declaration for why.
                 if (suiteDirByAssembly.TryGetValue(asm, out var suiteDir))
-                    AlRunnerV2.Patches.NavAppResourcePatches.SetCurrentBundleDir(suiteDir);
+                    AlRunner.Patches.NavAppResourcePatches.SetCurrentBundleDir(suiteDir);
                 BcRuntime.SetTestAssembly(asm, wireFieldTriggers: false);
                 BcRuntime.OosHooksActive = true;
                 var execSw = System.Diagnostics.Stopwatch.StartNew();
                 tests = executor.Run(asm);
                 execSw.Stop();
-                AlRunnerV2.PerfTrace.Log($"TestExecutor.Run {rel} {execSw.ElapsedMilliseconds}ms");
+                AlRunner.PerfTrace.Log($"TestExecutor.Run {rel} {execSw.ElapsedMilliseconds}ms");
             }
             catch (Exception ex)
             {
@@ -1564,11 +1564,11 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         bool shuttingDown = false;
         try
         {
-            var req = AlRunnerV2.ServerProtocol.Parse(line);
+            var req = AlRunner.ServerProtocol.Parse(line);
             switch (req?.Command?.ToLowerInvariant())
             {
                 case null:
-                    response = AlRunnerV2.ServerProtocol.Error("Invalid request (missing 'command')");
+                    response = AlRunner.ServerProtocol.Error("Invalid request (missing 'command')");
                     break;
                 case "runtests":
                     response = HandleServerRunTests(req);
@@ -1577,17 +1577,17 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     response = HandleServerExecute(req);
                     break;
                 case "shutdown":
-                    response = AlRunnerV2.ServerProtocol.Shutdown();
+                    response = AlRunner.ServerProtocol.Shutdown();
                     shuttingDown = true;
                     break;
                 default:
-                    response = AlRunnerV2.ServerProtocol.Error($"Unknown command: {req.Command}");
+                    response = AlRunner.ServerProtocol.Error($"Unknown command: {req.Command}");
                     break;
             }
         }
         catch (Exception ex)
         {
-            response = AlRunnerV2.ServerProtocol.Error(ex.Message);
+            response = AlRunner.ServerProtocol.Error(ex.Message);
         }
 
         output.WriteLine(response);
@@ -1598,15 +1598,15 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     return 0;
 
     // ── runTests: re-emit + run the requested bundle in-process. ───────────────
-    string HandleServerRunTests(AlRunnerV2.ServerRequest req)
+    string HandleServerRunTests(AlRunner.ServerRequest req)
     {
         if (req.SourcePaths == null || req.SourcePaths.Length == 0)
-            return AlRunnerV2.ServerProtocol.Error("sourcePaths is required");
+            return AlRunner.ServerProtocol.Error("sourcePaths is required");
 
         // v2 runs a single bundle per request; the extension passes one app root.
         var bundleDir = req.SourcePaths[0];
         if (!Directory.Exists(bundleDir))
-            return AlRunnerV2.ServerProtocol.Error($"bundle directory not found: {bundleDir}");
+            return AlRunner.ServerProtocol.Error($"bundle directory not found: {bundleDir}");
 
         var run = RunBundleForServer(bundleDir, req.PackagePaths, asm => executor.Run(asm));
 
@@ -1616,31 +1616,31 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             changed = DiffServerFiles(lastFileHashes, run.FileHashes);
         lastFileHashes = run.FileHashes;
 
-        return AlRunnerV2.ServerProtocol.RunTests(
+        return AlRunner.ServerProtocol.RunTests(
             run.Tests, run.ExitCode, run.Cached, changed, run.CompileErrors);
     }
 
     // ── execute: run the bundle's first OnRun-bearing codeunit (run-mode). v1 also
     // accepted an inline `code` string; v2 has no inline-AL compile path yet, so
     // that case fails LOUD (never a silent fake) per .claude/rules/loud-failures.md.
-    string HandleServerExecute(AlRunnerV2.ServerRequest req)
+    string HandleServerExecute(AlRunner.ServerRequest req)
     {
         if (!string.IsNullOrWhiteSpace(req.Code))
-            return AlRunnerV2.ServerProtocol.Error(
+            return AlRunner.ServerProtocol.Error(
                 "execute: inline AL 'code' is not yet supported in v2 — pass 'sourcePaths' "
                 + "to run the bundle's OnRun codeunit. See docs/server-mode.md.");
         if (req.CaptureValues == true)
-            return AlRunnerV2.ServerProtocol.Error(
+            return AlRunner.ServerProtocol.Error(
                 "execute: 'captureValues' is not yet supported in v2. See docs/server-mode.md.");
         if (req.SourcePaths == null || req.SourcePaths.Length == 0)
-            return AlRunnerV2.ServerProtocol.Error("sourcePaths is required");
+            return AlRunner.ServerProtocol.Error("sourcePaths is required");
         var bundleDir = req.SourcePaths[0];
         if (!Directory.Exists(bundleDir))
-            return AlRunnerV2.ServerProtocol.Error($"bundle directory not found: {bundleDir}");
+            return AlRunner.ServerProtocol.Error($"bundle directory not found: {bundleDir}");
 
         var run = RunBundleForServer(bundleDir, req.PackagePaths, RunFirstCodeunitOnRun);
         lastFileHashes = run.FileHashes;
-        return AlRunnerV2.ServerProtocol.Execute(run.Tests, run.ExitCode, null, run.CompileErrors);
+        return AlRunner.ServerProtocol.Execute(run.Tests, run.ExitCode, null, run.CompileErrors);
     }
 
     // Compile + run one bundle, resetting bundle-derived caches first so an edited
@@ -1665,8 +1665,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             .Distinct()
             .ToList();
 
-        IReadOnlyList<(AlRunnerV2.AppManifest Manifest, string AppPath)> ordered =
-            Array.Empty<(AlRunnerV2.AppManifest, string)>();
+        IReadOnlyList<(AlRunner.AppManifest Manifest, string AppPath)> ordered =
+            Array.Empty<(AlRunner.AppManifest, string)>();
         var appJsonPath = Path.Combine(bucketRoot, "app.json");
         if (File.Exists(appJsonPath))
         {
@@ -1683,20 +1683,20 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 var loaded = depLoader.LoadAll(ordered, bucketRoot);
                 // New bundle in the server session: replace (not inherit) the
                 // install-trigger registrations, then register this bundle's deps.
-                AlRunnerV2.InstallTriggerRunner.ResetForNewBundle();
-                AlRunnerV2.InstallTriggerRunner.SetDependencyAssemblies(loaded);
+                AlRunner.InstallTriggerRunner.ResetForNewBundle();
+                AlRunner.InstallTriggerRunner.SetDependencyAssemblies(loaded);
                 BcCompiler.SetResolvedDeps(ordered, resolverDirs);
                 foreach (var (_, appPath) in ordered)
-                    AlRunnerV2.Patches.RecordPatches.AddBcAppPath(appPath);
-                AlRunnerV2.Patches.RecordPatches.RegisterBundleSymbolApps(bucketRoot);
+                    AlRunner.Patches.RecordPatches.AddBcAppPath(appPath);
+                AlRunner.Patches.RecordPatches.RegisterBundleSymbolApps(bucketRoot);
                 SetBundleInfoFromAppJson(appJsonPath);
-                var bundleId = AlRunnerV2.Infrastructure.InProcessAppPackager.ReadIdentity(appJsonPath);
+                var bundleId = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJsonPath);
                 if (bundleId != null)
                     BcCompiler.SetCurrentAppIdentity(bundleId.AppId, bundleId.Publisher, bundleId.Version);
                 else
                     BcCompiler.SetCurrentAppIdentity(null, null, null);
             }
-            catch (AlRunnerV2.Infrastructure.DependencyLoadException ex)
+            catch (AlRunner.Infrastructure.DependencyLoadException ex)
             {
                 return ServerRunResult.Failure(3, "<deps>", ex.Message, new());
             }
@@ -1711,9 +1711,9 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         foreach (var suite in suites)
         {
             var s = Path.Combine(suite, "src");
-            if (Directory.Exists(s)) AlRunnerV2.Patches.RecordPatches.AddSourceDir(s);
+            if (Directory.Exists(s)) AlRunner.Patches.RecordPatches.AddSourceDir(s);
             else if (!Directory.Exists(Path.Combine(suite, "test")))
-                AlRunnerV2.Patches.RecordPatches.AddSourceDir(suite);
+                AlRunner.Patches.RecordPatches.AddSourceDir(suite);
             allPaths.AddRange(CollectSuitePaths(suite, bucketRoot));
         }
         allPaths = allPaths.Distinct().ToList();
@@ -1735,9 +1735,9 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             cacheKey = ComputeAlCacheKey(allPaths, moduleName,
                 ordered: GetOrderedDepIds(bucketRoot, effectivePkgDirs));
             cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
-            sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunnerV2.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
-            querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunnerV2.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
-            if (AlRunnerV2.Infrastructure.AlCacheSidecars.IsCompleteEntry(
+            sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
+            querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
+            if (AlRunner.Infrastructure.AlCacheSidecars.IsCompleteEntry(
                     File.Exists(cachePath), File.Exists(sidecarPath),
                     bundleDeclaresQuery, File.Exists(querySidecarPath)))
             {
@@ -1746,7 +1746,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     var bytes = File.ReadAllBytes(cachePath);
                     LoadEnumRegistrySidecar(sidecarPath);
                     if (bundleDeclaresQuery)
-                        AlRunnerV2.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(querySidecarPath);
+                        AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(querySidecarPath);
                     assemblyBytes = bytes;
                     cached = true;
                 }
@@ -1860,7 +1860,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 "no codeunit with an OnRun trigger found in the bundle", null, TimeSpan.Zero) };
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        AlRunnerV2.Infrastructure.AlCallStackCapture.Clear();
+        AlRunner.Infrastructure.AlCallStackCapture.Clear();
         try
         {
             var ctor = target.GetConstructors().FirstOrDefault(c =>
@@ -1881,7 +1881,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         catch (System.Reflection.TargetInvocationException tex)
         {
             var inner = tex.InnerException ?? tex;
-            var alStack = AlRunnerV2.Infrastructure.AlCallStackCapture.GetCaptured(inner);
+            var alStack = AlRunner.Infrastructure.AlCallStackCapture.GetCaptured(inner);
             return new[] { new TestResult(target.Name, "OnRun", TestOutcome.Fail,
                 $"{inner.GetType().Name}: {inner.Message}", inner.ToString(), sw.Elapsed, alStack) };
         }
@@ -2545,7 +2545,7 @@ static int RunEmitApp(string[] args)
     }
 
     var appJsonPath = Path.Combine(bundleDir, "app.json");
-    var identity = AlRunnerV2.Infrastructure.InProcessAppPackager.ReadIdentity(appJsonPath);
+    var identity = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJsonPath);
     if (identity == null)
     {
         Console.Error.WriteLine($"--emit-app: could not read identity from {appJsonPath}");
@@ -2558,7 +2558,7 @@ static int RunEmitApp(string[] args)
     var sw = System.Diagnostics.Stopwatch.StartNew();
     try
     {
-        AlRunnerV2.Infrastructure.InProcessAppPackager.EmitAppPackageToFile(
+        AlRunner.Infrastructure.InProcessAppPackager.EmitAppPackageToFile(
             bundleDir, identity, outPath);
     }
     catch (Exception ex)
@@ -2579,7 +2579,7 @@ static int RunEmitApp(string[] args)
 static List<string> RunLayeredPrePass(List<string> bundles, List<string> packageCacheDirs, List<string> workspaceDirsOut)
 {
     // Read identity of every bundle.
-    var identities = new Dictionary<string, AlRunnerV2.Infrastructure.BundleIdentity>(StringComparer.OrdinalIgnoreCase);
+    var identities = new Dictionary<string, AlRunner.Infrastructure.BundleIdentity>(StringComparer.OrdinalIgnoreCase);
     foreach (var bundle in bundles)
     {
         var abs = Path.GetFullPath(bundle);
@@ -2591,7 +2591,7 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
             if (root != null) appJson = Path.Combine(root, "app.json");
         }
         if (!File.Exists(appJson)) continue;
-        var id = AlRunnerV2.Infrastructure.InProcessAppPackager.ReadIdentity(appJson);
+        var id = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJson);
         if (id != null) identities[abs] = id;
     }
 
@@ -2649,8 +2649,8 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
             // AL0791 / AL0185 diagnostics against source that is perfectly valid, with only
             // the "[layered] ... skipping in-process synthesis" line above to explain it.
             var prebuiltUtc = File.GetLastWriteTimeUtc(prebuilt);
-            var newestSourceUtc = AlRunnerV2.Infrastructure.PrebuiltShadowCheck.NewestAlSourceUtc(implPath);
-            if (AlRunnerV2.Infrastructure.PrebuiltShadowCheck.SourceIsNewer(prebuiltUtc, newestSourceUtc))
+            var newestSourceUtc = AlRunner.Infrastructure.PrebuiltShadowCheck.NewestAlSourceUtc(implPath);
+            if (AlRunner.Infrastructure.PrebuiltShadowCheck.SourceIsNewer(prebuiltUtc, newestSourceUtc))
             {
                 Console.WriteLine($"[layered] {implId.Name} {implId.Version} has a prebuilt symbol package " +
                     $"({Path.GetFileName(prebuilt)}) but it is STALE (source modified {newestSourceUtc:u} > " +
@@ -2699,7 +2699,7 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
         // Remember the impl's SOURCE dir by AppId so NavApp.GetResource can serve its
         // app.json resourceFolders files when the impl loads as a dependency via the
         // synthesized workspace .app (which carries no /resources/ part).
-        AlRunnerV2.Patches.NavAppResourcePatches.RegisterSourceDirForApp(implId.AppId, implPath);
+        AlRunner.Patches.NavAppResourcePatches.RegisterSourceDirForApp(implId.AppId, implPath);
 
         // The impl bundle's own .alpackages (same dirs the main per-bundle compile scans),
         // reused for both this impl's symbol-emit and the dependent-visible caches below.
@@ -2823,7 +2823,7 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
         {
             try
             {
-                AlRunnerV2.Infrastructure.InProcessAppPackager.EmitAppPackageToFile(
+                AlRunner.Infrastructure.InProcessAppPackager.EmitAppPackageToFile(
                     implPath, implId, outPath, symbolReferenceJson: null);
             }
             catch (Exception ex)
@@ -2887,7 +2887,7 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
             if (root != null) appJson = Path.Combine(root, "app.json");
         }
         if (!File.Exists(appJson)) continue;
-        var id = AlRunnerV2.Infrastructure.InProcessAppPackager.ReadIdentity(appJson);
+        var id = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJson);
         if (id == null) continue;
         bundleRoots.Add(Path.GetFullPath(Path.GetDirectoryName(appJson)!));
         // Skip Optional (implicit Microsoft Application/System) roots — those live
@@ -2897,7 +2897,7 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
     if (neededDeps.Count == 0) return packageCacheDirs;
 
     // 2. Discover candidate source apps in the parent dir of each bundle root.
-    var sourceApps = new Dictionary<string, AlRunnerV2.Infrastructure.BundleIdentity>(StringComparer.OrdinalIgnoreCase);
+    var sourceApps = new Dictionary<string, AlRunner.Infrastructure.BundleIdentity>(StringComparer.OrdinalIgnoreCase);
     foreach (var bundleRoot in bundleRoots)
     {
         var parent = Path.GetDirectoryName(bundleRoot);
@@ -2908,7 +2908,7 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
             if (bundleRoots.Contains(subAbs)) continue; // not a bundle itself
             var aj = Path.Combine(subAbs, "app.json");
             if (!File.Exists(aj)) continue;
-            var sid = AlRunnerV2.Infrastructure.InProcessAppPackager.ReadIdentity(aj);
+            var sid = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(aj);
             if (sid != null) sourceApps[subAbs] = sid;
         }
     }
@@ -2935,11 +2935,11 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
                 (string.Equals(dep.Name, sid.Name, StringComparison.OrdinalIgnoreCase) &&
                  string.Equals(dep.Publisher, sid.Publisher, StringComparison.OrdinalIgnoreCase));
             if (!match) continue;
-            AlRunnerV2.Patches.RecordPatches.AddSourceDir(dir);
+            AlRunner.Patches.RecordPatches.AddSourceDir(dir);
             // Remember the sibling source dir by AppId so NavApp.GetResource can serve
             // its resourceFolders files even when the dep loads via the synthetic
             // workspace-deps .app (which carries no /resources/ part).
-            AlRunnerV2.Patches.NavAppResourcePatches.RegisterSourceDirForApp(sid.AppId, dir);
+            AlRunner.Patches.NavAppResourcePatches.RegisterSourceDirForApp(sid.AppId, dir);
             if (!packageAvailable)
                 toBuild.Add(dir);
         }
@@ -2998,7 +2998,7 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
         // NCLMetaTable". This runs before RecordPatches.Register(), so the dir is parsed
         // by ParseAllSources during Register (not immediately). Compile-time visibility is
         // handled separately by the symbols.json emit below.
-        AlRunnerV2.Patches.RecordPatches.AddSourceDir(dir);
+        AlRunner.Patches.RecordPatches.AddSourceDir(dir);
         var appFileName = $"{Sanitize(sid.Publisher)}_{Sanitize(sid.Name)}_{sid.Version.ToString().Replace('.', '_')}.app";
         var outPath = Path.Combine(wsDir, appFileName);
         var hadApp = File.Exists(outPath);
@@ -3006,7 +3006,7 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
         {
             try
             {
-                AlRunnerV2.Infrastructure.InProcessAppPackager.EmitAppPackageToFile(dir, sid, outPath);
+                AlRunner.Infrastructure.InProcessAppPackager.EmitAppPackageToFile(dir, sid, outPath);
             }
             catch (Exception ex)
             {
@@ -3084,7 +3084,7 @@ static bool IsDependencyPackageAvailable(DependencyRef dep, IReadOnlyList<string
         if (!Directory.Exists(dir)) continue;
         foreach (var file in Directory.EnumerateFiles(dir, "*.app", SearchOption.AllDirectories))
         {
-            var manifest = AlRunnerV2.AppLoader.ReadManifest(file);
+            var manifest = AlRunner.AppLoader.ReadManifest(file);
             if (manifest == null || manifest.Version < dep.Version)
                 continue;
             var idMatches = dep.AppId != Guid.Empty && dep.AppId == manifest.AppId;
@@ -3100,7 +3100,7 @@ static bool IsDependencyPackageAvailable(DependencyRef dep, IReadOnlyList<string
 
 static string ComputeSourceWorkspaceKey(
     IReadOnlyList<string> sortedDirs,
-    IReadOnlyDictionary<string, AlRunnerV2.Infrastructure.BundleIdentity> sourceApps)
+    IReadOnlyDictionary<string, AlRunner.Infrastructure.BundleIdentity> sourceApps)
 {
     using var sha = System.Security.Cryptography.SHA256.Create();
     using var ms = new MemoryStream();
@@ -3111,7 +3111,7 @@ static string ComputeSourceWorkspaceKey(
     }
 
     WriteLine("schema:v1");
-    var runnerLoc = typeof(AlRunnerV2.BcAssembler).Assembly.Location;
+    var runnerLoc = typeof(AlRunner.BcAssembler).Assembly.Location;
     if (!string.IsNullOrEmpty(runnerLoc) && File.Exists(runnerLoc))
         WriteLine($"runner:{File.GetLastWriteTimeUtc(runnerLoc).Ticks}:{new FileInfo(runnerLoc).Length}");
     else
@@ -3140,7 +3140,7 @@ static string ComputeSourceWorkspaceKey(
 
 static List<string> TopologicalSort(
     List<string> implPaths,
-    Dictionary<string, AlRunnerV2.Infrastructure.BundleIdentity> idByKey)
+    Dictionary<string, AlRunner.Infrastructure.BundleIdentity> idByKey)
 {
     var result = new List<string>();
     var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -3195,7 +3195,7 @@ static IEnumerable<string> ExpandPackageCacheDirs(IEnumerable<string> userDirs)
 static IEnumerable<string> BcArtifactTestDirs(string cacheDir)
 {
     // Cross-platform home (POSIX HOME is null on Windows — see AlRunnerPaths).
-    var home = AlRunnerV2.Infrastructure.AlRunnerPaths.UserHome;
+    var home = AlRunner.Infrastructure.AlRunnerPaths.UserHome;
     if (string.IsNullOrEmpty(home)) yield break;
 
     var bcRoot = Path.GetFullPath(Path.Combine(home, ".bcartifacts.cache"));
@@ -3237,7 +3237,7 @@ static string[] RewriteArtifactPathArg(string[] argv)
         if (argv[i] == "--artifact-path" && i + 1 < argv.Length)
         {
             string? ver = null;
-            try { ver = AlRunnerV2.Infrastructure.BcArtifacts.TryTranslateArtifactPathToVersion(argv[i + 1]); }
+            try { ver = AlRunner.Infrastructure.BcArtifacts.TryTranslateArtifactPathToVersion(argv[i + 1]); }
             catch (InvalidOperationException) { ver = null; }
             if (ver != null) { outv.Add("--bc-version"); outv.Add(ver); i++; continue; }
         }
@@ -3256,10 +3256,10 @@ static string[] RewriteArtifactPathArg(string[] argv)
 static IEnumerable<string> DefaultPackageCacheDirs()
 {
     // Cross-platform home (POSIX HOME is null on Windows — see AlRunnerPaths).
-    var home = AlRunnerV2.Infrastructure.AlRunnerPaths.UserHome;
+    var home = AlRunner.Infrastructure.AlRunnerPaths.UserHome;
     if (string.IsNullOrEmpty(home)) yield break;
 
-    var sel = AlRunnerV2.Infrastructure.BcArtifacts.SelectedVersion;
+    var sel = AlRunner.Infrastructure.BcArtifacts.SelectedVersion;
     var mmPrefix = $"{sel.Major}.{sel.Minor}";
 
     var bcRoot = Path.Combine(home, ".bcartifacts.cache", "sandbox");
@@ -3284,7 +3284,7 @@ static IEnumerable<string> DefaultPackageCacheDirs()
     // The provisioned MS test toolkit for the SELECTED version (see
     // EnsureTestToolkitProvisioned). Scanned by default so a test bundle whose app.json
     // depends on Library Assert / Test Runner / Any resolves them without --package-cache.
-    var testApps = Path.Combine(AlRunnerV2.Infrastructure.BcArtifacts.ArtifactsRootDir,
+    var testApps = Path.Combine(AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir,
         sel.ToString(), "test-apps");
     if (Directory.Exists(testApps)) yield return testApps;
 }
@@ -3299,7 +3299,7 @@ static string? SelectVersionDirOrNull(string root, string versionPrefix)
     if (!Directory.Exists(root)) return null;
     try
     {
-        return AlRunnerV2.Infrastructure.BcArtifacts.SelectArtifactVersionDir(root, versionPrefix);
+        return AlRunner.Infrastructure.BcArtifacts.SelectArtifactVersionDir(root, versionPrefix);
     }
     catch (InvalidOperationException)
     {
@@ -3346,7 +3346,7 @@ static IEnumerable<DepsSidecarWriter.DepEntry> ScanVendoredPlatformApps(IEnumera
         {
             var m = AppLoader.ReadManifest(app);
             if (m == null) continue;
-            if (AlRunnerV2.DependencyResolver.IsMicrosoftPlatformApp(m.Name, m.Publisher))
+            if (AlRunner.DependencyResolver.IsMicrosoftPlatformApp(m.Name, m.Publisher))
                 yield return new DepsSidecarWriter.DepEntry(m.Publisher, m.Name, m.Version, m.AppId);
         }
     }
@@ -3416,7 +3416,7 @@ static int RunProvisioning(string? bcVersionArg, string? artifactPathArg,
     else
     {
         var prefix = bcVersionArg
-            ?? AlRunnerV2.Infrastructure.BcArtifacts.EngineMajor(AppContext.BaseDirectory)?.ToString()
+            ?? AlRunner.Infrastructure.BcArtifacts.EngineMajor(AppContext.BaseDirectory)?.ToString()
             ?? TryDeriveBcMajorFromProject(bundles);
         if (prefix == null)
         {
@@ -3428,8 +3428,8 @@ static int RunProvisioning(string? bcVersionArg, string? artifactPathArg,
         // otherwise resolve the latest full version from the public CDN index.
         try
         {
-            var cachedDir = AlRunnerV2.Infrastructure.BcArtifacts.SelectArtifactVersionDir(
-                AlRunnerV2.Infrastructure.BcArtifacts.ArtifactsRootDir, prefix);
+            var cachedDir = AlRunner.Infrastructure.BcArtifacts.SelectArtifactVersionDir(
+                AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, prefix);
             full = Path.GetFileName(cachedDir);
             Console.Error.WriteLine($"[provision] found cached BC {full} for prefix '{prefix}' — verifying completeness.");
         }
@@ -3445,11 +3445,11 @@ static int RunProvisioning(string? bcVersionArg, string? artifactPathArg,
         }
     }
 
-    var serviceTierDir = AlRunnerV2.Infrastructure.BcArtifacts.ArtifactDirFor(full);
-    var report = AlRunnerV2.Infrastructure.ProvisioningCheck.Check(full, serviceTierDir);
+    var serviceTierDir = AlRunner.Infrastructure.BcArtifacts.ArtifactDirFor(full);
+    var report = AlRunner.Infrastructure.ProvisioningCheck.Check(full, serviceTierDir);
     if (report.Ok)
         Console.Error.WriteLine($"[provision] BC {full} engine artifacts already complete at {serviceTierDir}.");
-    else if (!AlRunnerV2.Infrastructure.ProvisioningCheck.AutoProvision(full, serviceTierDir))
+    else if (!AlRunner.Infrastructure.ProvisioningCheck.AutoProvision(full, serviceTierDir))
         return 1;
 
     EnsureTestToolkitProvisioned(full);
@@ -3491,13 +3491,13 @@ static void EnsureTestToolkitProvisioned(string fullVersion)
 }
 
 static string TestAppsDirFor(string fullVersion)
-    => Path.Combine(AlRunnerV2.Infrastructure.BcArtifacts.ArtifactsRootDir, fullVersion, "test-apps");
+    => Path.Combine(AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, fullVersion, "test-apps");
 
 static void SetBundleInfoFromAppJson(string appJsonPath)
 {
     // Remember (or clear) the bundle dir for NavApp.GetResource: the emitted test
     // assembly's resources are the files under this dir's app.json resourceFolders.
-    AlRunnerV2.Patches.NavAppResourcePatches.SetCurrentBundleDir(
+    AlRunner.Patches.NavAppResourcePatches.SetCurrentBundleDir(
         File.Exists(appJsonPath) ? Path.GetDirectoryName(Path.GetFullPath(appJsonPath)) : null);
     try
     {
@@ -3509,7 +3509,7 @@ static void SetBundleInfoFromAppJson(string appJsonPath)
         var ver = root.TryGetProperty("version", out var pv) ? pv.GetString() ?? "1.0.0.0" : "1.0.0.0";
         Guid appId = Guid.Empty;
         if (!string.IsNullOrEmpty(idStr)) Guid.TryParse(idStr, out appId);
-        AlRunnerV2.BcRuntime.SetCurrentBundleInfo(appId, name, pub, ver);
+        AlRunner.BcRuntime.SetCurrentBundleInfo(appId, name, pub, ver);
     }
     catch { /* non-fatal */ }
 }
@@ -3541,7 +3541,7 @@ static IEnumerable<DependencyRef> ReadDependencies(string appJsonPath)
             // Mark the explicit ones Optional so resolution skips them when they aren't a
             // findable .app (e.g. on CI, where packageCacheDirs is empty) instead of failing
             // the whole bundle — matching how the implicit roots below are already Optional.
-            bool isMsPlatform = AlRunnerV2.DependencyResolver.IsMicrosoftPlatformApp(name, pub);
+            bool isMsPlatform = AlRunner.DependencyResolver.IsMicrosoftPlatformApp(name, pub);
             yield return new DependencyRef(id, name, pub, v, Optional: isMsPlatform);
         }
     }
@@ -3579,10 +3579,10 @@ static IEnumerable<DependencyRef> ReadDependencies(string appJsonPath)
 /// an identity of their own and are merged into one fallback module named after the
 /// bundle, which is the pre-existing behaviour for that shape.
 /// </summary>
-static List<AlRunnerV2.AppGroup> BuildAppGroups(List<string> suites, string? bucketRoot, string bundleAbs)
+static List<AlRunner.AppGroup> BuildAppGroups(List<string> suites, string? bucketRoot, string bundleAbs)
 {
-    var groups = new List<AlRunnerV2.AppGroup>();
-    var identified = new List<(AlRunnerV2.AppGroup Group, Guid Id)>();
+    var groups = new List<AlRunner.AppGroup>();
+    var identified = new List<(AlRunner.AppGroup Group, Guid Id)>();
     var orphanPaths = new List<string>();
 
     foreach (var suite in suites)
@@ -3590,11 +3590,11 @@ static List<AlRunnerV2.AppGroup> BuildAppGroups(List<string> suites, string? buc
         var paths = CollectSuitePaths(suite, bucketRoot);
         var appJson = Path.Combine(suite, "app.json");
         var id = File.Exists(appJson)
-            ? AlRunnerV2.Infrastructure.InProcessAppPackager.ReadIdentity(appJson)
+            ? AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJson)
             : null;
         if (id == null) { orphanPaths.AddRange(paths); continue; }
 
-        var group = new AlRunnerV2.AppGroup(
+        var group = new AlRunner.AppGroup(
             ModuleName: id.Name,
             AppId: id.AppId,
             Publisher: id.Publisher,
@@ -3609,7 +3609,7 @@ static List<AlRunnerV2.AppGroup> BuildAppGroups(List<string> suites, string? buc
     // this bundle are resolved from the package cache as before and are ignored here.
     var siblingIds = identified.Select(t => t.Id).ToHashSet();
     var emitted = new HashSet<Guid>();
-    var remaining = new List<(AlRunnerV2.AppGroup Group, Guid Id)>(identified);
+    var remaining = new List<(AlRunner.AppGroup Group, Guid Id)>(identified);
     while (remaining.Count > 0)
     {
         // Take every app whose sibling dependencies are already emitted. If none
@@ -3628,7 +3628,7 @@ static List<AlRunnerV2.AppGroup> BuildAppGroups(List<string> suites, string? buc
     }
 
     if (orphanPaths.Count > 0)
-        groups.Add(new AlRunnerV2.AppGroup(
+        groups.Add(new AlRunner.AppGroup(
             ModuleName: $"V2_{Path.GetFileName(bundleAbs)}",
             AppId: null, Publisher: null, Version: null,
             Paths: orphanPaths.Distinct().ToList(),
@@ -3701,7 +3701,7 @@ static string ComputeAlCacheKey(
 
     // 1. Runner assembly fingerprint — any rewriter / polyfill / patch change
     //    in the runner forces a cache miss.
-    var runnerLoc = typeof(AlRunnerV2.BcAssembler).Assembly.Location;
+    var runnerLoc = typeof(AlRunner.BcAssembler).Assembly.Location;
     if (!string.IsNullOrEmpty(runnerLoc) && File.Exists(runnerLoc))
         WriteLine($"runner:{File.GetLastWriteTimeUtc(runnerLoc).Ticks}:{new FileInfo(runnerLoc).Length}");
     else
@@ -3892,7 +3892,7 @@ static IReadOnlyList<string> GetOrderedDepIds(string? bucketRoot, IReadOnlyList<
     try
     {
         var roots = ReadDependencies(appJsonPath).ToList();
-        var resolver = new AlRunnerV2.DependencyResolver(packageCacheDirs);
+        var resolver = new AlRunner.DependencyResolver(packageCacheDirs);
         var ordered = resolver.Resolve(roots);
         return ordered
             .Select(d => $"{d.Manifest.AppId:N}:{d.Manifest.Version}")

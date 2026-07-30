@@ -26,7 +26,7 @@
 //   when something downstream reads a setup table that codeunit 2 never got to.
 using System.Reflection;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 internal static class CompanyInitializer
 {

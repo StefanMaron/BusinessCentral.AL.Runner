@@ -29,7 +29,7 @@
 //   on a nested field / control / column never masquerades as the object's.
 using System.Text.RegularExpressions;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {

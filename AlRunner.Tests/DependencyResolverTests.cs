@@ -22,9 +22,9 @@
 using System.IO.Compression;
 using System.Text;
 using Xunit;
-using AlRunnerV2;
+using AlRunner;
 
-namespace AlRunnerV2.Tests;
+namespace AlRunner.Tests;
 
 public sealed class DependencyResolverTests : IDisposable
 {
@@ -157,7 +157,7 @@ public sealed class DependencyResolverTests : IDisposable
             Guid.Parse("bee8cf2f-494a-42f4-aabd-650e87934d39"),
             "Business Foundation Test Libraries", "Microsoft", new Version(28, 2, 0, 0));
 
-        Assert.Throws<AlRunnerV2.Infrastructure.MissingDependencyException>(
+        Assert.Throws<AlRunner.Infrastructure.MissingDependencyException>(
             () => resolver.Resolve(new[] { dep }));
     }
 
@@ -175,7 +175,7 @@ public sealed class DependencyResolverTests : IDisposable
         var dep = new DependencyRef(
             depId, "Business Foundation Test Libraries", "Microsoft", new Version(28, 2, 0, 0));
 
-        var ex = Assert.Throws<AlRunnerV2.Infrastructure.MissingDependencyException>(
+        var ex = Assert.Throws<AlRunner.Infrastructure.MissingDependencyException>(
             () => resolver.Resolve(new[] { dep }));
 
         Assert.Equal("Microsoft", ex.DepPublisher);
@@ -193,7 +193,7 @@ public sealed class DependencyResolverTests : IDisposable
     public void DepCompletelyAbsent_ToDetailedMessage_NamesProvisionCommandForMicrosoftDep()
     {
         var dir = MakeDir("MDE_msg_ms");
-        var ex = new AlRunnerV2.Infrastructure.MissingDependencyException(
+        var ex = new AlRunner.Infrastructure.MissingDependencyException(
             "Microsoft", "Business Foundation Test Libraries", "28.2.0.0",
             Guid.Parse("bee8cf2f-494a-42f4-aabd-650e87934d39"),
             new[] { dir });
@@ -222,7 +222,7 @@ public sealed class DependencyResolverTests : IDisposable
     public void DepCompletelyAbsent_ToDetailedMessage_NoProvisionForThirdPartyDep()
     {
         var dir = MakeDir("MDE_msg_3p");
-        var ex = new AlRunnerV2.Infrastructure.MissingDependencyException(
+        var ex = new AlRunner.Infrastructure.MissingDependencyException(
             "Contoso", "Contoso Core Library", "5.0.0.0",
             Guid.NewGuid(), new[] { dir });
 
@@ -253,7 +253,7 @@ public sealed class DependencyResolverTests : IDisposable
         // Must be InvalidOperationException (version near-miss), NOT MissingDependencyException
         // (completely absent).
         var ex = Assert.Throws<InvalidOperationException>(() => resolver.Resolve(new[] { dep }));
-        Assert.IsNotType<AlRunnerV2.Infrastructure.MissingDependencyException>(ex);
+        Assert.IsNotType<AlRunner.Infrastructure.MissingDependencyException>(ex);
         Assert.Contains("5.0", ex.Message);
     }
 

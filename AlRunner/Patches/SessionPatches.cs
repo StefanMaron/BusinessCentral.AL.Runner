@@ -8,7 +8,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public static partial class BcRuntime
 {
@@ -93,7 +93,7 @@ public static partial class BcRuntime
             Console.Error.WriteLine("[BcRuntime] WARN: NavSession.cultureSettings field not found.");
             return;
         }
-        AlRunnerV2.Infrastructure.FieldPoke.SetInstance(f, session, value);
+        AlRunner.Infrastructure.FieldPoke.SetInstance(f, session, value);
     }
 
     private static object? _baseAppGroup;

@@ -30,7 +30,7 @@
 //   matters is which one the runner is driving.
 using System.Runtime.CompilerServices;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static class RunnerFormInit
 {

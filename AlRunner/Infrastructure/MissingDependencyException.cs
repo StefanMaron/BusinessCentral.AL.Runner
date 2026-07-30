@@ -9,7 +9,7 @@
 //
 // See: .claude/rules/loud-failures.md
 
-namespace AlRunnerV2.Infrastructure;
+namespace AlRunner.Infrastructure;
 
 /// <summary>
 /// Thrown by DependencyResolver when a declared dependency app cannot be found in any

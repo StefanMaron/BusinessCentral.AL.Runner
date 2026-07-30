@@ -20,7 +20,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public static class AlReportMetadataRegistry
 {

@@ -23,10 +23,10 @@
 
 using System.IO.Compression;
 using System.Text;
-using AlRunnerV2.Patches;
+using AlRunner.Patches;
 using Xunit;
 
-namespace AlRunnerV2.Tests;
+namespace AlRunner.Tests;
 
 public class BcAppSymbolCacheReportTests
 {

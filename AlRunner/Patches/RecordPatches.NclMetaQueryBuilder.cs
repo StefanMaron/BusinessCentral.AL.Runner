@@ -18,7 +18,7 @@
 using System.Collections;
 using System.Reflection;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {

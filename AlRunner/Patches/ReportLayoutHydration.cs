@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 /// <summary>
 /// Completes the <c>ReportLayout</c> objects the runner hands to report rendering.

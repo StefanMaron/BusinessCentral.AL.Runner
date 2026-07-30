@@ -12,7 +12,7 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public static partial class BcRuntime
 {
@@ -208,7 +208,7 @@ public static partial class BcRuntime
         PopulateNotificationId(self);
         try
         {
-            var session = AlRunnerV2.BcRuntime.SkeletonSession;
+            var session = AlRunner.BcRuntime.SkeletonSession;
             var testExecution = session?.GetType()
                 .GetProperty("TestExecution", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
                 .GetValue(session);

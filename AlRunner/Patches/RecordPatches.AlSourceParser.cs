@@ -6,7 +6,7 @@
 // good enough for the spike since we only need table layout (IDs, fields, PK).
 using System.Text.RegularExpressions;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {

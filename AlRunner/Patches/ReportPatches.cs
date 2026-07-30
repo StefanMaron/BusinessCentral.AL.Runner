@@ -12,7 +12,7 @@
 // `Assert.ExpectedError('out-of-scope: static NavReport.Run')`. No silent no-ops.
 using System.Runtime.CompilerServices;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public static partial class BcRuntime
 {

@@ -22,7 +22,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
 
-namespace AlRunnerV2.Rewriters;
+namespace AlRunner.Rewriters;
 
 public static class CallSiteArgWrap
 {

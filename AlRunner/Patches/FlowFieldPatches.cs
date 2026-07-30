@@ -28,11 +28,11 @@
 using System.Collections;
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using AlRunnerV2.Infrastructure;
+using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static class FlowFieldPatches
 {
@@ -430,7 +430,7 @@ public static class FlowFieldPatches
                 object? srcTtdp = null;
                 try
                 {
-                    var srcDataAccess = AlRunnerV2.Patches.RecordPatches
+                    var srcDataAccess = AlRunner.Patches.RecordPatches
                         .NavDataAccessSource_GetDataAccessForTable(dataAccessSource!, srcTable, false);
                     if (srcDataAccess != null && _pDataAccessDataProvider != null)
                         srcTtdp = _pDataAccessDataProvider.GetValue(srcDataAccess) ?? srcDataAccess;

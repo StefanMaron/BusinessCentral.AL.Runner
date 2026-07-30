@@ -22,7 +22,7 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
@@ -132,7 +132,7 @@ public static partial class RecordPatches
             // a REAL metadata load later and on demand, by EnsureRealPageMetadata below.
             EnsureCachePopulatorReflection();
             if (meta != null && _fNCLMetaAppObjMetadataLoaded != null)
-                AlRunnerV2.Infrastructure.FieldPoke.SetInstance(_fNCLMetaAppObjMetadataLoaded, meta, true);
+                AlRunner.Infrastructure.FieldPoke.SetInstance(_fNCLMetaAppObjMetadataLoaded, meta, true);
 
             return meta;
         }
@@ -173,7 +173,7 @@ public static partial class RecordPatches
 
             EnsureCachePopulatorReflection();
             if (meta != null && _fNCLMetaAppObjMetadataLoaded != null)
-                AlRunnerV2.Infrastructure.FieldPoke.SetInstance(_fNCLMetaAppObjMetadataLoaded, meta, true);
+                AlRunner.Infrastructure.FieldPoke.SetInstance(_fNCLMetaAppObjMetadataLoaded, meta, true);
 
             return meta;
         }
@@ -205,7 +205,7 @@ public static partial class RecordPatches
 
             EnsureCachePopulatorReflection();
             if (meta != null && _fNCLMetaAppObjMetadataLoaded != null)
-                AlRunnerV2.Infrastructure.FieldPoke.SetInstance(_fNCLMetaAppObjMetadataLoaded, meta, true);
+                AlRunner.Infrastructure.FieldPoke.SetInstance(_fNCLMetaAppObjMetadataLoaded, meta, true);
 
             return meta;
         }
@@ -232,7 +232,7 @@ public static partial class RecordPatches
 
             EnsureCachePopulatorReflection();
             if (meta != null && _fNCLMetaAppObjMetadataLoaded != null)
-                AlRunnerV2.Infrastructure.FieldPoke.SetInstance(_fNCLMetaAppObjMetadataLoaded, meta, true);
+                AlRunner.Infrastructure.FieldPoke.SetInstance(_fNCLMetaAppObjMetadataLoaded, meta, true);
 
             return meta;
         }

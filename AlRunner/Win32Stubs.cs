@@ -3,7 +3,7 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 internal static class Win32Stubs
 {

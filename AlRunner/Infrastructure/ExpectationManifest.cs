@@ -19,7 +19,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 
-namespace AlRunnerV2.Infrastructure;
+namespace AlRunner.Infrastructure;
 
 public enum ExpectationMode
 {

@@ -36,7 +36,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public static class NavReportSync
 {
@@ -306,7 +306,7 @@ public static class NavReportSync
     {
         var report = navReportOrNull ?? CreateReportForRequestPage(reportId);
         if (report == null)
-            throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 $"NavReport.RunRequestPage({reportId})",
                 "not-yet-implemented — the runner could not construct report " + reportId +
                 " to run its request page. See docs/scope.md");
@@ -428,7 +428,7 @@ public static class NavReportSync
         // Register the request-page surface BC's dispatch will ask the client session for
         // (RunnerTestClientSession.GetPage) — it is keyed by this form, and is also how the
         // handler's OK/Cancel is read back below.
-        var testPage = AlRunnerV2.Patches.RequestPageTestPage.Bind(requestPage, report, reportId);
+        var testPage = AlRunner.Patches.RequestPageTestPage.Bind(requestPage, report, reportId);
         if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_RP") == "1")
         {
             try
@@ -466,7 +466,7 @@ public static class NavReportSync
             // masterPage.PageProperties.PageType. So landing here means the request page was
             // built without a real MasterPage (see GetRealMetaReport's fallback) or the test
             // declares no [RequestPageHandler] for this report.
-            throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 "NavReport.RunRequestPage",
                 "request-page-dispatch — the request page was built but BC found no handler for "
                 + "it, so it fell through to a client callback the runner cannot serve. Either "
@@ -630,7 +630,7 @@ public static class NavReportSync
             if (diag) Console.Error.WriteLine($"[NavReportSync] SyncRun: reportId=0 (could not resolve), defaulting ProcessingOnly=true");
             return true;
         }
-        bool po = AlRunnerV2.Patches.RecordPatches.IsReportProcessingOnly(reportId);
+        bool po = AlRunner.Patches.RecordPatches.IsReportProcessingOnly(reportId);
         if (diag) Console.Error.WriteLine($"[NavReportSync] SyncRun: report {reportId} ProcessingOnly={po}");
         return po;
     }
@@ -793,7 +793,7 @@ public static class NavReportSync
             // stamps ProcessingOnly — and BC then refuses SaveAs on it entirely
             // ("Report N is a processing-only report"), even though the real report renders.
             if (!AlReportMetadataRegistry.TryGet(id, out var xml))
-                xml = AlRunnerV2.Patches.RecordPatches.TryBuildDependencyReportMetadata(id);
+                xml = AlRunner.Patches.RecordPatches.TryBuildDependencyReportMetadata(id);
             if (string.IsNullOrEmpty(xml)) return null;
             try
             {
@@ -1132,7 +1132,7 @@ public static class NavReportSync
         void Set(string field, object? value)
         {
             var f = t.GetField(field, BindingFlags.Instance | BindingFlags.NonPublic);
-            if (f != null) AlRunnerV2.Infrastructure.FieldPoke.SetInstance(f, self, value!);
+            if (f != null) AlRunner.Infrastructure.FieldPoke.SetInstance(f, self, value!);
         }
         Set("instanceFolderName", name);
         Set("instanceBasePath", basePath);
@@ -1168,7 +1168,7 @@ public static class NavReportSync
         foreach (var f in _navReportCollectionFields)
         {
             if (f.GetValue(navReport) == null)
-                AlRunnerV2.Infrastructure.FieldPoke.SetInstance(f, navReport,
+                AlRunner.Infrastructure.FieldPoke.SetInstance(f, navReport,
                     Activator.CreateInstance(f.FieldType)!); // FieldPoke handles initonly fields
         }
     }
@@ -1193,7 +1193,7 @@ public static class NavReportSync
         int id = (int)(numProp?.GetValue(appObjId)
             ?? throw new InvalidOperationException("ApplicationObjectId.ObjectNumber unavailable"));
 
-        var reportType = AlRunnerV2.BcRuntime.FindReportTypePublic(id)
+        var reportType = AlRunner.BcRuntime.FindReportTypePublic(id)
             ?? throw new InvalidOperationException(
                 $"Report{id} is not present in the test assembly or any loaded dependency.");
 
@@ -1451,7 +1451,7 @@ public static class NavReportSync
     private static void SeedSessionSystemTenant(object? session)
     {
         if (session == null) return;
-        var skeletonTenant = AlRunnerV2.BcRuntime.SkeletonSystemTenant;
+        var skeletonTenant = AlRunner.BcRuntime.SkeletonSystemTenant;
         if (skeletonTenant == null) return;
         try
         {
@@ -1467,7 +1467,7 @@ public static class NavReportSync
             }
             if (_sessionSystemTenantField == null) return;
             if (_sessionSystemTenantField.GetValue(session) == null)
-                AlRunnerV2.Infrastructure.FieldPoke.SetInstance(_sessionSystemTenantField, session, skeletonTenant);
+                AlRunner.Infrastructure.FieldPoke.SetInstance(_sessionSystemTenantField, session, skeletonTenant);
         }
         catch (Exception ex)
         {

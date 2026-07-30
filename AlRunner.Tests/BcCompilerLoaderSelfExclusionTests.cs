@@ -52,9 +52,9 @@ using System.IO.Compression;
 using System.Reflection;
 using System.Text;
 using Xunit;
-using AlRunnerV2;
+using AlRunner;
 
-namespace AlRunnerV2.Tests;
+namespace AlRunner.Tests;
 
 public sealed class BcCompilerLoaderSelfExclusionTests : IDisposable
 {

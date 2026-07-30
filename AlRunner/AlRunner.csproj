@@ -17,7 +17,7 @@
          on disk, the dotnet tool command, and the on-screen banner all read the same.
          The csproj filename stays PascalCase to follow .NET project conventions. -->
     <AssemblyName>al-runner</AssemblyName>
-    <RootNamespace>AlRunnerV2</RootNamespace>
+    <RootNamespace>AlRunner</RootNamespace>
 
     <!-- v2 stability constraint: JMP-hook patches written at tier-0 addresses are
          overwritten when .NET promotes hot methods to tier-1. Tiered compilation

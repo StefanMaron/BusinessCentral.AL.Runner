@@ -52,7 +52,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
@@ -253,7 +253,7 @@ public static partial class RecordPatches
                 }
             }
         }
-        catch (AlRunnerV2.Infrastructure.RunnerOutOfScopeException) { throw; }
+        catch (AlRunner.Infrastructure.RunnerOutOfScopeException) { throw; }
         catch { /* best-effort populate; the find still runs over whatever is present */ }
     }
 

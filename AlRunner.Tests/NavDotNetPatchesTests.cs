@@ -11,10 +11,10 @@
 
 using System;
 using Xunit;
-using AlRunnerV2.Patches;
-using AlRunnerV2.Infrastructure;
+using AlRunner.Patches;
+using AlRunner.Infrastructure;
 
-namespace AlRunnerV2.Tests;
+namespace AlRunner.Tests;
 
 public sealed class NavDotNetPatchesTests
 {

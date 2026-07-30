@@ -48,9 +48,9 @@ using System.Diagnostics.Tracing;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using AlRunnerV2.Infrastructure;
+using AlRunner.Infrastructure;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 /// <summary>
 /// In-process EventListener that subscribes to JIT MethodLoad events.

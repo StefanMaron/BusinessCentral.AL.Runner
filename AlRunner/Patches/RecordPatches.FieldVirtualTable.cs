@@ -47,10 +47,10 @@ using System.Collections;
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using AlRunnerV2.Infrastructure;
+using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
@@ -92,16 +92,16 @@ public static partial class RecordPatches
     {
         // Lazily seed NavGlobal.MetadataProvider the first time the Field table is accessed (so
         // non-Field tests keep baseline NavGlobal state). Required for FieldDataProvider's ctor.
-        AlRunnerV2.BcRuntime.EnsureMetadataProviderSeeded();
+        AlRunner.BcRuntime.EnsureMetadataProviderSeeded();
         EnsureFieldVirtualTableReflection(fieldMetaTable, session);
         if (_mGetFieldRecordBuffer == null || _mTtdpInsert == null || _ctorMutableFromReadOnly == null)
-            throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 "Field (virtual table 2000000041)",
                 "field-virtual-table — managed FieldDataProvider row-builder could not be bound; see docs/scope.md");
 
         EnsureDataAccessProviderReflection(dataAccess);
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
-            ?? throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 "Field (virtual table 2000000041)",
                 "field-virtual-table — Field data access has no in-memory provider; see docs/scope.md");
 
@@ -170,7 +170,7 @@ public static partial class RecordPatches
             {
                 // A single field that cannot be projected must not silently vanish nor
                 // poison the whole table — surface loudly so the gap is visible.
-                throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                     "Field (virtual table 2000000041)",
                     $"field-virtual-table — GetFieldRecordBuffer threw for table {srcMeta.TableId} field: " +
                     $"{tie.InnerException.GetType().Name}: {tie.InnerException.Message}; see docs/scope.md");
@@ -356,7 +356,7 @@ public static partial class RecordPatches
         catch (TargetInvocationException tie)
         {
             var inner = tie.InnerException ?? tie;
-            throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 "Field (virtual table 2000000041)",
                 $"field-virtual-table — FieldDataProvider ctor failed ({inner.GetType().Name}: {inner.Message}); " +
                 "the skeleton NavGlobal.MetadataProvider/NCLMetadata is not seeded; see docs/scope.md");

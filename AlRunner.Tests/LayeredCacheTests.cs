@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using Xunit;
 
-namespace AlRunnerV2.Tests;
+namespace AlRunner.Tests;
 
 /// <summary>
 /// Proves the layered-build workspace cache is keyed PER dependency package, so

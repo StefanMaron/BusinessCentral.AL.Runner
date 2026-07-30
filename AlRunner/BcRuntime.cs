@@ -5,9 +5,9 @@ using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using AlRunnerV2.Infrastructure;
+using AlRunner.Infrastructure;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public static partial class BcRuntime
 {
@@ -110,7 +110,7 @@ public static partial class BcRuntime
     public static void RegisterTestAssemblyInfo(System.Reflection.Assembly asm)
     {
         var (appId, name, publisher, version) = _currentBundleInfo;
-        AlRunnerV2.Infrastructure.AlCallStackCapture.RegisterAssemblyInfo(asm, name, publisher, version);
+        AlRunner.Infrastructure.AlCallStackCapture.RegisterAssemblyInfo(asm, name, publisher, version);
         _moduleInfoByAssembly[asm] = (appId, name, publisher, version);
     }
 
@@ -221,7 +221,7 @@ public static partial class BcRuntime
                 // the assembly test above while being runner plumbing, not AL. Counting
                 // them shifts the whole walk by one and yields the callee as its own caller.
                 if (type!.Namespace != null
-                    && type.Namespace.StartsWith("AlRunnerV2Shim", StringComparison.Ordinal)) continue;
+                    && type.Namespace.StartsWith("AlRunnerShim", StringComparison.Ordinal)) continue;
                 // Same AL method, not a caller: fold away the emitted scope frame object.
                 if (type.Name.Contains("_Scope", StringComparison.Ordinal)) continue;
 
@@ -321,14 +321,14 @@ public static partial class BcRuntime
         if (_currentTestAssembly == asm)
         {
             if (wireFieldTriggers)
-                AlRunnerV2.Patches.RecordPatches.WireFieldTriggerHandlersAll();
+                AlRunner.Patches.RecordPatches.WireFieldTriggerHandlersAll();
             return;
         }
         _currentTestAssembly = asm;
         _codeunitTypeCache.Clear();
         // NavApp.GetResource: bind this emitted assembly to the current bundle dir
         // (its app.json resourceFolders are where the app's resource bytes live).
-        AlRunnerV2.Patches.NavAppResourcePatches.RegisterTestAssembly(asm);
+        AlRunner.Patches.NavAppResourcePatches.RegisterTestAssembly(asm);
         var sw = System.Diagnostics.Stopwatch.StartNew();
         // NavObjectDictionary`2.get_Target used to be hooked here, per closed
         // instantiation, once the test assembly's generic types were in the AppDomain.
@@ -344,7 +344,7 @@ public static partial class BcRuntime
         // the test assembly) is deterministic since the JIT hasn't seen this method yet.
         sw.Restart();
         HookXmlPortInitializeComponents(asm);
-        AlRunnerV2.PerfTrace.Log($"SetTestAssembly.HookXmlPortInitializeComponents {sw.ElapsedMilliseconds}ms");
+        AlRunner.PerfTrace.Log($"SetTestAssembly.HookXmlPortInitializeComponents {sw.ElapsedMilliseconds}ms");
 
         // Field-level OnValidate/OnLookup wiring. NCLMetaField.EventTriggerDataValue
         // must point at the AL-emitted [FieldTriggerHandler] methods on the Record CLR
@@ -354,8 +354,8 @@ public static partial class BcRuntime
         if (wireFieldTriggers)
         {
             sw.Restart();
-            AlRunnerV2.Patches.RecordPatches.WireFieldTriggerHandlersAll();
-            AlRunnerV2.PerfTrace.Log($"SetTestAssembly.WireFieldTriggerHandlersAll {sw.ElapsedMilliseconds}ms");
+            AlRunner.Patches.RecordPatches.WireFieldTriggerHandlersAll();
+            AlRunner.PerfTrace.Log($"SetTestAssembly.WireFieldTriggerHandlersAll {sw.ElapsedMilliseconds}ms");
         }
 
         // Enum field-option metadata fix-up: the AlEnumMetadataRegistry is
@@ -363,8 +363,8 @@ public static partial class BcRuntime
         // The first BuildNCLMetaTable pass therefore misses enum-typed fields.
         // Re-apply now that the registry has the bucket's emitted enums.
         sw.Restart();
-        AlRunnerV2.Patches.RecordPatches.FixupEnumFieldOptionMetadataAll();
-        AlRunnerV2.PerfTrace.Log($"SetTestAssembly.FixupEnumFieldOptionMetadataAll {sw.ElapsedMilliseconds}ms");
+        AlRunner.Patches.RecordPatches.FixupEnumFieldOptionMetadataAll();
+        AlRunner.PerfTrace.Log($"SetTestAssembly.FixupEnumFieldOptionMetadataAll {sw.ElapsedMilliseconds}ms");
     }
 
     // Cached reflection for Codeunit151.initializationInProgress field.
@@ -456,8 +456,8 @@ public static partial class BcRuntime
         AlReportLayoutRegistry.Clear();
         NavReportSync.ResetMetadataCache();
         // Sibling patch classes with their own bundle-derived state.
-        AlRunnerV2.Patches.RecordPatches.ResetForReload();
-        AlRunnerV2.Patches.EventSubscriberPatches.ResetForReload();
+        AlRunner.Patches.RecordPatches.ResetForReload();
+        AlRunner.Patches.EventSubscriberPatches.ResetForReload();
     }
 
     private static void HookXmlPortInitializeComponents(Assembly asm)
@@ -602,7 +602,7 @@ public static partial class BcRuntime
         // (visible only with AL_RUNNER_HOOK_TRACE=1, which logs every Apply with flush).
         // Write to both streams + a tmpfile fallback so the success marker survives even
         // if a precedent patch (e.g. NavEnvironment.cctor replacement) redirected Console.
-        var ready = $"[BcRuntime] STARTUP-READY: {AlRunnerV2.Infrastructure.JmpHook.AppliedCount} hooks applied";
+        var ready = $"[BcRuntime] STARTUP-READY: {AlRunner.Infrastructure.JmpHook.AppliedCount} hooks applied";
         Console.Out.WriteLine(ready);
         Console.Out.Flush();
         Console.Error.WriteLine(ready);
@@ -613,13 +613,13 @@ public static partial class BcRuntime
         // owned by neither the (disabled) JmpHook layer nor a Cecil rewrite. Those patches are
         // silently absent at runtime — BC's unpatched body runs instead. AL_RUNNER_HOOK_AUDIT=1
         // names them so the remaining JmpHook→Cecil migration debt is measurable.
-        AlRunnerV2.Infrastructure.JmpHook.ReportOrphanedHooks();
+        AlRunner.Infrastructure.JmpHook.ReportOrphanedHooks();
 
         // Wire FirstChanceException-based AL call-stack capture now that patches are live
         // and _skeletonSession is initialised. This must happen after all hooks so that
         // NavException type lookup succeeds and CurrentMethodScope reflection is valid.
         if (_skeletonSession != null)
-            AlRunnerV2.Infrastructure.AlCallStackCapture.Initialize(_skeletonSession);
+            AlRunner.Infrastructure.AlCallStackCapture.Initialize(_skeletonSession);
     }
 
     /// <summary>
@@ -650,7 +650,7 @@ public static partial class BcRuntime
 
     private static void ForceLoadBcDlls()
     {
-        var dir = AlRunnerV2.Infrastructure.BcArtifacts.ServiceTierDir;
+        var dir = AlRunner.Infrastructure.BcArtifacts.ServiceTierDir;
         // Ncl is preloaded with Cecil rewrite by Program.cs before this runs.
         foreach (var n in new[] { "Microsoft.Dynamics.Nav.Common", "Microsoft.Dynamics.Nav.Types",
                                   "Microsoft.Dynamics.Nav.Language" })
@@ -669,7 +669,7 @@ public static partial class BcRuntime
 
         // Without this, every page's merged MasterPage arrives with its whole control tree
         // removed — see MetadataProviderElementRemoval.cs.
-        AlRunnerV2.Patches.MetadataProviderElementRemoval.Apply(navNcl);
+        AlRunner.Patches.MetadataProviderElementRemoval.Apply(navNcl);
 
         // NavEnvironment.cctor — replace WindowsIdentity-touching init
         Hook(envType.TypeInitializer!, nameof(NavEnvironmentCctorReplacement), "NavEnvironment..cctor");
@@ -1671,12 +1671,12 @@ public static partial class BcRuntime
                 BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(string) }, null);
             if (alSid != null)
             {
-                var repl = typeof(AlRunnerV2.Patches.ALDatabasePatches)
-                    .GetMethod(nameof(AlRunnerV2.Patches.ALDatabasePatches.ALDatabase_ALSid),
+                var repl = typeof(AlRunner.Patches.ALDatabasePatches)
+                    .GetMethod(nameof(AlRunner.Patches.ALDatabasePatches.ALDatabase_ALSid),
                         BindingFlags.Public | BindingFlags.Static);
                 if (repl != null)
                 {
-                    AlRunnerV2.Infrastructure.JmpHook.Apply(alSid, repl, "ALDatabase.ALSid");
+                    AlRunner.Infrastructure.JmpHook.Apply(alSid, repl, "ALDatabase.ALSid");
                     Console.Error.WriteLine("[BcRuntime] hooking ALDatabase.ALSid");
                 }
             }
@@ -1687,12 +1687,12 @@ public static partial class BcRuntime
                 BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
             if (alSessionId != null)
             {
-                var repl = typeof(AlRunnerV2.Patches.ALDatabasePatches)
-                    .GetMethod(nameof(AlRunnerV2.Patches.ALDatabasePatches.ALDatabase_ALSessionID),
+                var repl = typeof(AlRunner.Patches.ALDatabasePatches)
+                    .GetMethod(nameof(AlRunner.Patches.ALDatabasePatches.ALDatabase_ALSessionID),
                         BindingFlags.Public | BindingFlags.Static);
                 if (repl != null)
                 {
-                    AlRunnerV2.Infrastructure.JmpHook.Apply(alSessionId, repl, "ALDatabase.ALSessionID");
+                    AlRunner.Infrastructure.JmpHook.Apply(alSessionId, repl, "ALDatabase.ALSessionID");
                     Console.Error.WriteLine("[BcRuntime] hooking ALDatabase.ALSessionID");
                 }
             }
@@ -1704,12 +1704,12 @@ public static partial class BcRuntime
             //     BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
             // if (alTenantId != null)
             // {
-            //     var repl = typeof(AlRunnerV2.Patches.ALDatabasePatches)
-            //         .GetMethod(nameof(AlRunnerV2.Patches.ALDatabasePatches.ALDatabase_ALTenantID),
+            //     var repl = typeof(AlRunner.Patches.ALDatabasePatches)
+            //         .GetMethod(nameof(AlRunner.Patches.ALDatabasePatches.ALDatabase_ALTenantID),
             //             BindingFlags.Public | BindingFlags.Static);
             //     if (repl != null)
             //     {
-            //         AlRunnerV2.Infrastructure.JmpHook.Apply(alTenantId, repl, "ALDatabase.ALTenantID");
+            //         AlRunner.Infrastructure.JmpHook.Apply(alTenantId, repl, "ALDatabase.ALTenantID");
             //         Console.Error.WriteLine("[BcRuntime] hooking ALDatabase.ALTenantID");
             //     }
             // }
@@ -2140,8 +2140,8 @@ public static partial class BcRuntime
                 BindingFlags.Public | BindingFlags.Instance)?.GetGetMethod(true);
             if (fieldCaptionGetter != null)
             {
-                var repl = typeof(AlRunnerV2.Patches.RecordPatches).GetMethod(
-                    nameof(AlRunnerV2.Patches.RecordPatches.NCLMetaField_get_FieldCaption),
+                var repl = typeof(AlRunner.Patches.RecordPatches).GetMethod(
+                    nameof(AlRunner.Patches.RecordPatches.NCLMetaField_get_FieldCaption),
                     BindingFlags.Public | BindingFlags.Static)!;
                 Hook(fieldCaptionGetter, repl, "NCLMetaField.get_FieldCaption");
             }
@@ -2159,8 +2159,8 @@ public static partial class BcRuntime
                 BindingFlags.Public | BindingFlags.Instance)?.GetGetMethod(true);
             if (valueGetter != null)
             {
-                var repl = typeof(AlRunnerV2.Patches.RecordPatches).GetMethod(
-                    nameof(AlRunnerV2.Patches.RecordPatches.NavTextConstant_get_Value),
+                var repl = typeof(AlRunner.Patches.RecordPatches).GetMethod(
+                    nameof(AlRunner.Patches.RecordPatches.NavTextConstant_get_Value),
                     BindingFlags.Public | BindingFlags.Static)!;
                 Hook(valueGetter, repl, "NavTextConstant.get_Value");
             }
@@ -2178,8 +2178,8 @@ public static partial class BcRuntime
                 new[] { navStringValueType_forOp }, null);
             if (opImplicit != null)
             {
-                var repl = typeof(AlRunnerV2.Patches.RecordPatches).GetMethod(
-                    nameof(AlRunnerV2.Patches.RecordPatches.NavStringValue_op_Implicit),
+                var repl = typeof(AlRunner.Patches.RecordPatches).GetMethod(
+                    nameof(AlRunner.Patches.RecordPatches.NavStringValue_op_Implicit),
                     BindingFlags.Public | BindingFlags.Static)!;
                 Hook(opImplicit, repl, "NavStringValue.op_Implicit");
             }
@@ -2203,8 +2203,8 @@ public static partial class BcRuntime
                     null, new[] { nclMetaFieldT, navAlErrorInfoT }, null);
                 if (testFieldNotBlank != null)
                 {
-                    var repl = typeof(AlRunnerV2.Patches.RecordPatches).GetMethod(
-                        nameof(AlRunnerV2.Patches.RecordPatches.NavRecord_TestFieldNotBlank),
+                    var repl = typeof(AlRunner.Patches.RecordPatches).GetMethod(
+                        nameof(AlRunner.Patches.RecordPatches.NavRecord_TestFieldNotBlank),
                         BindingFlags.Public | BindingFlags.Static)!;
                     Hook(testFieldNotBlank, repl, "NavRecord.TestFieldNotBlank");
                 }
@@ -2213,8 +2213,8 @@ public static partial class BcRuntime
                     null, new[] { nclMetaFieldT, typeof(string), navAlErrorInfoT }, null);
                 if (testFieldError != null)
                 {
-                    var repl = typeof(AlRunnerV2.Patches.RecordPatches).GetMethod(
-                        nameof(AlRunnerV2.Patches.RecordPatches.NavRecord_TestFieldError),
+                    var repl = typeof(AlRunner.Patches.RecordPatches).GetMethod(
+                        nameof(AlRunner.Patches.RecordPatches.NavRecord_TestFieldError),
                         BindingFlags.Public | BindingFlags.Static)!;
                     Hook(testFieldError, repl, "NavRecord.TestFieldError");
                 }
@@ -2386,7 +2386,7 @@ public static partial class BcRuntime
         var ffNavTypesAsm = AppDomain.CurrentDomain.GetAssemblies()
             .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Types");
         if (ffNavTypesAsm != null)
-            AlRunnerV2.Patches.FlowFieldPatches.Register(navNcl, ffNavTypesAsm);
+            AlRunner.Patches.FlowFieldPatches.Register(navNcl, ffNavTypesAsm);
 
         // NavCancellationToken throws — uninitialized cancellation tokens trip the check.
         var typesAsm = AppDomain.CurrentDomain.GetAssemblies()

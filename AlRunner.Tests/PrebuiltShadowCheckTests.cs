@@ -1,6 +1,6 @@
 using System;
 using System.IO;
-using AlRunnerV2.Infrastructure;
+using AlRunner.Infrastructure;
 using Xunit;
 
 namespace AlRunner.Tests;

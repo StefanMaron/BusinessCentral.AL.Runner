@@ -22,11 +22,11 @@
 // §O fills those arrays with real entries built from AL source.
 using System.Collections.Concurrent;
 using System.Reflection;
-using AlRunnerV2.Infrastructure;
+using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
@@ -86,7 +86,7 @@ public static partial class RecordPatches
         // Field table first). Seed it here too: idempotent, and this method already runs
         // once per bundle before any AL test code executes, so every report-metadata AL
         // surface gets a real receiver regardless of test order.
-        AlRunnerV2.BcRuntime.EnsureMetadataProviderSeeded();
+        AlRunner.BcRuntime.EnsureMetadataProviderSeeded();
         // Every report the runner knows exists, not just the source-parsed ones — a report
         // in a precompiled dependency (Base Application 1306, say) reaches
         // NCLMetadata.GetMetaApplicationObject through exactly the same AL surfaces.
@@ -112,7 +112,7 @@ public static partial class RecordPatches
         // injected LAZILY instead — see EventSubscriberPatches.InjectValidateSubsForTable, called
         // from BuildNCLMetaTable the moment that table's metatable is first built. Eagerly building
         // those publisher tables here perturbs unrelated setup (No.-Series assignment), so don't.
-        AlRunnerV2.Patches.EventSubscriberPatches.InjectAll(
+        AlRunner.Patches.EventSubscriberPatches.InjectAll(
             id => _metaTableCache.TryGetValue(id, out var m) ? m : null);
     }
 

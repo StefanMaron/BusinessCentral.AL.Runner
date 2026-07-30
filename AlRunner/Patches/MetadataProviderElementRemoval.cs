@@ -43,9 +43,9 @@
 //   configured server tier would itself do. The enum type is resolved from the field, so
 //   this does not hardcode a type name that a BC version bump could move.
 using System.Reflection;
-using AlRunnerV2.Infrastructure;
+using AlRunner.Infrastructure;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static class MetadataProviderElementRemoval
 {

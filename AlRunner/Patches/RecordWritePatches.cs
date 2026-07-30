@@ -16,7 +16,7 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public static partial class BcRuntime
 {
@@ -34,37 +34,37 @@ public static partial class BcRuntime
         // NavRecordHandle.CreateTarget — bypass NCLMetadata by constructing Record{ID}
         // directly using an NCLMetaTable built from parsed AL source, backed by BC's own
         // TempTableDataProvider (in-memory AVL-tree store).
-        AlRunnerV2.Patches.RecordPatches.Register();
+        AlRunner.Patches.RecordPatches.Register();
 
         // W-8b A-prime: resolve EventSubscriberPatches' reflection state up front so
         // EventSubscriberPatches.CreateTableTriggerEventHandler / InjectAll can run during
         // NclMetaTableBuilder / NclMetadataCachePopulator without extra plumbing.
-        AlRunnerV2.Patches.EventSubscriberPatches.Register(navNcl);
+        AlRunner.Patches.EventSubscriberPatches.Register(navNcl);
 
         // RecordLink (table 2000000068) in-memory polyfill — AL `Rec.AddLink/HasLinks/
         // DeleteLinks/CopyLinks` paths. Real BC body NREs in NavRecord..ctor because
         // our skeleton lacks a TenantDataAccess for system tables (see docs/scope.md §2).
-        AlRunnerV2.Patches.RecordLinkPatches.Register(navNcl);
+        AlRunner.Patches.RecordLinkPatches.Register(navNcl);
 
         // NavRecordId.get_CollationAwareStringComparer — real getter walks
         // Session.Database.CollationAwareStringComparer which NREs on the skeleton
         // (NavTenant.database LazyEx is null). Hook with a cached comparer to drain
         // the NRE cluster that surfaces from TempTableDataProvider.Modify on
         // Rename/Modify paths. See Patches/NavRecordIdPatches.cs.
-        AlRunnerV2.Patches.NavRecordIdPatches.Register(navNcl);
+        AlRunner.Patches.NavRecordIdPatches.Register(navNcl);
 
         // IsolatedStorage (ALIsolatedStorage.AL*) in-memory polyfill — real bodies
         // route through IsolatedStorageRepository which requires a NavTenant +
         // DataAccessSource for tenant-scoped tables, both NRE on the skeleton.
         // SetEncrypted/GetEncrypted is real AES-256-CBC (faithful — encrypted ≠ plaintext).
-        AlRunnerV2.Patches.TenantStoragePatches.Register(navNcl);
+        AlRunner.Patches.TenantStoragePatches.Register(navNcl);
 
         // Pre-populate skeleton session's DataAccessSource field directly.
         // NavSession.DataAccessSource getter is inlined by JIT (trivial field return),
         // so the JMP hook on it never fires — we must inject DAS via field reflection.
         Console.Error.WriteLine($"[BcRuntime] _skeletonSession null? {_skeletonSession == null}");
         if (_skeletonSession != null)
-            AlRunnerV2.Patches.RecordPatches.InitializeSkeletonSession(_skeletonSession);
+            AlRunner.Patches.RecordPatches.InitializeSkeletonSession(_skeletonSession);
         else
             Console.Error.WriteLine("[BcRuntime] WARN: _skeletonSession is null — DAS not injected");
 
@@ -85,14 +85,14 @@ public static partial class BcRuntime
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance, null, Type.EmptyTypes, null);
             if (beginInit != null)
             {
-                AlRunnerV2.Infrastructure.JmpHook.Apply(beginInit, replNoOp, "NavRecord.BeginInitialization()");
+                AlRunner.Infrastructure.JmpHook.Apply(beginInit, replNoOp, "NavRecord.BeginInitialization()");
                 Console.Error.WriteLine("[BcRuntime] NavRecord.BeginInitialization() hooked → NoOp");
             }
             var endInit = navRecordType.GetMethod("EndInitialization",
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance, null, Type.EmptyTypes, null);
             if (endInit != null)
             {
-                AlRunnerV2.Infrastructure.JmpHook.Apply(endInit, replNoOp, "NavRecord.EndInitialization()");
+                AlRunner.Infrastructure.JmpHook.Apply(endInit, replNoOp, "NavRecord.EndInitialization()");
                 Console.Error.WriteLine("[BcRuntime] NavRecord.EndInitialization() hooked → NoOp");
             }
             // NavRecord.Dispose(bool) and NavRecord.IsGlobalTriggerImplemented are Cecil-owned
@@ -258,7 +258,7 @@ public static partial class BcRuntime
             var mutexField = navServerEventSourceType.GetField("mutex",
                 BindingFlags.NonPublic | BindingFlags.Instance);
             if (mutexField != null)
-                AlRunnerV2.Infrastructure.FieldPoke.SetInstance(mutexField, _skeletonNavServerEventSource, new object());
+                AlRunner.Infrastructure.FieldPoke.SetInstance(mutexField, _skeletonNavServerEventSource, new object());
             else
                 Console.Error.WriteLine("[BcRuntime] WARNING: NavServerEventSource.mutex field not found — trappable-error logging may mask real exceptions");
 

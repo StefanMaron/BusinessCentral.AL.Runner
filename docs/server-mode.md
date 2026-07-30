@@ -31,7 +31,7 @@ al-runner --server [--package-cache PATH ...] [--cache DIR]
 ```jsonc
 {
   "command": "runTests",        // runTests | execute | shutdown (case-insensitive)
-  "sourcePaths": ["/path/app"], // bundle dir(s); v2 uses the first
+  "sourcePaths": ["/path/app"], // bundle dir(s); uses the first
   "packagePaths": ["/extra"],   // optional: extra .app caches, augment server defaults
   "stubPaths": [],              // v1 field, ignored in v2 (no stubs layer)
   "code": "...",                // execute only (inline AL) — not yet supported

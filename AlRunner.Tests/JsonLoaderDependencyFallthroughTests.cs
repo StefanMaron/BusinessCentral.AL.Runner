@@ -22,12 +22,12 @@ using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
 using Xunit;
-using AlRunnerV2;
+using AlRunner;
 using Microsoft.Dynamics.Nav.CodeAnalysis;
 using Microsoft.Dynamics.Nav.CodeAnalysis.Diagnostics;
 using Microsoft.Dynamics.Nav.CodeAnalysis.SymbolReference;
 
-namespace AlRunnerV2.Tests;
+namespace AlRunner.Tests;
 
 public sealed class JsonLoaderDependencyFallthroughTests : IDisposable
 {

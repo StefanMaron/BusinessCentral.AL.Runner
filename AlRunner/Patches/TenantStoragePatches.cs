@@ -37,11 +37,11 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
-using AlRunnerV2.Infrastructure;
+using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static class TenantStoragePatches
 {

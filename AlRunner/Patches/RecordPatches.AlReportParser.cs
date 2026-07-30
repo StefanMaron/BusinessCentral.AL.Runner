@@ -3,7 +3,7 @@
 // page parser; same minimal shape (id + name).
 using System.Text.RegularExpressions;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {

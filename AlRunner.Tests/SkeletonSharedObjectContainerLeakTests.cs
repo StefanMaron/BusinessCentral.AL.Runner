@@ -5,7 +5,7 @@
 // ---------------------------------------------------------------------
 // TreeObject's ctor unconditionally links every new instance into its parent
 // TreeHandler's child linked list (TreeHandler.CreateTreeHandler -> InternalAddChild).
-// AlRunnerV2.BcRuntime._skeletonSharedObjectContainer is a single process-wide static
+// AlRunner.BcRuntime._skeletonSharedObjectContainer is a single process-wide static
 // TreeSharedObjectContainer that every SharedRecordRef / SharedNavStream / etc. wrapper
 // is parented to. Nothing was ever unlinking those children, so the chain — and every
 // live NavRecord each child transitively holds — grew for the life of the process.
@@ -22,19 +22,19 @@
 // afterwards, rather than growing linearly with cycle count.
 //
 // RED/GREEN proof (see PR/verification notes): commenting out the
-// `AlRunnerV2.BcRuntime.DisposeSkeletonSharedObjectContainerChildren();` call inside
+// `AlRunner.BcRuntime.DisposeSkeletonSharedObjectContainerChildren();` call inside
 // RecordPatches.ResetPerTestState() reproduces the leak — this test then fails with the
 // child count equal to cycles * perCycle (100 for the constants below) instead of the
 // asserted bound.
 
 using System.Reflection;
-using AlRunnerV2;
-using AlRunnerV2.Infrastructure;
-using AlRunnerV2.Patches;
+using AlRunner;
+using AlRunner.Infrastructure;
+using AlRunner.Patches;
 using Microsoft.Dynamics.Nav.Runtime;
 using Xunit;
 
-namespace AlRunnerV2.Tests;
+namespace AlRunner.Tests;
 
 public class SkeletonSharedObjectContainerLeakTests
 {

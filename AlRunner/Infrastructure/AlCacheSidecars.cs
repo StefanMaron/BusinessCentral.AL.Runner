@@ -15,7 +15,7 @@
 // The query sidecar is only written for bundles that actually declare an AL query, so
 // it is required for a HIT only when the bundle declares one. That also self-heals
 // cache entries written before the sidecar existed: they simply miss once.
-namespace AlRunnerV2.Infrastructure;
+namespace AlRunner.Infrastructure;
 
 public static class AlCacheSidecars
 {

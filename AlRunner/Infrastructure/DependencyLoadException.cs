@@ -7,7 +7,7 @@
 //
 // See: .claude/rules/loud-failures.md — the no-silent-skip rule.
 
-namespace AlRunnerV2.Infrastructure;
+namespace AlRunner.Infrastructure;
 
 /// <summary>
 /// Thrown when a dependency app's AL source was found but the compile pipeline

@@ -33,7 +33,7 @@
 //   one, on any platform.
 using System.Reflection;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static class MediaPatches
 {
@@ -49,7 +49,7 @@ public static class MediaPatches
             throw NotAnImage("the media content is not a readable stream");
 
         if (!stream.CanSeek)
-            throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 "NavMediaImage.GetImageWithContentHeaderValidation",
                 "media-content-sniff — the media content stream is not seekable, so its header "
                 + "cannot be inspected without consuming the content BC is about to store. "
@@ -68,7 +68,7 @@ public static class MediaPatches
         if (!LooksLikeImage(header[..read]))
             throw NotAnImage("the media content header matches no known image signature");
 
-        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             "NavMediaImage.GetImageWithContentHeaderValidation",
             "media-image-decode — the content IS an image, but decoding one needs "
             + "System.Drawing, which has no support on this platform (no libgdiplus). Non-image "

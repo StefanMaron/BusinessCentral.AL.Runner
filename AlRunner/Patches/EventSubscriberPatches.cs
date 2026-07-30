@@ -24,13 +24,13 @@
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using AlRunnerV2.Infrastructure;
+using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.EventSubscription;
 using Microsoft.Dynamics.Nav.Types;
 using NCLMetaTable = Microsoft.Dynamics.Nav.Runtime.NCLMetaTable;
 using NCLMetaField = Microsoft.Dynamics.Nav.Runtime.NCLMetaField;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static class EventSubscriberPatches
 {
@@ -271,7 +271,7 @@ public static class EventSubscriberPatches
             var n = asm.GetName().Name ?? "";
             if (n.StartsWith("System.") || n.StartsWith("Microsoft.Extensions.")
                 || n == "netstandard" || n == "mscorlib"
-                || n == "AlRunnerV2" || n == "Runner"
+                || n == "AlRunner" || n == "Runner"
                 || n.StartsWith("Microsoft.CodeAnalysis")) continue;
             // Skip a previous bundle assembly still loaded after a server reload.
             if (BcRuntime.IsStaleBundleAssembly(asm)) continue;
@@ -561,7 +561,7 @@ public static class EventSubscriberPatches
                     || name.StartsWith("Microsoft.Dynamics.Nav.") || name == "netstandard"
                     || name == "mscorlib" || name == "Microsoft.CodeAnalysis"
                     || name.StartsWith("Microsoft.CodeAnalysis.")
-                    || name == "AlRunnerV2" || name == "Runner") continue;
+                    || name == "AlRunner" || name == "Runner") continue;
                 // Skip a previous bundle assembly still loaded after a server reload —
                 // otherwise its [EventSubscriber] codeunits re-register alongside the
                 // new ones and events fire twice. No-op in normal one-shot mode.

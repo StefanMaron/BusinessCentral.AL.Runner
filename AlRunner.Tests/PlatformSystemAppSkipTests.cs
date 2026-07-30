@@ -8,9 +8,9 @@
 // every run. These tests lock the predicate that gates the skip.
 
 using Xunit;
-using AlRunnerV2.Infrastructure;
+using AlRunner.Infrastructure;
 
-namespace AlRunnerV2.Tests;
+namespace AlRunner.Tests;
 
 public sealed class PlatformSystemAppSkipTests
 {

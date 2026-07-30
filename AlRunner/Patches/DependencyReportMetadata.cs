@@ -47,7 +47,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {

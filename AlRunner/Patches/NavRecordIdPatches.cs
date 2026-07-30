@@ -18,9 +18,9 @@
 using System.Globalization;
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using AlRunnerV2.Infrastructure;
+using AlRunner.Infrastructure;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static class NavRecordIdPatches
 {

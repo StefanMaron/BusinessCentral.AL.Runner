@@ -34,7 +34,7 @@
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 internal sealed class RunnerPageInstance
 {
@@ -240,7 +240,7 @@ internal sealed class RunnerPageInstance
             // Loudly, not true-by-default: this property IS the page's read-only contract,
             // and answering "editable" for one we could not evaluate makes every test of
             // that contract unfailable. Naming the expression is what makes the gap fixable.
-            throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 $"TestPage page {_pageId} element {elementId} — {propertyName}",
                 $"testpage-control-property — the property is bound to expression '{raw}', which "
                 + "the page publishes no binding for, so its value cannot be evaluated. "
@@ -249,7 +249,7 @@ internal sealed class RunnerPageInstance
         var value = GetValue(expression);
         return value?.ClientObject is bool b
             ? b
-            : throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            : throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 $"TestPage page {_pageId} element {elementId} — {propertyName}",
                 $"testpage-control-property — expression '{raw}' evaluated to "
                 + $"'{value?.ClientObject ?? "null"}', which is not a Boolean. See docs/scope.md");
@@ -381,7 +381,7 @@ internal sealed class RunnerPageInstance
     internal void RaiseOnAction(int actionId)
     {
         var trigger = FindTrigger(actionId, "_OnAction", "OnAction")
-            ?? throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 $"TestPage action {actionId} on page {_pageId}",
                 "testpage-action — the page declares no OnAction trigger for this action. An "
                 + "action whose effect is RunObject (opening another page or report) cannot be "
@@ -417,7 +417,7 @@ internal sealed class RunnerPageInstance
     internal NavText? RaiseOnLookup(int controlId, NavText current)
     {
         var trigger = FindTrigger(controlId, "_OnLookup", "OnLookup", arity: 1)
-            ?? throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 $"TestPage lookup on control {controlId} (page {_pageId})",
                 "testpage-lookup — the control declares no OnLookup trigger, so its lookup comes "
                 + "from a TableRelation and would open the related table's list page, which the "
@@ -561,7 +561,7 @@ internal sealed class RunnerPageInstance
             if (MemberId(_pageId, memberName) != memberId) continue;
 
             if (match != null)
-                throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                     $"TestPage {surface} (member {memberId})",
                     $"testpage-{surface.ToLowerInvariant()} — both '{match.Name}' and '{m.Name}' on "
                     + $"{_form.GetType().Name} resolve to member {memberId}; the runner cannot "

@@ -1,9 +1,9 @@
 ---
 name: al-runner-tests
-description: How AL tests are organised and run in v2 — the read-only al-language submodule corpus, the runner-owned expectations manifest, runner-extras for runner-specific positive tests, the proving-test rules, the run command, and how to bump the corpus pin. Use when investigating a corpus failure, adding an expectation entry, writing a runner-specific test, or evaluating whether an existing test "proves" anything.
+description: How AL tests are organised and run — the read-only al-language submodule corpus, the runner-owned expectations manifest, runner-extras for runner-specific positive tests, the proving-test rules, the run command, and how to bump the corpus pin. Use when investigating a corpus failure, adding an expectation entry, writing a runner-specific test, or evaluating whether an existing test "proves" anything.
 ---
 
-# Running and writing AL tests (v2)
+# Running and writing AL tests
 
 ## Layout
 

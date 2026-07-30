@@ -27,7 +27,7 @@
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using AlRunnerV2.Patches;
+using AlRunner.Patches;
 using NCLOptionMetadata = Microsoft.Dynamics.Nav.Runtime.NCLOptionMetadata;
 using NavCodeunitHandle = Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle;
 using NavInterfaceHandle = Microsoft.Dynamics.Nav.Runtime.NavInterfaceHandle;
@@ -37,7 +37,7 @@ using NavOption = Microsoft.Dynamics.Nav.Runtime.NavOption;
 using NavText = Microsoft.Dynamics.Nav.Runtime.NavText;
 using ITreeObject = Microsoft.Dynamics.Nav.Runtime.ITreeObject;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 /// <summary>
 /// Captures (id, name, options[], indexes[]) for every AL enum compiled by

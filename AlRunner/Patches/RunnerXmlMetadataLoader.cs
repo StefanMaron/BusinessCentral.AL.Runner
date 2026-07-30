@@ -46,7 +46,7 @@ using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Runtime.Apps;
 using Microsoft.Dynamics.Nav.Types;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 /// <summary>
 /// Real INCLObjectXmlMetadataLoader backed by AlReportMetadataRegistry.
@@ -81,7 +81,7 @@ public sealed class RunnerXmlMetadataLoader : INCLObjectXmlMetadataLoader
             && RecordPatches.TryBuildDependencyReportMetadata(objectId.ObjectNumber) is { } depXml)
             return Wrap(depXml, $"runner-dep-report-{objectId.ObjectNumber}");
 
-        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             $"INCLObjectXmlMetadataLoader.GetMetaObjectXmlMetadata({objectId.ObjectType} {objectId.ObjectNumber})",
             "not-yet-implemented — no metadata XML for this object: it was not source-compiled " +
             "by the runner, and no loaded dependency .app declares it " +
@@ -96,7 +96,7 @@ public sealed class RunnerXmlMetadataLoader : INCLObjectXmlMetadataLoader
     }
 
     public NCLObjectXmlMetadata GetSystemTableMetaObjectXmlMetadataFromApplicationDatabase(ApplicationObjectId objectId) =>
-        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             "INCLObjectXmlMetadataLoader.GetSystemTableMetaObjectXmlMetadataFromApplicationDatabase",
             "not-yet-implemented — system-table (2000000071) metadata-from-application-database lookup is not wired");
 
@@ -121,12 +121,12 @@ public sealed class RunnerMetaApplicationObjectLoader : INCLMetaApplicationObjec
     public INCLObjectXmlMetadataLoader XmlMetadataLoader { get; } = new RunnerXmlMetadataLoader();
 
     public INCLCodeLoader CodeLoader =>
-        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             "INCLMetaApplicationObjectLoader.CodeLoader",
             "not-yet-implemented — runner metadata loader only serves report metadata XML");
 
     public NCLMetadata MetadataCache =>
-        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             "INCLMetaApplicationObjectLoader.MetadataCache",
             "not-yet-implemented — runner metadata loader only serves report metadata XML");
 
@@ -168,7 +168,7 @@ public sealed class RunnerMetaApplicationObjectLoader : INCLMetaApplicationObjec
     }
 
     public INavAppClrTypeRetriever AppClrTypeRetriever =>
-        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             "INCLMetaApplicationObjectLoader.AppClrTypeRetriever",
             "not-yet-implemented — runner metadata loader only serves report metadata XML");
 

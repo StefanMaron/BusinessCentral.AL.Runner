@@ -9,9 +9,9 @@
 // version-named directories (no real artifacts needed).
 
 using Xunit;
-using AlRunnerV2.Infrastructure;
+using AlRunner.Infrastructure;
 
-namespace AlRunnerV2.Tests;
+namespace AlRunner.Tests;
 
 public sealed class BcArtifactSelectionTests : IDisposable
 {

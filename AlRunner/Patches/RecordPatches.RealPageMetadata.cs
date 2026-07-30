@@ -29,7 +29,7 @@
 //   refusing to answer them.
 using System.Reflection;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
@@ -62,7 +62,7 @@ public static partial class RecordPatches
                 // LoadMetadata() actually runs instead of returning immediately.
                 EnsureCachePopulatorReflection();
                 if (_fNCLMetaAppObjMetadataLoaded != null)
-                    AlRunnerV2.Infrastructure.FieldPoke.SetInstance(_fNCLMetaAppObjMetadataLoaded, meta, false);
+                    AlRunner.Infrastructure.FieldPoke.SetInstance(_fNCLMetaAppObjMetadataLoaded, meta, false);
 
                 meta.GetType()
                     .GetMethod("LoadMetadata", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
@@ -80,7 +80,7 @@ public static partial class RecordPatches
                 // Put the flag back so the skeleton behaves exactly as it did before the
                 // attempt — a half-loaded metaform is worse than none.
                 if (_fNCLMetaAppObjMetadataLoaded != null)
-                    AlRunnerV2.Infrastructure.FieldPoke.SetInstance(_fNCLMetaAppObjMetadataLoaded, meta, true);
+                    AlRunner.Infrastructure.FieldPoke.SetInstance(_fNCLMetaAppObjMetadataLoaded, meta, true);
                 Console.Error.WriteLine(
                     $"[RecordPatches] page {pageId}: real metadata load failed ({inner.GetType().Name}: {inner.Message}); "
                     + "falling back to the control-less skeleton");

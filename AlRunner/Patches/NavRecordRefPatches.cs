@@ -9,11 +9,11 @@
 using System.Collections;
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using AlRunnerV2.Patches;
+using AlRunner.Patches;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public static partial class BcRuntime
 {
@@ -169,7 +169,7 @@ public static partial class BcRuntime
         // Wire field OnValidate/OnLookup handlers + field-validate subscribers onto this table's
         // metatable (lazy wiring for on-demand-built tables — e.g. a precompiled BaseApp table).
         RecordPatches.WireFieldTriggerHandlersForTable(tableNo, metaTable);
-        AlRunnerV2.Patches.EventSubscriberPatches.InjectValidateSubsForTable(tableNo, metaTable);
+        AlRunner.Patches.EventSubscriberPatches.InjectValidateSubsForTable(tableNo, metaTable);
         // SharedRecordRef.Record is a non-public-accessor property on the headless
         // build, so include NonPublic in the lookup (Public-only returns null → NRE).
         var recordProp = target.GetType().GetProperty("Record",

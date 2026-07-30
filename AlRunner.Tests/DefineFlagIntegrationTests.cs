@@ -20,7 +20,7 @@ using System.Diagnostics;
 using System.Text;
 using Xunit;
 
-namespace AlRunnerV2.Tests;
+namespace AlRunner.Tests;
 
 public sealed class DefineFlagIntegrationTests : IDisposable
 {

@@ -38,7 +38,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
@@ -529,13 +529,13 @@ public static partial class RecordPatches
             if (expr == null) continue;
             if (key == null || _tNCLMetaQueryColumn == null || !_tNCLMetaQueryColumn.IsInstanceOfType(key))
                 // A non-query-column key on a query request should not occur; refuse to guess.
-                throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                     "NavQuery (multi-dataitem join)",
                     "query-join-runtime-filter-on-nonprojected-column — a runtime filter is keyed by a " +
                     $"non-query-column ({key?.GetType().Name ?? "null"}); cannot evaluate post-projection; see docs/scope.md");
             int slot = (int)_pColColumnIndexQ.GetValue(key)!;
             if (slot < 0)
-                throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                     "NavQuery (multi-dataitem join)",
                     "query-join-runtime-filter-on-nonprojected-column — a runtime filter targets a query " +
                     "column with no result slot (filter-only column); cannot evaluate post-projection; see docs/scope.md");
@@ -549,7 +549,7 @@ public static partial class RecordPatches
             foreach (var (slot, expr) in conds)
             {
                 if (slot >= row.FieldCount)
-                    throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                    throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                         "NavQuery (multi-dataitem join)",
                         $"query-join-runtime-filter-on-nonprojected-column — filtered slot {slot} is outside the " +
                         $"projected row (FieldCount {row.FieldCount}); cannot evaluate post-projection; see docs/scope.md");

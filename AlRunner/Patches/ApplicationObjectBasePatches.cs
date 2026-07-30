@@ -5,9 +5,9 @@
 // state pointing at the skeleton session.
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using AlRunnerV2.Infrastructure;
+using AlRunner.Infrastructure;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public static partial class BcRuntime
 {
@@ -206,9 +206,9 @@ public static partial class BcRuntime
     /// opposite — it is a runner gap, and swallowing it would turn the gap into a green
     /// test that lies (see .claude/rules/loud-failures.md), so it keeps propagating.
     /// </summary>
-    private static bool IsPermanentOutOfScope(Exception ex, out AlRunnerV2.Infrastructure.RunnerOutOfScopeException? oos)
+    private static bool IsPermanentOutOfScope(Exception ex, out AlRunner.Infrastructure.RunnerOutOfScopeException? oos)
     {
-        oos = ex as AlRunnerV2.Infrastructure.RunnerOutOfScopeException;
+        oos = ex as AlRunner.Infrastructure.RunnerOutOfScopeException;
         return oos != null
             && !oos.Reason.StartsWith("not-yet-implemented", StringComparison.Ordinal);
     }
@@ -220,7 +220,7 @@ public static partial class BcRuntime
     /// TryFunction absorbs it, so the surface a test quietly did without is always visible in
     /// the run output even though the test itself legitimately continues.
     /// </summary>
-    private static void ReportOosTrappedByTryFunction(AlRunnerV2.Infrastructure.RunnerOutOfScopeException oos)
+    private static void ReportOosTrappedByTryFunction(AlRunner.Infrastructure.RunnerOutOfScopeException oos)
     {
         if (!_oosTrapReported.TryAdd($"{oos.Api} {oos.Reason}", 0)) return;
         Console.Error.WriteLine(

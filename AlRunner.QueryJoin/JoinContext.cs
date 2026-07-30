@@ -6,7 +6,7 @@
 // and BCL primitives ONLY — no Microsoft.Dynamics.Nav.* type appears in any signature.
 // That keeps this assembly (and the thin shim in al-runner that references it) free of
 // Ncl-referencing IL, so neither perturbs al-runner.dll's startup ReadyToRun binding.
-namespace AlRunnerV2.QueryJoin;
+namespace AlRunner.QueryJoin;
 
 using System.Collections;
 
@@ -45,7 +45,7 @@ public sealed class JoinContext
     public required Action<string> Log;
 
     /// <summary>
-    /// Factory for AlRunnerV2.Infrastructure.RunnerOutOfScopeException so the executor can
+    /// Factory for AlRunner.Infrastructure.RunnerOutOfScopeException so the executor can
     /// throw the project's typed OOS exception without referencing al-runner's types directly.
     /// (api, reason) → Exception. Throwing it loudly is required by loud-failures.
     /// </summary>

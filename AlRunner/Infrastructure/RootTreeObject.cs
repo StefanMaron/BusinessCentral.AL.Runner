@@ -2,7 +2,7 @@
 // Its TreeHandler.hostObject must be non-null so TreeHandler.IsDisposed returns false.
 using System.Reflection;
 
-namespace AlRunnerV2.Infrastructure;
+namespace AlRunner.Infrastructure;
 
 internal sealed class RootTreeObject : Microsoft.Dynamics.Nav.Runtime.ITreeObject
 {

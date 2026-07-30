@@ -8,10 +8,10 @@
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using AlRunnerV2.Patches;
+using AlRunner.Patches;
 using Microsoft.Dynamics.Nav.Runtime;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public static partial class BcRuntime
 {
@@ -294,7 +294,7 @@ public static partial class BcRuntime
         // initializationInProgress = true on the fresh instance so the unmodified
         // SystemInitialization.IsInProgress() returns true. See PrimeCodeunit151Instance.
         if (id == 151)
-            AlRunnerV2.BcRuntime.PrimeCodeunit151Instance(instance);
+            AlRunner.BcRuntime.PrimeCodeunit151Instance(instance);
 
         // NavCodeunit.IsSingleInstance is a real, unmodified NCL property (base implementation
         // `return false`; BC's own emitter overrides it per-codeunit to a compile-time constant
@@ -317,7 +317,7 @@ public static partial class BcRuntime
             if (_skeletonSession is Microsoft.Dynamics.Nav.Runtime.ITreeObject sessionParent)
                 instance = (Microsoft.Dynamics.Nav.Runtime.NavCodeunit)ctor.Invoke(new object[] { sessionParent });
             if (id == 151)
-                AlRunnerV2.BcRuntime.PrimeCodeunit151Instance(instance);
+                AlRunner.BcRuntime.PrimeCodeunit151Instance(instance);
 
             _singleInstanceCache[id] = instance;
             KeepSingleInstanceAlive(id, instance);
@@ -527,7 +527,7 @@ public static partial class BcRuntime
             if (m == null || m.DeclaringType != reportType) return; // no override in this type
             var repl = typeof(BcRuntime).GetMethod(nameof(NavReport_BeginEndInitialization),
                 BindingFlags.Public | BindingFlags.Static)!;
-            AlRunnerV2.Infrastructure.JmpHook.Apply(m, repl, $"{reportType.Name}.InitializeComponent()");
+            AlRunner.Infrastructure.JmpHook.Apply(m, repl, $"{reportType.Name}.InitializeComponent()");
             Console.Error.WriteLine($"[BcRuntime] {reportType.Name}.InitializeComponent() hooked → NoOp");
         }
         catch (Exception ex)
@@ -653,7 +653,7 @@ public static partial class BcRuntime
                 var fLoaded = tBase?.GetField("metadataLoaded",
                     BindingFlags.NonPublic | BindingFlags.Instance);
                 if (fLoaded != null)
-                    AlRunnerV2.Infrastructure.FieldPoke.SetInstance(fLoaded, meta, true);
+                    AlRunner.Infrastructure.FieldPoke.SetInstance(fLoaded, meta, true);
 
                 Console.Error.WriteLine($"[BcRuntime] LookupNclMetaForReport({reportId}): built skeleton NCLMetaReport via fallback");
                 return meta;
@@ -759,7 +759,7 @@ public static partial class BcRuntime
             var secVal = Enum.ToObject(secFilt, 0);
             // Build a REAL NCLMetaQuery so the genuine async engine can execute the
             // query against the in-memory provider (null → NRE in FindDataImplAsync).
-            var meta = AlRunnerV2.Patches.RecordPatches.BuildRealNCLMetaQuery(id, queryType);
+            var meta = AlRunner.Patches.RecordPatches.BuildRealNCLMetaQuery(id, queryType);
             return QDiag(31, threeArgMq.Invoke(new object?[] { self, secVal, meta }));
         }
 
@@ -952,7 +952,7 @@ public static partial class BcRuntime
             return
                 $"Codeunit {id} (\"{known.Name}\") is not present in the test " +
                 $"assembly or any loaded dependency. It belongs to {known.Package}, " +
-                $"a Microsoft dependency app. AL Runner v2 does not yet load " +
+                $"a Microsoft dependency app. AL Runner does not yet load " +
                 $"Microsoft R2R packages at runtime — either provide an AL " +
                 $"implementation/stub for this codeunit at the bucket level, or " +
                 $"wait until runtime dependency loading lands.";
@@ -962,7 +962,7 @@ public static partial class BcRuntime
             $"dependency. It is most likely defined in a dependency .app " +
             $"(e.g. System Application, Base Application, a test-framework " +
             $"library, or a third-party app) whose runtime DLL is not loaded. " +
-            $"AL Runner v2 does not yet load dependency-app DLLs at runtime — " +
+            $"AL Runner does not yet load dependency-app DLLs at runtime — " +
             $"either provide an AL implementation/stub at the bucket level, " +
             $"or wait until runtime dependency loading lands.";
     }
@@ -1006,7 +1006,7 @@ public static partial class BcRuntime
         // symbol-only (no runtime code in the .app); their compiled bodies live in the
         // extracted BC service-tier DLL cache. Lazily load the owning DLL by object id
         // so the test exercises the REAL Microsoft code rather than a re-compile.
-        var fromCache = AlRunnerV2.Infrastructure.ServiceTierDllIndex.ResolveObjectType(name);
+        var fromCache = AlRunner.Infrastructure.ServiceTierDllIndex.ResolveObjectType(name);
         if (fromCache != null && baseCu.IsAssignableFrom(fromCache))
             return fromCache;
         return null;

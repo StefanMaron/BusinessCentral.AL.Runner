@@ -22,7 +22,7 @@
 //   code and in the AL handler.
 using System.Reflection;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static class RunnerModalDispatch
 {
@@ -34,7 +34,7 @@ public static class RunnerModalDispatch
     public static void FormRunModal(object testExecution, object runRequest)
     {
         if (testExecution == null || runRequest == null)
-            throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 "TestPage modal dispatch",
                 "testpage-modal — the runner was asked to run a modal page with no test-execution "
                 + "context or no request. See docs/scope.md");
@@ -113,7 +113,7 @@ public static class RunnerModalDispatch
     {
         try
         {
-            var session = AlRunnerV2.BcRuntime.SkeletonSession;
+            var session = AlRunner.BcRuntime.SkeletonSession;
             var company = session?.GetType()
                 .GetProperty("Company", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
                 .GetValue(session);

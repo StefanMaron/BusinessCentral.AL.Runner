@@ -11,9 +11,9 @@
 //      no syntax rewriter needed for those.
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
-using AlRunnerV2.Rewriters;
+using AlRunner.Rewriters;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public sealed record CompileResult(byte[]? AssemblyBytes, IReadOnlyList<string> Errors)
 {
@@ -23,7 +23,7 @@ public sealed record CompileResult(byte[]? AssemblyBytes, IReadOnlyList<string> 
 public sealed class BcAssembler
 {
     public string ServiceTierDir { get; init; } =
-        AlRunnerV2.Infrastructure.BcArtifacts.ServiceTierDir;
+        AlRunner.Infrastructure.BcArtifacts.ServiceTierDir;
 
     // Roslyn's internal recursion on large bundles can overflow the default 8 MB stack.
     // Run the full compile pass on a thread with 64 MB stack to avoid SIGSEGV.
@@ -128,7 +128,7 @@ public sealed class BcAssembler
                 yield return File.Exists(inArtifact) ? inArtifact : p;
             }
         }
-        // The runner's own assembly — polyfill shims call back into AlRunnerV2.BcRuntime
+        // The runner's own assembly — polyfill shims call back into AlRunner.BcRuntime
         // helpers (e.g. NCLEnumMetadata_CreateByIdAlAware) so AL emit-time captured
         // metadata is reachable from compiled-AL call sites.
         var runnerDll = typeof(BcAssembler).Assembly.Location;
@@ -142,52 +142,52 @@ public sealed class BcAssembler
     private static readonly (string from, string to)[] _polyfillRedirects = new[]
     {
         ("NavRuntimeHelpers.ThrowIfWrongArgumentCount",
-         "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ThrowIfWrongArgumentCount"),
+         "global::AlRunnerShim.NavRuntimeHelpersShim.ThrowIfWrongArgumentCount"),
         // AL compiler 17.0.34 emits a 2-arg ConvertToDotNetFormatString(session, format) but
         // BC 27.5 only ships the 1-arg overload. Redirect to our shim that drops the session.
         ("ALCompiler.ConvertToDotNetFormatString(",
-         "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ConvertToDotNetFormatString("),
+         "global::AlRunnerShim.NavRuntimeHelpersShim.ConvertToDotNetFormatString("),
         // NCLEnumMetadata.Create(int) chains through NavGlobal.MetadataProvider which NREs on the
         // skeleton session.  After JIT tiering the JMP-hook on that method is bypassed, so we
         // redirect at source level.  Our shim returns NCLOptionMetadata.Default which preserves
         // ordinal arithmetic for any enum value that callers create with NavOption.Create.
         ("NCLEnumMetadata.Create(",
-         "global::AlRunnerV2Shim.NavRuntimeHelpersShim.NCLEnumMetadataCreate("),
+         "global::AlRunnerShim.NavRuntimeHelpersShim.NCLEnumMetadataCreate("),
         // ALDebugger methods all throw NavObsoleteMethodException and have value-type params
         // (DataError enum) — redirect at source level to avoid JMP-hook ABI issues.
-        ("ALDebugger.ALActivate(",     "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALDebugger_ALActivate("),
-        ("ALDebugger.ALDeactivate(",   "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALDebugger_ALDeactivate("),
-        ("ALDebugger.ALIsActive(",     "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALDebugger_ALIsActive("),
-        ("ALDebugger.ALIsAttached(",   "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALDebugger_ALIsAttached("),
-        ("ALDebugger.CheckPermissionToDebug(", "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALDebugger_CheckPermissionToDebug("),
+        ("ALDebugger.ALActivate(",     "global::AlRunnerShim.NavRuntimeHelpersShim.ALDebugger_ALActivate("),
+        ("ALDebugger.ALDeactivate(",   "global::AlRunnerShim.NavRuntimeHelpersShim.ALDebugger_ALDeactivate("),
+        ("ALDebugger.ALIsActive(",     "global::AlRunnerShim.NavRuntimeHelpersShim.ALDebugger_ALIsActive("),
+        ("ALDebugger.ALIsAttached(",   "global::AlRunnerShim.NavRuntimeHelpersShim.ALDebugger_ALIsAttached("),
+        ("ALDebugger.CheckPermissionToDebug(", "global::AlRunnerShim.NavRuntimeHelpersShim.ALDebugger_CheckPermissionToDebug("),
         // ALSession.ALStopSession sync wrappers NRE via session.Diagnostics; return false.
-        ("ALSession.ALStopSession(",   "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALSession_StopSession("),
+        ("ALSession.ALStopSession(",   "global::AlRunnerShim.NavRuntimeHelpersShim.ALSession_StopSession("),
         // ALSession.ALGetExecutionContext / ALGetModuleExecutionContext NRE via session properties.
         // Return ExecutionContext.Normal (0) which is the expected value in a headless runner.
-        ("ALSession.ALGetExecutionContext(",         "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALGetExecutionContext("),
-        ("ALSession.ALGetModuleExecutionContext(",   "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALGetModuleExecutionContext("),
+        ("ALSession.ALGetExecutionContext(",         "global::AlRunnerShim.NavRuntimeHelpersShim.ALGetExecutionContext("),
+        ("ALSession.ALGetModuleExecutionContext(",   "global::AlRunnerShim.NavRuntimeHelpersShim.ALGetModuleExecutionContext("),
         // ALSession.ALSendTraceTag NREs via session.Diagnostics; telemetry is a no-op here.
-        ("ALSession.ALSendTraceTag(",  "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALSession_SendTraceTag("),
+        ("ALSession.ALSendTraceTag(",  "global::AlRunnerShim.NavRuntimeHelpersShim.ALSession_SendTraceTag("),
         // ALSessionInformation static properties NRE via session.SqlDebuggingStatisticsCheckPoint.
         // Return 0 — SQL counters are 0 in a skeleton/non-database run.
-        ("ALSessionInformation.ALSqlRowsRead",         "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALSqlRowsRead"),
-        ("ALSessionInformation.ALSqlStatementsExecuted", "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALSqlStatementsExecuted"),
+        ("ALSessionInformation.ALSqlRowsRead",         "global::AlRunnerShim.NavRuntimeHelpersShim.ALSqlRowsRead"),
+        ("ALSessionInformation.ALSqlStatementsExecuted", "global::AlRunnerShim.NavRuntimeHelpersShim.ALSqlStatementsExecuted"),
         // ALSystemErrorHandling.ALGetLastErrorCallStack NREs via NavCurrentThread.Session; return "".
-        ("ALSystemErrorHandling.ALGetLastErrorCallStack", "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALGetLastErrorCallStack"),
+        ("ALSystemErrorHandling.ALGetLastErrorCallStack", "global::AlRunnerShim.NavRuntimeHelpersShim.ALGetLastErrorCallStack"),
         // NavSession.Sleep — real body NREs via session state on the skeleton runtime.
         // In-scope (§3.9): inline-execution model, no parallel sessions — Sleep is a no-op delay.
         // The shim sleeps the current thread by `duration` ms (clamped to >=0).
-        ("NavSession.Sleep(", "global::AlRunnerV2Shim.NavRuntimeHelpersShim.NavSession_Sleep("),
+        ("NavSession.Sleep(", "global::AlRunnerShim.NavRuntimeHelpersShim.NavSession_Sleep("),
         // ALSession.ALIsSessionActive — real body chases session state that doesn't exist.
         // Faithful in-scope answer (§3.9): the runner runs sessions inline + synchronously,
         // so any session id is "no longer active" by the time the caller asks. Return false.
-        ("ALSession.ALIsSessionActive(", "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALSession_ALIsSessionActive("),
+        ("ALSession.ALIsSessionActive(", "global::AlRunnerShim.NavRuntimeHelpersShim.ALSession_ALIsSessionActive("),
         // ALSession.ALStartSession — real body schedules an async session via NavCurrentThread/
         // Diagnostics which both NRE on the skeleton. Faithful in-scope replacement (§3.9):
         // dispatch the target codeunit synchronously in-process, assign a fresh non-zero
         // session id, and return true. Missing codeunit → return false (DataError.TrapError
         // pathway). See BcRuntime.AlRunnerStartSession for the dispatch logic.
-        ("ALSession.ALStartSession(", "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALSession_ALStartSession("),
+        ("ALSession.ALStartSession(", "global::AlRunnerShim.NavRuntimeHelpersShim.ALSession_ALStartSession("),
         // NavForm.Run (static, non-modal) — OOS §3.11. BC emits the [Obsolete] sync wrapper
         // NavForm.Run(...) (not RunAsync) for Page.Run calls. The real body calls
         // RunAsync().AsTask().GetAwaiter().GetResult() which NREs deep in NavForm/NCLMetaForm
@@ -196,56 +196,56 @@ public sealed class BcAssembler
         // address than what the hook patches (R2R vs JIT code layout mismatch on .NET 8).
         // Source-level redirect is the reliable alternative: "NavForm.Run(" cannot be a
         // substring of "NavForm.RunModal(" so there is no false-positive risk.
-        ("NavForm.Run(", "global::AlRunnerV2Shim.NavRuntimeHelpersShim.NavForm_Run("),
+        ("NavForm.Run(", "global::AlRunnerShim.NavRuntimeHelpersShim.NavForm_Run("),
         // NavTextExtensions.ALSubstring — AL contract is 1-based, consistent with all other
         // AL string positions (CopyStr, StrPos, etc.). The prior comment claiming v28+ is
         // 0-based for Substring was incorrect; the AL test library validates 1-based semantics
         // against real BC. Override with shims that consistently apply 1-based behaviour
         // regardless of which BC DLL version is loaded.
-        ("NavTextExtensions.ALSubstring(",   "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALSubstring("),
+        ("NavTextExtensions.ALSubstring(",   "global::AlRunnerShim.NavRuntimeHelpersShim.ALSubstring("),
         // NavTextExtensions.ALIndexOf — AL contract is 1-based (0 = not found), consistent
         // with all other AL string positions (StrPos, CopyStr, SelectStr). The prior comment
         // claiming v28+ is 0-based was incorrect; the AL test library validated against real
         // BC confirms 1-based semantics. Override with shims that return 1-based results.
-        ("NavTextExtensions.ALIndexOf(",     "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALIndexOf("),
+        ("NavTextExtensions.ALIndexOf(",     "global::AlRunnerShim.NavRuntimeHelpersShim.ALIndexOf("),
         // NavTextExtensions.ALLastIndexOf — same 1-based semantics.
-        ("NavTextExtensions.ALLastIndexOf(", "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALLastIndexOf("),
+        ("NavTextExtensions.ALLastIndexOf(", "global::AlRunnerShim.NavRuntimeHelpersShim.ALLastIndexOf("),
         // NavTextExtensions.ALIndexOfAny — v27 DLL doesn't have NavList<char> overloads; shim adds them
         // and converts 0-based C# results back to 1-based AL semantics (0 = not found).
-        ("NavTextExtensions.ALIndexOfAny(",  "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALIndexOfAny("),
+        ("NavTextExtensions.ALIndexOfAny(",  "global::AlRunnerShim.NavRuntimeHelpersShim.ALIndexOfAny("),
         // NavTextExtensions.ALSplit — v27 DLL overloads don't accept NavList<char> text/separator
         // directly from the AL compiler. Redirect to the shim which adds those overloads while
         // preserving the same whole-string-delimiter semantics as real BC.
-        ("NavTextExtensions.ALSplit(",       "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALSplit("),
+        ("NavTextExtensions.ALSplit(",       "global::AlRunnerShim.NavRuntimeHelpersShim.ALSplit("),
         // ALSystemString.ALMaxStrLen — v27 returns Int32.MaxValue for unlimited Text;
         // v28+ returns 0 for unlimited Text variables (NavDefinedLengthMetadata == Int32.MaxValue).
-        ("ALSystemString.ALMaxStrLen(",      "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALMaxStrLen("),
+        ("ALSystemString.ALMaxStrLen(",      "global::AlRunnerShim.NavRuntimeHelpersShim.ALMaxStrLen("),
         // NavApp.GetCurrentModuleInfo — NREs via NavTenant.get_Database on skeleton.
         // Shim returns module info derived from the loaded bundle's app.json.
-        ("ALNavApp.ALGetCurrentModuleInfo(", "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALNavApp_GetCurrentModuleInfo("),
+        ("ALNavApp.ALGetCurrentModuleInfo(", "global::AlRunnerShim.NavRuntimeHelpersShim.ALNavApp_GetCurrentModuleInfo("),
         // NavApp.GetModuleInfo(moduleId, info) — looks up installed extensions, throws on miss.
         // The runner has no installed-extensions registry — the only "extension" loaded is the
         // currently-running bundle. Shim matches against _currentBundleInfo.AppId and returns
         // false (not-found) for any other GUID, mirroring what real BC would return when an
         // unknown id is queried with errorLevel=DataError.Ignore.
-        ("ALNavApp.ALGetModuleInfo(", "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALNavApp_GetModuleInfo("),
+        ("ALNavApp.ALGetModuleInfo(", "global::AlRunnerShim.NavRuntimeHelpersShim.ALNavApp_GetModuleInfo("),
         // NavApp.GetCallerModuleInfo has the same service-tier dependency as
         // GetCurrentModuleInfo in this in-process runner.
-        ("ALNavApp.ALGetCallerModuleInfo(", "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALNavApp_GetCallerModuleInfo("),
+        ("ALNavApp.ALGetCallerModuleInfo(", "global::AlRunnerShim.NavRuntimeHelpersShim.ALNavApp_GetCallerModuleInfo("),
         // Database.LockTimeout get/set calls reach NavTenant.Database even though the corpus only
         // needs the API to be callable. Redirect property access to a runner-local value.
-        ("ALDatabase.ALLockTimeout", "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALDatabase_ALLockTimeout"),
-        ("ALDatabase.ALGetDefaultTableConnection(", "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALGetDefaultTableConnection("),
-        ("ALDatabase.ALRegisterTableConnection(", "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALRegisterTableConnection("),
+        ("ALDatabase.ALLockTimeout", "global::AlRunnerShim.NavRuntimeHelpersShim.ALDatabase_ALLockTimeout"),
+        ("ALDatabase.ALGetDefaultTableConnection(", "global::AlRunnerShim.NavRuntimeHelpersShim.ALGetDefaultTableConnection("),
+        ("ALDatabase.ALRegisterTableConnection(", "global::AlRunnerShim.NavRuntimeHelpersShim.ALRegisterTableConnection("),
         // ALSystemString.ALCopyStr — throws "outside of the permitted range" when fromPos < 1.
-        ("ALSystemString.ALCopyStr(",      "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALCopyStr("),
+        ("ALSystemString.ALCopyStr(",      "global::AlRunnerShim.NavRuntimeHelpersShim.ALCopyStr("),
         // ALSystemString.ALIncStr — returns "" for non-numeric strings.
-        ("ALSystemString.ALIncStr(",       "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALIncStr("),
+        ("ALSystemString.ALIncStr(",       "global::AlRunnerShim.NavRuntimeHelpersShim.ALIncStr("),
         // ALSystemString.ALSelectString — throws "does not contain a value for index" for invalid index.
-        ("ALSystemString.ALSelectString(", "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALSelectString("),
+        ("ALSystemString.ALSelectString(", "global::AlRunnerShim.NavRuntimeHelpersShim.ALSelectString("),
         // ALSystemString.ALStrPos — v27 DLL doesn't have NavList<char> overloads; shim adds them
         // while preserving the same semantics: returns 0 when substring is empty or not found.
-        ("ALSystemString.ALStrPos(",       "global::AlRunnerV2Shim.NavRuntimeHelpersShim.ALStrPos("),
+        ("ALSystemString.ALStrPos(",       "global::AlRunnerShim.NavRuntimeHelpersShim.ALStrPos("),
     };
 
     private static string ApplyPolyfillRedirects(string code)
@@ -256,7 +256,7 @@ public sealed class BcAssembler
     }
 
     private const string PolyfillSource = @"
-namespace AlRunnerV2Shim
+namespace AlRunnerShim
 {
     public static class NavRuntimeHelpersShim
     {
@@ -279,13 +279,13 @@ namespace AlRunnerV2Shim
             => Microsoft.Dynamics.Nav.Runtime.ALCompiler.ConvertToDotNetFormatString(format);
 
         // NCLEnumMetadata.Create(int) chains through NavGlobal.MetadataProvider which NREs on the
-        // skeleton session.  Forward to AlRunnerV2.BcRuntime.NCLEnumMetadata_CreateByIdAlAware
+        // skeleton session.  Forward to AlRunner.BcRuntime.NCLEnumMetadata_CreateByIdAlAware
         // which returns a real NCLOptionMetadata subclass populated with the AL enum's
         // (names[], ordinals[]) so GetNames()/GetOrdinals() work; falls back to
         // NCLOptionMetadata.Default for system / dependency enums whose metadata isn't
         // captured at AL emit time.
         public static Microsoft.Dynamics.Nav.Runtime.NCLOptionMetadata NCLEnumMetadataCreate(int id)
-            => global::AlRunnerV2.BcRuntime.NCLEnumMetadata_CreateByIdAlAware(id);
+            => global::AlRunner.BcRuntime.NCLEnumMetadata_CreateByIdAlAware(id);
 
         // ALDebugger — all classic-debugger methods are obsolete stubs that throw.
         // Shims return false / no-op so Debugger.IsActive, .Activate, .Deactivate work in tests.
@@ -323,7 +323,7 @@ namespace AlRunnerV2Shim
         // ALSystemErrorHandling — GetLastErrorCallStack: return the AL call stack captured by
         // AlCallStackCapture (FCE-based), falling back to empty when no error has been raised.
         public static string ALGetLastErrorCallStack =>
-            global::AlRunnerV2.Infrastructure.AlCallStackCapture.GetCaptured() ?? string.Empty;
+            global::AlRunner.Infrastructure.AlCallStackCapture.GetCaptured() ?? string.Empty;
 
         // ───────────────────────────────────────────────────────────────────────
         // NavSession.Sleep — in-scope (§3.9). Inline execution model: a Sleep
@@ -352,7 +352,7 @@ namespace AlRunnerV2Shim
             Microsoft.Dynamics.Nav.Types.DataError errorLevel,
             Microsoft.Dynamics.Nav.Runtime.ByRef<int> sessionId,
             int objectId)
-            => global::AlRunnerV2.BcRuntime.AlRunnerStartSession(
+            => global::AlRunner.BcRuntime.AlRunnerStartSession(
                 errorLevel, sessionId, objectId, null, null);
 
         public static bool ALSession_ALStartSession(
@@ -360,7 +360,7 @@ namespace AlRunnerV2Shim
             Microsoft.Dynamics.Nav.Runtime.ByRef<int> sessionId,
             int objectId,
             string companyName)
-            => global::AlRunnerV2.BcRuntime.AlRunnerStartSession(
+            => global::AlRunner.BcRuntime.AlRunnerStartSession(
                 errorLevel, sessionId, objectId, companyName, null);
 
         public static bool ALSession_ALStartSession(
@@ -368,7 +368,7 @@ namespace AlRunnerV2Shim
             Microsoft.Dynamics.Nav.Runtime.ByRef<int> sessionId,
             int objectId,
             Microsoft.Dynamics.Nav.Runtime.NavDuration timeout)
-            => global::AlRunnerV2.BcRuntime.AlRunnerStartSession(
+            => global::AlRunner.BcRuntime.AlRunnerStartSession(
                 errorLevel, sessionId, objectId, null, null);
 
         public static bool ALSession_ALStartSession(
@@ -377,7 +377,7 @@ namespace AlRunnerV2Shim
             int objectId,
             Microsoft.Dynamics.Nav.Runtime.NavDuration timeout,
             string companyName)
-            => global::AlRunnerV2.BcRuntime.AlRunnerStartSession(
+            => global::AlRunner.BcRuntime.AlRunnerStartSession(
                 errorLevel, sessionId, objectId, companyName, null);
 
         public static bool ALSession_ALStartSession(
@@ -387,7 +387,7 @@ namespace AlRunnerV2Shim
             Microsoft.Dynamics.Nav.Runtime.NavDuration timeout,
             string companyName,
             Microsoft.Dynamics.Nav.Runtime.NavRecord record)
-            => global::AlRunnerV2.BcRuntime.AlRunnerStartSession(
+            => global::AlRunner.BcRuntime.AlRunnerStartSession(
                 errorLevel, sessionId, objectId, companyName, record);
 
         public static bool ALSession_ALStartSession(
@@ -396,7 +396,7 @@ namespace AlRunnerV2Shim
             int objectId,
             string companyName,
             Microsoft.Dynamics.Nav.Runtime.NavRecord record)
-            => global::AlRunnerV2.BcRuntime.AlRunnerStartSession(
+            => global::AlRunner.BcRuntime.AlRunnerStartSession(
                 errorLevel, sessionId, objectId, companyName, record);
 
         public static bool ALSession_ALStartSession(
@@ -406,7 +406,7 @@ namespace AlRunnerV2Shim
             string companyName,
             Microsoft.Dynamics.Nav.Runtime.NavRecord record,
             Microsoft.Dynamics.Nav.Runtime.NavDuration timeout)
-            => global::AlRunnerV2.BcRuntime.AlRunnerStartSession(
+            => global::AlRunner.BcRuntime.AlRunnerStartSession(
                 errorLevel, sessionId, objectId, companyName, record);
 
         // ───────────────────────────────────────────────────────────────────────
@@ -418,28 +418,28 @@ namespace AlRunnerV2Shim
         // inside a test run); calls during BC SA init pass through harmlessly.
         public static void NavForm_Run(int formId)
         {
-            if (global::AlRunnerV2.BcRuntime.OosHooksActive)
-                global::AlRunnerV2.Infrastructure.RunnerScope.ThrowOutOfScope(""NavForm.RunAsync"", ""non-modal-ui"", ""ui"");
+            if (global::AlRunner.BcRuntime.OosHooksActive)
+                global::AlRunner.Infrastructure.RunnerScope.ThrowOutOfScope(""NavForm.RunAsync"", ""non-modal-ui"", ""ui"");
         }
         public static void NavForm_Run(int formId, Microsoft.Dynamics.Nav.Runtime.NavRecord record)
         {
-            if (global::AlRunnerV2.BcRuntime.OosHooksActive)
-                global::AlRunnerV2.Infrastructure.RunnerScope.ThrowOutOfScope(""NavForm.RunAsync"", ""non-modal-ui"", ""ui"");
+            if (global::AlRunner.BcRuntime.OosHooksActive)
+                global::AlRunner.Infrastructure.RunnerScope.ThrowOutOfScope(""NavForm.RunAsync"", ""non-modal-ui"", ""ui"");
         }
         public static void NavForm_Run(int formId, Microsoft.Dynamics.Nav.Runtime.NavRecord record, int fieldNo)
         {
-            if (global::AlRunnerV2.BcRuntime.OosHooksActive)
-                global::AlRunnerV2.Infrastructure.RunnerScope.ThrowOutOfScope(""NavForm.RunAsync"", ""non-modal-ui"", ""ui"");
+            if (global::AlRunner.BcRuntime.OosHooksActive)
+                global::AlRunner.Infrastructure.RunnerScope.ThrowOutOfScope(""NavForm.RunAsync"", ""non-modal-ui"", ""ui"");
         }
         public static void NavForm_Run(string fullName, Microsoft.Dynamics.Nav.Runtime.NavRecord record)
         {
-            if (global::AlRunnerV2.BcRuntime.OosHooksActive)
-                global::AlRunnerV2.Infrastructure.RunnerScope.ThrowOutOfScope(""NavForm.RunAsync"", ""non-modal-ui"", ""ui"");
+            if (global::AlRunner.BcRuntime.OosHooksActive)
+                global::AlRunner.Infrastructure.RunnerScope.ThrowOutOfScope(""NavForm.RunAsync"", ""non-modal-ui"", ""ui"");
         }
         public static void NavForm_Run(string fullName, Microsoft.Dynamics.Nav.Runtime.NavRecord record, int fieldNo)
         {
-            if (global::AlRunnerV2.BcRuntime.OosHooksActive)
-                global::AlRunnerV2.Infrastructure.RunnerScope.ThrowOutOfScope(""NavForm.RunAsync"", ""non-modal-ui"", ""ui"");
+            if (global::AlRunner.BcRuntime.OosHooksActive)
+                global::AlRunner.Infrastructure.RunnerScope.ThrowOutOfScope(""NavForm.RunAsync"", ""non-modal-ui"", ""ui"");
         }
 
         // ─── Text method polyfills ────────────────────────────────────────────────
@@ -570,7 +570,7 @@ namespace AlRunnerV2Shim
             Microsoft.Dynamics.Nav.Types.DataError errorLevel,
             Microsoft.Dynamics.Nav.Runtime.ByRef<Microsoft.Dynamics.Nav.Runtime.NavModuleInfo> info)
         {
-            var (appId, name, publisher, version) = global::AlRunnerV2.BcRuntime.GetModuleAppInfoFor(
+            var (appId, name, publisher, version) = global::AlRunner.BcRuntime.GetModuleAppInfoFor(
                 global::System.Reflection.Assembly.GetExecutingAssembly());
             var navVersion = new Microsoft.Dynamics.Nav.Runtime.NavVersion(version);
             var emptyDeps = Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavModuleDependencyInfo>.Default;
@@ -587,7 +587,7 @@ namespace AlRunnerV2Shim
             global::System.Guid moduleId,
             Microsoft.Dynamics.Nav.Runtime.ByRef<Microsoft.Dynamics.Nav.Runtime.NavModuleInfo> info)
         {
-            var found = global::AlRunnerV2.BcRuntime.TryGetModuleInfoByAppId(moduleId);
+            var found = global::AlRunner.BcRuntime.TryGetModuleInfoByAppId(moduleId);
             if (found == null) return false;
             var (appId, name, publisher, version) = found.Value;
             var navVersion = new Microsoft.Dynamics.Nav.Runtime.NavVersion(version);
@@ -604,7 +604,7 @@ namespace AlRunnerV2Shim
             Microsoft.Dynamics.Nav.Types.DataError errorLevel,
             Microsoft.Dynamics.Nav.Runtime.ByRef<Microsoft.Dynamics.Nav.Runtime.NavModuleInfo> info)
         {
-            var (appId, name, publisher, version) = global::AlRunnerV2.BcRuntime.GetCallerModuleAppInfoFor(
+            var (appId, name, publisher, version) = global::AlRunner.BcRuntime.GetCallerModuleAppInfoFor(
                 global::System.Reflection.Assembly.GetExecutingAssembly());
             var navVersion = new Microsoft.Dynamics.Nav.Runtime.NavVersion(version);
             var emptyDeps = Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavModuleDependencyInfo>.Default;

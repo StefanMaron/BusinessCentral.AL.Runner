@@ -19,7 +19,7 @@
 // RethrowIfRunnerOOS check (inserted at the start of CreateDotNet's catch block by
 // NclCecilRewrite.cs) rethrows OOS before the wrapping logic runs.
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static class NavDotNetPatches
 {
@@ -28,7 +28,7 @@ public static class NavDotNetPatches
     // patched catch block has a valid Exception-typed value on the IL stack.
     // This method ALWAYS throws; it never returns.
     public static Exception ThrowServerInteropOOS(string assemblyName)
-        => throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+        => throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             "NavDotNet.CreateNavServerHandle",
             $"dotnet-server-interop — external assembly/KMS unavailable: {assemblyName}",
             "crypto-external");
@@ -39,7 +39,7 @@ public static class NavDotNetPatches
     // the catch block's original logic (diagnostics + NavNCLDotNetCreate wrapping) runs.
     public static void RethrowIfRunnerOOS(Exception? ex)
     {
-        if (ex is AlRunnerV2.Infrastructure.RunnerOutOfScopeException oos)
+        if (ex is AlRunner.Infrastructure.RunnerOutOfScopeException oos)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(oos).Throw();
     }
 }

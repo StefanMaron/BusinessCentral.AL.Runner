@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 /// <summary>
 /// Wire types and (de)serialization for <c>--server</c> mode — the

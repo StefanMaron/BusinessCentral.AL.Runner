@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using Spectre.Console.Testing;
 using Xunit;
 
-namespace AlRunnerV2.Tests;
+namespace AlRunner.Tests;
 
 /// <summary>
 /// Pure render-model tests for the --watch live dashboard. The interactive loop

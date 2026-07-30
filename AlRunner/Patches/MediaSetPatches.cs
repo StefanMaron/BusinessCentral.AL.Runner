@@ -17,7 +17,7 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static class MediaSetPatches
 {

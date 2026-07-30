@@ -8,10 +8,10 @@
 // run after it, because a rebuild changes the cache key and forces a MISS.
 //
 // The e2e proof is running that suite TWICE (MISS then HIT); this pins the decision rule.
-using AlRunnerV2.Infrastructure;
+using AlRunner.Infrastructure;
 using Xunit;
 
-namespace AlRunnerV2.Tests;
+namespace AlRunner.Tests;
 
 public sealed class AlCacheSidecarsTests
 {

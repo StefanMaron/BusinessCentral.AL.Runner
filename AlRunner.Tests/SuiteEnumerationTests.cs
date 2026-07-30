@@ -25,7 +25,7 @@ using System.Text;
 using System.Text.Json;
 using Xunit;
 
-namespace AlRunnerV2.Tests;
+namespace AlRunner.Tests;
 
 public sealed class SuiteEnumerationTests : IDisposable
 {

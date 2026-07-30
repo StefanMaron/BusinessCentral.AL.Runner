@@ -13,7 +13,7 @@
 
 using System.Collections.Concurrent;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 /// <summary>
 /// A tableextension parsed from a precompiled .app's SymbolReference.json.

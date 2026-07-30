@@ -24,7 +24,7 @@
 //     2  Description   Text       4  Mime Type Text      6  Width   Integer   11  File Name    Text
 //   Field 1 is the primary key — the media id BC generates and stores on the parent record.
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {

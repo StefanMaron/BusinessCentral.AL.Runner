@@ -17,9 +17,9 @@
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using Microsoft.Dynamics.Nav.Types;
-using AlRunnerV2.Infrastructure;
+using AlRunner.Infrastructure;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 public static class FormPatches
 {

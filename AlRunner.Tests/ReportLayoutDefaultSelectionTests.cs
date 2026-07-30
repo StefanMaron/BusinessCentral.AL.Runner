@@ -1,5 +1,5 @@
-using AlRunnerV2;
-using AlRunnerV2.Patches;
+using AlRunner;
+using AlRunner.Patches;
 using Xunit;
 
 namespace AlRunner.Tests;

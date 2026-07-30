@@ -1,4 +1,4 @@
-namespace AlRunnerV2;
+namespace AlRunner;
 
 /// <summary>
 /// One emitted module within a bundle.

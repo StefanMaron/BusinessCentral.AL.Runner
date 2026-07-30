@@ -15,10 +15,10 @@ using System.Collections.Immutable;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
-using AlRunnerV2.Infrastructure;
+using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
 
-namespace AlRunnerV2.Patches;
+namespace AlRunner.Patches;
 
 /// <summary>Builds real NCLMetaTable objects from AL source, bypassing NCLMetadata service.</summary>
 public static partial class RecordPatches
@@ -294,7 +294,7 @@ public static partial class RecordPatches
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
                 binder: null, new[] { _tNavDatabase }, modifiers: null);
             if (ctorCompanyTokens != null)
-                AlRunnerV2.Infrastructure.FieldPoke.SetInstance(fCompanyTokens, _skeletonDatabase,
+                AlRunner.Infrastructure.FieldPoke.SetInstance(fCompanyTokens, _skeletonDatabase,
                     ctorCompanyTokens.Invoke(new[] { _skeletonDatabase }));
         }
 
@@ -809,7 +809,7 @@ public static partial class RecordPatches
             if (createHandler != null)
             {
                 var companyTree = createHandler.Invoke(null, new[] { skeletonSession, skeletonCompany });
-                AlRunnerV2.Infrastructure.FieldPoke.SetInstance(fTreeObjTree, skeletonCompany, companyTree!);
+                AlRunner.Infrastructure.FieldPoke.SetInstance(fTreeObjTree, skeletonCompany, companyTree!);
             }
             else
             {
@@ -894,7 +894,7 @@ public static partial class RecordPatches
         if (metaTable == null)
         {
             if (id == 0)
-                AlRunnerV2.Infrastructure.RunnerScope.ThrowNotYetImplemented(
+                AlRunner.Infrastructure.RunnerScope.ThrowNotYetImplemented(
                     "NavRecord.CloneForVariant (default-variant tableId=0)",
                     "HANDOFF.md §6 row E — synthetic empty NavRecord for default-variant clone case");
             throw new InvalidOperationException(
@@ -928,7 +928,7 @@ public static partial class RecordPatches
         // wiring its OnValidate body never runs (e.g. Purchase Header."Buy-from Vendor No." copying the
         // vendor name), without the subscriber injection an ISV's OnAfterValidateEvent never fires.
         WireFieldTriggerHandlersForTable(id, metaTable);
-        AlRunnerV2.Patches.EventSubscriberPatches.InjectValidateSubsForTable(id, metaTable);
+        AlRunner.Patches.EventSubscriberPatches.InjectValidateSubsForTable(id, metaTable);
         return rec;
     }
 
@@ -1063,24 +1063,24 @@ public static partial class RecordPatches
 
         // RecordLink polyfill store is also per-test — BC's RecordLink table is part
         // of the per-test transaction (records' links go away on rollback).
-        AlRunnerV2.Patches.RecordLinkPatches.ResetForTest();
+        AlRunner.Patches.RecordLinkPatches.ResetForTest();
 
         // IsolatedStorage in-memory store — per-test reset matches BC semantics where
         // a test's writes are rolled back on completion.
-        AlRunnerV2.Patches.TenantStoragePatches.ResetForTest();
+        AlRunner.Patches.TenantStoragePatches.ResetForTest();
 
         // Process-wide skeleton TreeSharedObjectContainer (SharedRecordRef / SharedNavStream
         // / SharedHttpRequest / SharedHttpResponseMessage / SharedNavHttpClient /
         // SharedNavObjectDictionary wrappers) — see BcRuntime.DisposeSkeletonSharedObjectContainerChildren
         // for why this is a distinct leak from _dataAccessByTable above and must be swept
         // at the same per-test boundary.
-        AlRunnerV2.BcRuntime.DisposeSkeletonSharedObjectContainerChildren();
+        AlRunner.BcRuntime.DisposeSkeletonSharedObjectContainerChildren();
 
         // SingleInstance=true codeunit instances are session-scoped in real BC and get reset
         // on the same per-test transaction rollback boundary as everything else above — without
         // this a SingleInstance codeunit's instance-variable state would leak from one test into
         // the next. See BcRuntime._singleInstanceCache / BcRuntime.ResetSingleInstanceCache.
-        AlRunnerV2.BcRuntime.ResetSingleInstanceCache();
+        AlRunner.BcRuntime.ResetSingleInstanceCache();
     }
 
     public static object NavDataAccessSource_GetDataAccessForTable(object self, NCLMetaTable table, bool isTemporary)
@@ -1133,7 +1133,7 @@ public static partial class RecordPatches
                 // on demand there. This whole path is now DEFAULT-ON (no env gate): the find
                 // interception means a populated Field table no longer crashes under R2R.
                 var session = _fDasSession?.GetValue(self)
-                    ?? throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                    ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                         "Field (virtual table 2000000041)",
                         "field-virtual-table — DataAccessSource has no skeleton session; see docs/scope.md");
                 PopulateFieldVirtualTable(fieldDa, table, session);

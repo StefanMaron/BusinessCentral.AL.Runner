@@ -5,10 +5,10 @@
 using System.IO.Compression;
 using System.Text;
 using Xunit;
-using AlRunnerV2;
-using AlRunnerV2.Infrastructure;
+using AlRunner;
+using AlRunner.Infrastructure;
 
-namespace AlRunnerV2.Tests;
+namespace AlRunner.Tests;
 
 public sealed class ProvisioningCheckTests : IDisposable
 {

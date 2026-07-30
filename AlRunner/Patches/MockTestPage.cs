@@ -9,12 +9,12 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using AlRunnerV2.Patches;
+using AlRunner.Patches;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
 using Microsoft.Dynamics.Nav.Types.Data;
 
-namespace AlRunnerV2;
+namespace AlRunner;
 
 /// <summary>
 /// Minimal ITestPage + ITestFilter + IDisposable implementation.
@@ -169,7 +169,7 @@ internal class LiveNavTestPage : MockITestPage
         if (_parts.TryGetValue(controlId, out var cached)) return cached;
 
         var definition = _page?.TryGetPartDefinition(controlId)
-            ?? throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 $"TestPage part {controlId} (page {_pageId})",
                 "testpage-part — the runner could not resolve this control to a subpage part"
                 + (_page == null
@@ -181,7 +181,7 @@ internal class LiveNavTestPage : MockITestPage
         var partPageId = definition.PagePartID;
         var built = _owner == null ? null : TestPageFactory.TryBuild(_owner, partPageId, out _);
         if (built == null)
-            throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 $"TestPage part {controlId} → page {partPageId}",
                 "testpage-part — the part's own page could not be driven live "
                 + "(no source table, or no runtime record type for it). See docs/scope.md");
@@ -302,13 +302,13 @@ internal class LiveNavTestPage : MockITestPage
         foreach (var link in definition.SubFormLink ?? new List<Microsoft.Dynamics.Nav.Types.Metadata.FilterDefinition>())
         {
             if (link.FilterType != Microsoft.Dynamics.Nav.Types.Metadata.FilterType.FIELD)
-                throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                     $"TestPage part → page {partPageId} SubPageLink ({link.FilterType})",
                     $"testpage-part-link — only FilterType.FIELD SubPageLinks are implemented; "
                     + $"this part links field {link.FieldID} by {link.FilterType} '{link.FilterValue}'. "
                     + "See docs/scope.md");
             if (!int.TryParse(link.FilterValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parentFieldNo))
-                throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                     $"TestPage part → page {partPageId} SubPageLink",
                     $"testpage-part-link — a FIELD link's value must be the parent's field number, "
                     + $"but this one is '{link.FilterValue}'. See docs/scope.md");
@@ -423,7 +423,7 @@ internal class LiveNavTestPage : MockITestPage
         // meaning in a test that has already asked for the close. Refusing by name beats both
         // alternatives — closing anyway hides that the page objected, and hanging is worse.
         if (_page != null && !_page.RaiseOnClosePage(_formResult))
-            throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 $"TestPage page {_pageId} — OnQueryClosePage",
                 "testpage-close-veto — the page's OnQueryClosePage returned false, which in BC "
                 + "leaves the page open awaiting the user. See docs/scope.md");
@@ -462,7 +462,7 @@ internal class LiveNavTestPage : MockITestPage
         // produced "The supplied field number '<hash>' cannot be found in the '<table>'
         // table" — a control-name hash reported as a missing field, blaming the table for
         // the runner's own inability to resolve the control. Say what actually happened.
-        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             $"TestPage control {id}",
             "testpage-control-binding — this control is bound neither to a field of the page's "
             + $"source table nor to a page variable the runner could resolve (table "
@@ -581,7 +581,7 @@ internal class LiveNavTestPage : MockITestPage
     private int ControlIdToTableFieldNo(int controlId)
     {
         if (_controlIdToFieldNo.TryGetValue(controlId, out var fieldNo)) return fieldNo;
-        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             $"TestPage control {controlId} used to locate a row",
             "testpage-control-binding — this control is not bound to a field of the page's "
             + $"source table ({_record.MetaTable?.TableName ?? "?"}), so it cannot be used to "
@@ -629,7 +629,7 @@ internal static class TestPageOptionValue
     internal static NavValue Resolve(NavOption current, string value, string[]? captions, string context)
     {
         var metadata = current.NavOptionMetadata
-            ?? throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 context,
                 "testpage-option-value — the control is bound to an Option with no option "
                 + "metadata, so a value cannot be resolved by name. See docs/scope.md");
@@ -656,7 +656,7 @@ internal static class TestPageOptionValue
             && (ordinals == null || ordinals.Contains(literal)))
             return NavOption.Create(metadata, literal);
 
-        throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             context,
             $"testpage-option-value — '{value}' is not one of the option's values "
             + $"[{string.Join(", ", options)}]"
@@ -835,7 +835,7 @@ internal sealed class LiveNavTestField : ITestField
     public void Lookup()
     {
         if (_page == null)
-            throw new AlRunnerV2.Infrastructure.RunnerOutOfScopeException(
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 $"TestPage lookup on field {_fieldNo}",
                 "testpage-lookup — no AL page object was built for this page, so its OnLookup "
                 + "trigger cannot be reached. See docs/scope.md");
