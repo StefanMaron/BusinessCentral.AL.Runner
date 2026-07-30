@@ -19,11 +19,12 @@ the BC runtime environment:
 - **Permissions and entitlements** — there is no permission system. All field/table
   access succeeds unconditionally. `entitlement_declaration`, `permissionset_declaration`,
   and `permissionsetextension_declaration` object types compile but have no effect at runtime.
-- **Company context** — no active BC company. `CompanyName()` defaults to empty
-  string but is configurable: pass `--company-name <name>` on the CLI, or call
-  codeunit 131100 `"AL Runner Config".SetCompanyName(Name)` from AL tests.
-  Code that only branches on whether the name is empty still takes the "empty"
-  branch by default.
+- **Company context** — no active BC company. `CompanyName()` and `UserId()` are
+  seeded with fixed defaults (empty string / `"TESTUSER"`) at runtime startup —
+  not currently configurable via a CLI flag or an AL-callable API. Code that
+  only branches on whether the name is empty still takes the "empty" branch by
+  default. If your workflow needs a different value, open an issue describing
+  the use case.
 - **Base app data** — no standard BC tables are populated. Code that reads
   `G/L Account`, `Customer`, `Vendor`, or any other base app table finds them empty
   unless your test inserts data.
@@ -216,8 +217,8 @@ the exact value will see different results.
 
 | AL call | Real BC | al-runner |
 |---|---|---|
-| `CompanyName()` | Active company name | `""` (or `--company-name <name>` / `"AL Runner Config".SetCompanyName()`) |
-| `UserId()` | Authenticated user | `""` (configurable via `--user-id <value>` / `PipelineOptions.UserId`) |
+| `CompanyName()` | Active company name | `""` (fixed default, not currently configurable) |
+| `UserId()` | Authenticated user | `"TESTUSER"` (fixed default, not currently configurable) |
 | `IsSessionActive(id)` | True while session runs | Always `false` |
 | `GuiAllowed()` | False in background sessions | `false` |
 | `GetFilter(field)` | Serialised filter expression | Returns serialised filter expression (functional) |

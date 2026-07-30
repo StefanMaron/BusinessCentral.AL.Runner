@@ -38,11 +38,12 @@ allowed and forbidden.
 | `--verbose` | ✓ | ✓ | Same. |
 | `--show-pass` | ✓ | accepted (no-op) | v2 prints PASS lines by default. |
 | `--failures-only` / `--quiet` | (no flag — was default) | ✓ | New v2 opt-out to suppress PASS lines. |
-| `--strict` | ✓ | ✓ | Same exit-code convention. 0 / 1 / 2 / 3. |
+| `--strict` | ✓ | accepted (no-op) | Same exit-code convention (0 / 1 / 2 / 3), but strict exit is now v2's default — matching v1. `--no-strict-exit` opts back into always-exit-0 for tooling that only wants to parse the JSON output. |
 | `--test PATTERN` / `--filter PATTERN` | ✓ | ✓ | Substring match on `Codeunit.Method`. |
 | `--dump-csharp DIR` | ✓ | ✓ | v2 dumps BC `Compilation.Emit`'s intermediate C# per AL object. |
 | `--precompile <in> --out <out>` | ✓ | ✓ | Same. |
 | `--bundled` / `--per-suite` | (n/a) | ✓ | v2's pipeline mode toggle. Default `--bundled`. |
+| `--server` (JSON-RPC daemon) | (n/a) | ✓ | Long-running warm-state daemon over stdin/stdout, used by the VS Code extension. See `docs/server-mode.md`. Not to be confused with the deferred DAP debug adapter below. |
 | `--version`, `--help`, `-h`, `help` | ✓ | ✓ | Same. |
 
 ## Deferred — accepted as v2 followups
@@ -52,9 +53,10 @@ typical "compile and run AL tests" workflow.
 
 | Flag / feature | Why deferred | Estimated lift |
 |---|---|---|
-| `--server` (DAP debugger) | Needs an AL→C# source map BC's `Compilation.Emit` does not currently expose. Without that, breakpoints land on C# lines, not AL. Workaround for now: run with `--verbose` + `AL_RUNNER_TRACE_NRE=1` for diagnostic output. | 1-2 wk (research-heavy) |
+| DAP debug adapter | v1's `DapServer.cs`. Needs an AL→C# source map BC's `Compilation.Emit` does not currently expose — without that, breakpoints would land on C# lines, not AL. Distinct from `--server`, the JSON-RPC daemon, which IS implemented (see below). | 1-2 wk (research-heavy) |
 | `--coverage` (cobertura XML) | v1 hooked the Roslyn rewriter to inject hit-counters. v2 has no rewrite pass on AL output. A Cecil post-pass over the emitted DLL is feasible. | 2-4 d |
 | `--junit PATH` | Self-contained add; reformatting the existing `Reporter` state into JUnit XML. | <1 d |
+| `--output-json PATH` | v1-shaped per-test `status: pass/fail/error` JSON, distinct from `--out`'s failure-classification JSON. | <1 d |
 | `--stubs DIR` | v1's stub-merge path. v2 loads real MS DLLs in-process so the original use case mostly evaporates, but the "extra source roots" capability still has value for partial extensions. | <1 d |
 | Telemetry / crash reporter | v1's `TelemetryReporter.cs` phoned home to App Insights. `tools/telemetry-triage/` still exists. Needs a secret-handling decision before re-enabling. | 1 d |
 
@@ -68,9 +70,9 @@ unless a concrete user need surfaces.
 | `--extract-deps` subcommand | v1's 121 KB dep-slicer existed because v1 needed the **full minimal AL surface** of each dependency to compile against. v2 just loads the dependency `.app` directly via `DependencyLoader` and links against its embedded DLL. Memory cost is a few hundred MB more per run — acceptable for the workflow. |
 | In-tree stubs (`AlRunner/stubs/*.al`, `AlRunner/Runtime/MockX.cs`) | v1 needed stubs because the rewriter couldn't satisfy MS DLL signatures otherwise. v2 satisfies them by loading the MS DLLs as-is. |
 | Roslyn rewriter / type-rename pass | The premise — that BC types could be safely renamed — was incompatible with linking against MS R2R DLLs. v2's only rewriter is `Rewriters/CallSiteArgWrap.cs` (121 LOC, IL-byte-equivalent to BC's own emit). |
-| AlRunner.Tests C# unit-test project | v1's C# tests targeted the rewriter / stub generator / dep extractor. None of those exist in v2. Test coverage for v2 lives in `tests/al-language/` (the corpus) plus `tests/runner-extras/` (runner-specific positive tests). |
 | `docs/coverage.yaml` / `docs/coverage.md` | v1 tracked AL-language coverage in a hand-curated YAML; the orchestrator blocked merges if the YAML wasn't updated. v2's spec is the `tests/al-language/` corpus itself — every AL surface that needs coverage has a test there. Both files are archived under `docs/archive/`. |
 | `coverage-demo.yml` GitHub workflow | Demonstrated v1's `--coverage` flag. Re-enable when v2 implements coverage. |
+| .NET 9 / .NET 10 target frameworks | v1 multi-targeted; v2 targets `net8.0` only, to run on BC's own real .NET 8 runtime rather than reimplementing its runtime-dependent behavior on a newer BCL. net10's BCL drift breaks BC's `UnsafeAccessor`/precode assumptions; net9 can't satisfy BC's `System.Text.Json` 10 bind. Breaking change for any consumer targeting net9/net10 exclusively. |
 
 ## Layout change
 
@@ -78,7 +80,10 @@ unless a concrete user need surfaces.
 v1                             v2
 ──                             ──
 AlRunner/                      AlRunner/                  (renamed; v2 source lives here now)
-AlRunner.Tests/                (deleted)
+AlRunner.Tests/                AlRunner.Tests/            (kept and grown; C# integration tests for
+                                                            v2's own runtime/CLI behavior — distinct
+                                                            from AL-language coverage, which lives in
+                                                            tests/al-language/ + tests/runner-extras/)
 SymbolProbe/                   SymbolProbe/               (kept; diagnostic tool, framework-agnostic)
 tools/                         tools/                     (kept; DownloadArtifacts used by csproj target)
 scripts/                       scripts/                   (kept)
@@ -99,7 +104,7 @@ The full ruleset for the new layout lives in
 
 ```bash
 git fetch
-git checkout main      # once the v2 PR merges
+git checkout main
 git submodule update --init --recursive
 dotnet build AlRunner.slnx -c Release
 dotnet run --project AlRunner -c Release -- tests/al-language/tests/al-language
@@ -108,7 +113,7 @@ dotnet run --project AlRunner -c Release -- tests/al-language/tests/al-language
 If you install via NuGet:
 
 ```bash
-dotnet tool update --global MSDyn365BC.AL.Runner --version 2.0.0-preview.1
+dotnet tool update --global MSDyn365BC.AL.Runner --version 2.0.0
 al-runner --help
 ```
 
