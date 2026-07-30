@@ -1096,6 +1096,43 @@ foreach (var bundle in bundles)
                 bundleEmit += et.Elapsed;
             }
 
+            // Partial silent emit-drop guard. #1620 already catches the ALL-objects-missing
+            // case (sources.Count==0 with diagnostics). This catches the SUBSET case: BC's
+            // Compilation.Emit can silently drop ONE of several objects with ZERO
+            // diagnostics — confirmed reproducible for tests/runner-extras/crypto-hash-instream
+            // (2 codeunits in, 1 source out, no error) specifically when compiled as the
+            // Nth app in a long-running bundled process; the same 2 files compile correctly
+            // every time in isolation. Root cause is inside BC's own Compilation.Emit and is
+            // not yet understood — see the tracked runner-gap issue. Per
+            // .claude/rules/loud-failures.md this must fail loudly, not vanish a whole
+            // suite's tests with no trace.
+            if (sources.Count > 0 && alDiagnostics.Count == 0)
+            {
+                var declaredObjects = allPaths
+                    .Where(File.Exists)
+                    .Concat(allPaths.Where(Directory.Exists)
+                        .SelectMany(d => Directory.EnumerateFiles(d, "*.al", SearchOption.AllDirectories)))
+                    .Distinct()
+                    .SelectMany(f => System.Text.RegularExpressions.Regex.Matches(
+                        File.ReadAllText(f),
+                        @"^(table|codeunit|page|report|query|enum|xmlport|tableextension|pageextension|permissionset)\s+\d+\s+""?([^""\r\n]+?)""?\s*$",
+                        System.Text.RegularExpressions.RegexOptions.Multiline))
+                    .Select(m => m.Groups[2].Value.Trim())
+                    .ToList();
+                if (declaredObjects.Count > sources.Count)
+                {
+                    var emittedNames = sources.Select(s => s.Name).ToList();
+                    bundleErrors.Add(
+                        $"<bundled>: PARTIAL-EMIT-DROP for {moduleName}: {declaredObjects.Count} object(s) declared, " +
+                        $"only {sources.Count} emitted, 0 AL diagnostics explain the gap. Declared: " +
+                        $"[{string.Join(", ", declaredObjects)}]. Emitted: [{string.Join(", ", emittedNames)}].");
+                    Console.Error.WriteLine(
+                        $"<bundled>: PARTIAL-EMIT-DROP — {moduleName}: {declaredObjects.Count} declared vs " +
+                        $"{sources.Count} emitted, no diagnostics. Declared: [{string.Join(", ", declaredObjects)}]. " +
+                        $"Emitted: [{string.Join(", ", emittedNames)}].");
+                    sources = Array.Empty<EmittedSource>(); // do not compile a partial, silently-wrong module
+                }
+            }
             if (sources.Count == 0 && alDiagnostics.Count > 0)
             {
                 // Emit produced zero sources — BC's compiler swallowed exceptions internally.
