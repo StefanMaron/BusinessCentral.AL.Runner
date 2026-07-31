@@ -1,24 +1,11 @@
 /// <summary>
-/// Control experiment for report EXECUTION entry points.
-///
-/// Observed while fixing the Integer virtual table: a probe report did not execute
-/// at all through Report.Run() — OnPreReport never fired, nothing was raised and
-/// nothing was written. That is a silent no-op, the same class as an empty virtual
-/// table or emit-only state lost on a cache hit, and it matters because a report
-/// that never runs produces no PDF and raises no error — precisely what the
-/// Pageworks pdf-render (64 tests) and asserterror-not-thrown (16 tests) clusters
-/// report.
-///
-/// That probe was ProcessingOnly with no rendering layout, so the no-op might have
-/// been specific to that shape rather than general. These tests separate the
-/// possibilities over a REAL table with REAL stored rows, so no virtual-table
-/// provider is involved:
-///
-///   shape A (ProcessingOnly, no layout)  vs  shape B (layout, columns)
-///   Report.Run(Report::X)  vs  instance .Run()  vs  instance .SaveAs(Xml)
-///
-/// Each assertion names the entry point, so a fix cannot repair one path while
-/// silently leaving another a no-op.
+/// The report-execution-entry-point coverage this suite originally proved (SaveAs(Xml)
+/// actually running a report's triggers/body, Report.Run(Report::X) vs instance .Run() vs
+/// .SaveAs) is real BC semantics and migrated upstream to the al-language corpus
+/// (tests/al-language, handlers/TestReportRunExecution.al). Only this one test stays: it
+/// asserts a runner-specific OutOfScope classification (the runner has no service tier to
+/// render a non-ProcessingOnly report with, so it must fail LOUDLY naming the surface
+/// rather than silently no-op), not real BC behavior.
 /// </summary>
 codeunit 61892 "RRE Tests"
 {
@@ -60,51 +47,5 @@ codeunit 61892 "RRE Tests"
             Error('Expected an out-of-scope error naming report rendering, got: %1', GetLastErrorText());
         if StrPos(GetLastErrorText(), 'Layout') = 0 then
             Error('Expected the error to name the layout surface, got: %1', GetLastErrorText());
-    end;
-
-    [Test]
-    procedure InstanceSaveAsXml_ExecutesTriggersAndBody()
-    var
-        Probe: Report "RRE Layout Report";
-        TempBlob: Codeunit "Temp Blob";
-        ResultOutStream: OutStream;
-    begin
-        // The dataset (Xml) path is in scope for the runner and is what Pageworks drives.
-        SeedRows();
-        Clear(Probe);
-        TempBlob.CreateOutStream(ResultOutStream);
-        Probe.SaveAs('', ReportFormat::Xml, ResultOutStream);
-
-        if not Probe.DidPreReportRun() then
-            Error('instance SaveAs(Xml): OnPreReport never fired — the report did not execute at all.');
-        if Probe.RowsProcessed() <> 3 then
-            Error('instance SaveAs(Xml): expected 3 body executions, got %1', Probe.RowsProcessed());
-    end;
-
-    [Test]
-    procedure StaticSaveAsXml_ProducesADatasetNamingTheRows()
-    var
-        TempBlob: Codeunit "Temp Blob";
-        ResultOutStream: OutStream;
-        ResultInStream: InStream;
-        Dataset: Text;
-        Line: Text;
-    begin
-        // The static form cannot report through report globals, so assert on the OUTPUT:
-        // a dataset that actually names a seeded row proves the body ran.
-        SeedRows();
-        TempBlob.CreateOutStream(ResultOutStream);
-        Report.SaveAs(Report::"RRE Layout Report", '', ReportFormat::Xml, ResultOutStream);
-
-        TempBlob.CreateInStream(ResultInStream);
-        while not ResultInStream.EOS() do begin
-            ResultInStream.ReadText(Line);
-            Dataset += Line;
-        end;
-
-        if Dataset = '' then
-            Error('Report.SaveAs(Xml) wrote an EMPTY stream — the report produced no dataset at all.');
-        if StrPos(Dataset, 'second') = 0 then
-            Error('Report.SaveAs(Xml) dataset does not contain the seeded row "second" — the data item body did not run. Dataset was: %1', CopyStr(Dataset, 1, 300));
     end;
 }

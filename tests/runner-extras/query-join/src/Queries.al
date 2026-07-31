@@ -1,55 +1,6 @@
-// Two queries over the same two tables. They differ only in SqlJoinType so the
-// test can compare InnerJoin vs LeftOuterJoin semantics over identical data.
-
-// InnerJoin: a customer with no order row is dropped from the result.
-query 60310 "QJ Cust Orders Inner"
-{
-    QueryType = Normal;
-    OrderBy = ascending(EntryNo);
-
-    elements
-    {
-        dataitem(Customer; "QJ Customer")
-        {
-            column(CustNo; "No.") { }
-            column(CustName; "Name") { }
-
-            dataitem(Ord; "QJ Order")
-            {
-                DataItemLink = "Customer No." = Customer."No.";
-                SqlJoinType = InnerJoin;
-
-                column(EntryNo; "Entry No.") { }
-                column(Amount; "Amount") { }
-            }
-        }
-    }
-}
-
-// LeftOuterJoin: a customer with no order row is KEPT, with null/default child columns.
-query 60311 "QJ Cust Orders Left"
-{
-    QueryType = Normal;
-    OrderBy = ascending(CustNo);
-
-    elements
-    {
-        dataitem(Customer; "QJ Customer")
-        {
-            column(CustNo; "No.") { }
-            column(CustName; "Name") { }
-
-            dataitem(Ord; "QJ Order")
-            {
-                DataItemLink = "Customer No." = Customer."No.";
-                SqlJoinType = LeftOuterJoin;
-
-                column(EntryNo; "Entry No.") { }
-                column(Amount; "Amount") { }
-            }
-        }
-    }
-}
+// InnerJoin and LeftOuterJoin coverage migrated upstream to the al-language corpus
+// (tests/al-language, query/). Only the RightOuterJoin case stays here: it asserts a
+// runner-specific OutOfScope classification (loud-failures rule), not real BC semantics.
 
 // RightOuterJoin: an in-memory join sub-case the runner cannot faithfully reproduce.
 // Opening this query must throw RunnerOutOfScopeException with a SPECIFIC named reason
