@@ -354,11 +354,24 @@ internal class LiveNavTestPage : MockITestPage
     public override void InsertEmptyRow(bool beforeCurrent)
     {
         FlushPendingNewRow();   // starting a second row persists the first
-        _record.ALInit();
+
+        // Ask the page to start the row, exactly as it would for a user: BC's NavForm.NewRecord
+        // does ALInit, fills the linking fields in from the page's own filters, and raises
+        // OnNewRecord. A filtered page is showing one parent's rows, so a row created on it
+        // belongs to that parent — that is what makes Lines.New() on a subpage produce a line
+        // already attached to its header.
+        //
+        // The runner used to do the first and last of those steps by hand and skip the middle,
+        // so the row arrived with blank keys and the damage surfaced one step later: an
+        // OnValidate looking its parent up found nothing, and the test failed naming a derived
+        // field rather than the key that was never set.
+        if (!(_page?.TryNewRecord(!beforeCurrent) ?? false))
+        {
+            // Record-only mode: no page to ask, so no filters and no trigger to run either.
+            _record.ALInit();
+        }
+
         _pendingNewRow = true;
-        // The page's own defaults for a brand-new row. ALInit gives the FIELD defaults, which
-        // for an enum is member 0 — routinely the opposite of what the page intends.
-        _page?.RaiseOnNewRecord(!beforeCurrent);
     }
 
     internal void FlushPendingNewRow()
@@ -370,7 +383,11 @@ internal class LiveNavTestPage : MockITestPage
         // answer would be worse than not running it: the row lands anyway, but now it also
         // carries whatever the trigger wrote on its way to saying no.
         if (_page != null && !_page.RaiseOnInsertRecord(false)) return;
-        _record.ALInsertAsync(DataError.TrapError, false, false).GetAwaiter().GetResult();
+        // runApplicationTrigger: true. Inserting a row from a page runs the table's OnInsert, the
+        // same as Rec.Insert(true) — that trigger is where a table assigns its number series,
+        // stamps its own derived fields, and enforces what it will not accept. Passing false
+        // wrote a row the table had never agreed to.
+        _record.ALInsertAsync(DataError.TrapError, true, false).GetAwaiter().GetResult();
     }
 
     /// <summary>Abandon an in-progress new row without writing it — how Cancel closes.</summary>

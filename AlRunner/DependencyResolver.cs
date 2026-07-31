@@ -26,6 +26,17 @@ public sealed class DependencyResolver
     private readonly Dictionary<(string Name, string Publisher), List<(AppManifest Manifest, string Path)>>
         _byNamePub = new(NamePublisherComparer.Instance);
     private bool _indexed;
+    private readonly List<string> _diagnostics = new();
+
+    /// <summary>
+    /// Problems detected while resolving that are NOT fatal but almost certainly wrong —
+    /// currently: a symbols-only package outranking a code-bearing copy of the same
+    /// package on version. Such a set compiles cleanly and then dies deep inside BC with
+    /// "The object with ID 0 does not have a member with that ID", naming neither the
+    /// package nor the directory. Surfaced by the caller so the cause is stated where it
+    /// happens instead of being reconstructed by hand from the whole dependency set.
+    /// </summary>
+    public IReadOnlyList<string> Diagnostics => _diagnostics;
 
     public DependencyResolver(IReadOnlyList<string> cacheDirs)
     {
@@ -152,7 +163,7 @@ public sealed class DependencyResolver
         return false;
     }
 
-    private static bool SelectBestVersion(
+    private bool SelectBestVersion(
         DependencyRef dep,
         List<(AppManifest Manifest, string Path)> candidates,
         out (AppManifest Manifest, string Path) found,
@@ -190,6 +201,35 @@ public sealed class DependencyResolver
 
         if (best.Manifest != null)
         {
+            // The tie-break above only settles EQUAL versions. When a symbols-only copy is
+            // strictly HIGHER it wins outright and nothing downstream can execute it — the
+            // failure surfaces much later as an object-ID-0 MissingMethod inside BC. Say so
+            // now, naming the winner and what it displaced, so the fix is obvious.
+            //
+            // Not fatal: symbols-only is CORRECT for Microsoft platform apps, whose runtime
+            // comes from the service-tier DLLs (see IsMicrosoftPlatformApp) — warning on
+            // those would fire on every healthy run and teach readers to ignore this.
+            if (!AppLoader.IsR2R(best.Path)
+                && !IsMicrosoftPlatformApp(best.Manifest.Name, best.Manifest.Publisher))
+            {
+                var shadowed = candidates
+                    .Where(c => c.Manifest.Version < best.Manifest.Version && AppLoader.IsR2R(c.Path))
+                    .OrderByDescending(c => c.Manifest.Version)
+                    .ToList();
+                if (shadowed.Count > 0)
+                    _diagnostics.Add(
+                        $"[dep] note: {best.Manifest.Publisher}/{best.Manifest.Name} resolved to a "
+                        + $"SYMBOLS-ONLY package v{best.Manifest.Version} (no publishedartifacts DLL):"
+                        + $"\n           winner: {best.Path}"
+                        + string.Concat(shadowed.Select(c =>
+                            $"\n         shadowed: v{c.Manifest.Version} {c.Path} (code-bearing)"))
+                        + "\n           Resolution picks the HIGHEST version across all scanned dirs, so the"
+                        + "\n           code-bearing copy lost on version. This is COMMON AND USUALLY BENIGN —"
+                        + "\n           it occurs on known-good configurations. But it is the first thing to"
+                        + "\n           check if execution later fails with \"The object with ID 0 does not"
+                        + "\n           have a member with that ID\".");
+            }
+
             found = best;
             return true;
         }

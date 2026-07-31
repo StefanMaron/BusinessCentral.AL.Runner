@@ -1882,20 +1882,36 @@ public static class NclCecilRewrite
                 var sourceTableGetter = sourceTableProp?.GetMethod;
                 if (sourceTableGetter != null)
                 {
+                    // Guard the real body; do NOT replace it. This used to be an unconditional
+                    // `ret` justified by "the only legitimate use exercised by AL tests is the
+                    // no-op path" — true of the bucket-1 contracts above, and false as soon as
+                    // real AL arrived: `Card.SetRecord(Rec); Card.RunModal();` is how AL hands a
+                    // page the row it must show, and silently dropping it opened the page on
+                    // whatever the source table yielded first. A no-op that is only correct for
+                    // the callers you happened to know about announces nothing when a new one
+                    // appears — see .claude/rules/loud-failures.md.
                     foreach (var m in navFormTypeRew.Methods.Where(x =>
                         (x.Name == "GetRecord" || x.Name == "SetRecord" || x.Name == "SetTableView") &&
                         x.Parameters.Count == 1))
                     {
                         var body = m.Body;
-                        body.Instructions.Clear();
-                        body.Variables.Clear();
-                        body.ExceptionHandlers.Clear();
+                        if (body.Instructions.Count == 0) continue;
                         var il = body.GetILProcessor();
-                        // if (this.SourceTable == null) return;  else throw away — full no-op is safe
-                        // since the only legitimate use exercised by AL tests is the no-op path.
-                        il.Append(il.Create(OpCodes.Ret));
-                        body.MaxStackSize = 0;
-                        Console.Error.WriteLine($"[Cecil] Rewrote NavForm.{m.Name}({m.Parameters[0].ParameterType.Name}) → no-op");
+                        var original = body.Instructions[0];
+
+                        // if (this.SourceTable == null) return;  — then fall through to BC's own
+                        // body, which is what a page with a real source table needs.
+                        var ret = il.Create(OpCodes.Ret);
+                        il.InsertBefore(original, il.Create(OpCodes.Ldarg_0));
+                        il.InsertBefore(original, il.Create(OpCodes.Call,
+                            asm.MainModule.ImportReference(sourceTableGetter)));
+                        il.InsertBefore(original, il.Create(OpCodes.Brtrue, original));
+                        il.InsertBefore(original, ret);
+
+                        body.MaxStackSize = Math.Max(body.MaxStackSize, 1);
+                        Console.Error.WriteLine(
+                            $"[Cecil] Guarded NavForm.{m.Name}({m.Parameters[0].ParameterType.Name}) "
+                            + "→ no-op only when SourceTable is null");
                     }
                 }
             }

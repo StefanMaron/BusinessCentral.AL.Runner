@@ -89,6 +89,20 @@
     </Content>
   </ItemGroup>
 
+  <!-- Bake the BC version this binary was BUILT against into the assembly.
+       Microsoft stamps Ncl.dll's assembly version as major.0.0.0 only (28.0.0.0), so the
+       MINOR is unrecoverable from the engine DLLs at runtime — yet the minor is what
+       decides whether the artifact matches. Without this the default artifact selection
+       could only constrain by major and silently picked whatever minor was cached:
+       measured at 1041P/35F/0E (28.1, the built minor) vs 996P/77F/3E (28.2) on the same
+       Pageworks suite. Read back via BcArtifacts.EngineBuiltVersion(). -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>BcEngineVersion</_Parameter1>
+      <_Parameter2>$(_BCVersion)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
   <PropertyGroup>
     <_BCVersion>28.1.49838.50794</_BCVersion>
     <!-- Cross-platform cache directory for the build-time BC service tier. MUST match the

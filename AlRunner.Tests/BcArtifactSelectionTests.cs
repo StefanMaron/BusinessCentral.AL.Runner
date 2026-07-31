@@ -69,6 +69,93 @@ public sealed class BcArtifactSelectionTests : IDisposable
         Assert.Contains("Download it explicitly", ex.Message);
     }
 
+    /// <summary>
+    /// The default must prefer the engine's built MAJOR.MINOR, not merely its major.
+    ///
+    /// MEASURED 2026-07-29 on Pageworks (1076 tests, identical dep set and binary):
+    ///   engine built for 28.1.49838.50794, selected 28.1.x  -> 1041 pass / 35 fail / 0 error
+    ///   engine built for 28.1.49838.50794, selected 28.2.x  ->  996 pass / 77 fail / 3 error
+    /// The 42 regressions are all "testpage-part — could not resolve this control to a
+    /// subpage part". Major-only matching let that skew through silently, contradicting
+    /// the project's own finding that the engine must match the target BC MINOR.
+    /// </summary>
+    [Fact]
+    public void DefaultPrefix_PrefersEngineMajorMinor_WhenThatMinorIsCached()
+    {
+        MakeVersionDirs("28.1.49838.50794", "28.2.50931.52786");
+
+        var prefix = BcArtifacts.DefaultVersionPrefix(new Version("28.1.49838.50794"), _root);
+        Assert.Equal("28.1", prefix);
+
+        // And it must actually select the engine-matched minor, not the highest one.
+        Assert.Equal("28.1.49838.50794",
+            Path.GetFileName(BcArtifacts.SelectArtifactVersionDir(_root, prefix)));
+    }
+
+    /// <summary>
+    /// Fallback: if the engine's own minor is not cached, the major is still the right
+    /// constraint — but this is a degraded configuration, so the caller must be told.
+    /// </summary>
+    [Fact]
+    public void DefaultPrefix_FallsBackToMajor_WhenEngineMinorNotCached()
+    {
+        MakeVersionDirs("28.2.50931.52786", "28.3.60000.60000");
+
+        var prefix = BcArtifacts.DefaultVersionPrefix(new Version("28.1.49838.50794"), _root);
+        Assert.Equal("28", prefix);
+    }
+
+    /// <summary>Negative: no engine version → no opinion, caller handles it.</summary>
+    [Fact]
+    public void DefaultPrefix_IsNull_WhenEngineVersionUnknown()
+    {
+        MakeVersionDirs("28.1.49838.50794");
+        Assert.Null(BcArtifacts.DefaultVersionPrefix(null, _root));
+    }
+
+    /// <summary>
+    /// The built BC version must survive into the shipped assembly. Ncl.dll's own version
+    /// is major.0.0.0 (Microsoft stamps only the major), so without this attribute the
+    /// runner cannot tell which MINOR it was built for and artifact selection degrades to
+    /// major-only — the defect that silently cost 45 passing tests on Pageworks.
+    /// </summary>
+    [Fact]
+    public void EngineBuiltVersion_IsBakedIn_AndCarriesAMinor()
+    {
+        var built = BcArtifacts.EngineBuiltVersion();
+        Assert.NotNull(built);
+        // 4-part and meaningful — a major.0.0.0 value would mean we baked in the useless
+        // Ncl assembly version instead of the csproj _BCVersion.
+        Assert.True(built!.Build > 0 && built.Revision > 0,
+            $"BcEngineVersion must be the full 4-part _BCVersion, got '{built}'.");
+        Assert.Equal(BcArtifacts.EngineMajor(AppContext.BaseDirectory) ?? built.Major, built.Major);
+    }
+
+    /// <summary>
+    /// Negative control documenting WHY EngineBuiltVersion exists: the engine DLL's own
+    /// version carries no minor. If this ever starts failing, Microsoft changed their
+    /// stamping and the baked-in attribute may no longer be needed.
+    /// </summary>
+    [Fact]
+    public void NclAssemblyVersion_CarriesNoUsableMinor()
+    {
+        var ncl = BcArtifacts.EngineVersion(AppContext.BaseDirectory);
+        if (ncl == null) return; // no engine in bin — nothing to assert
+        Assert.True(ncl.Minor == 0 && ncl.Build <= 0,
+            $"Ncl.dll now reports a detailed version ({ncl}) — revisit EngineBuiltVersion.");
+    }
+
+    [Fact]
+    public void EngineVersion_ReflectsBinNclVersion_OrNullWhenAbsent()
+    {
+        Assert.Null(BcArtifacts.EngineVersion(_root));
+
+        var live = BcArtifacts.EngineVersion(AppContext.BaseDirectory);
+        // When an engine is present its version must agree with EngineMajor.
+        if (live != null)
+            Assert.Equal(BcArtifacts.EngineMajor(AppContext.BaseDirectory), live.Major);
+    }
+
     [Fact]
     public void EngineMajor_ReflectsBinNclVersion_OrNullWhenAbsent()
     {

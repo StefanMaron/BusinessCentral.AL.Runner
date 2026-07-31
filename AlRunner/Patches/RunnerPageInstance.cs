@@ -508,6 +508,35 @@ internal sealed class RunnerPageInstance
            is not false;
 
     /// <summary>
+    /// Start a new row the way the page itself would: BC's own NavForm.NewRecord, which does
+    /// ALInit, then InitializeFieldsFromFilters (so the row arrives already carrying the page's
+    /// filters — the header a subpage's line belongs to), then raises OnNewRecord.
+    ///
+    /// Reused rather than reimplemented on purpose. The filter step in particular depends on the
+    /// page's own metadata (SourceObject.PopulateAllFields) and on which FILTER GROUPS count —
+    /// a page's programmatic FilterGroup(2) scope is not the user's filter pane — and BC already
+    /// knows both. Hand-rolling it meant guessing at that, and guessing wrong is invisible: the
+    /// row simply arrives with blank keys.
+    /// </summary>
+    /// <returns>false when there is no form to ask, leaving the caller its own fallback.</returns>
+    internal bool TryNewRecord(bool belowXRec)
+    {
+        if (_form == null) return false;
+        var newRecord = _form.GetType().GetMethod("NewRecord",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            binder: null, types: new[] { typeof(bool) }, modifiers: null);
+        if (newRecord == null) return false;
+
+        try { newRecord.Invoke(_form, new object[] { belowXRec }); }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            // OnNewRecord runs inside this call; an Error() it raises is the test's result.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+        }
+        return true;
+    }
+
+    /// <summary>
     /// The page's last word before an EDIT to an existing row is written — the counterpart of
     /// OnInsertRecord, and a veto in exactly the same way. A page that stamps a "last modified
     /// by" field or refuses to save a row in a closed period does it here.

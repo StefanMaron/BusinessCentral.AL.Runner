@@ -245,11 +245,64 @@ public static class BcArtifacts
     /// engine DLL is absent / unversioned. This is the only major this binary can run
     /// (cross-major needs a matching engine build); used to default artifact selection.
     /// </summary>
-    public static int? EngineMajor(string binDir)
+    public static int? EngineMajor(string binDir) => EngineVersion(binDir)?.Major;
+
+    /// <summary>
+    /// Version of bin Ncl.dll. NOTE: Microsoft stamps this as major.0.0.0 — the MINOR is
+    /// always 0 and carries no information. Use <see cref="EngineBuiltVersion"/> when the
+    /// minor matters (i.e. whenever selecting an artifact).
+    /// </summary>
+    public static Version? EngineVersion(string binDir)
     {
         var ncl = Path.Combine(binDir, "Microsoft.Dynamics.Nav.Ncl.dll");
         if (!File.Exists(ncl)) return null;
-        return System.Reflection.AssemblyName.GetAssemblyName(ncl).Version?.Major;
+        return System.Reflection.AssemblyName.GetAssemblyName(ncl).Version;
+    }
+
+    /// <summary>
+    /// The full 4-part BC version this binary was BUILT against, baked in at compile time
+    /// from the csproj `_BCVersion` property (see the AssemblyMetadata item there). This is
+    /// the only place the built MINOR survives into the shipped binary — Ncl.dll's own
+    /// assembly version is major.0.0.0. Null if the attribute is missing or unparseable.
+    /// </summary>
+    public static Version? EngineBuiltVersion()
+    {
+        var attrs = typeof(BcArtifacts).Assembly
+            .GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), false);
+        foreach (System.Reflection.AssemblyMetadataAttribute a in attrs)
+            if (a.Key == "BcEngineVersion" && Version.TryParse(a.Value, out var v))
+                return v;
+        return null;
+    }
+
+    /// <summary>
+    /// The version prefix to select by when the user pinned neither --bc-version nor
+    /// --artifact-path: the engine's own MAJOR.MINOR when that minor is cached, else the
+    /// major alone. Null when the engine version is unknown (caller decides).
+    ///
+    /// Why major.minor and not just major: MEASURED 2026-07-29 on Pageworks (same dep set,
+    /// same binary, engine built for 28.1.49838.50794) —
+    ///   selected 28.1.x -> 1041 pass / 35 fail / 0 error
+    ///   selected 28.2.x ->  996 pass / 77 fail / 3 error
+    /// The 42 regressions were all TestPage subpage-part resolution failures. Latest-in-major
+    /// silently picked 28.2 whenever any 28.2 artifact happened to be cached, so the runner
+    /// chose a degraded configuration on its own and said nothing.
+    /// </summary>
+    public static string? DefaultVersionPrefix(Version? engineVersion, string artifactsRoot)
+    {
+        if (engineVersion == null) return null;
+        var majorMinor = $"{engineVersion.Major}.{engineVersion.Minor}";
+        try
+        {
+            SelectArtifactVersionDir(artifactsRoot, majorMinor);
+            return majorMinor;
+        }
+        catch (InvalidOperationException)
+        {
+            // Engine's own minor isn't cached — fall back to the major, which is still the
+            // only major this binary can run. Degraded; the caller warns.
+            return engineVersion.Major.ToString();
+        }
     }
 
     public static void VerifyEngineConsistency(string binDir)

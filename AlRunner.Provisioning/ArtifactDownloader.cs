@@ -187,7 +187,15 @@ public static class ArtifactDownloader
             if (!IsCentralHeader(cdData, pos)) break;
             var (cm, cs, nl, el, cl, lo, name) = ReadCentralEntry(cdData, pos);
             var lower = name.ToLowerInvariant();
-            if (lower.Contains("/test/") && lower.EndsWith(".app") && cs > 0)
+            // "/test/" alone MISSES the actual test toolkit: Library Assert, Test Runner,
+            // Any and Library Variable Storage ship under Applications/TestFramework/
+            // TestLibraries/... and TestFramework/TestRunner/..., which contain no "/test/"
+            // segment. Those four are exactly what a test bundle's app.json depends on, so
+            // the old filter fetched 97 country test apps and none of the packages anyone
+            // actually needs — leaving --package-cache mandatory with no way to populate it.
+            if (lower.EndsWith(".app") && cs > 0
+                && (lower.Contains("/test/") || lower.Contains("testframework")
+                    || lower.Contains("testlibraries") || lower.Contains("testrunner")))
                 matching.Add((name, cm, cs, lo));
             pos += 46 + nl + el + cl;
         }

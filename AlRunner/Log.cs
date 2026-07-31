@@ -15,11 +15,18 @@ public static class Log
 
     // Matches `[Component]` or `[ComponentName]` at the start of a line — alphanumeric
     // tag in square brackets, NOT a numeric progress tag like `[1/3]`.
-    // `[layered]`, `[watch]` and `[provision]` are explicitly exempted — they are
-    // user-facing output (layered source-build progress; watch-mode status; artifact
-    // provisioning/download progress), not internal diagnostics.
-    private static readonly Regex ComponentTag = new(@"^\[(?!(?:layered|watch|provision)\])[A-Za-z][A-Za-z0-9._+]*\]",
-        RegexOptions.Compiled);
+    // `[layered]`, `[watch]`, `[provision]`, `[bc]` and `[dep]` are explicitly exempted —
+    // they are user-facing output (layered source-build progress; watch-mode status;
+    // artifact provisioning/download progress; which BC version was selected; dependency
+    // resolution warnings), not internal diagnostics.
+    //
+    // `[bc]` was NOT exempted until 2026-07-29, so the two lines naming the selected BC
+    // version vanished at default verbosity. Measured: the same suite scores 1041P/35F/0E
+    // on `--bc-version 28.1` and 996P/77F/3E on the default selection — a 42-test swing
+    // decided silently. Which version ran is a RESULT, not a diagnostic.
+    private static readonly Regex ComponentTag =
+        new(@"^\[(?!(?:layered|watch|provision|bc|dep)\])[A-Za-z][A-Za-z0-9._+]*\]",
+            RegexOptions.Compiled);
 
     public static void Install()
     {
