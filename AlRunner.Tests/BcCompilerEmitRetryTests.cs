@@ -46,12 +46,15 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+[Collection(BcEngineCollection.Name)]
 public sealed class BcCompilerEmitRetryTests : IDisposable
 {
     private readonly string _root;
+    private readonly BcEngineFixture _engine;
 
-    public BcCompilerEmitRetryTests()
+    public BcCompilerEmitRetryTests(BcEngineFixture engine)
     {
+        _engine = engine;
         _root = Path.Combine(Path.GetTempPath(), "al-runner-emit-retry-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_root);
     }
@@ -61,35 +64,17 @@ public sealed class BcCompilerEmitRetryTests : IDisposable
         try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
     }
 
-    private static bool ArtifactsAvailable()
-    {
-        try
-        {
-            var dir = AlRunner.Infrastructure.BcArtifacts.ServiceTierDir;
-            return File.Exists(Path.Combine(dir, "Microsoft.Dynamics.Nav.CodeAnalysis.dll"))
-                && File.Exists(Path.Combine(dir, "Microsoft.Dynamics.Nav.Ncl.dll"));
-        }
-        catch { return false; }
-    }
+    // (The artifacts probe moved into BcEngineFixture, which now owns the whole
+    // in-process engine bootstrap and exposes the result as BcEngineFixture.Ready.)
 
     [Fact]
     public void Emit_RecoversHealthyCodeunit_WhenAnUnrelatedObjectCrashesTheModuleEmit()
     {
-        if (!ArtifactsAvailable()) return; // no BC artifacts provisioned — skip, don't fail
-
-        // Production (Program.cs) Cecil-rewrites Ncl.dll in-place in the app's own bin
-        // dir BEFORE anything touches it, then (on a cold/uncached rewrite only) re-execs
-        // once so the child process loads the now-cached, already-rewritten bytes from a
-        // clean start. Do the same here, first thing, before any other AlRunner type
-        // that might resolve Ncl types: with a warm cache (already populated by a prior
-        // real run on this machine) this is a plain cached-bytes file copy, not a fresh
-        // rewrite, so no re-exec is needed for the test to see a byte-identical DLL.
-        var srcDir = AlRunner.Infrastructure.BcArtifacts.ServiceTierDir;
-        var binNcl = Path.Combine(AppContext.BaseDirectory, "Microsoft.Dynamics.Nav.Ncl.dll");
-        AlRunner.Infrastructure.NclCecilRewrite.RewriteInPlace(srcDir, binNcl);
-
-        DependencyLoader.EnsureResolverInstalled_Public();
-        BcRuntime.EnsureApplied();
+        // The Ncl Cecil rewrite + runtime-patch bootstrap now happens ONCE in BcEngineFixture,
+        // before any test in the bc-engine-serial collection runs. Doing it here instead meant
+        // overwriting bin/…Ncl.dll while a parallel test class was loading types out of it —
+        // see BcEngineCollection.cs for the torn-image failures that caused.
+        if (!_engine.Ready) return; // no BC artifacts provisioned — skip, don't fail
 
         // One healthy codeunit whose real body must survive the retry...
         File.WriteAllText(Path.Combine(_root, "Good.al"), """

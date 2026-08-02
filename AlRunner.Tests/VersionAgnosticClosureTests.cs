@@ -13,8 +13,10 @@
 // R2R app then requesting a higher version fails with FileLoadException 0x80131621 and
 // never loads. That pinned one engine binary to exactly one BC minor.
 //
-// Fix (AlRunner.csproj target StripBcAppClosureFromCopyLocal): keep this closure OUT of
-// bin. The DependencyLoader ALC Resolving handler serves any such assembly from the
+// Fix (Directory.Build.targets target StripBcAppClosureFromCopyLocal): keep this closure OUT
+// of bin — in EVERY project, since a referencing project runs its own ResolveAssemblyReferences
+// and would re-copy the closure into its own bin. The DependencyLoader ALC Resolving handler
+// serves any such assembly from the
 // SELECTED version's artifact dir (BcArtifacts.ServiceTierDir) on demand, so the runner
 // serves whichever minor the target project needs — from BC's own shipped copy.
 //
@@ -50,8 +52,8 @@ public sealed class VersionAgnosticClosureTests
             leaked.Length == 0,
             $"BC-app closure DLLs are CopyLocal'd into '{baseDir}': [{string.Join(", ", leaked)}]. " +
             "This re-pins the engine to a single BC minor and breaks cross-minor projects. " +
-            "The AlRunner.csproj 'StripBcAppClosureFromCopyLocal' target must remove them so the " +
-            "DependencyLoader ALC resolver serves the selected version from the artifact dir.");
+            "The Directory.Build.targets 'StripBcAppClosureFromCopyLocal' target must remove them " +
+            "so the DependencyLoader ALC resolver serves the selected version from the artifact dir.");
     }
 
     [Fact]

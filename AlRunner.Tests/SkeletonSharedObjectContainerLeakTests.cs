@@ -36,14 +36,24 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+// Loads Ncl types in-process, so it must share the serial bc-engine collection with the
+// class that Cecil-rewrites Ncl.dll on disk — otherwise it maps a half-written image.
+// See BcEngineCollection.cs.
+[Collection(BcEngineCollection.Name)]
 public class SkeletonSharedObjectContainerLeakTests
 {
     private const int Cycles = 20;
     private const int PerCycle = 5;
 
+    private readonly BcEngineFixture _engine;
+
+    public SkeletonSharedObjectContainerLeakTests(BcEngineFixture engine) => _engine = engine;
+
     [Fact]
     public void ResetPerTestState_SweepsSkeletonContainerChildren_AcrossManyCycles()
     {
+        if (!_engine.Ready) return; // no BC artifacts provisioned — skip, don't fail
+
         var nclAssembly = typeof(ITreeObject).Assembly;
 
         // Isolated root — deliberately NOT BcRuntime.RootTreeStub, so this test does not
@@ -97,6 +107,8 @@ public class SkeletonSharedObjectContainerLeakTests
         // observing growth (i.e. it isn't accidentally bounded for some unrelated reason,
         // such as the container silently refusing to parent children). Never calls
         // ResetPerTestState(), so the child count must equal everything created.
+        if (!_engine.Ready) return; // no BC artifacts provisioned — skip, don't fail
+
         var nclAssembly = typeof(ITreeObject).Assembly;
         var root = new RootTreeObject();
         var container = new TreeSharedObjectContainer(root);

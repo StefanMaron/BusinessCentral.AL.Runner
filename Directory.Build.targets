@@ -1,0 +1,36 @@
+<Project>
+
+  <!--
+    Keep the BC-app-only closure OUT of every project's output directory.
+
+    BC 28 moved its runtime onto a large external closure — the Azure SDK (Azure.*) and the
+    Microsoft.Identity / Microsoft.IdentityModel / System.IdentityModel token stack. Those
+    assemblies are minor-version-pinned: a 28.2 R2R Base App binds
+    Microsoft.Identity.ServiceEssentials.Core 1.43.0.0, whereas 28.1 shipped 1.39.0.0.
+
+    RAR CopyLocal's that transitive closure at whatever _BCVersion the engine was built
+    against. If the copies sit beside the running assembly, the default ALC binds them FIRST
+    by simple name; a different-minor R2R app then requesting a higher version fails with
+    FileLoadException 0x80131621. That pins one engine binary to exactly one BC minor.
+
+    Instead, DependencyLoader's ALC Resolving handler serves these on demand from the
+    SELECTED version's artifact dir (BcArtifacts.ServiceTierDir) — BC's own shipped copy — so
+    one binary spans a major's minors.
+
+    This lives in Directory.Build.targets rather than AlRunner.csproj because the strip has to
+    apply to every project that pulls the closure transitively. A referencing project (e.g.
+    AlRunner.Tests, SymbolProbe) runs its OWN ResolveAssemblyReferences and would otherwise
+    re-copy the closure into its own bin, re-pinning the in-process engine there.
+
+    Guarded by VersionAgnosticClosureTests.
+  -->
+  <Target Name="StripBcAppClosureFromCopyLocal" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)"
+        Condition="$([System.String]::Copy('%(Filename)').StartsWith('Microsoft.Identity'))
+                   OR $([System.String]::Copy('%(Filename)').StartsWith('System.IdentityModel'))
+                   OR $([System.String]::Copy('%(Filename)').StartsWith('Azure.'))" />
+    </ItemGroup>
+  </Target>
+
+</Project>

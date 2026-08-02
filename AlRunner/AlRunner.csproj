@@ -229,13 +229,8 @@
        bin: those ARE the engine and are covered by the MAJOR-only consistency contract.)
 
        Cross-MAJOR still needs a matching engine build; this only relaxes the minors. -->
-  <Target Name="StripBcAppClosureFromCopyLocal" AfterTargets="ResolveAssemblyReferences">
-    <ItemGroup>
-      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)"
-        Condition="$([System.String]::Copy('%(Filename)').StartsWith('Microsoft.Identity'))
-                   OR $([System.String]::Copy('%(Filename)').StartsWith('System.IdentityModel'))
-                   OR $([System.String]::Copy('%(Filename)').StartsWith('Azure.'))" />
-    </ItemGroup>
-  </Target>
+  <!-- StripBcAppClosureFromCopyLocal moved to the repo-root Directory.Build.targets so it
+       also applies to referencing projects (AlRunner.Tests, SymbolProbe), which run their
+       own ResolveAssemblyReferences and would otherwise re-copy the closure into their bin. -->
 
 </Project>
