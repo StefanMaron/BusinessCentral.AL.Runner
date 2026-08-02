@@ -115,8 +115,7 @@ public sealed class BatchAppIdentityTests : IDisposable
         // No --per-suite: this asserts the DEFAULT (bundled) path, which is what
         // both CI legs and every user invocation use.
         var args = new StringBuilder(
-            $"run --no-build -c Release --framework net{Environment.Version.Major}.{Environment.Version.Minor} " +
-            $"--project \"{ProjectPath}\" -- --bc-version 28.1 \"{_root}\"");
+            TestBuildConfig.RunArgs(ProjectPath) + $" --bc-version 28.1 \"{_root}\"");
         foreach (var a in extra) args.Append($" {a}");
         var psi = new ProcessStartInfo
         {

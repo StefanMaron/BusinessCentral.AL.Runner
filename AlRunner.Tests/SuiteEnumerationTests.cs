@@ -104,7 +104,7 @@ public sealed class SuiteEnumerationTests : IDisposable
     private (string output, int exit) RunRunner(string target)
     {
         var args = new StringBuilder(
-            $"run --no-build -c Release --framework {CurrentFramework()} --project \"{ProjectPath}\" --");
+            TestBuildConfig.RunArgs(ProjectPath));
         args.Append(" --bc-version 28.1");
         args.Append($" \"{target}\"");
         var psi = new ProcessStartInfo

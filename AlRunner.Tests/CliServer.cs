@@ -45,7 +45,7 @@ public sealed class CliServer : IAsyncDisposable
     public static async Task<CliServer> StartAsync(IEnumerable<string>? extraArgs = null, TimeSpan? readyTimeout = null)
     {
         var argList = new StringBuilder(
-            $"run --no-build --framework {CurrentFramework()} --project \"{ProjectPath}\" -- --server");
+            TestBuildConfig.RunArgs(ProjectPath) + " --server");
         if (extraArgs != null)
             foreach (var a in extraArgs)
                 argList.Append(' ').Append(a.Contains(' ') ? $"\"{a}\"" : a);

@@ -49,9 +49,25 @@ internal static class BcEngineBootstrap
     internal static bool Ready { get; private set; }
     internal static string? SkipReason { get; private set; }
 
+    private static string FileHash(string path)
+    {
+        if (!File.Exists(path)) return "<missing>";
+        using var fs = File.OpenRead(path);
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(fs));
+    }
+
+    private static void Probe(string msg)
+    {
+        var path = Environment.GetEnvironmentVariable("AL_RUNNER_TEST_ENGINE_PROBE");
+        if (string.IsNullOrEmpty(path)) return;
+        try { File.AppendAllText(path, msg + "\n"); } catch { }
+    }
+
     [ModuleInitializer]
     internal static void Initialize()
     {
+        Probe($"init: nclLoaded={AppDomain.CurrentDomain.GetAssemblies().Any(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl")}");
+
         string serviceTierDir;
         try
         {
@@ -75,7 +91,47 @@ internal static class BcEngineBootstrap
             // Order mirrors Program.cs: rewrite Ncl FIRST, before any AlRunner type resolves
             // an Ncl type and forces the un-rewritten file to load.
             var binNcl = Path.Combine(AppContext.BaseDirectory, "Microsoft.Dynamics.Nav.Ncl.dll");
-            AlRunner.Infrastructure.NclCecilRewrite.RewriteInPlace(serviceTierDir, binNcl);
+
+            // Snapshot before, so we can tell whether the rewrite actually CHANGED the file
+            // in this process. Writing bin/…Ncl.dll and then loading it in the same process
+            // is the documented BadImageFormatException 0x80131124 hazard — and it is the
+            // write that matters, not merely whether the Cecil cache missed. After a fresh
+            // build (bin holds the pristine Ncl) even a cache HIT rewrites the file here.
+            var before = FileHash(binNcl);
+
+            var coldRewrite = AlRunner.Infrastructure.NclCecilRewrite.RewriteInPlace(serviceTierDir, binNcl);
+            var changed = FileHash(binNcl) != before;
+            Probe($"rewrite: cold={coldRewrite} changed={changed} binNcl={binNcl} exists={File.Exists(binNcl)}");
+
+            if (changed)
+            {
+                // We just replaced the file this process is about to load. Skip rather than
+                // risk a torn image; the NEXT run finds bin already rewritten, the copy is a
+                // no-op, and these tests execute normally.
+                SkipReason =
+                    "bin/Microsoft.Dynamics.Nav.Ncl.dll was rewritten by this process (first run " +
+                    "after a build), so loading it here risks BadImageFormatException 0x80131124. " +
+                    "Re-run the suite — bin is now rewritten and these tests will execute.";
+                return;
+            }
+
+            if (coldRewrite)
+            {
+                // true == the Cecil cache MISSed and we just rewrote Ncl in THIS process.
+                // A process that performs the rewrite then loads the result in-process
+                // intermittently dies with BadImageFormatException 0x80131124 — which is
+                // exactly why Program.cs re-execs on a `true` return. A test host cannot
+                // re-exec, so the honest answer is to skip rather than crash.
+                //
+                // CI hits this on every fresh runner (cold ~/.cache/al-runner/ncl-cecil).
+                // The workflow warms the cache with a throwaway runner invocation before
+                // `dotnet test` so these tests really execute there instead of skipping.
+                SkipReason =
+                    "Ncl Cecil cache was cold, so the rewrite happened in this process; " +
+                    "loading it here would risk BadImageFormatException 0x80131124. Warm the " +
+                    "cache with one runner invocation before `dotnet test` to run these tests.";
+                return;
+            }
 
             DependencyLoader.EnsureResolverInstalled_Public();
             BcRuntime.EnsureApplied();

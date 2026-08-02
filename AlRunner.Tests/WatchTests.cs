@@ -50,8 +50,7 @@ public class WatchTests
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet",
-            Arguments = $"run --no-build --framework {CurrentFramework()} --project \"{ProjectPath}\" -- " +
-                        $"\"{bundle}\" --watch --cache \"{cacheDir}\"",
+            Arguments = TestBuildConfig.RunArgs(ProjectPath) + $" \"{bundle}\" --watch --cache \"{cacheDir}\"",
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
         };
@@ -107,9 +106,25 @@ public class WatchTests
             Assert.Contains("FAIL", cycle2);
             Assert.Contains("Insert_OnInsertReadsXRec_BuildsConcreteBeforeImage", cycle2);
             // The dependency loader stayed warm in-process across the edit: the
-            // re-emit's symbol load is instant, not a cold ~40s reload.
+            // re-emit's symbol load is near-instant, not a cold ~40s reload.
+            //
+            // Assert the MAGNITUDE, not the exact string. This used to be
+            // Assert.Contains("0ms"), which demanded the step round to exactly zero
+            // milliseconds — on a Release build or a loaded machine it reports "1ms"
+            // and the test failed despite the warm path working perfectly. The real
+            // claim is warm (milliseconds) vs cold (tens of seconds), so a generous
+            // ceiling still fails loudly if the loader ever goes cold here.
             Assert.Contains("GetSharedReferences", cycle2);
-            Assert.Contains("0ms", cycle2);
+            // The label carries a parenthetical, e.g.
+            //   [emit-timing] GetSharedReferences (5 specs): 787ms
+            var timing = System.Text.RegularExpressions.Regex.Match(
+                cycle2, @"GetSharedReferences[^:]*:\s*(\d+)ms");
+            Assert.True(timing.Success,
+                $"expected an '[emit-timing] GetSharedReferences: <n>ms' line in cycle 2, got:\n{cycle2}");
+            var elapsedMs = int.Parse(timing.Groups[1].Value);
+            Assert.True(elapsedMs < 5_000,
+                $"warm in-process symbol load took {elapsedMs}ms — a warm re-emit must not pay " +
+                "the cold ~40s dependency reload. The loader did not stay warm across the edit.");
         }
         finally
         {

@@ -57,7 +57,7 @@ public class LayeredCacheTests
 
     private static (string output, int exit) RunRunner(string cacheDir, params string[] bundles)
     {
-        var args = new StringBuilder($"run --no-build --framework {CurrentFramework()} --project \"{ProjectPath}\" --");
+        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         foreach (var b in bundles) args.Append(" \"").Append(b).Append('"');
         args.Append(" --cache \"").Append(cacheDir).Append('"');
         var psi = new ProcessStartInfo

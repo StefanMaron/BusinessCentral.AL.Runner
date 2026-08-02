@@ -30,8 +30,7 @@ public sealed class CliDocumentationTests
 
     private static (int ExitCode, string StdOut, string StdErr) RunCli(params string[] args)
     {
-        var argLine = $"run --no-build --framework {CurrentFramework()} "
-                    + $"--project \"{Path.Combine(RepoRoot, "AlRunner")}\" -- {string.Join(' ', args)}";
+        var argLine = TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner")) + $" {string.Join(' ', args)}";
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet",

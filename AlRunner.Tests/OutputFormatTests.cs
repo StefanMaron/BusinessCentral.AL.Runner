@@ -107,7 +107,7 @@ public sealed class OutputFormatTests : IDisposable
     private (string output, int exit) RunRunner(params string[] extraArgs)
     {
         var args = new StringBuilder(
-            $"run --no-build -c Release --framework {CurrentFramework()} --project \"{ProjectPath}\" --");
+            TestBuildConfig.RunArgs(ProjectPath));
         args.Append($" --bc-version 28.1");
         foreach (var a in extraArgs) args.Append($" {a}");
         args.Append($" \"{_root}\"");
