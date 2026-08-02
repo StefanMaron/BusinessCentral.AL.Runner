@@ -48,6 +48,11 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.IsolatedStorageRepository::Contains/6",
         "Microsoft.Dynamics.Nav.Runtime.IsolatedStorageRepository::Contains/5",
         "Microsoft.Dynamics.Nav.Runtime.IsolatedStorageRepository::Delete/6",
+        // ALDatabase row-version getters (Cecil-migrated onto the in-process monotonic
+        // clock in ALDatabasePatches). Their JmpHooks were orphaned — silently no-ops
+        // once the JmpHook layer went off by default — so BC's SQL body ran and NRE'd.
+        "Microsoft.Dynamics.Nav.Runtime.ALDatabase::ALLastUsedRowVersion/0",
+        "Microsoft.Dynamics.Nav.Runtime.ALDatabase::ALMinimumActiveRowVersion/0",
         // ALSystemEncryption AL-facing statics (Cecil-migrated onto the in-process
         // AES envelope) — legacy JmpHooks must no-op.
         "Microsoft.Dynamics.Nav.Runtime.ALSystemEncryption::ALEncrypt/1",
@@ -3175,8 +3180,67 @@ public static class NclCecilRewrite
                     body.MaxStackSize = 1;
                     Console.Error.WriteLine("[Cecil] Replaced ALDatabase.ALTenantID → return \"STANDALONE\"");
                 }
+
+                // ── ALDatabase.ALLastUsedRowVersion / ALMinimumActiveRowVersion ──────
+                // Both real bodies call NavSqlRowVersionCommand, which opens a SQL
+                // connection and NREs in NavSqlConnectionScope.TryOpenConnection on the
+                // headless session. The JmpHook registrations for these two have been
+                // orphaned since the JmpHook layer was disabled by default (BcRuntime's
+                // Hook(...) call sites became silent no-ops), so BC's unpatched SQL body
+                // ran and 5 al-language tests NRE'd. Migrate to Cecil, backed by the real
+                // monotonic counter in ALDatabasePatches — see the faithfulness note there.
+                foreach (var (name, helper) in new[]
+                         {
+                             ("ALLastUsedRowVersion",
+                              nameof(AlRunner.Patches.ALDatabasePatches.ALDatabase_ALLastUsedRowVersion)),
+                             ("ALMinimumActiveRowVersion",
+                              nameof(AlRunner.Patches.ALDatabasePatches.ALDatabase_ALMinimumActiveRowVersion)),
+                         })
+                {
+                    var m = alDbType.Methods.FirstOrDefault(
+                        x => x.Name == name && x.Parameters.Count == 0 && x.IsStatic)
+                        ?? throw new InvalidOperationException($"ALDatabase.{name}() not found in Ncl");
+                    var helperMi = typeof(AlRunner.Patches.ALDatabasePatches).GetMethod(
+                        helper, BindingFlags.Public | BindingFlags.Static)
+                        ?? throw new InvalidOperationException($"ALDatabasePatches.{helper} not found");
+                    ReplaceBodyWithHelper(asm.MainModule, m, helperMi);
+                    Console.Error.WriteLine($"[Cecil] Replaced ALDatabase.{name} → {helper}");
+                }
             }
         }
+
+        // ── Row-version clock: advance on every AL write entry point ─────────────────
+        // The counter above is only faithful if it actually moves when a row is written.
+        // Prepend a no-arg bump to each AL write entry on NavRecord, mirroring the
+        // AssignAutoIncrement / StampSystemFields prepends below. Insert/Modify/Delete/
+        // Rename are the four AL-visible row writes; every overload of each is covered
+        // because AL binds different overloads depending on the call form.
+        {
+            var navRecord = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord")
+                ?? throw new InvalidOperationException("NavRecord type not found in Ncl");
+            var bumpMi = typeof(AlRunner.Patches.ALDatabasePatches).GetMethod(
+                nameof(AlRunner.Patches.ALDatabasePatches.BumpRowVersion),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("ALDatabasePatches.BumpRowVersion not found");
+            var bumpRef = asm.MainModule.ImportReference(bumpMi);
+
+            var writeEntries = new[] { "ALInsertAsync", "ALModifyAsync", "ALDeleteAsync", "ALRenameAsync" };
+            int bumped = 0;
+            foreach (var m in navRecord.Methods.Where(
+                         x => writeEntries.Contains(x.Name) && x.HasBody && x.Body.Instructions.Count > 0))
+            {
+                var il = m.Body.GetILProcessor();
+                il.InsertBefore(m.Body.Instructions[0], il.Create(OpCodes.Call, bumpRef));
+                bumped++;
+            }
+            if (bumped == 0)
+                throw new InvalidOperationException(
+                    "[Cecil] no NavRecord AL write entry points found for the row-version bump — " +
+                    "Database.LastUsedRowVersion would stop advancing silently.");
+            Console.Error.WriteLine(
+                $"[Cecil] Prepended BumpRowVersion → {bumped} NavRecord AL write entry point(s)");
+        }
+
 
         // === NavQuery ctor null-safety ===
         // The AL-emitted Query{ID} class chains to `: base(parent, securityFiltering, metaQuery)`

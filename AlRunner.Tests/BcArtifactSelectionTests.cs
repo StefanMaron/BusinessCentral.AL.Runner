@@ -82,12 +82,38 @@ public sealed class BcArtifactSelectionTests : IDisposable
     [Fact]
     public void DefaultPrefix_PrefersEngineMajorMinor_WhenThatMinorIsCached()
     {
+        // The engine's exact build is NOT cached, so major.minor is the tightest match
+        // available — see DefaultPrefix_PrefersExactEngineBuild_* for the tighter tier.
         MakeVersionDirs("28.1.49838.50794", "28.2.50931.52786");
 
-        var prefix = BcArtifacts.DefaultVersionPrefix(new Version("28.1.49838.50794"), _root);
+        var prefix = BcArtifacts.DefaultVersionPrefix(new Version("28.1.49838.49999"), _root);
         Assert.Equal("28.1", prefix);
 
         // And it must actually select the engine-matched minor, not the highest one.
+        Assert.Equal("28.1.49838.50794",
+            Path.GetFileName(BcArtifacts.SelectArtifactVersionDir(_root, prefix)));
+    }
+
+    /// <summary>
+    /// Tighter than major.minor: when the engine's EXACT 4-part build is cached, that is
+    /// the only artifact whose Microsoft.Dynamics.Nav.CodeAnalysis.dll carries the assembly
+    /// version bin/ was compiled against. Two builds of the same BC minor ship different
+    /// CodeAnalysis versions (28.1.49838.50794 -> 17.0.36.40629,
+    /// 28.1.49838.53220 -> 17.0.39.53543), and the strong-named reference does not tolerate
+    /// the skew: selecting the higher 28.1 build makes the run die at startup with
+    /// FileLoadException 0x80131621 on Microsoft.Dynamics.Nav.CodeAnalysis before a single
+    /// test executes. Highest-in-minor is therefore wrong whenever the built version is
+    /// itself cached.
+    /// </summary>
+    [Fact]
+    public void DefaultPrefix_PrefersExactEngineBuild_OverAHigherBuildOfTheSameMinor()
+    {
+        MakeVersionDirs("28.1.49838.50794", "28.1.49838.53220", "28.2.50931.52786");
+
+        var prefix = BcArtifacts.DefaultVersionPrefix(new Version("28.1.49838.50794"), _root);
+        Assert.Equal("28.1.49838.50794", prefix);
+
+        // And the prefix must resolve back to that exact build, not the higher 28.1 one.
         Assert.Equal("28.1.49838.50794",
             Path.GetFileName(BcArtifacts.SelectArtifactVersionDir(_root, prefix)));
     }

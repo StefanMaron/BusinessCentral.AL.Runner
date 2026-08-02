@@ -365,9 +365,16 @@ if (bcVersionArg == null && artifactPathArg == null)
             engineVersion, AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir);
 
         var engineMajorMinor = $"{engineVersion.Major}.{engineVersion.Minor}";
-        if (bcVersionArg == engineMajorMinor)
-            Console.Error.WriteLine($"[bc] no --bc-version given — selecting BC {engineMajorMinor}.x, " +
-                $"matching the engine this binary was built for ({engineVersion}). Override with --bc-version.");
+        if (bcVersionArg == engineVersion.ToString())
+            Console.Error.WriteLine($"[bc] no --bc-version given — selecting BC {engineVersion}, the exact " +
+                $"build this binary was compiled against. Override with --bc-version.");
+        else if (bcVersionArg == engineMajorMinor)
+            // Degraded but usually survivable: right minor, different build. The CodeAnalysis
+            // assembly version can still differ between builds of one minor, which fails loud
+            // at startup rather than silently — see BcArtifacts.DefaultVersionPrefix.
+            Console.Error.WriteLine($"[bc] warning: no cached BC {engineVersion} — selecting the latest " +
+                $"{engineMajorMinor}.x instead. Build-level skew within a minor can still fail to load " +
+                $"Microsoft.Dynamics.Nav.CodeAnalysis. Fix with: al-runner provision --bc-version {engineVersion}");
         else
             Console.Error.WriteLine($"[bc] warning: no cached BC {engineMajorMinor}.x — this binary's engine was " +
                 $"built for {engineVersion}, so a different minor is a KNOWN-DEGRADED configuration " +

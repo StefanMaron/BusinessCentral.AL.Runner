@@ -277,8 +277,17 @@ public static class BcArtifacts
 
     /// <summary>
     /// The version prefix to select by when the user pinned neither --bc-version nor
-    /// --artifact-path: the engine's own MAJOR.MINOR when that minor is cached, else the
-    /// major alone. Null when the engine version is unknown (caller decides).
+    /// --artifact-path, in descending order of tightness: the engine's EXACT built
+    /// version when it is cached, else its MAJOR.MINOR when that minor is cached, else
+    /// the major alone. Null when the engine version is unknown (caller decides).
+    ///
+    /// Why the exact build and not just major.minor: two BUILDS of the same BC minor ship
+    /// different Microsoft.Dynamics.Nav.CodeAnalysis assembly versions (28.1.49838.50794 ->
+    /// 17.0.36.40629, 28.1.49838.53220 -> 17.0.39.53543), and bin/ CopyLocal's the one it
+    /// was compiled against. The strong-named reference does not tolerate that skew, so
+    /// picking highest-in-minor kills the process at startup with FileLoadException
+    /// 0x80131621 before any test runs. Same lesson as the major.minor tier below, one
+    /// level deeper.
     ///
     /// Why major.minor and not just major: MEASURED 2026-07-29 on Pageworks (same dep set,
     /// same binary, engine built for 28.1.49838.50794) —
@@ -291,6 +300,20 @@ public static class BcArtifacts
     public static string? DefaultVersionPrefix(Version? engineVersion, string artifactsRoot)
     {
         if (engineVersion == null) return null;
+
+        // Tier 1: the exact 4-part build. Only this artifact's CodeAnalysis.dll matches
+        // the strong-named reference baked into bin/.
+        var exact = engineVersion.ToString();
+        try
+        {
+            SelectArtifactVersionDir(artifactsRoot, exact);
+            return exact;
+        }
+        catch (InvalidOperationException)
+        {
+            // Not cached — fall through to the looser tiers.
+        }
+
         var majorMinor = $"{engineVersion.Major}.{engineVersion.Minor}";
         try
         {

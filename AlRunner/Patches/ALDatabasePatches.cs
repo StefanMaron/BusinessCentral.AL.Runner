@@ -37,6 +37,47 @@ public static class ALDatabasePatches
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static int ALDatabase_ALSessionID() => 42;
 
+    // ── Row-version clock ──────────────────────────────────────────────────────
+    // BC backs Database.LastUsedRowVersion() / MinimumActiveRowVersion() with SQL's
+    // @@DBTS / MIN_ACTIVE_ROWVERSION(). The runner has no SQL connection, so the real
+    // bodies NRE inside NavSqlConnectionScope.TryOpenConnection.
+    //
+    // Faithfulness: the AL-observable contract of @@DBTS is "a positive, strictly
+    // monotonic database-wide counter that advances whenever a row is written". We
+    // reproduce exactly that with an in-process counter advanced from the same Cecil
+    // prepend sites that already stamp system fields on the AL write entry points
+    // (ALInsertAsync / ALModifyAsync / ALDeleteAsync / ALRenameAsync). It starts at 1
+    // because a BC database always has a non-zero @@DBTS once it has been written to,
+    // and AL code reads this value to detect change, never to index storage.
+    //
+    // NOT faithful for: cross-session/cross-process comparison, and any caller that
+    // treats the value as a real SQL rowversion token to hand back to SQL. Both are
+    // out of scope for the in-process runner (no SQL to hand it back to).
+    private static long _rowVersion = 1;
+
+    /// <summary>Advance the row-version clock. Called from the AL write entry points
+    /// via Cecil prepend, so every AL-visible row write moves the counter exactly as a
+    /// SQL write moves @@DBTS.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void BumpRowVersion() => System.Threading.Interlocked.Increment(ref _rowVersion);
+
+    /// <summary>Replacement for ALDatabase.ALLastUsedRowVersion() — the runner's
+    /// @@DBTS equivalent. Positive and non-decreasing; advances on every row write.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static Microsoft.Dynamics.Nav.Runtime.NavBigInteger ALDatabase_ALLastUsedRowVersion()
+        => Microsoft.Dynamics.Nav.Runtime.NavBigInteger.Create(
+            System.Threading.Interlocked.Read(ref _rowVersion));
+
+    /// <summary>Replacement for ALDatabase.ALMinimumActiveRowVersion().
+    /// SQL's MIN_ACTIVE_ROWVERSION() returns the lowest row version among open
+    /// transactions, or @@DBTS + 1 when none are open. The runner executes AL on a
+    /// single session with no concurrent open transactions, so the second branch is
+    /// the correct one — always @@DBTS + 1, never below LastUsedRowVersion.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static Microsoft.Dynamics.Nav.Runtime.NavBigInteger ALDatabase_ALMinimumActiveRowVersion()
+        => Microsoft.Dynamics.Nav.Runtime.NavBigInteger.Create(
+            System.Threading.Interlocked.Read(ref _rowVersion) + 1);
+
     /// <summary>Replacement for ALDatabase.ALTenantID().
     /// Returns a fixed non-empty tenant id stub. The real getter reaches into
     /// NavCurrentThread.Session.Tenant.Id which does not exist on the skeleton

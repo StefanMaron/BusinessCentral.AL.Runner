@@ -1888,20 +1888,12 @@ public static partial class BcRuntime
             // if (alTenant != null && alTenant.GetParameters().Length == 0)
             //     Hook(alTenant, nameof(ReturnStandalone_0Args), "ALDatabase.ALTenantID");
 
-            // ALDatabase.ALLastUsedRowVersion() / ALMinimumActiveRowVersion() —
-            // both reach DataAccess.RowVersionTracker which is null on the
-            // headless session. With no SQL, no row has ever been written, so
-            // returning NavBigInteger zero is the faithful answer.
-            var lastUsedRv = alDbType.GetMethod("ALLastUsedRowVersion",
-                BindingFlags.Public | BindingFlags.Static);
-            if (lastUsedRv != null && lastUsedRv.GetParameters().Length == 0)
-                Hook(lastUsedRv, nameof(ReturnNavBigIntegerZero_0Args),
-                    "ALDatabase.ALLastUsedRowVersion");
-            var minActiveRv = alDbType.GetMethod("ALMinimumActiveRowVersion",
-                BindingFlags.Public | BindingFlags.Static);
-            if (minActiveRv != null && minActiveRv.GetParameters().Length == 0)
-                Hook(minActiveRv, nameof(ReturnNavBigIntegerZero_0Args),
-                    "ALDatabase.ALMinimumActiveRowVersion");
+            // ALDatabase.ALLastUsedRowVersion() / ALMinimumActiveRowVersion() are now
+            // Cecil-owned (NclCecilRewrite, backed by the monotonic clock in
+            // ALDatabasePatches). The JmpHook registrations that used to live here
+            // returned NavBigInteger zero and were orphaned — never applied once the
+            // JmpHook layer went off by default — so BC's SQL body ran and NRE'd. Zero
+            // was also wrong: BC's @@DBTS is strictly positive.
         }
 
         // ALTaskScheduler.ALCreateTaskAsync — 8-arg ValueTask<Guid> static. Hook
