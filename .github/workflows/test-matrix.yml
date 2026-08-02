@@ -15,6 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.resolve.outputs.matrix }}
+      # The single REQUIRED version (28.1), for jobs that build once rather than
+      # across the matrix — currently `smoke`.
+      required-version: ${{ steps.resolve.outputs.required-version }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -34,6 +37,7 @@ jobs:
             FULL=$(dotnet run --project tools/DownloadArtifacts -- resolve-version "$prefix" dummy 2>/dev/null || true)
             if [ -n "$FULL" ]; then
               REQ=$([ "$prefix" = "28.1" ] && echo True || echo False)
+              [ "$prefix" = "28.1" ] && echo "required-version=$FULL" >> "$GITHUB_OUTPUT"
               echo "  $prefix -> $FULL (required=$REQ)"
               ENTRIES=$(echo "$ENTRIES" | python3 -c "import json,sys; v=json.load(sys.stdin); v.append({'bc-version':'$FULL','required':$REQ}); print(json.dumps(v))")
             else
@@ -69,7 +73,14 @@ jobs:
 
       - name: Build (auto-downloads BC ${{ matrix.target.bc-version }} DLLs)
         run: |
-          dotnet build AlRunner.slnx -p:_BCVersion=${{ matrix.target.bc-version }} -c Release
+          # AllowBcArtifactDownload=true is what actually permits the in-build fetch
+          # (AlRunner.csproj target EnsureBCServiceTierDlls). Without it the sibling
+          # FailIfBCServiceTierDllsMissing target hard-errors, and this step failed
+          # before a single test ran — despite its name promising the download.
+          dotnet build AlRunner.slnx \
+            -p:_BCVersion=${{ matrix.target.bc-version }} \
+            -p:AllowBcArtifactDownload=true \
+            -c Release
 
       - name: Download R2R platform apps (Base/System Application, …)
         run: |
@@ -134,6 +145,7 @@ jobs:
 
   smoke:
     name: Smoke ${{ matrix.tfm }}
+    needs: resolve-versions
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -152,7 +164,15 @@ jobs:
         run: rm -rf ~/.cache/al-runner/ncl-cecil/
 
       - name: Build Release
-        run: dotnet build AlRunner.slnx -c Release
+        # Pin to the resolved REQUIRED version rather than AlRunner.csproj's baked-in
+        # _BCVersion default: resolve-versions picks whatever 28.1.* MS currently ships,
+        # so the hardcoded default goes stale the moment MS publishes a new build and
+        # this job then demanded an artifact dir nothing had provisioned.
+        run: |
+          dotnet build AlRunner.slnx \
+            -p:_BCVersion=${{ needs.resolve-versions.outputs.required-version }} \
+            -p:AllowBcArtifactDownload=true \
+            -c Release
 
       - name: Run cold-cache binary smoke test
         run: |

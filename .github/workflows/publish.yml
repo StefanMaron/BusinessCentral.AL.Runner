@@ -104,7 +104,13 @@ jobs:
 
       - name: Build (auto-downloads BC ${{ matrix.bc-version }} DLLs)
         run: |
-          dotnet build AlRunner.slnx -p:_BCVersion=${{ matrix.bc-version }} -c Release
+          # AllowBcArtifactDownload=true permits the in-build fetch; without it
+          # AlRunner.csproj's FailIfBCServiceTierDllsMissing hard-errors. Same defect
+          # as test-matrix.yml had.
+          dotnet build AlRunner.slnx \
+            -p:_BCVersion=${{ matrix.bc-version }} \
+            -p:AllowBcArtifactDownload=true \
+            -c Release
 
       - name: Run unit tests (AlRunner.Tests)
         run: |
@@ -139,8 +145,12 @@ jobs:
 
       - name: Build and pack
         run: |
-          dotnet build AlRunner/
-          dotnet pack AlRunner/ -p:Version=${{ inputs.version }} -o ./nupkg
+          # Packing also needs the BC service tier present (RAR resolves against it),
+          # so the same download switch applies here. This job builds once at the
+          # csproj's default _BCVersion, which is the version the package is stamped
+          # with (AssemblyMetadata BcEngineVersion).
+          dotnet build AlRunner/ -p:AllowBcArtifactDownload=true
+          dotnet pack AlRunner/ -p:AllowBcArtifactDownload=true -p:Version=${{ inputs.version }} -o ./nupkg
 
       - name: Push to NuGet
         run: dotnet nuget push ./nupkg/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
