@@ -1,0 +1,25 @@
+{
+  "id": "a1b2c3d4-e5f6-4708-9a1b-2c3d4e5f6071",
+  "name": "Runner Tests Fixture - Record Trigger xRec",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Regression test: table OnInsert trigger reading xRec must not throw an InvalidCastException.",
+  "description": "Proves the runner builds the OldRecord (xRec) before-image as the concrete record CLR type, so AL trigger code that reads xRec (compiled as a cast to the concrete Record<N> type) runs without an InvalidCastException. Used by AlRunner.Tests' ServerTests/WatchTests as a small edit-and-rerun fixture.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [
+    {
+      "from": 60100,
+      "to": 60199
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

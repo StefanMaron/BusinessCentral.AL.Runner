@@ -22,6 +22,12 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+// Serialized with the other runner-subprocess integration tests: each spawns a real
+// `dotnet run --project AlRunner` process (native BC engine, R2R/EventPipe). Running
+// several concurrently under xUnit's default parallelization contends for shared
+// caches and native process state and has produced SIGBUS crashes (exit code 135 =
+// 128+SIGBUS) — a flake that does not reproduce when the same invocation runs alone.
+[Collection("server-serial")]
 public sealed class DefineFlagIntegrationTests : IDisposable
 {
     private static readonly string RepoRoot = Path.GetFullPath(

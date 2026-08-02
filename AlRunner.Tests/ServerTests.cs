@@ -19,8 +19,8 @@ public class ServerTests
     // that asserts the resulting Counter value. Copied to a temp dir per test so
     // edits never touch the repo.
     private static readonly string FixtureSrc = Path.GetFullPath(Path.Combine(
-        AppContext.BaseDirectory, "..", "..", "..", "..",
-        "tests", "runner-extras", "record-trigger-xrec"));
+        AppContext.BaseDirectory, "..", "..", "..",
+        "Fixtures", "RecordTriggerXRec"));
 
     private static bool ArtifactsPresent()
     {

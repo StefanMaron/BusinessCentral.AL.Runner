@@ -27,6 +27,9 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+// See DefineFlagIntegrationTests for why this is serialized with the other
+// runner-subprocess integration tests.
+[Collection("server-serial")]
 public sealed class SuiteEnumerationTests : IDisposable
 {
     private static readonly string RepoRoot = Path.GetFullPath(

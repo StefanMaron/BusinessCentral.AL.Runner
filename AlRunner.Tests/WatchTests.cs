@@ -19,8 +19,8 @@ public class WatchTests
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-    private static readonly string FixtureSrc = Path.Combine(
-        RepoRoot, "tests", "runner-extras", "record-trigger-xrec");
+    private static readonly string FixtureSrc = Path.GetFullPath(Path.Combine(
+        AppContext.BaseDirectory, "..", "..", "..", "Fixtures", "RecordTriggerXRec"));
 
     private static bool ArtifactsPresent()
     {
