@@ -3738,6 +3738,14 @@ static string ComputeAlCacheKey(
 
     WriteLine($"module:{moduleName}");
 
+    // 2. Preprocessor symbols from --define / --preprocessor-symbols. They select which
+    //    #if branch compiles, so two runs over byte-identical sources but different symbol
+    //    sets are different compilations. Omitting them made --define a silent no-op on any
+    //    cache hit: a bare run and a --define run produced the same key, and whichever
+    //    compiled first served the other. Written unconditionally so the line always frames
+    //    the key (existing entries hash differently once and rebuild).
+    WriteLine($"defines:{string.Join(",", AlRunner.BcCompiler.GetExtraPreprocessorSymbols())}");
+
     foreach (var d in ordered) WriteLine($"dep:{d}");
 
     // Enumerate every .al file in stable order, hash each. The key uses paths

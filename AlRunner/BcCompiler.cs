@@ -101,6 +101,22 @@ public sealed class BcCompiler
     }
 
     /// <summary>
+    /// The extra preprocessor symbols registered via <see cref="SetExtraPreprocessorSymbols"/>,
+    /// sorted for a stable order. These change which <c>#if</c> branch compiles, so the AL
+    /// cache key must include them — otherwise a bare run and a <c>--define</c> run over the
+    /// same sources hash identically and the second one silently reuses the first one's DLL.
+    /// </summary>
+    public static IReadOnlyList<string> GetExtraPreprocessorSymbols()
+    {
+        lock (_refSync)
+        {
+            return _extraPreprocessorSymbols is null
+                ? []
+                : _extraPreprocessorSymbols.OrderBy(s => s, StringComparer.Ordinal).ToList();
+        }
+    }
+
+    /// <summary>
     /// Returns true if <paramref name="symbol"/> is a valid AL preprocessor identifier:
     /// one or more characters from [A-Za-z0-9_], not starting with a digit.
     /// </summary>
