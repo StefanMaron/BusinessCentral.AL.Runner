@@ -280,8 +280,69 @@ public static class ArtifactDownloader
             logf($"  Written {basename} ({fileData.Length / 1048576} MB)");
         }
 
+        // Microsoft/System — the platform symbol package. It is NOT in the w1 artifact's
+        // Extensions/ folder with the four apps above; it ships in the PLATFORM artifact under
+        // ModernDev/.../AL Development Environment/System.app, so it needs its own pass over a
+        // second artifact.
+        //
+        // Why this matters: without it the compile falls back to whatever System.app a bundle
+        // happens to carry in its own .alpackages. The al-language corpus carries 27.0.46760.0,
+        // and AL compiler 17.0.39.53543 (BC 28.1.49838.53220) rejects it with
+        //   AL1022: A package with publisher 'Microsoft', name 'System', and a version
+        //           compatible with '28.0.0.0' could not be found
+        // That one miss cascades: Table 'Integer' (a System virtual table) goes missing,
+        // "Global Triggers" fails to bind, three Report objects fail to emit, and the emit-retry
+        // loop drops the two test codeunits that referenced them — 7 corpus tests, gone. The
+        // older compiler (17.0.36.40629) accepted the 27.0 package, which is why this only
+        // appeared when CI moved to a newer BC build.
+        extracted += SystemApp(version, outputDir, logf);
+
         logf($"Downloaded {extracted} app(s) ({totalBytes / 1048576} MB total) to {outputDir}");
         return extracted > 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// Extracts Microsoft's System.app (the platform symbol package) from the platform
+    /// artifact into <paramref name="outputDir"/>. Returns the number of files written (0 or 1).
+    /// </summary>
+    private static int SystemApp(string version, string outputDir, Action<string> logf)
+    {
+        var artifactUrl = $"{CdnBase}/{version}/platform";
+        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+
+        logf($"Resolving platform artifact for System.app (BC {version})...");
+        long totalSize = HeadContentLength(http, artifactUrl);
+        if (totalSize == 0) { logf("Warning: could not size the platform artifact — skipping System.app"); return 0; }
+
+        if (!TryReadCentralDirectory(http, artifactUrl, totalSize, logf, out var cdData, out var cdStart, out var entryCount))
+        {
+            logf("Warning: could not read the platform artifact directory — skipping System.app");
+            return 0;
+        }
+
+        int pos = cdStart;
+        for (int i = 0; i < entryCount && pos + 46 <= cdData.Length; i++)
+        {
+            if (!IsCentralHeader(cdData, pos)) break;
+            var (cm, cs, nl, el, cl, lo, name) = ReadCentralEntry(cdData, pos);
+            var lower = name.ToLowerInvariant();
+            // Anchor on the AL Development Environment folder: the artifact also carries
+            // per-version copies elsewhere, and this is the one the AL compiler ships with.
+            if (Path.GetFileName(lower) == "system.app" && cs > 0
+                && lower.Contains("al development environment"))
+            {
+                logf($"  Downloading System.app ({cs / 1024} KB compressed)...");
+                var fileData = ExtractEntry(http, artifactUrl, totalSize, name, cm, cs, lo, logf);
+                if (fileData == null) break;
+                File.WriteAllBytes(Path.Combine(outputDir, "System.app"), fileData);
+                logf($"  Written System.app ({fileData.Length / 1024} KB)");
+                return 1;
+            }
+            pos += 46 + nl + el + cl;
+        }
+
+        logf("Warning: System.app not found in the platform artifact");
+        return 0;
     }
 
     // -----------------------------------------------------------------------

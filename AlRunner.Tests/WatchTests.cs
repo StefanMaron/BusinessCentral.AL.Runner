@@ -101,7 +101,15 @@ public class WatchTests
             await File.WriteAllTextAsync(tablePath, edited);
 
             // Cycle 2 (warm, after the edit).
-            int m2 = await WaitForMarkerAfter(m1 + 1, TimeSpan.FromSeconds(60));
+            //
+            // This budget is only "did the cycle finish at all" — it is NOT the warm-vs-cold
+            // claim, which the GetSharedReferences timing assertion below makes on its own. So
+            // it should be generous: at 60s this was the single flaky test in the suite, passing
+            // in 57s when run alone and timing out when the full 193-test suite had just driven
+            // the machine through several BC engine boots. A cycle that has genuinely gone cold
+            // still fails loudly on the <5s assertion below, so a longer wait here costs nothing
+            // and removes a false red that trains people to re-run and shrug.
+            int m2 = await WaitForMarkerAfter(m1 + 1, TimeSpan.FromSeconds(240));
             var cycle2 = Segment(m1 + 1, m2);
             Assert.Contains("FAIL", cycle2);
             Assert.Contains("Insert_OnInsertReadsXRec_BuildsConcreteBeforeImage", cycle2);

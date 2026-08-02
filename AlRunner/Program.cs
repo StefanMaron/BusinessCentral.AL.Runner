@@ -1084,6 +1084,32 @@ foreach (var bundle in bundles)
                     sources = emitOutput.Sources;
                     alDiagnostics = emitOutput.Diagnostics;
 
+                    // An emit-retry exclusion means one or more AL objects are NOT in the
+                    // compiled module. Any test they declared is now absent from the run —
+                    // the total silently shrinks and every remaining test still passes, so
+                    // the run looks green. Fail loudly instead (.claude/rules/loud-failures.md).
+                    //
+                    // Deliberately NOT folded into the PARTIAL-EMIT-DROP guard below: that one
+                    // is gated on `alDiagnostics.Count == 0`, and an exclusion always carries
+                    // diagnostics (they are what identified the broken object), so it could
+                    // never catch this case. Reporting the excluded names directly also beats
+                    // inferring a count from a regex over the sources.
+                    if (emitOutput.ExcludedObjects.Count > 0)
+                    {
+                        var names = string.Join(", ", emitOutput.ExcludedObjects);
+                        // Untagged on purpose: a `[Component]` prefix would be swallowed by
+                        // Log's filter at default verbosity, which is the original defect.
+                        Console.Error.WriteLine(
+                            $"<bundled>: EMIT-EXCLUDED — {moduleName}: {emitOutput.ExcludedObjects.Count} object(s) " +
+                            $"could not be compiled and were dropped from the module, so any tests they declare " +
+                            $"are MISSING from this run: [{names}]. Re-run with --verbose for the AL diagnostics " +
+                            $"that identified them.");
+                        bundleErrors.Add(
+                            $"<bundled>: EMIT-EXCLUDED for {moduleName}: {emitOutput.ExcludedObjects.Count} " +
+                            $"object(s) dropped from the module — tests they declare are missing: [{names}].");
+                        sources = Array.Empty<EmittedSource>(); // do not run a module that is missing objects
+                    }
+
                     // --dump-csharp DIR: write the emitted intermediate C# (BC's
                     // Compilation.Emit produces UTF-8 C# source per AL object before
                     // BcAssembler hands it to Roslyn) so codegen issues can be
@@ -3921,6 +3947,17 @@ static int LoadEnumRegistrySidecar(string path)
 // Read app.json deps and feed them through DependencyResolver so the cache key
 // reflects the exact resolved set (id+version), not just declared roots. This
 // matches what BcCompiler.SetResolvedDeps fed into the compile.
+//
+// The dirs MUST match the ones the compile resolves against — bundlePkgDirs (the
+// bundle's own .alpackages, found by recursive search) CONCAT the package caches. This
+// used to be handed only the package caches, and the omission was total, not partial:
+// a bundle whose roots live in its own .alpackages could not resolve at all, the throw
+// landed in the catch below, and the key got NO dep line whatsoever. So the key was
+// blind to the entire dependency closure. Observed: adding a System.app package changed
+// the emitted DLL (3175424 -> 3206144 bytes) while the key stayed
+// 67c4f8c4622a928aae07bf1857af515bb37fc5df4ac16eb047855f5dd2f9bba8 — a warm cache then
+// serves a DLL compiled against a different dependency closure. Same defect family as
+// the --define symbols that were missing from this key.
 static IReadOnlyList<string> GetOrderedDepIds(string? bucketRoot, IReadOnlyList<string> packageCacheDirs)
 {
     if (bucketRoot == null) return Array.Empty<string>();
@@ -3929,16 +3966,29 @@ static IReadOnlyList<string> GetOrderedDepIds(string? bucketRoot, IReadOnlyList<
     try
     {
         var roots = ReadDependencies(appJsonPath).ToList();
-        var resolver = new AlRunner.DependencyResolver(packageCacheDirs);
+        var bundlePkgDirs = Directory
+            .EnumerateDirectories(bucketRoot, ".alpackages", SearchOption.AllDirectories)
+            .ToList();
+        var resolver = new AlRunner.DependencyResolver(
+            bundlePkgDirs.Concat(packageCacheDirs).Distinct().ToList());
         var ordered = resolver.Resolve(roots);
         return ordered
             .Select(d => $"{d.Manifest.AppId:N}:{d.Manifest.Version}")
             .OrderBy(s => s, StringComparer.Ordinal)
             .ToList();
     }
-    catch
+    catch (Exception ex)
     {
-        return Array.Empty<string>();
+        // Never collapse to "no deps": an empty list is indistinguishable from a bundle
+        // that genuinely has none, so two different closures would share a key and the
+        // cache would hand back the wrong DLL. Fold the failure itself into the key
+        // instead — an unresolvable closure is its own cache identity, and it changes
+        // again as soon as the reason changes.
+        Console.Error.WriteLine(
+            $"  [cache] dependency resolution failed while computing the cache key for " +
+            $"{bucketRoot}: {ex.GetType().Name}: {ex.Message}. Keying on the failure so this " +
+            $"bundle cannot share a cache entry with a resolvable one.");
+        return new[] { $"unresolved:{ex.GetType().Name}:{ex.Message}" };
     }
 }
 

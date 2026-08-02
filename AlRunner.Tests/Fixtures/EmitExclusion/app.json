@@ -1,0 +1,25 @@
+{
+  "id": "b7c9d1e2-3f40-4a51-8b62-7c8d9e0f1a2b",
+  "name": "Runner Tests Fixture - Emit Exclusion",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves an object excluded from emit is reported loudly, not silently dropped.",
+  "description": "One healthy test codeunit plus one object that cannot bind. BC's Compilation.Emit is atomic per module, so the runner excludes the broken object and retries. That exclusion must be reported and must fail the run \u2014 otherwise the healthy tests still pass and the run looks green while a test object has silently vanished.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [
+    {
+      "from": 60600,
+      "to": 60699
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

@@ -43,7 +43,17 @@ public sealed record EmittedSource(string Name, string Code);
 /// diagnostics (parse errors, declaration errors, emit-result errors) formatted
 /// alc-style: <c>path(line,col): error ALXXXX: message</c>.
 /// </summary>
-public sealed record BcEmitOutput(IReadOnlyList<EmittedSource> Sources, IReadOnlyList<string> Diagnostics);
+/// <param name="ExcludedObjects">
+/// Objects the emit-retry loop dropped to get the rest of the module to compile. NON-EMPTY
+/// MEANS TESTS VANISHED: an excluded test codeunit contributes no results, so the run reports
+/// a smaller total and still exits 0. Measured on the al-language corpus — a stale System.app
+/// silently cost 7 tests (1904 -> 1897) with no output at any verbosity below --verbose.
+/// The caller MUST treat this as a hard failure (.claude/rules/loud-failures.md).
+/// </param>
+public sealed record BcEmitOutput(
+    IReadOnlyList<EmittedSource> Sources,
+    IReadOnlyList<string> Diagnostics,
+    IReadOnlyList<string> ExcludedObjects);
 
 public sealed class BcCompiler
 {
@@ -971,10 +981,24 @@ public sealed class BcCompiler
         // ANOTHER previously-masked one (e.g. an ambiguous-reference bind error that only
         // manifests once its sibling stops crashing emit first), so retry iteratively — each
         // round drops whatever NEW objects the latest exception names — bounded so a
-        // pathological module can't loop forever. Never silent: every excluded object and any
-        // repeat failure is always logged (not gated behind BCCOMPILER_DIAG), and if the module
-        // still produces 0 sources after exhausting rounds, the ORIGINAL failure is preserved
-        // for the EMIT-ZERO diagnostic below (no regression versus the pre-fix behaviour).
+        // pathological module can't loop forever. If the module still produces 0 sources after
+        // exhausting rounds, the ORIGINAL failure is preserved for the EMIT-ZERO diagnostic
+        // below (no regression versus the pre-fix behaviour).
+        //
+        // This comment used to claim "Never silent: every excluded object ... is always
+        // logged". That was wrong, and the wrongness cost real coverage. The lines below DO
+        // reach Console.Error, but they carry a `[BcCompiler]` prefix and Log's FilteredWriter
+        // drops every `[Component]`-tagged line unless --verbose — so at default verbosity an
+        // exclusion produced NO output at all, the vanished objects' tests simply never
+        // appeared in the total, and the run still exited 0. That is how a stale System.app
+        // quietly cost the al-language corpus 7 tests. Logging is therefore NOT the mechanism
+        // that makes this loud: `excludedObjects` is returned to the caller, which fails the
+        // bundle. Keep both — the log explains, the return value enforces.
+        // Hoisted out of the retry block below so it survives into the returned
+        // BcEmitOutput: the caller has to fail the run when anything was excluded, and
+        // a stderr line alone does not do that (Log's [Component] filter eats it, and
+        // nothing counts it).
+        var excludedObjects = new List<string>();
         {
             const int maxRounds = 10;
             // Indices are always relative to the ORIGINAL alFiles/trees arrays (captured once,
@@ -983,7 +1007,7 @@ public sealed class BcCompiler
             // with an IndexOutOfRangeException on the second round onward.
             var originalTrees = trees;
             var keepIdx = Enumerable.Range(0, alFiles.Count).ToList();
-            var allExcluded = new List<string>();
+            var allExcluded = excludedObjects;
             int round = 0;
             // A round can fail two different ways and both are handled the same (exclude the
             // culprit file(s), retry):
@@ -1229,7 +1253,7 @@ public sealed class BcCompiler
             }
         }
 
-        return new BcEmitOutput(outputter.Captured, alDiags);
+        return new BcEmitOutput(outputter.Captured, alDiags, excludedObjects);
     }
 
     // Cheap text probe: does any source file declare an AL `query` object? Avoids
