@@ -170,6 +170,19 @@ public static partial class RecordPatches
             if (meta != null)
                 return meta;
         }
+        else if (objectType == ObjectType.XmlPort)
+        {
+            // NavXmlPort.BeginInitialization reads get_NclMetaXmlPort, which resolves
+            // through GetMetaApplicationObject(ObjectType.XmlPort, …). The §P populator
+            // already builds an NCLMetaXmlPort for every parsed xmlport, but this
+            // dispatch had no XmlPort branch, so EVERY instance-form xmlport
+            // (XmlPort.Import/Export via a `XmlPort "Foo"` variable) fell through to the
+            // not-found throw even though its metadata was sitting in the cache. Serve
+            // the same cache the populator fills — identical shape to Report/Query above.
+            var meta = _metaXmlPortCache.GetOrAdd(objectId, BuildNCLMetaXmlPort);
+            if (meta != null)
+                return meta;
+        }
 
         // BC's OWN exception type, not a plain InvalidOperationException. This is not
         // cosmetic: NCLMetadata.TryGetMetaApplicationObject is implemented as

@@ -262,6 +262,17 @@ public static partial class RecordPatches
             else
                 existing.AddRange(fields);
 
+            // The base table's NCLMetaTable may ALREADY be built and cached at this point:
+            // a table pulled in from a precompiled dependency .app is materialised lazily
+            // the moment something references it, which happens during source parsing —
+            // i.e. BEFORE this tableextension is parsed. BuildNCLMetaTable merges
+            // _parsedExtensionFields at build time only, so that cached metatable is frozen
+            // without the extension's fields, and every AL access to one of them dies in
+            // NCLMetaTable_GetFieldByNoExt ("extension field N ... not found").
+            // Evict it so the next access rebuilds WITH the merge. Safe here: source
+            // parsing runs before any AL test code, so nothing holds the stale instance.
+            EvictCachedMetaTableForBaseTable(baseName);
+
             // Record the extension object id so its emitted TableExtension{extId} CLR type
             // can be instantiated and registered on each record of the base table — this is
             // what makes the extension's record-level triggers (OnInsert/OnModify/OnDelete/
@@ -271,6 +282,24 @@ public static partial class RecordPatches
                 _extensionIdsByBaseTable[key] = extIds = new List<int>();
             if (!extIds.Contains(extId))
                 extIds.Add(extId);
+        }
+    }
+
+    /// <summary>
+    /// Drop any cached NCLMetaTable built for <paramref name="baseTableName"/> before its
+    /// tableextension fields were known, so the next lookup rebuilds it with them merged.
+    /// No-op when the table has not been built yet (the common, in-order case).
+    /// </summary>
+    private static void EvictCachedMetaTableForBaseTable(string baseTableName)
+    {
+        foreach (var kvp in _parsedTables)
+        {
+            if (!string.Equals(kvp.Value.TableName, baseTableName, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (_metaTableCache.TryRemove(kvp.Key, out _))
+                Console.Error.WriteLine(
+                    $"[TableExt] evicted stale NCLMetaTable {kvp.Key} '{baseTableName}' " +
+                    $"(built before its tableextension fields were parsed)");
         }
     }
 
