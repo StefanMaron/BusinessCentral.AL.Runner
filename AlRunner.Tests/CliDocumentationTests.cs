@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.RegularExpressions;
 using Xunit;
 
@@ -41,11 +42,35 @@ public sealed class CliDocumentationTests
             CreateNoWindow = true,
             WorkingDirectory = RepoRoot,
         };
+        // Drain BOTH pipes concurrently. Reading stdout to the end first and stderr only
+        // afterwards deadlocks: the runner writes heavily to stderr ([Cecil], [cache],
+        // [deps], [emit-timing]), so once that 64K pipe buffer fills the child blocks on
+        // its stderr write, never exits, and never closes stdout — so ReadToEnd() on
+        // stdout never returns and the WaitForExit timeout below is never even reached.
+        //
+        // The window is widest right after AlRunner is rebuilt: a new runner assembly
+        // changes the Ncl Cecil cache key, so the next invocation does a fresh rewrite and
+        // re-execs itself, and that re-exec child inherits these same pipes. That is the
+        // multi-hour "suite hangs after Starting test execution" with al-runner children
+        // parked in Process.WaitForExit().
+        //
+        // The other runner-subprocess tests already use this async pattern; this one was
+        // the last holdout.
         using var proc = Process.Start(psi)!;
-        var stdout = proc.StandardOutput.ReadToEnd();
-        var stderr = proc.StandardError.ReadToEnd();
-        proc.WaitForExit(120_000);
-        return (proc.ExitCode, stdout, stderr);
+        var outSb = new StringBuilder();
+        var errSb = new StringBuilder();
+        proc.OutputDataReceived += (_, e) => { if (e.Data != null) lock (outSb) outSb.AppendLine(e.Data); };
+        proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (errSb) errSb.AppendLine(e.Data); };
+        proc.BeginOutputReadLine();
+        proc.BeginErrorReadLine();
+        if (!proc.WaitForExit(240_000))
+        {
+            try { proc.Kill(entireProcessTree: true); } catch { }
+            throw new TimeoutException(
+                $"al-runner did not exit within 240s for args: {string.Join(' ', args)}");
+        }
+        proc.WaitForExit(); // flush the async readers
+        lock (outSb) lock (errSb) return (proc.ExitCode, outSb.ToString(), errSb.ToString());
     }
 
     /// <summary>
