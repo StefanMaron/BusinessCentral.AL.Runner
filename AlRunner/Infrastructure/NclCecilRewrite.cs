@@ -6835,6 +6835,44 @@ public static class NclCecilRewrite
     /// cold run into the known-good HIT path. Returns <c>false</c> on cache HIT (the
     /// load is safe — proceed in this process).
     /// </summary>
+    /// <summary>
+    /// Publishes <paramref name="contents"/> to <paramref name="destPath"/> by writing a
+    /// sibling temp file and renaming it over the destination.
+    ///
+    /// Never truncate-and-rewrite a DLL in place. Every loaded assembly is memory-mapped, so
+    /// overwriting the file's existing inode invalidates the mappings any live process holds
+    /// and that process takes SIGBUS on its next page touch — the crash class behind the
+    /// exit-135 (128+7) integration-test flakes and the al-runner SIGBUS coredumps.
+    ///
+    /// It also wedges the machine: a task that dies this way can leave its mmap_lock held, and
+    /// every subsequent ps/pgrep/pkill blocks in __access_remote_vm reading its /proc entry.
+    /// Those readers are unkillable and each new one blocks on the previous, so process listing
+    /// stays broken until reboot even though CPU, memory and I/O are idle.
+    ///
+    /// rename(2) is atomic and only swaps the directory entry: existing mappings keep the OLD
+    /// inode and stay valid, new opens see the new file. Same pattern already used for the
+    /// cache entry itself.
+    /// </summary>
+    private static void AtomicReplace(string destPath, byte[] contents)
+    {
+        var dir = Path.GetDirectoryName(Path.GetFullPath(destPath))!;
+        var tempPath = Path.Combine(dir, Path.GetFileName(destPath) + ".tmp." + Guid.NewGuid().ToString("N"));
+        try
+        {
+            File.WriteAllBytes(tempPath, contents);
+            File.Move(tempPath, destPath, overwrite: true);
+        }
+        catch
+        {
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+            throw;
+        }
+    }
+
+    /// <inheritdoc cref="AtomicReplace(string, byte[])"/>
+    private static void AtomicReplaceFrom(string sourcePath, string destPath)
+        => AtomicReplace(destPath, File.ReadAllBytes(sourcePath));
+
     public static bool RewriteInPlace(string srcDir, string binNclPath)
     {
         var alreadyLoaded = AppDomain.CurrentDomain.GetAssemblies()
@@ -6851,7 +6889,7 @@ public static class NclCecilRewrite
         {
             Console.Error.WriteLine("[Cecil] Cecil cache DISABLED via AL_RUNNER_NCL_CACHE=0");
             var bytes = RewriteNcl(nclSrc);
-            File.WriteAllBytes(binNclPath, bytes);
+            AtomicReplace(binNclPath, bytes);
             Console.Error.WriteLine($"[Cecil] Wrote rewritten Ncl to {binNclPath} ({bytes.Length} bytes)");
             return true;
         }
@@ -6868,7 +6906,7 @@ public static class NclCecilRewrite
         if (File.Exists(cachePath))
         {
             Console.Error.WriteLine($"[Cecil] Cecil cache HIT (key={shortKey})");
-            File.Copy(cachePath, binNclPath, overwrite: true);
+            AtomicReplaceFrom(cachePath, binNclPath);
             Console.Error.WriteLine($"[Cecil] Copied cached Ncl to {binNclPath}");
             PruneCacheFiles(cacheDir, cachePath, keepNewest: 8);
             return false;
@@ -6890,7 +6928,7 @@ public static class NclCecilRewrite
         // byte-identical Ncl in-process still intermittently fails with
         // BadImageFormatException 0x80131124. The caller re-execs on the `true` return
         // below so the actual load always happens in a fresh process via cache HIT.)
-        File.Copy(cachePath, binNclPath, overwrite: true);
+        AtomicReplaceFrom(cachePath, binNclPath);
         Console.Error.WriteLine($"[Cecil] Copied rewritten Ncl to {binNclPath} ({modifiedBytes.Length} bytes)");
         PruneCacheFiles(cacheDir, cachePath, keepNewest: 8);
         return true;
