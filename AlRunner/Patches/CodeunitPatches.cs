@@ -700,6 +700,54 @@ public static partial class BcRuntime
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
         int id = (int)idProp!.GetValue(objId)!;
 
+        return ConstructQuery(id, self);
+    }
+
+    /// <summary>
+    /// Replacement for <c>NCLMetaQuery.CreateObjectInstance(ITreeObject, SecurityFiltering)</c>.
+    ///
+    /// Same story as NCLMetaXmlPort.CreateObjectInstance: BC invokes
+    /// <c>base.ApplicationObjectConstructor</c>, which the runner forces null for every
+    /// object type, substituting a per-type construction path. Query had one only for the
+    /// HANDLE form (an AL <c>Query "Foo"</c> variable). The STATIC forms —
+    /// <c>Query.SaveAsXml(id, stream)</c>, <c>SaveAsCsv(id, …)</c>, <c>SaveAsJson(id, …)</c> —
+    /// come through here and NREd on the null delegate.
+    ///
+    /// The securityFiltering argument is dropped deliberately: the AL-emitted
+    /// <c>Query{id}</c> constructors the handle path already uses do not take one, and the
+    /// runner's security filtering is applied on the record side (see
+    /// SecurityFilteringPatches), not on the query object.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static Microsoft.Dynamics.Nav.Runtime.NavQuery NCLMetaQuery_CreateObjectInstance(
+        object self, Microsoft.Dynamics.Nav.Runtime.ITreeObject parent, int securityFiltering)
+    {
+        const BindingFlags Any =
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+        int id = 0;
+        foreach (var propName in new[] { "ApplicationObjectId", "ObjectId" })
+        {
+            var objId = self.GetType().GetProperty(propName, Any)?.GetValue(self);
+            if (objId?.GetType().GetProperty("ObjectNumber", Any)?.GetValue(objId) is int n && n != 0)
+            {
+                id = n;
+                break;
+            }
+        }
+        if (id == 0)
+            throw new InvalidOperationException(
+                "NCLMetaQuery.CreateObjectInstance: could not read the query's object id from " +
+                "its metadata — constructing the wrong query would silently export the wrong dataset.");
+
+        return (Microsoft.Dynamics.Nav.Runtime.NavQuery)ConstructQuery(id, parent);
+    }
+
+    /// <summary>
+    /// Construct the AL-emitted <c>Query{id}</c> instance parented to <paramref name="parent"/>.
+    /// Shared by the handle path and the static-form path so the two cannot diverge.
+    /// </summary>
+    private static object ConstructQuery(int id, object self)
+    {
         var queryType = _queryTypeCache.GetOrAdd(id, FindQueryType);
         if (queryType == null)
             throw new InvalidOperationException(

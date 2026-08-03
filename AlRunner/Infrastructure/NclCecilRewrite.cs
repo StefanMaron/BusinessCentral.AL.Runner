@@ -84,6 +84,9 @@ public static class NclCecilRewrite
         // to null for every object type; this is XmlPort's per-type construction path for the
         // STATIC XmlPort.Import/Export forms (the handle path has its own).
         "Microsoft.Dynamics.Nav.Runtime.NCLMetaXmlPort::CreateObjectInstance/1",
+        // NCLMetaQuery.CreateObjectInstance — same null-ApplicationObjectConstructor story,
+        // for the STATIC Query.SaveAsXml/Csv/Json(id, …) forms.
+        "Microsoft.Dynamics.Nav.Runtime.NCLMetaQuery::CreateObjectInstance/2",
         // NavCurrentThread.get_Session — AsyncLocal-backed; falls back to the skeleton
         // session on any flow the bootstrap ExecutionContext does not reach.
         "Microsoft.Dynamics.Nav.Runtime.NavCurrentThread::get_Session/0",
@@ -1231,6 +1234,36 @@ public static class NclCecilRewrite
 
             ReplaceBodyWithHelper(asm.MainModule, createInstance, createHelper);
             Console.Error.WriteLine("[Cecil] Rewrote NCLMetaXmlPort.CreateObjectInstance → BcRuntime.NCLMetaXmlPort_CreateObjectInstance");
+        }
+
+        // 8b. NCLMetaQuery.CreateObjectInstance(ITreeObject, SecurityFiltering) — the query
+        //     twin of the rewrite above. The handle form (an AL `Query "Foo"` variable) has
+        //     its own construction path; the STATIC Query.SaveAsXml(id, stream) /
+        //     SaveAsCsv(id, …) / SaveAsJson(id, …) forms come through here and NREd on the
+        //     null ApplicationObjectConstructor delegate.
+        {
+            var metaQueryType = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.NCLMetaQuery")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NCLMetaQuery type not found — Ncl shape changed; do not commit");
+
+            var qCreate = metaQueryType.Methods
+                .FirstOrDefault(m => m.Name == "CreateObjectInstance" && m.Parameters.Count == 2 && m.HasBody)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NCLMetaQuery.CreateObjectInstance(2) not found — Ncl shape changed; do not commit");
+
+            var qHelper = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.NCLMetaQuery_CreateObjectInstance),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] BcRuntime.NCLMetaQuery_CreateObjectInstance not found");
+
+            if (qCreate.ReturnType.FullName != qHelper.ReturnType.FullName)
+                throw new InvalidOperationException(
+                    "[Cecil] NCLMetaQuery.CreateObjectInstance/helper return type mismatch — do not commit");
+
+            ReplaceBodyWithHelper(asm.MainModule, qCreate, qHelper);
+            Console.Error.WriteLine("[Cecil] Rewrote NCLMetaQuery.CreateObjectInstance → BcRuntime.NCLMetaQuery_CreateObjectInstance");
         }
 
         // 9. NavCurrentThread.get_Session — see BcRuntime.NavCurrentThread_get_Session.
@@ -3729,44 +3762,13 @@ public static class NclCecilRewrite
                         body.MaxStackSize = 0;
                         rewriteCount++;
                     }
-                    // ALSaveAsXml(DataError, NavOutStream) / ALSaveAsCsv 3-arg + 4-arg → return true (no-op success).
-                    // ALSaveAsCsv(DataError, string) [2-arg] / ALSaveAsJson(DataError, NavOutStream) → throw "Query: ..." (asserterror with "Query" expected).
-                    else if (method.ReturnType.FullName == "System.Boolean"
-                        && (method.Name == "ALSaveAsXml"
-                            || method.Name == "ALSaveAsCsv"
-                            || method.Name == "ALSaveAsJson")
-                        && ps.Count >= 2
-                        && ps[0].ParameterType.FullName == "Microsoft.Dynamics.Nav.Types.DataError")
-                    {
-                        bool isCsvFile2Arg = method.Name == "ALSaveAsCsv"
-                            && ps.Count == 2
-                            && ps[1].ParameterType.FullName == "System.String";
-                        bool isJsonStream = method.Name == "ALSaveAsJson";
-                        bool throwIt = isCsvFile2Arg || isJsonStream;
-                        var body = method.Body;
-                        body.Instructions.Clear();
-                        body.ExceptionHandlers.Clear();
-                        body.Variables.Clear();
-                        var il = body.GetILProcessor();
-                        if (throwIt)
-                        {
-                            // throw new InvalidOperationException("Query: ...")
-                            var ioeCtor = asm.MainModule.ImportReference(
-                                typeof(InvalidOperationException).GetConstructor(new[] { typeof(string) })!);
-                            il.Append(il.Create(OpCodes.Ldstr,
-                                $"Query: {method.Name} is not supported in standalone mode."));
-                            il.Append(il.Create(OpCodes.Newobj, ioeCtor));
-                            il.Append(il.Create(OpCodes.Throw));
-                            body.MaxStackSize = 1;
-                        }
-                        else
-                        {
-                            il.Append(il.Create(OpCodes.Ldc_I4_1));
-                            il.Append(il.Create(OpCodes.Ret));
-                            body.MaxStackSize = 1;
-                        }
-                        rewriteCount++;
-                    }
+                    // NOTE: ALSaveAsXml / ALSaveAsCsv / ALSaveAsJson are deliberately NOT
+                    // rewritten. They used to be: Xml and Csv were replaced with a bare
+                    // `return true` that wrote nothing at all, and Json with a throw. The
+                    // `return true` pair is exactly the silent-fake shape loud-failures.md
+                    // forbids — AL asked for a dataset export, got success, and read back an
+                    // empty stream. BC's own implementations run instead, against the real
+                    // NCLMetaQuery the query-symbol sidecar now supplies.
                     // ALRead(DataError) sync wrapper — throw with "Query" message.
                     // (Plan note: this is the safe sync wrapper, OK to rewrite.)
                     else if (method.Name == "ALRead"
