@@ -78,8 +78,7 @@ public static partial class RecordPatches
     }
 
     private static bool _ivtReflectionReady;
-    private static MethodInfo? _ivtGetSystemPopulatedValues;
-    private static ConstructorInfo? _ivtCtorMetadataSystemId;
+    private static SystemPopulatedValues? _ivtSystemValues;
     private static ConstructorInfo? _ivtCtorReadOnlyBuffer;
     private static ConstructorInfo? _ivtCtorMutableBuffer;
     private static MethodInfo? _ivtTtdpInsert;
@@ -134,8 +133,7 @@ public static partial class RecordPatches
     /// </summary>
     private static void InsertIntegerRow(object provider, NCLMetaTable integerMetaTable, int numberFieldNo, int number)
     {
-        var systemId = _ivtCtorMetadataSystemId!.Invoke(new object[] { IntegerVirtualTableId, number, 0, 0 });
-        var values = (Array)_ivtGetSystemPopulatedValues!.Invoke(null, new object[] { integerMetaTable, systemId })!;
+        var values = _ivtSystemValues!.Invoke(integerMetaTable, IntegerVirtualTableId, number, 0, 0);
 
         foreach (var field in GetAllFields(integerMetaTable) ?? Enumerable.Empty<NCLMetaField>())
         {
@@ -200,8 +198,6 @@ public static partial class RecordPatches
         Type Need(string name) => nclAsm.GetType(name)
             ?? throw new InvalidOperationException($"{name} not found in Ncl — BC metadata shape changed");
 
-        var tVirtualDataProvider = Need(rt + "VirtualDataProvider");
-        var tMetadataSystemId = Need(rt + "MetadataSystemId");
         var tReadOnlyBuffer = Need(rt + "ReadOnlyRecordBuffer");
         var tMutableBuffer = Need(rt + "MutableRecordBuffer");
         var tTempTableProvider = Need(rt + "TempTableDataProvider");
@@ -214,20 +210,8 @@ public static partial class RecordPatches
         var tNavValueMetadata = Need(rt + "INavValueMetadata");
         var tInsertOptions = Need(rt + "InsertOptions");
 
-        // Overload-resolved by hand (several overloads exist; we want the
-        // (NCLMetaTable, MetadataSystemId) form AllObj uses).
-        _ivtGetSystemPopulatedValues = tVirtualDataProvider.GetMethods(
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
-            .FirstOrDefault(m => m.Name == "GetSystemPopulatedVirtualRecordValues"
-                && m.GetParameters().Length == 2
-                && m.GetParameters()[1].ParameterType == tMetadataSystemId)
-            ?? throw new InvalidOperationException(
-                "VirtualDataProvider.GetSystemPopulatedVirtualRecordValues(NCLMetaTable, MetadataSystemId) not found — BC metadata shape changed");
-
-        _ivtCtorMetadataSystemId = tMetadataSystemId.GetConstructors(
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            .FirstOrDefault(c => c.GetParameters().Length == 4)
-            ?? throw new InvalidOperationException("MetadataSystemId(int,int,int,int) not found — BC metadata shape changed");
+        // Overload-resolved across BC versions; see SystemPopulatedValues.
+        _ivtSystemValues = SystemPopulatedValues.Bind(nclAsm);
 
         _ivtCtorReadOnlyBuffer = tReadOnlyBuffer.GetConstructors(
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)

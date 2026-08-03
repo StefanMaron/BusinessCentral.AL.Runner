@@ -380,4 +380,83 @@ public static partial class RecordPatches
         }
         return null;
     }
+
+    /// <summary>
+    /// Binds BC's own <c>VirtualDataProvider.GetSystemPopulatedVirtualRecordValues</c>, the
+    /// helper that fills the system slots (timestamp, SystemId, audit fields) of a virtual
+    /// record's value array. Shared by every virtual table we populate.
+    ///
+    /// BC 28 added a <c>(NCLMetaTable, MetadataSystemId)</c> overload alongside the original
+    /// <c>(NCLMetaTable)</c> form. <c>MetadataSystemId</c> does not exist at all before 28 —
+    /// not in Ncl, not in Types — so binding exclusively to the 2-arg overload made every
+    /// caller throw "MetadataSystemId not found in Ncl" on BC 27. That took out the Integer
+    /// virtual table and with it every <c>dataitem(X; Integer)</c>: 7 of BC 27.5's 8 corpus
+    /// failures, and 15 across the 27.x legs, from one binding assumption.
+    ///
+    /// So: prefer the deterministic 2-arg form where BC offers it, fall back to the 1-arg
+    /// form where it does not. The fallback is faithful rather than degraded — the 1-arg
+    /// overload is what BC 27 calls for its own virtual records, and the SystemId slot it
+    /// leaves unset is filled by each caller's existing GetDefaultNavValue pass, exactly as
+    /// BC does. A build offering NEITHER overload still throws, naming what it looked for.
+    /// </summary>
+    private sealed class SystemPopulatedValues
+    {
+        private readonly MethodInfo _method;
+        private readonly ConstructorInfo? _systemIdCtor;
+
+        private SystemPopulatedValues(MethodInfo method, ConstructorInfo? systemIdCtor)
+        {
+            _method = method;
+            _systemIdCtor = systemIdCtor;
+        }
+
+        /// <summary>True when this BC build takes an explicit MetadataSystemId.</summary>
+        internal bool TakesSystemId => _systemIdCtor != null;
+
+        internal static SystemPopulatedValues Bind(Assembly nclAsm)
+        {
+            const string rt = "Microsoft.Dynamics.Nav.Runtime.";
+            var tVdp = nclAsm.GetType(rt + "VirtualDataProvider")
+                ?? throw new InvalidOperationException(
+                    "VirtualDataProvider not found in Ncl — BC metadata shape changed");
+
+            var overloads = tVdp.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+                .Where(m => m.Name == "GetSystemPopulatedVirtualRecordValues")
+                .ToList();
+
+            var tSystemId = ResolveType(rt + "MetadataSystemId", "Microsoft.Dynamics.Nav.Types.MetadataSystemId");
+            if (tSystemId != null)
+            {
+                var twoArg = overloads.FirstOrDefault(m => m.GetParameters().Length == 2
+                    && m.GetParameters()[1].ParameterType == tSystemId);
+                var ctor = tSystemId.GetConstructor(
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    binder: null, types: new[] { typeof(int), typeof(int), typeof(int), typeof(int) },
+                    modifiers: null);
+                if (twoArg != null && ctor != null)
+                    return new SystemPopulatedValues(twoArg, ctor);
+            }
+
+            var oneArg = overloads.FirstOrDefault(m => m.GetParameters().Length == 1)
+                ?? throw new InvalidOperationException(
+                    "VirtualDataProvider.GetSystemPopulatedVirtualRecordValues: neither the "
+                    + "(NCLMetaTable, MetadataSystemId) nor the (NCLMetaTable) overload is present "
+                    + $"[MetadataSystemId={(tSystemId == null ? "absent" : "present")}, "
+                    + $"overloads={string.Join("/", overloads.Select(m => m.GetParameters().Length))}] "
+                    + "— BC metadata shape changed");
+            return new SystemPopulatedValues(oneArg, systemIdCtor: null);
+        }
+
+        /// <summary>
+        /// Invoke BC's helper for one virtual row, passing a MetadataSystemId built from
+        /// <paramref name="systemIdArgs"/> (tableId, id1, id2, id3) only on builds that take one.
+        /// </summary>
+        internal Array Invoke(NCLMetaTable metaTable, params object[] systemIdArgs)
+        {
+            var args = _systemIdCtor == null
+                ? new object[] { metaTable }
+                : new object[] { metaTable, _systemIdCtor.Invoke(systemIdArgs) };
+            return (Array)_method.Invoke(null, args)!;
+        }
+    }
 }

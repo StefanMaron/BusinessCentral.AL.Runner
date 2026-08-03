@@ -99,9 +99,8 @@ public static partial class RecordPatches
         // Virtual-record identity: (tableId, reportId, hash(name)) — stable per
         // (report, layout) so repeated handouts produce the same SystemId.
         var nameKey = System.StringComparer.Ordinal.GetHashCode(layout.Name) & 0x7fffffff;
-        var systemId = _aovCtorMetadataSystemId!.Invoke(
-            new object[] { ReportLayoutListVirtualTableId, layout.ReportId, nameKey, 0 });
-        var values = (System.Array)_aovGetSystemPopulatedValues!.Invoke(null, new object[] { metaTable, systemId })!;
+        var values = _aovSystemValues!.Invoke(
+            metaTable, ReportLayoutListVirtualTableId, layout.ReportId, nameKey, 0);
 
         foreach (var field in GetAllFields(metaTable) ?? System.Linq.Enumerable.Empty<NCLMetaField>())
         {

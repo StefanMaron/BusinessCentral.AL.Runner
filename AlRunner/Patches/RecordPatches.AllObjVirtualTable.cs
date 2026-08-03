@@ -65,9 +65,8 @@ public static partial class RecordPatches
     private const int AllObjFieldObjectName = 4;
 
     private static bool _aovReflectionReady;
-    private static MethodInfo? _aovGetSystemPopulatedValues;   // VirtualDataProvider.GetSystemPopulatedVirtualRecordValues(NCLMetaTable, MetadataSystemId)
-    private static Type? _aovTMetadataSystemId;
-    private static ConstructorInfo? _aovCtorMetadataSystemId;  // MetadataSystemId(int tableId, int id1, int id2, int id3)
+    // Shared by AllObj, Report Metadata and Report Layout List; see SystemPopulatedValues.
+    private static SystemPopulatedValues? _aovSystemValues;
     private static ConstructorInfo? _aovCtorReadOnlyBuffer;    // ReadOnlyRecordBuffer(NCLMetaApplicationObject, NavValue[])
     private static ConstructorInfo? _aovCtorMutableBuffer;     // MutableRecordBuffer(ReadOnlyRecordBuffer)
     private static MethodInfo? _aovTtdpInsert;                 // TempTableDataProvider.Insert(int, MutableRecordBuffer, InsertOptions, out ReadOnlyRecordBuffer)
@@ -191,8 +190,7 @@ public static partial class RecordPatches
     /// </summary>
     private static void InsertAllObjRow(object provider, NCLMetaTable allObjMetaTable, int typeOrdinal, int objectId, string objectName)
     {
-        var systemId = _aovCtorMetadataSystemId!.Invoke(new object[] { AllObjVirtualTableId, typeOrdinal, objectId, 0 });
-        var values = (Array)_aovGetSystemPopulatedValues!.Invoke(null, new object[] { allObjMetaTable, systemId })!;
+        var values = _aovSystemValues!.Invoke(allObjMetaTable, AllObjVirtualTableId, typeOrdinal, objectId, 0);
 
         foreach (var field in GetAllFields(allObjMetaTable) ?? Enumerable.Empty<NCLMetaField>())
         {
@@ -295,21 +293,7 @@ public static partial class RecordPatches
         var nclAsm = allObjMetaTable.GetType().Assembly;
         const string rt = "Microsoft.Dynamics.Nav.Runtime.";
 
-        var tVdp = nclAsm.GetType(rt + "VirtualDataProvider")
-            ?? throw new InvalidOperationException("VirtualDataProvider type not found");
-        _aovTMetadataSystemId = nclAsm.GetType(rt + "MetadataSystemId")
-            ?? throw new InvalidOperationException("MetadataSystemId type not found");
-        _aovCtorMetadataSystemId = _aovTMetadataSystemId.GetConstructor(
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-            binder: null, types: new[] { typeof(int), typeof(int), typeof(int), typeof(int) }, modifiers: null)
-            ?? throw new InvalidOperationException("MetadataSystemId(int,int,int,int) ctor not found");
-
-        _aovGetSystemPopulatedValues = tVdp.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
-            .FirstOrDefault(m => m.Name == "GetSystemPopulatedVirtualRecordValues"
-                && m.GetParameters().Length == 2
-                && m.GetParameters()[1].ParameterType == _aovTMetadataSystemId)
-            ?? throw new InvalidOperationException(
-                "VirtualDataProvider.GetSystemPopulatedVirtualRecordValues(NCLMetaTable, MetadataSystemId) not found");
+        _aovSystemValues = SystemPopulatedValues.Bind(nclAsm);
 
         var tReadOnly = nclAsm.GetType(rt + "ReadOnlyRecordBuffer")!;
         var tMetaAppObj = nclAsm.GetType(rt + "NCLMetaApplicationObject")!;

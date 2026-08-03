@@ -158,8 +158,7 @@ public static partial class RecordPatches
     private static void InsertVirtualRow(
         object provider, NCLMetaTable metaTable, object[] systemIdArgs, Func<NCLMetaField, object?> buildValue)
     {
-        var systemId = _aovCtorMetadataSystemId!.Invoke(systemIdArgs);
-        var values = (Array)_aovGetSystemPopulatedValues!.Invoke(null, new object[] { metaTable, systemId })!;
+        var values = _aovSystemValues!.Invoke(metaTable, systemIdArgs);
 
         foreach (var field in GetAllFields(metaTable) ?? Enumerable.Empty<NCLMetaField>())
         {
