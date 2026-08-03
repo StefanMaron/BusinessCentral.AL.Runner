@@ -153,7 +153,6 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.NavRecordId::get_CollationAwareStringComparer/0",
         // NavRecord no-ops
         "Microsoft.Dynamics.Nav.Runtime.NavRecord::Dispose/1",
-        "Microsoft.Dynamics.Nav.Runtime.NavRecord::IsGlobalTriggerImplemented/1",
         "Microsoft.Dynamics.Nav.Runtime.NavRecord::UpdateReferencesOnRenameAsync/2",
         // RecordLink / management
         "Microsoft.Dynamics.Nav.Runtime.RecordLink::MoveLinksAsync/2",
@@ -193,7 +192,6 @@ public static class NclCecilRewrite
         // Misc
         "Microsoft.Dynamics.Nav.Runtime.Data.SequentialUuidCreator+NativeMethods::NewSequentialId/0",
         "Microsoft.Dynamics.Nav.Runtime.TempTableStatistics::ReportIncrementChange/3",
-        "Microsoft.Dynamics.Nav.Runtime.NavSystemCodeunitGlobalTriggers::GetTriggersOnTable/1",
         // NavSession getter cluster + GetActiveCompany + NavStream.Target (same atomic path)
         "Microsoft.Dynamics.Nav.Runtime.NavSession::get_CurrentMethodScope/0",
         "Microsoft.Dynamics.Nav.Runtime.NavSession::get_NavAppGroup/0",
@@ -5914,15 +5912,16 @@ public static class NclCecilRewrite
                 Console.Error.WriteLine($"[Cecil] NavDialog: {dialogNoOps} progress-dialog method(s) → headless no-op");
             }
 
-            // ── NavRecord no-ops (Dispose / IsGlobalTriggerImplemented / UpdateRefs) ──
-            // Dispose(bool) → NoOp2; IsGlobalTriggerImplemented(Triggers) → ReturnFalse2;
+            // ── NavRecord no-ops (Dispose / UpdateRefs) ──
+            // Dispose(bool) → NoOp2;
             // UpdateReferencesOnRenameAsync(List,NavRecord) instance overload → ReturnValueTask3.
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavRecord", "Dispose", "Boolean"),
                 H(helperShims, "NoOp2"));
-            ReplaceBodyWithHelper(nclMod,
-                ByParams(Rt + "NavRecord", "IsGlobalTriggerImplemented", "Triggers"),
-                H(helperShims, "ReturnFalse2"));
+            // NavRecord.IsGlobalTriggerImplemented is NOT rewritten: BC's body is
+            // `(GlobalTriggers.GetTriggersOnTable(TableID) & wanted) != 0`, which now works
+            // because GetTriggersOnTable is real again. It used to be forced to false, so
+            // the write pipeline skipped global-trigger dispatch entirely.
             {
                 var navRec = nclMod.GetType(Rt + "NavRecord")!;
                 var updRefs = navRec.Methods.FirstOrDefault(m =>
@@ -6034,23 +6033,12 @@ public static class NclCecilRewrite
                 ByParams(Rt + "TempTableStatistics", "ReportIncrementChange", "Int32", "Int32", "Int32"),
                 H(helperShims, "NoOp4"));
 
-            // ── NavSystemCodeunitGlobalTriggers.GetTriggersOnTable(int) → Triggers.None ──
-            // Helper returns int 0; the target returns the int-backed Triggers enum.
-            // Emit `ldc.i4.0; ret` directly (enum/underlying-int are ret-compatible),
-            // bypassing the int→enum boxing path entirely.
-            {
-                var gt = FindNclMethod(nclMod, Rt + "NavSystemCodeunitGlobalTriggers", "GetTriggersOnTable", 1);
-                var body = gt.Body;
-                body.Instructions.Clear();
-                body.Variables.Clear();
-                body.ExceptionHandlers.Clear();
-                var il = body.GetILProcessor();
-                il.Append(il.Create(OpCodes.Ldc_I4_0));
-                il.Append(il.Create(OpCodes.Ret));
-                body.MaxStackSize = 1;
-                Console.Error.WriteLine("[Cecil] Replaced NavSystemCodeunitGlobalTriggers.GetTriggersOnTable → Triggers.None");
-            }
-
+            // NOTE: NavSystemCodeunitGlobalTriggers.GetTriggersOnTable is NOT rewritten.
+            // It used to return Triggers.None unconditionally, which silently disabled every
+            // global/database table trigger in the runner. BC's own body invokes
+            // GetDatabaseTableTriggerSetup on the Global Triggers codeunit (2000000002) and
+            // lets the AL subscribers decide the per-table mask — which is the answer AL
+            // authors wrote and the only faithful one.
             // ── NavSession getter cluster + GetActiveCompany + NavStream.Target ──
             // These are installed via Hook(...) from the main ApplyAllPatches (BcRuntime.cs
             // ~525-570 / 2291 / 2380), NOT ApplyRecordPatches — but they sit on the same

@@ -746,17 +746,38 @@ public static partial class RecordPatches
         else
             factory = RuntimeHelpers.GetUninitializedObject(tFactory);
 
-        // Build skeleton GlobalTriggers (uninitialized).
-        // NavSystemCodeunitGlobalTriggers.GetTriggersOnTable checks session.IsCompanyOpen first.
-        // Now that we seed hasBeenOpened+companyName (so IsCompanyOpen=true and the real
-        // ALCompanyName/ALCurrentCompany paths work), GetTriggersOnTable proceeds past the
-        // short-circuit and tries `Monitor.TryEnter(triggersOnTables)`. The dict is normally
-        // initialized via field initializer, but GetUninitializedObject skips that — so we
-        // must populate it here, otherwise Monitor.TryEnter NREs ("Value cannot be null").
-        var globalTriggers = RuntimeHelpers.GetUninitializedObject(tGlobalTriggers);
-        var fSession = tGlobalTriggers.GetField("session",
-            BindingFlags.NonPublic | BindingFlags.Instance);
-        fSession?.SetValue(globalTriggers, skeletonSession);
+        // Build GlobalTriggers with its REAL public ctor, NavSystemCodeunitGlobalTriggers(
+        // TreeObject parent), parented to the session — same reasoning as the factory above.
+        //
+        // This used to be a GetUninitializedObject skeleton with `session` field-poked in.
+        // That skipped the base NavSystemCodeunit ctor, which is what allocates
+        // `codeunitHandle` — the handle BC's own NavGlobalTriggers.Insert/Modify/Delete/
+        // RenameAsync invoke the "Global Triggers" codeunit (2000000002) through. Without it
+        // no OnDatabase* / OnGlobal* event could ever be published, so AL subscribers to
+        // Codeunit::"Global Triggers" silently never fired (corpus CU60210). It also skipped
+        // the `triggersOnTables` field initializer, which the old code had to patch up by
+        // hand; the real ctor does both correctly.
+        object globalTriggers;
+        var gtCtor = tGlobalTriggers.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
+            .FirstOrDefault(c => c.GetParameters().Length == 1
+                && c.GetParameters()[0].ParameterType.IsInstanceOfType(skeletonSession));
+        if (gtCtor != null)
+        {
+            globalTriggers = gtCtor.Invoke(new[] { skeletonSession });
+        }
+        else
+        {
+            // Ncl shape changed. Fall back to the old skeleton rather than crash, but say so
+            // loudly: on this path every global/database trigger stays silently undelivered.
+            Console.Error.WriteLine(
+                "[RecordPatches] WARN: NavSystemCodeunitGlobalTriggers(TreeObject) ctor not found — "
+                + "falling back to an uninitialized skeleton; AL subscribers to "
+                + "Codeunit::\"Global Triggers\" will not fire.");
+            globalTriggers = RuntimeHelpers.GetUninitializedObject(tGlobalTriggers);
+            var fSession = tGlobalTriggers.GetField("session",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            fSession?.SetValue(globalTriggers, skeletonSession);
+        }
 
         // triggersOnTables: Dictionary<int, Triggers> — initialize empty so Monitor.TryEnter
         // doesn't NRE on the locked object. The dict is normally allocated via field initializer
@@ -769,8 +790,8 @@ public static partial class RecordPatches
             fTriggersOnTables.SetValue(globalTriggers, Activator.CreateInstance(dictType));
         }
 
-        // NavSystemCodeunitGlobalTriggers.GetTriggersOnTable is Cecil-owned (see
-        // NclCecilRewrite.cs) — short-circuits to Triggers.None for the headless runner.
+        // GetTriggersOnTable is BC's own body again — it invokes GetDatabaseTableTriggerSetup
+        // on the Global Triggers codeunit, whose AL subscribers decide the per-table mask.
 
         // Wire global triggers into factory.
         var fGlobalTriggers = tFactory.GetField("globalTriggers",
