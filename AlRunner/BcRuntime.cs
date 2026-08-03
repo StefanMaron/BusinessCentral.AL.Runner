@@ -1355,13 +1355,9 @@ public static partial class BcRuntime
             }
         }
 
-        // SessionTransactionExtensions.Rollback — called by AssertError after catching an AL error;
-        // NREs through skeleton session.DataAccessSource (null).
-        var stExtType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.SessionTransactionExtensions");
-        var rollback = stExtType?.GetMethod("Rollback",
-            BindingFlags.Public | BindingFlags.Static, null, new[] { sessType! }, null);
-        if (rollback != null)
-            Hook(rollback, nameof(NoOp_OneArg), "SessionTransactionExtensions.Rollback");
+        // SessionTransactionExtensions.Rollback is Cecil-owned (see NclCecilRewrite.cs block
+        // 8f). NavMethodScope.AssertError calls it after catching an AL error, and it is what
+        // unwinds the row store to the last commit point.
 
         // NCLEnumMetadata.Create(int), NavCodeunitHandle.CreateTarget, NavCodeunit.get_MetaCodeunit,
         // and NCLMetaCodeunit.get_IsEventManualBinding are all Cecil-owned (see NclCecilRewrite.cs).

@@ -270,6 +270,11 @@ public sealed class TestExecutor
         {
             AlRunner.Patches.RecordPatches.RestoreInstallBaseline();
         }
+        // BC's test framework commits between test methods, whatever the isolation mode.
+        // That commit is what a rollback inside this test unwinds to, so an asserterror here
+        // restores what the PREVIOUS test method left rather than the state the codeunit
+        // started with — see RecordPatches.TransactionSnapshot.
+        AlRunner.Patches.RecordPatches.MarkCommitPoint();
         // Clear any AL call stack captured from a previous test on this thread.
         AlRunner.Infrastructure.AlCallStackCapture.Clear();
         // Enter BC's own "in test" scope for the duration of this test (mirrors

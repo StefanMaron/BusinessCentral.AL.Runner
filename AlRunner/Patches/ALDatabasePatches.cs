@@ -84,12 +84,23 @@ public static class ALDatabasePatches
     /// what AL observes via Database.IsInWriteTransaction().</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void ALDatabase_ALCommit()
-        => System.Threading.Volatile.Write(ref _inWriteTransaction, false);
+    {
+        System.Threading.Volatile.Write(ref _inWriteTransaction, false);
+        // Everything written so far is now durable: a later AL error rolls back to HERE,
+        // not to the start of the test method.
+        RecordPatches.MarkCommitPoint();
+    }
 
     /// <summary>Clear write-transaction state at the per-test isolation boundary, so one
     /// test's uncommitted write cannot make the next test start "in a transaction".</summary>
     public static void ResetWriteTransactionState()
-        => System.Threading.Volatile.Write(ref _inWriteTransaction, false);
+    {
+        System.Threading.Volatile.Write(ref _inWriteTransaction, false);
+        // The isolation boundary is also a commit point — BC's test framework commits
+        // between test methods, which is why a rollback inside one test restores the state
+        // the previous test left rather than the state the codeunit started with.
+        RecordPatches.MarkCommitPoint();
+    }
 
     // ── Database.CurrentTransactionType ────────────────────────────────────────
     // BC stores this on TransactionManager's current LogicalTransaction. The runner has
@@ -207,6 +218,9 @@ public static class ALDatabasePatches
         if (record is Microsoft.Dynamics.Nav.Runtime.NavRecord { IsTemporary: true }) return;
         System.Threading.Interlocked.Increment(ref _rowVersion);
         System.Threading.Volatile.Write(ref _inWriteTransaction, true);
+        // First write since the last commit point: take the rollback snapshot now, before
+        // this write lands. Deferring it to here is what keeps a read-only test free.
+        RecordPatches.NoteTransactionWrite(record);
     }
 
     /// <summary>Replacement for ALDatabase.ALLastUsedRowVersion() — the runner's

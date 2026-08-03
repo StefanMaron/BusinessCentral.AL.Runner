@@ -55,6 +55,13 @@ public static class RunnerTestPageState
             if (navTestPage == null) return;
             _testPageField ??= FindTestPageField(navTestPage.GetType());
             if (_testPageField?.GetValue(navTestPage) is not LiveNavTestPage live) return;
+            // Opening a page is a commit point. BC reaches one because the page opens inside a
+            // new TRANSACTION WORLD, and TransactionManager.BeginTransactionWorld commits the
+            // active transaction on entering one (CommitImpl(commit: true)). The runner opens
+            // the page in-process without that machinery, so the commit has to be made here —
+            // otherwise an asserterror on a page operation rolls back the test's own setup,
+            // which real BC has already committed by then.
+            AlRunner.Patches.RecordPatches.MarkCommitPoint();
             live.MarkOpened(viewMode);
             // Before anything else reads the page: OnOpenPage is where a page establishes what
             // it is looking at — the singleton buffer it fetches or creates for the current

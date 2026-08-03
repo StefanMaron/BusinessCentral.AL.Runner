@@ -250,6 +250,11 @@ public static partial class BcRuntime
             // in MiscPatches) can return its message — Assert.ExpectedError / Library
             // Assert depend on this round-trip.
             StoreLastExceptionOnSkeletonSession(ex);
+            // BC's own AssertError ends its catch with session.Rollback(): an AL error
+            // unwinds the database to the last COMMIT. This replacement exists because the
+            // real body's rollback path NREs on the skeleton session, not because the
+            // rollback itself is out of scope — see RecordPatches.TransactionSnapshot.
+            AlRunner.Patches.RecordPatches.RollbackToCommitPoint(_skeletonSession);
             return; /* asserterror passed: body threw something */
         }
         throw new Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLAssertErrorException();

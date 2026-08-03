@@ -96,6 +96,9 @@ public static class NclCecilRewrite
         // CompanyHelper.ValidateUserHasAccessToCompany — the only decision behind AL's
         // Record.ChangeCompany(<name>); the real body needs a tenant database + entitlements.
         "Microsoft.Dynamics.Nav.Runtime.CompanyHelper::ValidateUserHasAccessToCompany/3",
+        // SessionTransactionExtensions.Rollback — AL's write-transaction rollback, which
+        // NavMethodScope.AssertError calls after catching an error.
+        "Microsoft.Dynamics.Nav.Runtime.SessionTransactionExtensions::Rollback/1",
         // TreeHandler.get_Session — `=> session`, and that field is null on every tree the
         // runner builds (the root handler has no session to propagate). Callers do not
         // null-check it: NavFieldRef.ALValidateSafe() hands it straight to
@@ -1427,6 +1430,39 @@ public static class NclCecilRewrite
             ReplaceBodyWithHelper(asm.MainModule, validateAccess, validateHelper);
             Console.Error.WriteLine(
                 "[Cecil] Rewrote CompanyHelper.ValidateUserHasAccessToCompany → single-company check");
+        }
+
+        // 8f. SessionTransactionExtensions.Rollback — see RecordPatches.RollbackToCommitPoint.
+        //
+        //     BC implements AL's "an error rolls the database back to the last COMMIT" here:
+        //     NavMethodScope.AssertError catches the error and calls session.Rollback(). The
+        //     real body goes through session.DataAccessSource's transaction manager, which the
+        //     runner has no equivalent of — its tables are in-memory TempTableDataProviders.
+        //
+        //     This used to be a JmpHook to a no-op, and JmpHook has been disabled by default
+        //     since the Cecil migration, so nothing rolled back at all: an asserterror left
+        //     every write made before it in place. Corpus TestTriggerRollback pins the real
+        //     behaviour in three directions (see RecordPatches.TransactionSnapshot).
+        {
+            var sessTxType = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.SessionTransactionExtensions")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] SessionTransactionExtensions type not found — Ncl shape changed; do not commit");
+
+            var rollbackMethod = sessTxType.Methods
+                .FirstOrDefault(m => m.Name == "Rollback" && m.IsStatic
+                                     && m.Parameters.Count == 1 && m.HasBody)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] SessionTransactionExtensions.Rollback(NavSession) not found — Ncl shape changed; do not commit");
+
+            var rollbackHelper = typeof(AlRunner.Patches.RecordPatches).GetMethod(
+                nameof(AlRunner.Patches.RecordPatches.RollbackToCommitPoint),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] RecordPatches.RollbackToCommitPoint not found");
+
+            ReplaceBodyWithHelper(asm.MainModule, rollbackMethod, rollbackHelper);
+            Console.Error.WriteLine("[Cecil] Rewrote SessionTransactionExtensions.Rollback → row-store rollback");
         }
 
         // 9b. TreeHandler.get_Session — see BcRuntime.TreeHandler_get_Session.
@@ -3629,7 +3665,16 @@ public static class NclCecilRewrite
                 ?? throw new InvalidOperationException("ALDatabasePatches.NoteRecordWrite not found");
             var bumpRef = asm.MainModule.ImportReference(bumpMi);
 
-            var writeEntries = new[] { "ALInsertAsync", "ALModifyAsync", "ALDeleteAsync", "ALRenameAsync" };
+            // The bulk forms count too: BC's DeleteAll/ModifyAll write rows, so they advance
+            // @@DBTS and open a write transaction exactly like the single-row forms — and the
+            // rollback snapshot hangs off this same note, so leaving them out meant a
+            // DeleteAll before the first single-row write was never captured and therefore
+            // never rolled back.
+            var writeEntries = new[]
+            {
+                "ALInsertAsync", "ALModifyAsync", "ALDeleteAsync", "ALRenameAsync",
+                "ALDeleteAllAsync", "ALModifyAllAsync",
+            };
             int bumped = 0;
             foreach (var m in navRecord.Methods.Where(
                          x => writeEntries.Contains(x.Name) && x.HasBody && x.Body.Instructions.Count > 0))
