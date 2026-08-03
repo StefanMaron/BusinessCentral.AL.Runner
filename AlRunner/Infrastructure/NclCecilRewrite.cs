@@ -80,6 +80,16 @@ public static class NclCecilRewrite
         // Cecil rewrite in step 6 of the TestPage cluster. Registering it here makes the
         // legacy JmpHook a no-op so the two mechanisms cannot coexist on this method.
         "Microsoft.Dynamics.Nav.Runtime.NavTestPageBase::ALGoToRecord/2",
+        // NCLMetaXmlPort.CreateObjectInstance — the runner forces ApplicationObjectConstructor
+        // to null for every object type; this is XmlPort's per-type construction path for the
+        // STATIC XmlPort.Import/Export forms (the handle path has its own).
+        "Microsoft.Dynamics.Nav.Runtime.NCLMetaXmlPort::CreateObjectInstance/1",
+        // NavCurrentThread.get_Session — AsyncLocal-backed; falls back to the skeleton
+        // session on any flow the bootstrap ExecutionContext does not reach.
+        "Microsoft.Dynamics.Nav.Runtime.NavCurrentThread::get_Session/0",
+        // NavSession.ThrowSessionTerminatedExceptionIfStopping — pure guard over a null
+        // AccessLock on the skeleton session.
+        "Microsoft.Dynamics.Nav.Runtime.NavSession::ThrowSessionTerminatedExceptionIfStopping/0",
         // NavTestPageBase.GetMetaTable — same orphaned-JmpHook story as ALGoToRecord above.
         "Microsoft.Dynamics.Nav.Runtime.NavTestPageBase::GetMetaTable/0",
         "Microsoft.Dynamics.Nav.Runtime.NavFormHandle::CreateTarget/0",
@@ -1189,6 +1199,101 @@ public static class NclCecilRewrite
 
             ReplaceBodyWithHelper(asm.MainModule, getMetaTable, metaTableHelper);
             Console.Error.WriteLine("[Cecil] Rewrote NavTestPageBase.GetMetaTable → BcRuntime.NavTestPageBase_GetMetaTable");
+        }
+
+        // 8. NCLMetaXmlPort.CreateObjectInstance(ITreeObject) — BC invokes
+        //    base.ApplicationObjectConstructor, which the runner forces to null for every
+        //    object type (see RecordPatches.CreateObjectInstance), substituting a per-type
+        //    construction path. XmlPort had one only for the handle path
+        //    (NavXmlPortHandle.CreateTarget); the STATIC XmlPort.Import(id, …) /
+        //    XmlPort.Export(id, …) forms come through here instead and NREd on the null
+        //    delegate. Both paths now construct from the same CLR type.
+        {
+            var metaXmlPortType = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.NCLMetaXmlPort")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NCLMetaXmlPort type not found — Ncl shape changed; do not commit");
+
+            var createInstance = metaXmlPortType.Methods
+                .FirstOrDefault(m => m.Name == "CreateObjectInstance" && m.Parameters.Count == 1 && m.HasBody)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NCLMetaXmlPort.CreateObjectInstance(1) not found — Ncl shape changed; do not commit");
+
+            var createHelper = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.NCLMetaXmlPort_CreateObjectInstance),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] BcRuntime.NCLMetaXmlPort_CreateObjectInstance not found");
+
+            if (createInstance.ReturnType.FullName != createHelper.ReturnType.FullName)
+                throw new InvalidOperationException(
+                    "[Cecil] NCLMetaXmlPort.CreateObjectInstance/helper return type mismatch — do not commit");
+
+            ReplaceBodyWithHelper(asm.MainModule, createInstance, createHelper);
+            Console.Error.WriteLine("[Cecil] Rewrote NCLMetaXmlPort.CreateObjectInstance → BcRuntime.NCLMetaXmlPort_CreateObjectInstance");
+        }
+
+        // 9. NavCurrentThread.get_Session — see BcRuntime.NavCurrentThread_get_Session.
+        //    BC reads an AsyncLocal the runner sets once on the bootstrap thread; any flow
+        //    the ExecutionContext does not reach gets a silent null that BC's callers do
+        //    not null-check. The replacement prefers the AsyncLocal and falls back to the
+        //    skeleton session, which — the runner being single-session by construction —
+        //    is the same instance that context would have carried.
+        {
+            var navCurrentThreadType = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.NavCurrentThread")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NavCurrentThread type not found — Ncl shape changed; do not commit");
+
+            var getSession = navCurrentThreadType.Methods
+                .FirstOrDefault(m => m.Name == "get_Session" && m.IsStatic
+                                     && m.Parameters.Count == 0 && m.HasBody)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NavCurrentThread.get_Session not found — Ncl shape changed; do not commit");
+
+            var sessionHelper = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.NavCurrentThread_get_Session),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] BcRuntime.NavCurrentThread_get_Session not found");
+
+            if (getSession.ReturnType.FullName != sessionHelper.ReturnType.FullName)
+                throw new InvalidOperationException(
+                    "[Cecil] NavCurrentThread.get_Session/helper return type mismatch — do not commit");
+
+            ReplaceBodyWithHelper(asm.MainModule, getSession, sessionHelper);
+            Console.Error.WriteLine("[Cecil] Rewrote NavCurrentThread.get_Session → BcRuntime.NavCurrentThread_get_Session");
+        }
+
+        // 10. NavSession.ThrowSessionTerminatedExceptionIfStopping() → no-op.
+        //     The body is `AccessLock.ThrowSessionTerminatedExceptionIfStopping()`, and
+        //     AccessLock is null on the skeleton session, so this pure guard NREs instead
+        //     of guarding. It is inlined into its callers, which is why the NRE surfaced
+        //     as NavXmlPortExporter.ProcessTableElement IL_0000 — the exporter opens with
+        //     this call.
+        //
+        //     No-op is faithful: the method's entire contract is "throw if this session is
+        //     being terminated". The runner has no session manager and no way to stop a
+        //     session mid-run — one session runs to process exit (docs/scope.md) — so the
+        //     guard's condition is permanently false and BC would return without throwing.
+        {
+            var navSessionType = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.NavSession")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NavSession type not found — Ncl shape changed; do not commit");
+
+            var guard = navSessionType.Methods
+                .FirstOrDefault(m => m.Name == "ThrowSessionTerminatedExceptionIfStopping"
+                                     && m.Parameters.Count == 0 && m.HasBody
+                                     && m.ReturnType.FullName == "System.Void")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NavSession.ThrowSessionTerminatedExceptionIfStopping not found — do not commit");
+
+            var noOp = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.NoOp_OneArg), BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("[Cecil] BcRuntime.NoOp_OneArg not found");
+            ReplaceBodyWithHelper(asm.MainModule, guard, noOp);
+            Console.Error.WriteLine("[Cecil] Rewrote NavSession.ThrowSessionTerminatedExceptionIfStopping → no-op (skeleton session never stops)");
         }
 
 

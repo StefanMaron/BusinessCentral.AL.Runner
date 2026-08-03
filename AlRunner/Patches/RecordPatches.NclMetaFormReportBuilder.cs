@@ -227,8 +227,16 @@ public static partial class RecordPatches
         try
         {
             // (loader, xmlPortId, appGroup, depOrder=-1, alNamespace="")
+            //
+            // loader = RunnerMetaApplicationObjectLoader.Instance for the same reason the
+            // report and page builders pass it: NCLMetaXmlPort.LoadMetadata() ->
+            // GetMetadataFromLoader() -> ObjectLoader.XmlMetadataLoader.GetMetaObjectXmlMetadata(...)
+            // dereferences it, and a null loader NREs there. It answers from
+            // AlXmlPortMetadataRegistry — the emit-captured xmlport metadata XML — so the
+            // port gets its REAL node schema. See RecordPatches.RealXmlPortMetadata.cs for
+            // why the load itself is deferred rather than done here.
             var meta = _mCreateEmptyNCLMetaXmlPort.Invoke(null,
-                new object?[] { null, xmlPortId, _baseAppGroup, -1, string.Empty });
+                new object?[] { RunnerMetaApplicationObjectLoader.Instance, xmlPortId, _baseAppGroup, -1, string.Empty });
 
             EnsureCachePopulatorReflection();
             if (meta != null && _fNCLMetaAppObjMetadataLoaded != null)

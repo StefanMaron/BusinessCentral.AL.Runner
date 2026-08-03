@@ -72,6 +72,13 @@ public sealed class RunnerXmlMetadataLoader : INCLObjectXmlMetadataLoader
             && AlPageMetadataRegistry.TryGet(objectId.ObjectNumber, out var pageXml))
             return Wrap(pageXml, $"runner-page-{objectId.ObjectNumber}");
 
+        // XmlPorts: same emit-captured metadata XML, feeding NCLMetaXmlPort.LoadMetadata()
+        // so BC's own XmlPort engine imports/exports against the port's real node schema
+        // instead of NREing on an empty skeleton.
+        if (objectId.ObjectType == ObjectType.XmlPort
+            && AlXmlPortMetadataRegistry.TryGet(objectId.ObjectNumber, out var xmlPortXml))
+            return Wrap(xmlPortXml, $"runner-xmlport-{objectId.ObjectNumber}");
+
         // Reports living in a PRECOMPILED dependency .app: never source-compiled, so the
         // emit registry above will never hold them. Their shape is still fully stated by
         // the .app itself (SymbolReference.json + the embedded AL source), so reconstruct
@@ -85,7 +92,7 @@ public sealed class RunnerXmlMetadataLoader : INCLObjectXmlMetadataLoader
             $"INCLObjectXmlMetadataLoader.GetMetaObjectXmlMetadata({objectId.ObjectType} {objectId.ObjectNumber})",
             "not-yet-implemented — no metadata XML for this object: it was not source-compiled " +
             "by the runner, and no loaded dependency .app declares it " +
-            "(only reports and pages are served)");
+            "(only reports, pages and xmlports are served)");
     }
 
     private static NCLObjectXmlMetadata Wrap(string xml, string metadataHash)

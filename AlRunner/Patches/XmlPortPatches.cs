@@ -41,6 +41,56 @@ public static partial class BcRuntime
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
         int id = (int)idProp!.GetValue(objId)!;
 
+        return ConstructXmlPort(id, self);
+    }
+
+    /// <summary>
+    /// Replacement for <c>NCLMetaXmlPort.CreateObjectInstance(ITreeObject)</c>.
+    ///
+    /// BC's body invokes <c>base.ApplicationObjectConstructor</c>, and the runner forces
+    /// that delegate to null for every object type (see RecordPatches.CreateObjectInstance),
+    /// substituting a per-type construction path instead. XmlPort had one only for the
+    /// HANDLE path (<c>NavXmlPortHandle.CreateTarget</c>, above) — i.e. for an AL
+    /// <c>XmlPort "Foo"</c> variable. The STATIC forms, <c>XmlPort.Import(id, …)</c> and
+    /// <c>XmlPort.Export(id, …)</c>, reach the instance through
+    /// <c>NCLMetaXmlPort.CreateObjectInstance</c> instead and so NREd on the null delegate.
+    ///
+    /// Both paths now construct the same way, from the same CLR type.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static Microsoft.Dynamics.Nav.Runtime.NavXmlPort NCLMetaXmlPort_CreateObjectInstance(
+        object self, Microsoft.Dynamics.Nav.Runtime.ITreeObject parent)
+    {
+        int id = ReadMetaObjectNumber(self);
+        if (id == 0)
+            throw new InvalidOperationException(
+                "NCLMetaXmlPort.CreateObjectInstance: could not read the xmlport's object id " +
+                "from its metadata — constructing the wrong xmlport would silently import or " +
+                "export against the wrong schema.");
+
+        return (Microsoft.Dynamics.Nav.Runtime.NavXmlPort)ConstructXmlPort(id, parent);
+    }
+
+    /// <summary>Read ObjectId.ObjectNumber off an NCLMetaApplicationObject.</summary>
+    private static int ReadMetaObjectNumber(object meta)
+    {
+        const BindingFlags Any =
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+        foreach (var propName in new[] { "ApplicationObjectId", "ObjectId" })
+        {
+            var objId = meta.GetType().GetProperty(propName, Any)?.GetValue(meta);
+            if (objId?.GetType().GetProperty("ObjectNumber", Any)?.GetValue(objId) is int n && n != 0)
+                return n;
+        }
+        return 0;
+    }
+
+    /// <summary>
+    /// Construct the AL-emitted <c>XmlPort{id}</c> instance parented to <paramref name="parent"/>.
+    /// Shared by the handle path and the static-form path so the two can never diverge.
+    /// </summary>
+    private static object ConstructXmlPort(int id, object parent)
+    {
         var xmlPortType = _xmlPortTypeCache.GetOrAdd(id, FindXmlPortType);
         if (xmlPortType == null)
             throw new InvalidOperationException(
@@ -55,7 +105,7 @@ public static partial class BcRuntime
         var oneArg = ctors.FirstOrDefault(c => c.GetParameters().Length == 1 &&
             typeof(Microsoft.Dynamics.Nav.Runtime.ITreeObject)
                 .IsAssignableFrom(c.GetParameters()[0].ParameterType));
-        if (oneArg != null) return oneArg.Invoke(new object[] { self });
+        if (oneArg != null) return oneArg.Invoke(new object[] { parent })!;
 
         var twoArg = ctors.FirstOrDefault(c => c.GetParameters().Length == 2 &&
             typeof(Microsoft.Dynamics.Nav.Runtime.ITreeObject)
@@ -63,7 +113,7 @@ public static partial class BcRuntime
         if (twoArg != null)
         {
             object? metaArg = LookupNclMetaForXmlPort(id);
-            return twoArg.Invoke(new object?[] { self, metaArg });
+            return twoArg.Invoke(new object?[] { parent, metaArg })!;
         }
         throw new InvalidOperationException(
             $"XmlPort{id} has no (ITreeObject) or (ITreeObject, NCLMetaXmlPort) constructor");

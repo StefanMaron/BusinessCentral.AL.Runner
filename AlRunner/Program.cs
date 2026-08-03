@@ -3759,7 +3759,10 @@ static string ComputeAlCacheKey(
     //    v7: report-layout rows carry IsDefault (the report's DefaultRenderingLayout),
     //        without which a cache HIT could not resolve a multi-layout report's
     //        default-layout render and hydrated nothing.
-    WriteLine("schema:v7");
+    //    v8: sidecar also carries the AlXmlPortMetadataRegistry (per-xmlport runtime
+    //        metadata XML) so cache HIT replays the real node schema that
+    //        NCLMetaXmlPort.LoadMetadata() builds from it.
+    WriteLine("schema:v8");
 
     // 1. Runner assembly fingerprint — any rewriter / polyfill / patch change
     //    in the runner forces a cache miss.
@@ -3864,6 +3867,16 @@ static int SaveEnumRegistrySidecar(string path)
                 id = i,
                 xml = AlPageMetadataRegistry.TryGet(i, out var x) ? x : string.Empty,
             }).ToArray(),
+        // v8: per-xmlport runtime metadata XML captured from emit — replayed on cache
+        // HIT so NCLMetaXmlPort.LoadMetadata() still builds a real node schema on a warm
+        // run. Same emit-only capture hazard as pageMetadata above.
+        xmlPortMetadata = AlXmlPortMetadataRegistry.Ids
+            .OrderBy(i => i)
+            .Select(i => new
+            {
+                id = i,
+                xml = AlXmlPortMetadataRegistry.TryGet(i, out var x) ? x : string.Empty,
+            }).ToArray(),
     };
     var json = System.Text.Json.JsonSerializer.Serialize(dto, new System.Text.Json.JsonSerializerOptions
     {
@@ -3944,6 +3957,17 @@ static int LoadEnumRegistrySidecar(string path)
         foreach (var e in pageArr.EnumerateArray())
         {
             AlPageMetadataRegistry.Register(
+                e.GetProperty("id").GetInt32(),
+                e.GetProperty("xml").GetString() ?? string.Empty);
+        }
+    }
+    // v8: replay per-xmlport runtime metadata XML.
+    if (doc.RootElement.TryGetProperty("xmlPortMetadata", out var xmlPortArr)
+        && xmlPortArr.ValueKind == System.Text.Json.JsonValueKind.Array)
+    {
+        foreach (var e in xmlPortArr.EnumerateArray())
+        {
+            AlXmlPortMetadataRegistry.Register(
                 e.GetProperty("id").GetInt32(),
                 e.GetProperty("xml").GetString() ?? string.Empty);
         }

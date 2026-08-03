@@ -1622,8 +1622,16 @@ public sealed class BcCompiler
             if (symbol is NavCA.IPageTypeSymbol pageSym && !string.IsNullOrEmpty(metadata))
                 AlPageMetadataRegistry.Register(pageSym.Id, metadata);
 
+            // Same capture for xmlports. NCLMetaXmlPort.LoadMetadata() parses this XML into
+            // a real MetaXmlPort with the port's full node schema; without it BC's own
+            // XmlPort engine has nothing to import/export against and both
+            // NCLMetaXmlPort.CreateObjectInstance and GetMetadataFromLoader NRE.
+            // See AlXmlPortMetadataRegistry.cs (and the cache-HIT sidecar it documents).
+            if (symbol is NavCA.IXmlPortTypeSymbol xmlPortSym && !string.IsNullOrEmpty(metadata))
+                AlXmlPortMetadataRegistry.Register(xmlPortSym.Id, metadata);
+
             if (Environment.GetEnvironmentVariable("BCCOMPILER_TRACE") == "1")
-                Console.Error.WriteLine($"  emit[{AddCalls}]: {symbol.Name}");
+                Console.Error.WriteLine($"  emit[{AddCalls}]: {symbol.Name} kind={symbol.GetType().Name} metaLen={metadata?.Length ?? -1}");
             if (Environment.GetEnvironmentVariable("BCCOMPILER_DUMP_CS") == "1")
             {
                 var dir = Path.Combine(Path.GetTempPath(), "bccompiler-dump");

@@ -179,7 +179,15 @@ public static partial class RecordPatches
             // (XmlPort.Import/Export via a `XmlPort "Foo"` variable) fell through to the
             // not-found throw even though its metadata was sitting in the cache. Serve
             // the same cache the populator fills — identical shape to Report/Query above.
-            var meta = _metaXmlPortCache.GetOrAdd(objectId, BuildNCLMetaXmlPort);
+            //
+            // Prefer a REAL metadata load: EnsureRealXmlPortMetadata parses the
+            // emit-captured schema XML so BC's own XmlPort engine has a node tree to work
+            // against. Without it the port resolves to a schema-less skeleton and every
+            // real operation NREs (NCLMetaXmlPort.CreateObjectInstance,
+            // NCLMetaApplicationObject.GetMetadataFromLoader). Falls back to the skeleton
+            // for an xmlport we have no captured XML for — a precompiled dependency's.
+            var meta = EnsureRealXmlPortMetadata(objectId)
+                       ?? _metaXmlPortCache.GetOrAdd(objectId, BuildNCLMetaXmlPort);
             if (meta != null)
                 return meta;
         }

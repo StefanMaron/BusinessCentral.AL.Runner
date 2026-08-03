@@ -240,6 +240,7 @@ public sealed class DependencyLoader
         // leaves every page of this dep a control-less NCLMetaForm skeleton, so TestPage
         // access to its page-variable-bound controls fails only on warm runs.
         var pageMetadataSidecar = Path.Combine(cacheDir, cacheKey + ".page-metadata.json");
+        var xmlPortMetadataSidecar = Path.Combine(cacheDir, cacheKey + ".xmlport-metadata.json");
         if (File.Exists(cachedDll))
         {
             try
@@ -254,6 +255,8 @@ public sealed class DependencyLoader
                     AlReportLayoutRegistry.LoadSidecar(reportLayoutSidecar);
                 if (File.Exists(pageMetadataSidecar))
                     AlPageMetadataRegistry.LoadSidecar(pageMetadataSidecar);
+                if (File.Exists(xmlPortMetadataSidecar))
+                    AlXmlPortMetadataRegistry.LoadSidecar(xmlPortMetadataSidecar);
                 Console.Error.WriteLine(
                     $"[deps] source-cache HIT: {m.Name} v{m.Version} key={cacheKey[..12]} ({cachedBytes.Length} bytes, {replayedReports} report-metadata entries)");
                 return Assembly.Load(cachedBytes);
@@ -299,6 +302,7 @@ public sealed class DependencyLoader
         // persist exactly the entries THIS app contributed to its own sidecar.
         var reportIdsBeforeEmit = new HashSet<int>(AlReportMetadataRegistry.Ids);
         var pageIdsBeforeEmit = new HashSet<int>(AlPageMetadataRegistry.Ids);
+        var xmlPortIdsBeforeEmit = new HashSet<int>(AlXmlPortMetadataRegistry.Ids);
         // Scope _currentAppId to the dep's own identity for the duration of this compile.
         // GetSharedReferences uses _currentAppId to exclude the "current app" from its
         // reference specs. Without this, the dep's resolved spec (from _resolvedDeps of
@@ -354,6 +358,8 @@ public sealed class DependencyLoader
             AlReportLayoutRegistry.SaveSidecar(reportLayoutSidecar, ownReportIds);
             AlPageMetadataRegistry.SaveSidecar(pageMetadataSidecar,
                 AlPageMetadataRegistry.Ids.Where(i => !pageIdsBeforeEmit.Contains(i)).ToArray());
+            AlXmlPortMetadataRegistry.SaveSidecar(xmlPortMetadataSidecar,
+                AlXmlPortMetadataRegistry.Ids.Where(i => !xmlPortIdsBeforeEmit.Contains(i)).ToArray());
             Console.Error.WriteLine(
                 $"[deps] source-cache WROTE: {m.Name} v{m.Version} key={cacheKey[..12]} ({compile.AssemblyBytes!.Length} bytes, {sidecarCount} report-metadata entries)");
         }

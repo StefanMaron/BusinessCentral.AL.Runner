@@ -28,6 +28,64 @@ public static partial class BcRuntime
     public static object? TreeHandler_get_Session(object self) => _skeletonSession;
 
     /// <summary>
+    /// Replacement for <c>NavCurrentThread.get_Session</c>.
+    ///
+    /// BC's body is <c>NavThreadLocalStorage.Current.Session?.Target</c> — an
+    /// <c>AsyncLocal</c>. The runner sets it once on the bootstrap thread
+    /// (RecordPatches.WireNavCurrentThreadSession) and relies on ExecutionContext to carry
+    /// it into test threads. That works for most of the runtime because most BC code reads
+    /// <c>base.Session</c> off the tree instead — but any flow the context does not reach
+    /// gets a silent null, and BC's callers do not null-check it. NavXmlPortExporter
+    /// .ProcessTableElement opens with
+    /// <c>NavCurrentThread.Session.ThrowSessionTerminatedExceptionIfStopping()</c> and NREs
+    /// on its very first instruction.
+    ///
+    /// Falling back to the skeleton session is not a substitute for the real value: the
+    /// runner is single-session by construction (docs/scope.md), so the skeleton session
+    /// IS the session this thread would have been given had the context propagated. Same
+    /// argument as TreeHandler.get_Session above and the NavSession.NCLMetadata → NavGlobal
+    /// .NCLMetadata reroute — there is exactly one instance to hand back, so this cannot
+    /// pick the wrong one.
+    ///
+    /// The AsyncLocal is still preferred when set, so anything that deliberately scopes a
+    /// different session keeps working.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static Microsoft.Dynamics.Nav.Runtime.NavSession? NavCurrentThread_get_Session()
+    {
+        var fromContext = ReadAsyncLocalSession();
+        if (fromContext != null) return fromContext;
+        return _skeletonSession as Microsoft.Dynamics.Nav.Runtime.NavSession;
+    }
+
+    private static PropertyInfo? _pTlsCurrent, _pTlsSession, _pRefTarget;
+    private static bool _tlsResolved;
+
+    /// <summary>Read NavThreadLocalStorage.Current.Session?.Target without recursing into the rewritten property.</summary>
+    private static Microsoft.Dynamics.Nav.Runtime.NavSession? ReadAsyncLocalSession()
+    {
+        if (!_tlsResolved)
+        {
+            var nclAsm = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
+            var tTls = nclAsm?.GetType("Microsoft.Dynamics.Nav.Runtime.NavThreadLocalStorage");
+            _pTlsCurrent = tTls?.GetProperty("Current", BindingFlags.Public | BindingFlags.Static);
+            _pTlsSession = tTls?.GetProperty("Session", BindingFlags.Public | BindingFlags.Instance);
+            _tlsResolved = true;
+        }
+        try
+        {
+            var current = _pTlsCurrent?.GetValue(null);
+            var reference = current == null ? null : _pTlsSession?.GetValue(current);
+            if (reference == null) return null;
+            _pRefTarget ??= reference.GetType().GetProperty("Target",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            return _pRefTarget?.GetValue(reference) as Microsoft.Dynamics.Nav.Runtime.NavSession;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
     /// Build the ClientSettings (BC's "regional settings": ShortDatePattern, LongTimePattern,
     /// separators, …) that the skeleton session should carry.
     ///
