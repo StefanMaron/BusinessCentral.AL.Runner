@@ -581,6 +581,49 @@ public static class NclCecilRewrite
             throw new InvalidOperationException("MetadataProvider.VersionNumber not found — Ncl shape changed; do not commit");
         Console.Error.WriteLine($"[Cecil] Rewrote {versionNumberRewroteCount} VersionNumber overload(s) → 0 (no tenant metadata versioning in the runner)");
 
+        // MetadataProvider.EffectiveVersionNumber(NavSession) → 0. Same rewrite, same
+        // justification as VersionNumber above — but reached through a different door.
+        //
+        // A 28.1 SERVICE UPDATE (present in 28.1.49838.53249, absent in .50794) added a
+        // scoped metadata cache and rerouted the metadata-version reads onto this new
+        // static: the master-page merge (GetMasterPageUnsolved, MergePageAndTable, the
+        // NavTestPage paths) and metaQuery.MetadataToken all call it now, and only the
+        // legacy tenant-scoped VersionNumber(NavTenant) still uses the method we rewrite
+        // above. So on the newer build our patch guarded a door nobody walks through and
+        // the merge threw again — the AL page object was never registered, which is what
+        // surfaced as "no AL page object was built for this page".
+        //
+        // The body dereferences session.Tenant.MetadataVersionTracker and
+        // ServerUserSettings.Instance.EnableScopedMetadataCache; the skeleton session has
+        // neither. 0 is the same "no version recorded" value for the same reason: one
+        // process, no client metadata cache, no scoped-cache snapshots to invalidate, and
+        // no AL surface that can read the stamp.
+        //
+        // NOT a hard error when missing: the method genuinely does not exist on 28.1 builds
+        // before the update, and the runner must still work against those. VersionNumber
+        // above stays mandatory — it is present on every build we support.
+        int effectiveVersionRewroteCount = 0;
+        foreach (var method in metadataProviderType.Methods
+                     .Where(mm => mm.Name == "EffectiveVersionNumber" && mm.HasBody).ToList())
+        {
+            if (method.ReturnType.FullName != "System.Int64")
+                throw new InvalidOperationException(
+                    $"EffectiveVersionNumber returns {method.ReturnType.FullName}, expected System.Int64 — do not commit");
+            var body = method.Body;
+            body.Instructions.Clear();
+            body.Variables.Clear();
+            body.ExceptionHandlers.Clear();
+            var il = body.GetILProcessor();
+            il.Append(il.Create(OpCodes.Ldc_I4_0));
+            il.Append(il.Create(OpCodes.Conv_I8));
+            il.Append(il.Create(OpCodes.Ret));
+            body.MaxStackSize = 1;
+            effectiveVersionRewroteCount++;
+        }
+        Console.Error.WriteLine(effectiveVersionRewroteCount > 0
+            ? $"[Cecil] Rewrote {effectiveVersionRewroteCount} EffectiveVersionNumber overload(s) → 0 (no scoped metadata cache in the runner)"
+            : "[Cecil] MetadataProvider.EffectiveVersionNumber absent — pre-scoped-metadata-cache BC build");
+
         // NavPageDataPersonalizationHelper.LoadPageDataPersonalization<T>(...) → default(T).
         //
         // Reached from MergePageAndTable -> SolveDefaultFilterColumnProperty. It opens the
