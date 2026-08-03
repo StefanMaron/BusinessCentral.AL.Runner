@@ -810,6 +810,15 @@ public static partial class BcRuntime
             // SeedSkeletonRegionalSettings), so every AL Evaluate() into a Date/Time/DateTime
             // NRE'd inside DateTimeParsingHelper. Seed it the way BC seeds its own default.
             SeedSkeletonRegionalSettings(sessType, _skeletonSession!);
+            // A BC service tier runs AL on a thread whose culture is the session's culture,
+            // and several BC code paths compare Thread.CurrentThread.CurrentCulture.Name
+            // against the session's format region. Without this the developer's machine
+            // locale leaked into those comparisons, so an AL run could behave differently on
+            // a de-DE workstation than in CI. Pin the process to the session culture.
+            System.Globalization.CultureInfo.DefaultThreadCurrentCulture = RunnerSessionCulture;
+            System.Globalization.CultureInfo.DefaultThreadCurrentUICulture = RunnerSessionCulture;
+            Thread.CurrentThread.CurrentCulture = RunnerSessionCulture;
+            Thread.CurrentThread.CurrentUICulture = RunnerSessionCulture;
             HookProperty(aoType, "Session", false, nameof(GetSessionReplacement));
 
             // Plant the skeleton session into RootTreeStub's TreeHandler.session field.

@@ -178,9 +178,27 @@ public static partial class BcRuntime
         // which is exactly what we then plant in the session's field.
         var boxed = Activator.CreateInstance(clientSettingsType);
         if (boxed == null) return null;
-        refresh.Invoke(boxed, new object[] { CultureInfo.InvariantCulture, CultureInfo.InvariantCulture });
+        refresh.Invoke(boxed, new object[] { RunnerSessionCulture, RunnerSessionCulture });
         return boxed;
     }
+
+    /// <summary>
+    /// The culture the skeleton session runs under.
+    ///
+    /// A real BC service tier never runs a session on InvariantCulture: the session's
+    /// culture, its FormatSettings and the executing thread's culture all come from the
+    /// user's language, and a default install is en-US. The runner used InvariantCulture
+    /// throughout, which is observably different AL behaviour — e.g.
+    /// <c>CurrReport.FormatRegion := 'en-US'</c> is a no-op on real BC (the session already
+    /// formats as en-US, so ReportLocalLanguageScope.UpdateLanguage pushes nothing and the
+    /// getter reads back the session's empty override stack), but on an invariant session
+    /// BC correctly treats it as a genuine override and pushes it.
+    ///
+    /// Using en-US also makes a run independent of the host machine's locale, which
+    /// otherwise leaks into <c>Thread.CurrentThread.CurrentCulture</c> comparisons inside
+    /// BC's own code.
+    /// </summary>
+    public static readonly CultureInfo RunnerSessionCulture = CultureInfo.GetCultureInfo("en-US");
 
     /// <summary>
     /// Plant <see cref="BuildSkeletonRegionalSettings"/> into the skeleton session's
@@ -268,6 +286,21 @@ public static partial class BcRuntime
         if (_cachedInvariantFmt != null) return _cachedInvariantFmt;
         var nclAsm = AppDomain.CurrentDomain.GetAssemblies()
             .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
+
+        // Same construction BC uses for InvariantFormatSettings (decompile @ 206944-206957),
+        // but for the runner's session culture rather than InvariantCulture — the skeleton
+        // session IS an en-US session, so its format settings must say so.
+        var fmtType = typeof(Microsoft.Dynamics.Nav.Runtime.FormatSettings);
+        var create = fmtType.GetMethod("Create", BindingFlags.NonPublic | BindingFlags.Static);
+        var clientSettings = BuildSkeletonRegionalSettings();
+        if (create != null && clientSettings != null
+            && create.Invoke(null, new[] { (object)RunnerSessionCulture.LCID, clientSettings })
+               is Microsoft.Dynamics.Nav.Runtime.FormatSettings built)
+        {
+            _cachedInvariantFmt = built;
+            return built;
+        }
+
         var navSessionType = nclAsm?.GetType("Microsoft.Dynamics.Nav.Runtime.NavSession");
         var prop = navSessionType?.GetProperty("InvariantFormatSettings",
             BindingFlags.NonPublic | BindingFlags.Static);
@@ -318,7 +351,7 @@ public static partial class BcRuntime
     /// Return InvariantCulture so format/parse paths work in headless mode.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    public static CultureInfo NavSession_get_Culture(object? self) => CultureInfo.InvariantCulture;
+    public static CultureInfo NavSession_get_Culture(object? self) => RunnerSessionCulture;
 
     // Monotonic fake session counter (>= 1) handed out to ALSession.ALStartSession callers.
     // Faithful to the contract that StartSession assigns a fresh non-zero session id.
