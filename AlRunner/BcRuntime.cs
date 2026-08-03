@@ -1332,15 +1332,9 @@ public static partial class BcRuntime
         // NavMethodScope..ctor(3) / ThrowStackOverflow / AssertError / Dispose(bool) are all
         // Cecil-owned (see NclCecilRewrite.cs, "NavMethodScope cluster").
 
-        // TreeHandler.get_Session — the tree's session field is null (root has no session propagated).
-        // Return _skeletonSession so NavApplicationObjectBase.ctor and NavRecord.ctor can find a session.
-        if (treeHandlerType != null)
-        {
-            var treeSessionProp = treeHandlerType.GetProperty("Session",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (treeSessionProp?.GetGetMethod(true) != null)
-                Hook(treeSessionProp.GetGetMethod(true)!, nameof(TreeHandler_get_Session), "TreeHandler.get_Session");
-        }
+        // TreeHandler.get_Session is Cecil-owned (see NclCecilRewrite.cs block 9b) — the tree's
+        // session field is null (the root has no session to propagate), so it returns
+        // _skeletonSession instead.
 
         // ALTelemetryHelper.LogALErrorTelemetry — called before creating NavNCLDialogException;
         // NREs through SessionContextHelper.GetALScope → NavGlobal.get_NCLMetadata on skeleton.

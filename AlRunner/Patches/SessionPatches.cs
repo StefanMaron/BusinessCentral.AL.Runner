@@ -25,7 +25,8 @@ public static partial class BcRuntime
     /// can access a non-null session without needing a real BC tree.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    public static object? TreeHandler_get_Session(object self) => _skeletonSession;
+    public static Microsoft.Dynamics.Nav.Runtime.NavSession? TreeHandler_get_Session(object self)
+        => _skeletonSession as Microsoft.Dynamics.Nav.Runtime.NavSession;
 
     /// <summary>
     /// Seed <c>NavSession.appId</c>, which AL's <c>Session.ApplicationIdentifier()</c> reads

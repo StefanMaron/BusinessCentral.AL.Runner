@@ -93,6 +93,11 @@ public static class NclCecilRewrite
         // NavCurrentThread.get_Session — AsyncLocal-backed; falls back to the skeleton
         // session on any flow the bootstrap ExecutionContext does not reach.
         "Microsoft.Dynamics.Nav.Runtime.NavCurrentThread::get_Session/0",
+        // TreeHandler.get_Session — `=> session`, and that field is null on every tree the
+        // runner builds (the root handler has no session to propagate). Callers do not
+        // null-check it: NavFieldRef.ALValidateSafe() hands it straight to
+        // NavRecord.GetCallerRecord, which derefs it.
+        "Microsoft.Dynamics.Nav.Runtime.TreeHandler::get_Session/0",
         // SessionTransactionExtensions.HasWriteTransaction — AL's Database.IsInWriteTransaction().
         "Microsoft.Dynamics.Nav.Runtime.SessionTransactionExtensions::HasWriteTransaction/1",
         // ALDatabase.CurrentTransactionType — AL's Database.CurrentTransactionType().
@@ -1338,6 +1343,43 @@ public static class NclCecilRewrite
 
             ReplaceBodyWithHelper(asm.MainModule, getSession, sessionHelper);
             Console.Error.WriteLine("[Cecil] Rewrote NavCurrentThread.get_Session → BcRuntime.NavCurrentThread_get_Session");
+        }
+
+        // 9b. TreeHandler.get_Session — see BcRuntime.TreeHandler_get_Session.
+        //     The real body is `=> session`, a readonly field set in the ctor from
+        //     `parentHandler.session ?? (hostObject as NavSession)`. The runner's root tree
+        //     handler carries no session, so every tree node inherits null. Callers do not
+        //     guard: `NavFieldRef.ALValidateSafe()` passes it straight into
+        //     `NavRecord.GetCallerRecord(session)`, which derefs `session.CurrentMethodScope`
+        //     and NREs — AL's parameterless `FieldRef.Validate()` could never run.
+        //
+        //     This replacement used to be a JmpHook, which has been disabled by default since
+        //     the Cecil migration, so the call site was a silent no-op. Migrating it, not
+        //     re-enabling JmpHook.
+        //
+        //     Returning the skeleton session unconditionally is equivalent to returning the
+        //     field when it is set: the runner is single-session by construction, so the only
+        //     NavSession that can ever reach a tree handler IS the skeleton session.
+        {
+            var treeHandlerType = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.TreeHandler")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] TreeHandler type not found — Ncl shape changed; do not commit");
+
+            var thGetSession = treeHandlerType.Methods
+                .FirstOrDefault(m => m.Name == "get_Session" && !m.IsStatic
+                                     && m.Parameters.Count == 0 && m.HasBody)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] TreeHandler.get_Session not found — Ncl shape changed; do not commit");
+
+            var thHelper = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.TreeHandler_get_Session),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] BcRuntime.TreeHandler_get_Session not found");
+
+            ReplaceBodyWithHelper(asm.MainModule, thGetSession, thHelper);
+            Console.Error.WriteLine("[Cecil] Rewrote TreeHandler.get_Session → BcRuntime.TreeHandler_get_Session");
         }
 
         // 10. NavSession.ThrowSessionTerminatedExceptionIfStopping() → no-op.
