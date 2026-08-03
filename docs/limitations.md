@@ -229,6 +229,53 @@ the exact value will see different results.
 
 ---
 
+## BC 26
+
+Not supported. The runner is tested against **BC 27.0 and up** — see
+`.github/bc-versions.txt` for the exact matrix.
+
+This is not a statement about the runner's capability. The canonical test corpus
+(`tests/al-language`) declares in its own `app.json`:
+
+```
+platform:     27.0.0.0
+dependencies: System Application 27.5.0.0
+              Base Application   27.5.0.0
+```
+
+Those are AL *minimum* versions, so a BC 26 provisioning — platform 26.0, System
+and Base Application 26.x — is rejected by the compiler before a single test
+runs. The corpus is a read-only upstream submodule pinned to 27.5-era System
+Application surface, so lowering that floor is neither this repo's call nor free:
+it would mean deleting the coverage that depends on it.
+
+"The runner supports BC 26" and "the corpus runs on BC 26" are therefore separate
+claims, and only the second one is blocked by the above. Demonstrating the first
+would need a small suite with its own BC 26-compatible `app.json`, not the corpus.
+
+Three interface shapes cannot be bridged by reflection, because the runner
+implements or constructs them and the C# compiler must agree with the reference
+assembly before any code runs:
+
+| Shape | BC 26 | BC 27+ |
+|---|---|---|
+| `ITestPage` part accessor | `ITestPage GetPage(int)` | `ITestPart GetPart(int)` (`ITestPart` does not exist on 26) |
+| `INCLObjectXmlMetadataLoader.GetExtensionDeltasForAppObject` | returns `NavAppObjectMetadataTimestampRecord<T>` | returns bare `T` |
+| `NCLObjectXmlMetadata` ctor | extra leading `long timestamp` | no timestamp |
+
+Commit `0983df71` handled all three with version-derived compile constants and is
+the reference if a future BC version needs the same treatment. The constants were
+removed again when BC 26 was dropped, because nothing in CI could exercise them
+and an unexercised `#if` branch rots silently.
+
+One further known difference, reached but never resolved: `NavTenant
+.GetObjectAccessIntent` takes `(session, objectType, objectId)` on BC 27+ but
+`(objectType, objectId)` on 26, and the Cecil pass looks it up by arity. That is
+the *first* failure past compilation, not necessarily the last — the pass aborts
+there, so everything behind it is unmeasured.
+
+---
+
 ## Known gaps — in scope but not yet implemented
 
 These are not architectural limits. They can be fixed; report them at

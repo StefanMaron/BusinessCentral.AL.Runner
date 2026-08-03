@@ -14,23 +14,6 @@ using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
 using Microsoft.Dynamics.Nav.Types.Data;
 
-// Subpage parts are the one place BC's test-page interface changed shape between majors,
-// and it changed in two ways at once: BC 26 declares `ITestPage GetPage(int)`, BC 27
-// renamed it to `GetPart(int)` and introduced a derived ITestPart type that does not exist
-// on 26 at all. We IMPLEMENT this interface, so it cannot be bridged by reflection — the
-// compiler has to agree with the reference assembly before any code runs.
-//
-// The return type is handled by this alias, so every signature, field and base list below
-// reads the same on both. Only the METHOD NAME needs an #if, and each site delegates to a
-// single shared body so the logic is never duplicated. On 26 the alias resolves to
-// ITestPage, which MockITestPage/LiveNavTestPage already implement — naming it again in a
-// base list is redundant but legal, which is what keeps the part types version-agnostic.
-#if BC_TESTPAGE_GETPAGE
-using ITestPartCompat = Microsoft.Dynamics.Nav.Types.ITestPage;
-#else
-using ITestPartCompat = Microsoft.Dynamics.Nav.Types.ITestPart;
-#endif
-
 namespace AlRunner;
 
 /// <summary>
@@ -67,13 +50,7 @@ internal class MockITestPage : ITestPage
         return a;
     }
 
-#if BC_TESTPAGE_GETPAGE
-    public virtual ITestPartCompat GetPage(int id)                                      => GetPartCore(id);
-#else
-    public virtual ITestPartCompat GetPart(int id)                                      => GetPartCore(id);
-#endif
-    /// <summary>The subpage part for <paramref name="id"/>, named the same on every BC major.</summary>
-    protected virtual ITestPartCompat GetPartCore(int id)                               => new MockITestPart();
+    public virtual ITestPart  GetPart(int id)                                           => new MockITestPart();
     public virtual ITestAction GetBuiltInAction(FormResult formResult)                  => new MockITestAction();
     public virtual ITestFilter GetDataItemFilter(string id)                              => this;
     public void               SetSelection(bool value)                                  { }
@@ -142,7 +119,7 @@ internal class LiveNavTestPage : MockITestPage
     // id — both needed to build a subpage part, which is another page over another table.
     private readonly object? _owner;
     private readonly int _pageId;
-    private readonly Dictionary<int, ITestPartCompat> _parts = new();
+    private readonly Dictionary<int, ITestPart> _parts = new();
 
     public LiveNavTestPage(NavRecord record, IReadOnlyDictionary<int, int> controlIdToFieldNo)
         : this(record, controlIdToFieldNo, creatable: true, page: null) { }
@@ -187,13 +164,7 @@ internal class LiveNavTestPage : MockITestPage
     /// Page = , Id = 0". A part that cannot be built now refuses by NAME rather than
     /// answering as an empty page that silently reports no rows and accepts no inserts.
     /// </summary>
-#if BC_TESTPAGE_GETPAGE
-    public override ITestPartCompat GetPage(int controlId) => GetPartCore(controlId);
-#else
-    public override ITestPartCompat GetPart(int controlId) => GetPartCore(controlId);
-#endif
-
-    protected override ITestPartCompat GetPartCore(int controlId)
+    public override ITestPart GetPart(int controlId)
     {
         if (_parts.TryGetValue(controlId, out var cached)) return cached;
 
@@ -1088,7 +1059,7 @@ internal sealed class LiveNavTestAction : ITestAction
 /// ITestPart extends ITestPage + ITestFilter + IDisposable, so this derives
 /// from MockITestPage which already implements all required members.
 /// </summary>
-internal sealed class MockITestPart : MockITestPage, ITestPartCompat
+internal sealed class MockITestPart : MockITestPage, ITestPart
 {
     public bool Enabled => true;
     public bool Visible => true;
@@ -1104,7 +1075,7 @@ internal sealed class MockITestPart : MockITestPage, ITestPartCompat
 /// show the previous row's children — a wrong answer that no assertion in the part itself
 /// could distinguish from a right one.
 /// </summary>
-internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPartCompat
+internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
 {
     private readonly NavRecord _parentRecord;
     private readonly (int PartFieldNo, int ParentFieldNo)[] _links;

@@ -1,4 +1,10 @@
 # BC version prefixes to test against.
 # Both test-matrix.yml and publish.yml read this file.
 # Add or remove versions here — both workflows pick up changes automatically.
-26.0 26.3 26.5 27.0 27.3 27.5 28.0 28.1
+#
+# BC 26 is deliberately absent. The canonical corpus (tests/al-language) declares
+# platform 27.0.0.0 and requires System Application / Base Application >= 27.5.0.0
+# in its own app.json, so no BC 26 provisioning can satisfy it and the leg cannot
+# go green regardless of runner capability. The corpus is a read-only upstream
+# submodule, so that floor is not ours to lower. See docs/limitations.md.
+27.0 27.3 27.5 28.0 28.1
