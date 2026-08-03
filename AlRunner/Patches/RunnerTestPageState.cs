@@ -55,7 +55,7 @@ public static class RunnerTestPageState
             if (navTestPage == null) return;
             _testPageField ??= FindTestPageField(navTestPage.GetType());
             if (_testPageField?.GetValue(navTestPage) is not LiveNavTestPage live) return;
-            live.MarkOpened();
+            live.MarkOpened(viewMode);
             // Before anything else reads the page: OnOpenPage is where a page establishes what
             // it is looking at — the singleton buffer it fetches or creates for the current
             // user, the filter it narrows to its caller's context.

@@ -152,7 +152,7 @@ internal class LiveNavTestPage : MockITestPage
     // TestPage.Editable() reaches here (NavTestPage.ALEditable => TestPage.RuntimeEditable).
     // A constant true made every `CurrPage.Editable(false)` invisible to the test that was
     // written to check it.
-    public override bool RuntimeEditable => _page?.PageEditable ?? true;
+    public override bool RuntimeEditable => _staticEditable;
 
     /// <summary>
     /// The subpage part hosted by <paramref name="controlId"/>, driven live over its own
@@ -337,7 +337,29 @@ internal class LiveNavTestPage : MockITestPage
     // is after the test's assertions have already read the table. See RunnerTestPageState.
     private bool _opened;
 
-    internal void MarkOpened() => _opened = true;
+    /// <summary>
+    /// Record that BC opened this page, in <paramref name="viewMode"/>.
+    ///
+    /// The mode is what <c>TestPage.Editable()</c> answers from. Real BC reports the page's
+    /// STATIC editability there — the mode it was opened in, combined with the page's own
+    /// <c>Editable</c> property — not whatever <c>CurrPage.Editable(…)</c> last set from a
+    /// row trigger (corpus CU60687
+    /// CurrPageEditable_TestPageGetterIgnoresTheRuntimeToggle, validated against a real
+    /// service tier: a page whose OnAfterGetRecord flips CurrPage.Editable(false) still reads
+    /// back Editable() = true). The live per-CONTROL properties are the mechanism that does
+    /// follow the row; these are two different mechanisms and BC surfaces both.
+    ///
+    /// The page's declared Editable is read HERE, before OnOpenPage runs, so a runtime
+    /// toggle cannot have moved it yet.
+    /// </summary>
+    internal void MarkOpened(Microsoft.Dynamics.Nav.Types.Metadata.ViewMode viewMode)
+    {
+        _opened = true;
+        _staticEditable = viewMode != Microsoft.Dynamics.Nav.Types.Metadata.ViewMode.View
+                          && (_page?.PageEditable ?? true);
+    }
+
+    private bool _staticEditable = true;
 
     /// <summary>Run the page's OnOpenPage — see RunnerTestPageState.MarkOpened.</summary>
     internal void RaiseOnOpenPage() => _page?.RaiseOnOpenPage();
@@ -571,19 +593,14 @@ internal class LiveNavTestPage : MockITestPage
     /// that reads as a real, plausible value belonging to the wrong row, so the test fails
     /// claiming the data is wrong rather than the cursor.
     ///
-    /// The current row is KEPT when the new filter still admits it, which is what BC's client
-    /// does and what makes "filter, then keep reading here" work. `ALFind("=")` is the probe:
-    /// it re-reads the record at the current primary key UNDER the current filters, so a false
-    /// answer means precisely "this row is no longer on the page".
+    /// Real BC always repositions to the FIRST row of the new filtered set, exactly like the
+    /// underlying Record.SetFilter; it does not special-case "the current row still
+    /// qualifies" to leave the cursor in place (corpus CU60694
+    /// SetFilter_EvenWhenCurrentRowStillQualifies_RepositionsToTheFirstMatch, validated
+    /// against a real service tier). An empty result leaves the page on no row, which
+    /// MoveFirst reports as false.
     /// </summary>
-    private void RepositionAfterFilterChange()
-    {
-        var position = _record.ALGetPosition();
-        if (!string.IsNullOrEmpty(position)
-            && _record.ALFindAsync(DataError.TrapError, "=").GetAwaiter().GetResult())
-            return;
-        MoveFirst();
-    }
+    private void RepositionAfterFilterChange() => MoveFirst();
 
     public override string GetFilter(int fieldNo)
         => _record.ALGetFilter(fieldNo);
