@@ -399,18 +399,62 @@ public sealed class DependencyResolverTests : IDisposable
     }
 
     /// <summary>
-    /// The tie-break is a TIE-break only: a strictly higher symbol-only version still
-    /// beats a lower R2R one, because version is the primary key (BC minimum-version
-    /// semantics). Guards against "prefer R2R" being applied across versions.
+    /// A code-bearing package beats a strictly HIGHER symbol-only one, so long as both clear
+    /// the declared minimum.
+    ///
+    /// This reverses the rule this test previously asserted ("version is the primary key;
+    /// a higher symbol-only version still wins"). That reading conflated two things: BC's
+    /// minimum-version semantics, which the `&lt; dep.Version` filter in SelectBestVersion
+    /// already enforces, and a claim that the HIGHEST acceptable version must win, which BC
+    /// does not require. A symbol-only package cannot execute at all — resolution picking it
+    /// over an executable peer does not honour version semantics, it silently disables the
+    /// app: NavCodeunitHandle_CreateTarget substitutes a NoOpCodeunit and the first call
+    /// fails with "The object with ID 0 does not have a member with that ID."
+    ///
+    /// Measured, not theoretical. The al-language corpus commits
+    /// .alpackages/System Application.app at v27.5.46862.48827, symbols-only. On the BC 27.0
+    /// and 27.3 matrix legs the provisioned code-bearing app sorts below it, so
+    /// `Codeunit "Temp Blob"` lost its body: 17 corpus failures on each leg, identical sets,
+    /// across CreateInStream/CreateOutStream and every report dataset built on one. The 27.5
+    /// and 28.x legs passed only because their provisioned build happened to outrank 48827.
+    /// Both legs go to 1904/1904 with executability ranked first.
     /// </summary>
     [Fact]
-    public void HigherSymbolOnlyVersion_StillBeats_LowerR2RVersion()
+    public void LowerCodeBearingVersion_Beats_HigherSymbolOnlyVersion()
     {
         var appId = "cccccccc-0000-0000-0000-000000000003";
         var dir = MakeDir("mixed");
 
         WriteApp(dir, "Lib_v28_1_r2r.app", appId, "Tests-TestLibraries", "Microsoft",
             "28.1.49838.50794", r2r: true);
+        WriteApp(dir, "Lib_v28_2_sym.app", appId, "Tests-TestLibraries", "Microsoft",
+            "28.2.50931.51111", r2r: false);
+
+        var resolver = new DependencyResolver(new[] { dir });
+        var dep = new DependencyRef(Guid.Parse(appId), "Tests-TestLibraries", "Microsoft",
+            new Version(28, 0, 0, 0));
+
+        var result = resolver.Resolve(new[] { dep });
+
+        Assert.Single(result);
+        Assert.Equal(new Version(28, 1, 49838, 50794), result[0].Manifest.Version);
+        Assert.Equal("Lib_v28_1_r2r.app", Path.GetFileName(result[0].AppPath));
+    }
+
+    /// <summary>
+    /// The negative direction of the rule above, and the one that keeps it honest: ranking
+    /// executability first must NOT reach below the declared minimum to find something
+    /// executable. A code-bearing package under dep.Version stays excluded, and the
+    /// symbol-only package that does clear the minimum is the answer.
+    /// </summary>
+    [Fact]
+    public void CodeBearingBelowMinimum_IsNotChosen_OverSymbolOnlyThatMeetsIt()
+    {
+        var appId = "cccccccc-0000-0000-0000-000000000009";
+        var dir = MakeDir("mixed-below-min");
+
+        WriteApp(dir, "Lib_v27_r2r.app", appId, "Tests-TestLibraries", "Microsoft",
+            "27.5.46862.53242", r2r: true);
         WriteApp(dir, "Lib_v28_2_sym.app", appId, "Tests-TestLibraries", "Microsoft",
             "28.2.50931.51111", r2r: false);
 

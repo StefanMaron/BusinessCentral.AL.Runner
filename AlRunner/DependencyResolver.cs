@@ -172,62 +172,84 @@ public sealed class DependencyResolver
         nearMissVersions = null;
         (AppManifest Manifest, string Path) best = default;
 
+        // A workspace .alpackages normally holds the SYMBOL-ONLY dev package of System
+        // Application / Base Application while the executable R2R package lives in the
+        // provisioned package cache. Picking the symbol-only copy makes every codeunit in
+        // that app unresolvable at runtime: NavCodeunitHandle_CreateTarget substitutes a
+        // NoOpCodeunit for the system id range, so the first procedure call dies with the
+        // cryptic "Function ID N was called. The object with ID 0 does not have a member
+        // with that ID."
+        //
+        // Executability therefore ranks ABOVE version among candidates that already satisfy
+        // the declared minimum (filtered below): a package that cannot execute is not a
+        // valid runtime answer while one that can is available. Ranking version first and
+        // using executability only to settle exact ties — as this did — meant a symbols-only
+        // copy that happened to carry a HIGHER version silently shadowed the code-bearing
+        // one and nothing downstream could run it.
+        //
+        // That was not hypothetical. The al-language corpus commits
+        // .alpackages/System Application.app at v27.5.46862.48827, symbols-only. On the BC
+        // 27.0 and 27.3 matrix legs the provisioned code-bearing app (v27.0.38460.53260 /
+        // v27.3.44313.53267) sorts BELOW it, so `Codeunit "Temp Blob"` lost its body and
+        // every CreateInStream/CreateOutStream — and every report dataset built on one —
+        // failed with object-ID-0. The 27.5 and 28.x legs passed only because their
+        // provisioned build happened to outrank 48827 on version.
+        //
+        // Minimum-version semantics are untouched: the filter below still excludes anything
+        // under dep.Version, so this only reorders candidates that were already acceptable.
+        var isExecutable = new Dictionary<string, bool>(StringComparer.Ordinal);
+        bool Executable(string path)
+        {
+            if (!isExecutable.TryGetValue(path, out var r))
+                isExecutable[path] = r = AppLoader.IsR2R(path);
+            return r;
+        }
+
         foreach (var c in candidates)
         {
             if (c.Manifest.Version < dep.Version) continue;
-            if (best.Manifest == null || c.Manifest.Version > best.Manifest.Version)
+            if (best.Manifest == null) { best = c; continue; }
+
+            var candidateExecutable = Executable(c.Path);
+            if (candidateExecutable != Executable(best.Path))
             {
-                best = c;
+                if (candidateExecutable) best = c;
                 continue;
             }
-            // Same version, two packages. Version alone cannot separate them, so the old
-            // `>` comparison left the winner decided by index order — i.e. by which cache
-            // dir happened to be scanned first. A workspace .alpackages normally holds the
-            // SYMBOL-ONLY dev package of System Application / Base Application while the
-            // executable R2R package lives in the provisioned package cache; picking the
-            // symbol-only copy makes every codeunit in that app unresolvable at runtime,
-            // and NavCodeunitHandle_CreateTarget then substitutes a NoOpCodeunit for the
-            // system id range — so the first procedure call dies with the cryptic
-            // "Function ID N was called. The object with ID 0 does not have a member with
-            // that ID." Prefer the package that can actually execute. Version stays the
-            // primary key (checked above), so this never overrides minimum-version
-            // semantics — it only settles a tie.
-            if (c.Manifest.Version == best.Manifest.Version
-                && AppLoader.IsR2R(c.Path) && !AppLoader.IsR2R(best.Path))
-            {
-                best = c;
-            }
+            if (c.Manifest.Version > best.Manifest.Version) best = c;
         }
 
         if (best.Manifest != null)
         {
-            // The tie-break above only settles EQUAL versions. When a symbols-only copy is
-            // strictly HIGHER it wins outright and nothing downstream can execute it — the
-            // failure surfaces much later as an object-ID-0 MissingMethod inside BC. Say so
-            // now, naming the winner and what it displaced, so the fix is obvious.
+            // Ranking executability first means a code-bearing candidate can no longer be
+            // shadowed by a higher symbols-only one. So reaching here with a symbols-only
+            // winner means NO code-bearing copy satisfied dep.Version at all — the code-
+            // bearing copies, if any, were excluded by the minimum-version filter. That is
+            // the one case left that still ends in object-ID-0 at runtime, and the fix is
+            // provisioning rather than resolution, so name the versions involved.
             //
-            // Not fatal: symbols-only is CORRECT for Microsoft platform apps, whose runtime
-            // comes from the service-tier DLLs (see IsMicrosoftPlatformApp) — warning on
-            // those would fire on every healthy run and teach readers to ignore this.
-            if (!AppLoader.IsR2R(best.Path)
+            // Not fatal, and deliberately quiet for Microsoft platform apps: symbols-only is
+            // legitimate for those, whose runtime can come from the service-tier DLLs (see
+            // IsMicrosoftPlatformApp). Warning on them would fire on healthy runs and teach
+            // readers to ignore this.
+            if (!Executable(best.Path)
                 && !IsMicrosoftPlatformApp(best.Manifest.Name, best.Manifest.Publisher))
             {
-                var shadowed = candidates
-                    .Where(c => c.Manifest.Version < best.Manifest.Version && AppLoader.IsR2R(c.Path))
+                var tooOld = candidates
+                    .Where(c => c.Manifest.Version < dep.Version && Executable(c.Path))
                     .OrderByDescending(c => c.Manifest.Version)
                     .ToList();
-                if (shadowed.Count > 0)
+                if (tooOld.Count > 0)
                     _diagnostics.Add(
                         $"[dep] note: {best.Manifest.Publisher}/{best.Manifest.Name} resolved to a "
                         + $"SYMBOLS-ONLY package v{best.Manifest.Version} (no publishedartifacts DLL):"
                         + $"\n           winner: {best.Path}"
-                        + string.Concat(shadowed.Select(c =>
-                            $"\n         shadowed: v{c.Manifest.Version} {c.Path} (code-bearing)"))
-                        + "\n           Resolution picks the HIGHEST version across all scanned dirs, so the"
-                        + "\n           code-bearing copy lost on version. This is COMMON AND USUALLY BENIGN —"
-                        + "\n           it occurs on known-good configurations. But it is the first thing to"
-                        + "\n           check if execution later fails with \"The object with ID 0 does not"
-                        + "\n           have a member with that ID\".");
+                        + string.Concat(tooOld.Select(c =>
+                            $"\n      below min: v{c.Manifest.Version} {c.Path} (code-bearing)"))
+                        + $"\n           Code-bearing copies exist but are all below the required minimum"
+                        + $"\n           v{dep.Version}, so none could be chosen. Provision a code-bearing"
+                        + "\n           package at or above that version, or execution will fail with"
+                        + "\n           \"The object with ID 0 does not have a member with that ID\".");
             }
 
             found = best;
