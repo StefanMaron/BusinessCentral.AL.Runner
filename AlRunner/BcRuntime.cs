@@ -1468,17 +1468,10 @@ public static partial class BcRuntime
                     "NavIntegerFormatter.FormatWithFormatNumber");
         }
 
-        // NavTestPageHandle.CreateTarget and NavTestPageBase.ALGoToRecord are Cecil-owned (see
-        // NclCecilRewrite.cs).
-
-        var testPageBaseType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavTestPageBase");
-        if (testPageBaseType != null)
-        {
-            var getMetaTable = testPageBaseType.GetMethod("GetMetaTable",
-                BindingFlags.NonPublic | BindingFlags.Instance);
-            if (getMetaTable != null)
-                Hook(getMetaTable, nameof(NavTestPageBase_GetMetaTable), "NavTestPageBase.GetMetaTable");
-        }
+        // NavTestPageHandle.CreateTarget, NavTestPageBase.ALGoToRecord and
+        // NavTestPageBase.GetMetaTable are Cecil-owned (see NclCecilRewrite.cs).
+        // GetMetaTable used to be hooked here; the JmpHook layer is off by default, so the
+        // registration was a silent no-op and BC's own body ran and NREd instead.
 
         // NavFormHandle.CreateTarget is Cecil-owned (see NclCecilRewrite.cs).
         var formHandleType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavFormHandle");

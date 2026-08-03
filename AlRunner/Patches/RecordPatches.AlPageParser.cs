@@ -87,6 +87,22 @@ public static partial class RecordPatches
         return !m.Success || !string.Equals(m.Groups[1].Value, "false", StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Whether the AL source parser has seen this page at all. Lets callers tell
+    /// "the page genuinely declares no SourceTable" (BC's SourceTable==0 case, a legal
+    /// AL page) apart from "we never parsed this page", which is a runner gap and must
+    /// be reported loudly rather than answered with a default.
+    /// </summary>
+    internal static bool IsPageParsed(int pageId) => _parsedPages.ContainsKey(pageId);
+
+    /// <summary>
+    /// Whether a parsed page declares a SourceTable in AL. False for a parsed page with
+    /// no SourceTable property (BC returns a null NCLMetaTable for those).
+    /// </summary>
+    internal static bool PageDeclaresSourceTable(int pageId)
+        => _parsedPages.TryGetValue(pageId, out var page)
+           && !string.IsNullOrWhiteSpace(page.SourceTableName);
+
     internal static int GetSourceTableIdForPage(int pageId)
     {
         if (!_parsedPages.TryGetValue(pageId, out var page) || string.IsNullOrWhiteSpace(page.SourceTableName))

@@ -80,6 +80,8 @@ public static class NclCecilRewrite
         // Cecil rewrite in step 6 of the TestPage cluster. Registering it here makes the
         // legacy JmpHook a no-op so the two mechanisms cannot coexist on this method.
         "Microsoft.Dynamics.Nav.Runtime.NavTestPageBase::ALGoToRecord/2",
+        // NavTestPageBase.GetMetaTable — same orphaned-JmpHook story as ALGoToRecord above.
+        "Microsoft.Dynamics.Nav.Runtime.NavTestPageBase::GetMetaTable/0",
         "Microsoft.Dynamics.Nav.Runtime.NavFormHandle::CreateTarget/0",
         "Microsoft.Dynamics.Nav.Runtime.NavReportHandle::CreateTarget/0",
         "Microsoft.Dynamics.Nav.Runtime.NavQueryHandle::CreateTarget/0",
@@ -1157,6 +1159,36 @@ public static class NclCecilRewrite
 
             ReplaceBodyWithHelper(asm.MainModule, goToRecord, helperMi);
             Console.Error.WriteLine("[Cecil] Rewrote NavTestPageBase.ALGoToRecord → BcRuntime.NavTestPageBase_ALGoToRecord");
+        }
+
+        // 7. NavTestPageBase.GetMetaTable() — the sibling orphan of #6, and left behind when
+        //    ALGoToRecord was migrated. BC's body reads
+        //    `MetaPage.Properties.SourceObject.SourceTable`, which NREs on the runner's page
+        //    metadata, so every TestPage API routed through PrimaryKeyFields —
+        //    GoToKey, FindFirstField, FindNextField, FindPreviousField, Filter — died
+        //    before reaching the backing LiveNavTestPage.
+        //
+        //    The replacement resolves the SourceTable from the AL source the runner parsed,
+        //    which is the same map TestPageFactory already builds the page's record from, so
+        //    the two cannot disagree.
+        {
+            var getMetaTable = navTestPageBaseType.Methods
+                .FirstOrDefault(m => m.Name == "GetMetaTable" && m.Parameters.Count == 0 && m.HasBody)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NavTestPageBase.GetMetaTable() not found — Ncl shape changed; do not commit");
+
+            var metaTableHelper = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.NavTestPageBase_GetMetaTable),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] BcRuntime.NavTestPageBase_GetMetaTable not found");
+
+            if (getMetaTable.ReturnType.FullName != metaTableHelper.ReturnType.FullName)
+                throw new InvalidOperationException(
+                    "[Cecil] GetMetaTable/helper return type mismatch — Ncl shape changed; do not commit");
+
+            ReplaceBodyWithHelper(asm.MainModule, getMetaTable, metaTableHelper);
+            Console.Error.WriteLine("[Cecil] Rewrote NavTestPageBase.GetMetaTable → BcRuntime.NavTestPageBase_GetMetaTable");
         }
 
 

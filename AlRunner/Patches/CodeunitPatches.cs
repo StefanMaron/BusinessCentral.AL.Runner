@@ -392,6 +392,19 @@ public static partial class BcRuntime
         var idProp = objId?.GetType().GetProperty("ObjectNumber",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
         var pageId = idProp?.GetValue(objId) is int value ? value : 0;
+
+        // BC's own body returns null when the page's SourceObject.SourceTable is 0 — a page
+        // without a source table is legal AL, and PrimaryKeyFields then reads as empty.
+        // Mirror that, but ONLY for a page we actually parsed: answering null for a page the
+        // parser never saw would turn a runner gap into a silently empty primary key.
+        if (!RecordPatches.IsPageParsed(pageId))
+            throw new InvalidOperationException(
+                $"TestPage {pageId} was never parsed from AL source — cannot resolve its " +
+                $"SourceTable, and guessing would silently yield an empty primary key.");
+
+        if (!RecordPatches.PageDeclaresSourceTable(pageId))
+            return null!;
+
         var tableId = RecordPatches.GetSourceTableIdForPage(pageId);
         if (tableId == 0)
             throw new InvalidOperationException($"TestPage {pageId} has no parsed SourceTable.");
