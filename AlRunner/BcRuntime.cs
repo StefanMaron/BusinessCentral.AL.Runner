@@ -979,6 +979,8 @@ public static partial class BcRuntime
                         BindingFlags.NonPublic | BindingFlags.Instance);
                     if (fAuthenticator != null)
                         FieldPoke.SetInstance(fAuthenticator, _skeletonSession!, skelAuth);
+
+                    SeedSkeletonAppId(sessType);
                 }
             }
             catch (Exception ex)

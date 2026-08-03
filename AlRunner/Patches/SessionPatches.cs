@@ -28,6 +28,60 @@ public static partial class BcRuntime
     public static object? TreeHandler_get_Session(object self) => _skeletonSession;
 
     /// <summary>
+    /// Seed <c>NavSession.appId</c>, which AL's <c>Session.ApplicationIdentifier()</c> reads
+    /// (via <c>ALSession.ALApplicationIdentifier</c> → <c>NavCurrentThread.Session.AppId</c>).
+    /// The skeleton session comes from GetUninitializedObject, so the field is null and AL
+    /// read back an empty string.
+    ///
+    /// The value is not invented. BC's own <c>AppId</c> setter resolves an unspecified
+    /// application id to <c>ServerUserSettings.Instance.DefaultApplicationId.Value</c>,
+    /// upper-cased — that setting's declared default is "NAV". The runner opens its session
+    /// without a client-supplied application id, so "NAV" is precisely what real BC would
+    /// have stored. Reading the setting rather than hardcoding keeps it correct if a future
+    /// BC build changes the default.
+    /// </summary>
+    private static void SeedSkeletonAppId(Type sessType)
+    {
+        try
+        {
+            var fAppId = sessType.GetField("appId", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (fAppId == null)
+            {
+                Console.Error.WriteLine(
+                    "[BcRuntime] WARN: NavSession.appId field not found — " +
+                    "Session.ApplicationIdentifier() will read back empty.");
+                return;
+            }
+
+            var typesAsm = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Types");
+            var tSettings = typesAsm?.GetType("Microsoft.Dynamics.Nav.Types.ServerUserSettings");
+            var instance = tSettings?.GetProperty("Instance",
+                BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+            var setting = instance == null ? null : tSettings!
+                .GetProperty("DefaultApplicationId", BindingFlags.Public | BindingFlags.Instance)
+                ?.GetValue(instance);
+            var value = setting?.GetType()
+                .GetProperty("Value", BindingFlags.Public | BindingFlags.Instance)
+                ?.GetValue(setting) as string;
+
+            if (string.IsNullOrEmpty(value))
+            {
+                Console.Error.WriteLine(
+                    "[BcRuntime] WARN: ServerUserSettings.DefaultApplicationId is empty — " +
+                    "Session.ApplicationIdentifier() will read back empty.");
+                return;
+            }
+
+            AlRunner.Infrastructure.FieldPoke.SetInstance(fAppId, _skeletonSession!, value.ToUpperInvariant());
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[BcRuntime] WARN: appId seed failed: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// Replacement for <c>NavCurrentThread.get_Session</c>.
     ///
     /// BC's body is <c>NavThreadLocalStorage.Current.Session?.Target</c> — an

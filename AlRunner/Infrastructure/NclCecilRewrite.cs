@@ -87,6 +87,9 @@ public static class NclCecilRewrite
         // NCLMetaQuery.CreateObjectInstance — same null-ApplicationObjectConstructor story,
         // for the STATIC Query.SaveAsXml/Csv/Json(id, …) forms.
         "Microsoft.Dynamics.Nav.Runtime.NCLMetaQuery::CreateObjectInstance/2",
+        // ALSystemOperatingSystem.get_ALGuiAllowed — AL's GuiAllowed(). True, because the
+        // runner registers a client callback and dispatches UI to test handlers.
+        "Microsoft.Dynamics.Nav.Runtime.ALSystemOperatingSystem::get_ALGuiAllowed/0",
         // NavCurrentThread.get_Session — AsyncLocal-backed; falls back to the skeleton
         // session on any flow the bootstrap ExecutionContext does not reach.
         "Microsoft.Dynamics.Nav.Runtime.NavCurrentThread::get_Session/0",
@@ -1264,6 +1267,42 @@ public static class NclCecilRewrite
 
             ReplaceBodyWithHelper(asm.MainModule, qCreate, qHelper);
             Console.Error.WriteLine("[Cecil] Rewrote NCLMetaQuery.CreateObjectInstance → BcRuntime.NCLMetaQuery_CreateObjectInstance");
+        }
+
+        // 8c. ALSystemOperatingSystem.get_ALGuiAllowed → true. This is AL's GuiAllowed().
+        //
+        //     BC's body is `NavCurrentThread.Session.CallbackAllowed`, which walks
+        //     serviceConnection / AccessLock / ClientCallbackOrNull — all null on the
+        //     skeleton session, so it reports false.
+        //
+        //     False is the wrong answer, not a conservative one: AL code branches on
+        //     GuiAllowed() to decide whether to raise UI at all, so a false answer silently
+        //     skips the very Message/Confirm/StrMenu/page calls the runner exists to route
+        //     into [MessageHandler]/[ConfirmHandler]/[PageHandler]. The runner IS a
+        //     UI-capable session — it dispatches those callbacks, and refuses unhandled UI
+        //     with "Unhandled UI" (see corpus CU60706) exactly as BC's test runner does.
+        //     True is what real BC reports under the test framework.
+        {
+            var alOsType = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.ALSystemOperatingSystem")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] ALSystemOperatingSystem type not found — Ncl shape changed; do not commit");
+
+            var guiAllowed = alOsType.Methods
+                .FirstOrDefault(m => m.Name == "get_ALGuiAllowed" && m.Parameters.Count == 0 && m.HasBody
+                                     && m.ReturnType.FullName == "System.Boolean")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] ALSystemOperatingSystem.get_ALGuiAllowed not found — do not commit");
+
+            var gaBody = guiAllowed.Body;
+            gaBody.Instructions.Clear();
+            gaBody.ExceptionHandlers.Clear();
+            gaBody.Variables.Clear();
+            var gaIl = gaBody.GetILProcessor();
+            gaIl.Append(gaIl.Create(OpCodes.Ldc_I4_1));
+            gaIl.Append(gaIl.Create(OpCodes.Ret));
+            gaBody.MaxStackSize = 1;
+            Console.Error.WriteLine("[Cecil] Rewrote ALSystemOperatingSystem.get_ALGuiAllowed → true (runner dispatches UI to test handlers)");
         }
 
         // 9. NavCurrentThread.get_Session — see BcRuntime.NavCurrentThread_get_Session.
