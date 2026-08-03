@@ -273,6 +273,25 @@ public sealed class JsonSymbolReferenceLoader : ISymbolReferenceLoader
     public bool HasAny => _moduleCache.Count > 0 || _dependencyCache.Count > 0;
 
     /// <summary>
+    /// Re-scan the root directory, picking up files written since construction.
+    ///
+    /// Indexing happens in the constructor, so a loader built over an initially-empty
+    /// directory would never see anything added later. Bundled mode needs exactly that:
+    /// an app is emitted, its symbols are written, and the NEXT app in the same bundle
+    /// must be able to reference it. Re-indexing in place keeps the loader OBJECT
+    /// identity, which is what makes this cheap — BcCompiler's expensive reference
+    /// loader (a filesystem scan plus a sequential symbol warm) is rebuilt only when its
+    /// content signature changes, and mutating this cache does not change it.
+    /// </summary>
+    public void Reindex()
+    {
+        _moduleCache.Clear();
+        _dependencyCache.Clear();
+        IndexModules();
+        IndexDependencySidecars();
+    }
+
+    /// <summary>
     /// Enumerate (publisher, name, version, appId) tuples for every cached module so
     /// callers can inject these specs into the BC compiler's reference list — without
     /// this, the compiler's PackageScanner only sees .app files and ignores our

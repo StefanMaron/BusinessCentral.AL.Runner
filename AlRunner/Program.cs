@@ -970,6 +970,21 @@ foreach (var bundle in bundles)
         // Suites whose AL hits BC emit bugs or bundled-only strictness checks are
         // quarantined under tests/excluded/ with a RUNNER-GAP-*.md note.
         var appGroups = BuildAppGroups(suites, bucketRoot, bundleAbs);
+
+        // ── in-bundle sibling symbols ──────────────────────────────────────
+        // BuildAppGroups orders an app after every sibling it depends on, but ordering
+        // alone does not make the sibling VISIBLE: references come from the resolved dep
+        // set, and a sibling app has no .app in any package cache. So `*-main` compiled
+        // without `*-dep` and hit AL0185 ("Codeunit 'XMI Dep Api' is missing"), which the
+        // emit-retry treats as a broken object — the whole test codeunit was dropped and
+        // its tests silently vanished from the run.
+        //
+        // Emit a *.symbols.json for each app some OTHER app in this bundle depends on, in
+        // topological order (a dep-of-a-dep is written before the app that needs it), and
+        // chain them into the compiler. Only sibling-dependency TARGETS are compiled here —
+        // this is an extra compile per app, and most bundles (the corpus: one app) have none.
+        EmitSiblingSymbols(appGroups, bundleAbs);
+
         var loadedAssemblies = new List<Assembly>();
         // SetTestAssembly re-runs its full body (incl. NavAppResourcePatches.RegisterTestAssembly)
         // on every call whose asm differs from whatever _currentTestAssembly currently holds —
@@ -3375,6 +3390,90 @@ static string? SelectVersionDirOrNull(string root, string versionPrefix)
 
 // Walks up from <bundlePath> until it finds a dir containing app.json.
 // Returns null if none found before /tests/ or filesystem root.
+/// <summary>
+/// Write a <c>*.symbols.json</c> (plus its dependency sidecar) for every app in this bundle
+/// that another app in the SAME bundle depends on, and register the directory holding them
+/// with the compiler so those later apps can reference them.
+///
+/// <paramref name="appGroups"/> must already be in topological order — the symbols for a
+/// dep-of-a-dep have to exist before the app that needs them is compiled. Only genuine
+/// sibling-dependency targets are emitted: each one costs an extra compile, and a bundle
+/// with no in-bundle dependencies (the corpus, every single-app bundle) does no work at all.
+///
+/// Failures are loud but non-fatal: without the symbols the dependent app fails to compile
+/// with AL0185, which is exactly the state this fixes, and the emit-retry already reports
+/// the dropped objects.
+/// </summary>
+static void EmitSiblingSymbols(List<AlRunner.AppGroup> appGroups, string bundleAbs)
+{
+    BcCompiler.SetSiblingSymbolsDir(null);
+    // Not a dictionary: two suites in the same tree can (and in tests/runner-extras do)
+    // carry the same app id, which would throw on insert. Only membership matters here.
+    var presentIds = appGroups.Where(g => g.AppId != null).Select(g => g.AppId!.Value).ToHashSet();
+    var targets = appGroups
+        .SelectMany(g => g.DependsOn)
+        .Where(presentIds.Contains)
+        .ToHashSet();
+    if (targets.Count == 0) return;
+
+    var dir = Path.Combine(Path.GetTempPath(),
+        "al-runner-sibling-symbols", Path.GetFileName(bundleAbs.TrimEnd(Path.DirectorySeparatorChar)));
+    try
+    {
+        if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        Directory.CreateDirectory(dir);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"  [sibling-symbols] cannot prepare {dir}: {ex.Message}");
+        return;
+    }
+
+    BcCompiler.SetSiblingSymbolsDir(dir);
+    // A sibling's symbol compile inherits the BUNDLE-WIDE dep spec list, which in a
+    // parent-of-many-apps bundle includes packages only ONE suite declares — among them
+    // synthetic source-only .apps that the compiler's .app scanner cannot read at all.
+    // Unlike the primary emit, this compile checks declaration diagnostics, so an unrelated
+    // suite's fixture package would fail every sibling here. See ScopeSymbolBearingDepsOnly.
+    using var depScope = BcCompiler.ScopeSymbolBearingDepsOnly();
+    foreach (var group in appGroups)
+    {
+        if (group.AppId == null || !targets.Contains(group.AppId.Value)) continue;
+        var symbolsPath = Path.Combine(dir, $"{group.AppId:N}.symbols.json");
+        try
+        {
+            using (BcCompiler.ScopeCurrentAppIdentity(
+                       group.AppId.Value, group.Publisher ?? "AlRunner",
+                       group.Version ?? new Version(1, 0, 0, 0)))
+                new BcCompiler().EmitDepSymbols(
+                    group.Paths, group.ModuleName, group.AppId.Value,
+                    group.Publisher ?? "AlRunner", group.Version ?? new Version(1, 0, 0, 0),
+                    symbolsPath);
+            // The dependency closure this app compiled against, so BC's ReferenceManager can
+            // link types from it that appear in the sibling's public surface — same reason as
+            // the source-dep sidecar (#1546); without it those types are __MissingTypeSymbol__.
+            DepsSidecarWriter.Write(
+                Path.Combine(dir, $"{group.AppId:N}.symbols.deps.json"),
+                group.Publisher ?? "AlRunner", group.ModuleName,
+                group.Version ?? new Version(1, 0, 0, 0), group.AppId.Value,
+                DepsSidecarWriter.BuildClosure(
+                    Array.Empty<DepsSidecarWriter.DepEntry>(),
+                    ScanVendoredPlatformApps(
+                        Directory.EnumerateDirectories(bundleAbs, ".alpackages", SearchOption.AllDirectories)),
+                    group.AppId.Value));
+            // Re-index in place so the NEXT app in this loop — and every app group compiled
+            // below — sees it, without rebuilding the expensive shared reference loader.
+            BcCompiler.RefreshSiblingSymbols();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                $"  [sibling-symbols] {group.ModuleName}: {ex.GetType().Name}: {ex.Message} — " +
+                "apps depending on it will fail to compile against it");
+        }
+    }
+}
+
 /// <summary>
 /// The manifests whose dependency lists together define this bundle's compile closure.
 ///

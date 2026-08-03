@@ -372,17 +372,23 @@ public static partial class RecordPatches
     internal static int[] KnownReportIds() => KnownReportIdSet().ToArray();
 
     private static HashSet<int>? _knownReportIds;
-    private static (int Apps, int Parsed) _knownReportIdsBuiltFrom = (-1, -1);
+    // Assembly count is part of the generation: a Tier-1 precompiled dependency's reports
+    // only become knowable once its DLL is loaded, which happens AFTER this set is first
+    // asked for. Without it the empty answer would be memoized for the whole run.
+    private static (int Apps, int Parsed, int Assemblies) _knownReportIdsBuiltFrom = (-1, -1, -1);
 
     /// <summary>Memoized backing set, rebuilt on the same generation key as the row cache.</summary>
     internal static HashSet<int> KnownReportIdSet()
     {
-        var generation = (_bcAppPaths.Count, _parsedReports.Count);
+        var generation = (_bcAppPaths.Count, _parsedReports.Count,
+            AppDomain.CurrentDomain.GetAssemblies().Length);
         if (_knownReportIds != null && _knownReportIdsBuiltFrom == generation) return _knownReportIds;
 
         var ids = new HashSet<int>(_parsedReports.Keys);
         foreach (var symbol in EnumerateBcAppReportSymbols())
             ids.Add(symbol.Id);
+        foreach (var id in CompiledReportIds())
+            ids.Add(id);
         _knownReportIds = ids;
         _knownReportIdsBuiltFrom = generation;
         return ids;
@@ -398,6 +404,33 @@ public static partial class RecordPatches
         foreach (var i in items)
             if (i.Indentation == 0) return i.RelatedTableId;
         return 0;
+    }
+
+    /// <summary>
+    /// Report ids that exist as a compiled <c>Report{id}</c> type in a loaded assembly.
+    ///
+    /// The other two sources both need something the runner does not always have: AL source
+    /// it compiled itself, or a <c>SymbolReference.json</c> inside a dependency's .app. A
+    /// TIER-1 PRECOMPILED dependency has neither — DependencyLoader loads its DLL directly
+    /// and never extracts or compiles AL — so its reports were unknown, and
+    /// <c>Report.SaveAs</c> on one failed with BC's "metadata object Report N was not found /
+    /// the application might be incompatible with the current compiler" rather than running.
+    /// The compiled type is proof the report exists, which is exactly what this set answers.
+    /// </summary>
+    private static IEnumerable<int> CompiledReportIds()
+    {
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            Type[] types;
+            try { types = asm.GetTypes(); }
+            catch { continue; } // dynamic/reflection-only assemblies — nothing to learn here
+            foreach (var t in types)
+            {
+                if (!t.Name.StartsWith("Report", StringComparison.Ordinal)) continue;
+                if (!int.TryParse(t.Name.AsSpan(6), out var id) || id <= 0) continue;
+                yield return id;
+            }
+        }
     }
 
     private static IEnumerable<BcAppSymbolCache.ReportSymbol> EnumerateBcAppReportSymbols()

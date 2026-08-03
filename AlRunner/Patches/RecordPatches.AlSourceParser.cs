@@ -56,6 +56,27 @@ public static partial class RecordPatches
     // stores as NCLMetaField.initialValueText and evaluates via
     // ALSystemVariable.EvaluateIntoNavValue inside the NCLMetaField.InitValue
     // getter at Init() time.
+    // Caption = 'text'; — the field's declared caption. Without it BC's
+    // NCLMetaField.CreateCaptionStrings falls back to the field NAME, so
+    // `Rec.FieldCaption(n)` and the Field virtual table's "Field Caption" both answer
+    // `NewColumnName` where AL declared `New Column Name`. AL escapes an embedded quote
+    // by doubling it, so the literal runs to the last quote before the semicolon.
+    private static readonly Regex RxCaption = new(
+        @"\bCaption\s*=\s*'((?:[^']|'')*)'\s*(?:,[^;]*)?;",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// The <c>Caption = '...'</c> declared on a field body, or null when it declares none —
+    /// in which case BC's own field-name fallback is the correct answer and must stand.
+    /// Doubled single quotes are AL's escape for a literal quote.
+    /// </summary>
+    private static string? ParseCaption(string? fieldBody)
+    {
+        if (string.IsNullOrEmpty(fieldBody)) return null;
+        var m = RxCaption.Match(fieldBody);
+        return m.Success ? m.Groups[1].Value.Replace("''", "'") : null;
+    }
+
     private static readonly Regex RxInitValue = new(
         @"\bInitValue\s*=\s*([^;]+);",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -178,7 +199,9 @@ public static partial class RecordPatches
                     isAutoIncrement = RxAutoIncrement.IsMatch(fieldBody);
                 }
 
-                fields.Add(new ParsedField(fid, fname, ftype, length, isFlowField, calcFormula, optionMembers, initValueText, isAutoIncrement));
+                var caption = ParseCaption(fieldBody);
+
+                fields.Add(new ParsedField(fid, fname, ftype, length, isFlowField, calcFormula, optionMembers, initValueText, isAutoIncrement, caption));
             }
 
             // Parse first key as PK; all subsequent keys are secondary.
@@ -261,7 +284,7 @@ public static partial class RecordPatches
                         initValueText = ivMatch.Groups[1].Value.Trim();
                 }
 
-                fields.Add(new ParsedField(fid, fname, ftype, length, isFlowField, calcFormula, OptionMembers: null, InitValueText: initValueText));
+                fields.Add(new ParsedField(fid, fname, ftype, length, isFlowField, calcFormula, OptionMembers: null, InitValueText: initValueText, Caption: ParseCaption(fieldBody)));
             }
 
             Console.Error.WriteLine($"[TableExt] parsed extension {extId} '{extName}' extends '{baseName}' with {fields.Count} fields");
@@ -358,7 +381,8 @@ public static partial class RecordPatches
 
 internal record ParsedCalcFilter(string SourceFieldName, string ParentFieldName);
 internal record ParsedCalcFormula(string FormulaType, string SourceTableName, string? SourceFieldName, List<ParsedCalcFilter> Filters);
-internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false);
+
+internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null);
 internal record ParsedKey(string Name, List<int> FieldIds);
 internal record ParsedTable(int TableId, string TableName,
     List<ParsedField> Fields, List<int> PkFieldIds, List<ParsedKey>? SecondaryKeys = null,

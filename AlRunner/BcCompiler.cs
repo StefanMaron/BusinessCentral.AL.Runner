@@ -93,6 +93,83 @@ public sealed class BcCompiler
     // synthetic (SymbolReference.json-free) .app to the BC package scanner, which
     // would report AL1023 "package not valid". Set by RunLayeredPrePass.
     private static IReadOnlyList<string>? _extraSymbolDirs;
+    // Symbols for apps emitted EARLIER IN THIS SAME BUNDLE, so a later app can reference a
+    // sibling it depends on. Deliberately NOT part of the loader signature: it is chained on
+    // top of the cached loader per call and re-indexed in place, so adding a sibling never
+    // triggers a rebuild of the expensive scan+warm. See SetSiblingSymbolsDir.
+    private static JsonSymbolReferenceLoader? _siblingSymbols;
+
+    /// <summary>
+    /// Point the compiler at a directory that will receive <c>*.symbols.json</c> for apps
+    /// emitted earlier in the current bundle, and reset any previous bundle's. Pass null to
+    /// clear.
+    ///
+    /// Bundled mode emits ONE MODULE PER app.json, ordered so an app follows every sibling it
+    /// depends on — but nothing made the emitted sibling VISIBLE to the next compile, so
+    /// `*-main` could not see `*-dep` (AL0185 "Codeunit 'XMI Dep Api' is missing") and its
+    /// whole test codeunit was dropped by the emit-retry.
+    /// </summary>
+    public static void SetSiblingSymbolsDir(string? dir)
+    {
+        lock (_refSync)
+        {
+            _siblingSymbols = dir == null ? null : new JsonSymbolReferenceLoader(dir);
+        }
+    }
+
+    /// <summary>
+    /// Re-index the sibling-symbols directory after another app's symbols were written into
+    /// it. Cheap: no loader rebuild, no symbol warm.
+    /// </summary>
+    public static void RefreshSiblingSymbols()
+    {
+        lock (_refSync) { _siblingSymbols?.Reindex(); }
+    }
+
+    /// <summary>
+    /// Temporarily drop resolved deps whose .app carries no <c>SymbolReference.json</c> from
+    /// the compile spec list, restoring the full set on dispose.
+    ///
+    /// Such a package is a SYNTHETIC source-only .app (InProcessAppPackager): it exists so
+    /// DependencyResolver can find the dep and the loader can compile it from source, and it
+    /// can never serve the compiler's native .app scanner — requesting a spec for it yields
+    /// AL1023 ("package file is not valid") and then AL1022 ("could not be found"). The
+    /// primary Compilation.Emit path never inspects declaration diagnostics so it shrugs
+    /// these off, but any compile that DOES check them (EmitDepSymbols) fails outright on a
+    /// package that has nothing to do with the AL it is compiling. Their symbols reach the
+    /// compiler the intended way regardless — through *.symbols.json and the JSON loader,
+    /// whose specs are contributed separately in GetSharedReferences.
+    /// </summary>
+    public static IDisposable ScopeSymbolBearingDepsOnly()
+    {
+        IReadOnlyList<(AppManifest Manifest, string AppPath)>? saved;
+        lock (_refSync)
+        {
+            saved = _resolvedDeps;
+            if (saved != null)
+            {
+                var filtered = saved.Where(d => AppLoader.HasSymbolReference(d.AppPath)).ToList();
+                if (filtered.Count != saved.Count)
+                {
+                    _resolvedDeps = filtered;
+                    _refSpecs = null;
+                }
+                else saved = null; // nothing removed — restore is a no-op
+            }
+        }
+        return new RestoreResolvedDeps(saved);
+    }
+
+    private sealed class RestoreResolvedDeps : IDisposable
+    {
+        private readonly IReadOnlyList<(AppManifest Manifest, string AppPath)>? _saved;
+        public RestoreResolvedDeps(IReadOnlyList<(AppManifest, string)>? saved) => _saved = saved;
+        public void Dispose()
+        {
+            if (_saved == null) return;
+            lock (_refSync) { _resolvedDeps = _saved; _refSpecs = null; }
+        }
+    }
     // Extra preprocessor symbols supplied by the caller via --define / --preprocessor-symbols.
     // Merged with the built-in CLEANSCHEMA1..25 set at both ParseOptions sites.
     private static IReadOnlyList<string>? _extraPreprocessorSymbols;
@@ -806,8 +883,37 @@ public sealed class BcCompiler
                 if (extra.Length > 0)
                     specs = specs.Concat(extra).ToArray();
             }
+            // Siblings emitted earlier in this bundle. Chained ahead of the cached loader
+            // for THIS call only — never stored as _refLoader and never folded into the
+            // loader signature, so a sibling appearing mid-bundle costs a dictionary lookup
+            // rather than a rebuild + symbol warm. The same self-exclusion applies: an app
+            // must not reference its own symbols alongside its own source (AL0275).
+            NavCA.ISymbolReferenceLoader? effectiveLoader = _refLoader;
+            if (_siblingSymbols != null && _siblingSymbols.HasAny)
+            {
+                var siblingSpecs = _siblingSymbols.EnumerateSpecs()
+                    .Where(s => _currentAppId == null || s.AppId != _currentAppId.Value)
+                    .ToList();
+                if (siblingSpecs.Count > 0)
+                {
+                    var have = new HashSet<Guid>(specs.Select(s => s.AppId));
+                    var extra = siblingSpecs
+                        .Where(s => have.Add(s.AppId))
+                        .Select(s => new NavCA.SymbolReferenceSpecification(
+                            publisher: s.Publisher, name: s.Name, version: s.Version,
+                            exact: false, appId: s.AppId, isPropagated: false,
+                            alternateIds: ImmutableArray<Guid>.Empty))
+                        .ToArray();
+                    if (extra.Length > 0) specs = specs.Concat(extra).ToArray();
+                }
+                effectiveLoader = effectiveLoader == null
+                    ? _siblingSymbols
+                    : new CompositeSymbolReferenceLoader(
+                        new List<NavCA.ISymbolReferenceLoader> { _siblingSymbols, effectiveLoader });
+            }
+
             _refSpecs = specs; // keep for any legacy callers that read _refSpecs directly
-            return (_refLoader, specs);
+            return (effectiveLoader, specs);
         }
     }
 
@@ -1442,9 +1548,18 @@ public sealed class BcCompiler
         // in the .al). The primary bundle compile (see Compilation.Emit path above) never
         // checks declaration diagnostics and so already tolerates AL0327; mirror that here
         // rather than failing a source-dep whose only fault is a missing JS/CSS resource.
+        // AL1023 = "the package file X is not valid": a .app in a scanned package dir that
+        // carries no SymbolReference.json. It is a complaint about ANOTHER app's package,
+        // not about the AL being compiled here, and it says nothing about this module's
+        // symbol table. It surfaces when a bundle holding many sibling apps puts one
+        // suite's fixture .app into the shared scan set — the primary Compilation.Emit
+        // path never inspects declaration diagnostics and so has always tolerated it, and
+        // failing here instead means the sibling that actually needs these symbols gets
+        // none. If the invalid package were genuinely supplying a type this module needs,
+        // the missing type still fails LOUDLY as AL0185 below.
         var errors = compilation.GetDeclarationDiagnostics()
             .Where(d => d.Severity == NavCA.Diagnostics.DiagnosticSeverity.Error)
-            .Where(d => d.Id != "AL0327")
+            .Where(d => d.Id != "AL0327" && d.Id != "AL1023")
             .ToList();
         if (errors.Count > 0)
             throw new InvalidOperationException(

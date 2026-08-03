@@ -2195,6 +2195,45 @@ public static class NclCecilRewrite
             }
         }
 
+        // ── NavDotNet.CreateNavServerHandle: route object creation through the shims ──
+        //
+        // Redirects the single `call NavAutomationHelper.CreateDotNetObject` inside
+        // CreateNavServerHandle to DotNetInteropShims.CreateDotNetObject, which has the
+        // IDENTICAL signature (string, string, object[]) → object, so the call site's stack
+        // shape is untouched. Everything it does not handle is forwarded to BC's original
+        // method, exceptions and all — this intercepts, it does not reimplement.
+        //
+        // Needed because the type that actually has to be substituted
+        // (System.Security.Principal.SecurityIdentifier, which throws
+        // PlatformNotSupportedException for its pure-string-parsing constructor on Linux)
+        // is created inside NavAutomationHelper in Types.dll, and the Cecil pass rewrites
+        // only Ncl.dll. The CALL to it lives in Ncl, so the call site is the seam.
+        {
+            var navDotNetTypeForShim = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavDotNet");
+            var mHandle = navDotNetTypeForShim?.Methods.FirstOrDefault(x =>
+                x.Name == "CreateNavServerHandle" && x.Parameters.Count == 9);
+            if (mHandle?.Body != null)
+            {
+                var calls = mHandle.Body.Instructions
+                    .Where(i => (i.OpCode == OpCodes.Call || i.OpCode == OpCodes.Callvirt)
+                                && i.Operand is MethodReference mr && mr.Name == "CreateDotNetObject")
+                    .ToList();
+                if (calls.Count != 1)
+                    throw new InvalidOperationException(
+                        $"NavDotNet.CreateNavServerHandle: expected 1 CreateDotNetObject call, found " +
+                        $"{calls.Count} — Ncl shape changed; do not commit");
+                var shimMi = typeof(AlRunner.Patches.DotNetInteropShims).GetMethod(
+                        nameof(AlRunner.Patches.DotNetInteropShims.CreateDotNetObject),
+                        BindingFlags.Public | BindingFlags.Static)
+                    ?? throw new InvalidOperationException(
+                        "DotNetInteropShims.CreateDotNetObject not found — do not commit");
+                calls[0].OpCode = OpCodes.Call;
+                calls[0].Operand = asm.MainModule.ImportReference(shimMi);
+                Console.Error.WriteLine(
+                    "[Cecil] NavDotNet.CreateNavServerHandle → DotNetInteropShims.CreateDotNetObject");
+            }
+        }
+
         // ── NavDotNet.CreateNavServerHandle catch block → OOS ────────────────────────
         // The try block (NavAutomationHelper.CreateDotNetObject — succeeds for
         // in-process types like MemoryStream, crypto) is UNTOUCHED. Only the catch

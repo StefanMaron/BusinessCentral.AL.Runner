@@ -138,12 +138,39 @@ public sealed class DependencyLoader
         return list;
     }
 
+    /// <summary>
+    /// Every <c>&lt;root&gt;/**/.deps-bin/&lt;fileName&gt;</c>, ordered so the result is stable.
+    /// Scoped to <c>.deps-bin</c> directories so this cannot pick up an unrelated DLL that
+    /// happens to share the name. Returns empty on any IO error rather than throwing —
+    /// a failed probe just means the lower dependency tiers take over, as before.
+    /// </summary>
+    private static IEnumerable<string> SafeEnumerateFiles(string root, string fileName)
+    {
+        IEnumerable<string> depsBinDirs;
+        try { depsBinDirs = Directory.EnumerateDirectories(root, ".deps-bin", SearchOption.AllDirectories); }
+        catch { yield break; }
+        foreach (var dir in depsBinDirs.OrderBy(d => d, StringComparer.Ordinal))
+        {
+            var candidate = Path.Combine(dir, fileName);
+            if (File.Exists(candidate)) yield return candidate;
+        }
+    }
+
     private Assembly? LoadOne(AppManifest m, string appPath, string bucketRoot)
     {
         // Tier 1: precompiled DLL.
-        var depsBin = Path.Combine(bucketRoot, ".deps-bin");
         var fileName = SanitizeFileName($"{m.Publisher}_{m.Name}_{m.Version}.dll");
-        var precompiled = Path.Combine(depsBin, fileName);
+        var precompiled = Path.Combine(bucketRoot, ".deps-bin", fileName);
+        if (!File.Exists(precompiled))
+        {
+            // A bundle that is a PARENT of many apps has no .deps-bin of its own — the one
+            // that matters belongs to the suite that declares the dependency, one level
+            // down. Without this the Tier-1 DLL was simply not found when the same suite ran
+            // as part of the parent bundle (it loads fine standalone, where bucketRoot IS
+            // the suite), and the dep silently fell through to a lower tier — for a
+            // source-less fixture .app that means its objects never exist at all.
+            precompiled = SafeEnumerateFiles(bucketRoot, fileName).FirstOrDefault() ?? precompiled;
+        }
         if (File.Exists(precompiled))
         {
             try

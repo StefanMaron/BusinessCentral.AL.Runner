@@ -150,6 +150,20 @@ public static partial class RecordPatches
             // no NavAppMetadata, etc.).
             if (built != null)
             {
+                // Hand BC back the MetaTable this NCLMetaTable was built from.
+                //
+                // BC answers a whole family of metadata questions — field captions
+                // (NCLMetaField.CreateCaptionStrings), tooltips, field groups — by calling
+                // NCLMetaTable.GetMetaTableOriginal() and reading the ORIGINAL MetaTable.
+                // That returns `metadataAppGroupMetaTable?.Item`, which only BC's own
+                // AssignFromMetaTable populates, and the runner constructs NCLMetaTable
+                // through a different path. Left null, those lookups do not fail loudly —
+                // they take a silent fallback. For a caption that fallback is the field
+                // NAME, so a field declaring `Caption = 'New Column Name'` answered
+                // `NewColumnName`: a plausible-looking wrong value, which is worse than an
+                // empty one. Assign it exactly as AssignFromMetaTable does.
+                AssignMetaTableOriginal(built, defaultMetaTable);
+
                 EnsureCachePopulatorReflection();
                 if (_fNCLMetaAppObjMetadataLoaded != null)
                     AlRunner.Infrastructure.FieldPoke.SetInstance(_fNCLMetaAppObjMetadataLoaded, built, true);
@@ -289,6 +303,50 @@ public static partial class RecordPatches
         return ctor.Invoke(args);
     }
 
+    /// <summary>
+    /// Populate <c>NCLMetaTable.metadataAppGroupMetaTable</c> so
+    /// <c>GetMetaTableOriginal()</c> answers with the MetaTable we built the instance from,
+    /// mirroring BC's own <c>AssignFromMetaTable</c>. Best-effort: if the field or the
+    /// MetadataExtension&lt;T&gt; shape moves, BC keeps its existing fallbacks rather than
+    /// the table failing to build.
+    /// </summary>
+    private static void AssignMetaTableOriginal(object nclMetaTable, object metaTable)
+    {
+        try
+        {
+            var field = nclMetaTable.GetType().GetField("metadataAppGroupMetaTable",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            if (field == null) return;
+            // MetadataExtension<MetaTable>(item) — the wrapper BC stores it in.
+            var ctor = field.FieldType.GetConstructors(
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                .FirstOrDefault(c => c.GetParameters().Length == 1
+                                     && c.GetParameters()[0].ParameterType.IsInstanceOfType(metaTable));
+            if (ctor == null) return;
+            AlRunner.Infrastructure.FieldPoke.SetInstance(
+                field, nclMetaTable, ctor.Invoke(new[] { metaTable }));
+        }
+        catch { /* BC keeps its name-based fallbacks */ }
+    }
+
+    /// <summary>
+    /// A single-language <c>MultiLanguage</c> holding <paramref name="text"/> as ENU — the
+    /// shape BC itself builds when it needs one from a plain string
+    /// (<c>MultiLanguage.Parse("ENU=" + …)</c> in NCLMetaField). Returns null if the type or
+    /// method is not where we expect, so a metadata-shape change degrades to BC's field-name
+    /// fallback rather than throwing during table construction.
+    /// </summary>
+    private static object? BuildEnuMultiLanguage(Type mlType, string text)
+    {
+        try
+        {
+            var parse = mlType.GetMethod("Parse", BindingFlags.Public | BindingFlags.Static,
+                binder: null, types: new[] { typeof(string) }, modifiers: null);
+            return parse?.Invoke(null, new object[] { "ENU=" + text });
+        }
+        catch { return null; }
+    }
+
     private static object BuildMetaField(ParsedField f, int index, bool isPk, ParsedTable? parentTable = null)
     {
         var ctor = _tMetaField!.GetConstructors()
@@ -310,6 +368,23 @@ public static partial class RecordPatches
             if (p.Name == "type") { args[i] = MapNavType(f.TypeName); continue; }
             if (p.Name == "length") { args[i] = f.Length; continue; }
             if (p.Name == "autoIncrement" && f.IsAutoIncrement) { args[i] = true; continue; }
+            // Caption: BC answers Rec.FieldCaption(n) and the Field virtual table's
+            // "Field Caption" from NCLMetaField.CreateCaptionStrings, which reads the
+            // ORIGINAL MetaField's merged caption MultiLanguage and falls back to the field
+            // NAME when there is none. Leaving both unset therefore did not produce an empty
+            // caption — it produced a WRONG one that looks plausible (`NewColumnName` where
+            // the AL declared `New Column Name`), which is the harder failure to notice.
+            // A field with no declared Caption stays unset so BC's name fallback stands.
+            if (p.Name == "caption" && !string.IsNullOrEmpty(f.Caption)) { args[i] = f.Caption; continue; }
+            if (p.Name == "captionML" && !string.IsNullOrEmpty(f.Caption))
+            {
+                // The ML type comes from the parameter itself rather than a hard-coded name:
+                // BC's caption read is GetMergedCaptionMultiLanguage, so the plain `caption`
+                // string above is NOT what it consults — without this the declared caption is
+                // stored and then ignored.
+                var ml = BuildEnuMultiLanguage(p.ParameterType, f.Caption!);
+                if (ml != null) { args[i] = ml; continue; }
+            }
             if (p.Name == "enabled") { args[i] = (bool?)true; continue; }
             if (p.Name == "fieldClass" && f.IsFlowField && _tFieldClass != null)
             {
