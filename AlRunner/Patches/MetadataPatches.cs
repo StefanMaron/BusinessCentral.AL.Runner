@@ -421,11 +421,25 @@ public static partial class BcRuntime
             Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: NavTenant.tenantSettings field NOT FOUND — IsSandbox/IsSaaS will still NRE");
         }
 
-        // Wire the skeleton tenant onto the session's `tenant` field so `Session.Tenant` resolves to
-        // the skeleton (carrying its TenantSettings + default encoding) instead of null. We only set
-        // `tenant` — the existing `systemTenant` injection into the NavTenantCollection (step 6 below)
-        // already covers NavGlobal.SystemTenant; touching `Session.SystemTenant` is unnecessary and
-        // out of scope here.
+        // Wire the skeleton tenant onto the session's `tenant` AND `systemTenant` fields so
+        // `Session.Tenant` and `Session.SystemTenant` resolve to the skeleton (carrying its
+        // TenantSettings, default encoding and MetadataProvider) instead of null.
+        //
+        // `systemTenant` used to be left alone here on the reasoning that the NavTenantCollection
+        // injection (step 6 below) already covers the STATIC NavGlobal.SystemTenant. That was true
+        // only for code reaching metadata statically. Every INSTANCE path goes through the session:
+        // NavSession.MetadataProvider is literally `SystemTenant.MetadataProvider`, so a null
+        // session.systemTenant NREs before any of our metadata dispatch is reached. The live
+        // example is NavXmlPort.BeginInitialization —
+        // `base.Tree.Session.MetadataProvider.GetXmlPortMetadata(NclMetaXmlPort)` — which every
+        // real xmlport runs from its generated ctor.
+        //
+        // That NRE was a pure TEST-ORDER dependency: NavReportSync.SeedSessionSystemTenant seeds
+        // the same field as a side effect of constructing a report, so xmlport tests passed in any
+        // bundle where a report test happened to run first, and failed (14 corpus tests, repro
+        // `--test Codeunit6020`) in one where none did. Seeding it here, once, for every session
+        // makes the field's value independent of what ran before — which is also what real BC has,
+        // since NavSession is never constructed without a system tenant.
         if (_skeletonSession != null)
         {
             var sessType = _skeletonSession.GetType();
@@ -434,6 +448,19 @@ public static partial class BcRuntime
             {
                 FieldPoke.SetInstance(sessTenantField, _skeletonSession, _skeletonSystemTenant!);
                 Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: skeleton tenant wired onto session.tenant");
+            }
+
+            FieldInfo? sessSystemTenantField = null;
+            for (var walkT = sessType; walkT != null && sessSystemTenantField == null; walkT = walkT.BaseType)
+                sessSystemTenantField = walkT.GetField("systemTenant", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (sessSystemTenantField == null)
+                Console.Error.WriteLine(
+                    "[BcRuntime] InjectSkeletonSystemTenant: NavSession.systemTenant field NOT FOUND — "
+                    + "Session.MetadataProvider will NRE on every instance metadata path");
+            else if (sessSystemTenantField.GetValue(_skeletonSession) == null)
+            {
+                FieldPoke.SetInstance(sessSystemTenantField, _skeletonSession, _skeletonSystemTenant!);
+                Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: skeleton tenant wired onto session.systemTenant");
             }
 
             // Session.UserFolder — auto-property, null on the skeleton (the real

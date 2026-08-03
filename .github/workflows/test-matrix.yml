@@ -166,6 +166,25 @@ jobs:
             exit "$rc"
           fi
 
+      - name: Run al-language xmlport tests in isolation (order-independence guard)
+        # always() so this still runs when the full-corpus leg above is red — it answers a
+        # DIFFERENT question and its answer is most useful exactly when something is broken.
+        #
+        # The full corpus passing does not prove each test passes on its own: skeleton state
+        # seeded as a side effect of one subsystem can silently carry another. That is not
+        # hypothetical — session.systemTenant was seeded only while constructing a report, so
+        # these 14 xmlport tests passed whenever a report test happened to run first and failed
+        # when none did, landing on a different BC leg each CI run. Running a slice that
+        # deliberately excludes the report tests keeps that class of bug from coming back
+        # disguised as flakiness.
+        if: ${{ always() }}
+        run: |
+          dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
+              tests/al-language/tests/al-language \
+              --package-cache "$HOME/.al-runner/platform-apps" \
+              --test "Codeunit6020" \
+              --strict
+
       - name: Run runner-extras (if present)
         # always() so a failed (red) corpus leg above doesn't skip this — runner-extras
         # is an independent gate. --strict so any runner-extra failure also fails the leg.
