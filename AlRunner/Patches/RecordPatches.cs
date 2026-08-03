@@ -913,8 +913,15 @@ public static partial class RecordPatches
             throw new InvalidOperationException($"Record{id} has no 6-arg constructor");
 
         // Construct Record{ID}(parent, metaTable, isTemporary, sharedTable, companyName, securityFiltering)
+        //
+        // Validated, not Ignored: a Record variable created inside BC's test runner defaults to
+        // SecurityFiltering.Validated — see corpus test
+        // Codeunit60175.SecurityFiltering_Default_InTestContext_IsValidated_NotIgnored, which
+        // asserts that contract explicitly. The distinction only became observable once
+        // RecordImplementation.SetSecurityFiltering stopped being a no-op; before that the
+        // argument passed here was discarded and the field kept its default.
         var rec = (NavRecord)ctor.Invoke(new object?[] { self, metaTable, isTemp, null, null,
-            SecurityFiltering.Ignored });
+            SecurityFiltering.Validated });
         StampObjectId(rec, id);
 
         // Register any tableextensions on this (primary) record instance so the extension's

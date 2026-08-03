@@ -6308,9 +6308,14 @@ public static class NclCecilRewrite
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavRecord", "ValidateTruncateSupport", "NavRecord"),
                 H(helperShims, "NoOp_OneArg"));
+            // SetSecurityFiltering was NoOp2 — which also dropped `securityFiltering = filtering`,
+            // so Record.SecurityFiltering() could never observe a mode change. The helper stores
+            // the field and invalidates the result set; see SecurityFilteringPatches for why
+            // omitting the GetSecurityFilters arms stays observably equivalent here.
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "RecordImplementation", "SetSecurityFiltering", "SecurityFiltering"),
-                H(helperShims, "NoOp2"));
+                H(typeof(AlRunner.Patches.SecurityFilteringPatches),
+                  "RecordImplementation_SetSecurityFiltering"));
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "DataProvider", "TruncateAsync",
                          "Int32", "NCLMetaTable", "FiltersAndMarks", "Boolean"),
