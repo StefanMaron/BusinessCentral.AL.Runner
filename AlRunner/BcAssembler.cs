@@ -526,11 +526,26 @@ namespace AlRunnerShim
             return result;
         }
 
+        // Text.Split(List of [Char]) — EACH CHARACTER is a separator, not the concatenation
+        // of them. This mirrors BC's own body verbatim
+        // (NavTextExtensions.ALSplit(string, NavList<char>) => text.Split(separators.Value.ToArray())).
+        // It used to do separator.ToString() and pass the result as a single whole-string
+        // delimiter, so 'a,b;c'.Split([',', ';']) looked for the two-character literal
+        // comma-semicolon and returned one part instead of three.
         public static Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavText> ALSplit(
-            string text, Microsoft.Dynamics.Nav.Runtime.NavList<char> separator)
+            string text, Microsoft.Dynamics.Nav.Runtime.NavList<char> separators)
         {
-            string sep = separator == null ? global::System.String.Empty : separator.ToString();
-            return ALSplit(text, sep);
+            var result = Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavText>.Default;
+            if (separators == null)
+            {
+                result.ALAdd(new Microsoft.Dynamics.Nav.Runtime.NavText(text));
+                return result;
+            }
+            var chars = new char[separators.ALCount];
+            for (int i = 0; i < chars.Length; i++) chars[i] = separators.ALGet(i + 1);
+            foreach (var p in text.Split(chars))
+                result.ALAdd(new Microsoft.Dynamics.Nav.Runtime.NavText(p));
+            return result;
         }
 
         // NavList<char> (AL Text) overloads — emitted C# passes Text args as NavList<char>.
