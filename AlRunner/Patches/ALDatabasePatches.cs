@@ -91,6 +91,110 @@ public static class ALDatabasePatches
     public static void ResetWriteTransactionState()
         => System.Threading.Volatile.Write(ref _inWriteTransaction, false);
 
+    // ── Database.CurrentTransactionType ────────────────────────────────────────
+    // BC stores this on TransactionManager's current LogicalTransaction. The runner has
+    // no TransactionManager, so both the getter and the setter reached skeleton-null
+    // state. The default is UpdateNoLocks (0) because that is what a freshly constructed
+    // LogicalTransaction carries — BC never assigns the root transaction a type.
+    //
+    // The setter reproduces BC's own state machine verbatim (TransactionManager
+    // .CurrentTransactionType.set): before a transaction has begun, any value is simply
+    // stored; once one has begun, a subset of transitions is silently ignored and the
+    // rest throw. "A transaction has begun" is the same write-transaction state
+    // IsInWriteTransaction() reports, which is precisely what BeginTransactionIssued
+    // tracks on BC.
+    private static int _currentTransactionType; // TransactionType.UpdateNoLocks
+
+    /// <summary>Replacement for ALDatabase.get_ALCurrentTransactionType.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static int ALDatabase_GetCurrentTransactionType()
+        => System.Threading.Volatile.Read(ref _currentTransactionType);
+
+    /// <summary>Replacement for ALDatabase.set_ALCurrentTransactionType.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void ALDatabase_SetCurrentTransactionType(int value)
+    {
+        // TransactionType: UpdateNoLocks=0, Update=1, Snapshot=2, Browse=3, Report=4.
+        int current = System.Threading.Volatile.Read(ref _currentTransactionType);
+
+        if (!HasWriteTransaction(null))
+        {
+            // BC: `if (!logicalTransaction.BeginTransactionIssued) { type = value; return; }`
+            System.Threading.Volatile.Write(ref _currentTransactionType, value);
+            return;
+        }
+
+        // BC's switch: `return` means "silently ignored", falling out means "throw".
+        bool ignored = current switch
+        {
+            0 => (uint)(value - 1) > 1u,   // UpdateNoLocks
+            1 => true,                     // Update — every change is ignored
+            2 => (uint)value > 1u,         // Snapshot
+            3 or 4 => (uint)value > 2u,    // Browse / Report
+            _ => true,
+        };
+        if (ignored) return;
+
+        throw BuildCannotChangeTransactionType(current, value);
+    }
+
+    /// <summary>
+    /// Build BC's own NavCSideException(18023779, Lang.CannotChangeTransactionType) so AL's
+    /// asserterror sees the real platform message rather than a runner paraphrase. Resolved
+    /// by reflection because Lang is an internal resource-backed class.
+    /// </summary>
+    private static Exception BuildCannotChangeTransactionType(int current, int value)
+    {
+        try
+        {
+            var nclAsm = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
+            var typesAsm = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Types");
+            var tTransactionType = typesAsm?.GetType("Microsoft.Dynamics.Nav.Types.TransactionType");
+
+            string? format = null;
+            foreach (var t in nclAsm?.GetTypes() ?? Array.Empty<Type>())
+            {
+                if (t.Name != "Lang") continue;
+                format = t.GetProperty("CannotChangeTransactionType",
+                             System.Reflection.BindingFlags.Static
+                             | System.Reflection.BindingFlags.Public
+                             | System.Reflection.BindingFlags.NonPublic)
+                         ?.GetValue(null) as string;
+                if (format != null) break;
+            }
+
+            object Name(int v) => tTransactionType != null
+                ? Enum.ToObject(tTransactionType, v)
+                : v;
+
+            var message = format != null
+                ? string.Format(System.Globalization.CultureInfo.CurrentCulture, format, Name(current), Name(value))
+                : $"You cannot change the transaction type from {Name(current)} to {Name(value)} " +
+                  "after the transaction has started.";
+
+            var tCSide = nclAsm?.GetType("Microsoft.Dynamics.Nav.Runtime.NavCSideException");
+            var ctor = tCSide?.GetConstructor(
+                System.Reflection.BindingFlags.Instance
+                | System.Reflection.BindingFlags.Public
+                | System.Reflection.BindingFlags.NonPublic,
+                null, new[] { typeof(int), typeof(string) }, null);
+            if (ctor != null)
+                return (Exception)ctor.Invoke(new object[] { 18023779, message });
+
+            return new InvalidOperationException(message);
+        }
+        catch (Exception ex)
+        {
+            // Never let the diagnostic construction mask the real contract: AL must still
+            // see an error here, because BC would have thrown one.
+            return new InvalidOperationException(
+                "You cannot change the transaction type after the transaction has started. " +
+                $"(runner could not build BC's own message: {ex.GetType().Name})");
+        }
+    }
+
     /// <summary>Record an AL-visible row write. Called from the AL write entry points via
     /// Cecil prepend, so every write moves the row-version counter exactly as a SQL write
     /// moves @@DBTS, and opens the write transaction exactly as BC's first write does.

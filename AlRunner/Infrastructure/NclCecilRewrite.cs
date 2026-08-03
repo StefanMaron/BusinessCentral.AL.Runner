@@ -95,6 +95,9 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.NavCurrentThread::get_Session/0",
         // SessionTransactionExtensions.HasWriteTransaction — AL's Database.IsInWriteTransaction().
         "Microsoft.Dynamics.Nav.Runtime.SessionTransactionExtensions::HasWriteTransaction/1",
+        // ALDatabase.CurrentTransactionType — AL's Database.CurrentTransactionType().
+        "Microsoft.Dynamics.Nav.Runtime.ALDatabase::get_ALCurrentTransactionType/0",
+        "Microsoft.Dynamics.Nav.Runtime.ALDatabase::set_ALCurrentTransactionType/1",
         // NavSession.ThrowSessionTerminatedExceptionIfStopping — pure guard over a null
         // AccessLock on the skeleton session.
         "Microsoft.Dynamics.Nav.Runtime.NavSession::ThrowSessionTerminatedExceptionIfStopping/0",
@@ -1392,6 +1395,37 @@ public static class NclCecilRewrite
                     nameof(AlRunner.Patches.ALDatabasePatches.HasWriteTransaction),
                     BindingFlags.Public | BindingFlags.Static)!);
             Console.Error.WriteLine("[Cecil] Rewrote SessionTransactionExtensions.HasWriteTransaction → runner write-transaction state");
+        }
+
+        // 12. ALDatabase.CurrentTransactionType — AL's Database.CurrentTransactionType().
+        //     BC keeps it on TransactionManager's current LogicalTransaction, which the
+        //     runner does not have. ALDatabasePatches holds the value and reproduces BC's
+        //     own transition state machine, including the throw once a transaction has
+        //     begun. See ALDatabasePatches for the per-transition table.
+        {
+            var alDbType = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.ALDatabase")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] ALDatabase type not found — Ncl shape changed; do not commit");
+
+            var ttGet = alDbType.Methods.FirstOrDefault(m =>
+                m.Name == "get_ALCurrentTransactionType" && m.Parameters.Count == 0 && m.HasBody)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] ALDatabase.get_ALCurrentTransactionType not found — do not commit");
+            var ttSet = alDbType.Methods.FirstOrDefault(m =>
+                m.Name == "set_ALCurrentTransactionType" && m.Parameters.Count == 1 && m.HasBody)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] ALDatabase.set_ALCurrentTransactionType not found — do not commit");
+
+            ReplaceBodyWithHelper(asm.MainModule, ttGet,
+                typeof(AlRunner.Patches.ALDatabasePatches).GetMethod(
+                    nameof(AlRunner.Patches.ALDatabasePatches.ALDatabase_GetCurrentTransactionType),
+                    BindingFlags.Public | BindingFlags.Static)!);
+            ReplaceBodyWithHelper(asm.MainModule, ttSet,
+                typeof(AlRunner.Patches.ALDatabasePatches).GetMethod(
+                    nameof(AlRunner.Patches.ALDatabasePatches.ALDatabase_SetCurrentTransactionType),
+                    BindingFlags.Public | BindingFlags.Static)!);
+            Console.Error.WriteLine("[Cecil] Rewrote ALDatabase.CurrentTransactionType get/set → runner transaction-type state");
         }
 
 
