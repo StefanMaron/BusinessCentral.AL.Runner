@@ -111,8 +111,23 @@ public sealed class CacheKeyDependencyClosureTests : IDisposable
         if (apps.Length < 2) { Console.Error.WriteLine("[skip] need >= 2 platform apps to vary the closure"); return; }
 
         foreach (var a in apps) File.Copy(a, Path.Combine(full, Path.GetFileName(a)));
-        // Same closure minus exactly one package — a genuinely different compile input.
-        foreach (var a in apps.OrderBy(a => a, StringComparer.Ordinal).Skip(1))
+
+        // Same closure minus exactly one package — and it has to be a package the bundle
+        // actually RESOLVES, or the two closures come out identical and this asserts nothing.
+        //
+        // Dropping the ordinally-first .app used to satisfy that by accident: the directory
+        // held only the platform apps, so "first" was Microsoft_Application_*. Once
+        // provisioning also fetched Application Test Library, "first" became a package this
+        // fixture never references — both keys matched and the test failed while the cache
+        // key was working correctly. Pick the platform root explicitly instead: every AL app
+        // resolves `System` (the manifest's `platform` root), so removing it is guaranteed to
+        // be a different compile input regardless of what else provisioning drops in here.
+        var platformRoot = apps.FirstOrDefault(
+            a => Path.GetFileName(a).Equals("System.app", StringComparison.OrdinalIgnoreCase));
+        Assert.True(platformRoot != null,
+            $"platform-apps must contain System.app to vary the closure; found: " +
+            string.Join(", ", apps.Select(Path.GetFileName)));
+        foreach (var a in apps.Where(a => a != platformRoot))
             File.Copy(a, Path.Combine(reduced, Path.GetFileName(a)));
 
         var keyFull = RunAndReadCacheKey(full, Path.Combine(_scratch, "cache-full"));
