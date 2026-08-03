@@ -1345,6 +1345,59 @@ public static class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Rewrote NavCurrentThread.get_Session → BcRuntime.NavCurrentThread_get_Session");
         }
 
+        // 8d. NavTestExecution.FindHandler — refuse unhandled UI even without a TestRunner codeunit.
+        //
+        //     BC's body:
+        //         if (methodInfo == null && throwIfNotFound
+        //             && executingTestRunner != null && executingTestMethod != null)
+        //             throw new NavNCLMissingUIHandlerException(Lang.MissingUIHandler, …)   // "Unhandled UI: {0} {1}"
+        //
+        //     `executingTestRunner` is only set by EnterTestRunner(NavTestRunnerCodeUnit) — i.e.
+        //     when an AL codeunit with `Subtype = TestRunner` is driving the run. The runner
+        //     invokes test methods itself, so that field is always null and the throw could
+        //     never fire. The consequence is not a missing diagnostic but a WRONG one: with no
+        //     [ModalPageHandler], TestHandleModalForm returned false, NavForm.RunModalAsync
+        //     fell through to the real client-callback path, and AL saw "A page with the
+        //     specified handle has not been registered" instead of BC's "Unhandled UI".
+        //     Worse, other unhandled-UI surfaces would silently continue.
+        //
+        //     `executingTestMethod` (set by EnterTestMethod) IS populated here — it is what
+        //     makes handler lookup work at all for the tests that do declare handlers. So the
+        //     fix is to drop the runner conjunct and keep the method one: rewrite the single
+        //     `ldfld executingTestRunner` in this method to load `executingTestMethod`, which
+        //     leaves the guard as `executingTestMethod != null && executingTestMethod != null`.
+        //     No new type or member references are introduced — both fields already belong to
+        //     this type — so R2R callers keep their token offsets.
+        {
+            var testExecType = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.NavTestExecution")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NavTestExecution type not found — Ncl shape changed; do not commit");
+
+            // The 4-arg overload: (NavHandlerType, NavApplicationObjectBase, bool, string).
+            var findHandler = testExecType.Methods
+                .FirstOrDefault(m => m.Name == "FindHandler" && m.Parameters.Count == 4 && m.HasBody)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NavTestExecution.FindHandler(4) not found — Ncl shape changed; do not commit");
+
+            var fTestMethod = testExecType.Fields.FirstOrDefault(f => f.Name == "executingTestMethod")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NavTestExecution.executingTestMethod not found — Ncl shape changed; do not commit");
+
+            var runnerLoads = findHandler.Body.Instructions
+                .Where(i => i.OpCode == OpCodes.Ldfld
+                            && i.Operand is FieldReference fr && fr.Name == "executingTestRunner")
+                .ToList();
+            if (runnerLoads.Count != 1)
+                throw new InvalidOperationException(
+                    $"[Cecil] NavTestExecution.FindHandler(4) has {runnerLoads.Count} executingTestRunner " +
+                    "loads, expected exactly 1 — Ncl shape changed; do not commit");
+
+            runnerLoads[0].Operand = fTestMethod;
+            Console.Error.WriteLine(
+                "[Cecil] NavTestExecution.FindHandler → unhandled UI now throws without a TestRunner codeunit");
+        }
+
         // 9b. TreeHandler.get_Session — see BcRuntime.TreeHandler_get_Session.
         //     The real body is `=> session`, a readonly field set in the ctor from
         //     `parentHandler.session ?? (hostObject as NavSession)`. The runner's root tree
