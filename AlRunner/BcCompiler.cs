@@ -1240,16 +1240,30 @@ public sealed class BcCompiler
         // SymbolReference.json, and register that file so TryGetQuerySymbol finds them.
         // Gated on the bundle actually declaring a query, so the common (no-query)
         // bundle pays nothing.
+        //
+        // The gate is "the emit produced objects", NOT emitResult.Success. Success is
+        // false if ANY object raised an emit-level error, and those errors are routinely
+        // unrelated to queries — the al-language corpus emits all 355 of its objects and
+        // still reports Success=false purely because 7 reports fail AL1081 report-layout
+        // update. Gating on Success there cost the corpus its query column ids (every
+        // multi-dataitem query NREd in NavQuery.ValidateTablesNotVirtual with a null
+        // NCLMetaQuery) AND made its cache entry permanently incomplete, forcing a full
+        // recompile on every single run. The symbols come from the compilation's semantic
+        // model, which is intact whether or not a report layout updated.
         LastBundleQuerySymbolsPath = null;
-        if (caught == null && (emitResult?.Success ?? false) && BundleDeclaresQuery(alFiles))
+        if (caught == null && outputter.Captured.Count > 0 && BundleDeclaresQuery(alFiles))
         {
             try { EmitAndRegisterBundleQuerySymbols(compilation, moduleName); }
             catch (Exception ex)
             {
                 // Never fail the run for this — a query that then can't build its
-                // metaquery surfaces its own loud error downstream.
-                if (Environment.GetEnvironmentVariable("AL_RUNNER_QDIAG") == "1")
-                    Console.Error.WriteLine($"[BcCompiler] bundle query-symbol emit failed: {ex.Message}");
+                // metaquery surfaces its own loud error downstream. But say so
+                // unconditionally: silently skipping this costs the bundle its query
+                // metadata AND permanently defeats its AL-output cache entry.
+                Console.Error.WriteLine(
+                    $"[BcCompiler] {moduleName}: bundle query-symbol emit failed — queries in this " +
+                    $"bundle will have no NCLMetaQuery and its cache entry stays incomplete: " +
+                    $"{ex.GetType().Name}: {ex.Message}");
             }
         }
 
