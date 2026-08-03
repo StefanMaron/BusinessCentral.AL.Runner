@@ -93,6 +93,9 @@ public static class NclCecilRewrite
         // NavCurrentThread.get_Session — AsyncLocal-backed; falls back to the skeleton
         // session on any flow the bootstrap ExecutionContext does not reach.
         "Microsoft.Dynamics.Nav.Runtime.NavCurrentThread::get_Session/0",
+        // CompanyHelper.ValidateUserHasAccessToCompany — the only decision behind AL's
+        // Record.ChangeCompany(<name>); the real body needs a tenant database + entitlements.
+        "Microsoft.Dynamics.Nav.Runtime.CompanyHelper::ValidateUserHasAccessToCompany/3",
         // TreeHandler.get_Session — `=> session`, and that field is null on every tree the
         // runner builds (the root handler has no session to propagate). Callers do not
         // null-check it: NavFieldRef.ALValidateSafe() hands it straight to
@@ -1396,6 +1399,34 @@ public static class NclCecilRewrite
             runnerLoads[0].Operand = fTestMethod;
             Console.Error.WriteLine(
                 "[Cecil] NavTestExecution.FindHandler → unhandled UI now throws without a TestRunner codeunit");
+        }
+
+        // 8e. CompanyHelper.ValidateUserHasAccessToCompany — see
+        //     CompanyAccessPatches.CompanyHelper_ValidateUserHasAccessToCompany.
+        //     The real body reads the Company system table through the tenant database and
+        //     the user's entitlements; the runner has neither, and this is the single
+        //     decision behind AL's Record.ChangeCompany(<name>).
+        {
+            var companyHelperType = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.CompanyHelper")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] CompanyHelper type not found — Ncl shape changed; do not commit");
+
+            var validateAccess = companyHelperType.Methods
+                .FirstOrDefault(m => m.Name == "ValidateUserHasAccessToCompany"
+                                     && m.IsStatic && m.Parameters.Count == 3 && m.HasBody)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] CompanyHelper.ValidateUserHasAccessToCompany(3) not found — Ncl shape changed; do not commit");
+
+            var validateHelper = typeof(AlRunner.Patches.CompanyAccessPatches).GetMethod(
+                nameof(AlRunner.Patches.CompanyAccessPatches.CompanyHelper_ValidateUserHasAccessToCompany),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] CompanyAccessPatches.CompanyHelper_ValidateUserHasAccessToCompany not found");
+
+            ReplaceBodyWithHelper(asm.MainModule, validateAccess, validateHelper);
+            Console.Error.WriteLine(
+                "[Cecil] Rewrote CompanyHelper.ValidateUserHasAccessToCompany → single-company check");
         }
 
         // 9b. TreeHandler.get_Session — see BcRuntime.TreeHandler_get_Session.

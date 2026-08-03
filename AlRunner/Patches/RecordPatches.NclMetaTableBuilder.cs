@@ -127,7 +127,8 @@ public static partial class RecordPatches
 
             // Build MetaTable via named-parameter ctor.  The public ctor takes many
             // named params with defaults; we resolve by name and fall back to defaults.
-            var defaultMetaTable = CallMetaTableCtor(tableId, parsed.TableName, fields, allKeys.ToArray(), parsed.IsTableTypeTemporary);
+            var defaultMetaTable = CallMetaTableCtor(tableId, parsed.TableName, fields, allKeys.ToArray(),
+                parsed.IsTableTypeTemporary, parsed.DataPerCompany);
             if (defaultMetaTable == null) return null;
 
             // NavAppGroup.BaseGroup
@@ -204,7 +205,8 @@ public static partial class RecordPatches
         }
     }
 
-    private static object? CallMetaTableCtor(int id, string name, object[] fields, object[] allKeys, bool isTableTypeTemporary)
+    private static object? CallMetaTableCtor(int id, string name, object[] fields, object[] allKeys,
+        bool isTableTypeTemporary, bool isDataPerCompany)
     {
         if (_tMetaTable == null) return null;
         var ctor = _tMetaTable.GetConstructors()
@@ -230,6 +232,11 @@ public static partial class RecordPatches
                 args[i] = MakeImmutableArray(_tMetaKey!, allKeys);
                 continue;
             }
+            // MetaTable's own default for this parameter is false; AL's default for a table is
+            // TRUE. Left at the ctor default, every runner-built table claimed to be
+            // not-per-company, and BC's RecordImplementation.ChangeCompany returns true
+            // without ever looking at the company name.
+            if (p.Name == "isDataPerCompany") { args[i] = isDataPerCompany; continue; }
             if (p.Name == "tableType" && p.ParameterType.IsEnum)
             {
                 var enumName = isTableTypeTemporary ? "Temporary" : "Normal";

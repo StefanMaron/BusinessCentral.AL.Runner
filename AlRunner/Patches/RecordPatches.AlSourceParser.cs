@@ -35,6 +35,14 @@ public static partial class RecordPatches
         @"\bTableType\s*=\s*Temporary\b",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    // DataPerCompany = false; — AL's default is TRUE, so only the explicit opt-out is
+    // parsed. MetaTable's own ctor default for isDataPerCompany is false, which is the
+    // opposite of AL's, and BC's RecordImplementation.ChangeCompany returns true
+    // immediately for a table that is not per-company.
+    private static readonly Regex RxDataPerCompanyFalse = new(
+        @"\bDataPerCompany\s*=\s*false\s*;",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     // OptionMembers = A,B,C; — captures the comma-joined list (whitespace trimmed
     // per-token by the consumer). Used to populate MetaField.optionString so BC's
     // NCLOptionMetadataNavTypeField (Field.Type field 5 of table 2000000041 and
@@ -207,7 +215,9 @@ public static partial class RecordPatches
                 pkFieldIds.Add(fields[0].FieldId);
 
             var isTableTypeTemporary = RxTableTypeTemporary.IsMatch(slice);
-            _parsedTables[tableId] = new ParsedTable(tableId, tableName, fields, pkFieldIds, secondaryKeys, isTableTypeTemporary);
+            var dataPerCompany = !RxDataPerCompanyFalse.IsMatch(slice);
+            _parsedTables[tableId] = new ParsedTable(tableId, tableName, fields, pkFieldIds, secondaryKeys,
+                isTableTypeTemporary, dataPerCompany);
         }
     }
 
@@ -352,4 +362,4 @@ internal record ParsedField(int FieldId, string FieldName, string TypeName, int 
 internal record ParsedKey(string Name, List<int> FieldIds);
 internal record ParsedTable(int TableId, string TableName,
     List<ParsedField> Fields, List<int> PkFieldIds, List<ParsedKey>? SecondaryKeys = null,
-    bool IsTableTypeTemporary = false);
+    bool IsTableTypeTemporary = false, bool DataPerCompany = true);
