@@ -99,7 +99,15 @@ public sealed class RunnerXmlMetadataLoader : INCLObjectXmlMetadataLoader
     {
         var doc = new System.Xml.XmlDocument();
         doc.LoadXml(xml);
+        // BC 26's ctor carries an extra leading `long timestamp`. The runner has no
+        // republish/versioning concept to date metadata against — metadataHash is already a
+        // stable per-object cache key, so 0 is the honest "no timestamp" value rather than a
+        // fabricated one, and BC only ever compares it for equality against itself.
+#if BC_XMLMETA_CTOR_TIMESTAMP
+        return new NCLObjectXmlMetadata(doc, 0L, NavText.Create(metadataHash));
+#else
         return new NCLObjectXmlMetadata(doc, NavText.Create(metadataHash));
+#endif
     }
 
     public NCLObjectXmlMetadata GetSystemTableMetaObjectXmlMetadataFromApplicationDatabase(ApplicationObjectId objectId) =>
@@ -107,7 +115,15 @@ public sealed class RunnerXmlMetadataLoader : INCLObjectXmlMetadataLoader
             "INCLObjectXmlMetadataLoader.GetSystemTableMetaObjectXmlMetadataFromApplicationDatabase",
             "not-yet-implemented — system-table (2000000071) metadata-from-application-database lookup is not wired");
 
+    // BC 26 declares this returning NavAppObjectMetadataTimestampRecord<T>; BC 27+ returns
+    // the bare T. We implement the interface, so the signature must match the reference
+    // assembly exactly — hence an #if rather than reflection. The body is the same `null!`
+    // either way, so nothing but the declared type differs.
+#if BC_XMLMETA_TIMESTAMP_RECORD
+    public NavAppObjectMetadataTimestampRecord<NavAppObjectMetadataRuntimeDeltas> GetExtensionDeltasForAppObject(ApplicationObjectId objectId, NavAppRuntimeMetadata runtimeAppMetadata) =>
+#else
     public NavAppObjectMetadataRuntimeDeltas GetExtensionDeltasForAppObject(ApplicationObjectId objectId, NavAppRuntimeMetadata runtimeAppMetadata) =>
+#endif
         // No extension-runtime-delta tracking in the runner (no published-app
         // extension pipeline) — null is BC's own "no deltas" value too (see
         // the real NCLObjectXmlMetadataLoader: it only calls the retriever

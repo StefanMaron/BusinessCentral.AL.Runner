@@ -105,6 +105,30 @@
 
   <PropertyGroup>
     <_BCVersion>28.1.49838.50794</_BCVersion>
+
+    <!-- Compile-time BC feature constants.
+
+         Almost every BC-version difference is handled by reflection at runtime, which is
+         strongly preferred: one binary, no build matrix in the source. These cannot be, because
+         they are the shape of types we IMPLEMENT or CONSTRUCT — the C# compiler has to agree
+         with the reference assembly before any code runs:
+
+           BC_TESTPAGE_GETPAGE          BC 26 declares ITestPage.GetPage(int) returning
+                                        ITestPage. BC 27 renamed it to GetPart(int) and
+                                        introduced the derived ITestPart type, which does
+                                        not exist at all on 26.
+           BC_XMLMETA_TIMESTAMP_RECORD  BC 26 declares INCLObjectXmlMetadataLoader
+                                        .GetExtensionDeltasForAppObject returning
+                                        NavAppObjectMetadataTimestampRecord<T>; BC 27+
+                                        returns the bare T.
+           BC_XMLMETA_CTOR_TIMESTAMP    BC 26's NCLObjectXmlMetadata ctor carries an extra
+                                        leading `long timestamp` parameter.
+
+         Keyed off the major only: every difference so far is a 26-vs-27+ split, and a constant per
+         feature (rather than a bare BC26) keeps the #if sites self-explaining and makes the
+         next such split additive. -->
+    <_BCMajor>$([System.Version]::Parse('$(_BCVersion)').Major)</_BCMajor>
+    <DefineConstants Condition="$(_BCMajor) &lt; 27">$(DefineConstants);BC_TESTPAGE_GETPAGE;BC_XMLMETA_TIMESTAMP_RECORD;BC_XMLMETA_CTOR_TIMESTAMP</DefineConstants>
     <!-- Cross-platform cache directory for the build-time BC service tier. MUST match the
          runtime artifacts root (BcArtifacts.ArtifactsRoot = UserProfile/.local/share/al-runner/
          artifacts on every OS) so a dev's downloaded artifacts serve both the build and the

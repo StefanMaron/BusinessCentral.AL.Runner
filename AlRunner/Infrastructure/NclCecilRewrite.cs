@@ -1135,7 +1135,11 @@ public static class NclCecilRewrite
         // 4. Remove TestClientProxy<T>.Proxy(T) call from all NavTestPageBase methods that use it.
         //    Removing the call leaves the raw ITest* value on the stack in the right place.
         {
-            var methodsToFix = new[] { "GetField", "GetAction", "GetDataItem", "GetPart", "GetBuiltInAction", "FindBuiltInAction" };
+            // "GetPage" is BC 26's name for what BC 27+ calls "GetPart". Listed unconditionally
+            // rather than behind an #if: this runs against the loaded Ncl at runtime, the loop
+            // skips names the assembly does not declare, and the treatment (strip the
+            // TestClientProxy.Proxy call) is correct for whichever of the two is present.
+            var methodsToFix = new[] { "GetField", "GetAction", "GetDataItem", "GetPart", "GetPage", "GetBuiltInAction", "FindBuiltInAction" };
             int removedCount = 0;
             foreach (var methodName in methodsToFix)
             {
