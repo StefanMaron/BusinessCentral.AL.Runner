@@ -795,14 +795,19 @@ foreach (var bundle in bundles)
 
     // ── per-bucket dep resolution ──────────────────────────────────────────
     var bucketRoot = FindBucketRoot(bundleAbs);
-    if (bucketRoot != null)
+    // The dependency closure comes from the bucket root's app.json when it has one, and
+    // otherwise from the union of the child apps' manifests — see CollectBundleManifests.
+    var bundleManifests = CollectBundleManifests(bucketRoot, bundleAbs);
+    // Everything below resolves package dirs and loads deps relative to a directory; when
+    // the bundle is a parent of many apps there is no bucket root, so the bundle dir is it.
+    var depRootDir = bucketRoot ?? bundleAbs;
     {
-        var appJsonPath = Path.Combine(bucketRoot, "app.json");
-        if (File.Exists(appJsonPath))
+        var appJsonPath = Path.Combine(depRootDir, "app.json");
+        if (bundleManifests.Count > 0)
         {
             try
             {
-                var roots = ReadDependencies(appJsonPath);
+                var roots = ReadBundleDependencyRoots(bundleManifests);
                 // Include the bundle's own .alpackages in the resolver search dirs. They
                 // carry the committed Microsoft platform symbol closure (Base Application /
                 // System Application / …) as real .app files. On CI, packageCacheDirs is
@@ -811,7 +816,7 @@ foreach (var bundle in bundles)
                 // it produces the COMPILE spec; LoadAll skips Microsoft platform apps so their
                 // runtime still comes from the service-tier DLLs, not a .app source-compile.
                 var bundlePkgDirs = Directory
-                    .EnumerateDirectories(bucketRoot, ".alpackages", SearchOption.AllDirectories)
+                    .EnumerateDirectories(depRootDir, ".alpackages", SearchOption.AllDirectories)
                     .ToList();
                 var resolverDirs = bundlePkgDirs.Concat(packageCacheDirs).Distinct().ToList();
                 var resolver = new DependencyResolver(resolverDirs);
@@ -854,7 +859,7 @@ foreach (var bundle in bundles)
                 BcCompiler.SetResolvedDeps(ordered, compilerDirs);
                 if (layeredWorkspaceDirs.Count > 0)
                     BcCompiler.SetExtraSymbolDirs(layeredWorkspaceDirs);
-                var loaded = depLoader.LoadAll(ordered, bucketRoot);
+                var loaded = depLoader.LoadAll(ordered, depRootDir);
                 Console.WriteLine($"  [{rel}] loaded {loaded.Count} dep assembl(ies)");
                 // Register dep assemblies (dependency order) so their Subtype=Install
                 // codeunit lifecycle triggers fire before this bundle's tests run.
@@ -873,14 +878,17 @@ foreach (var bundle in bundles)
                     AlRunner.Patches.RecordPatches.AddBcAppPath(appPath);
                 // Register any prebuilt bundle-root .app (with SymbolReference.json) so the
                 // generic NCLMetaQuery builder can read this bundle's own query column ids.
-                AlRunner.Patches.RecordPatches.RegisterBundleSymbolApps(bucketRoot);
+                AlRunner.Patches.RecordPatches.RegisterBundleSymbolApps(depRootDir);
                 // Populate BcRuntime with this bundle's identity for the
-                // NavApp.GetCurrentModuleInfo polyfill shim.
-                SetBundleInfoFromAppJson(appJsonPath);
+                // NavApp.GetCurrentModuleInfo polyfill shim. A parent-of-many-apps bundle
+                // has no identity of its own; each AppGroup sets its own below.
+                if (File.Exists(appJsonPath)) SetBundleInfoFromAppJson(appJsonPath);
                 // Compile this bundle under its REAL app.json identity so a dependency's
                 // internalsVisibleTo grant (which names this app) matches — otherwise the
                 // synthetic compile identity fails the grant check (AL0161).
-                var bundleId = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJsonPath);
+                var bundleId = File.Exists(appJsonPath)
+                    ? AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJsonPath)
+                    : null;
                 if (bundleId != null)
                     BcCompiler.SetCurrentAppIdentity(bundleId.AppId, bundleId.Publisher, bundleId.Version);
                 else
@@ -919,13 +927,8 @@ foreach (var bundle in bundles)
         }
         else
         {
-            Console.Error.WriteLine($"  [{rel}] WARN: no {appJsonPath} — skipping dep loading");
+            Console.Error.WriteLine($"  [{rel}] WARN: no app.json under {depRootDir} — skipping dep loading");
         }
-    }
-    // If there's no bucketRoot app.json but the bundle itself has one, use it.
-    else if (File.Exists(Path.Combine(bundleAbs, "app.json")))
-    {
-        SetBundleInfoFromAppJson(Path.Combine(bundleAbs, "app.json"));
     }
 
     var suites = EnumerateSuites(bundleAbs).ToList();
@@ -981,7 +984,7 @@ foreach (var bundle in bundles)
         // Ordered dep ids feed every app's cache key but depend only on the bucket root
         // and the package caches — both loop-invariant. Resolving them inside the loop
         // re-scanned the package caches once per app.
-        var orderedDepIds = GetOrderedDepIds(bucketRoot, packageCacheDirs);
+        var orderedDepIds = GetOrderedDepIds(bucketRoot, packageCacheDirs, bundleAbs);
 
         foreach (var appGroup in appGroups)
         {
@@ -1013,7 +1016,7 @@ foreach (var bundle in bundles)
         bool bundleDeclaresQuery = BcCompiler.BundleDeclaresQuery(allPaths);
         if (alCacheDir != null)
         {
-            cacheKey = ComputeAlCacheKey(allPaths, moduleName, ordered: GetOrderedDepIds(bucketRoot, packageCacheDirs));
+            cacheKey = ComputeAlCacheKey(allPaths, moduleName, ordered: GetOrderedDepIds(bucketRoot, packageCacheDirs, bundleAbs));
             cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
             sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
             querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
@@ -3372,6 +3375,65 @@ static string? SelectVersionDirOrNull(string root, string versionPrefix)
 
 // Walks up from <bundlePath> until it finds a dir containing app.json.
 // Returns null if none found before /tests/ or filesystem root.
+/// <summary>
+/// The manifests whose dependency lists together define this bundle's compile closure.
+///
+/// Normally exactly one: the bucket root's own app.json. But a PARENT directory holding
+/// many sibling apps — tests/runner-extras is 25 of them — has no app.json of its own, and
+/// FindBucketRoot walks UP looking for one, so it finds nothing. Before this, the entire
+/// dep-resolution block was gated on that single file existing, so for such a bundle
+/// SetResolvedDeps was never called and NO module got the Microsoft platform symbol
+/// closure: `Table "Field"`, `Table "Payment Method"`, `Codeunit "Library - No. Series"`
+/// and every platform enum resolved to nothing. The emit-retry then dropped each offending
+/// test codeunit as "broken", so 25 suites yielded 9 tests — while each suite run
+/// STANDALONE passed, because then FindBucketRoot landed on a directory that does have an
+/// app.json. Union the children instead: their manifests are where the `application` /
+/// `platform` roots are declared.
+/// </summary>
+static List<string> CollectBundleManifests(string? bucketRoot, string bundleAbs)
+{
+    if (bucketRoot != null && File.Exists(Path.Combine(bucketRoot, "app.json")))
+        return new List<string> { Path.Combine(bucketRoot, "app.json") };
+    if (!Directory.Exists(bundleAbs)) return new List<string>();
+    // Direct children only — that is the shape EnumerateSuites recognises, and it keeps
+    // the scan away from app.json files buried inside extracted .app packages.
+    return Directory.EnumerateDirectories(bundleAbs)
+        .Select(d => Path.Combine(d, "app.json"))
+        .Where(File.Exists)
+        .OrderBy(p => p, StringComparer.Ordinal)
+        .ToList();
+}
+
+/// <summary>
+/// Union the dependency roots declared across <paramref name="manifests"/>, keeping the
+/// highest version when two manifests name the same dependency.
+///
+/// Sibling apps that are THEMSELVES part of this bundle are dropped: BuildAppGroups already
+/// emits them in topological order, so they must not also be resolved from a package cache —
+/// they have no .app there and a non-optional root that cannot be found fails the bundle.
+/// </summary>
+static List<DependencyRef> ReadBundleDependencyRoots(IReadOnlyList<string> manifests)
+{
+    var siblingIds = new HashSet<Guid>();
+    if (manifests.Count > 1)
+        foreach (var m in manifests)
+        {
+            var id = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(m);
+            if (id != null) siblingIds.Add(id.AppId);
+        }
+
+    var byKey = new Dictionary<(string, string), DependencyRef>();
+    foreach (var m in manifests)
+        foreach (var d in ReadDependencies(m))
+        {
+            if (d.AppId != Guid.Empty && siblingIds.Contains(d.AppId)) continue;
+            var key = (d.Name ?? string.Empty, d.Publisher ?? string.Empty);
+            if (!byKey.TryGetValue(key, out var cur) || d.Version > cur.Version)
+                byKey[key] = d;
+        }
+    return byKey.Values.ToList();
+}
+
 static string? FindBucketRoot(string bundlePath)
 {
     var cur = Directory.Exists(bundlePath) ? bundlePath : Path.GetDirectoryName(bundlePath);
@@ -3989,16 +4051,22 @@ static int LoadEnumRegistrySidecar(string path)
 // 67c4f8c4622a928aae07bf1857af515bb37fc5df4ac16eb047855f5dd2f9bba8 — a warm cache then
 // serves a DLL compiled against a different dependency closure. Same defect family as
 // the --define symbols that were missing from this key.
-static IReadOnlyList<string> GetOrderedDepIds(string? bucketRoot, IReadOnlyList<string> packageCacheDirs)
+static IReadOnlyList<string> GetOrderedDepIds(
+    string? bucketRoot, IReadOnlyList<string> packageCacheDirs, string? bundleAbs = null)
 {
-    if (bucketRoot == null) return Array.Empty<string>();
-    var appJsonPath = Path.Combine(bucketRoot, "app.json");
-    if (!File.Exists(appJsonPath)) return Array.Empty<string>();
+    // Same closure the emit actually compiles against — a parent-of-many-apps bundle has no
+    // app.json of its own and takes the union of its children (see CollectBundleManifests).
+    // Keying on a DIFFERENT closure than the one used to compile would let two bundles that
+    // resolve differently share a cache entry.
+    var depRootDir = bucketRoot ?? bundleAbs;
+    if (depRootDir == null) return Array.Empty<string>();
+    var manifests = CollectBundleManifests(bucketRoot, bundleAbs ?? depRootDir);
+    if (manifests.Count == 0) return Array.Empty<string>();
     try
     {
-        var roots = ReadDependencies(appJsonPath).ToList();
+        var roots = ReadBundleDependencyRoots(manifests);
         var bundlePkgDirs = Directory
-            .EnumerateDirectories(bucketRoot, ".alpackages", SearchOption.AllDirectories)
+            .EnumerateDirectories(depRootDir, ".alpackages", SearchOption.AllDirectories)
             .ToList();
         var resolver = new AlRunner.DependencyResolver(
             bundlePkgDirs.Concat(packageCacheDirs).Distinct().ToList());
@@ -4017,7 +4085,7 @@ static IReadOnlyList<string> GetOrderedDepIds(string? bucketRoot, IReadOnlyList<
         // again as soon as the reason changes.
         Console.Error.WriteLine(
             $"  [cache] dependency resolution failed while computing the cache key for " +
-            $"{bucketRoot}: {ex.GetType().Name}: {ex.Message}. Keying on the failure so this " +
+            $"{depRootDir}: {ex.GetType().Name}: {ex.Message}. Keying on the failure so this " +
             $"bundle cannot share a cache entry with a resolvable one.");
         return new[] { $"unresolved:{ex.GetType().Name}:{ex.Message}" };
     }
