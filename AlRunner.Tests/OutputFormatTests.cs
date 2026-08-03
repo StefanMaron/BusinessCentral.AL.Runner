@@ -108,7 +108,7 @@ public sealed class OutputFormatTests : IDisposable
     {
         var args = new StringBuilder(
             TestBuildConfig.RunArgs(ProjectPath));
-        args.Append($" --bc-version 28.1");
+        args.Append(TestBuildConfig.BcVersionArg);
         foreach (var a in extraArgs) args.Append($" {a}");
         args.Append($" \"{_root}\"");
         var psi = new ProcessStartInfo

@@ -47,7 +47,7 @@ public sealed class EmitExclusionLoudnessTests
     private static (string Output, int Exit) RunRunner()
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(" --bc-version 28.1");
+        args.Append(TestBuildConfig.BcVersionArg);
         args.Append($" \"{FixturePath}\"");
         var psi = new ProcessStartInfo
         {
@@ -117,7 +117,7 @@ public sealed class EmitExclusionLoudnessTests
             }
 
             var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-            args.Append(" --bc-version 28.1");
+            args.Append(TestBuildConfig.BcVersionArg);
             args.Append($" \"{tmp}\"");
             var psi = new ProcessStartInfo
             {

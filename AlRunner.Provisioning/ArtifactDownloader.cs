@@ -244,6 +244,13 @@ public static class ArtifactDownloader
             "microsoft_system application_",
             "microsoft_business foundation_",
             "microsoft_application_",
+            // Ships in w1/Extensions like the four above, NOT in the platform artifact the
+            // `test-apps` command streams — so `test-apps` cannot supply it however it is
+            // filtered. A test bundle depending on it (tests/runner-extras/microsoft-dependencies)
+            // was therefore unresolvable on any machine without a full BC sandbox artifact,
+            // which is every CI runner: the leg aborted with the provisioning-gap message
+            // before running a test, while passing locally off a multi-GB sandbox download.
+            "microsoft_application test library_",
         };
 
         var matching = new List<(string Name, int Method, long CompSize, long Offset)>();

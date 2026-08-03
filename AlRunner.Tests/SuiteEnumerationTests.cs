@@ -105,7 +105,7 @@ public sealed class SuiteEnumerationTests : IDisposable
     {
         var args = new StringBuilder(
             TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(" --bc-version 28.1");
+        args.Append(TestBuildConfig.BcVersionArg);
         args.Append($" \"{target}\"");
         var psi = new ProcessStartInfo
         {

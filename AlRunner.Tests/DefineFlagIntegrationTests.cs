@@ -133,7 +133,7 @@ public sealed class DefineFlagIntegrationTests : IDisposable
     {
         var args = new StringBuilder(
             TestBuildConfig.RunArgs(ProjectPath));
-        args.Append($" --bc-version 28.1");
+        args.Append(TestBuildConfig.BcVersionArg);
         args.Append($" --strict");
         args.Append($" \"{_root}\"");
         foreach (var a in extraArgs) args.Append($" {a}");

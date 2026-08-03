@@ -35,6 +35,30 @@ internal static class TestBuildConfig
     internal static string RunArgs(string projectPath) =>
         $"run --no-build -c {Configuration} --framework {Framework} --project \"{projectPath}\" --";
 
+    /// <summary>
+    /// The ` --bc-version &lt;version&gt;` argument to pass to a spawned runner, pinned to the
+    /// BC build THIS binary was compiled against.
+    ///
+    /// Same defect as the build configuration above, one field over: seven suites hardcoded
+    /// `--bc-version 28.1`, so on any CI matrix leg building against another BC version
+    /// every one of them died before testing anything —
+    ///   "BC version selection failed: No BC artifact ... matches version '28.1'.
+    ///    Available: 28.0.46665.53240"
+    /// — 13 failures that look like the runner is broken on older BC and are really just the
+    /// tests asking for a version the leg never downloaded. Deriving it means a leg tests the
+    /// BC version it was actually built and provisioned for.
+    ///
+    /// Empty when the built version is unknown, which leaves the runner's own default
+    /// selection in charge rather than pinning it to a guess.
+    /// </summary>
+    internal static string BcVersionArg { get; } = ResolveBcVersionArg();
+
+    private static string ResolveBcVersionArg()
+    {
+        var built = AlRunner.Infrastructure.BcArtifacts.EngineBuiltVersion();
+        return built == null ? string.Empty : $" --bc-version {built}";
+    }
+
     private static string ResolveConfiguration()
     {
         // AppContext.BaseDirectory is …/AlRunner.Tests/bin/<Configuration>/<tfm>/.

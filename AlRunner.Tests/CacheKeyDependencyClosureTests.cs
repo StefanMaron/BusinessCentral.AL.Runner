@@ -65,7 +65,7 @@ public sealed class CacheKeyDependencyClosureTests : IDisposable
     private static string RunAndReadCacheKey(string packageCacheDir, string alCacheDir)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(" --bc-version 28.1");
+        args.Append(TestBuildConfig.BcVersionArg);
         args.Append($" \"{FixturePath}\"");
         args.Append($" --package-cache \"{packageCacheDir}\"");
         args.Append($" --cache \"{alCacheDir}\"");

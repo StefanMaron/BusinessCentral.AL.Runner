@@ -93,6 +93,18 @@ jobs:
           dotnet run --project tools/DownloadArtifacts -- \
             platform-apps ${{ matrix.target.bc-version }} "$HOME/.al-runner/platform-apps"
 
+      - name: Download the Microsoft test toolkit (Any, Library Assert, Test Runner, …)
+        run: |
+          # Into the SAME directory as the platform apps, so one --package-cache covers
+          # both. tests/runner-extras/microsoft-dependencies depends on Application Test
+          # Library (w1/Extensions, fetched above), which in turn needs the toolkit apps
+          # that ship in the PLATFORM artifact — two different artifacts, two commands.
+          # Without these the leg aborted on a provisioning gap before running a test;
+          # it only passed locally because a full multi-GB BC sandbox artifact happened
+          # to be cached there.
+          dotnet run --project tools/DownloadArtifacts -- \
+            test-apps ${{ matrix.target.bc-version }} "$HOME/.al-runner/platform-apps"
+
       - name: Warm the Ncl Cecil rewrite cache
         run: |
           # The in-process engine tests (BcEngineCollection) can only load a rewritten
@@ -154,8 +166,13 @@ jobs:
         # is an independent gate. --strict so any runner-extra failure also fails the leg.
         if: ${{ always() && hashFiles('tests/runner-extras/**/*.al') != '' }}
         run: |
+          # Same package cache the corpus leg gets. Without it this leg saw
+          # "package caches: 0 dir(s)" and aborted on the first suite declaring a
+          # Microsoft dependency (microsoft-dependencies -> Application Test Library)
+          # before running a single test.
           dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
               tests/runner-extras \
+              --package-cache "$HOME/.al-runner/platform-apps" \
               --strict \
               --out runner-extras-results.json
 
