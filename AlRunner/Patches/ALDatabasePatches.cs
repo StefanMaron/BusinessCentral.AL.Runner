@@ -55,11 +55,55 @@ public static class ALDatabasePatches
     // out of scope for the in-process runner (no SQL to hand it back to).
     private static long _rowVersion = 1;
 
-    /// <summary>Advance the row-version clock. Called from the AL write entry points
-    /// via Cecil prepend, so every AL-visible row write moves the counter exactly as a
-    /// SQL write moves @@DBTS.</summary>
+    // ── Write-transaction state ────────────────────────────────────────────────
+    // AL's Database.IsInWriteTransaction() is backed by
+    // SessionTransactionExtensions.HasWriteTransaction → DataAccessSource
+    // .SessionTransactionManager.AnyHasWriteTransactionStarted(). The runner's in-memory
+    // provider never opens one of BC's transactions, so that always answered false.
+    //
+    // Faithfulness: the AL-observable contract is "a row has been written and not yet
+    // committed". BC opens the write transaction on the first write of the AL call and
+    // ends it at Commit (or when the invocation unwinds). That is exactly what this flag
+    // models — set from the same AL write entry points that move the row-version clock,
+    // cleared by Commit and at the per-test isolation boundary.
+    //
+    // NOT faithful for: rollback semantics (the runner's store has none — see
+    // docs/limitations.md) and nested/explicit transaction scopes.
+    private static bool _inWriteTransaction;
+
+    /// <summary>Whether an AL write has happened since the last Commit / test boundary.
+    /// The session parameter mirrors the signature of the extension method this replaces
+    /// (SessionTransactionExtensions.HasWriteTransaction(NavSession)); the runner is
+    /// single-session, so there is nothing to distinguish per session.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void BumpRowVersion() => System.Threading.Interlocked.Increment(ref _rowVersion);
+    public static bool HasWriteTransaction(object? session)
+        => System.Threading.Volatile.Read(ref _inWriteTransaction);
+
+    /// <summary>Replacement for ALDatabase.ALCommit(). There is nothing to flush — the
+    /// in-memory store is written through — but the write transaction ends here, which is
+    /// what AL observes via Database.IsInWriteTransaction().</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void ALDatabase_ALCommit()
+        => System.Threading.Volatile.Write(ref _inWriteTransaction, false);
+
+    /// <summary>Clear write-transaction state at the per-test isolation boundary, so one
+    /// test's uncommitted write cannot make the next test start "in a transaction".</summary>
+    public static void ResetWriteTransactionState()
+        => System.Threading.Volatile.Write(ref _inWriteTransaction, false);
+
+    /// <summary>Record an AL-visible row write. Called from the AL write entry points via
+    /// Cecil prepend, so every write moves the row-version counter exactly as a SQL write
+    /// moves @@DBTS, and opens the write transaction exactly as BC's first write does.
+    ///
+    /// Temporary records are excluded from both: a temp-table write touches no database,
+    /// so it neither advances @@DBTS nor starts a write transaction on real BC.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void NoteRecordWrite(object? record)
+    {
+        if (record is Microsoft.Dynamics.Nav.Runtime.NavRecord { IsTemporary: true }) return;
+        System.Threading.Interlocked.Increment(ref _rowVersion);
+        System.Threading.Volatile.Write(ref _inWriteTransaction, true);
+    }
 
     /// <summary>Replacement for ALDatabase.ALLastUsedRowVersion() — the runner's
     /// @@DBTS equivalent. Positive and non-decreasing; advances on every row write.</summary>

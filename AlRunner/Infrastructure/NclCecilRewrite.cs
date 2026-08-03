@@ -93,6 +93,8 @@ public static class NclCecilRewrite
         // NavCurrentThread.get_Session — AsyncLocal-backed; falls back to the skeleton
         // session on any flow the bootstrap ExecutionContext does not reach.
         "Microsoft.Dynamics.Nav.Runtime.NavCurrentThread::get_Session/0",
+        // SessionTransactionExtensions.HasWriteTransaction — AL's Database.IsInWriteTransaction().
+        "Microsoft.Dynamics.Nav.Runtime.SessionTransactionExtensions::HasWriteTransaction/1",
         // NavSession.ThrowSessionTerminatedExceptionIfStopping — pure guard over a null
         // AccessLock on the skeleton session.
         "Microsoft.Dynamics.Nav.Runtime.NavSession::ThrowSessionTerminatedExceptionIfStopping/0",
@@ -1366,6 +1368,32 @@ public static class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Rewrote NavSession.ThrowSessionTerminatedExceptionIfStopping → no-op (skeleton session never stops)");
         }
 
+        // 11. SessionTransactionExtensions.HasWriteTransaction(NavSession) — AL's
+        //     Database.IsInWriteTransaction(). BC's body asks
+        //     session.DataAccessSource.SessionTransactionManager.AnyHasWriteTransactionStarted(),
+        //     and the runner's in-memory provider never opens one of BC's transactions, so it
+        //     always answered false. ALDatabasePatches tracks the AL-observable state instead:
+        //     set on the first non-temporary AL row write, cleared by Commit.
+        {
+            var stExtType = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.SessionTransactionExtensions")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] SessionTransactionExtensions type not found — Ncl shape changed; do not commit");
+
+            var hasWriteTx = stExtType.Methods
+                .FirstOrDefault(m => m.Name == "HasWriteTransaction" && m.IsStatic
+                                     && m.Parameters.Count == 1 && m.HasBody
+                                     && m.ReturnType.FullName == "System.Boolean")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] SessionTransactionExtensions.HasWriteTransaction(NavSession) not found — do not commit");
+
+            ReplaceBodyWithHelper(asm.MainModule, hasWriteTx,
+                typeof(AlRunner.Patches.ALDatabasePatches).GetMethod(
+                    nameof(AlRunner.Patches.ALDatabasePatches.HasWriteTransaction),
+                    BindingFlags.Public | BindingFlags.Static)!);
+            Console.Error.WriteLine("[Cecil] Rewrote SessionTransactionExtensions.HasWriteTransaction → runner write-transaction state");
+        }
+
 
         // ── Batch 5: NavMediaValueBase.get_ALMediaId → Cecil body rewrite ────────────────
         //
@@ -1770,8 +1798,18 @@ public static class NclCecilRewrite
             var alDatabaseType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.ALDatabase");
             if (alDatabaseType != null)
             {
+                // ALCommit is no longer a bare no-op: there is nothing to flush (the
+                // in-memory store is written through) but the write transaction ENDS here,
+                // which is what AL observes through Database.IsInWriteTransaction().
+                foreach (var m in alDatabaseType.Methods.Where(x => x.Name == "ALCommit" && x.Parameters.Count == 0 && x.HasBody))
+                {
+                    ReplaceBodyWithHelper(asm.MainModule, m,
+                        typeof(AlRunner.Patches.ALDatabasePatches).GetMethod(
+                            nameof(AlRunner.Patches.ALDatabasePatches.ALDatabase_ALCommit),
+                            BindingFlags.Public | BindingFlags.Static)!);
+                    Console.Error.WriteLine("[Cecil] Rewrote ALDatabase.ALCommit → end write transaction");
+                }
                 foreach (var m in alDatabaseType.Methods.Where(x =>
-                    x.Name == "ALCommit" ||
                     x.Name == "ALSetDefaultTableConnection" ||
                     x.Name == "ALRegisterTableConnection" ||
                     x.Name == "ALUnregisterTableConnection"))
@@ -3426,9 +3464,9 @@ public static class NclCecilRewrite
             var navRecord = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord")
                 ?? throw new InvalidOperationException("NavRecord type not found in Ncl");
             var bumpMi = typeof(AlRunner.Patches.ALDatabasePatches).GetMethod(
-                nameof(AlRunner.Patches.ALDatabasePatches.BumpRowVersion),
+                nameof(AlRunner.Patches.ALDatabasePatches.NoteRecordWrite),
                 BindingFlags.Public | BindingFlags.Static)
-                ?? throw new InvalidOperationException("ALDatabasePatches.BumpRowVersion not found");
+                ?? throw new InvalidOperationException("ALDatabasePatches.NoteRecordWrite not found");
             var bumpRef = asm.MainModule.ImportReference(bumpMi);
 
             var writeEntries = new[] { "ALInsertAsync", "ALModifyAsync", "ALDeleteAsync", "ALRenameAsync" };
@@ -3437,15 +3475,19 @@ public static class NclCecilRewrite
                          x => writeEntries.Contains(x.Name) && x.HasBody && x.Body.Instructions.Count > 0))
             {
                 var il = m.Body.GetILProcessor();
-                il.InsertBefore(m.Body.Instructions[0], il.Create(OpCodes.Call, bumpRef));
+                var first = m.Body.Instructions[0];
+                // Pass `this` so the helper can exclude temporary records, which touch no
+                // database and therefore neither advance @@DBTS nor open a write transaction.
+                il.InsertBefore(first, il.Create(OpCodes.Ldarg_0));
+                il.InsertBefore(first, il.Create(OpCodes.Call, bumpRef));
                 bumped++;
             }
             if (bumped == 0)
                 throw new InvalidOperationException(
-                    "[Cecil] no NavRecord AL write entry points found for the row-version bump — " +
+                    "[Cecil] no NavRecord AL write entry points found for the write-note prepend — " +
                     "Database.LastUsedRowVersion would stop advancing silently.");
             Console.Error.WriteLine(
-                $"[Cecil] Prepended BumpRowVersion → {bumped} NavRecord AL write entry point(s)");
+                $"[Cecil] Prepended NoteRecordWrite → {bumped} NavRecord AL write entry point(s)");
         }
 
 

@@ -1097,6 +1097,11 @@ public static partial class RecordPatches
         // a test's writes are rolled back on completion.
         AlRunner.Patches.TenantStoragePatches.ResetForTest();
 
+        // Write-transaction state behind Database.IsInWriteTransaction(). A test that
+        // writes without committing must not leave the next test believing it started
+        // inside a transaction — BC's per-test rollback ends the transaction either way.
+        AlRunner.Patches.ALDatabasePatches.ResetWriteTransactionState();
+
         // Process-wide skeleton TreeSharedObjectContainer (SharedRecordRef / SharedNavStream
         // / SharedHttpRequest / SharedHttpResponseMessage / SharedNavHttpClient /
         // SharedNavObjectDictionary wrappers) — see BcRuntime.DisposeSkeletonSharedObjectContainerChildren
