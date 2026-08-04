@@ -1092,6 +1092,21 @@ foreach (var bundle in bundles)
             // Note: Task.Run thread continues in background after timeout — acceptable for a CLI tool.
             int emitTimeoutSec = int.TryParse(
                 Environment.GetEnvironmentVariable("AL_RUNNER_EMIT_TIMEOUT_SEC"), out var ts) ? ts : 120;
+            // Containment: keep a symbol-less .app in ONE suite's .alpackages from failing
+            // every OTHER suite in the bundle. BC's native .app scanner reports AL1023
+            // ("package file is not valid") for a package with no SymbolReference.json and
+            // then AL1022 ("could not be found") for the dep it should have supplied — and
+            // because the bundle compiles every module against the UNION of all suites'
+            // resolved deps, both land in siblings that never declared that dependency.
+            //
+            // BC 28's Emit shrugs these off; BC 27's does not — measured on the 27.0 leg,
+            // one fixture package took 16 unrelated suites to EMIT-ZERO and cost ~50 tests.
+            // Such a package can never serve the compiler's scanner anyway, so dropping it
+            // from the COMPILER's dep list loses nothing: its symbols arrive via
+            // *.symbols.json (GetSharedReferences) and its code via the runtime's Tier-1
+            // .deps-bin path, neither of which this scope touches. Same filter EmitDepSymbols
+            // already applies — see BcCompiler.ScopeSymbolBearingDepsOnly.
+            using var bundleDepScope = BcCompiler.ScopeSymbolBearingDepsOnly();
             var emitTask = Task.Run(() => emitter.Emit(allPaths, moduleName));
             try
             {
