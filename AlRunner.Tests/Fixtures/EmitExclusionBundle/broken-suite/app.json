@@ -1,0 +1,25 @@
+{
+  "id": "c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+  "name": "Runner Tests Fixture - Emit Exclusion Bundle Broken",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "The suite whose only object cannot bind, so its whole module is dropped from the bundle.",
+  "description": "Sibling of the healthy suite in the same bundle. Its object cannot bind, so the emit-retry loop excludes it and the runner empties this module's sources. It therefore contributes ZERO tests to the bundle while the healthy sibling still contributes a passing one — the exact shape in which the bundle-level loudness guard used to go quiet.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "28.0.0.0",
+  "idRanges": [
+    {
+      "from": 60700,
+      "to": 60749
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

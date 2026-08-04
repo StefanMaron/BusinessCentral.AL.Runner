@@ -1460,6 +1460,11 @@ foreach (var bundle in bundles)
         else
             Console.WriteLine($"  → {sP}P/{sF}F/{sE}E across {bundleTests.Count} tests, {bundleErrors.Count} suite errors ({(bundleEmit + bundleComp + bundleRun).TotalSeconds:F1}s)");
     }
+    // Deliberately still gated on an EMPTY bundle. CompileFailed suppresses the bucket's
+    // per-test reporting (Reporter treats it as "nothing ran"), so widening it to any suite
+    // error would hide the tests that DID pass — trading one silent inaccuracy for another.
+    // Partial suite loss reaches the exit code via computedExitCode's CompileErrors check
+    // instead, which keeps the surviving results in the report and the JSON.
     if (bundleTests.Count == 0 && bundleErrors.Count > 0) bundleStage = BucketStage.CompileFailed;
     results.Add(new BucketResult(bundleAbs, bundleStage,
         bundleErrors, null, bundleTests,
@@ -1577,6 +1582,14 @@ int computedExitCode = 0;
     {
         if (b.Stage == BucketStage.CompileFailed) { compileFail++; continue; }
         if (b.Stage == BucketStage.ExecuteFailed) { execFail++; continue; }
+        // A bundle that RAN but lost whole suites still covers less than it declares, and
+        // its surviving tests all pass by construction (the dropped ones contribute nothing).
+        // Without this the run exits 0: bucket Stage stays Executed, so suite errors reached
+        // neither branch above. Measured on the matrix — BC 27.0 ran 26 of ~76 runner-extras
+        // tests with 16 suite errors and reported success; BC 28.0 ran 8 of 76 and exited
+        // non-zero only because one survivor happened to fail. See loud-failures.md.
+        // No `continue`: the bucket's real results still belong in the totals.
+        if (b.CompileErrors.Count > 0) compileFail++;
         foreach (var t in b.Tests)
         {
             if (t.Outcome == TestOutcome.Fail) failed++;
