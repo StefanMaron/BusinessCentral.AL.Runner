@@ -112,6 +112,22 @@ jobs:
             -p:AllowBcArtifactDownload=true \
             -c Release
 
+      - name: Download R2R platform apps (Base/System Application, …)
+        run: |
+          # See test-matrix.yml's identical step: the corpus ships a SYMBOL-ONLY Base
+          # Application in its .alpackages (compiles, no runtime DLL), so cross-app
+          # tableextension/report/xmlport tests fail at runtime without the real R2R
+          # platform apps in a package cache. This job was missing this step entirely —
+          # 17 corpus tests failed on BC 27.3 without it (2026-08-05 release attempts),
+          # despite the identical commit passing clean in test-matrix.yml.
+          dotnet run --project tools/DownloadArtifacts -- \
+            platform-apps ${{ matrix.bc-version }} "$HOME/.al-runner/platform-apps"
+
+      - name: Download the Microsoft test toolkit (Any, Library Assert, Test Runner, …)
+        run: |
+          dotnet run --project tools/DownloadArtifacts -- \
+            test-apps ${{ matrix.bc-version }} "$HOME/.al-runner/test-apps"
+
       - name: Run unit tests (AlRunner.Tests)
         run: |
           dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c Release --no-build
@@ -120,6 +136,8 @@ jobs:
         run: |
           dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
             tests/al-language/tests/al-language \
+            --package-cache "$HOME/.al-runner/platform-apps" \
+            --strict \
             --out al-language-results.json
 
       - name: Run runner-extras (if present)
@@ -127,6 +145,9 @@ jobs:
         run: |
           dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
             tests/runner-extras \
+            --package-cache "$HOME/.al-runner/platform-apps" \
+            --package-cache "$HOME/.al-runner/test-apps" \
+            --strict \
             --out runner-extras-results.json
 
   publish:
