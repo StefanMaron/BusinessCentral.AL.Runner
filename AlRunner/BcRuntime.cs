@@ -1657,7 +1657,7 @@ public static partial class BcRuntime
         // ALDatabase.ALSid — BC's real getter walks NavCurrentThread.Session.Identity
         // and NREs on the skeleton (no real session). Hook to return a constant stub
         // SID. The JmpHook fires reliably for this static (R2R spike, 2026-05-18). See
-        // spike/v2/Runner/Patches/ALDatabasePatches.cs for the rationale.
+        // AlRunner/Patches/ALDatabasePatches.cs for the rationale.
         var alDbType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ALDatabase");
         if (alDbType != null)
         {

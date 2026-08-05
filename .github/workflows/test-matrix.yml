@@ -2,9 +2,9 @@ name: Test Matrix
 
 on:
   push:
-    branches: [main, v2]
+    branches: [main]
   pull_request:
-    branches: [main, v2]
+    branches: [main]
 
 env:
   DOTNET_NOLOGO: true

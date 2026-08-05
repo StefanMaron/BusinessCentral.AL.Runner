@@ -36,7 +36,7 @@
 
 **Status:** spike artifact, architectural analysis only.
 **Audience:** anyone deciding whether AlRunner v2 should continue with reactive JMP-hook patches or pivot to principled subsystem replacement at natural interface boundaries.
-**Method:** ILSpy-decompiled BC 27.5.46862.48827 service-tier types, read-only reference (decompiled output not committed). Conclusions cross-checked against `spike/v2/Runner/BcRuntime.cs`, `spike/bc-abi-identity/FINDINGS.md`, the live failure stacks in `spike/v2/results-after-w1.json`, and the bc-linux StartupHook (`~/Documents/Repos/community/bc-linux/src/StartupHook/StartupHook.cs`).
+**Method:** ILSpy-decompiled BC 27.5.46862.48827 service-tier types, read-only reference (decompiled output not committed). Conclusions cross-checked against `AlRunner/BcRuntime.cs` (promoted from `spike/v2/Runner/BcRuntime.cs` at cutover), `docs/archive/spike-bc-abi-identity-findings.md`, the live failure stacks in a since-removed spike snapshot (`spike/v2/results-after-w1.json`, no longer present), and the bc-linux StartupHook (`~/Documents/Repos/community/bc-linux/src/StartupHook/StartupHook.cs`).
 
 ---
 
@@ -78,7 +78,7 @@ The answers are surprisingly clear and not what the JMP-hook history suggests.
 
 ## Background: what we have today
 
-`spike/v2/Runner/BcRuntime.cs` applies 14 patches at process start. Categorized:
+`AlRunner/BcRuntime.cs` applies 14 patches at process start. Categorized:
 
 | Category | Count | Patches |
 |---|---|---|
@@ -443,11 +443,11 @@ This is the entire skeleton state. The proposed W-1 patch would not need to grow
 
 | Path | What it is |
 |---|---|
-| `/home/stefan/Documents/Repos/community/BusinessCentral.AL.Runner/spike/v2/Runner/BcRuntime.cs` | All current JMP-hook patches |
-| `/home/stefan/Documents/Repos/community/BusinessCentral.AL.Runner/spike/v2/Runner/TestExecutor.cs` | Test discovery + invoke |
-| `/home/stefan/Documents/Repos/community/BusinessCentral.AL.Runner/spike/v2/CLASSIFICATION.md` | W-1..W-5 work plan, current corpus state |
-| `/home/stefan/Documents/Repos/community/BusinessCentral.AL.Runner/spike/v2/results-after-w1.json` | 158 remaining failures, classified |
-| `/home/stefan/Documents/Repos/community/BusinessCentral.AL.Runner/spike/bc-abi-identity/FINDINGS.md` | The 18-layer trace explaining each existing patch |
+| `AlRunner/BcRuntime.cs` (was `spike/v2/Runner/BcRuntime.cs` pre-cutover) | All current JMP-hook patches |
+| `AlRunner/TestExecutor.cs` (was `spike/v2/Runner/TestExecutor.cs` pre-cutover) | Test discovery + invoke |
+| `docs/archive/spike-classification.md` (was `spike/v2/CLASSIFICATION.md`) | W-1..W-5 work plan, corpus state at spike time |
+| *(removed — was `spike/v2/results-after-w1.json`)* | 158 remaining failures, classified, snapshot no longer present |
+| `docs/archive/spike-bc-abi-identity-findings.md` (was `spike/bc-abi-identity/FINDINGS.md`) | The 18-layer trace explaining each existing patch |
 | `/home/stefan/Documents/Repos/community/bc-linux/src/StartupHook/StartupHook.cs` | Reference patch set for the full BC service tier |
 | `/home/stefan/Documents/Repos/community/BusinessCentral.AL.Runner/AlRunner/Runtime/AlScope.cs` | Existing v1 stand-in for the service tier — what subsystem replacement would aim to *eliminate*, not extend |
 

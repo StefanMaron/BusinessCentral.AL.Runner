@@ -22,7 +22,7 @@ The structure is four buckets, in order of decreasing fidelity:
    land in bucket 1 or 2 over time.
 
 Audit status of each existing patch against this manifest is tracked in
-`spike/v2/SCOPE-AUDIT.md`.
+`docs/archive/spike-scope-audit.md`.
 
 ---
 
@@ -189,7 +189,7 @@ invokes `OnInitReport` → `OnPreReport` → per-DataItem `OnPreDataItem` / `OnP
 
 | API | Reason |
 |---|---|
-| Multi-dataitem queries (JOINs), aggregations (`Sum`, `Avg`, `Min`, `Max`), `SaveAsCsv`/`SaveAsXml`/`SaveAsJson`/`SaveAsExcel` | NavQuery compiles AL into SQL projections. A faithful in-memory equivalent is a multi-day workstream (see `spike/v2/QUERY-INVESTIGATION.md`). Single-dataitem queries are in scope today (§2). |
+| Multi-dataitem queries (JOINs), aggregations (`Sum`, `Avg`, `Min`, `Max`), `SaveAsCsv`/`SaveAsXml`/`SaveAsJson`/`SaveAsExcel` | NavQuery compiles AL into SQL projections. A faithful in-memory equivalent is a multi-day workstream. Single-dataitem queries are in scope today (§2). |
 
 ### §3.14. .NET interop (DotNet AL type) <a id="dotnet-interop"></a>
 
@@ -234,11 +234,12 @@ Reason: external-smtp. See docs/scope.md#email.
 2. The row tells you which bucket the API is in (3.x permanent, or 4 TODO).
 3. If §3 — move the test to a real-service-tier test app, or refactor to inject
    an AL interface and pass a fake from the test project.
-4. If §4 — file a runner-gap issue and add the test to `tests/excluded/`.
+4. If §4 — file a runner-gap issue and add a `known-gaps-<area>.json` entry
+   in `tests/expectations/` linking it (see `docs/expectations.md`).
 
 ## Sister docs
 
 - `.claude/rules/loud-failures.md` — the rule.
 - `docs/limitations.md` — user-facing version with patterns + workarounds.
-- `spike/v2/SCOPE-AUDIT.md` — audit table of each existing patch vs this manifest.
-- `spike/v2/HANDOFF.md` — what's prioritized for the §4 list.
+- `docs/archive/spike-scope-audit.md` — audit table of each existing patch vs this manifest.
+- `docs/archive/spike-handoff.md` — what's prioritized for the §4 list.

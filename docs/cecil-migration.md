@@ -76,7 +76,7 @@ After phases 1-2, most of `ApplyAllPatches` is dead code. Audit, delete. Skeleto
 In rough order of priority:
 - ALDatabase cluster (currently blocked on JmpHook calling-convention bugs — Cecil sidesteps the whole class)
 - Field-init patches
-- Remaining `spike/v2/Runner/Patches/*.cs`
+- Remaining `AlRunner/Patches/*.cs`
 
 Each migration: ~5-30 lines of Cecil + delete the corresponding JmpHook code. Per-commit verification: 4-bucket smoke must stay within ±1 P of baseline (no silent regressions on the migration).
 

@@ -54,12 +54,14 @@ Placeholder hooks for not-yet-implemented in-scope surfaces must throw
 `RunnerOutOfScopeException` with reason `"not-yet-implemented"`, NOT silently
 return a default. This is so the developer notices and can either:
 1. Implement it (with a real in-memory backend or a faithful replacement), or
-2. Open a runner-gap issue and move the test to `tests/excluded/<bucket>/`
-   with a `RUNNER-GAP-*.md` note.
+2. Open a runner-gap issue and add a `known-gaps-<area>.json` entry in
+   `tests/expectations/` linking it (see `docs/expectations.md`). `tests/excluded/`
+   was the pre-cutover mechanism; it now lives frozen under `tests/archive/excluded/`
+   and is not wired into CI.
 
 ## Audit obligation
 
-Any new patch under `spike/v2/Runner/Patches/` (or anywhere else that
+Any new patch under `AlRunner/Patches/` (or anywhere else that
 substitutes BC method behaviour) must justify in a code comment why its return
 value is **observably equivalent** to the real BC behaviour for in-scope test
 code. If it isn't, it throws `RunnerOutOfScopeException` instead.
@@ -81,5 +83,5 @@ throws as they're identified.
 
 - `.claude/rules/precompiled-dll-respect.md` — what we may NOT rewrite. The DLL contract.
 - `.claude/rules/no-assumption-fixes.md` — never fix without understanding the AL pattern.
-- `.claude/rules/file-issues-for-gaps.md` — gaps go to issues + `tests/excluded/`, never silent workarounds.
+- `.claude/rules/file-issues-for-gaps.md` — gaps go to issues + `tests/expectations/`, never silent workarounds.
 - `.claude/rules/tdd.md` — every fix needs a RED → GREEN.

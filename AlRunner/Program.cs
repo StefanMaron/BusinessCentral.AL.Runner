@@ -968,7 +968,7 @@ foreach (var bundle in bundles)
         // restores per-app identity, resources and install-trigger seeding.
         //
         // Suites whose AL hits BC emit bugs or bundled-only strictness checks are
-        // quarantined under tests/excluded/ with a RUNNER-GAP-*.md note.
+        // quarantined via a tests/expectations/ known-gaps-<area>.json entry.
         var appGroups = BuildAppGroups(suites, bucketRoot, bundleAbs);
 
         // ── in-bundle sibling symbols ──────────────────────────────────────
@@ -1115,7 +1115,7 @@ foreach (var bundle in bundles)
                     Console.Error.WriteLine(
                         $"<bundled>: EMIT-TIMEOUT after {emitTimeoutSec}s on {allPaths.Count} AL paths");
                     Console.Error.WriteLine(
-                        "Hint: increase AL_RUNNER_EMIT_TIMEOUT_SEC or quarantine the offending suite under tests/excluded/.");
+                        "Hint: increase AL_RUNNER_EMIT_TIMEOUT_SEC or quarantine the offending suite via a tests/expectations/ entry.");
                     bundleErrors.Add($"<bundled>: EMIT-TIMEOUT after {emitTimeoutSec}s");
                 }
                 else
