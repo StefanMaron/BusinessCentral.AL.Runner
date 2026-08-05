@@ -16,17 +16,7 @@ All notable changes to this project are documented here. Format based on
 ### Changed
 - AL Runner v2: full architecture cutover
 - Update telemetry-triage.yml
-
-## [2.0.0] - 2026-08-05
-
-### Fixed
-- Record.Get with fewer key values than PK fields binds type defaults instead of prefix-matching
-- make TableFieldRegistry.GetSourceTableId a pure reader to remove rewrite-phase race
-- raise platform error when Record.Get receives more key values than PK fields — closes #1630
-
-### Changed
-- AL Runner v2: full architecture cutover
-- Update telemetry-triage.yml
+- publish.yml's test job was missing the platform-apps package cache
 
 ## [1.0.31] - 2026-05-06
 

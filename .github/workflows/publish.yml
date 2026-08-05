@@ -39,21 +39,39 @@ jobs:
         id: changelog
         run: |
           VERSION="${{ inputs.version }}"
-          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-          if [ -n "$PREV_TAG" ]; then
-            COMMITS=$(git log "${PREV_TAG}..HEAD" --pretty=format:"%s")
+          TAG="v${VERSION}"
+
+          # Idempotent retry: if a prior run for this version already got as far as
+          # pushing the release commit + tag (then failed later, e.g. in `test`), a
+          # naive re-run would generate and commit a SECOND [x.y.z] section — exactly
+          # what happened on 2026-08-05 (two duplicate v2.0.0 sections, cleaned up by
+          # hand). Detect the existing tag and reuse its CHANGELOG section instead of
+          # regenerating.
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists on origin — reusing its release commit, not re-committing."
+            git fetch origin "refs/tags/$TAG:refs/tags/$TAG"
+            SECTION=$(git show "$TAG:CHANGELOG.md" | awk -v ver="## [$VERSION]" '
+              $0 == ver { found=1 }
+              found && /^## \[/ && $0 != ver { exit }
+              found { print }
+            ')
           else
-            COMMITS=$(git log --pretty=format:"%s")
+            PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+            if [ -n "$PREV_TAG" ]; then
+              COMMITS=$(git log "${PREV_TAG}..HEAD" --pretty=format:"%s")
+            else
+              COMMITS=$(git log --pretty=format:"%s")
+            fi
+
+            SECTION=$(VERSION="$VERSION" DATE="$(date +%Y-%m-%d)" COMMITS="$COMMITS" \
+              python3 .github/scripts/generate_changelog.py)
+
+            git add CHANGELOG.md
+            git commit -m "chore: release v${VERSION}"
+            git push origin main
+            git tag "$TAG"
+            git push origin "$TAG"
           fi
-
-          SECTION=$(VERSION="$VERSION" DATE="$(date +%Y-%m-%d)" COMMITS="$COMMITS" \
-            python3 .github/scripts/generate_changelog.py)
-
-          git add CHANGELOG.md
-          git commit -m "chore: release v${VERSION}"
-          git push origin main
-          git tag "v${VERSION}"
-          git push origin "v${VERSION}"
 
           {
             echo "notes<<EOF_NOTES"
