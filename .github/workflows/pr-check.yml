@@ -57,14 +57,9 @@ jobs:
           echo ""
           echo "Test presence check passed. Copilot review will assess test quality."
 
-  validate-coverage:
-    name: Coverage manifest valid
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Run coverage-gen unit tests
-        run: node scripts/tests/coverage-gen.test.js
-
-      - name: Validate docs/coverage.yaml
-        run: node scripts/coverage-gen.js --validate
+  # validate-coverage (docs/coverage.yaml) removed at the v1->v2 cutover: v1 tracked
+  # AL-language coverage in a hand-curated YAML the orchestrator validated on every PR.
+  # v2's spec is the tests/al-language/ corpus itself -- every AL surface that needs
+  # coverage has a real test there, so a separate hand-maintained manifest adds nothing.
+  # The old file is preserved for reference at docs/archive/coverage.yaml.
+  # See docs/v1-to-v2-migration.md's "Dropped" table.
