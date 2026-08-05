@@ -7424,7 +7424,42 @@ public static class NclCecilRewrite
         try
         {
             File.WriteAllBytes(tempPath, contents);
-            File.Move(tempPath, destPath, overwrite: true);
+
+            // On Windows, a real-time antivirus scanner (confirmed: Defender) opens a
+            // freshly-written file for scanning and holds it long enough that a plain
+            // File.Move(overwrite:true) — MoveFileEx(MOVEFILE_REPLACE_EXISTING) under the
+            // hood — fails with ERROR_ACCESS_DENIED. Reproduced on real Windows 11 (#1650
+            // investigation): al-runner died here on every run without a manual Defender
+            // exclusion. POSIX rename(2) (what this call becomes on Linux/macOS) has no
+            // equivalent lock, so none of this fires there — File.Move succeeds first try.
+            //
+            // File.Replace (the ReplaceFile Win32 API — designed to swap a file that may
+            // have open handles) clears the lock that defeats File.Move; try it first when
+            // destPath already exists, then fall back to a bounded, backed-off File.Move
+            // retry for the create case (ReplaceFile requires an existing destination) and
+            // as a safety net if Replace itself is ever refused.
+            const int maxAttempts = 60;
+            for (int attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                try
+                {
+                    if (attempt == 1 && File.Exists(destPath))
+                    {
+                        try { File.Replace(tempPath, destPath, destinationBackupFileName: null); break; }
+                        catch { /* fall through to the File.Move retry loop below */ }
+                    }
+                    File.Move(tempPath, destPath, overwrite: true);
+                    break;
+                }
+                catch (IOException) when (attempt < maxAttempts)
+                {
+                    System.Threading.Thread.Sleep(500);
+                }
+                catch (UnauthorizedAccessException) when (attempt < maxAttempts)
+                {
+                    System.Threading.Thread.Sleep(500);
+                }
+            }
         }
         catch
         {
@@ -7480,10 +7515,9 @@ public static class NclCecilRewrite
         var modifiedBytes = RewriteNcl(nclSrc);
 
         // Write to cache atomically via temp-file-then-rename so concurrent runners
-        // never read a partially-written cache entry.
-        var tempPath = cachePath + ".tmp." + Guid.NewGuid().ToString("N");
-        File.WriteAllBytes(tempPath, modifiedBytes);
-        File.Move(tempPath, cachePath, overwrite: true);
+        // never read a partially-written cache entry. Routed through AtomicReplace for
+        // the same Windows AV-lock retry it applies to binNclPath below.
+        AtomicReplace(cachePath, modifiedBytes);
         Console.Error.WriteLine($"[Cecil] Saved to cache ({modifiedBytes.Length} bytes)");
 
         // Produce binNclPath via File.Copy from the freshly-written cache entry,

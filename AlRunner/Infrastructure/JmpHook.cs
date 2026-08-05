@@ -17,6 +17,37 @@ internal static class JmpHook
     private static extern int mprotect(IntPtr addr, nuint len, int prot);
     private const int PROT_READ = 1, PROT_WRITE = 2, PROT_EXEC = 4;
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool VirtualProtect(IntPtr lpAddress, nuint dwSize, uint flNewProtect, out uint lpflOldProtect);
+    private const uint PAGE_NOACCESS = 0x01, PAGE_READONLY = 0x02, PAGE_READWRITE = 0x04,
+        PAGE_EXECUTE_READ = 0x20, PAGE_EXECUTE_READWRITE = 0x40;
+
+    private static readonly bool _isWindows =
+        RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+
+    /// <summary>
+    /// Cross-platform page-protection change: <c>mprotect</c> on Linux/macOS,
+    /// <c>VirtualProtect</c> on Windows (#1650 — verified on real Windows 11/.NET 8;
+    /// the same precode shapes WriteJmp/InstallIndirect already handle apply
+    /// unchanged, only the OS call that flips the page's RWX bits differs).
+    /// Returns 0 on success and nonzero on failure, mirroring mprotect's convention,
+    /// so every existing `!= 0` call site keeps working without modification.
+    /// </summary>
+    private static int ProtectMemory(IntPtr addr, nuint len, int prot)
+    {
+        if (!_isWindows) return mprotect(addr, len, prot);
+
+        uint winProt = (prot & (PROT_READ | PROT_WRITE | PROT_EXEC)) switch
+        {
+            PROT_READ | PROT_WRITE | PROT_EXEC => PAGE_EXECUTE_READWRITE,
+            PROT_READ | PROT_EXEC => PAGE_EXECUTE_READ,
+            PROT_READ | PROT_WRITE => PAGE_READWRITE,
+            PROT_READ => PAGE_READONLY,
+            _ => PAGE_NOACCESS,
+        };
+        return VirtualProtect(addr, len, winProt, out _) ? 0 : -1;
+    }
+
     /// <summary>
     /// Byte length for an <c>mprotect</c> call that must cover exactly the page(s) the
     /// <paramref name="bytes"/>-byte write at <paramref name="addr"/> touches — starting from
@@ -206,7 +237,7 @@ internal static class JmpHook
         long addr = target.ToInt64();
         long pageStart = addr & ~(pageSize - 1);
         var regionSize = (nuint)(((addr - pageStart) + jmp.Length + pageSize - 1) & ~(pageSize - 1));
-        if (mprotect(new IntPtr(pageStart), regionSize, PROT_READ | PROT_WRITE | PROT_EXEC) != 0)
+        if (ProtectMemory(new IntPtr(pageStart), regionSize, PROT_READ | PROT_WRITE | PROT_EXEC) != 0)
         {
             Console.Error.WriteLine($"[JmpHook.WriteJmp] mprotect FAILED for target=0x{target:X} errno={Marshal.GetLastSystemError()}");
             return;
@@ -340,7 +371,7 @@ internal static class JmpHook
             restoreProt = PROT_READ | PROT_WRITE;
         }
 
-        if (mprotect(new IntPtr(cellPage), regionSize, writeProt) != 0)
+        if (ProtectMemory(new IntPtr(cellPage), regionSize, writeProt) != 0)
         {
             int err = Marshal.GetLastSystemError();
             Console.Error.WriteLine($"[JmpHook.InstallIndirect] {label}: mprotect({(cellInCodePage ? "RWX" : "RW")}) FAILED errno={err}");
@@ -355,7 +386,7 @@ internal static class JmpHook
         }
 
         // Step 7: restore page protection.
-        mprotect(new IntPtr(cellPage), regionSize, restoreProt);
+        ProtectMemory(new IntPtr(cellPage), regionSize, restoreProt);
         return true;
     }
 }

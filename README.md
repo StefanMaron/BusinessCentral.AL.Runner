@@ -52,7 +52,9 @@ This is the **precompiled-DLL contract** described in `.claude/rules/precompiled
 dotnet tool install --global MSDyn365BC.AL.Runner
 ```
 
-On first run, the AL compiler and the BC service-tier DLLs (around 11 MB via HTTP range requests) are downloaded and cached. Works on Linux and macOS. Windows is not yet supported — the runtime-patching layer relies on the Unix `mprotect` syscall (see [#1650](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1650)); a Windows run fails fast with a clear `PlatformNotSupportedException` instead of a raw crash.
+On first run, the AL compiler and the BC service-tier DLLs (around 11 MB via HTTP range requests) are downloaded and cached. Works on Windows, Linux, and macOS.
+
+On Windows, exclude the runner's cache/output directories from real-time antivirus scanning if you hit slow cold-start times — Windows Defender locking a just-written DLL for scanning is a known source of first-run delay (worked around automatically with a bounded retry, but excluding the folder avoids the wait entirely).
 
 ### Run
 

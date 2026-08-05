@@ -548,36 +548,10 @@ public static partial class BcRuntime
         };
     }
 
-    /// <summary>
-    /// Fails loudly and immediately when running on Windows, instead of letting the
-    /// first JmpHook.InstallIndirect call die on the unconditional Unix mprotect
-    /// P/Invoke (see #1650). Takes the platform check as a bool so the branch is
-    /// unit-testable without needing a real Windows host.
-    /// </summary>
-    internal static void ThrowIfUnsupportedPlatform(bool isWindows)
-    {
-        if (!isWindows) return;
-        throw new PlatformNotSupportedException(
-            "al-runner requires Linux or macOS: JmpHook's page-protection patching " +
-            "(AlRunner/Infrastructure/JmpHook.cs) is implemented via the Unix mprotect() " +
-            "syscall only. Windows support (a VirtualProtect-based path) is not implemented " +
-            "yet — see https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1650.");
-    }
-
     public static void EnsureApplied()
     {
         if (_applied) return;
         _applied = true;
-
-        // JmpHook.InstallIndirect (and EventPipeJitListener's opt-in path) call the
-        // Unix mprotect P/Invoke unconditionally — there is no VirtualProtect branch.
-        // Left unguarded, the first patch registration below dies with a raw
-        // DllNotFoundException hundreds of frames from here (see #1650). Fail loudly
-        // and immediately instead, per .claude/rules/loud-failures.md: real Windows
-        // support (a VirtualProtect-based JmpHook path, verified against .NET 8's
-        // Windows precode layout) is tracked separately and not implemented yet.
-        ThrowIfUnsupportedPlatform(System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
-            System.Runtime.InteropServices.OSPlatform.Windows));
 
         Win32Stubs.Register();
 
