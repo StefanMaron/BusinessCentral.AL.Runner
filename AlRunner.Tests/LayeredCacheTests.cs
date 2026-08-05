@@ -47,7 +47,7 @@ public class LayeredCacheTests
           "version": "1.0.0.0",
           "dependencies": [{{dependsOnJson ?? ""}}],
           "platform": "1.0.0.0",
-          "application": "28.0.0.0",
+          "application": "1.0.0.0",
           "idRanges": [ { "from": {{idFrom}}, "to": {{idFrom + 9}} } ],
           "runtime": "14.0"
         }
@@ -58,6 +58,7 @@ public class LayeredCacheTests
     private static (string output, int exit) RunRunner(string cacheDir, params string[] bundles)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
+        args.Append(TestBuildConfig.BcVersionArg);
         foreach (var b in bundles) args.Append(" \"").Append(b).Append('"');
         args.Append(" --cache \"").Append(cacheDir).Append('"');
         var psi = new ProcessStartInfo

@@ -115,7 +115,7 @@ public class ServerTests
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "application": "28.0.0.0",
+          "application": "1.0.0.0",
           "idRanges": [ { "from": 60120, "to": 60129 } ],
           "runtime": "14.0"
         }

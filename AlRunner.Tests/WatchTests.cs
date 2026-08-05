@@ -50,7 +50,8 @@ public class WatchTests
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet",
-            Arguments = TestBuildConfig.RunArgs(ProjectPath) + $" \"{bundle}\" --watch --cache \"{cacheDir}\"",
+            Arguments = TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg
+                + $" \"{bundle}\" --watch --cache \"{cacheDir}\"",
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
         };

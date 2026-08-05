@@ -71,6 +71,21 @@ internal static class BcEngineBootstrap
         string serviceTierDir;
         try
         {
+            // ServiceTierDir's own EnsureSelected() fallback (used when nothing has called
+            // SelectVersion yet) picks the numerically HIGHEST cached artifact — fine for a
+            // human running the CLI with no opinion, wrong here: this bootstrap must rewrite
+            // and load the SAME BC version this test assembly was built and linked against
+            // (_BCVersion), not whichever version happens to be newest in ~/.local/share/al-runner
+            // /artifacts. On a dev box with several BC versions cached (every version ever
+            // built/tested locally accumulates there) the highest-cached one is usually a
+            // different major than the build, silently corrupting bin/Ncl.dll with a
+            // wrong-major rewrite that the rest of this test run then treats as "the engine".
+            // Program.cs's own no-arg default (DefaultVersionPrefix keyed off
+            // EngineBuiltVersion()) is the correct selection to mirror here.
+            var built = AlRunner.Infrastructure.BcArtifacts.EngineBuiltVersion();
+            var prefix = AlRunner.Infrastructure.BcArtifacts.DefaultVersionPrefix(
+                built, AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir);
+            AlRunner.Infrastructure.BcArtifacts.SelectVersion(prefix, null);
             serviceTierDir = AlRunner.Infrastructure.BcArtifacts.ServiceTierDir;
         }
         catch (Exception ex)

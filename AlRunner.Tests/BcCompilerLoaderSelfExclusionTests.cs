@@ -170,8 +170,18 @@ public sealed class BcCompilerLoaderSelfExclusionTests : IDisposable
         using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
         {
             var entry = zip.CreateEntry("NavxManifest.xml");
-            using var es = entry.Open();
-            es.Write(Encoding.UTF8.GetBytes(xml));
+            using (var es = entry.Open())
+                es.Write(Encoding.UTF8.GetBytes(xml));
+
+            // DeduplicateAppPackageDirs (the method under test) now drops any .app with no
+            // SymbolReference.json from the loader's scan set — see BcCompiler.cs, the
+            // symbol-less-package filter added alongside BcFloorGate. A real BC package
+            // always carries one; this fixture must too, or it is dropped before the
+            // AppId-exclusion logic being tested here ever runs. Content is irrelevant —
+            // only its presence is checked.
+            var symEntry = zip.CreateEntry("SymbolReference.json");
+            using (var symStream = symEntry.Open())
+                symStream.Write(Encoding.UTF8.GetBytes("{}"));
         }
         var zipBytes = ms.ToArray();
 

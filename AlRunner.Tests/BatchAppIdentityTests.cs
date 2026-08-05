@@ -75,7 +75,7 @@ public sealed class BatchAppIdentityTests : IDisposable
           "version": "{{version}}",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "application": "28.0.0.0",
+          "application": "1.0.0.0",
           "idRanges": [ { "from": {{baseId}}, "to": {{baseId + 9}} } ],
           "runtime": "14.0"
         }
