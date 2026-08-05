@@ -4,7 +4,6 @@ codeunit 61001 "Microsoft Dependency Tests"
 
     var
         Assert: Codeunit "MD Assert";
-        LibraryNoSeries: Codeunit "Library - No. Series";
 
     [Test]
     procedure BaseAppTable_PaymentMethod_CanInsertAndRead()
@@ -106,19 +105,9 @@ codeunit 61001 "Microsoft Dependency Tests"
         Assert.IsTrue(NextNo <> '', 'No. Series codeunit should return a number.');
     end;
 
-    [Test]
-    procedure BaseAppCodeunit_LibraryNoSeries_CreateNoSeriesLine_Completes()
-    var
-        NoSeries: Record "No. Series";
-        NoSeriesLine: Record "No. Series Line";
-    begin
-        NoSeries.Code := 'ALRLIB';
-        NoSeries.Insert();
-
-        LibraryNoSeries.CreateNoSeriesLine('ALRLIB', 1, 'ALL0000001', 'ALL9999999');
-
-        Assert.IsTrue(NoSeriesLine.Get('ALRLIB', 10000), 'Library - No. Series should create a No. Series Line.');
-    end;
+    // The Microsoft/Application Test Library test that used to live here moved to
+    // tests/runner-extras/microsoft-test-library — that app is BC 28.0+ only, and its dependency
+    // was forcing a 28.0 floor onto this whole suite, which needs nothing newer than 27.0.
 
     [Test]
     procedure BaseAppCodeunit_EnvironmentInformation_IsSandbox_IsTrue()

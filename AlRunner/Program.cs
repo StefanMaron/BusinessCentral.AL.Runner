@@ -3524,11 +3524,33 @@ static List<string> CollectBundleManifests(string? bucketRoot, string bundleAbs)
     if (!Directory.Exists(bundleAbs)) return new List<string>();
     // Direct children only — that is the shape EnumerateSuites recognises, and it keeps
     // the scan away from app.json files buried inside extracted .app packages.
-    return Directory.EnumerateDirectories(bundleAbs)
+    //
+    // Suites declaring a newer BC than the one under test are dropped HERE, before their
+    // dependencies join the union. The union is bundle-wide, so one such suite's unmet
+    // Microsoft dependency aborts the entire bundle — every sibling included — before a
+    // single test runs. Filtering at BuildAppGroups alone is far too late: the run never
+    // reaches it. See BcFloorGate.
+    //
+    // Deliberately NOT applied to the bucket-root branch above: a root manifest speaks for
+    // the whole bucket, so honoring a floor there would silently skip everything under it.
+    // That case should stay a loud failure.
+    var children = Directory.EnumerateDirectories(bundleAbs)
         .Select(d => Path.Combine(d, "app.json"))
         .Where(File.Exists)
         .OrderBy(p => p, StringComparer.Ordinal)
         .ToList();
+
+    var kept = new List<string>();
+    foreach (var m in children)
+    {
+        if (AlRunner.BcFloorGate.DeclaresNewerBcThanRunning(m, out var floor) && floor != null)
+        {
+            AlRunner.BcFloorGate.ReportSkip(m, AlRunner.BcFloorGate.SuiteNameOf(m), floor);
+            continue;
+        }
+        kept.Add(m);
+    }
+    return kept;
 }
 
 /// <summary>
@@ -3835,6 +3857,7 @@ static List<AlRunner.AppGroup> BuildAppGroups(List<string> suites, string? bucke
     var groups = new List<AlRunner.AppGroup>();
     var identified = new List<(AlRunner.AppGroup Group, Guid Id)>();
     var orphanPaths = new List<string>();
+    var skippedForBcFloor = new List<(string Name, Version Floor)>();
 
     foreach (var suite in suites)
     {
@@ -3844,6 +3867,18 @@ static List<AlRunner.AppGroup> BuildAppGroups(List<string> suites, string? bucke
             ? AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJson)
             : null;
         if (id == null) { orphanPaths.AddRange(paths); continue; }
+
+        // Honor a declared minimum BC version — see BcFloorGate. CollectBundleManifests already
+        // drops these before the dependency union, which is the filter that actually keeps the
+        // bundle alive; this one covers the paths that reach here with a different suite set
+        // (a single suite passed as the target, --watch re-enumeration), so the two must agree.
+        // BcFloorGate reports each suite once, so the overlap does not double-print.
+        if (AlRunner.BcFloorGate.DeclaresNewerBcThanRunning(appJson, out var floor) && floor != null)
+        {
+            AlRunner.BcFloorGate.ReportSkip(appJson, id.Name, floor);
+            skippedForBcFloor.Add((id.Name, floor));
+            continue;
+        }
 
         var group = new AlRunner.AppGroup(
             ModuleName: id.Name,
@@ -3885,6 +3920,15 @@ static List<AlRunner.AppGroup> BuildAppGroups(List<string> suites, string? bucke
             Paths: orphanPaths.Distinct().ToList(),
             DependsOn: Array.Empty<Guid>(),
             SuiteDir: Path.GetFullPath(bundleAbs)));
+
+    // Restate the skips as one line after the per-suite detail. A reader scanning the tail of a
+    // green run must be able to see that the run covered less than the tree contains — a skip
+    // that only appears 200 lines up is a skip nobody notices.
+    if (skippedForBcFloor.Count > 0)
+        Console.WriteLine(
+            $"  [skip] {skippedForBcFloor.Count} suite(s) need a newer BC than "
+            + $"{AlRunner.Infrastructure.BcArtifacts.SelectedVersion}: "
+            + string.Join(", ", skippedForBcFloor.Select(s => $"{s.Name} (>= {s.Floor})")));
 
     return groups;
 }

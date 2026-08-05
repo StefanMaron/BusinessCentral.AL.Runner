@@ -1,0 +1,18 @@
+{
+  "id": "c41f7b90-5d2a-4e18-8b3c-16a9d2f70e44",
+  "name": "BC Floor Skip - Healthy",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Sibling suite with a floor every supported BC satisfies; must always run.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 60810,
+      "to": 60819
+    }
+  ],
+  "platform": "1.0.0.0",
+  "application": "1.0.0.0",
+  "runtime": "17.0",
+  "target": "Cloud"
+}

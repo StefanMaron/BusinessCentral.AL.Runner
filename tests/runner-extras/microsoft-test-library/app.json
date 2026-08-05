@@ -1,0 +1,26 @@
+{
+  "id": "3a1c8f47-2b6e-4d55-9a0c-7e51d8b4c962",
+  "name": "Runner Extras - Microsoft Test Library",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves runner-loaded Microsoft Application Test Library (R2R, precompiled DLL) code is invocable from AL tests.",
+  "description": "Split out of microsoft-dependencies: this is the ONLY suite that needs Microsoft/Application Test Library, which ships as an R2R app (precompiled DLL, no src/) and exists only from BC 28.0 onwards. Keeping it separate lets every other Microsoft-dependency regression run on BC 27.x too.",
+  "dependencies": [
+    {
+      "id": "d852d5d2-a39d-4179-baeb-f99a19e32510",
+      "name": "Application Test Library",
+      "publisher": "Microsoft",
+      "version": "28.0.0.0"
+    }
+  ],
+  "idRanges": [
+    {
+      "from": 62200,
+      "to": 62209
+    }
+  ],
+  "platform": "28.0.0.0",
+  "application": "28.0.0.0",
+  "runtime": "17.0",
+  "target": "Cloud"
+}

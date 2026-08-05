@@ -621,6 +621,25 @@ public sealed class BcCompiler
                 if (m == null) continue;
                 if (excludeAppId != null && m.AppId == excludeAppId.Value) { changed = true; continue; }
                 if (!seen.Add((m.AppId, m.Version.ToString()))) { changed = true; continue; }
+                // Drop packages carrying no SymbolReference.json. The native .app scanner
+                // cannot serve them — it reports AL1023 "package file is not valid" — and the
+                // error is attributed to the COMPILATION, not to the package, so a single such
+                // file fails every compile that scans its directory even when nothing
+                // references it. That is a bundle-wide blast radius from one unrelated suite's
+                // fixture.
+                //
+                // Removing them loses nothing: a symbol-less .app is either a synthetic
+                // source-dependency package (its symbols reach the compiler through the
+                // *.symbols.json JSON loader chain below, which is the intended route) or a
+                // fixture that exists purely for DependencyResolver's identity lookup, which
+                // reads manifests directly and never goes through this scan set.
+                //
+                // ScopeSymbolBearingDepsOnly applies the same rule to the RESOLVED DEP list;
+                // this is its counterpart for the directory scan. Both are needed — the two
+                // paths reach the compiler independently, and BC 27 is far stricter than BC 28
+                // about a malformed package, so a gap here shows up as a version-specific
+                // failure that looks like a runner capability gap and is not one.
+                if (!AppLoader.HasSymbolReference(app)) { changed = true; continue; }
                 picked.Add(app);
             }
         }

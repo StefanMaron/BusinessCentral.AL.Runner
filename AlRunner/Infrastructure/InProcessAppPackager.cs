@@ -35,11 +35,24 @@ public sealed record BundleIdentity(
 
 public static class InProcessAppPackager
 {
-    // NAVX header magic bytes (BC .app format).
-    // Bytes 0-3: 'N','A','V','X'
-    // Bytes 4-7: LE uint32 = offset of the zip data within the file (= 8 for our output).
+    // NAVX header (BC .app format), verified byte-for-byte against a shipped Microsoft
+    // package (Microsoft_Application_27.0.38460.53260.app):
+    //
+    //   0..3    'N','A','V','X'
+    //   4..7    LE uint32  — offset of the zip data within the file (= 40)
+    //   8..11   LE uint32  — format version (= 2)
+    //   12..27  16 bytes   — the app GUID
+    //   28..35  LE uint64  — payload (zip) length in bytes
+    //   36..39  'N','A','V','X'  — trailing magic, closing the header
+    //
+    // We used to write a truncated 8-byte header (magic + offset only). BC 28's package
+    // reader tolerates it; BC 27's does NOT — it rejects the file outright with AL1023
+    // "The package file … is not valid". Because the compiler's native scanner walks whole
+    // directories, ONE such package poisons every compile that scans its directory, which is
+    // how a single test fixture blocked an entire bundle on BC 27 while looking fine on 28.
     private static readonly byte[] NavxMagic = [(byte)'N', (byte)'A', (byte)'V', (byte)'X'];
-    private const uint NavxZipOffset = 8; // immediately after the 8-byte header
+    private const uint NavxZipOffset = 40;   // zip begins immediately after the 40-byte header
+    private const uint NavxFormatVersion = 2;
 
     /// <summary>
     /// Read the identity (id/name/publisher/version/runtime/dependencies) from an app.json.
@@ -103,6 +116,45 @@ public static class InProcessAppPackager
     }
 
     /// <summary>
+    /// The minimum BC version this app declares it can run against — the higher of app.json's
+    /// <c>application</c> and <c>platform</c> floors, or null when it declares neither.
+    ///
+    /// Both fields are MINIMA in AL, not pins: `"application": "27.0.0.0"` means "needs BC 27.0
+    /// or newer". A suite whose floor is above the BC version under test cannot compile, because
+    /// the Microsoft/Application + Microsoft/System symbols it asks for do not exist at that
+    /// version. Today that surfaces as an emit exclusion with no AL diagnostic attached (the
+    /// dependency simply never resolves), which reads as a runner bug and is what made BC 27.x
+    /// legs abort before running a test. Callers use this to skip such a suite deliberately and
+    /// say so, instead of failing opaquely.
+    /// </summary>
+    public static Version? ReadMinimumBcVersion(string appJsonPath)
+    {
+        if (!File.Exists(appJsonPath)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(appJsonPath));
+            var root = doc.RootElement;
+            Version? floor = null;
+            foreach (var field in new[] { "application", "platform" })
+            {
+                if (root.TryGetProperty(field, out var v)
+                    && v.ValueKind == JsonValueKind.String
+                    && Version.TryParse(v.GetString(), out var parsed)
+                    && (floor == null || parsed > floor))
+                    floor = parsed;
+            }
+            return floor;
+        }
+        catch (Exception ex)
+        {
+            // Do not guess a floor from an unreadable manifest — a wrong guess either skips a
+            // suite that would have run (silent coverage loss) or admits one that cannot compile.
+            Console.Error.WriteLine($"[bc-floor] failed to read {appJsonPath}: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Emit a bundle directory as a synthetic NAVX .app package to <paramref name="outPath"/>.
     ///
     /// The .app contains:
@@ -130,17 +182,18 @@ public static class InProcessAppPackager
 
         // Write NAVX header + zip to file.
         using var fs = new FileStream(outPath, FileMode.Create, FileAccess.Write, FileShare.None);
-        WriteNavxApp(fs, manifestXml, bundleDir, alFiles, symbolReferenceJson);
+        WriteNavxApp(fs, identity.AppId, manifestXml, bundleDir, alFiles, symbolReferenceJson);
     }
 
     // ── internals ─────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Write the NAVX header + zip to <paramref name="outStream"/>.
-    /// Format: 8-byte header (NAVX + LE uint32 offset=8) followed immediately by a zip.
+    /// Write the 40-byte NAVX header (see <see cref="NavxZipOffset"/>) followed by the zip
+    /// payload to <paramref name="outStream"/>.
     /// </summary>
     private static void WriteNavxApp(
         Stream outStream,
+        Guid appId,
         string manifestXml,
         string bundleDir,
         IReadOnlyList<string> alFiles,
@@ -217,14 +270,24 @@ public static class InProcessAppPackager
             zipBytes = zipMs.ToArray();
         }
 
-        // NAVX magic header: 'N','A','V','X' + LE uint32 zip-offset (=8), then the
-        // self-contained zip bytes immediately after.
+        // 40-byte NAVX header (see NavxZipOffset), then the self-contained zip bytes.
         outStream.Write(NavxMagic, 0, 4);
-        var offsetBytes = BitConverter.GetBytes(NavxZipOffset); // little-endian on x64 Linux
-        if (!BitConverter.IsLittleEndian)
-            Array.Reverse(offsetBytes); // ensure little-endian regardless of host byte order
-        outStream.Write(offsetBytes, 0, 4);
+        WriteLe(outStream, BitConverter.GetBytes(NavxZipOffset));
+        WriteLe(outStream, BitConverter.GetBytes(NavxFormatVersion));
+        outStream.Write(appId.ToByteArray(), 0, 16);
+        WriteLe(outStream, BitConverter.GetBytes((ulong)zipBytes.Length));
+        outStream.Write(NavxMagic, 0, 4);
         outStream.Write(zipBytes, 0, zipBytes.Length);
+    }
+
+    /// <summary>
+    /// Write <paramref name="bytes"/> little-endian regardless of host byte order. The NAVX
+    /// header is a fixed on-disk format, so it must not inherit the architecture's endianness.
+    /// </summary>
+    private static void WriteLe(Stream s, byte[] bytes)
+    {
+        if (!BitConverter.IsLittleEndian) Array.Reverse(bytes);
+        s.Write(bytes, 0, bytes.Length);
     }
 
     /// <summary>

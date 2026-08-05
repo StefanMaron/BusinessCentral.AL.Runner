@@ -1,0 +1,18 @@
+{
+  "id": "9e2b04c7-6a31-4f5d-b8e0-3c7d95a1f206",
+  "name": "BC Floor Skip - Future",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Declares a BC floor no artifact can satisfy; must be skipped, never run.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 60820,
+      "to": 60829
+    }
+  ],
+  "platform": "99.0.0.0",
+  "application": "99.0.0.0",
+  "runtime": "17.0",
+  "target": "Cloud"
+}

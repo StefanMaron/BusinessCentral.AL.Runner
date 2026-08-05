@@ -15,8 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.resolve.outputs.matrix }}
-      # The single REQUIRED version (28.1), for jobs that build once rather than
-      # across the matrix — currently `smoke`.
+      # The PRIMARY version (28.1) — the one the runner is developed against, used by
+      # jobs that build once rather than across the matrix (currently `smoke`). Every
+      # version in the matrix now gates; this output just picks the representative one.
       required-version: ${{ steps.resolve.outputs.required-version }}
     steps:
       - uses: actions/checkout@v6
@@ -29,14 +30,27 @@ jobs:
         id: resolve
         run: |
           # Each prefix in bc-versions.txt → one matrix entry {bc-version, required}.
-          # 28.1 is the REQUIRED gate (the version the runner is developed against);
-          # older versions are informational (continue-on-error) until verified.
+          #
+          # EVERY version gates. Older versions used to be informational
+          # (continue-on-error) "until verified" — and they had failed on every single
+          # run since the matrix landed without anyone being told, because a red
+          # informational leg still reports the check as green. They are now verified:
+          # BC 27.0 runs the corpus 1904/1904, the unit tests 198/198 and runner-extras
+          # in full. Every blocker turned out to be our own test scaffolding (a
+          # dependency pinned above what BC ships, suite errors that never reached the
+          # exit code, one unreadable .app poisoning its siblings, and application-version
+          # floors) — not a runner capability gap.
+          #
+          # So the informational tier has nothing left to protect, and keeping it would
+          # mean a BC 27 regression lands silently, which is exactly what this matrix
+          # exists to prevent. 28.1 stays singled out only as `required-version`, for
+          # single-build jobs that need to name one version.
           BC_PREFIXES=$(cat .github/bc-versions.txt | grep -v '^#' | tr '\n' ' ')
           ENTRIES="[]"
           for prefix in $BC_PREFIXES; do
             FULL=$(dotnet run --project tools/DownloadArtifacts -- resolve-version "$prefix" dummy 2>/dev/null || true)
             if [ -n "$FULL" ]; then
-              REQ=$([ "$prefix" = "28.1" ] && echo True || echo False)
+              REQ=True
               [ "$prefix" = "28.1" ] && echo "required-version=$FULL" >> "$GITHUB_OUTPUT"
               echo "  $prefix -> $FULL (required=$REQ)"
               ENTRIES=$(echo "$ENTRIES" | python3 -c "import json,sys; v=json.load(sys.stdin); v.append({'bc-version':'$FULL','required':$REQ}); print(json.dumps(v))")
@@ -54,7 +68,9 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.resolve-versions.outputs.matrix) }}
     name: BC ${{ matrix.target.bc-version }}${{ matrix.target.required && ' (required)' || '' }}
-    # Only the required leg (28.1) gates the pipeline; older versions are informational.
+    # Every leg gates — see the resolve step for why the informational tier was removed.
+    # The flag is kept (rather than hardcoding `false`) so a genuinely unverified version
+    # can be added to bc-versions.txt as informational without reworking the job.
     continue-on-error: ${{ !matrix.target.required }}
     env:
       BC_VERSION: ${{ matrix.target.bc-version }}
