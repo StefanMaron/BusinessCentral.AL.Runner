@@ -416,6 +416,28 @@ public static partial class RecordPatches
                 {
                     iv = iv.Substring(1, iv.Length - 2).Replace("''", "'");
                 }
+                // Enum-typed fields: a quoted-identifier InitValue (e.g. the blank
+                // value `InitValue = " ";`, or any member name needing quotes) is
+                // captured by the source parser with its quotes intact, but enum
+                // member names are captured UNQUOTED at emit time (BcCompiler reads
+                // IEnumValueSymbol.Name) and NavOptionEvaluator.InternalEvaluate
+                // matches the text exactly (GetIndexFromCaption/GetIndexFromOption,
+                // ordinal compare, no trimming) — so `" "` (three chars) could never
+                // match the member named ` ` and every Init/Insert of the table threw
+                // NavNCLInvalidOptionStringException (#1674). Real BC's compiled
+                // metadata stores the member name unquoted — Base App symbol packages
+                // carry {"Name":"InitValue","Value":" "} for exactly this shape — so
+                // stripping the outer quotes (and un-doubling AL's "" escape) is
+                // observably equivalent to real BC. Symbol-loaded fields already
+                // arrive unquoted and pass through unchanged; classic Option fields
+                // are untouched (their OptionMembers are captured with the same
+                // quoting as their InitValue, so the pair stays internally
+                // consistent).
+                else if (tn.StartsWith("Enum", StringComparison.OrdinalIgnoreCase)
+                    && iv.Length >= 2 && iv.StartsWith("\"") && iv.EndsWith("\""))
+                {
+                    iv = iv.Substring(1, iv.Length - 2).Replace("\"\"", "\"");
+                }
                 args[i] = iv;
                 continue;
             }
