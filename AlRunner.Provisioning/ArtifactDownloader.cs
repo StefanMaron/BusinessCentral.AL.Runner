@@ -13,9 +13,13 @@
 // selects its NuGet package by RID instead of hardcoding .linux.
 
 using System.IO.Compression;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Runtime.CompilerServices;
+
+[assembly: InternalsVisibleTo("AlRunner.Tests")]
 
 namespace AlRunner.Provisioning;
 
@@ -104,7 +108,7 @@ public static class ArtifactDownloader
         using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
 
         logf($"Resolving artifact size for BC {version}...");
-        long totalSize = HeadContentLength(http, artifactUrl);
+        if (!TryHeadContentLength(http, artifactUrl, version, "platform", logf, out long totalSize)) return 1;
         if (totalSize == 0) { logf("Error: unknown size"); return 1; }
         logf($"Platform artifact: {totalSize / 1048576} MB");
 
@@ -173,7 +177,7 @@ public static class ArtifactDownloader
         using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
 
         logf($"Resolving artifact size for BC {version} (platform)...");
-        long totalSize = HeadContentLength(http, artifactUrl);
+        if (!TryHeadContentLength(http, artifactUrl, version, "platform", logf, out long totalSize)) return 1;
         if (totalSize == 0) { logf("Error: unknown size"); return 1; }
 
         logf("Downloading ZIP directory...");
@@ -230,7 +234,7 @@ public static class ArtifactDownloader
         using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
 
         logf($"Resolving artifact size for BC {version} (w1)...");
-        long totalSize = HeadContentLength(http, artifactUrl);
+        if (!TryHeadContentLength(http, artifactUrl, version, "w1", logf, out long totalSize)) return 1;
         if (totalSize == 0) { logf("Error: unknown size"); return 1; }
         logf($"w1 artifact: {totalSize / 1048576} MB");
 
@@ -318,7 +322,11 @@ public static class ArtifactDownloader
         using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
 
         logf($"Resolving platform artifact for System.app (BC {version})...");
-        long totalSize = HeadContentLength(http, artifactUrl);
+        if (!TryHeadContentLength(http, artifactUrl, version, "platform", logf, out long totalSize))
+        {
+            logf("Warning: skipping System.app");
+            return 0;
+        }
         if (totalSize == 0) { logf("Warning: could not size the platform artifact — skipping System.app"); return 0; }
 
         if (!TryReadCentralDirectory(http, artifactUrl, totalSize, logf, out var cdData, out var cdStart, out var entryCount))
@@ -405,6 +413,40 @@ public static class ArtifactDownloader
         using var headResp = http.Send(new HttpRequestMessage(HttpMethod.Head, url));
         headResp.EnsureSuccessStatusCode();
         return headResp.Content.Headers.ContentLength ?? 0;
+    }
+
+    /// <summary>
+    /// Sizes a remote artifact and turns a failure into a named, actionable log message
+    /// instead of letting <see cref="HttpRequestException"/> propagate as an unhandled
+    /// exception with a raw .NET stack trace. A 404 (no artifact published for that exact
+    /// version) gets the <c>resolve-version</c> pointer; any other transport failure
+    /// (DNS, TLS, timeout, 5xx) gets a distinct "could not reach the CDN" message so the
+    /// caller can tell "your version is wrong" from "the network/tool is broken" — the
+    /// two categories the raw stack trace collapsed into one indistinguishable crash.
+    /// </summary>
+    internal static bool TryHeadContentLength(
+        HttpClient http, string url, string version, string channel, Action<string> logf, out long size)
+    {
+        try
+        {
+            size = HeadContentLength(http, url);
+            return true;
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+        {
+            var prefix = string.Join(".", version.Split('.').Take(2));
+            logf($"Error: no BC artifact published for {version} ({channel}).");
+            logf("       Check the version, or resolve the latest for a prefix:");
+            logf($"         dotnet run --project tools/DownloadArtifacts -- resolve-version {prefix}");
+            size = 0;
+            return false;
+        }
+        catch (HttpRequestException ex)
+        {
+            logf($"Error: could not reach the BC artifact CDN for {version} ({channel}): {ex.Message}");
+            size = 0;
+            return false;
+        }
     }
 
     // Read the ZIP End-Of-Central-Directory + central directory bytes for a remote
