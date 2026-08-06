@@ -17,7 +17,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check that tests/ was updated when AlRunner/ changed
+      - name: Check that tests/ or AlRunner.Tests/ was updated when AlRunner/ changed
         run: |
           BASE=${{ github.event.pull_request.base.sha }}
           HEAD=${{ github.event.pull_request.head.sha }}
@@ -37,11 +37,11 @@ jobs:
           echo "$SOURCE_CHANGED"
 
           # Did any test file also change?
-          TESTS_CHANGED=$(echo "$CHANGED" | grep -E '^tests/' || true)
+          TESTS_CHANGED=$(echo "$CHANGED" | grep -E '^(tests/|AlRunner\.Tests/)' || true)
 
           if [ -z "$TESTS_CHANGED" ]; then
             echo ""
-            echo "ERROR: AlRunner/ was modified but no files under tests/ were updated."
+            echo "ERROR: AlRunner/ was modified but no files under tests/ or AlRunner.Tests/ were updated."
             echo ""
             echo "Every change that affects behavior, mocks, or rewriter rules must include"
             echo "a test. See CONTRIBUTING.md for the requirements."
