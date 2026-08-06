@@ -25,6 +25,7 @@
 //   NCLEnumMetadata override: 158980 / 158985 returns namesList / ordinalsList.
 //
 using System.Collections.Concurrent;
+using System.Collections.Immutable;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using AlRunner.Patches;
@@ -48,9 +49,29 @@ public static class AlEnumMetadataRegistry
 {
     public sealed record Entry(int Id, string Name, string[] Options, int[] Indexes, int[][] Implementations);
 
+    // Base-enum registrations, keyed by the enum's own object Id. This also
+    // absorbs precompiled-dependency enums (RegisterFromAppPath) and cache
+    // replay (Program.cs sidecar), both of which hand in already-flattened
+    // entries and must keep last-writer-wins semantics for id collisions.
     private static readonly ConcurrentDictionary<int, Entry> _byId = new();
 
-    /// <summary>Last-writer-wins; bundle-wide enum-id collisions are quarantined upstream.</summary>
+    // Enumextension registrations, keyed by the TARGET base enum's object Id
+    // (not the extension's own Id — enum and enumextension objects live in
+    // separate AL object-type namespaces and their numbers can coincide or
+    // differ independently of each other). AL emits one AddApplicationObject
+    // per enumextension in addition to the base enum's, and BC's own
+    // EnumExtensionTypeSymbol.Values never includes the base's values (see
+    // SourceEnumExtensionTypeSymbol.LazyGetEnumValues) — only the extension's
+    // own declared values. So base and extension entries are accumulated
+    // separately here and merged on read (TryGet/Snapshot), because emit
+    // order between a base enum and its extension(s) is not guaranteed
+    // (issue #1625: registering both under one dictionary slot made whichever
+    // fired last silently clobber the other instead of merging).
+    private static readonly ConcurrentDictionary<int, ImmutableList<Entry>> _extByTargetId = new();
+
+    /// <summary>Last-writer-wins for the base enum itself; bundle-wide enum-id
+    /// collisions are quarantined upstream. Enumextension values are tracked
+    /// separately — see <see cref="RegisterExtension"/>.</summary>
     public static void Register(int id, string name, string[] options, int[] indexes, int[][]? implementations = null)
     {
         if (options == null || indexes == null) return;
@@ -61,9 +82,80 @@ public static class AlEnumMetadataRegistry
         _byId[id] = new Entry(id, name ?? string.Empty, options, indexes, implementations);
     }
 
-    public static bool TryGet(int id, out Entry entry) => _byId.TryGetValue(id, out entry!);
+    /// <summary>
+    /// Registers an enumextension's own values against the base enum id it
+    /// extends. Multiple extensions targeting the same base enum accumulate;
+    /// none of them overwrite the base entry or each other.
+    /// </summary>
+    public static void RegisterExtension(int targetId, string name, string[] options, int[] indexes, int[][]? implementations = null)
+    {
+        if (options == null || indexes == null) return;
+        if (options.Length != indexes.Length) return;
+        implementations ??= Array.Empty<int[]>();
+        if (implementations.Length != options.Length)
+            implementations = Array.Empty<int[]>();
+        var entry = new Entry(targetId, name ?? string.Empty, options, indexes, implementations);
+        _extByTargetId.AddOrUpdate(
+            targetId,
+            ImmutableList.Create(entry),
+            (_, list) => list.Add(entry));
+    }
 
-    public static void Clear() => _byId.Clear();
+    /// <summary>
+    /// Merges the base entry (if any) with every enumextension registered
+    /// against <paramref name="id"/>, base values first, in declaration
+    /// order, then each extension's values in the order the extensions were
+    /// registered. Ordinal collisions keep the earliest occurrence.
+    /// </summary>
+    public static bool TryGet(int id, out Entry entry)
+    {
+        _byId.TryGetValue(id, out var baseEntry);
+        _extByTargetId.TryGetValue(id, out var extensions);
+
+        if (baseEntry == null && (extensions == null || extensions.IsEmpty))
+        {
+            entry = null!;
+            return false;
+        }
+
+        if (extensions == null || extensions.IsEmpty)
+        {
+            entry = baseEntry!;
+            return true;
+        }
+
+        var name = baseEntry?.Name ?? extensions[0].Name;
+        var options = new List<string>();
+        var indexes = new List<int>();
+        var implementations = new List<int[]>();
+        var seenOrdinals = new HashSet<int>();
+
+        void AddValues(Entry e)
+        {
+            for (int i = 0; i < e.Options.Length; i++)
+            {
+                if (!seenOrdinals.Add(e.Indexes[i]))
+                    continue; // earliest occurrence wins on ordinal collision
+                options.Add(e.Options[i]);
+                indexes.Add(e.Indexes[i]);
+                implementations.Add(i < e.Implementations.Length ? e.Implementations[i] : Array.Empty<int>());
+            }
+        }
+
+        if (baseEntry != null)
+            AddValues(baseEntry);
+        foreach (var ext in extensions)
+            AddValues(ext);
+
+        entry = new Entry(id, name, options.ToArray(), indexes.ToArray(), implementations.ToArray());
+        return true;
+    }
+
+    public static void Clear()
+    {
+        _byId.Clear();
+        _extByTargetId.Clear();
+    }
 
     public static int Count => _byId.Count;
 
@@ -86,12 +178,22 @@ public static class AlEnumMetadataRegistry
         }
     }
 
-    /// <summary>Snapshot of all currently registered entries. Used by the
-    /// AL-output cache sidecar writer (Program.cs). Order is stable
-    /// (sorted by Id) so the sidecar is byte-deterministic across runs.</summary>
+    /// <summary>Snapshot of all currently registered entries, MERGED with any
+    /// enumextension values (see <see cref="TryGet"/>) — the cache sidecar
+    /// replays these via plain <see cref="Register"/> calls on a cache HIT, so
+    /// each snapshotted entry must already carry the full base+extension set.
+    /// Used by the AL-output cache sidecar writer (Program.cs). Order is
+    /// stable (sorted by Id) so the sidecar is byte-deterministic across
+    /// runs.</summary>
     public static IReadOnlyList<Entry> Snapshot()
     {
-        return _byId.Values.OrderBy(e => e.Id).ToList();
+        var ids = new HashSet<int>(_byId.Keys);
+        ids.UnionWith(_extByTargetId.Keys);
+        var result = new List<Entry>(ids.Count);
+        foreach (var id in ids)
+            if (TryGet(id, out var merged))
+                result.Add(merged);
+        return result.OrderBy(e => e.Id).ToList();
     }
 
 }

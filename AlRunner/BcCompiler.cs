@@ -1718,7 +1718,14 @@ public sealed class BcCompiler
             // GetNames()/GetOrdinals() data instead of NCLOptionMetadata.Default
             // (which throws NavNCLNotSupportedOperationException). Enum
             // extensions also flow through here as IEnumExtensionTypeSymbol;
-            // both expose Values via the IEnumBaseTypeSymbol interface.
+            // both expose Values via the IEnumBaseTypeSymbol interface. Per BC's
+            // own SourceEnumExtensionTypeSymbol.LazyGetEnumValues, an
+            // extension's Values NEVER includes the base enum's values — only
+            // its own declared ones — so an extension must be registered
+            // against the base enum's Id (via its Target), not merged as if it
+            // were the base (issue #1625: registering both under the same
+            // dictionary slot made whichever AddApplicationObject call fired
+            // last silently clobber the other instead of merging).
             if (symbol is NavCA.IEnumBaseTypeSymbol enumSym)
             {
                 var values = enumSym.Values;
@@ -1731,7 +1738,15 @@ public sealed class BcCompiler
                     indexes[i] = values[i].Ordinal;
                     implementations[i] = ReadEnumValueImplementations(values[i]);
                 }
-                AlEnumMetadataRegistry.Register(enumSym.Id, enumSym.Name, options, indexes, implementations);
+                if (symbol is NavCA.IEnumExtensionTypeSymbol enumExtSym
+                    && enumExtSym.Target is NavCA.ISymbolWithId targetSym)
+                {
+                    AlEnumMetadataRegistry.RegisterExtension(targetSym.Id, enumSym.Name, options, indexes, implementations);
+                }
+                else
+                {
+                    AlEnumMetadataRegistry.Register(enumSym.Id, enumSym.Name, options, indexes, implementations);
+                }
             }
             // Capture the per-report runtime metadata XML the emit pipeline hands us
             // (the same XML the service tier stores at publish time). Consumed at run
