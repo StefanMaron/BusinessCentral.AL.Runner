@@ -1698,32 +1698,44 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     // EOF — client disconnected.
     return 0;
 
-    // ── runTests: re-emit + run the requested bundle in-process. ───────────────
+    // ── runTests: re-emit + run every requested bundle in-process, aggregating the
+    // results. ──────────────────────────────────────────────────────────────────
     string HandleServerRunTests(AlRunner.ServerRequest req)
     {
         if (req.SourcePaths == null || req.SourcePaths.Length == 0)
             return AlRunner.ServerProtocol.Error("sourcePaths is required");
 
-        // v2 runs a single bundle per request; the extension passes one app root.
-        var bundleDir = req.SourcePaths[0];
-        if (!Directory.Exists(bundleDir))
-            return AlRunner.ServerProtocol.Error($"bundle directory not found: {bundleDir}");
+        foreach (var p in req.SourcePaths)
+            if (!Directory.Exists(p))
+                return AlRunner.ServerProtocol.Error($"bundle directory not found: {p}");
 
-        var run = RunBundleForServer(bundleDir, req.PackagePaths, asm => executor.Run(asm));
+        var runs = RunAllBundlesForServer(req.SourcePaths, req.PackagePaths, asm => executor.Run(asm));
+
+        var allTests = runs.SelectMany(r => r.Tests).ToList();
+        var allCompileErrors = runs.SelectMany(r => r.CompileErrors ?? Array.Empty<CompilationErrorGroup>()).ToList();
+        // Same priority as the CLI's computedExitCode: 3 (compile) > 2 (exec) > 1 (test fail) > 0.
+        var exitCode = runs.Count > 0 ? runs.Max(r => r.ExitCode) : 0;
+        var cached = runs.Count > 0 && runs.All(r => r.Cached);
+
+        var combinedHashes = new Dictionary<string, string>();
+        foreach (var r in runs)
+            foreach (var kv in r.FileHashes)
+                combinedHashes[kv.Key] = kv.Value;
 
         // changedFiles is only meaningful on a cache miss (a hit means nothing changed).
         List<string>? changed = null;
-        if (!run.Cached)
-            changed = DiffServerFiles(lastFileHashes, run.FileHashes);
-        lastFileHashes = run.FileHashes;
+        if (!cached)
+            changed = DiffServerFiles(lastFileHashes, combinedHashes);
+        lastFileHashes = combinedHashes;
 
         return AlRunner.ServerProtocol.RunTests(
-            run.Tests, run.ExitCode, run.Cached, changed, run.CompileErrors);
+            allTests, exitCode, cached, changed, allCompileErrors.Count > 0 ? allCompileErrors : null);
     }
 
-    // ── execute: run the bundle's first OnRun-bearing codeunit (run-mode). v1 also
-    // accepted an inline `code` string; v2 has no inline-AL compile path yet, so
-    // that case fails LOUD (never a silent fake) per .claude/rules/loud-failures.md.
+    // ── execute: run every requested bundle's first OnRun-bearing codeunit
+    // (run-mode), aggregating the results. v1 also accepted an inline `code`
+    // string; v2 has no inline-AL compile path yet, so that case fails LOUD
+    // (never a silent fake) per .claude/rules/loud-failures.md.
     string HandleServerExecute(AlRunner.ServerRequest req)
     {
         if (!string.IsNullOrWhiteSpace(req.Code))
@@ -1735,13 +1747,66 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 "execute: 'captureValues' is not yet supported in v2. See docs/server-mode.md.");
         if (req.SourcePaths == null || req.SourcePaths.Length == 0)
             return AlRunner.ServerProtocol.Error("sourcePaths is required");
-        var bundleDir = req.SourcePaths[0];
-        if (!Directory.Exists(bundleDir))
-            return AlRunner.ServerProtocol.Error($"bundle directory not found: {bundleDir}");
+        foreach (var p in req.SourcePaths)
+            if (!Directory.Exists(p))
+                return AlRunner.ServerProtocol.Error($"bundle directory not found: {p}");
 
-        var run = RunBundleForServer(bundleDir, req.PackagePaths, RunFirstCodeunitOnRun);
-        lastFileHashes = run.FileHashes;
-        return AlRunner.ServerProtocol.Execute(run.Tests, run.ExitCode, null, run.CompileErrors);
+        var runs = RunAllBundlesForServer(req.SourcePaths, req.PackagePaths, RunFirstCodeunitOnRun);
+
+        var allTests = runs.SelectMany(r => r.Tests).ToList();
+        var allCompileErrors = runs.SelectMany(r => r.CompileErrors ?? Array.Empty<CompilationErrorGroup>()).ToList();
+        var exitCode = runs.Count > 0 ? runs.Max(r => r.ExitCode) : 0;
+
+        var combinedHashes = new Dictionary<string, string>();
+        foreach (var r in runs)
+            foreach (var kv in r.FileHashes)
+                combinedHashes[kv.Key] = kv.Value;
+        lastFileHashes = combinedHashes;
+
+        return AlRunner.ServerProtocol.Execute(allTests, exitCode, null,
+            allCompileErrors.Count > 0 ? allCompileErrors : null);
+    }
+
+    // Runs every bundle in sourcePaths in order and returns one ServerRunResult per
+    // bundle. Restores v1's "honour every sourcePaths entry" behaviour (v1 fed them
+    // all into a single compile; v2 keeps one bundle = one compile, so it runs each
+    // sequentially instead — the same shape the CLI already uses for multiple
+    // <bundle-dir> arguments). See #1658: honouring only sourcePaths[0] silently
+    // dropped the rest, returning a green empty result for an app + separate
+    // test-app request.
+    //
+    // When more than one path is given, first wire any inter-bundle dependency (the
+    // app + test-app shape --guide recommends) the same way the CLI does before its
+    // per-bundle loop: compile whichever bundle a sibling bundle depends on into a
+    // package cache the sibling can resolve against.
+    List<ServerRunResult> RunAllBundlesForServer(string[] sourcePaths, string[]? requestPackagePaths,
+        Func<Assembly, IReadOnlyList<TestResult>> runStep)
+    {
+        if (sourcePaths.Length > 1)
+        {
+            var bundleList = sourcePaths.ToList();
+            var workspaceScratch = new List<string>();
+            try
+            {
+                packageCacheDirs = RunLayeredPrePass(bundleList, packageCacheDirs, workspaceScratch);
+                packageCacheDirs = BuildSiblingSourceDeps(bundleList, packageCacheDirs, workspaceScratch);
+            }
+            catch (Exception ex)
+            {
+                // Loud per-bundle failure below (dep resolution during the per-bundle
+                // compile) already covers the "can't resolve" case; a failure in the
+                // wiring pre-pass itself must not silently fall back to unwired compiles.
+                return new List<ServerRunResult>
+                {
+                    ServerRunResult.Failure(3, "<inter-bundle-deps>", $"LAYERED-PREPASS-FAIL: {ex.Message}", new())
+                };
+            }
+        }
+
+        var results = new List<ServerRunResult>(sourcePaths.Length);
+        foreach (var bundleDir in sourcePaths)
+            results.Add(RunBundleForServer(bundleDir, requestPackagePaths, runStep));
+        return results;
     }
 
     // Compile + run one bundle, resetting bundle-derived caches first so an edited
