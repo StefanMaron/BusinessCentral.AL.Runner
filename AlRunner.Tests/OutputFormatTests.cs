@@ -139,11 +139,11 @@ public sealed class OutputFormatTests : IDisposable
 
         Assert.Equal(1, exit); // strict-by-default: a failing test means nonzero exit
 
-        // stdout carries banner lines ahead of the JSON payload; the JSON itself
-        // starts at the first '{' and is everything from there to EOF.
-        int jsonStart = output.IndexOf('{');
-        Assert.True(jsonStart >= 0, $"no JSON object found in output:\n{output}");
-        using var doc = JsonDocument.Parse(output[jsonStart..]);
+        // stdout must be JSON-only, per --help's documented contract ("Replace the normal
+        // text output with per-test JSON on stdout") — no bundle/suite progress banners,
+        // no [layered]/[bc] lines ahead of it. The whole trimmed stream must parse as one
+        // JSON object; a caller doing JSON.parse(stdout) must succeed with no preprocessing.
+        using var doc = JsonDocument.Parse(output.Trim());
         var root = doc.RootElement;
 
         Assert.Equal(1, root.GetProperty("passed").GetInt32());

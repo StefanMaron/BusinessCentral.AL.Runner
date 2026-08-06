@@ -321,6 +321,17 @@ if (serverMode && watchMode)
     Console.Error.WriteLine("--server and --watch are mutually exclusive (both stay warm in-process; pick one).");
     return 2;
 }
+// --output-json: stdout must be JSON-only, matching the documented contract ("Replace
+// the normal text output with per-test JSON on stdout") and the convention --server
+// already follows. Redirect ALL human-readable progress (bundle/suite banners, [layered]
+// cache lines, [bc] selection notices, etc.) to stderr from here on; capture the real
+// stdout so the single final JSON write below can go straight to it, un-interleaved.
+System.IO.TextWriter? outputJsonStdout = null;
+if (outputJson && !serverMode)
+{
+    outputJsonStdout = Console.Out;
+    Console.SetOut(Console.Error);
+}
 // ── BC artifact/version selection (must run BEFORE the Cecil block below, which
 // reads BcArtifacts.ServiceTierDir, and before any dependency/symbol resolver). Sets
 // the process-global selection that resolvers A (engine), B (deps), C (symbols) all
@@ -1638,7 +1649,12 @@ int computedExitCode = 0;
 
 if (outputJson)
 {
-    Console.WriteLine(Reporter.SerializeJsonOutput(results, computedExitCode));
+    var json = Reporter.SerializeJsonOutput(results, computedExitCode);
+    // Restore the real stdout (captured above) so this is the ONLY thing ever
+    // written to it — every banner/progress line up to this point went to stderr
+    // instead. See the redirect right after arg parsing for why.
+    if (outputJsonStdout != null) Console.SetOut(outputJsonStdout);
+    Console.WriteLine(json);
 }
 else
 {
@@ -1650,7 +1666,9 @@ else
 if (outPath != null)
 {
     Reporter.WriteClassification(results, outPath);
-    Console.WriteLine($"Classification → {outPath}");
+    // In --output-json mode this must not land on stdout (it already printed the
+    // JSON above and restored the real stdout writer) — route to stderr there.
+    (outputJson ? Console.Error : Console.Out).WriteLine($"Classification → {outPath}");
 }
 if (outputJunitPath != null)
 {
