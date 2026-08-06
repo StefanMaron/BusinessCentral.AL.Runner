@@ -1,0 +1,25 @@
+{
+  "id": "8f2e5c9a-1b3d-4e6f-9a0c-000000000651",
+  "name": "Runner Extras - Install Trigger Text Constant",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves an install trigger that reaches a TextConstant (via System App's Upgrade Tag codeunit, the standard install pattern) runs to completion on Linux instead of crashing in WindowsLanguageHelper..cctor (issue #1651).",
+  "description": "Real BC evaluates NavTextConstant.Value through Microsoft.Dynamics.Nav.Types.LanguageHelper, which lazily initialises WindowsLanguageHelper — a type that P/Invokes kernel32's LCIDToLocaleName. On Linux that import is redirected through Win32Stubs, a small .so compiled on first use from Win32Stubs/win32_stubs.c. RED before the fix: when the Win32Stubs resolver failed to build/load the shim (e.g. no C compiler on PATH) it silently returned IntPtr.Zero, so .NET's default probing took over and threw a DllNotFoundException hundreds of frames removed from the real cause, INSIDE an install trigger the runner runs before any test — 0 tests execute, no reason given. GREEN after: any install trigger that touches a TextConstant runs to completion and its effect (Upgrade Tag.SetUpgradeTag persisting a row) is directly observable from a [Test] method.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "27.0.0.0",
+  "idRanges": [
+    {
+      "from": 62050,
+      "to": 62059
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

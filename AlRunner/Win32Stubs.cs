@@ -1,5 +1,14 @@
 // Win32Stubs — installs a P/Invoke resolver redirecting Win32 imports to a Linux .so
 // built from bc-linux's win32_stubs.c.
+//
+// Loud-failure contract (.claude/rules/loud-failures.md): if the shim can't be built
+// or loaded, the resolver used to swallow the exception and return IntPtr.Zero. That
+// let .NET's default native-library probing take over, which produced a confusing
+// `DllNotFoundException: kernel32.dll.so not found` hundreds of frames away from the
+// real cause (issue #1651) — worse, that diagnostic line was itself filtered out by
+// Log's [Component] tag suppression at default verbosity (Log.cs), so the operator
+// saw nothing but the deep BC stack trace. The resolver now throws directly with the
+// real cause and a remediation step; see Win32StubsLoudFailureTests.cs.
 using System.Reflection;
 using System.Runtime.InteropServices;
 
@@ -9,6 +18,12 @@ internal static class Win32Stubs
 {
     private static IntPtr _handle = IntPtr.Zero;
     private static bool _registered;
+
+    /// <summary>C compilers tried, in order, to build the shim from source. "cc" is
+    /// the POSIX-mandated name but is absent on some minimal distros (e.g. a bare
+    /// WSL Ubuntu with no build-essential, see #1651) that still ship gcc or clang
+    /// under their own name.</summary>
+    internal static readonly string[] CandidateCompilers = { "cc", "gcc", "clang" };
 
     private static readonly HashSet<string> _libs = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -29,6 +44,14 @@ internal static class Win32Stubs
         AppDomain.CurrentDomain.AssemblyLoad += (_, e) => TryRegister(e.LoadedAssembly);
     }
 
+    /// <summary>Test-only: forget the cached handle/registration so a unit test can
+    /// exercise <see cref="GetOrBuild"/> from a clean slate. Never called from
+    /// production code paths.</summary>
+    internal static void ResetForTests()
+    {
+        _handle = IntPtr.Zero;
+    }
+
     private static void TryRegister(Assembly asm)
     {
         var n = asm.GetName().Name ?? "";
@@ -40,28 +63,87 @@ internal static class Win32Stubs
     private static IntPtr Resolver(string library, Assembly asm, DllImportSearchPath? sp)
     {
         if (!_libs.Contains(library)) return IntPtr.Zero;
-        try { return GetOrBuild(); }
-        catch (Exception ex) { Console.WriteLine($"[Win32Stubs] build failed for {library}: {ex.Message}"); return IntPtr.Zero; }
+        // Deliberately NOT caught-and-defaulted here (loud-failures.md): a swallowed
+        // exception means .NET's own DllImportResolver fallback takes over and the
+        // real cause never surfaces. Let it propagate — it comes back to the P/Invoke
+        // call site as a TypeInitializationException / DllNotFoundException whose
+        // InnerException/Message is this exact, actionable text.
+        return GetOrBuild(library);
     }
 
-    private static IntPtr GetOrBuild()
+    /// <summary>internal (not private) purely so <c>AlRunner.Tests</c> can exercise the
+    /// AL_RUNNER_WIN32_STUBS_SO override / no-compiler paths directly, via
+    /// InternalsVisibleTo — see Win32StubsLoudFailureTests.cs.</summary>
+    internal static IntPtr GetOrBuild(string library)
     {
         if (_handle != IntPtr.Zero) return _handle;
+
+        var soOverride = Environment.GetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO");
+        if (!string.IsNullOrEmpty(soOverride))
+        {
+            if (!File.Exists(soOverride))
+                throw new InvalidOperationException(
+                    $"Win32Stubs: AL_RUNNER_WIN32_STUBS_SO is set to '{soOverride}' but that file does not exist. "
+                    + "Unset it to build the shim from source, or point it at a valid prebuilt libwin32_stubs.so.");
+            _handle = NativeLibrary.Load(soOverride);
+            return _handle;
+        }
+
+        var compiler = FindCompiler(cmd => IsOnPath(cmd));
+        if (compiler == null)
+            throw new InvalidOperationException(BuildNoCompilerMessage(library));
+
         var src = LocateStubSource();
         var dir = Path.Combine(Path.GetTempPath(), "alrunner-v2-win32-stubs");
         Directory.CreateDirectory(dir);
         var cFile = Path.Combine(dir, "win32_stubs.c");
         var soFile = Path.Combine(dir, "libwin32_stubs.so");
         File.Copy(src, cFile, overwrite: true);
-        var proc = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cc",
+        var proc = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(compiler,
             $"-shared -fPIC -o \"{soFile}\" \"{cFile}\"")
         { RedirectStandardError = true, UseShellExecute = false })!;
         proc.WaitForExit(10000);
         if (proc.ExitCode != 0)
-            throw new InvalidOperationException($"cc failed: {proc.StandardError.ReadToEnd()}");
+            throw new InvalidOperationException(
+                $"Win32Stubs: '{compiler}' failed to build the Linux Win32 P/Invoke shim needed to resolve "
+                + $"'{library}' (required by {src}). Compiler output:\n{proc.StandardError.ReadToEnd()}");
         _handle = NativeLibrary.Load(soFile);
         return _handle;
     }
+
+    /// <summary>Returns the first name in <see cref="CandidateCompilers"/> for which
+    /// <paramref name="exists"/> is true, or null if none are available. Pure/injectable
+    /// so it can be unit-tested without touching the real PATH.</summary>
+    internal static string? FindCompiler(Func<string, bool> exists)
+    {
+        foreach (var c in CandidateCompilers)
+            if (exists(c))
+                return c;
+        return null;
+    }
+
+    private static bool IsOnPath(string command)
+    {
+        var pathVar = Environment.GetEnvironmentVariable("PATH") ?? "";
+        foreach (var dir in pathVar.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            try { if (File.Exists(Path.Combine(dir, command))) return true; }
+            catch { /* malformed PATH entry — skip */ }
+        }
+        return false;
+    }
+
+    /// <summary>The loud, actionable message when no C compiler is available at all —
+    /// pure/testable so its content (naming the library, the compilers tried, and both
+    /// remediation options) is asserted directly rather than by scraping a live run.</summary>
+    internal static string BuildNoCompilerMessage(string library) =>
+        $"Win32Stubs: cannot resolve the Win32 import '{library}' — building the Linux "
+        + $"P/Invoke shim requires a C compiler, and none of [{string.Join(", ", CandidateCompilers)}] "
+        + "is on PATH. This blocks any AL code that reaches a Windows-only Win32 API through BC's "
+        + "runtime (e.g. any install trigger that touches a TextConstant — see issue #1651). Fix by "
+        + "either: (1) installing a C compiler (e.g. `apt install build-essential`) so it's on PATH, or "
+        + "(2) building AlRunner/Win32Stubs/win32_stubs.c into a shared library yourself and pointing "
+        + "AL_RUNNER_WIN32_STUBS_SO at it.";
 
     /// <summary>
     /// Locate <c>win32_stubs.c</c>. Three resolution paths, in order:

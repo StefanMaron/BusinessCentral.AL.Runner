@@ -46,6 +46,15 @@ This is the **precompiled-DLL contract** described in `.claude/rules/precompiled
 
 .NET SDK 9 or 10 — download from [https://aka.ms/dotnet/download](https://aka.ms/dotnet/download).
 
+**Linux only:** a C compiler (`cc`, `gcc`, or `clang`) on `PATH`. The BC service-tier
+DLLs contain a handful of genuine Win32 P/Invokes (e.g. `kernel32`'s locale APIs,
+reached by anything that evaluates a `TextConstant`, including the standard
+upgrade-tag install-trigger pattern) that the runner redirects to a small shim
+compiled on first use from `AlRunner/Win32Stubs/win32_stubs.c`. Without a compiler
+this fails loudly and names the missing tool and the two ways to fix it — install one
+(e.g. `apt install build-essential`) or build the shim yourself and point
+`AL_RUNNER_WIN32_STUBS_SO` at the resulting `.so`. Not needed on Windows or macOS.
+
 ### Install
 
 ```bash
