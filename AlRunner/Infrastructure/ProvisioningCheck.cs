@@ -284,6 +284,31 @@ public static class ProvisioningCheck
         return parts.Length >= 2 ? string.Join(".", parts.Take(2)) : fallbackVersion;
     }
 
+    // ── Auto-provision download destination (issue #1653) ────────────────────
+    // `--auto-provision` used to download platform R2R apps + the MS test toolkit into
+    // whichever `--package-cache` dir the caller passed first — i.e. into the *project's*
+    // .alpackages (up to ~135 MB / 112 files). That directory is the user's; the runner
+    // must never write into it unasked. These two helpers are the single source of truth
+    // for the correct destination: the runner-owned artifact cache, exactly mirroring the
+    // layout the standalone `al-runner provision` step already uses for the test toolkit
+    // (`<artifacts-root>/<version>/test-apps`). Pure path composition — no I/O, so callers
+    // can create the dir, or add it as a search root, as needed.
+
+    /// <summary>
+    /// Runner-owned directory to download Microsoft platform R2R runtime apps (System
+    /// Application, Base Application, Business Foundation) into. Sibling of
+    /// <see cref="TestAppsDirFor"/> under the same per-version artifact root.
+    /// </summary>
+    public static string PlatformAppsDirFor(string artifactsRootDir, string fullVersion)
+        => Path.Combine(artifactsRootDir, fullVersion, "platform-apps");
+
+    /// <summary>
+    /// Runner-owned directory to download the Microsoft test toolkit (Business Foundation
+    /// Test Libraries, Application Test Library, Library Assert, Test Runner, …) into.
+    /// </summary>
+    public static string TestAppsDirFor(string artifactsRootDir, string fullVersion)
+        => Path.Combine(artifactsRootDir, fullVersion, "test-apps");
+
     public sealed record Report(string Version, string ServiceTierDir, IReadOnlyList<string> MissingFiles)
     {
         public bool Ok => MissingFiles.Count == 0;

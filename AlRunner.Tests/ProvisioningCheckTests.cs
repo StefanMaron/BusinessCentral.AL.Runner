@@ -439,4 +439,50 @@ public sealed class ProvisioningCheckTests : IDisposable
         var mm = ProvisioningCheck.DerivePresentPlatformMajorMinor(new[] { dir }, "28.1.49838.50794");
         Assert.Equal("28.4", mm);
     }
+
+    // ── Issue #1653: --auto-provision download destination ──────────────────
+    // --auto-provision was writing platform R2R apps + the MS test toolkit into whichever
+    // --package-cache dir the caller passed first (the project's own .alpackages), instead
+    // of the runner-owned artifact cache the standalone `provision` command already uses.
+    // These two helpers are the single source of truth for that destination — they must
+    // resolve under the runner's artifact root, NEVER under a caller-supplied package-cache
+    // path, regardless of what package-cache dirs happen to be in scope.
+
+    [Fact]
+    public void PlatformAppsDirFor_IsUnderArtifactsRoot_NotAProjectPackageCacheDir()
+    {
+        var artifactsRoot = Path.Combine(_dir, "artifacts");
+        var projectPackageCache = Path.Combine(_dir, "app", ".alpackages"); // what a caller's --package-cache[0] would be
+
+        var dir = ProvisioningCheck.PlatformAppsDirFor(artifactsRoot, "28.1.49838.50794");
+
+        Assert.Equal(Path.Combine(artifactsRoot, "28.1.49838.50794", "platform-apps"), dir);
+        Assert.NotEqual(projectPackageCache, dir);
+        Assert.StartsWith(artifactsRoot, dir);
+    }
+
+    [Fact]
+    public void TestAppsDirFor_IsUnderArtifactsRoot_NotAProjectPackageCacheDir()
+    {
+        var artifactsRoot = Path.Combine(_dir, "artifacts");
+        var projectPackageCache = Path.Combine(_dir, "app", ".alpackages");
+
+        var dir = ProvisioningCheck.TestAppsDirFor(artifactsRoot, "28.1.49838.50794");
+
+        Assert.Equal(Path.Combine(artifactsRoot, "28.1.49838.50794", "test-apps"), dir);
+        Assert.NotEqual(projectPackageCache, dir);
+        Assert.StartsWith(artifactsRoot, dir);
+    }
+
+    [Fact]
+    public void PlatformAppsDirFor_And_TestAppsDirFor_AreDistinctSiblingDirs()
+    {
+        var artifactsRoot = Path.Combine(_dir, "artifacts");
+
+        var platform = ProvisioningCheck.PlatformAppsDirFor(artifactsRoot, "28.1.49838.50794");
+        var testApps = ProvisioningCheck.TestAppsDirFor(artifactsRoot, "28.1.49838.50794");
+
+        Assert.NotEqual(platform, testApps);
+        Assert.Equal(Path.GetDirectoryName(platform), Path.GetDirectoryName(testApps));
+    }
 }

@@ -527,20 +527,29 @@ if (!provisionSubcommand && packageCacheDirs.Count > 0)
             Console.Error.WriteLine($"[provision] could not resolve a full BC artifact version for '{mm}'; cannot continue.");
             return 2;
         }
-        // Pick first writable cache dir.
-        var pkgCacheOut = packageCacheDirs.FirstOrDefault(Directory.Exists)
-            ?? packageCacheDirs[0];
+        // Runner-owned artifact-cache destinations — NEVER a caller-supplied --package-cache
+        // dir (issue #1653: this used to pick packageCacheDirs[0], writing ~135 MB of
+        // downloaded apps straight into the project's .alpackages). Mirrors the destination
+        // the standalone `al-runner provision` step already uses for the test toolkit.
+        var platformAppsOut = AlRunner.Infrastructure.ProvisioningCheck.PlatformAppsDirFor(
+            AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, full);
+        var testAppsOut = AlRunner.Infrastructure.ProvisioningCheck.TestAppsDirFor(
+            AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, full);
 
         if (!platformReport.Ok)
         {
             Console.Error.WriteLine("[provision] platform R2R apps missing — downloading...");
             var rc = AlRunner.Provisioning.ArtifactDownloader.PlatformApps(
-                full, pkgCacheOut, m => Console.Error.WriteLine($"[provision] {m}"));
+                full, platformAppsOut, m => Console.Error.WriteLine($"[provision] {m}"));
             if (rc != 0)
             {
                 Console.Error.WriteLine("[provision] platform-apps download failed; cannot continue.");
                 return 2;
             }
+            // Make the downloaded apps visible to resolution: add the artifact-cache dir as
+            // an additional search root rather than copying its contents into the project.
+            if (!packageCacheDirs.Contains(platformAppsOut))
+                packageCacheDirs.Add(platformAppsOut);
             // Re-check: never silently continue on a partial/failed provision.
             platformReport = AlRunner.Infrastructure.ProvisioningCheck.CheckPlatformApps(
                 version, packageCacheDirs);
@@ -556,12 +565,16 @@ if (!provisionSubcommand && packageCacheDirs.Count > 0)
         {
             Console.Error.WriteLine("[provision] test-toolkit apps missing — downloading...");
             var rc = AlRunner.Provisioning.ArtifactDownloader.TestApps(
-                full, pkgCacheOut, m => Console.Error.WriteLine($"[provision] {m}"));
+                full, testAppsOut, m => Console.Error.WriteLine($"[provision] {m}"));
             if (rc != 0)
             {
                 Console.Error.WriteLine("[provision] test-toolkit download failed; cannot continue.");
                 return 2;
             }
+            // Make the downloaded apps visible to resolution: add the artifact-cache dir as
+            // an additional search root rather than copying its contents into the project.
+            if (!packageCacheDirs.Contains(testAppsOut))
+                packageCacheDirs.Add(testAppsOut);
             // Re-check: never silently continue on a partial/failed provision.
             toolkitPresent = AlRunner.Infrastructure.ProvisioningCheck.TestToolkitPresent(packageCacheDirs);
             if (!toolkitPresent)
@@ -3457,9 +3470,16 @@ static IEnumerable<string> DefaultPackageCacheDirs()
     // The provisioned MS test toolkit for the SELECTED version (see
     // EnsureTestToolkitProvisioned). Scanned by default so a test bundle whose app.json
     // depends on Library Assert / Test Runner / Any resolves them without --package-cache.
-    var testApps = Path.Combine(AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir,
-        sel.ToString(), "test-apps");
+    var testApps = AlRunner.Infrastructure.ProvisioningCheck.TestAppsDirFor(
+        AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, sel.ToString());
     if (Directory.Exists(testApps)) yield return testApps;
+
+    // The provisioned Microsoft platform R2R runtime apps for the SELECTED version (see
+    // --auto-provision, issue #1653). Scanned by default so a --auto-provision run on one
+    // invocation is visible on a later run that omits --auto-provision.
+    var platformApps = AlRunner.Infrastructure.ProvisioningCheck.PlatformAppsDirFor(
+        AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, sel.ToString());
+    if (Directory.Exists(platformApps)) yield return platformApps;
 }
 
 // Highest version-named child of <root> matching <versionPrefix> (System.Version sort),
@@ -3829,7 +3849,8 @@ static void EnsureTestToolkitProvisioned(string fullVersion)
 }
 
 static string TestAppsDirFor(string fullVersion)
-    => Path.Combine(AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, fullVersion, "test-apps");
+    => AlRunner.Infrastructure.ProvisioningCheck.TestAppsDirFor(
+        AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, fullVersion);
 
 static void SetBundleInfoFromAppJson(string appJsonPath)
 {
