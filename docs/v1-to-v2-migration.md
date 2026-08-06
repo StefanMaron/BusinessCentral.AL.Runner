@@ -46,7 +46,8 @@ allowed and forbidden.
 | `--precompile <in> --out <out>` | ✓ | ✓ | Same. |
 | `--bundled` / `--per-suite` | (n/a) | ✓ | v2's pipeline mode toggle. Default `--bundled`. |
 | `--server` (JSON-RPC daemon) | (n/a) | ✓ | Long-running warm-state daemon over stdin/stdout, used by the VS Code extension. See `docs/server-mode.md`. Not to be confused with the deferred DAP debug adapter below. |
-| `--version`, `--help`, `-h`, `help` | ✓ | ✓ | Same. |
+| `--help`, `-h`, `help` | ✓ | ✓ | Same. |
+| `--version` | ✗ (rejected as an unknown path — v1 treats it as a positional bundle argument, so it fails with `Error: file or directory not found: --version`) | ✓ | Because v1 rejects it and v2 accepts it, `--version` doubles as a v1-vs-v2 discriminator: a non-zero exit with that message is itself the v1 signal. |
 
 ## Deferred — accepted as v2 followups
 
