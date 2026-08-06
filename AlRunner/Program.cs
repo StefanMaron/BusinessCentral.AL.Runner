@@ -294,11 +294,18 @@ for (int i = 0; i < args.Length; i++)
         var mode = args[++i].ToLowerInvariant();
         isolation = mode switch
         {
-            "codeunit" or "method" => AlRunner.TestIsolation.Codeunit,
-            "test"                 => AlRunner.TestIsolation.Test,
+            // v1's --test-isolation method reset AL table/session state before every
+            // [Test] procedure (per-v1 Program.cs: doTableReset = testIsolation ==
+            // TestIsolation.Method). That is v2's TestIsolation.Test, NOT
+            // TestIsolation.Codeunit — see issue #1647. Map 'method' onto the mode
+            // that actually reproduces v1's behavior so callers that still pass the
+            // v1-idiomatic flag value (e.g. LethAL) don't silently get weaker
+            // isolation than they asked for.
+            "codeunit"             => AlRunner.TestIsolation.Codeunit,
+            "test" or "method"     => AlRunner.TestIsolation.Test,
             "disabled"             => AlRunner.TestIsolation.Disabled,
             _ => throw new ArgumentException(
-                $"--isolation: unknown mode '{mode}' (codeunit|test|disabled; 'method' accepted as v1 alias for codeunit)")
+                $"--isolation: unknown mode '{mode}' (codeunit|test|disabled; 'method' accepted as v1 alias for test)")
         };
         continue;
     }
@@ -2434,7 +2441,7 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                                      (default; BC's \"Isol. Codeunit\" 130450)");
     w.WriteLine("                            test      every [Test] gets a fresh state (BC's 130452)");
     w.WriteLine("                            disabled  no resets at all (BC's 130453)");
-    w.WriteLine("                            method    accepted as v1 alias for codeunit");
+    w.WriteLine("                            method    v1 alias for 'test' (v1's per-method reset)");
     w.WriteLine();
     w.WriteLine("EXECUTION");
     w.WriteLine("  --bc-version X          Select the BC artifact version (e.g. \"28.1\" or a full");

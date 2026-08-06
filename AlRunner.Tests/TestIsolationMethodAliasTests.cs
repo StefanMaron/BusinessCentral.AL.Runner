@@ -1,0 +1,215 @@
+// TestIsolationMethodAliasTests — RED->GREEN guard for issue #1647.
+//
+// v1's `--test-isolation method` reset AL table/session state before EVERY [Test]
+// procedure. v2 kept `method` as a backward-compat alias but pointed it at
+// TestIsolation.Codeunit — state shared within a codeunit, reset only between
+// codeunits — instead of the mode that actually does a per-test reset
+// (TestIsolation.Test). Callers that pass the v1-idiomatic `--test-isolation method`
+// (including external tooling built against v1, e.g. the AL mutation-testing tool
+// LethAL) silently got weaker isolation than v1 gave them, with no error.
+//
+// Ghost-test trap avoided: the fixture below has two [Test] procedures in ONE
+// codeunit. Step1 inserts a row and commits implicitly at the end of the method
+// (BC always commits between test methods). Step2 asserts the row count is
+// UNCONDITIONALLY 0 — under `--test-isolation codeunit` (the true "shared within a
+// codeunit" mode) that assertion is FALSE, so a no-op fix that keeps `method`
+// pointed at Codeunit isolation makes this test FAIL, not vacuously pass.
+using System.Diagnostics;
+using System.Text;
+using Xunit;
+
+namespace AlRunner.Tests;
+
+// Serialized with the other runner-subprocess integration tests — see
+// DefineFlagIntegrationTests for why (shared native BC engine state, SIGBUS flakes
+// under xUnit's default parallelization).
+[Collection("server-serial")]
+public sealed class TestIsolationMethodAliasTests : IDisposable
+{
+    private static readonly string RepoRoot = Path.GetFullPath(
+        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
+
+    private readonly string _root;
+
+    public TestIsolationMethodAliasTests()
+    {
+        _root = Path.Combine(Path.GetTempPath(), "al-runner-isolation-method-alias", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(_root);
+        WriteFixture(_root);
+    }
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_root, recursive: true); } catch { }
+    }
+
+    private static bool ArtifactsPresent()
+    {
+        var home = Environment.GetEnvironmentVariable("HOME")
+            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var stdCache = Path.Combine(home, ".local", "share", "al-runner", "artifacts");
+        return Directory.Exists(stdCache) &&
+               Directory.EnumerateDirectories(stdCache).Any();
+    }
+
+    /// <summary>
+    /// Writes a minimal AL package to <paramref name="dir"/>:
+    ///   - app.json (no dependencies, id range 62110..62119)
+    ///   - a one-field table
+    ///   - a test codeunit with two [Test] procedures, declared in this order:
+    ///       Step1_InsertsRow inserts one row.
+    ///       Step2_ExpectsFreshTable asserts the table is empty (UNCONDITIONALLY).
+    ///     Under real per-test isolation (v1's `method`, v2's `test`), Step2 always
+    ///     sees an empty table because state resets before every [Test]. Under
+    ///     per-codeunit isolation (v2's true `codeunit` mode), the row from Step1
+    ///     survives into Step2 and the assertion fails.
+    /// </summary>
+    private static void WriteFixture(string dir)
+    {
+        File.WriteAllText(Path.Combine(dir, "app.json"), """
+        {
+          "id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+          "name": "Isolation Method Alias Test Fixture",
+          "publisher": "AL Runner",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "application": "1.0.0.0",
+          "idRanges": [ { "from": 62110, "to": 62119 } ],
+          "runtime": "14.0"
+        }
+        """);
+
+        File.WriteAllText(Path.Combine(dir, "Assert.Codeunit.al"), """
+        codeunit 62111 "IMA Assert"
+        {
+            procedure AreEqual(Expected: Integer; Actual: Integer; Msg: Text)
+            begin
+                if Expected <> Actual then
+                    Error('Expected:<%1> Actual:<%2> %3', Expected, Actual, Msg);
+            end;
+        }
+        """);
+
+        File.WriteAllText(Path.Combine(dir, "Marker.Table.al"), """
+        table 62110 "IMA Marker"
+        {
+            fields
+            {
+                field(1; Id; Integer) { }
+            }
+            keys
+            {
+                key(PK; Id) { Clustered = true; }
+            }
+        }
+        """);
+
+        File.WriteAllText(Path.Combine(dir, "IsolationTest.Codeunit.al"), """
+        codeunit 62112 "Isolation Method Alias Tests"
+        {
+            Subtype = Test;
+
+            var
+                Assert: Codeunit "IMA Assert";
+
+            [Test]
+            procedure Step1_InsertsRow()
+            var
+                Marker: Record "IMA Marker";
+            begin
+                Marker.Init();
+                Marker.Id := 1;
+                Marker.Insert();
+                Assert.AreEqual(1, Marker.Count(), 'row must be inserted');
+            end;
+
+            [Test]
+            procedure Step2_ExpectsFreshTable()
+            var
+                Marker: Record "IMA Marker";
+            begin
+                Assert.AreEqual(0, Marker.Count(), 'table must be reset before this test — per-method isolation must have fired');
+            end;
+        }
+        """);
+    }
+
+    private (string output, int exit) RunRunner(params string[] extraArgs)
+    {
+        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
+        args.Append(TestBuildConfig.BcVersionArg);
+        args.Append(" --strict");
+        args.Append($" \"{_root}\"");
+        foreach (var a in extraArgs) args.Append($" {a}");
+        var psi = new ProcessStartInfo
+        {
+            FileName = "dotnet", Arguments = args.ToString(),
+            RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
+        };
+        var sb = new StringBuilder();
+        var p = Process.Start(psi)!;
+        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
+        p.ErrorDataReceived  += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
+        p.BeginOutputReadLine();
+        p.BeginErrorReadLine();
+        if (!p.WaitForExit(240_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
+        p.WaitForExit();
+        lock (sb) return (sb.ToString(), p.ExitCode);
+    }
+
+    /// <summary>
+    /// Positive: `--test-isolation method` must behave like v1 — a fresh reset before
+    /// every [Test] procedure. Before the fix (method aliased to Codeunit isolation)
+    /// Step2 sees the row Step1 inserted and fails; this is the RED proof.
+    /// </summary>
+    [Fact]
+    public void TestIsolationMethod_ResetsStateBetweenTestMethods()
+    {
+        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+
+        var (output, exit) = RunRunner("--test-isolation method");
+
+        Assert.Equal(0, exit);
+        Assert.DoesNotContain("FAIL  Codeunit", output);
+        Assert.Contains("Step1_InsertsRow", output);
+        Assert.Contains("Step2_ExpectsFreshTable", output);
+    }
+
+    /// <summary>
+    /// Same assertion via the short `--isolation` flag spelling, which shares the
+    /// same alias-mapping switch.
+    /// </summary>
+    [Fact]
+    public void IsolationMethod_ResetsStateBetweenTestMethods()
+    {
+        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+
+        var (output, exit) = RunRunner("--isolation method");
+
+        Assert.Equal(0, exit);
+        Assert.DoesNotContain("FAIL  Codeunit", output);
+    }
+
+    /// <summary>
+    /// Negative / contrast case: real `--test-isolation codeunit` shares state within
+    /// a codeunit (BC's "Isol. Codeunit" 130450), so the row Step1 inserted survives
+    /// into Step2 and its unconditional "table must be empty" assertion fails. This
+    /// proves the fixture actually exercises the isolation boundary — a no-op fix
+    /// that keeps `method` pointed at Codeunit isolation would make this outcome
+    /// identical to the `method` runs above, not just "some test passes".
+    /// </summary>
+    [Fact]
+    public void TestIsolationCodeunit_SharesStateBetweenTestMethods()
+    {
+        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+
+        var (output, exit) = RunRunner("--test-isolation codeunit");
+
+        Assert.NotEqual(0, exit);
+        Assert.Contains("Step2_ExpectsFreshTable", output);
+        Assert.Contains("table must be reset before this test", output);
+    }
+}

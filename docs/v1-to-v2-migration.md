@@ -34,7 +34,7 @@ allowed and forbidden.
 | `--out PATH` | ✓ | ✓ | Failure-classification JSON. |
 | `--package-cache PATH` (repeatable) | ✓ | ✓ | Same scan order. |
 | `--cache DIR` | ✓ | ✓ | AL-output cache. |
-| `--isolation MODE` / `--test-isolation MODE` | `--test-isolation` only | both work | v2 accepts the v1 name. `method` accepted as alias for `codeunit`. |
+| `--isolation MODE` / `--test-isolation MODE` | `--test-isolation` only | both work | v2 accepts the v1 name. `method` accepted as alias for `test` (v1's `--test-isolation method` reset state before every `[Test]` procedure — that is v2's `test` mode, not `codeunit`; see #1647). |
 | `--verbose` | ✓ | ✓ | Same. |
 | `--show-pass` | ✓ | accepted (no-op) | v2 prints PASS lines by default. |
 | `--failures-only` / `--quiet` | (no flag — was default) | ✓ | New v2 opt-out to suppress PASS lines. |
