@@ -827,6 +827,15 @@ foreach (var bundle in bundles)
     AlRunner.InstallTriggerRunner.ResetForNewBundle();
 
     // ── per-bucket dep resolution ──────────────────────────────────────────
+    // Hoisted out of the try block below so EmitSiblingSymbols (called later, once
+    // per bundle) can pass this bundle's resolved Microsoft-platform closure into
+    // each in-bundle sibling's *.symbols.deps.json sidecar — see #1686 follow-up:
+    // without it, a sibling app that extends a PLATFORM table (not one of its own)
+    // gets an empty dependency sidecar, and BC's ReferenceManager cannot attach its
+    // tableextension to the platform table because the declaring module has no
+    // recorded path to the module that owns the base table.
+    IReadOnlyList<(AlRunner.AppManifest Manifest, string AppPath)> bundleResolvedDeps =
+        Array.Empty<(AlRunner.AppManifest, string)>();
     var bucketRoot = FindBucketRoot(bundleAbs);
     // The dependency closure comes from the bucket root's app.json when it has one, and
     // otherwise from the union of the child apps' manifests — see CollectBundleManifests.
@@ -854,6 +863,7 @@ foreach (var bundle in bundles)
                 var resolverDirs = bundlePkgDirs.Concat(packageCacheDirs).Distinct().ToList();
                 var resolver = new DependencyResolver(resolverDirs);
                 var ordered = resolver.Resolve(roots);
+                bundleResolvedDeps = ordered;
                 Console.WriteLine($"  [{rel}] resolved {ordered.Count} dep(s)");
                 // Under --verbose, name the package that actually WON for each
                 // dependency, with the file it came from. Resolution picks by highest
@@ -1016,7 +1026,7 @@ foreach (var bundle in bundles)
         // topological order (a dep-of-a-dep is written before the app that needs it), and
         // chain them into the compiler. Only sibling-dependency TARGETS are compiled here —
         // this is an extra compile per app, and most bundles (the corpus: one app) have none.
-        EmitSiblingSymbols(appGroups, bundleAbs);
+        EmitSiblingSymbols(appGroups, bundleAbs, bundleResolvedDeps);
 
         var loadedAssemblies = new List<Assembly>();
         // SetTestAssembly re-runs its full body (incl. NavAppResourcePatches.RegisterTestAssembly)
@@ -3619,8 +3629,25 @@ static string? SelectVersionDirOrNull(string root, string versionPrefix)
 /// Failures are loud but non-fatal: without the symbols the dependent app fails to compile
 /// with AL0185, which is exactly the state this fixes, and the emit-retry already reports
 /// the dropped objects.
+///
+/// <paramref name="bundleResolvedDeps"/> is this bundle's resolved Microsoft-platform
+/// dependency closure (the same set every suite under a parent-of-many-apps bundle
+/// implicitly gets — Base Application, System Application, …). It is recorded in each
+/// sibling's *.symbols.deps.json sidecar so BC's ReferenceManager can see that the
+/// sibling itself depends on (e.g.) Base Application. Without it a sibling whose only
+/// AL is a `tableextension ... extends <PlatformTable>` gets an EMPTY sidecar — its
+/// declaring module has no recorded path to the module owning the base table, so the
+/// extension never attaches: the base table's own fields resolve fine (they come from
+/// the primary compile's own direct reference to the platform .app) but the extension
+/// field does not, surfacing as AL0132 "'Record X' does not contain a definition for
+/// '<field>'" in the app that consumes it. A sibling that only extends another sibling's
+/// OWN table (the common case in this bundle) never depended on this fix — its base
+/// table lives in the SAME symbols.json as the extension, so no cross-module link was
+/// needed. See #1686.
 /// </summary>
-static void EmitSiblingSymbols(List<AlRunner.AppGroup> appGroups, string bundleAbs)
+static void EmitSiblingSymbols(
+    List<AlRunner.AppGroup> appGroups, string bundleAbs,
+    IReadOnlyList<(AlRunner.AppManifest Manifest, string AppPath)> bundleResolvedDeps)
 {
     BcCompiler.SetSiblingSymbolsDir(null);
     // Not a dictionary: two suites in the same tree can (and in tests/runner-extras do)
@@ -3668,12 +3695,21 @@ static void EmitSiblingSymbols(List<AlRunner.AppGroup> appGroups, string bundleA
             // The dependency closure this app compiled against, so BC's ReferenceManager can
             // link types from it that appear in the sibling's public surface — same reason as
             // the source-dep sidecar (#1546); without it those types are __MissingTypeSymbol__.
+            //
+            // Include the BUNDLE-WIDE Microsoft-platform closure (bundleResolvedDeps) — every
+            // suite under a parent-of-many-apps bundle implicitly compiles against it, this
+            // sibling included. Without it, a sibling whose only AL is a `tableextension ...
+            // extends <PlatformTable>` records an empty dependency closure: its declaring
+            // module has no path to the module owning the base table, so the extension never
+            // attaches downstream (AL0132 in the consuming app) even though the sibling's own
+            // symbols.json genuinely contains the TableExtension entry. See #1686.
             DepsSidecarWriter.Write(
                 Path.Combine(dir, $"{group.AppId:N}.symbols.deps.json"),
                 group.Publisher ?? "AlRunner", group.ModuleName,
                 group.Version ?? new Version(1, 0, 0, 0), group.AppId.Value,
                 DepsSidecarWriter.BuildClosure(
-                    Array.Empty<DepsSidecarWriter.DepEntry>(),
+                    bundleResolvedDeps.Select(d => new DepsSidecarWriter.DepEntry(
+                        d.Manifest.Publisher, d.Manifest.Name, d.Manifest.Version, d.Manifest.AppId)),
                     ScanVendoredPlatformApps(
                         Directory.EnumerateDirectories(bundleAbs, ".alpackages", SearchOption.AllDirectories)),
                     group.AppId.Value));
