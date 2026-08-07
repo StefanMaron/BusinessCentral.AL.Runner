@@ -1045,6 +1045,35 @@ foreach (var bundle in bundles)
         // seeding resolve per app instead of per bundle.
         BcCompiler.SetCurrentAppIdentity(appGroup.AppId, appGroup.Publisher, appGroup.Version);
 
+        // ── cross-bundle module identity dedup (issue #1683) ────────────────
+        // If this app's identity (AppId) was already compiled and loaded earlier in
+        // THIS process — either as an earlier bundle's own AppGroup (this same code
+        // path) or as an earlier bundle's resolved dependency (DependencyLoader) —
+        // reuse that exact Assembly/Type set instead of emitting+compiling a second,
+        // distinct module for the same AL app. Two live modules for one AL identity
+        // is what produced the TargetException in #1683: EventSubscriberPatches'
+        // registry paired a subscriber MethodInfo discovered from one module's Type
+        // with a subscriberInstance BC's dispatcher materialized from the OTHER
+        // module's Type at CallEventSubscriberInternalAsync → ValidateInvokeTarget.
+        // One AL app identity must resolve to exactly one loaded compilation.
+        //
+        // Disabled under --watch: watch mode re-runs this SAME per-AppGroup loop on every
+        // edit cycle for the SAME bundle set, and its whole point is to pick up the edited
+        // source on each iteration. Reusing "the module already loaded for this AppId"
+        // there would mean iteration 2 replays iteration 1's stale pre-edit assembly
+        // forever — ResetForNewBundleReload() does not (and must not, for the unrelated
+        // deps-stay-warm reason documented there) clear DependencyLoader's cross-bundle
+        // cache, so this dedup stays scoped to genuinely distinct bundle args in one
+        // one-shot invocation, never a same-bundle reload.
+        Assembly? reusedAsm = (!watchMode && appGroup.AppId is { } reuseCheckId)
+            ? DependencyLoader.TryGetByAppId(reuseCheckId)
+            : null;
+        bool needCompile = reusedAsm == null;
+        if (reusedAsm != null)
+            Console.Error.WriteLine(
+                $"  [{rel}] {moduleName}: AppId {appGroup.AppId} already loaded earlier in this " +
+                "process — reusing that module instead of recompiling (see issue #1683).");
+
         // ── AL-output cache check (Spike B keystone) ───────────────────────
         // Sidecar `<key>.enum-registry.json` carries the AlEnumMetadataRegistry
         // entries that emit would have populated as a side effect — see
@@ -1062,7 +1091,7 @@ foreach (var bundle in bundles)
         // emit produces. Serving a HIT without it leaves NCLMetaQuery null and every
         // query Find NREs inside BC's NavQuery.ValidateTablesNotVirtual.
         bool bundleDeclaresQuery = BcCompiler.BundleDeclaresQuery(allPaths);
-        if (alCacheDir != null)
+        if (needCompile && alCacheDir != null)
         {
             cacheKey = ComputeAlCacheKey(allPaths, moduleName, ordered: GetOrderedDepIds(bucketRoot, packageCacheDirs, bundleAbs));
             cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
@@ -1087,7 +1116,7 @@ foreach (var bundle in bundles)
         }
 
         byte[]? assemblyBytes = null;
-        if (cachedBytes != null)
+        if (needCompile && cachedBytes != null)
         {
             // Replay the enum-registry sidecar BEFORE Assembly.Load. Test
             // execution is what reads the registry (via the
@@ -1115,7 +1144,7 @@ foreach (var bundle in bundles)
                 assemblyBytes = cachedBytes;
             }
         }
-        if (assemblyBytes == null)
+        if (needCompile && assemblyBytes == null)
         {
             if (alCacheDir != null) Console.Error.WriteLine($"  [cache] MISS key={cacheKey} — running Emit+Compile");
             var et = System.Diagnostics.Stopwatch.StartNew();
@@ -1320,12 +1349,33 @@ foreach (var bundle in bundles)
         // Load and register each module as it is built, but do NOT run yet: the
         // test run happens once, after every app in the bundle is loaded, so that
         // an app can call into a sibling it depends on.
-        if (assemblyBytes != null)
+        if (reusedAsm != null || assemblyBytes != null)
         {
-            var loadSw = System.Diagnostics.Stopwatch.StartNew();
-            var asm = Assembly.Load(assemblyBytes);
-            loadSw.Stop();
-            AlRunner.PerfTrace.Log($"test assembly load {rel}/{moduleName} {loadSw.ElapsedMilliseconds}ms");
+            Assembly asm;
+            if (reusedAsm != null)
+            {
+                // See the "cross-bundle module identity dedup" comment above: this app's
+                // AppId was already loaded earlier in this process, so run with that exact
+                // Assembly instead of Assembly.Load-ing a second, distinct module for the
+                // same AL identity.
+                asm = reusedAsm;
+            }
+            else
+            {
+                var loadSw = System.Diagnostics.Stopwatch.StartNew();
+                asm = Assembly.Load(assemblyBytes!);
+                loadSw.Stop();
+                AlRunner.PerfTrace.Log($"test assembly load {rel}/{moduleName} {loadSw.ElapsedMilliseconds}ms");
+                // Register this freshly-loaded module by AppId so a LATER bundle that
+                // resolves the same app as a dependency (via DependencyLoader) reuses this
+                // exact Assembly instead of re-emitting/re-compiling a second module for the
+                // same AL identity — see the dedup comment above (issue #1683). Skipped under
+                // --watch: TryAdd is first-wins, so iteration 2's freshly-edited asm would
+                // never overwrite iteration 1's stale entry, and any sibling bundle that
+                // later resolves this AppId as a real dependency would get the stale copy.
+                if (!watchMode && appGroup.AppId is { } newlyLoadedId)
+                    DependencyLoader.RegisterLoaded(newlyLoadedId, asm);
+            }
             var registerSw = System.Diagnostics.Stopwatch.StartNew();
             // wireFieldTriggers:false — WireFieldTriggerHandlersAll walks EVERY table
             // registered so far, not just this assembly's. Calling it here, per app,

@@ -508,4 +508,20 @@ public sealed class DependencyLoader
     /// </summary>
     public static Assembly? TryGetByAppId(Guid appId)
         => _cache.TryGetValue(appId, out var asm) ? asm : null;
+
+    /// <summary>
+    /// Record that <paramref name="asm"/> is the loaded module for AL app identity
+    /// <paramref name="appId"/> — used by the bundle loop's own-AppGroup compile path
+    /// (Program.cs) so an app compiled as ITS OWN bundle is visible here too, not just
+    /// apps that arrived through <see cref="LoadAll"/>. Without this, a later bundle
+    /// that resolves the same AppId as a *dependency* would MISS this cache and
+    /// re-emit/re-compile a second, distinct module for the same AL identity — see
+    /// issue #1683 (event-subscriber dispatch pairs a MethodInfo from one module's
+    /// Type with a subscriberInstance from the other module's Type, throwing
+    /// TargetException at ValidateInvokeTarget). First registration for a given AppId
+    /// wins; a duplicate call for an AppId already present is a no-op (the earlier
+    /// module is the one every other bundle should keep resolving to).
+    /// </summary>
+    public static void RegisterLoaded(Guid appId, Assembly asm)
+        => _cache.TryAdd(appId, asm);
 }
