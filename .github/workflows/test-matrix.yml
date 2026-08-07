@@ -267,7 +267,17 @@ jobs:
           # any cross-app tableextension there fails to resolve (AL0185/AL0247) and aborts
           # the whole emit. The crash-gate purpose (cold Cecil rewrite + emit + run) is
           # fully exercised by the canonical app. --strict tolerated codes are 0|1|2 below.
-          ./AlRunner/bin/Release/${{ matrix.tfm }}/al-runner --strict --quiet tests/al-language/tests/al-language > smoke.log 2>&1
+          #
+          # --auto-provision: as of #1678 the platform-app R2R gate also scans the target
+          # bundle's OWN .alpackages (not just the home-rooted default caches) — and the
+          # corpus vendors symbol-only Base/System Application/Business Foundation there
+          # (the standard "symbol download, no R2R" shape). On a genuinely cold cache with
+          # no package-cache and no prior provisioning, the gate now correctly fails loud
+          # BEFORE any emit/run, which is the fix's whole point (see #1678) but means this
+          # job's crash-gate (cold Cecil rewrite + emit + run) would never even start.
+          # --auto-provision downloads the corpus's platform apps once so the rest of the
+          # smoke test still exercises what it always exercised.
+          ./AlRunner/bin/Release/${{ matrix.tfm }}/al-runner --strict --quiet --auto-provision tests/al-language/tests/al-language > smoke.log 2>&1
           rc=$?
           cat smoke.log
           case "$rc" in
