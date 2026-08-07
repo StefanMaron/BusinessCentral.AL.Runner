@@ -685,8 +685,14 @@ public sealed class BcCompiler
                     try { File.CreateSymbolicLink(dst, src); }
                     catch { try { File.Copy(src, dst, overwrite: true); } catch { } }
                 }
-                try { Directory.Move(tmp, stage); }
-                catch { if (!Directory.Exists(stage)) throw; try { Directory.Delete(tmp, true); } catch { } }
+                // Publishing the scratch dir under its content-addressed name is best-effort:
+                // on Windows the move of a just-written tree intermittently hits a transient
+                // "Access to the path ... is denied", and rethrowing there killed whole runs
+                // at emit time (#1691). Publish retries, then falls back to the scratch dir —
+                // same staged files, so the compile is unaffected; only the cross-compile
+                // reuse of this key is lost.
+                return new List<string> {
+                    AlRunner.Infrastructure.PkgDedupStaging.Publish(tmp, stage, Console.Error) };
             }
             return new List<string> { stage };
         }
