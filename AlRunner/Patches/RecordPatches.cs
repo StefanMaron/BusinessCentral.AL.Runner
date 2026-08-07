@@ -142,6 +142,16 @@ public static partial class RecordPatches
     public static void AddSourceDir(string dir)
     {
         if (!Directory.Exists(dir)) return;
+        // De-dup: BuildSiblingSourceDeps (Program.cs) can legitimately call this for the
+        // SAME dependency source dir twice — once while matching declared deps to sibling
+        // source apps, once while emitting the synthetic workspace .app for a dep that
+        // needs a fresh build. Without this guard the same dir lands twice in _sourceDirs,
+        // so ParseAllSources() parses its .al files twice on the next Register()/rebuild.
+        // For a dependency that declares a `tableextension` on a table whose base metadata
+        // comes from elsewhere (e.g. a platform-app table), that duplicated every extension
+        // field id in _parsedExtensionFields — see #1686. The dedup here is defense in depth
+        // alongside the field-id dedup in TryParseTableExtensionFile.
+        if (_sourceDirs.Contains(dir, StringComparer.OrdinalIgnoreCase)) return;
         _sourceDirs.Add(dir);
         // If Register() already ran (it runs before the bucket loop), parse immediately
         // and feed the freshly-parsed tables into the NCLMetadata cache.

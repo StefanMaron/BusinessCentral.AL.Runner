@@ -290,10 +290,25 @@ public static partial class RecordPatches
             Console.Error.WriteLine($"[TableExt] parsed extension {extId} '{extName}' extends '{baseName}' with {fields.Count} fields");
 
             var key = baseName.ToLowerInvariant();
+            // De-dup by field id (mirrors the symbol-index merge in
+            // RecordPatches.BcAppFallback.cs's EnsureBcSymbolExtensionIndex): the same
+            // extension source file can legitimately be scanned more than once (e.g. a
+            // dependency app's source dir registered both by its own suite AND by
+            // BuildSiblingSourceDeps' sibling-source discovery — see #1686), and without
+            // this guard the same field id lands twice in the merged list. A duplicated
+            // NCLMetaField with the same FieldNo corrupts NCLMetaTable.AssignFromMetaTable's
+            // positional field-count arithmetic, which crashes deep inside
+            // NCLMetaTable.SetSystemFields() with a bare NullReferenceException — surfaced
+            // to the caller as the misleading "no NCLMetaTable ... (AL source not parsed)".
             if (!_parsedExtensionFields.TryGetValue(key, out var existing))
                 _parsedExtensionFields[key] = fields;
             else
-                existing.AddRange(fields);
+            {
+                var existingIds = new HashSet<int>(existing.Select(f => f.FieldId));
+                foreach (var f in fields)
+                    if (existingIds.Add(f.FieldId))
+                        existing.Add(f);
+            }
 
             // The base table's NCLMetaTable may ALREADY be built and cached at this point:
             // a table pulled in from a precompiled dependency .app is materialised lazily

@@ -1,0 +1,32 @@
+{
+  "id": "5d3c2b1a-6f4e-4a2d-9c1b-8e7f6a5d4c32",
+  "name": "DTB Platform Base Main",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Main test app: proves the DEPENDENCY-declared tableextension on the platform Item table round-trips correctly.",
+  "description": "Regression test for #1686: 'Platform-app table metadata lost when a dependency app extends the table'. Depends on DTB Platform Base Dep, which extends the platform Item table (27). Before the fix, building table 27's NCLMetaTable crashed with a NullReferenceException inside NCLMetaTable.SetSystemFields() (surfaced as 'no NCLMetaTable for table 27 (AL source not parsed)') because BuildSiblingSourceDeps registered the dependency's source dir twice, duplicating the extension's field ids in the merged metadata.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "5d3c2b1a-6f4e-4a2d-9c1b-8e7f6a5d4c31",
+      "name": "DTB Platform Base Dep",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 63410,
+      "to": 63419
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}
