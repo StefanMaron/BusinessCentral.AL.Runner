@@ -640,7 +640,20 @@ public sealed class BcCompiler
                 // about a malformed package, so a gap here shows up as a version-specific
                 // failure that looks like a runner capability gap and is not one.
                 if (!AppLoader.HasSymbolReference(app)) { changed = true; continue; }
-                picked.Add(app);
+                // Normalise to an absolute path BEFORE it is ever used as a symlink target.
+                // `dir` (and therefore `app`) may be a caller-supplied RELATIVE path (e.g. a
+                // relative --package-cache argument, exactly as in issue #1652's repro:
+                // `--package-cache app/.alpackages`). File.CreateSymbolicLink below treats its
+                // target argument LITERALLY — a relative target is resolved by the OS relative
+                // to the SYMLINK's own directory (the temp stage dir under
+                // al-runner-pkgdedup/<hash>/), not relative to this process's CWD. Staging a
+                // relative target therefore produces a DANGLING symlink: BC's native package
+                // reader then reports the (perfectly valid) package as `AL1023 ... is not
+                // valid`, the resulting declaration errors cascade into Compilation.Emit, and
+                // the emitter crashes on unbound types — the EMIT-ZERO failure this dedup path
+                // is supposed to prevent, not cause. Resolving to an absolute path here makes
+                // every downstream symlink target valid regardless of CWD.
+                picked.Add(Path.GetFullPath(app));
             }
         }
         if (!changed) return packageDirs; // common case — leave the hot path untouched
