@@ -177,11 +177,20 @@ public static class Reporter
             .SelectMany(b => b.Tests)
             .ToList();
 
+        // One entry per compile-failed bucket, identified by its FULL path. This used to
+        // build a Dictionary keyed on Path.GetFileName(BucketPath), which threw an
+        // unhandled ArgumentException ("An item with the same key has already been added")
+        // whenever two bundles shared a last path segment — `al-runner ./appA/src
+        // ./appB/src`, or the same directory passed twice. That fired here, during report
+        // serialisation and AFTER the tests had already run, so a completed run's results
+        // were discarded with a raw stack trace. The dictionary bought nothing: the result
+        // is projected straight back into an array. Full paths also keep same-named
+        // bundles distinguishable in the output — same field name as WriteClassification's
+        // `bucket`. See #1692.
         var compileErrors = buckets
             .Where(b => b.Stage == BucketStage.CompileFailed)
-            .ToDictionary(
-                b => Path.GetFileName(b.BucketPath),
-                b => b.CompileErrors.ToList());
+            .Select(b => new { file = b.BucketPath, errors = b.CompileErrors.ToList() })
+            .ToList();
 
         var output = new
         {
@@ -198,9 +207,7 @@ public static class Reporter
             errors = tests.Count(t => t.Outcome == TestOutcome.Error),
             total = tests.Count,
             exitCode,
-            compilationErrors = compileErrors.Count > 0
-                ? compileErrors.Select(kvp => new { file = kvp.Key, errors = kvp.Value })
-                : null,
+            compilationErrors = compileErrors.Count > 0 ? compileErrors : null,
         };
 
         return JsonSerializer.Serialize(output, new JsonSerializerOptions
