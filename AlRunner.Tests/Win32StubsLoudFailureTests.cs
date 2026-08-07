@@ -282,4 +282,40 @@ public class Win32StubsLoudFailureTests
             try { Directory.Delete(dir, recursive: true); } catch { /* best effort */ }
         }
     }
+
+    /// <summary>
+    /// Issue #1673 (regression from #1669): on Windows, kernel32/user32/etc. are the *real*
+    /// Win32 libraries — the Linux-only shim resolver must never intercept them at all.
+    /// Before #1669 an unconditional interception was harmless because the resolver's failure
+    /// was swallowed and the default loader took over; after #1669 it throws directly, which
+    /// on Windows means every AL install trigger that touches WindowsLanguageHelper (e.g. a
+    /// bare TextConstant, see #1651) now dies with a Linux-shim error on a platform that never
+    /// needed the shim. <see cref="Win32Stubs.Register(bool)"/> must skip registration entirely
+    /// when told it's running on Windows, and — critically — must do so *before* setting the
+    /// "already registered" flag, so a later non-Windows call in the same process still works.
+    /// </summary>
+    [Fact]
+    public void Register_OnWindows_NeverMarksItselfRegistered()
+    {
+        Win32Stubs.ResetForTests();
+        Win32Stubs.Register(isWindows: true);
+        Assert.False(Win32Stubs.IsRegisteredForTests,
+            "Register(isWindows: true) must no-op without setting the registered flag, " +
+            "so the Win32 shim resolver is never installed for Nav.* assemblies on Windows.");
+    }
+
+    /// <summary>
+    /// Positive counterpart: the non-Windows path must be unaffected by the platform guard —
+    /// it still marks itself registered exactly as before #1673's fix. A guard that always
+    /// no-ops (e.g. `return;` unconditionally) would make the negative test above pass too,
+    /// so this positive case is required to prove the guard is actually platform-conditional.
+    /// </summary>
+    [Fact]
+    public void Register_OnNonWindows_StillMarksItselfRegistered()
+    {
+        Win32Stubs.ResetForTests();
+        Win32Stubs.Register(isWindows: false);
+        Assert.True(Win32Stubs.IsRegisteredForTests,
+            "Register(isWindows: false) must behave exactly as before #1673 and register normally.");
+    }
 }

@@ -34,8 +34,25 @@ internal static class Win32Stubs
         "psapi", "psapi.dll", "ws2_32", "ws2_32.dll", "shlwapi", "shlwapi.dll",
     };
 
-    public static void Register()
+    /// <summary>
+    /// Issue #1673: kernel32/user32/etc. are the *real* Win32 libraries on Windows — this
+    /// shim exists purely to fake them on Linux (see the type-level comment). Intercepting
+    /// them on Windows too used to be harmless (the resolver's failure was swallowed and the
+    /// default loader took over), but #1669 made the resolver throw directly, so on Windows
+    /// that interception now breaks every AL codepath that touches one of these libraries
+    /// (e.g. any install trigger reaching WindowsLanguageHelper via a bare TextConstant, see
+    /// #1651) even though Windows never needed the shim in the first place.
+    /// </summary>
+    public static void Register() => Register(OperatingSystem.IsWindows());
+
+    /// <summary>internal (not private) purely so <c>AlRunner.Tests</c> can exercise the
+    /// Windows-vs-Linux branch deterministically without depending on the OS the test happens
+    /// to run on — see Win32StubsLoudFailureTests.cs.</summary>
+    internal static void Register(bool isWindows)
     {
+        // Checked before touching _registered so a Register(isWindows: true) no-op call never
+        // blocks a later, real Register() call in the same process from registering normally.
+        if (isWindows) return;
         if (_registered) return;
         _registered = true;
 
@@ -44,12 +61,17 @@ internal static class Win32Stubs
         AppDomain.CurrentDomain.AssemblyLoad += (_, e) => TryRegister(e.LoadedAssembly);
     }
 
+    /// <summary>Test-only: observes whether <see cref="Register(bool)"/> has completed
+    /// registration in this process. Never read from production code paths.</summary>
+    internal static bool IsRegisteredForTests => _registered;
+
     /// <summary>Test-only: forget the cached handle/registration so a unit test can
-    /// exercise <see cref="GetOrBuild"/> from a clean slate. Never called from
-    /// production code paths.</summary>
+    /// exercise <see cref="GetOrBuild"/> or <see cref="Register(bool)"/> from a clean slate.
+    /// Never called from production code paths.</summary>
     internal static void ResetForTests()
     {
         _handle = IntPtr.Zero;
+        _registered = false;
     }
 
     /// <summary>Test-only seam: when set, <see cref="GetOrBuild"/> probes for the
