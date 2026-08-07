@@ -505,6 +505,10 @@ public sealed class DependencyResolverTests : IDisposable
         => MakeMinimalApp(appId, name, publisher, version, r2r: false);
 
     private static byte[] MakeMinimalApp(string appId, string name, string publisher, string version, bool r2r)
+        => MakeMinimalApp(appId, name, publisher, version, r2r, alSource: false);
+
+    private static byte[] MakeMinimalApp(string appId, string name, string publisher, string version,
+        bool r2r, bool alSource)
     {
         var xml = $"""
             <?xml version="1.0" encoding="utf-8"?>
@@ -527,6 +531,14 @@ public sealed class DependencyResolverTests : IDisposable
                 using var ds = dll.Open();
                 ds.Write(new byte[] { 0x4D, 0x5A });
             }
+            if (alSource)
+            {
+                // AppLoader.HasAlSource only looks for a src/*.al entry. This is the shape of
+                // Microsoft's real test toolkit: no DLL, but AL the Tier-3 compile can build.
+                var al = zip.CreateEntry("src/" + name + ".al");
+                using var als = al.Open();
+                als.Write(Encoding.UTF8.GetBytes("codeunit 130002 \"" + name + "\" { }"));
+            }
         }
         var zipBytes = ms.ToArray();
 
@@ -536,5 +548,124 @@ public sealed class DependencyResolverTests : IDisposable
         BitConverter.TryWriteBytes(result.AsSpan(4, 4), (uint)8);
         zipBytes.CopyTo(result, 8);
         return result;
+    }
+
+    // ── #1689: a resolved package that NO loader tier can implement ───────────
+    //
+    // Reported shape: a symbols-only `Library Assert` in .alpackages satisfies resolution,
+    // the bundle compiles green, and every call into it dies with "Function ID N was
+    // called. The object with ID 0 does not have a member with that ID" — naming neither
+    // the app nor the codeunit.
+    //
+    // The pre-existing symbols-only diagnostic could not catch it twice over: it only fired
+    // when OTHER code-bearing copies existed below the minimum version (here there are no
+    // other copies at all), and it was printed only under --verbose.
+    //
+    // The discriminator is NOT !IsR2R. Microsoft's real toolkit ships no publishedartifacts
+    // DLL but DOES ship src/*.al, and the loader's Tier-3 source compile implements it —
+    // verified against the real 28.1.49838.53479 artifact, where `Microsoft_Library
+    // Assert.app` is 22 KB with IsR2R=false and one src/*.al, and a bundle resolving it
+    // scores 2/2 PASS. Gating on !IsR2R alone would fire on every healthy toolkit run.
+
+    /// <summary>
+    /// Neither R2R nor AL source, no other copy anywhere: unservable. Must be reported,
+    /// naming the app and the winning path.
+    /// </summary>
+    [Fact]
+    public void SymbolsOnlyWithNoAlSource_AndNoOtherCopy_IsReportedAsUnservable()
+    {
+        var appId = "dd0be2ea-f733-4d65-bb34-a28f4624fb14";
+        var dir = MakeDir("symbols-only-alone");
+        WriteApp(dir, "Microsoft_Library Assert.app", appId, "Library Assert", "Microsoft",
+            "28.1.49838.53479", r2r: false);
+
+        var resolver = new DependencyResolver(new[] { dir });
+        var result = resolver.Resolve(new[] { new DependencyRef(Guid.Parse(appId), "Library Assert", "Microsoft", new Version(22, 0, 0, 0)) });
+        Assert.Single(result);
+
+        var report = Assert.Single(resolver.UnservableDependencies);
+        Assert.Contains("Microsoft/Library Assert", report);
+        Assert.Contains("NO IMPLEMENTATION", report);
+        Assert.Contains(Path.Combine(dir, "Microsoft_Library Assert.app"), report);
+        // Names the failure the developer would otherwise meet unexplained.
+        Assert.Contains("object with ID 0", report);
+    }
+
+    /// <summary>
+    /// NEGATIVE — the healthy Microsoft test-toolkit shape: no DLL, but AL source present.
+    /// Tier-3 compiles it, so this must stay silent. This is the regression guard that
+    /// stops the fix from breaking every working toolkit resolution.
+    /// </summary>
+    [Fact]
+    public void SymbolsOnlyButShipsAlSource_IsNotReported()
+    {
+        var appId = "dd0be2ea-f733-4d65-bb34-a28f4624fb14";
+        var dir = MakeDir("no-dll-but-al");
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Library Assert.app"),
+            MakeMinimalApp(appId, "Library Assert", "Microsoft", "28.1.49838.53479",
+                r2r: false, alSource: true));
+
+        var resolver = new DependencyResolver(new[] { dir });
+        var result = resolver.Resolve(new[] { new DependencyRef(Guid.Parse(appId), "Library Assert", "Microsoft", new Version(22, 0, 0, 0)) });
+        Assert.Single(result);
+
+        Assert.Empty(resolver.UnservableDependencies);
+    }
+
+    /// <summary>
+    /// NEGATIVE — Microsoft platform apps are legitimately symbols-only; their runtime comes
+    /// from the service tier. The existing carve-out must survive.
+    /// </summary>
+    [Fact]
+    public void SymbolsOnlyMicrosoftPlatformApp_IsNotReported()
+    {
+        var appId = "eeeeeeee-0000-0000-0000-000000000001";
+        var dir = MakeDir("platform-symbols-only");
+        WriteApp(dir, "SysApp.app", appId, "System Application", "Microsoft",
+            "28.1.49838.53479", r2r: false);
+
+        var resolver = new DependencyResolver(new[] { dir });
+        var result = resolver.Resolve(new[] { new DependencyRef(Guid.Parse(appId), "System Application", "Microsoft", new Version(28, 0, 0, 0)) });
+        Assert.Single(result);
+
+        Assert.Empty(resolver.UnservableDependencies);
+    }
+
+    /// <summary>
+    /// NEGATIVE — an executable winner is servable by definition.
+    /// </summary>
+    [Fact]
+    public void ExecutableWinner_IsNotReported()
+    {
+        var appId = "ffffffff-0000-0000-0000-000000000001";
+        var dir = MakeDir("r2r-winner");
+        WriteApp(dir, "Lib.app", appId, "SomeLib", "SomeVendor", "28.1.49838.53479", r2r: true);
+
+        var resolver = new DependencyResolver(new[] { dir });
+        var result = resolver.Resolve(new[] { new DependencyRef(Guid.Parse(appId), "SomeLib", "SomeVendor", new Version(1, 0, 0, 0)) });
+        Assert.Single(result);
+
+        Assert.Empty(resolver.UnservableDependencies);
+    }
+
+    /// <summary>
+    /// The pre-existing "code-bearing copies exist but are below the minimum" diagnostic
+    /// still fires, and stays on the verbose-only Diagnostics channel rather than being
+    /// promoted to the always-on one.
+    /// </summary>
+    [Fact]
+    public void CodeBearingCopiesBelowMinimum_StillUseTheVersionDiagnostic()
+    {
+        var appId = "aaaaaaaa-1111-0000-0000-000000000001";
+        var dir = MakeDir("below-min");
+        WriteApp(dir, "Lib_v28_symbols.app", appId, "SomeLib", "SomeVendor", "28.0.0.0", r2r: false);
+        WriteApp(dir, "Lib_v5_r2r.app",      appId, "SomeLib", "SomeVendor", "5.0.0.0",  r2r: true);
+
+        var resolver = new DependencyResolver(new[] { dir });
+        var result = resolver.Resolve(new[] { new DependencyRef(Guid.Parse(appId), "SomeLib", "SomeVendor", new Version(28, 0, 0, 0)) });
+        Assert.Single(result);
+
+        Assert.Empty(resolver.UnservableDependencies);
+        Assert.Contains(resolver.Diagnostics, d => d.Contains("SYMBOLS-ONLY"));
     }
 }

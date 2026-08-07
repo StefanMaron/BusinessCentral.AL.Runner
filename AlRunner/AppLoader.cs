@@ -189,6 +189,44 @@ public static class AppLoader
 
 
     /// <summary>
+    /// True if the package ships AL source under <c>src/*.al</c> — i.e. the loader's
+    /// Tier-3 on-the-fly source compile can produce an implementation from it.
+    ///
+    /// This is the other half of "can this package supply runnable code", and it is NOT
+    /// implied by <see cref="IsR2R"/>. Microsoft ships its test toolkit (Library Assert,
+    /// Library Variable Storage, …) with NO <c>publishedartifacts/*.dll</c> but WITH AL
+    /// source: verified against the real 28.1.49838.53479 test-apps artifact, where
+    /// `Microsoft_Library Assert.app` is 22 KB with IsR2R=false and one `src/*.al`.
+    /// Treating !IsR2R alone as "carries no implementation" therefore misclassifies the
+    /// entire healthy test toolkit — see #1689 and DependencyResolver.SelectBestVersion.
+    ///
+    /// Entry-name scan only: nothing is decompressed, so this stays cheap on packages
+    /// with thousands of sources.
+    /// </summary>
+    public static bool HasAlSource(string appPath)
+    {
+        static bool AnyAl(ZipArchive zip) => zip.Entries.Any(e =>
+            e.FullName.StartsWith("src/", StringComparison.OrdinalIgnoreCase)
+            && e.FullName.EndsWith(".al", StringComparison.OrdinalIgnoreCase));
+        try
+        {
+            var bytes = File.ReadAllBytes(appPath);
+            using var zip = OpenZipFromNavx(bytes);
+            if (AnyAl(zip)) return true;
+            // R2R nested case: the inner .app carries the source, mirroring HasSymbolReference.
+            var nested = zip.Entries.FirstOrDefault(e =>
+                e.FullName.EndsWith(".app", StringComparison.OrdinalIgnoreCase) && !e.FullName.Contains('/'));
+            if (nested == null) return false;
+            using var ns = nested.Open();
+            using var nms = new MemoryStream();
+            ns.CopyTo(nms);
+            using var innerZip = OpenZipFromNavx(nms.ToArray());
+            return AnyAl(innerZip);
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
     /// Returns the IL DLL bytes from a Microsoft R2R `.app` package, or null
     /// if no `publishedartifacts/*.dll` is present (i.e. the package is not R2R).
     /// Returns only the first DLL — kept for backwards-compat callers that

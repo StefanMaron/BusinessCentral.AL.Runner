@@ -27,6 +27,10 @@ public sealed class DependencyResolver
         _byNamePub = new(NamePublisherComparer.Instance);
     private bool _indexed;
     private readonly List<string> _diagnostics = new();
+    // Kept separate from _diagnostics because these are printed UNCONDITIONALLY, not just
+    // under --verbose: a dependency that no loader tier can implement is a certain runtime
+    // failure, and the whole point of #1689 is that the developer never saw it coming.
+    private readonly List<string> _unservable = new();
 
     /// <summary>
     /// Problems detected while resolving that are NOT fatal but almost certainly wrong —
@@ -37,6 +41,14 @@ public sealed class DependencyResolver
     /// happens instead of being reconstructed by hand from the whole dependency set.
     /// </summary>
     public IReadOnlyList<string> Diagnostics => _diagnostics;
+
+    /// <summary>
+    /// Resolved dependencies that no loader tier can supply an implementation for (neither
+    /// an R2R payload nor AL source, and not a Microsoft platform app served by the service
+    /// tier). Unlike <see cref="Diagnostics"/> these are always surfaced — each one is a
+    /// call that will end in "The object with ID 0 does not have a member with that ID".
+    /// </summary>
+    public IReadOnlyList<string> UnservableDependencies => _unservable;
 
     public DependencyResolver(IReadOnlyList<string> cacheDirs)
     {
@@ -232,14 +244,46 @@ public sealed class DependencyResolver
             // legitimate for those, whose runtime can come from the service-tier DLLs (see
             // IsMicrosoftPlatformApp). Warning on them would fire on healthy runs and teach
             // readers to ignore this.
+            // "Cannot execute" is NOT the same as "carries no implementation". A package with
+            // no publishedartifacts DLL but WITH src/*.al is served by the loader's Tier-3
+            // on-the-fly source compile — which is exactly how Microsoft ships its test
+            // toolkit. Verified against the real 28.1.49838.53479 test-apps artifact:
+            // `Microsoft_Library Assert.app` is 22 KB, IsR2R=false, one src/*.al. Gating on
+            // !Executable alone would fire on every healthy toolkit resolution, which is the
+            // answer to the open question this diagnostic carried (#1689): the healthy run
+            // tolerates a symbols-only winner because that winner still ships AL.
+            //
+            // The genuinely unservable shape is neither R2R nor AL — symbols and a manifest
+            // and nothing else, as produced by a symbol-only package download. No loader tier
+            // can implement it, so every call into it ends at
+            // "The object with ID 0 does not have a member with that ID".
             if (!Executable(best.Path)
+                && !AppLoader.HasAlSource(best.Path)
                 && !IsMicrosoftPlatformApp(best.Manifest.Name, best.Manifest.Publisher))
             {
                 var tooOld = candidates
                     .Where(c => c.Manifest.Version < dep.Version && Executable(c.Path))
                     .OrderByDescending(c => c.Manifest.Version)
                     .ToList();
-                if (tooOld.Count > 0)
+                if (tooOld.Count == 0)
+                {
+                    // No other copy exists at all — the case #1689 reported, and the one this
+                    // block used to fall straight through in silence. Nothing downstream can
+                    // name the app: DependencyLoader's symbol-only branch says it is "relying
+                    // on service-tier/already-loaded assembly" (true for platform apps, false
+                    // here), and the runtime error that follows names neither app nor codeunit.
+                    _unservable.Add(
+                        $"[dep] {best.Manifest.Publisher}/{best.Manifest.Name} v{best.Manifest.Version} "
+                        + "resolved to a package with NO IMPLEMENTATION (no publishedartifacts DLL,"
+                        + "\n      no src/*.al) and no other copy was found in the package caches:"
+                        + $"\n      winner: {best.Path}"
+                        + "\n      Calls into this app will fail with \"The object with ID 0 does not"
+                        + "\n      have a member with that ID\". Provision a package that carries an"
+                        + "\n      implementation — `al-runner provision`, or re-run with --auto-provision;"
+                        + "\n      for the Microsoft test toolkit specifically:"
+                        + $"\n        dotnet run --project tools/DownloadArtifacts -- test-apps {best.Manifest.Version} \"<dir>\"");
+                }
+                else
                     _diagnostics.Add(
                         $"[dep] note: {best.Manifest.Publisher}/{best.Manifest.Name} resolved to a "
                         + $"SYMBOLS-ONLY package v{best.Manifest.Version} (no publishedartifacts DLL):"

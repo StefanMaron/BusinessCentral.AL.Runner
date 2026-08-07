@@ -896,12 +896,26 @@ foreach (var bundle in bundles)
                 //
                 // It is still the right thing to look at when execution dies with an
                 // object-ID-0 MissingMethod, which is why it is retained and printed under
-                // --verbose. Making it a reliable failure signal needs the open question
-                // answered first: why does the healthy run tolerate a symbols-only winner?
-                // Until then this is evidence to weigh, not a verdict.
+                // --verbose.
+                //
+                // The open question this used to carry — why does the healthy run tolerate a
+                // symbols-only winner? — is answered (#1689): because "symbols-only" here means
+                // "no publishedartifacts DLL", and Microsoft's test toolkit ships no DLL but DOES
+                // ship src/*.al, so the loader's Tier-3 source compile implements it. Verified
+                // against the real 28.1.49838.53479 artifact: `Microsoft_Library Assert.app` is
+                // 22 KB, IsR2R=false, one src/*.al. That is exactly the 7 packages measured above.
+                //
+                // So this list stays evidence rather than a verdict, and the verdict moved to
+                // UnservableDependencies below, which applies the discriminator that actually
+                // separates the two: neither a DLL nor AL source.
                 if (AlRunner.Log.Verbose)
                     foreach (var d in resolver.Diagnostics)
                         Console.Error.WriteLine(d);
+                // Always-on, unlike the above: a dependency no loader tier can implement is a
+                // certain object-ID-0 failure later, and #1689 is precisely the report that
+                // nothing named it. One line per app, and only for a shape that cannot work.
+                foreach (var u in resolver.UnservableDependencies)
+                    Console.Error.WriteLine(u);
                 // Compiler sees only non-workspace dirs in its .app scanner; the
                 // synthetic workspace dirs are registered as symbols.json-only
                 // sources via SetExtraSymbolDirs (called AFTER SetResolvedDeps,
