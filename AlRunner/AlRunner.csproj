@@ -89,6 +89,51 @@
     </Content>
   </ItemGroup>
 
+  <!-- #1672: ship a prebuilt libwin32_stubs.<rid>.so beside win32_stubs.c so a Linux
+       install with no C toolchain still resolves Win32 imports (Win32Stubs.GetOrBuild
+       tries this before falling back to compiling from source). Built once per
+       architecture, here, at build/pack time — never committed to source control
+       (see .gitignore) since it's a native binary artifact of the build, not source.
+       Best-effort per compiler:
+         - native `cc`, labelled by the host's own `uname -m`, covers whatever
+           architecture actually runs this build (the linux-x64 GH Actions runner
+           in publish.yml, or a dev box).
+         - the `aarch64-linux-gnu-gcc` cross toolchain, if present, additionally
+           produces linux-arm64 regardless of host arch (installed explicitly by
+           publish.yml so a single x64 CI runner can ship both RIDs).
+       Neither Exec fails the build if its compiler is missing (ContinueOnError):
+       Win32Stubs.GetOrBuild's compile-from-source fallback (and #1669's loud
+       failure if that has no compiler either) still covers whatever RID didn't
+       get a prebuilt here. Windows-only guard: `cc`/cross-gcc/bash aren't
+       reliably present there and this whole subsystem targets Linux Win32 shims. -->
+  <!-- BeforeTargets="PrepareForBuild" (not "Build"): "Build" is a thin alias whose
+       own DependsOnTargets chain (…;CopyFilesToOutputDirectory;…) already runs before
+       a "BeforeTargets=Build" hook fires, so the .so wouldn't exist yet when Content
+       items get copied to the output dir. PrepareForBuild runs at the very start of
+       that chain. -->
+  <Target Name="BuildWin32PrebuiltStubs" BeforeTargets="PrepareForBuild;Pack;GenerateNuspec"
+          Condition="'$(OS)' != 'Windows_NT'">
+    <!-- Delegates to a standalone script rather than an inline command — MSBuild's
+         Exec task re-quotes inline shell strings in a way that breaks backtick/${var}
+         substitution (see build-prebuilt.sh's header comment for the concrete
+         failure this sidesteps). -->
+    <Exec Command="bash Win32Stubs/build-prebuilt.sh"
+          WorkingDirectory="$(MSBuildProjectDirectory)"
+          ContinueOnError="WarnAndContinue" />
+    <ItemGroup>
+      <Content Include="Win32Stubs/libwin32_stubs.linux-x64.so" Condition="Exists('Win32Stubs/libwin32_stubs.linux-x64.so')">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <Pack>true</Pack>
+        <PackagePath>tools/$(TargetFramework)/any/Win32Stubs/</PackagePath>
+      </Content>
+      <Content Include="Win32Stubs/libwin32_stubs.linux-arm64.so" Condition="Exists('Win32Stubs/libwin32_stubs.linux-arm64.so')">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <Pack>true</Pack>
+        <PackagePath>tools/$(TargetFramework)/any/Win32Stubs/</PackagePath>
+      </Content>
+    </ItemGroup>
+  </Target>
+
   <!-- Bake the BC version this binary was BUILT against into the assembly.
        Microsoft stamps Ncl.dll's assembly version as major.0.0.0 only (28.0.0.0), so the
        MINOR is unrecoverable from the engine DLLs at runtime — yet the minor is what

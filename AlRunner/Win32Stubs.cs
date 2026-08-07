@@ -52,6 +52,14 @@ internal static class Win32Stubs
         _handle = IntPtr.Zero;
     }
 
+    /// <summary>Test-only seam: when set, <see cref="GetOrBuild"/> probes for the
+    /// shipped prebuilt stub under this directory instead of <see
+    /// cref="AppContext.BaseDirectory"/>, so a unit test can drop a fixture .so
+    /// somewhere temporary without touching the real install layout. Null in
+    /// production. Never read from production code paths other than
+    /// <see cref="GetOrBuild"/>'s own base-directory resolution below.</summary>
+    internal static string? BaseDirectoryForTests;
+
     private static void TryRegister(Assembly asm)
     {
         var n = asm.GetName().Name ?? "";
@@ -89,6 +97,19 @@ internal static class Win32Stubs
             return _handle;
         }
 
+        // #1672: try the shipped prebuilt stub (beside the binary, one per RID —
+        // see AlRunner.csproj's BuildWin32PrebuiltStubs target) before falling back
+        // to compiling from source. This is what lets a fresh Linux install with no
+        // C toolchain resolve Win32 imports out of the box; the compile-from-source
+        // path below still exists for RIDs the release pipeline didn't prebuild for
+        // (or a dev tree running straight from `dotnet run`).
+        var prebuilt = LocatePrebuiltSo(BaseDirectoryForTests ?? AppContext.BaseDirectory, File.Exists);
+        if (prebuilt != null)
+        {
+            _handle = NativeLibrary.Load(prebuilt);
+            return _handle;
+        }
+
         var compiler = FindCompiler(cmd => IsOnPath(cmd));
         if (compiler == null)
             throw new InvalidOperationException(BuildNoCompilerMessage(library));
@@ -109,6 +130,40 @@ internal static class Win32Stubs
                 + $"'{library}' (required by {src}). Compiler output:\n{proc.StandardError.ReadToEnd()}");
         _handle = NativeLibrary.Load(soFile);
         return _handle;
+    }
+
+    /// <summary>The filename of the shipped prebuilt stub for the current process's
+    /// RID, or null if this architecture has no shipped prebuilt (falls back to
+    /// compile-from-source in that case). Named after the standard RID convention
+    /// (<c>linux-x64</c>, <c>linux-arm64</c>) even though the file lives beside the
+    /// binary rather than under a NuGet <c>runtimes/&lt;rid&gt;/native/</c> folder —
+    /// PackAsTool nupkgs only extract <c>tools/&lt;tfm&gt;/any/</c>, so the RID lives
+    /// in the filename instead of the directory structure. Linux-only: this whole
+    /// resolver exists to redirect Win32 P/Invokes to a Linux .so (see the file
+    /// header), so other OSes never reach here in practice, but the explicit guard
+    /// keeps the contract obvious.</summary>
+    internal static string? PrebuiltStubFileName()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) return null;
+        return RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.X64 => "libwin32_stubs.linux-x64.so",
+            Architecture.Arm64 => "libwin32_stubs.linux-arm64.so",
+            _ => null,
+        };
+    }
+
+    /// <summary>Pure/injectable lookup for the shipped prebuilt stub beside the
+    /// binary: <c>&lt;baseDirectory&gt;/Win32Stubs/libwin32_stubs.&lt;rid&gt;.so</c>.
+    /// Returns null (never throws) when there is no prebuilt for this RID or the
+    /// file isn't there — both are legitimate "fall through to compile-from-source"
+    /// cases, not errors.</summary>
+    internal static string? LocatePrebuiltSo(string baseDirectory, Func<string, bool> exists)
+    {
+        var name = PrebuiltStubFileName();
+        if (name is null) return null;
+        var candidate = Path.Combine(baseDirectory, "Win32Stubs", name);
+        return exists(candidate) ? candidate : null;
     }
 
     /// <summary>Returns the first name in <see cref="CandidateCompilers"/> for which

@@ -182,12 +182,22 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      - name: Install the aarch64 cross-compiler (#1672)
+        run: |
+          # This runner is linux-x64; AlRunner.csproj's BuildWin32PrebuiltStubs target
+          # uses the native `cc` for linux-x64 (always present) and this cross
+          # toolchain for linux-arm64, so a single x64 job ships prebuilt Win32
+          # stubs for both RIDs without needing an arm64 runner.
+          sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+
       - name: Build and pack
         run: |
           # Packing also needs the BC service tier present (RAR resolves against it),
           # so the same download switch applies here. This job builds once at the
           # csproj's default _BCVersion, which is the version the package is stamped
-          # with (AssemblyMetadata BcEngineVersion).
+          # with (AssemblyMetadata BcEngineVersion). It also runs
+          # BuildWin32PrebuiltStubs (see AlRunner.csproj) which ships the prebuilt
+          # libwin32_stubs.linux-{x64,arm64}.so shims in the resulting nupkg.
           dotnet build AlRunner/ -p:AllowBcArtifactDownload=true
           dotnet pack AlRunner/ -p:AllowBcArtifactDownload=true -p:Version=${{ inputs.version }} -o ./nupkg
 

@@ -67,3 +67,7 @@ tests/.claude/
 # permanently red on Linux). See project_dotnet_sspw_resolution_hard memory.
 tests/runner-extras/dotnet-interop/
 .serena/
+
+# #1672: prebuilt Win32 stub shims are build artifacts, produced fresh per-arch by
+# AlRunner.csproj's BuildWin32PrebuiltStubs target — never committed as binaries.
+AlRunner/Win32Stubs/*.so

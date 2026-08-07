@@ -146,4 +146,140 @@ public class Win32StubsLoudFailureTests
             Win32Stubs.ResetForTests();
         }
     }
+
+    // ---------------------------------------------------------------------------------
+    // #1672: shipped prebuilt libwin32_stubs.so — no C compiler required on Linux.
+    // ---------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Pure lookup: the current RID's filename must be present when a fixture file with
+    /// that exact name exists. Would a stub that always returns null (or always returns
+    /// some hardcoded path regardless of the `exists` probe) pass this? No — this asserts
+    /// the exact composed path, keyed off <see cref="Win32Stubs.PrebuiltStubFileName"/>,
+    /// which is itself keyed off the live <c>RuntimeInformation.ProcessArchitecture</c> so
+    /// the test can't fake a mismatched RID past it.
+    /// </summary>
+    [Fact]
+    public void LocatePrebuiltSo_ReturnsComposedPath_WhenFileExists()
+    {
+        var name = Win32Stubs.PrebuiltStubFileName();
+        if (name is null) return; // unsupported RID (e.g. not Linux, or non-x64/arm64) — nothing to assert
+        var expected = Path.Combine("/fake/base", "Win32Stubs", name);
+
+        var found = Win32Stubs.LocatePrebuiltSo("/fake/base", path => path == expected);
+
+        Assert.Equal(expected, found);
+    }
+
+    /// <summary>
+    /// Negative: when the file genuinely isn't there, LocatePrebuiltSo must return null
+    /// (not throw, not fall back to some default) — GetOrBuild relies on that null to know
+    /// it should proceed to the compile-from-source path.
+    /// </summary>
+    [Fact]
+    public void LocatePrebuiltSo_ReturnsNull_WhenFileMissing()
+    {
+        var found = Win32Stubs.LocatePrebuiltSo("/fake/base", _ => false);
+        Assert.Null(found);
+    }
+
+    /// <summary>
+    /// PrebuiltStubFileName must actually vary by architecture — pinning that x64 and
+    /// arm64 produce different filenames catches a copy-paste bug that would silently load
+    /// the wrong architecture's shim (an ELF class mismatch that fails at NativeLibrary.Load
+    /// time with a confusing "wrong ELF class" error, not at compile time).
+    /// </summary>
+    [Fact]
+    public void PrebuiltStubFileName_NamesTheRidExplicitly_WhenSupported()
+    {
+        var name = Win32Stubs.PrebuiltStubFileName();
+        if (name is null) return; // e.g. running this test suite on macOS/Windows
+        Assert.True(name is "libwin32_stubs.linux-x64.so" or "libwin32_stubs.linux-arm64.so",
+            $"Unexpected prebuilt stub filename: {name}");
+    }
+
+    /// <summary>
+    /// GREEN, end-to-end: with a fixture .so dropped at the exact beside-the-binary path
+    /// GetOrBuild probes (via the BaseDirectoryForTests test seam), GetOrBuild must load it
+    /// directly — with zero compiler invocation. Proven here by additionally stripping PATH
+    /// down to nothing: if GetOrBuild fell through to the compile-from-source path instead of
+    /// using the prebuilt stub, it would throw (no compiler on PATH) rather than return a
+    /// valid handle.
+    /// </summary>
+    [Fact]
+    public void GetOrBuild_LoadsShippedPrebuiltStub_WithoutInvokingAnyCompiler()
+    {
+        var ridName = Win32Stubs.PrebuiltStubFileName();
+        if (ridName is null) return; // no prebuilt convention for this OS/arch — nothing to prove here
+
+        var dir = Path.Combine(Path.GetTempPath(), "win32stubs-prebuilt-test-" + Guid.NewGuid());
+        var stubDir = Path.Combine(dir, "Win32Stubs");
+        Directory.CreateDirectory(stubDir);
+        var cFile = Path.Combine(dir, "trivial.c");
+        var soFile = Path.Combine(stubDir, ridName);
+        File.WriteAllText(cFile, "int dummy_export(void) { return 42; }\n");
+
+        var psi = new System.Diagnostics.ProcessStartInfo("cc", $"-shared -fPIC -o \"{soFile}\" \"{cFile}\"")
+        { RedirectStandardError = true, UseShellExecute = false };
+        using var proc = System.Diagnostics.Process.Start(psi)!;
+        proc.WaitForExit(10000);
+        // Skip (not fail) on a machine with no compiler — building the FIXTURE needs cc,
+        // but the behaviour under test (GetOrBuild not needing cc at RUN time) doesn't.
+        if (proc.ExitCode != 0) { try { Directory.Delete(dir, true); } catch { } return; }
+
+        var savedPath = Environment.GetEnvironmentVariable("PATH");
+        var savedOverride = Environment.GetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO");
+        try
+        {
+            Environment.SetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO", null);
+            Environment.SetEnvironmentVariable("PATH", ""); // no compiler reachable at all
+            Win32Stubs.BaseDirectoryForTests = dir;
+            Win32Stubs.ResetForTests();
+
+            var handle = Win32Stubs.GetOrBuild("kernel32.dll");
+            Assert.NotEqual(IntPtr.Zero, handle);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", savedPath);
+            Environment.SetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO", savedOverride);
+            Win32Stubs.BaseDirectoryForTests = null;
+            Win32Stubs.ResetForTests();
+            try { Directory.Delete(dir, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    /// <summary>
+    /// Negative direction for the new load-order step: with no prebuilt stub AND no
+    /// compiler on PATH, GetOrBuild must still fail loudly with #1669's message — the new
+    /// "check for a prebuilt" step must not itself swallow the absence and return a
+    /// default/zero handle.
+    /// </summary>
+    [Fact]
+    public void GetOrBuild_StillThrows_WhenNoPrebuiltAndNoCompiler()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "win32stubs-no-prebuilt-test-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir); // deliberately no Win32Stubs/ subfolder inside it
+
+        var savedPath = Environment.GetEnvironmentVariable("PATH");
+        var savedOverride = Environment.GetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO");
+        try
+        {
+            Environment.SetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO", null);
+            Environment.SetEnvironmentVariable("PATH", "");
+            Win32Stubs.BaseDirectoryForTests = dir;
+            Win32Stubs.ResetForTests();
+
+            var ex = Assert.Throws<InvalidOperationException>(() => Win32Stubs.GetOrBuild("kernel32.dll"));
+            Assert.Contains("kernel32.dll", ex.Message);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", savedPath);
+            Environment.SetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO", savedOverride);
+            Win32Stubs.BaseDirectoryForTests = null;
+            Win32Stubs.ResetForTests();
+            try { Directory.Delete(dir, recursive: true); } catch { /* best effort */ }
+        }
+    }
 }
