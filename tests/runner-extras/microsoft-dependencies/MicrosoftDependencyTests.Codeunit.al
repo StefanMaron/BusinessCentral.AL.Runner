@@ -259,4 +259,125 @@ codeunit 61001 "Microsoft Dependency Tests"
         Assert.Contains(GetLastErrorText(), '99999999',
             'A report id no loaded dependency declares must raise a real error naming the id, not return an empty schema.');
     end;
+
+    // ── Precompiled BaseApp query execution (NavQuery.FindDataImplAsync) ─────
+    //
+    // Codeunit 9170 "Conf./Personalization Mgt." (Base Application) resolves the current
+    // user's default profile by opening Query 777 "Role Center from Plans" (System
+    // Application) filtered by user security ID, joining table "User Plan" to table "Plan".
+    // "User Security ID" is a `filter(...)` on the query — referenced only via SetRange, never
+    // projected as a result `column(...)` — which is Query 777's own shape and exactly the
+    // case that broke: NCLMetaQueryColumn.ColumnIndex is only assigned by BC's own runtime
+    // factory for non-filter-only columns, so a filter-only column's ColumnIndex is left at
+    // its CLR default (0) — indistinguishable, by value, from a genuinely-projected column at
+    // real slot 0. AlRunner.QueryJoin.JoinExecutor's multi-dataitem join projector and
+    // RecordPatches.QueryProjection.ApplyJoinRuntimeFilters both read that ColumnIndex naively,
+    // so a runtime SetRange on "User Security ID" (Guid) got aliased onto whatever real column
+    // happened to land in slot 0 (Query 777's "Role Center ID", an Integer) — comparing a Guid
+    // filter value against an Integer row value, which threw NavNCLInvalidComparisonException
+    // ("Unable to compare operands of type NavInteger with NavGuid") instead of ever being
+    // evaluated as the filter it actually was.
+    //
+    // Both tests below drive Query 777 directly (bypassing Codeunit 9170's business logic)
+    // so the assertion is squarely about the query engine itself: does the real InnerJoin
+    // between "User Plan" and "Plan" execute against the in-memory provider for real Guid
+    // filter values, or does it throw resolving the precompiled query's metadata.
+    //
+    // RED (before fix): the positive test (seeded matching row) throws
+    // NavNCLInvalidComparisonException the moment the aliased Guid-vs-Integer comparison runs.
+    // The negative test (no seeded rows at all) happens not to reproduce the bug on its own —
+    // an empty in-memory join never enumerates a row to compare against — so it is kept here
+    // as the literal "faithful expected behavior" acceptance criterion from the reported issue,
+    // not as independent proof of the fix.
+    // GREEN (after fix): both tests pass — filter-only columns get their own dedicated
+    // projection slot (see JoinExecutor.BuildJoinProjectionPlan /
+    // QueryProjection.ComputeJoinColumnSlotMap), so the Guid filter is evaluated against the
+    // real filtered value instead of an unrelated column.
+    [Test]
+    procedure Query777_RoleCenterFromPlans_NoMatchingPlan_ReturnsNoRows()
+    var
+        RoleCenterFromPlans: Query "Role Center from Plans";
+    begin
+        // [GIVEN] No AAD-plan mapping exists for this (freshly generated, guaranteed unused)
+        // user security ID.
+        RoleCenterFromPlans.SetRange(User_Security_ID, CreateGuid());
+        RoleCenterFromPlans.Open();
+
+        // [WHEN] / [THEN] Reading the query must faithfully report "no rows" — never a
+        // NullReferenceException while resolving the precompiled query's metadata.
+        Assert.IsTrue(not RoleCenterFromPlans.Read(),
+            'Query 777 ("Role Center from Plans") must return zero rows when no AAD plan links this user to a Plan, not throw a NullReferenceException in NavQuery.FindDataImplAsync.');
+        RoleCenterFromPlans.Close();
+    end;
+
+    // Positive companion, same fix (the filter-only-column projection-slot aliasing bug
+    // described above) — this is the case that actually reproduces it: a real Guid filter
+    // value compared against a real joined row. "Plan" and "User Plan" are `Access = Internal`
+    // on System Application, so this third-party test app cannot reference them via
+    // `RecordRef.Open(Database::Plan)` (AL0161 — the enum literal itself needs table access) —
+    // but a plain `Record Plan` / `Record "User Plan"` local variable declaration, and
+    // Init/field-assign/Insert on it, compiles and runs fine (AL only restricts the handful of
+    // surfaces that name the table by symbol at the point of use; a local variable of that
+    // type is not one of them). That is enough to seed real joined data and prove the fix past
+    // the empty-table case above.
+    [Test]
+    procedure Query777_RoleCenterFromPlans_MatchingPlan_ReturnsJoinedRoleCenterID()
+    var
+        Plan: Record Plan;
+        UserPlan: Record "User Plan";
+        RoleCenterFromPlans: Query "Role Center from Plans";
+        TestUserSecurityID: Guid;
+    begin
+        // [GIVEN] A Plan mapped to Role Center 9022, and this user linked to it via an AAD
+        // plan assignment — the exact join "User Plan" -> "Plan" Query 777 performs.
+        TestUserSecurityID := CreateGuid();
+
+        Plan.Init();
+        Plan."Plan ID" := CreateGuid();
+        Plan.Name := 'AL Runner Test Plan';
+        Plan."Role Center ID" := 9022;
+        Plan.Insert();
+
+        UserPlan.Init();
+        UserPlan."User Security ID" := TestUserSecurityID;
+        UserPlan."Plan ID" := Plan."Plan ID";
+        UserPlan."User Name" := 'alrunner';
+        UserPlan.Insert();
+
+        // [WHEN] Query 777 is opened filtered to this user and read.
+        RoleCenterFromPlans.SetRange(User_Security_ID, TestUserSecurityID);
+        RoleCenterFromPlans.Open();
+
+        // [THEN] The real InnerJoin executes against the in-memory tables and projects the
+        // linked Plan's Role Center ID — proving NavQuery.FindDataImplAsync runs the
+        // precompiled query's actual business logic end to end, not a stub.
+        Assert.IsTrue(RoleCenterFromPlans.Read(),
+            'Query 777 must return the joined row for a user with a matching AAD-plan-to-Plan link.');
+        Assert.AreEqual(9022, RoleCenterFromPlans.Role_Center_ID,
+            'Query 777''s Role_Center_ID column must reflect the joined Plan''s "Role Center ID" (9022), proving the InnerJoin ran for real.');
+        RoleCenterFromPlans.Close();
+    end;
+
+    // Integration-level companion, matching the exact frame the reported stack trace names
+    // (Codeunit9170.GetCurrentProfileNoError -> TryGetDefaultProfileForCurrentUser ->
+    // GetDefaultProfileID -> Query 777). This is a *_NoThrow-shaped claim only: per real BC's
+    // [TryFunction] codegen, GetCurrentProfileNoError's Boolean return reports "completed
+    // without an unhandled AL error", not "a profile was found" — decompiling Codeunit9170
+    // confirms the Boolean is threaded straight from the try-wrapper's success flag, and with
+    // no AAD-plan/profile data configured it legitimately returns true while leaving
+    // AllProfile unpopulated. The row-level proof that the query itself runs (rather than
+    // throwing on a real Guid filter) is the two Query777_* tests above.
+    [Test]
+    procedure BaseAppCodeunit_ConfPersonalizationMgt_GetCurrentProfileNoError_NoThrow()
+    var
+        ConfPersonalizationMgt: Codeunit "Conf./Personalization Mgt.";
+        AllProfile: Record "All Profile";
+    begin
+        // RED (before fix): NullReferenceException in NavQuery.FindDataImplAsync while
+        // Codeunit9170.GetDefaultProfileID opens the precompiled Query 777.
+        // GREEN (after fix): completes normally.
+        ConfPersonalizationMgt.GetCurrentProfileNoError(AllProfile);
+        Assert.IsTrue(true,
+            'GetCurrentProfileNoError must not throw a NullReferenceException while resolving the default profile via the precompiled Query 777.');
+    end;
 }

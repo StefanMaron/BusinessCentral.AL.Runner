@@ -40,6 +40,7 @@ public static class JoinExecutor
     private static PropertyInfo? _pLinkSourceDataItemName;
     private static PropertyInfo? _pColSourceTableField;
     private static PropertyInfo? _pColColumnIndex;
+    private static PropertyInfo? _pColColumnType;
     private static PropertyInfo? _pColParentDataItem;
     private static PropertyInfo? _pFieldColumnIndex;
     private static PropertyInfo? _pFieldFieldClass;
@@ -74,6 +75,13 @@ public static class JoinExecutor
         _pLinkSourceDataItemName = tLink.GetProperty("SourceDataItemName", F)!;
         _pColSourceTableField = tCol.GetProperty("SourceTableField", F)!;
         _pColColumnIndex = tCol.GetProperty("ColumnIndex", F)!;
+        // NCLMetaQueryColumn.ColumnType (QueryColumnType enum: Normal/FilterOnly/ConstValue) —
+        // NOT the design-time MetaQueryColumn.ColumnType (a NavType). ColumnIndex alone cannot
+        // tell a filter-only column from a genuinely-projected column at slot 0: the runtime
+        // ctor only assigns ColumnIndex when ColumnType != FilterOnly, so a filter-only column's
+        // ColumnIndex is left at its CLR default (0) — indistinguishable from a real slot-0
+        // column by value alone. See BuildJoinProjectionPlan below.
+        _pColColumnType = tCol.GetProperty("ColumnType", F);
         _pColParentDataItem = tCol.GetProperty("ParentDataItem", F)!;
         _pFieldColumnIndex = tField.GetProperty("ColumnIndex", F)!;
         _pFieldFieldClass = tField.GetProperty("FieldClass", F);
@@ -356,34 +364,75 @@ public static class JoinExecutor
         public List<JoinColumn> Columns = new();
     }
 
+    /// <summary>True when the runtime NCLMetaQueryColumn was created FilterOnly (a
+    /// `filter(...)` element with no result `column(...)`) — ColumnIndex alone cannot tell
+    /// this apart from a genuinely-projected slot-0 column (see the ColumnType reflection
+    /// comment in EnsureReflection); QUERY-COLUMN.ColumnType is the only reliable signal.
+    /// Falls back to false (treat as a normal/projected column) if the runtime type predates
+    /// this property.</summary>
+    private static bool IsFilterOnlyColumn(object col)
+        => _pColColumnType?.GetValue(col)?.ToString() == "FilterOnly";
+
     private static JoinProjectionPlan BuildJoinProjectionPlan(JoinContext ctx, object queryDef)
     {
         var plan = new JoinProjectionPlan();
         int maxSlot = -1;
         var dataItems = ((IEnumerable)_pQueryDefDataItems!.GetValue(queryDef)!).Cast<object>().ToList();
+
+        // Pass 1: genuinely-projected (non-filter-only) columns get their real ColumnIndex slot.
         foreach (var di in dataItems)
         {
             var name = (string)_pDataItemName!.GetValue(di)!;
             var cols = ((IEnumerable?)_pDataItemQueryColumns!.GetValue(di))?.Cast<object>() ?? Enumerable.Empty<object>();
             foreach (var col in cols)
             {
+                if (IsFilterOnlyColumn(col)) continue; // handled in pass 2 below.
                 int querySlot = (int)_pColColumnIndex!.GetValue(col)!;
-                if (querySlot < 0) continue; // filter-only column (no result slot)
+                if (querySlot < 0) continue; // defensive: shouldn't happen for a non-filter-only column.
                 if (querySlot > maxSlot) maxSlot = querySlot;
-                int tableSlot = -1;
-                object? srcField = null;
-                try
-                {
-                    srcField = _pColSourceTableField!.GetValue(col);
-                    if (srcField != null)
-                        tableSlot = (int)_pFieldColumnIndex!.GetValue(srcField)!;
-                }
-                catch { tableSlot = -1; srcField = null; }
-                plan.Columns.Add(new JoinColumn { QuerySlot = querySlot, OwnerName = name, TableSlot = tableSlot, SourceField = srcField });
+                plan.Columns.Add(new JoinColumn { QuerySlot = querySlot, OwnerName = name, TableSlot = ResolveTableSlot(col, out var srcField), SourceField = srcField });
             }
         }
-        plan.SlotCount = maxSlot + 1;
+
+        // Pass 2: filter-only columns (referenced only via `filter(...)`, never `column(...)`,
+        // and — Query 777's own shape — join-key fields with no declared column at all) get NO
+        // real ColumnIndex slot from BC, so mint dedicated EXTRA slots past every projected
+        // column, in the SAME deterministic (dataitem, then declaration) order that
+        // RecordPatches.QueryProjection.ApplyJoinRuntimeFilters recomputes independently (the two
+        // live in separate assemblies and cannot share a single source of truth for this map —
+        // see the comment there). This is what lets a runtime SetRange/SetFilter on a
+        // non-projected column (e.g. Query 777's "User Security ID") be evaluated post-join
+        // instead of either aliasing onto an unrelated real column's slot (the original bug —
+        // NavNCLInvalidComparisonException comparing the filter's NavGuid against whatever
+        // happened to land in slot 0) or being silently dropped.
+        int nextExtraSlot = maxSlot + 1;
+        foreach (var di in dataItems)
+        {
+            var name = (string)_pDataItemName!.GetValue(di)!;
+            var cols = ((IEnumerable?)_pDataItemQueryColumns!.GetValue(di))?.Cast<object>() ?? Enumerable.Empty<object>();
+            foreach (var col in cols)
+            {
+                if (!IsFilterOnlyColumn(col)) continue;
+                plan.Columns.Add(new JoinColumn { QuerySlot = nextExtraSlot++, OwnerName = name, TableSlot = ResolveTableSlot(col, out var srcField), SourceField = srcField });
+            }
+        }
+
+        plan.SlotCount = Math.Max(maxSlot + 1, nextExtraSlot);
         return plan;
+    }
+
+    private static int ResolveTableSlot(object col, out object? srcField)
+    {
+        int tableSlot = -1;
+        srcField = null;
+        try
+        {
+            srcField = _pColSourceTableField!.GetValue(col);
+            if (srcField != null)
+                tableSlot = (int)_pFieldColumnIndex!.GetValue(srcField)!;
+        }
+        catch { tableSlot = -1; srcField = null; }
+        return tableSlot;
     }
 
     // Apply the query's OrderBy (top-level result ordering) over the projected result rows.

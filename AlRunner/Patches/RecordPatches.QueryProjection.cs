@@ -266,6 +266,16 @@ public static partial class RecordPatches
     private static Type? _tNavFieldMetadata;
     private static bool _filterReflectionReady;
 
+    // For the extended-slot recomputation in ApplyJoinRuntimeFilters — mirrors
+    // AlRunner.QueryJoin.JoinExecutor's own DataItems/QueryColumns/ColumnType reflection
+    // (a SEPARATE, isolated assembly that cannot share these PropertyInfo handles).
+    private static Type? _tNCLMetaQueryDefinition;
+    private static Type? _tNCLMetaQueryDataItem;
+    private static PropertyInfo? _pQueryDefDataItemsQ;
+    private static PropertyInfo? _pDataItemQueryColumnsQ;
+    private static PropertyInfo? _pColColumnTypeQ;
+    private static PropertyInfo? _pColColumnIndexQ2;
+
     private static void EnsureFilterReflection()
     {
         if (_filterReflectionReady) return;
@@ -278,8 +288,67 @@ public static partial class RecordPatches
         _tFilterExpr = asm.GetType(rt + "FilterExpression");
         _tNavFieldMetadata = asm.GetType(rt + "INavFieldMetadata");
         _tNCLMetaQueryColumn = asm.GetType(rt + "NCLMetaQueryColumn");
+        _tNCLMetaQueryDefinition = asm.GetType(rt + "NCLMetaQueryDefinition");
+        _tNCLMetaQueryDataItem = asm.GetType(rt + "NCLMetaQueryDataItem");
+        const BindingFlags anyInstance = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+        _pQueryDefDataItemsQ = _tNCLMetaQueryDefinition?.GetProperty("DataItems", anyInstance);
+        _pDataItemQueryColumnsQ = _tNCLMetaQueryDataItem?.GetProperty("QueryColumns", anyInstance);
+        _pColColumnTypeQ = _tNCLMetaQueryColumn?.GetProperty("ColumnType", anyInstance);
         _filterReflectionReady = true;
     }
+
+    /// <summary>
+    /// Recompute, for every QueryColumn across every DataItem of <paramref name="queryDef"/>, the
+    /// slot it occupies in the join-projected row buffer AlRunner.QueryJoin.JoinExecutor
+    /// produces — by reference identity, since neither assembly can hand the other a
+    /// PropertyInfo/slot map directly (JoinExecutor is loaded in an isolated ALC specifically so
+    /// its assembly never leaks an Ncl type into al-runner's own startup surface).
+    ///
+    /// MUST mirror JoinExecutor.BuildJoinProjectionPlan's two-pass algorithm EXACTLY (same
+    /// dataitem enumeration order, same "normal columns first at their real ColumnIndex, then
+    /// filter-only columns at sequential extra slots past the projected max" rule) — that
+    /// algorithm is duplicated rather than shared for the isolation reason above, and duplicated
+    /// logic that drifts is exactly the failure mode SCOPE-AUDIT-style comments warn about, so
+    /// change both together.
+    /// </summary>
+    private static Dictionary<object, int> ComputeJoinColumnSlotMap(object queryDef)
+    {
+        var map = new Dictionary<object, int>();
+        if (_pQueryDefDataItemsQ == null || _pDataItemQueryColumnsQ == null) return map;
+        var dataItems = ((System.Collections.IEnumerable)_pQueryDefDataItemsQ.GetValue(queryDef)!).Cast<object>().ToList();
+
+        int maxSlot = -1;
+        foreach (var di in dataItems)
+        {
+            var cols = (_pDataItemQueryColumnsQ.GetValue(di) as System.Collections.IEnumerable)?.Cast<object>()
+                ?? Enumerable.Empty<object>();
+            foreach (var col in cols)
+            {
+                if (IsFilterOnlyColumnQ(col)) continue;
+                _pColColumnIndexQ2 ??= _tNCLMetaQueryColumn!.GetProperty("ColumnIndex", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!;
+                var idx = (int)_pColColumnIndexQ2.GetValue(col)!;
+                if (idx < 0) continue;
+                map[col] = idx;
+                if (idx > maxSlot) maxSlot = idx;
+            }
+        }
+
+        int nextExtraSlot = maxSlot + 1;
+        foreach (var di in dataItems)
+        {
+            var cols = (_pDataItemQueryColumnsQ.GetValue(di) as System.Collections.IEnumerable)?.Cast<object>()
+                ?? Enumerable.Empty<object>();
+            foreach (var col in cols)
+            {
+                if (!IsFilterOnlyColumnQ(col)) continue;
+                map[col] = nextExtraSlot++;
+            }
+        }
+        return map;
+    }
+
+    private static bool IsFilterOnlyColumnQ(object col)
+        => _pColColumnTypeQ?.GetValue(col)?.ToString() == "FilterOnly";
 
     /// <summary>
     /// If <paramref name="request"/> targets a query and carries query-column-keyed
@@ -473,7 +542,7 @@ public static partial class RecordPatches
             // STATIC metadata filters, so runtime filters must be evaluated against the projected
             // rows here. Without this the join returns UNFILTERED rows (a correctness bug). Done
             // before Top so the cap applies to the filtered set, matching SQL TOP-after-WHERE.
-            joined = ApplyJoinRuntimeFilters(metaAppObj, request, joined);
+            joined = ApplyJoinRuntimeFilters(metaAppObj, queryDef, request, joined);
             var topJ = _pReqTopNumberOfRows!.GetValue(request);
             int topNJ = topJ == null ? 0 : Convert.ToInt32(topJ);
             return topNJ > 0 ? joined.Take(topNJ) : joined;
@@ -492,7 +561,6 @@ public static partial class RecordPatches
     }
 
     private static MethodInfo? _mFilterExprEvaluate;
-    private static PropertyInfo? _pColColumnIndexQ;
 
     /// <summary>
     /// Apply the live NavQuery's runtime filters (the request's FiltersAndMarks, keyed by
@@ -505,7 +573,7 @@ public static partial class RecordPatches
     /// rather than silently return wrong rows (loud-failures rule).
     /// </summary>
     private static IEnumerable<ReadOnlyRecordBuffer> ApplyJoinRuntimeFilters(
-        object nclMetaQuery, object request, IEnumerable<ReadOnlyRecordBuffer> rows)
+        object nclMetaQuery, object queryDef, object request, IEnumerable<ReadOnlyRecordBuffer> rows)
     {
         EnsureFilterReflection();
         var fam = request.GetType().GetProperty("FiltersAndMarks", BindingFlags.Public | BindingFlags.Instance)?
@@ -518,8 +586,21 @@ public static partial class RecordPatches
             .GetValue(filters);
         if (items == null || items.Length == 0) return rows; // no runtime filters → unchanged.
 
-        // Build (projectionSlot, FilterExpression) pairs. Loud-fail on any non-projected column.
-        _pColColumnIndexQ ??= _tNCLMetaQueryColumn!.GetProperty("ColumnIndex", BindingFlags.Public | BindingFlags.Instance)!;
+        // Build (projectionSlot, FilterExpression) pairs.
+        //
+        // NCLMetaQueryColumn.ColumnIndex CANNOT distinguish a filter-only column (one declared
+        // only via `filter(...)`, or a bare join-key field with no declared column at all — see
+        // Query 777's own "User Security ID") from a genuinely-projected column at slot 0: BC's
+        // own runtime ctor only assigns ColumnIndex when the column isn't FilterOnly, so a
+        // filter-only column's ColumnIndex is left at the CLR default (0) — the same value a
+        // real slot-0 column has. Reading it naively made every runtime filter on a filter-only
+        // column alias onto whatever real column happened to land in slot 0, so a Guid-typed
+        // filter (Query 777's "User Security ID") got compared against an unrelated Integer
+        // column's value and threw NavNCLInvalidComparisonException instead of ever being
+        // evaluated as a filter. ComputeJoinColumnSlotMap gives filter-only columns their OWN
+        // dedicated extra slots (mirroring the ones JoinExecutor.BuildJoinProjectionPlan already
+        // populates them into), so this now evaluates against the real filtered value.
+        var slotMap = ComputeJoinColumnSlotMap(queryDef);
         var conds = new List<(int slot, object expr)>();
         foreach (var item in items)
         {
@@ -533,12 +614,14 @@ public static partial class RecordPatches
                     "NavQuery (multi-dataitem join)",
                     "query-join-runtime-filter-on-nonprojected-column — a runtime filter is keyed by a " +
                     $"non-query-column ({key?.GetType().Name ?? "null"}); cannot evaluate post-projection; see docs/scope.md");
-            int slot = (int)_pColColumnIndexQ.GetValue(key)!;
-            if (slot < 0)
+            if (!slotMap.TryGetValue(key, out var slot))
+                // The filtered column isn't in ANY dataitem's QueryColumns of this query
+                // definition — should not occur (the filter dictionary is keyed by columns that
+                // came from this same query), but refuse to guess rather than silently drop it.
                 throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                     "NavQuery (multi-dataitem join)",
-                    "query-join-runtime-filter-on-nonprojected-column — a runtime filter targets a query " +
-                    "column with no result slot (filter-only column); cannot evaluate post-projection; see docs/scope.md");
+                    "query-join-runtime-filter-unresolved-column — a runtime filter's column could not be " +
+                    "located in the query's own DataItems/QueryColumns; see docs/scope.md");
             conds.Add((slot, expr));
         }
         if (conds.Count == 0) return rows;
