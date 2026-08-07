@@ -124,6 +124,35 @@ public class Win32StubsLoudFailureTests
     }
 
     /// <summary>
+    /// Issue #1673: Register() must be a no-op on Windows. There, kernel32/user32 ARE the
+    /// real libraries and the default loader is the correct resolution — intercepting them
+    /// turned #1669's loud Linux failure into a Windows regression (WindowsLanguageHelper's
+    /// cctor dies on the first TextConstant, killing every install trigger). The shim exists
+    /// to fake Win32 on Linux; on Windows the real thing is the answer. Asserted via the
+    /// registration latch because the resolver event is not observable from outside.
+    /// </summary>
+    [Fact]
+    public void Register_OnWindows_IsNoOp()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        Win32Stubs.Register();
+        Assert.False(Win32Stubs.RegisteredForTests);
+    }
+
+    /// <summary>
+    /// Companion direction: on non-Windows the shim must still register — #1673's fix is an
+    /// early return for Windows, not a disable. Would this pass if Register() were gutted to
+    /// always return? No — this asserts the latch flips on Linux/macOS.
+    /// </summary>
+    [Fact]
+    public void Register_OnNonWindows_Registers()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        Win32Stubs.Register();
+        Assert.True(Win32Stubs.RegisteredForTests);
+    }
+
+    /// <summary>
     /// RED-shaped negative: an override pointing at a nonexistent path must fail loudly and
     /// name the bad path, not silently fall through to trying to build from source.
     /// </summary>

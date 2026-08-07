@@ -36,6 +36,13 @@ internal static class Win32Stubs
 
     public static void Register()
     {
+        // Issue #1673: never intercept on Windows. kernel32/user32 etc. are the REAL
+        // libraries there and the default loader is the correct resolution; the shim
+        // exists solely to fake Win32 on Linux. Note the compiler probe below could
+        // never succeed on Windows anyway (IsOnPath checks for files named exactly
+        // "cc"/"gcc"/"clang" — never "clang.exe"), and "fixing" that probe instead
+        // would be worse: it would build and load a fake kernel32 over the real one.
+        if (OperatingSystem.IsWindows()) return;
         if (_registered) return;
         _registered = true;
 
@@ -59,6 +66,10 @@ internal static class Win32Stubs
     /// production. Never read from production code paths other than
     /// <see cref="GetOrBuild"/>'s own base-directory resolution below.</summary>
     internal static string? BaseDirectoryForTests;
+
+    /// <summary>Test-only: whether <see cref="Register"/> actually installed the resolver.
+    /// The resolver hook itself is not observable from outside, so tests assert the latch.</summary>
+    internal static bool RegisteredForTests => _registered;
 
     private static void TryRegister(Assembly asm)
     {
