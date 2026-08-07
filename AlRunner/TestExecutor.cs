@@ -20,6 +20,35 @@ public enum TestOutcome { Pass, Fail, Error }
 /// </summary>
 public enum TestIsolation { Codeunit, Test, Disabled }
 
+public static class TestIsolationParser
+{
+    /// <summary>
+    /// Parse the CLI/--server <c>testIsolation</c> mode string. Shared by
+    /// Program.cs's <c>--isolation</c>/<c>--test-isolation</c> CLI parsing and the
+    /// <c>runTests</c>/<c>execute</c> server commands (see #1616) so the two entry
+    /// points can never silently drift onto different mappings.
+    /// </summary>
+    public static TestIsolation Parse(string mode)
+    {
+        var m = mode.ToLowerInvariant();
+        return m switch
+        {
+            "codeunit"         => TestIsolation.Codeunit,
+            // v1's --test-isolation method reset AL table/session state before every
+            // [Test] procedure (per v1 Program.cs: doTableReset = testIsolation ==
+            // TestIsolation.Method). That is v2's TestIsolation.Test, NOT
+            // TestIsolation.Codeunit — see issue #1647. Map 'method' onto the mode
+            // that actually reproduces v1's behavior so callers that still pass the
+            // v1-idiomatic value (e.g. LethAL) don't silently get weaker isolation
+            // than they asked for.
+            "test" or "method" => TestIsolation.Test,
+            "disabled"         => TestIsolation.Disabled,
+            _ => throw new ArgumentException(
+                $"unknown test isolation mode '{mode}' (codeunit|test|disabled; 'method' accepted as v1 alias for test)")
+        };
+    }
+}
+
 public sealed record TestResult(string Codeunit, string Method, TestOutcome Outcome,
                                 string? Message, string? FullException, TimeSpan Duration,
                                 string? AlCallStack = null,

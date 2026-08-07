@@ -28,6 +28,16 @@ public sealed class ServerRequest
     [JsonPropertyName("code")] public string? Code { get; set; }
     /// <summary>Opt-in to variable capture on <c>execute</c> (v1 field; not yet supported in v2).</summary>
     [JsonPropertyName("captureValues")] public bool? CaptureValues { get; set; }
+    /// <summary>
+    /// "codeunit" (default) | "test"/"method" | "disabled" — see <see cref="TestIsolationParser"/>.
+    /// Null = the server's existing default (TestIsolation.Codeunit), matching the
+    /// CLI's own default. Threaded into PipelineOptions.TestIsolation-equivalent
+    /// (TestExecutor.Isolation) before RunTests/execute — see #1616: without this
+    /// field, --server had no way to ask for per-method isolation, so tests that
+    /// depend on per-method reset cross-pollute under --server even though the
+    /// identical CLI invocation with --test-isolation method passes.
+    /// </summary>
+    [JsonPropertyName("testIsolation")] public string? TestIsolation { get; set; }
 }
 
 /// <summary>A file-grouped compilation error block, matching v1's response shape.</summary>

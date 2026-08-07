@@ -38,7 +38,12 @@ al-runner --server [--package-cache PATH ...] [--cache DIR]
   "packagePaths": ["/extra"],   // optional: extra .app caches, augment server defaults
   "stubPaths": [],              // v1 field, ignored in v2 (no stubs layer)
   "code": "...",                // execute only (inline AL) — not yet supported
-  "captureValues": false        // execute only — not yet supported
+  "captureValues": false,       // execute only — not yet supported
+  "testIsolation": "codeunit"   // optional: "codeunit" (default) | "test"/"method" | "disabled"
+                                 // — see #1616. Applies to this request only; a later
+                                 // request that omits the field falls back to the
+                                 // server's own startup default, not the previous
+                                 // request's value.
 }
 ```
 

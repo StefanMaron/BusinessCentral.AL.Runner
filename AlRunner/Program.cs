@@ -306,22 +306,9 @@ for (int i = 0; i < args.Length; i++)
     // --test-isolation and --isolation are aliases (v1 used the former, v2 introduced the shorter form).
     if ((args[i] == "--isolation" || args[i] == "--test-isolation") && i + 1 < args.Length)
     {
-        var mode = args[++i].ToLowerInvariant();
-        isolation = mode switch
-        {
-            // v1's --test-isolation method reset AL table/session state before every
-            // [Test] procedure (per-v1 Program.cs: doTableReset = testIsolation ==
-            // TestIsolation.Method). That is v2's TestIsolation.Test, NOT
-            // TestIsolation.Codeunit — see issue #1647. Map 'method' onto the mode
-            // that actually reproduces v1's behavior so callers that still pass the
-            // v1-idiomatic flag value (e.g. LethAL) don't silently get weaker
-            // isolation than they asked for.
-            "codeunit"             => AlRunner.TestIsolation.Codeunit,
-            "test" or "method"     => AlRunner.TestIsolation.Test,
-            "disabled"             => AlRunner.TestIsolation.Disabled,
-            _ => throw new ArgumentException(
-                $"--isolation: unknown mode '{mode}' (codeunit|test|disabled; 'method' accepted as v1 alias for test)")
-        };
+        var mode = args[++i];
+        try { isolation = AlRunner.TestIsolationParser.Parse(mode); }
+        catch (ArgumentException ex) { throw new ArgumentException($"--isolation: {ex.Message}"); }
         continue;
     }
     if (args[i].StartsWith("--"))
@@ -1706,6 +1693,14 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     // miss can report which files changed (v1 `changedFiles`).
     Dictionary<string, string>? lastFileHashes = null;
 
+    // The isolation mode in effect when the server started (CLI --isolation, or
+    // TestIsolation.Codeunit if not given) — the fallback for any request that
+    // doesn't carry its own `testIsolation` field. Captured once so a request that
+    // DOES set testIsolation never leaks its mode onto a later request that
+    // doesn't (see #1616 — the whole point is per-request control, not a sticky
+    // session-wide override).
+    var defaultServerIsolation = executor.Isolation;
+
     // Readiness handshake — MUST be the first line on stdout.
     output.WriteLine("{\"ready\":true}");
     output.Flush();
@@ -1751,6 +1746,27 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     // EOF — client disconnected.
     return 0;
 
+    // Sets executor.Isolation from req.TestIsolation (see #1616), falling back to
+    // defaultServerIsolation when the request doesn't specify one. Returns an
+    // error response string on an unrecognised mode, else null.
+    string? ApplyRequestIsolation(AlRunner.ServerRequest req)
+    {
+        if (req.TestIsolation == null)
+        {
+            executor.Isolation = defaultServerIsolation;
+            return null;
+        }
+        try
+        {
+            executor.Isolation = AlRunner.TestIsolationParser.Parse(req.TestIsolation);
+            return null;
+        }
+        catch (ArgumentException ex)
+        {
+            return AlRunner.ServerProtocol.Error($"testIsolation: {ex.Message}");
+        }
+    }
+
     // ── runTests: re-emit + run every requested bundle in-process, aggregating the
     // results. ──────────────────────────────────────────────────────────────────
     string HandleServerRunTests(AlRunner.ServerRequest req)
@@ -1761,6 +1777,9 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         foreach (var p in req.SourcePaths)
             if (!Directory.Exists(p))
                 return AlRunner.ServerProtocol.Error($"bundle directory not found: {p}");
+
+        var isolationError = ApplyRequestIsolation(req);
+        if (isolationError != null) return isolationError;
 
         var runs = RunAllBundlesForServer(req.SourcePaths, req.PackagePaths, asm => executor.Run(asm));
 
@@ -1803,6 +1822,9 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         foreach (var p in req.SourcePaths)
             if (!Directory.Exists(p))
                 return AlRunner.ServerProtocol.Error($"bundle directory not found: {p}");
+
+        var isolationError = ApplyRequestIsolation(req);
+        if (isolationError != null) return isolationError;
 
         var runs = RunAllBundlesForServer(req.SourcePaths, req.PackagePaths, RunFirstCodeunitOnRun);
 
