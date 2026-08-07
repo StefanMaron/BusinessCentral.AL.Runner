@@ -505,22 +505,34 @@ var packageCacheDirs = packageCacheArgs.Count > 0
     : DefaultPackageCacheDirs().ToList();
 Console.WriteLine($"  package caches: {packageCacheDirs.Count} dir(s)");
 
+// Issue #1678: the platform-app R2R gate below used to scan ONLY packageCacheDirs
+// (the home-rooted default caches / explicit --package-cache dirs) — never the target
+// bundles' own `.alpackages`, which is exactly where every standard AL project's symbol
+// download lives. For that ordinary shape the gate saw an empty set, reported "Ok"
+// vacuously, and neither the loud failure nor --auto-provision's download ever fired —
+// the run limped all the way to a cryptic NavNCLMissingMethodException deep in dispatch
+// instead of hitting either remediation the "[provision-gap]" message promises. Fold the
+// bundles' own .alpackages into the dirs the gate scans (recomputed via PlatformCheckDirs
+// below so it picks up anything --auto-provision adds to packageCacheDirs afterward).
+var bundleAlpackagesDirs = AlRunner.Infrastructure.ProvisioningCheck.CollectBundleAlpackagesDirs(bundles);
+List<string> PlatformCheckDirs() => packageCacheDirs.Concat(bundleAlpackagesDirs).Distinct().ToList();
+
 // Platform-app R2R check: scan the package cache for known Microsoft platform runtime apps
 // (System Application, Base Application, Business Foundation). If any are present as
 // symbol-only (non-R2R) packages, the runner CANNOT execute their codeunits at runtime —
 // the EMIT-ZERO crash is a provisioning gap, not a user-code error. Fail loud here before
 // any bundle compile, naming the fix, instead of deep inside the dep-load pipeline.
 // (--auto-provision downloads the R2R apps and clears the check.)
-if (!provisionSubcommand && packageCacheDirs.Count > 0)
+if (!provisionSubcommand && (packageCacheDirs.Count > 0 || bundleAlpackagesDirs.Count > 0))
 {
     var version = AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString();
     var platformReport = AlRunner.Infrastructure.ProvisioningCheck.CheckPlatformApps(
-        version, packageCacheDirs);
+        version, PlatformCheckDirs());
     // Test-toolkit apps (Business Foundation Test Libraries, Application Test Library, …)
     // are a SEPARATE artifact set from the w1 platform apps (they live under the
     // `platform` artifact, not `w1`) — a cache can have complete R2R platform apps and
     // still be missing the whole test toolkit, which fails compiling any test bundle.
-    var toolkitPresent = AlRunner.Infrastructure.ProvisioningCheck.TestToolkitPresent(packageCacheDirs);
+    var toolkitPresent = AlRunner.Infrastructure.ProvisioningCheck.TestToolkitPresent(PlatformCheckDirs());
 
     if (!platformReport.Ok && !autoProvision)
     {
@@ -539,7 +551,7 @@ if (!provisionSubcommand && packageCacheDirs.Count > 0)
         // (only the toolkit is missing); (c) else fall back to the engine's own version.
         var mm = !platformReport.Ok
             ? AlRunner.Infrastructure.ProvisioningCheck.DeriveProvisionMajorMinor(platformReport, version)
-            : AlRunner.Infrastructure.ProvisioningCheck.DerivePresentPlatformMajorMinor(packageCacheDirs, version);
+            : AlRunner.Infrastructure.ProvisioningCheck.DerivePresentPlatformMajorMinor(PlatformCheckDirs(), version);
         var full = AlRunner.Provisioning.ArtifactDownloader.ResolveVersion(
             mm, m => Console.Error.WriteLine($"[provision] {m}"));
         if (full == null)
@@ -572,7 +584,7 @@ if (!provisionSubcommand && packageCacheDirs.Count > 0)
                 packageCacheDirs.Add(platformAppsOut);
             // Re-check: never silently continue on a partial/failed provision.
             platformReport = AlRunner.Infrastructure.ProvisioningCheck.CheckPlatformApps(
-                version, packageCacheDirs);
+                version, PlatformCheckDirs());
             if (!platformReport.Ok)
             {
                 var stillMissing = string.Join(", ", platformReport.Issues.Select(i => i.Name));
@@ -596,7 +608,7 @@ if (!provisionSubcommand && packageCacheDirs.Count > 0)
             if (!packageCacheDirs.Contains(testAppsOut))
                 packageCacheDirs.Add(testAppsOut);
             // Re-check: never silently continue on a partial/failed provision.
-            toolkitPresent = AlRunner.Infrastructure.ProvisioningCheck.TestToolkitPresent(packageCacheDirs);
+            toolkitPresent = AlRunner.Infrastructure.ProvisioningCheck.TestToolkitPresent(PlatformCheckDirs());
             if (!toolkitPresent)
             {
                 Console.Error.WriteLine("[provision] test-toolkit apps still missing after download.");
@@ -3876,9 +3888,64 @@ static int RunProvisioning(string? bcVersionArg, string? artifactPathArg,
     else if (!AlRunner.Infrastructure.ProvisioningCheck.AutoProvision(full, serviceTierDir))
         return 1;
 
+    EnsurePlatformAppsProvisioned(full, bundles);
     EnsureTestToolkitProvisioned(full);
     provisionedVersion = full;
     return 0;
+}
+
+// Issue #1678: `provision` used to stop at the engine closure + test toolkit, so its half
+// of the "[provision-gap]" fix text ("al-runner provision") was wrong — the subcommand
+// never touched platform apps at all, and re-running it after the gap message reported the
+// engine "already complete" and exited without ever creating <artifacts>/<version>/platform-apps.
+// Detect the gap the same way the --auto-provision path does: scan the TARGET bundles'
+// own `.alpackages` (the standard shape any AL project's symbol download produces) for
+// symbol-only Microsoft platform apps, and download the R2R package set for THEIR version
+// (which can be a different minor than <paramref name="full"/>, the engine's own version —
+// see DeriveProvisionMajorMinor) into the runner-owned platform-apps dir for that version.
+// No-op when no bundle is given (`al-runner provision` with no target) or the bundle(s)
+// carry no symbol-only platform apps.
+static void EnsurePlatformAppsProvisioned(string engineVersion, List<string> bundles)
+{
+    var bundleAlpackagesDirs = AlRunner.Infrastructure.ProvisioningCheck.CollectBundleAlpackagesDirs(bundles);
+    if (bundleAlpackagesDirs.Count == 0)
+        return;
+
+    var platformReport = AlRunner.Infrastructure.ProvisioningCheck.CheckPlatformApps(
+        engineVersion, bundleAlpackagesDirs);
+    if (platformReport.Ok)
+    {
+        Console.Error.WriteLine("[provision] platform R2R apps already present for the target bundle(s).");
+        return;
+    }
+
+    var mm = AlRunner.Infrastructure.ProvisioningCheck.DeriveProvisionMajorMinor(platformReport, engineVersion);
+    var platformFull = AlRunner.Provisioning.ArtifactDownloader.ResolveVersion(
+        mm, m => Console.Error.WriteLine($"[provision] {m}"));
+    if (platformFull == null)
+    {
+        Console.Error.WriteLine(
+            $"[provision] warning: could not resolve a full BC artifact version for platform apps '{mm}'. " +
+            $"Symbol-only Microsoft platform apps found: {string.Join(", ", platformReport.Issues.Select(i => i.Name))}.");
+        return;
+    }
+    var platformAppsOut = AlRunner.Infrastructure.ProvisioningCheck.PlatformAppsDirFor(
+        AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, platformFull);
+    Console.Error.WriteLine($"[provision] fetching Microsoft platform R2R apps for BC {platformFull} → {platformAppsOut}");
+    try
+    {
+        var rc = AlRunner.Provisioning.ArtifactDownloader.PlatformApps(
+            platformFull, platformAppsOut, m => Console.Error.WriteLine($"[provision] {m}"));
+        if (rc != 0)
+            Console.Error.WriteLine(
+                $"[provision] warning: could not fetch platform apps for BC {platformFull}. " +
+                $"Test bundles calling into Base Application / System Application / Business Foundation " +
+                $"codeunits will need --package-cache <dir-with-those-apps>.");
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[provision] warning: platform-apps download failed: {ex.Message}");
+    }
 }
 
 // The MS test toolkit (Any, Library Assert, Library Variable Storage, Test Runner,

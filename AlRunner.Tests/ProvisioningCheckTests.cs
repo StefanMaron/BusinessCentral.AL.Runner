@@ -485,4 +485,114 @@ public sealed class ProvisioningCheckTests : IDisposable
         Assert.NotEqual(platform, testApps);
         Assert.Equal(Path.GetDirectoryName(platform), Path.GetDirectoryName(testApps));
     }
+
+    // ── CollectBundleAlpackagesDirs (issue #1678) ─────────────────────────────
+    // The startup gate that decides whether --auto-provision fires (or the run fails
+    // loud without it) used to scan ONLY the home-rooted default package caches, never
+    // the target bundles' own `.alpackages` — exactly where a standard AL project's
+    // symbol download lives. This helper is the fix's single source of truth for the
+    // bundle-rooted half of that scan; these tests pin its exact contract.
+
+    [Fact]
+    public void CollectBundleAlpackagesDirs_FindsNestedAlpackagesDir()
+    {
+        var bundle = Path.Combine(_dir, "bundle1");
+        var pkgDir = Path.Combine(bundle, ".alpackages");
+        Directory.CreateDirectory(pkgDir);
+
+        var found = ProvisioningCheck.CollectBundleAlpackagesDirs(new[] { bundle });
+
+        Assert.Single(found);
+        Assert.Equal(pkgDir, found[0]);
+    }
+
+    [Fact]
+    public void CollectBundleAlpackagesDirs_ParentOfManySuites_FindsEveryNestedAlpackagesDir()
+    {
+        var bundle = Path.Combine(_dir, "parent");
+        var pkg1 = Path.Combine(bundle, "suite1", ".alpackages");
+        var pkg2 = Path.Combine(bundle, "suite2", ".alpackages");
+        Directory.CreateDirectory(pkg1);
+        Directory.CreateDirectory(pkg2);
+
+        var found = ProvisioningCheck.CollectBundleAlpackagesDirs(new[] { bundle });
+
+        Assert.Equal(2, found.Count);
+        Assert.Contains(pkg1, found);
+        Assert.Contains(pkg2, found);
+    }
+
+    [Fact]
+    public void CollectBundleAlpackagesDirs_NoAlpackagesAnywhere_ReturnsEmpty()
+    {
+        var bundle = Path.Combine(_dir, "bundle-no-pkgs");
+        Directory.CreateDirectory(bundle);
+
+        var found = ProvisioningCheck.CollectBundleAlpackagesDirs(new[] { bundle });
+
+        Assert.Empty(found);
+    }
+
+    [Fact]
+    public void CollectBundleAlpackagesDirs_NonexistentBundlePath_SkippedNotThrown()
+    {
+        var gone = Path.Combine(_dir, "does-not-exist");
+
+        var found = ProvisioningCheck.CollectBundleAlpackagesDirs(new[] { gone });
+
+        Assert.Empty(found);
+    }
+
+    [Fact]
+    public void CollectBundleAlpackagesDirs_DuplicateAcrossBundles_DeduplicatedOnce()
+    {
+        var bundle = Path.Combine(_dir, "bundle-dup");
+        var pkgDir = Path.Combine(bundle, ".alpackages");
+        Directory.CreateDirectory(pkgDir);
+
+        // The SAME bundle passed twice (e.g. a caller-supplied bundle list with an
+        // accidental duplicate) must not duplicate the result.
+        var found = ProvisioningCheck.CollectBundleAlpackagesDirs(new[] { bundle, bundle });
+
+        Assert.Single(found);
+    }
+
+    [Fact]
+    public void CollectBundleAlpackagesDirs_EmptyBundleList_ReturnsEmpty()
+    {
+        var found = ProvisioningCheck.CollectBundleAlpackagesDirs(Array.Empty<string>());
+
+        Assert.Empty(found);
+    }
+
+    // ── End-to-end composition (issue #1678) ──────────────────────────────────
+    // Reproduces the exact defect at the unit level: a standard AL project's bundle
+    // carries a symbol-only Microsoft platform app in its OWN .alpackages (never in any
+    // home-rooted default cache). Before the fix, feeding CheckPlatformApps only the
+    // default caches reported "Ok" vacuously for this shape; the fix folds the bundle's
+    // own .alpackages into the scanned set via CollectBundleAlpackagesDirs, so the gate
+    // now sees the same symbol-only package the real dependency loader trips over deep in
+    // dispatch — and can act on it (fail loud, or --auto-provision) BEFORE that happens.
+    [Fact]
+    public void CollectBundleAlpackagesDirs_FeedsIntoCheckPlatformApps_DetectsBundleOnlyGap()
+    {
+        var bundle = Path.Combine(_dir, "project");
+        var pkgDir = Path.Combine(bundle, ".alpackages");
+        Directory.CreateDirectory(pkgDir);
+        WriteSymbolOnlyApp(pkgDir, "microsoft_system application_28.1.0.0.app",
+            "00000000-0000-0000-0000-000000001678", "System Application", "Microsoft", "28.1.0.0");
+
+        // Simulates the OLD, buggy call site: only the (empty) default caches, no bundle
+        // .alpackages folded in. Must be vacuously Ok — this IS the bug being fixed.
+        var withoutBundleDirs = ProvisioningCheck.CheckPlatformApps("28.1.49838.50794", Array.Empty<string>());
+        Assert.True(withoutBundleDirs.Ok);
+
+        // The fix: fold CollectBundleAlpackagesDirs(bundles) into the scanned set.
+        var bundleAlpackagesDirs = ProvisioningCheck.CollectBundleAlpackagesDirs(new[] { bundle });
+        var withBundleDirs = ProvisioningCheck.CheckPlatformApps("28.1.49838.50794", bundleAlpackagesDirs);
+
+        Assert.False(withBundleDirs.Ok);
+        Assert.Single(withBundleDirs.Issues);
+        Assert.Equal("System Application", withBundleDirs.Issues[0].Name);
+    }
 }

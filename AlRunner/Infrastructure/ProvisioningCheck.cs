@@ -119,6 +119,42 @@ public static class ProvisioningCheck
         }
     }
 
+    // ── Bundle .alpackages discovery (issue #1678) ────────────────────────────
+    // The startup gate that decides whether to fire --auto-provision (or fail loud
+    // without it) used to scan ONLY the home-rooted default package caches
+    // (~/.bcartifacts.cache, ~/.local/share/al-runner/{symbols,artifacts}) — never the
+    // target bundles' own `.alpackages`. That is exactly where every standard AL project's
+    // symbol download lives, so for the ordinary shape (symbol-only Microsoft platform
+    // apps vendored in the project) the gate saw an EMPTY set, reported "Ok" vacuously, and
+    // neither the loud failure nor the --auto-provision download ever fired — the run
+    // limped all the way to a cryptic NavNCLMissingMethodException deep in dispatch. This
+    // helper is the single source of truth for the bundle-rooted half of that scan, shared
+    // by the startup gate, the `provision` subcommand, and any other caller that needs to
+    // reason about what a bundle's own package cache actually vendors.
+
+    /// <summary>
+    /// Every `.alpackages` directory nested under any of <paramref name="bundlePaths"/>
+    /// (recursively — a bundle can be a parent of many suites, each with its own
+    /// `.alpackages`). Nonexistent paths are skipped; the result has no duplicates.
+    /// Pure filesystem scan — no network, no manifest parsing.
+    /// </summary>
+    public static IReadOnlyList<string> CollectBundleAlpackagesDirs(IEnumerable<string> bundlePaths)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<string>();
+        foreach (var bundle in bundlePaths)
+        {
+            if (string.IsNullOrEmpty(bundle) || !Directory.Exists(bundle)) continue;
+            IEnumerable<string> found;
+            try { found = Directory.EnumerateDirectories(bundle, ".alpackages", SearchOption.AllDirectories); }
+            catch { continue; }
+            foreach (var dir in found)
+                if (seen.Add(dir))
+                    result.Add(dir);
+        }
+        return result;
+    }
+
     /// <summary>
     /// Scan <paramref name="packageCacheDirs"/> for known Microsoft platform runtime apps
     /// (System Application, Base Application, Business Foundation). If any are found as
