@@ -7,13 +7,19 @@ namespace AlRunner;
 /// Wire types and (de)serialization for <c>--server</c> mode — the
 /// newline-delimited JSON protocol the VS Code extension depends on.
 ///
-/// One JSON object per line. stdin = requests, stdout = responses. The shape is
-/// kept byte-compatible with the v1 <c>AlRunnerServer</c> protocol so the
-/// existing extension keeps working:
-///   request : {command, sourcePaths[], packagePaths[], stubPaths[], code, captureValues}
-///   runTests: {tests:[{name,status,durationMs,message,stackTrace}],
-///              passed,failed,errors,total,exitCode,compilationErrors|null,
-///              cached,changedFiles|null}
+/// One JSON object per line. stdin = requests, stdout = responses.
+///   request : {command, sourcePaths[], packagePaths[], stubPaths[], code, captureValues, testIsolation}
+///   runTests: STREAMING (protocol-v2.schema.json — see #1641) — zero or more
+///             {"type":"test", name, status, durationMs, message, stackTrace}
+///             lines, one per completed test as it finishes, followed by exactly
+///             one terminal {"type":"summary", exitCode, passed, failed, errors,
+///             total, cached, changedFiles|omitted, compilationErrors|omitted,
+///             protocolVersion:2} line. `errorKind`/`stackFrames` on the test
+///             event and `cancelled` on the summary are schema-defined but not
+///             yet populated — separate follow-up slices of #1641.
+///   execute : {exitCode, tests:[{name,status,durationMs,message,stackTrace}],
+///              messages|null, compilationErrors|null} — single response, not
+///              streamed (matches v1: only runTests streams).
 ///   error   : {error}
 ///   shutdown: {status}
 /// </summary>
@@ -73,11 +79,34 @@ public static class ServerProtocol
         => JsonSerializer.Serialize(new { status = "shutting down" }, Opts);
 
     /// <summary>
-    /// Serialize a runTests response. <paramref name="changedFiles"/> is only
-    /// emitted on a cache miss (cache hits have no diff). <paramref name="compilationErrors"/>
-    /// is null when there were none.
+    /// Serialize one protocol-v2 <c>test</c> NDJSON line for a single completed
+    /// test (the streaming <c>runTests</c> shape — see #1641 / protocol-v2.schema.json's
+    /// <c>TestEvent</c>). <c>errorKind</c>/<c>stackFrames</c> are schema-defined
+    /// but not populated here — that wiring is a separate follow-up slice of #1641.
     /// </summary>
-    public static string RunTests(
+    public static string TestEvent(TestResult t)
+    {
+        var payload = new
+        {
+            type = "test",
+            name = $"{t.Codeunit}.{t.Method}",
+            status = t.Outcome.ToString().ToLowerInvariant(),
+            durationMs = (long)t.Duration.TotalMilliseconds,
+            message = t.Message,
+            stackTrace = (t.AlCallStack ?? t.FullException)?.TrimEnd(),
+        };
+        return JsonSerializer.Serialize(payload, Opts);
+    }
+
+    /// <summary>
+    /// Serialize the single terminal <c>summary</c> NDJSON line that ends a
+    /// streaming <c>runTests</c> response (protocol-v2.schema.json's <c>Summary</c>).
+    /// <paramref name="changedFiles"/> is only emitted on a cache miss (cache hits
+    /// have no diff). <paramref name="compilationErrors"/> is omitted when there
+    /// were none. <c>cancelled</c> is schema-defined but not populated here — the
+    /// <c>cancel</c> command is a separate follow-up slice of #1641.
+    /// </summary>
+    public static string Summary(
         IReadOnlyList<TestResult> tests,
         int exitCode,
         bool cached,
@@ -86,17 +115,18 @@ public static class ServerProtocol
     {
         var payload = new
         {
-            tests = tests.Select(ToWire),
+            type = "summary",
+            exitCode,
             passed = tests.Count(t => t.Outcome == TestOutcome.Pass),
             failed = tests.Count(t => t.Outcome == TestOutcome.Fail),
             errors = tests.Count(t => t.Outcome == TestOutcome.Error),
             total = tests.Count,
-            exitCode,
+            cached,
+            changedFiles = cached ? null : changedFiles,
             compilationErrors = compilationErrors is { Count: > 0 }
                 ? compilationErrors.Select(g => new { file = g.File, errors = g.Errors })
                 : null,
-            cached,
-            changedFiles = cached ? null : changedFiles,
+            protocolVersion = 2,
         };
         return JsonSerializer.Serialize(payload, Opts);
     }

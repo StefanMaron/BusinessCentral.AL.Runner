@@ -60,19 +60,19 @@ public class ServerTests
         await using var server = await CliServer.StartAsync(new[] { "--cache", cacheDir });
 
         // ── Phase 1: first run — must PASS (Counter 0 -> 1), cache MISS ──────────
-        var r1 = await server.SendAsync(Req("runTests", bundle));
-        var d1 = JsonSerializer.Deserialize<JsonElement>(r1);
+        var lines1 = await server.SendRequestStreamingAsync(Req("runTests", bundle));
+        var (_, d1) = ProtocolV2Streaming.Split(lines1);
         Assert.Equal(1, d1.GetProperty("passed").GetInt32());
         Assert.Equal(0, d1.GetProperty("failed").GetInt32());
         Assert.Equal(0, d1.GetProperty("errors").GetInt32());
         Assert.False(d1.GetProperty("cached").GetBoolean());
 
         // ── Phase 2: re-run with NO edit — must HIT the cache, still PASS ────────
-        var r2 = await server.SendAsync(Req("runTests", bundle));
-        var d2 = JsonSerializer.Deserialize<JsonElement>(r2);
+        var lines2 = await server.SendRequestStreamingAsync(Req("runTests", bundle));
+        var (_, d2) = ProtocolV2Streaming.Split(lines2);
         Assert.Equal(1, d2.GetProperty("passed").GetInt32());
         Assert.True(d2.GetProperty("cached").GetBoolean(),
-            $"second identical run should be a cache hit. Response: {r2}");
+            $"second identical run should be a cache hit. Lines: {string.Join(" | ", lines2)}");
 
         // ── Phase 3: edit ONLY the table trigger (+1 -> +9). The test codeunit is
         //    unchanged and still asserts Counter == '1', so the run MUST now FAIL.
@@ -83,14 +83,14 @@ public class ServerTests
         Assert.NotEqual(table, edited); // guard: the substitution actually applied
         await File.WriteAllTextAsync(tablePath, edited);
 
-        var r3 = await server.SendAsync(Req("runTests", bundle));
-        var d3 = JsonSerializer.Deserialize<JsonElement>(r3);
+        var lines3 = await server.SendRequestStreamingAsync(Req("runTests", bundle));
+        var (events3, d3) = ProtocolV2Streaming.Split(lines3);
         Assert.False(d3.GetProperty("cached").GetBoolean(),
-            $"run after an edit must be a cache miss. Response: {r3}");
+            $"run after an edit must be a cache miss. Lines: {string.Join(" | ", lines3)}");
         Assert.Equal(0, d3.GetProperty("passed").GetInt32());
         Assert.Equal(1, d3.GetProperty("failed").GetInt32());
         // The failure message proves the NEW trigger ran: Counter became 9, not 1.
-        var failMsg = d3.GetProperty("tests")[0].GetProperty("message").GetString() ?? "";
+        var failMsg = events3[0].GetProperty("message").GetString() ?? "";
         Assert.Contains("9", failMsg);
 
         // ── Phase 4: shutdown — response then process exit ──────────────────────
@@ -251,8 +251,8 @@ public class ServerTests
             sourcePaths = new[] { appDir, testDir },
             packagePaths = Array.Empty<string>(),
         });
-        var r = await server.SendAsync(req, TimeSpan.FromSeconds(180));
-        var d = JsonSerializer.Deserialize<JsonElement>(r);
+        var lines = await server.SendRequestStreamingAsync(req, TimeSpan.FromSeconds(180));
+        var (events, d) = ProtocolV2Streaming.Split(lines);
 
         // Bundle 1 (the app) has zero tests; bundle 2 (the test app) has exactly
         // one. Honouring only sourcePaths[0] would report total == 0, exitCode 0.
@@ -261,9 +261,8 @@ public class ServerTests
         Assert.Equal(0, d.GetProperty("failed").GetInt32());
         Assert.Equal(0, d.GetProperty("errors").GetInt32());
         Assert.Equal(0, d.GetProperty("exitCode").GetInt32());
-        var tests = d.GetProperty("tests");
-        Assert.Equal(1, tests.GetArrayLength());
-        Assert.Equal("AnswerIs42", tests[0].GetProperty("name").GetString()!.Split('.').Last());
+        Assert.Single(events);
+        Assert.Equal("AnswerIs42", events[0].GetProperty("name").GetString()!.Split('.').Last());
     }
 
     [Fact]

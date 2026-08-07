@@ -1709,7 +1709,11 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     while ((line = input.ReadLine()) != null)
     {
         if (line.Length == 0) continue;
-        string response;
+        // Null means "already fully written to output" — currently only the
+        // streaming runTests path (see HandleServerRunTests below), which emits
+        // its own {"type":"test"}* + {"type":"summary"} lines directly instead of
+        // going through the single-response write below.
+        string? response;
         bool shuttingDown = false;
         try
         {
@@ -1720,7 +1724,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     response = AlRunner.ServerProtocol.Error("Invalid request (missing 'command')");
                     break;
                 case "runtests":
-                    response = HandleServerRunTests(req);
+                    HandleServerRunTests(req, output);
+                    response = null;
                     break;
                 case "execute":
                     response = HandleServerExecute(req);
@@ -1739,8 +1744,11 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             response = AlRunner.ServerProtocol.Error(ex.Message);
         }
 
-        output.WriteLine(response);
-        output.Flush();
+        if (response != null)
+        {
+            output.WriteLine(response);
+            output.Flush();
+        }
         if (shuttingDown) return 0;
     }
     // EOF — client disconnected.
@@ -1767,21 +1775,49 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         }
     }
 
-    // ── runTests: re-emit + run every requested bundle in-process, aggregating the
-    // results. ──────────────────────────────────────────────────────────────────
-    string HandleServerRunTests(AlRunner.ServerRequest req)
+    // ── runTests: re-emit + run every requested bundle in-process, STREAMING one
+    // {"type":"test"} NDJSON line per completed test (via TestExecutor.Run's
+    // onTestComplete hook) as it finishes, then exactly one terminal
+    // {"type":"summary"} line once every bundle has run — protocol-v2
+    // (protocol-v2.schema.json), see #1641. Writes directly to `output` rather
+    // than returning a single response string, unlike every other command.
+    // ─────────────────────────────────────────────────────────────────────────
+    void HandleServerRunTests(AlRunner.ServerRequest req, System.IO.TextWriter output)
     {
         if (req.SourcePaths == null || req.SourcePaths.Length == 0)
-            return AlRunner.ServerProtocol.Error("sourcePaths is required");
+        {
+            output.WriteLine(AlRunner.ServerProtocol.Error("sourcePaths is required"));
+            output.Flush();
+            return;
+        }
 
         foreach (var p in req.SourcePaths)
             if (!Directory.Exists(p))
-                return AlRunner.ServerProtocol.Error($"bundle directory not found: {p}");
+            {
+                output.WriteLine(AlRunner.ServerProtocol.Error($"bundle directory not found: {p}"));
+                output.Flush();
+                return;
+            }
 
         var isolationError = ApplyRequestIsolation(req);
-        if (isolationError != null) return isolationError;
+        if (isolationError != null)
+        {
+            output.WriteLine(isolationError);
+            output.Flush();
+            return;
+        }
 
-        var runs = RunAllBundlesForServer(req.SourcePaths, req.PackagePaths, asm => executor.Run(asm));
+        // Flushed after every line so a client watching stdout sees each test the
+        // instant it finishes, not batched behind the whole bundle (or worse, every
+        // bundle in a multi-sourcePaths request).
+        void OnTestComplete(TestResult t)
+        {
+            output.WriteLine(AlRunner.ServerProtocol.TestEvent(t));
+            output.Flush();
+        }
+
+        var runs = RunAllBundlesForServer(req.SourcePaths, req.PackagePaths,
+            asm => executor.Run(asm, OnTestComplete));
 
         var allTests = runs.SelectMany(r => r.Tests).ToList();
         var allCompileErrors = runs.SelectMany(r => r.CompileErrors ?? Array.Empty<CompilationErrorGroup>()).ToList();
@@ -1800,8 +1836,9 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             changed = DiffServerFiles(lastFileHashes, combinedHashes);
         lastFileHashes = combinedHashes;
 
-        return AlRunner.ServerProtocol.RunTests(
-            allTests, exitCode, cached, changed, allCompileErrors.Count > 0 ? allCompileErrors : null);
+        output.WriteLine(AlRunner.ServerProtocol.Summary(
+            allTests, exitCode, cached, changed, allCompileErrors.Count > 0 ? allCompileErrors : null));
+        output.Flush();
     }
 
     // ── execute: run every requested bundle's first OnRun-bearing codeunit

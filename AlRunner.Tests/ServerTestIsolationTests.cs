@@ -99,8 +99,8 @@ public class ServerTestIsolationTests
         var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-server-isolation-cache", Guid.NewGuid().ToString("N"));
         await using var server = await CliServer.StartAsync(new[] { "--cache", cacheDir });
 
-        var r = await server.SendAsync(Req(bundle, testIsolation: null));
-        var d = JsonSerializer.Deserialize<JsonElement>(r);
+        var lines = await server.SendRequestStreamingAsync(Req(bundle, testIsolation: null));
+        var (_, d) = ProtocolV2Streaming.Split(lines);
 
         Assert.Equal(2, d.GetProperty("total").GetInt32());
         Assert.Equal(1, d.GetProperty("passed").GetInt32());
@@ -116,8 +116,8 @@ public class ServerTestIsolationTests
         var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-server-isolation-cache2", Guid.NewGuid().ToString("N"));
         await using var server = await CliServer.StartAsync(new[] { "--cache", cacheDir });
 
-        var r = await server.SendAsync(Req(bundle, testIsolation: "method"));
-        var d = JsonSerializer.Deserialize<JsonElement>(r);
+        var lines = await server.SendRequestStreamingAsync(Req(bundle, testIsolation: "method"));
+        var (_, d) = ProtocolV2Streaming.Split(lines);
 
         Assert.Equal(2, d.GetProperty("total").GetInt32());
         Assert.Equal(2, d.GetProperty("passed").GetInt32());
@@ -138,12 +138,12 @@ public class ServerTestIsolationTests
         var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-server-isolation-cache3", Guid.NewGuid().ToString("N"));
         await using var server = await CliServer.StartAsync(new[] { "--cache", cacheDir });
 
-        var r1 = await server.SendAsync(Req(bundle1, testIsolation: "method"));
-        var d1 = JsonSerializer.Deserialize<JsonElement>(r1);
+        var lines1 = await server.SendRequestStreamingAsync(Req(bundle1, testIsolation: "method"));
+        var (_, d1) = ProtocolV2Streaming.Split(lines1);
         Assert.Equal(2, d1.GetProperty("passed").GetInt32());
 
-        var r2 = await server.SendAsync(Req(bundle2, testIsolation: null));
-        var d2 = JsonSerializer.Deserialize<JsonElement>(r2);
+        var lines2 = await server.SendRequestStreamingAsync(Req(bundle2, testIsolation: null));
+        var (_, d2) = ProtocolV2Streaming.Split(lines2);
         Assert.Equal(1, d2.GetProperty("passed").GetInt32());
         Assert.Equal(1, d2.GetProperty("failed").GetInt32());
     }

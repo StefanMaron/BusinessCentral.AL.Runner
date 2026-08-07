@@ -3,8 +3,9 @@
 `al-runner --server` is a long-running JSON-RPC daemon over stdin/stdout. It loads
 the BC runtime patches and the dependency symbol set **once**, then serves many
 test runs in the same warm process — turning a ~19 s cold run into ~4 s per
-request. The VS Code extension depends on this flag; the protocol below is kept
-byte-compatible with the v1 server so the existing extension keeps working.
+request. The VS Code extension depends on this flag. `runTests` streams the
+protocol-v2 NDJSON shape (`protocol-v2.schema.json`, see #1641); every other
+command (`execute`, `shutdown`, errors) is a single response line.
 
 ```
 al-runner --server [--package-cache PATH ...] [--cache DIR]
@@ -49,24 +50,42 @@ al-runner --server [--package-cache PATH ...] [--cache DIR]
 
 ## Responses
 
-### `runTests`
+### `runTests` — streaming (protocol-v2)
+
+Unlike every other command, `runTests` is **not** a single response line. It
+emits zero or more `test` lines — one per completed test, in the order each
+test finishes, flushed immediately so a client sees results as they happen
+instead of waiting for the whole bundle — followed by exactly one terminal
+`summary` line. A request naming multiple `sourcePaths` runs them in order and
+streams `test` lines across all of them before the one final `summary`.
 
 ```jsonc
-{
-  "tests": [
-    { "name": "Codeunit60110.MyTest", "status": "pass",   // pass | fail | error
-      "durationMs": 12, "message": null, "stackTrace": null }
-  ],
-  "passed": 1, "failed": 0, "errors": 0, "total": 1,
-  "exitCode": 0,                          // 0 ok · 1 test fail · 2 exec · 3 compile
-  "compilationErrors": null,              // or [{ "file": "...", "errors": [...] }]
-  "cached": false,                        // true = served from the AL-output cache
-  "changedFiles": ["XRecProbe.Table.al"] // miss only: files changed vs the prior request
-}
+{"type":"test","name":"Codeunit60110.MyTest","status":"pass","durationMs":12}
+{"type":"test","name":"Codeunit60110.OtherTest","status":"fail","durationMs":3,"message":"...","stackTrace":"..."}
+{"type":"summary","exitCode":1,"passed":1,"failed":1,"errors":0,"total":2,
+ "cached":false,"changedFiles":["XRecProbe.Table.al"],"compilationErrors":null,
+ "protocolVersion":2}
 ```
 
-`stackTrace` is the AL call stack for AL-originated errors, falling back to the
-raw C# exception for runner-internal failures (matching the normal-mode rule).
+- `status` is `pass` | `fail` | `error`.
+- `stackTrace` is the AL call stack for AL-originated errors, falling back to
+  the raw C# exception for runner-internal failures (matching the normal-mode
+  rule). `message`/`stackTrace` are omitted (not `null`) on a passing test.
+- `exitCode`: `0` ok · `1` test fail · `2` exec · `3` compile (same ladder as
+  normal mode).
+- `changedFiles` is only present on a cache miss (a hit means nothing changed);
+  `compilationErrors` is only present when non-empty.
+- `cached: true` means the AL-output compile was skipped (assembly served from
+  the on-disk cache) — the tests still ran for real and still streamed.
+- A bundle that fails to compile short-circuits straight to the `summary` line
+  with `exitCode: 3` and `compilationErrors` set — no `test` lines for that
+  bundle (there was nothing to run).
+- `errorKind` (per-test) and `cancelled` (on the summary) are defined by
+  `protocol-v2.schema.json` but not populated yet — separate follow-up slices
+  of #1641, along with the `cancel` command.
+
+A request-level problem (e.g. a missing `sourcePaths`) returns the usual single
+`{"error":"..."}` line instead of a `test`/`summary` sequence — see Errors below.
 
 ### `execute`
 

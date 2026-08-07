@@ -110,6 +110,48 @@ public sealed class CliServer : IAsyncDisposable
             ?? throw new Exception($"Server closed stdout before responding to: {jsonRequest}\n--- stderr ---\n{StdErr}");
     }
 
+    /// <summary>
+    /// Send a JSON request and read lines until the streaming terminator: either
+    /// the protocol-v2 <c>{"type":"summary"}</c> line (runTests' streaming shape —
+    /// see #1641), or the first line that isn't <c>type: test</c>/<c>progress</c>
+    /// (a single-line error/ack response from a command that doesn't stream).
+    /// Returns every line read, in order, including the terminator.
+    /// </summary>
+    public async Task<List<string>> SendRequestStreamingAsync(string jsonRequest, TimeSpan? timeout = null)
+    {
+        await _process.StandardInput.WriteLineAsync(jsonRequest);
+        await _process.StandardInput.FlushAsync();
+
+        var t = timeout ?? TimeSpan.FromSeconds(120);
+        var lines = new List<string>();
+        while (true)
+        {
+            var readTask = _process.StandardOutput.ReadLineAsync();
+            var completed = await Task.WhenAny(readTask, Task.Delay(t));
+            if (completed != readTask)
+                throw new TimeoutException(
+                    $"No response within {t.TotalSeconds:F0}s to: {jsonRequest}\n--- stderr ---\n{StdErr}");
+            var line = await readTask
+                ?? throw new Exception($"Server closed stdout before completing: {jsonRequest}\n--- stderr ---\n{StdErr}");
+            lines.Add(line);
+
+            string? type = null;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(line);
+                if (doc.RootElement.TryGetProperty("type", out var tEl))
+                    type = tEl.GetString();
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                // Not JSON (shouldn't happen) — treat as terminal so callers see it.
+            }
+            if (type == "summary") break;
+            if (type != "test" && type != "progress") break; // single-line error/ack response
+        }
+        return lines;
+    }
+
     public async Task<bool> WaitForExitAsync(TimeSpan timeout)
     {
         using var cts = new CancellationTokenSource(timeout);

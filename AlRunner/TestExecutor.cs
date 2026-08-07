@@ -77,7 +77,16 @@ public sealed class TestExecutor
     /// </summary>
     public int? TimeoutSeconds { get; set; }
 
-    public IReadOnlyList<TestResult> Run(Assembly assembly)
+    /// <summary>
+    /// Runs every [Test] method in <paramref name="assembly"/>. When
+    /// <paramref name="onTestComplete"/> is supplied it fires synchronously right
+    /// after each <see cref="TestResult"/> is appended to the returned list — the
+    /// hook <c>--server</c>'s streaming <c>runTests</c> uses to emit one NDJSON
+    /// <c>test</c> line per completed test instead of waiting for the whole
+    /// bundle (see #1641). Null (the CLI's default) is a no-op; behaviour and the
+    /// returned list are otherwise unchanged either way.
+    /// </summary>
+    public IReadOnlyList<TestResult> Run(Assembly assembly, Action<TestResult>? onTestComplete = null)
     {
         var totalSw = System.Diagnostics.Stopwatch.StartNew();
         var results = new List<TestResult>();
@@ -169,8 +178,10 @@ public sealed class TestExecutor
             try { instance = InstantiateCodeunit(t); }
             catch (Exception ex)
             {
-                results.Add(new TestResult(t.Name, "<ctor>", TestOutcome.Error,
-                    Unwrap(ex).Message, ex.ToString(), TimeSpan.Zero));
+                var ctorResult = new TestResult(t.Name, "<ctor>", TestOutcome.Error,
+                    Unwrap(ex).Message, ex.ToString(), TimeSpan.Zero);
+                results.Add(ctorResult);
+                onTestComplete?.Invoke(ctorResult);
                 continue;
             }
             instMs += stageSw.ElapsedMilliseconds;
@@ -195,6 +206,7 @@ public sealed class TestExecutor
                     var result = RunOne(t.Name, m, instance, displayName);
                     methodsMs += stageSw.ElapsedMilliseconds;
                     results.Add(result);
+                    onTestComplete?.Invoke(result);
                     if (IsTimeout(result))
                         return results;
                 }
