@@ -132,6 +132,13 @@ public static partial class RecordPatches
 
     private static void TryParseTableFile(string text)
     {
+        // Comments first: every regex below matches property names as bare text, so a
+        // comment mentioning one is otherwise read as the property itself (#1690). Blanking
+        // is length-preserving, so the slice offsets computed below are unaffected. Done
+        // here rather than in ParseAllSources because TryParseTableFile has several callers
+        // (RecordPatches.Register, BcAppFallback's decompiled source) that each need it.
+        text = AlCommentBlanker.Blank(text);
+
         // Multiple `table N "Name" { ... }` declarations may live in one .al file.
         // Slice the text between consecutive RxTable matches so each table only sees
         // its own fields/keys.
@@ -246,6 +253,8 @@ public static partial class RecordPatches
 
     private static void TryParseTableExtensionFile(string text)
     {
+        text = AlCommentBlanker.Blank(text); // see TryParseTableFile — same reason (#1690)
+
         var extMatches = RxTableExtension.Matches(text);
         if (extMatches.Count == 0) return;
 

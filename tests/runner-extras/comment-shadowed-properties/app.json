@@ -1,0 +1,25 @@
+{
+  "id": "3f8c1d27-6e94-4b52-a1d8-7c05e93b4f16",
+  "name": "Runner Extras - Comment Shadowed Properties",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves an AL comment that mentions InitValue/Caption is not parsed as the property itself.",
+  "description": "Issue #1690: the AL source parser matched property regexes against raw file text, so a comment mentioning 'InitValue = true' was captured as the field's InitValue - with '[^;]+' running on into the surrounding prose. Every Insert of the table then died with NavNCLEvaluateException: The value \"true: new rows default to accepted. ...\" can not be evaluated into type Boolean. RED before the fix: CsfpInsertAppliesInitValueTrue errors on Insert. GREEN after: the real declaration wins for both InitValue and Caption, a commented-out field never becomes metadata, and a '//' inside a string literal is still literal text.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "27.0.0.0",
+  "idRanges": [
+    {
+      "from": 62400,
+      "to": 62419
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
