@@ -31,6 +31,8 @@ public static partial class RecordPatches
 
     private static void TryParseQueryFile(string text)
     {
+        text = AlCommentBlanker.Blank(text); // see AlPageParser — same reason (#1690/#1697)
+
         foreach (Match m in RxQuery.Matches(text))
         {
             if (!int.TryParse(m.Groups[1].Value, out int id)) continue;

@@ -49,6 +49,15 @@ public static partial class RecordPatches
 
     private static void TryParsePageFile(string text)
     {
+        // Comments first — every regex below matches property names and object headers as
+        // bare text, so a comment naming one is otherwise read as the declaration itself.
+        // #1690 fixed this for the table parser; the sibling parsers had the same exposure
+        // (#1697): a comment mentioning SourceTable rebound the page, one mentioning
+        // InsertAllowed flipped a behaviour flag, and a commented-out `page N "X" {` became
+        // real metadata. Blanking is length-preserving, so every SliceObjectText / match-offset
+        // calculation below is unaffected.
+        text = AlCommentBlanker.Blank(text);
+
         // `page N "Name"` — plain pages
         foreach (Match m in RxPage.Matches(text))
         {

@@ -82,6 +82,8 @@ public static partial class RecordPatches
 
     private static void TryParseObjectCaptionFile(string text)
     {
+        text = AlCommentBlanker.Blank(text); // see AlPageParser — same reason (#1690/#1697)
+
         foreach (var (kind, rx) in RxCaptionObjectDecls)
         {
             foreach (Match m in rx.Matches(text))

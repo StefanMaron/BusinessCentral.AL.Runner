@@ -59,6 +59,8 @@ public static partial class RecordPatches
 
     private static void TryParseObjectDeclFile(string text)
     {
+        text = AlCommentBlanker.Blank(text); // see AlPageParser — same reason (#1690/#1697)
+
         foreach (var (kind, rx) in RxObjectDecls)
         {
             foreach (Match m in rx.Matches(text))
