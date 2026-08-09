@@ -7,36 +7,19 @@
 // property getter on NCLMetaForm reads `metadataAppGroupPageDefinition.Item`
 // which is a default struct on a hand-built skeleton; those getters aren't
 // reached by the metadata lookup path itself.
-using System.Text.RegularExpressions;
+// Parsed from BC's own AL syntax tree (#1696). The old implementation guessed each object's
+// extent with SliceObjectText, which scanned forward for the next `page|table|codeunit|…`
+// keyword — a list that omitted `enum`, `interface`, `controladdin`, `permissionset` and
+// friends, so any of those following a page put the NEXT object's body inside this page's
+// slice, where SourceTable / InsertAllowed / field(...) could all match against it. Object
+// extent is now structural.
 using Microsoft.Dynamics.Nav.CodeAnalysis;
+using NavSyntax = Microsoft.Dynamics.Nav.CodeAnalysis.Syntax;
 
 namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
-    private static readonly Regex RxPage = new(
-        @"\bpage\s+(\d+)\s+(?:""([^""]+)""|([A-Za-z_]\w*))[^{]*?\{",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    private static readonly Regex RxPageExtension = new(
-        @"\bpageextension\s+(\d+)\s+(?:""([^""]+)""|([A-Za-z_]\w*))\s+extends\s+(?:""([^""]+)""|([A-Za-z_]\w*))[^{]*?\{",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    private static readonly Regex RxPageSourceTable = new(
-        @"\bSourceTable\s*=\s*(?:""([^""]+)""|([A-Za-z_]\w*))\s*;",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    // `InsertAllowed = false;` — AL's default when the property is absent is TRUE, so only
-    // an explicit `false` needs matching. Drives ITestPage.Creatable, which BC's
-    // NavTestPageBase.New() checks before inserting.
-    private static readonly Regex RxPageInsertAllowed = new(
-        @"\bInsertAllowed\s*=\s*(true|false)\s*;",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    private static readonly Regex RxPageField = new(
-        @"\bfield\s*\(\s*(?:""([^""]+)""|([A-Za-z_]\w*))\s*;\s*Rec\.(?:""([^""]+)""|([A-Za-z_]\w*))",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
     private static void ParseAllPageSources()
     {
         foreach (var dir in _sourceDirs)
@@ -49,35 +32,42 @@ public static partial class RecordPatches
 
     private static void TryParsePageFile(string text)
     {
-        // Comments first — every regex below matches property names and object headers as
-        // bare text, so a comment naming one is otherwise read as the declaration itself.
-        // #1690 fixed this for the table parser; the sibling parsers had the same exposure
-        // (#1697): a comment mentioning SourceTable rebound the page, one mentioning
-        // InsertAllowed flipped a behaviour flag, and a commented-out `page N "X" {` became
-        // real metadata. Blanking is length-preserving, so every SliceObjectText / match-offset
-        // calculation below is unaffected.
-        text = AlCommentBlanker.Blank(text);
+        var objects = ParseAlObjects(text);
 
-        // `page N "Name"` — plain pages
-        foreach (Match m in RxPage.Matches(text))
+        // Pages first, then pageextensions — deliberately, because `_parsedPages` is keyed on
+        // the object id ALONE. AL gives `page` and `pageextension` separate id namespaces, so
+        // a page 50100 and a pageextension 50100 may both exist and the second one written
+        // wins. That is pre-existing behaviour (the report parser hit the same problem and was
+        // given two dictionaries; this one never was), and preserving the write order keeps
+        // this migration behaviour-preserving rather than quietly changing which entry
+        // survives. Splitting the dictionary is the real fix and belongs in its own change.
+        foreach (var obj in objects)
         {
-            if (!int.TryParse(m.Groups[1].Value, out int id)) continue;
-            var name = m.Groups[2].Success ? m.Groups[2].Value : m.Groups[3].Value;
-            var pageText = SliceObjectText(text, m.Index);
-            var sourceTableName = TryReadSourceTableName(pageText);
-            _parsedPages[id] = new ParsedPage(id, name, IsExtension: false,
-                sourceTableName, ParsePageFieldBindings(id, pageText),
-                InsertAllowed: TryReadInsertAllowed(pageText));
+            if (obj is not NavSyntax.PageSyntax p) continue;
+            if (ObjectIdOf(p) is not int id) continue;
+            var props = p.PropertyList;
+            _parsedPages[id] = new ParsedPage(id, IdentText(p.Name), IsExtension: false,
+                // Absent SourceTable is the empty string, not null — callers distinguish
+                // "declares none" from "never parsed" via IsPageParsed.
+                SourceTableName: Unquote(PropValue(props, "SourceTable")?.ToString()?.Trim() ?? ""),
+                ControlIdToFieldName: ParsePageFieldBindings(id, p.Layout),
+                // AL's default when the property is absent is TRUE, so only an explicit
+                // `false` flips it. Drives ITestPage.Creatable via NavTestPageBase.New().
+                InsertAllowed: !PropIs(props, "InsertAllowed", "false"));
         }
 
-        // `pageextension N "Name" extends "Base"` — pageextensions
-        foreach (Match m in RxPageExtension.Matches(text))
+        foreach (var obj in objects)
         {
-            if (!int.TryParse(m.Groups[1].Value, out int id)) continue;
-            var name = m.Groups[2].Success ? m.Groups[2].Value : m.Groups[3].Value;
-            _parsedPages[id] = new ParsedPage(id, name, IsExtension: true,
+            if (obj is not NavSyntax.PageExtensionSyntax pe) continue;
+            if (ObjectIdOf(pe) is not int id) continue;
+            // Extensions carry no source table and no control map, exactly as before. Their
+            // addfirst/addlast field controls ARE reachable now (same PageFieldSyntax type
+            // under PageExtensionLayoutSyntax), so populating the map is newly possible — but
+            // it would change what GetPageControlFieldMap returns for every pageextension-backed
+            // TestPage, which needs its own test rather than riding along on a parser swap.
+            _parsedPages[id] = new ParsedPage(id, IdentText(pe.Name), IsExtension: true,
                 SourceTableName: string.Empty, ControlIdToFieldName: new Dictionary<int, string>(),
-                InsertAllowed: TryReadInsertAllowed(SliceObjectText(text, m.Index)));
+                InsertAllowed: !PropIs(pe.PropertyList, "InsertAllowed", "false"));
         }
     }
 
@@ -88,13 +78,6 @@ public static partial class RecordPatches
     /// </summary>
     internal static bool GetInsertAllowedForPage(int pageId)
         => !_parsedPages.TryGetValue(pageId, out var page) || page.InsertAllowed;
-
-    private static bool TryReadInsertAllowed(string pageText)
-    {
-        var m = RxPageInsertAllowed.Match(pageText);
-        // Absent => AL's default, which is true.
-        return !m.Success || !string.Equals(m.Groups[1].Value, "false", StringComparison.OrdinalIgnoreCase);
-    }
 
     /// <summary>
     /// Whether the AL source parser has seen this page at all. Lets callers tell
@@ -146,34 +129,39 @@ public static partial class RecordPatches
             ? table.PkFieldIds.ToArray()
             : Array.Empty<int>();
 
-    private static string TryReadSourceTableName(string pageText)
-    {
-        var m = RxPageSourceTable.Match(pageText);
-        if (!m.Success) return string.Empty;
-        return m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value;
-    }
-
-    private static Dictionary<int, string> ParsePageFieldBindings(int pageId, string pageText)
+    /// <summary>
+    /// Maps each <c>field(Control; Rec.Field)</c> control of a page's layout to the table field
+    /// it binds, keyed by the control's member id.
+    /// <para>Field controls are collected from the whole layout subtree at once, which covers
+    /// arbitrary <c>area</c> / <c>group</c> / <c>cuegroup</c> / <c>repeater</c> nesting. Scoping
+    /// to <c>Layout</c> also means the <c>actions</c> section cannot contribute (an action is a
+    /// structurally different node), and a <c>part(...)</c> is a leaf here — the page it
+    /// references is a separate object with its own tree, so its fields can never leak in.</para>
+    /// <para>Only a source expression that is exactly <c>Rec.Something</c> counts. The old regex
+    /// looked for the text <c>Rec.</c> anywhere after the semicolon, so
+    /// <c>field(Total; Rec.Amount + 1)</c> bound the control to <c>Amount</c> — a control that is
+    /// not bound to that field at all. A compound expression now yields no binding.</para>
+    /// </summary>
+    private static Dictionary<int, string> ParsePageFieldBindings(
+        int pageId, NavSyntax.PageLayoutSyntax? layout)
     {
         var result = new Dictionary<int, string>();
+        if (layout == null) return result;
 
-        foreach (Match m in RxPageField.Matches(pageText))
+        foreach (var field in layout.DescendantNodes().OfType<NavSyntax.PageFieldSyntax>())
         {
-            var controlName = m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value;
-            var fieldName = m.Groups[3].Success ? m.Groups[3].Value : m.Groups[4].Value;
+            if (field.Expression is not NavSyntax.MemberAccessExpressionSyntax access) continue;
+            if (access.Expression is not NavSyntax.IdentifierNameSyntax receiver) continue;
+            if (!string.Equals(Unquote(receiver.Identifier.ValueText ?? ""), "Rec",
+                    StringComparison.OrdinalIgnoreCase)) continue;
+
+            var controlName = IdentText(field.Name);
+            var fieldName = IdentText(access.Name as NavSyntax.IdentifierNameSyntax);
+            if (controlName.Length == 0 || fieldName.Length == 0) continue;
             result[IdSpace.GetMemberId(pageId, controlName)] = fieldName;
         }
 
         return result;
-    }
-
-    private static string SliceObjectText(string text, int start)
-    {
-        var nextObject = Regex.Match(text[(start + 1)..], @"\b(page|pageextension|table|tableextension|codeunit|report|xmlport|query)\s+\d+\b",
-            RegexOptions.IgnoreCase);
-        return nextObject.Success
-            ? text.Substring(start, nextObject.Index + 1)
-            : text[start..];
     }
 
     private static bool NamesEqual(string left, string right)

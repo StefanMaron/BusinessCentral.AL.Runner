@@ -20,51 +20,34 @@
 //   name, and that is what a real service tier reports in AllObjWithCaption. The default
 //   is applied by the consumer, not here, so the two cases stay distinguishable.
 //
-// LIMITS (same as every sibling parser)
-//   Regex over raw text, not a parse tree. The declaration is anchored to the start of a
-//   line and must be followed by its opening brace with nothing but the header between,
-//   so neither a variable declaration nor prose inside a doc comment or a Label literal
-//   can register an object — the trap that made the report parser fabricate a report 1306
-//   named "against". Caption is read only at the object's OWN brace depth, so a caption
-//   on a nested field / control / column never masquerades as the object's.
-using System.Text.RegularExpressions;
+// Parsed from BC's own AL syntax tree (#1696), so an object declaration is a node: neither a
+// variable declaration, nor prose inside a doc comment or a Label literal, can register an
+// object — the trap that made the report parser fabricate a report 1306 named "against".
+// Caption comes off the object's own property list, so a caption on a nested field / control /
+// column cannot masquerade as the object's.
+using NavSyntax = Microsoft.Dynamics.Nav.CodeAnalysis.Syntax;
 
 namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
     // Every AL object kind that carries an object id, and therefore can appear in
-    // AllObjWithCaption. Kinds with no id (interface, controladdin, profile,
-    // dotnet, entitlement) are excluded — AllObj is keyed on (Object Type, Object ID)
-    // and a synthetic id would be a fabrication.
-    private static readonly (string Kind, string Keyword)[] CaptionObjectKinds =
-    {
-        ("Table", "table"),
-        ("TableExtension", "tableextension"),
-        ("Page", "page"),
-        ("PageExtension", "pageextension"),
-        ("Report", "report"),
-        ("ReportExtension", "reportextension"),
-        ("Codeunit", "codeunit"),
-        ("Query", "query"),
-        ("QueryExtension", "queryextension"),
-        ("XMLport", "xmlport"),
-        ("Enum", "enum"),
-        ("EnumExtension", "enumextension"),
-        ("PermissionSet", "permissionset"),
-        ("PermissionSetExtension", "permissionsetextension"),
-    };
-
-    // `<keyword> <id> <name>` followed by an optional `extends`/`implements` header and
-    // then the object's opening brace. The header may span lines, so the tail allows
-    // whitespace and bare identifiers/quoted names/commas/dots only — never arbitrary
-    // text, which is what let prose match.
-    private static readonly (string Kind, Regex Rx)[] RxCaptionObjectDecls =
-        CaptionObjectKinds.Select(k => (k.Kind, new Regex(
-            @"^\s*" + k.Keyword + @"\s+(\d+)\s+(?:""([^""]+)""|([A-Za-z_]\w*))"
-            + @"(?:\s+(?:extends|implements)\s+(?:""[^""]+""|[A-Za-z_][\w.]*)(?:\s*,\s*(?:""[^""]+""|[A-Za-z_][\w.]*))*)*"
-            + @"\s*\{",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.Multiline))).ToArray();
+    // AllObjWithCaption. Kinds with no id (interface, controladdin, profile, dotnet,
+    // entitlement) are excluded — AllObj is keyed on (Object Type, Object ID) and a synthetic
+    // id would be a fabrication. They are also, independently, the exact set with no ObjectId
+    // on the syntax node, so the generic walk skips them by construction.
+    //
+    // Handled generically off the syntax
+    // tree (see AlObjectKindName). Two notes on what changed with the tree:
+    //   * `QueryExtension` is gone from the set. AL has no `queryextension` keyword — text
+    //     saying so is a parse error, not an object — so the old entry could only ever have
+    //     produced a caption for source that does not compile.
+    //   * The old brace-walk (ExtractObjectBody/DepthAt) counted `{` and `}` WITHOUT string
+    //     awareness, so a caption containing a literal brace (`Caption = 'Config {Beta}';`)
+    //     desynchronised the depth counter for every object after it in the file. The tree
+    //     has no such failure mode. This does mean captions that were previously corrupted
+    //     by a stray brace now read correctly — a fix, not a regression, but a real
+    //     behaviour change worth knowing about.
 
     /// <summary>
     /// (kind, id) → the object's declared Caption, or null when it declares none. Keyed
@@ -82,20 +65,16 @@ public static partial class RecordPatches
 
     private static void TryParseObjectCaptionFile(string text)
     {
-        text = AlCommentBlanker.Blank(text); // see AlPageParser — same reason (#1690/#1697)
-
-        foreach (var (kind, rx) in RxCaptionObjectDecls)
+        foreach (var obj in ParseAlObjects(text))
         {
-            foreach (Match m in rx.Matches(text))
-            {
-                if (!int.TryParse(m.Groups[1].Value, out int id) || id <= 0) continue;
-                // No keyword aliasing to worry about: `enum` cannot match the head of
-                // `enumextension` because the pattern demands whitespace before the id
-                // (same for table/page/report/query/permissionset and their *extension
-                // counterparts).
-                var body = ExtractObjectBody(text, m.Index + m.Length - 1);
-                _parsedObjectCaptions[(kind, id)] = ReadTopLevelProperty(body, "Caption");
-            }
+            if (AlObjectKindName(obj) is not string kind) continue;
+            // id <= 0 stays rejected, as before.
+            if (ObjectIdOf(obj) is not int id || id <= 0) continue;
+            // The object's OWN Caption: a caption on a nested field/control/column belongs to
+            // that node's property list, not this one, so the old brace-depth gate is now
+            // structural rather than arithmetic.
+            var props = (obj as NavSyntax.ObjectSyntax)?.PropertyList;
+            _parsedObjectCaptions[(kind, id)] = PropertyTextFrom(PropValue(props, "Caption"));
         }
     }
 

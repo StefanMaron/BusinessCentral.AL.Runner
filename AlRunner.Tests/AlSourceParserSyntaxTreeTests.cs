@@ -191,6 +191,88 @@ public class AlSourceParserSyntaxTreeTests
         finally { ParsedTables.Remove(TableId); }
     }
 
+    // ─── CalcFormula ─────────────────────────────────────────────────────────────────────
+
+    private static object CalcFormula(string formula)
+    {
+        var parsed = typeof(AlRunner.Patches.RecordPatches)
+            .GetMethod("TryParseCalcFormula", BindingFlags.NonPublic | BindingFlags.Static)!
+            .Invoke(null, new object[] { $"CalcFormula = {formula};" });
+        return parsed ?? throw new Xunit.Sdk.XunitException($"formula did not parse: {formula}");
+    }
+
+    private static (string Type, string Table, string? Field, List<(string Src, string Parent)> Filters)
+        Read(object calcFormula)
+    {
+        var t = calcFormula.GetType();
+        var filters = new List<(string, string)>();
+        foreach (var f in (System.Collections.IEnumerable)t.GetProperty("Filters")!.GetValue(calcFormula)!)
+            filters.Add(((string)f.GetType().GetProperty("SourceFieldName")!.GetValue(f)!,
+                         (string)f.GetType().GetProperty("ParentFieldName")!.GetValue(f)!));
+        return ((string)t.GetProperty("FormulaType")!.GetValue(calcFormula)!,
+                (string)t.GetProperty("SourceTableName")!.GetValue(calcFormula)!,
+                (string?)t.GetProperty("SourceFieldName")!.GetValue(calcFormula),
+                filters);
+    }
+
+    [Fact]
+    public void CalcFormula_FilterLiteralContainingASemicolon_StillParses()
+    {
+        // Same `[^;]+` class as InitValue, one level down: RxCalcFormula stopped at the first
+        // semicolon, so a filter literal containing one truncated the formula, RxCalcFormulaParts
+        // then failed to match the fragment, TryParseCalcFormula returned null, and the FlowField
+        // was left at EmptyFormula — CalcFields() became a silent no-op returning the type default
+        // (0) instead of the summed value. Nothing threw.
+        var (type, table, field, filters) = Read(CalcFormula(
+            """sum("Sales Line".Amount where("Document No."=field("Code"), Description=filter('A;B')))"""));
+
+        Assert.Equal("sum", type);
+        Assert.Equal("Sales Line", table);
+        Assert.Equal("Amount", field);
+        // filter(...) conditions are excluded, exactly as RxCalcFilter excluded them.
+        Assert.Equal(new[] { ("Document No.", "Code") }, filters);
+    }
+
+    [Fact]
+    public void CalcFormula_CountWithoutAFieldPart_ParsesTableOnly()
+    {
+        // count/exist are a different node type (TableCalculationFormulaSyntax) carrying a table
+        // and no field. A walk that assumed the qualified Table.Field shape would drop these.
+        var (type, table, field, filters) = Read(CalcFormula(
+            """count("Sales Line" where("Document No."=field("Code")))"""));
+
+        Assert.Equal("count", type);
+        Assert.Equal("Sales Line", table);
+        Assert.Null(field);
+        Assert.Equal(new[] { ("Document No.", "Code") }, filters);
+    }
+
+    [Fact]
+    public void CalcFormula_UnquotedTableName_Parses()
+    {
+        // Regression guard for the bug documented at AlSourceParser.cs:100-108 — an unquoted
+        // table name silently failed the old pattern and CalcFields() returned 0.
+        var (type, table, field, _) = Read(CalcFormula(
+            """lookup(PageworksLine.TargetTableNo where(Code=field("Entry No.")))"""));
+
+        Assert.Equal("lookup", type);
+        Assert.Equal("PageworksLine", table);
+        Assert.Equal("TargetTableNo", field);
+    }
+
+    [Fact]
+    public void CalcFormula_SignedFormula_IsRefusedRatherThanParsedWithoutItsSign()
+    {
+        // Negative direction. ParsedCalcFormula cannot carry the sign, so returning a formula
+        // here would mean a FlowField silently computing +sum where AL wrote -sum. Refusing
+        // preserves the old behaviour (the anchored regex never matched a leading sign).
+        var parsed = typeof(AlRunner.Patches.RecordPatches)
+            .GetMethod("TryParseCalcFormula", BindingFlags.NonPublic | BindingFlags.Static)!
+            .Invoke(null, new object[] { """CalcFormula = -sum("Sales Line".Amount);""" });
+
+        Assert.Null(parsed);
+    }
+
     [Fact]
     public void UnparseableSource_IsIgnoredRatherThanThrowing()
     {

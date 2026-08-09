@@ -5,20 +5,17 @@
 // Only the (id, name) tuple is needed: the cache slot just has to be non-null
 // so NCLMetadata.GetMetaApplicationObjectInternal finds an entry instead of
 // throwing NavNCLApplicationObjectNotFoundException for queries.
-using System.Text.RegularExpressions;
+// Parsed from BC's own AL syntax tree (#1696), so a `query` mentioned in prose or a
+// commented-out declaration is not a query. AL HAS NO `queryextension` — the compiler's own
+// object-keyword list excludes it, and text that says `queryextension 50100 X extends Y` is a
+// parse error, not an object. The old regex matched that text anyway and stored an
+// IsExtension: true entry; nothing valid can reach that path, so the flag is now always false.
+using NavSyntax = Microsoft.Dynamics.Nav.CodeAnalysis.Syntax;
 
 namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
-    private static readonly Regex RxQuery = new(
-        @"\bquery\s+(\d+)\s+(?:""([^""]+)""|([A-Za-z_]\w*))[^{]*?\{",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    private static readonly Regex RxQueryExtension = new(
-        @"\bqueryextension\s+(\d+)\s+(?:""([^""]+)""|([A-Za-z_]\w*))\s+extends\s+(?:""([^""]+)""|([A-Za-z_]\w*))[^{]*?\{",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
     private static void ParseAllQuerySources()
     {
         foreach (var dir in _sourceDirs)
@@ -31,20 +28,11 @@ public static partial class RecordPatches
 
     private static void TryParseQueryFile(string text)
     {
-        text = AlCommentBlanker.Blank(text); // see AlPageParser — same reason (#1690/#1697)
-
-        foreach (Match m in RxQuery.Matches(text))
+        foreach (var obj in ParseAlObjects(text))
         {
-            if (!int.TryParse(m.Groups[1].Value, out int id)) continue;
-            var name = m.Groups[2].Success ? m.Groups[2].Value : m.Groups[3].Value;
-            _parsedQueries[id] = new ParsedQuery(id, name, IsExtension: false);
-        }
-
-        foreach (Match m in RxQueryExtension.Matches(text))
-        {
-            if (!int.TryParse(m.Groups[1].Value, out int id)) continue;
-            var name = m.Groups[2].Success ? m.Groups[2].Value : m.Groups[3].Value;
-            _parsedQueries[id] = new ParsedQuery(id, name, IsExtension: true);
+            if (obj is not NavSyntax.QuerySyntax q) continue;
+            if (ObjectIdOf(q) is not int id) continue;
+            _parsedQueries[id] = new ParsedQuery(id, IdentText(q.Name), IsExtension: false);
         }
     }
 }

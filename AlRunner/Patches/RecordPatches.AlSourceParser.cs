@@ -15,11 +15,11 @@
 // closure — so this works on every input the parser takes: real files, AL extracted from
 // dependency .app archives, and the table text NclMetaTableBuilder synthesizes.
 //
-// STILL REGEX: the CalcFormula sub-parse below. It is fed the formula's own syntax node text
-// (so it no longer sees comments or neighbouring properties), but the structural mapping onto
-// QualifiedNameSyntax / WhereExpressionSyntax is deliberately deferred — #1696 orders it last,
-// and RecordPatches.TryParseCalcFormula has an external caller in BcAppSymbolCache that hands
-// it synthesized text rather than a node.
+// CalcFormula is mapped structurally too: `sum/lookup/…` and `count/exist` are two different
+// node types, and each filter condition carries its own type, so `X = field(Y)` filters are
+// selected BY TYPE rather than by a pattern that happened not to match `const(...)`. The one
+// regex left in this file extracts a length from a type's text (`Code[10]` → 10), which has no
+// structure for a tree to add.
 using System.Text.RegularExpressions;
 using NavCA = Microsoft.Dynamics.Nav.CodeAnalysis;
 using NavSyntax = Microsoft.Dynamics.Nav.CodeAnalysis.Syntax;
@@ -69,6 +69,73 @@ public static partial class RecordPatches
         return text.Replace("''", "'");
     }
 
+    /// <summary>
+    /// The declared object id of any AL object that has one, or null. `interface`,
+    /// `controladdin` and `profile` have no object id at all — they do not derive from
+    /// <c>ApplicationObjectSyntax</c> — which is the same set the id-keyed parsers already
+    /// excluded, for the same reason (AllObj is keyed by (type, id); a synthetic id would be
+    /// a fabrication).
+    /// </summary>
+    private static int? ObjectIdOf(NavCA.SyntaxNode obj) =>
+        obj is NavSyntax.ApplicationObjectSyntax ao && ao.ObjectId?.Value.Value is int id ? id : null;
+
+    /// <summary>
+    /// The AL object-kind name used as the first half of the `(Kind, Id)` keys and as AllObj's
+    /// "Object Type". These strings are a data contract — `XMLport`'s casing in particular is
+    /// what the virtual table emits. Objects not listed are not tracked by the id-keyed parsers.
+    /// </summary>
+    private static string? AlObjectKindName(NavCA.SyntaxNode obj) => obj switch
+    {
+        NavSyntax.TableSyntax => "Table",
+        NavSyntax.TableExtensionSyntax => "TableExtension",
+        NavSyntax.PageSyntax => "Page",
+        NavSyntax.PageExtensionSyntax => "PageExtension",
+        NavSyntax.ReportSyntax => "Report",
+        NavSyntax.ReportExtensionSyntax => "ReportExtension",
+        NavSyntax.CodeunitSyntax => "Codeunit",
+        NavSyntax.QuerySyntax => "Query",
+        NavSyntax.XmlPortSyntax => "XMLport",
+        NavSyntax.EnumTypeSyntax => "Enum",
+        NavSyntax.EnumExtensionTypeSyntax => "EnumExtension",
+        NavSyntax.PermissionSetSyntax => "PermissionSet",
+        NavSyntax.PermissionSetExtensionSyntax => "PermissionSetExtension",
+        _ => null,
+    };
+
+    /// <summary>
+    /// An OBJECT-level <c>Caption</c>, matching what the old brace-depth-scoped
+    /// <c>ReadTopLevelProperty</c> returned: the unescaped literal for <c>'…'</c>, the trimmed
+    /// text for a bare value, and null when the object declares no Caption at all. Null is
+    /// meaningful — "declares none", which the consumer turns into AL's name fallback — and is
+    /// not the same as an empty caption.
+    /// <para>Differs from <see cref="CaptionFrom"/> (field-level), which answers null for a
+    /// non-label value because the field-level regex required quotes.</para>
+    /// </summary>
+    private static string? PropertyTextFrom(NavSyntax.PropertyValueSyntax? value)
+    {
+        if (value == null) return null;
+        return CaptionFrom(value) ?? value.ToString()?.Trim();
+    }
+
+    /// <summary>
+    /// The last name segment of a possibly-namespaced object reference:
+    /// <c>Microsoft.Sales.History."Sales Invoice Header"</c> → <c>Sales Invoice Header</c>,
+    /// <c>Customer</c> → <c>Customer</c>. Quote-aware, so a quoted name that itself contains a
+    /// dot (<c>"Doc. No."</c>) survives intact — the old dot-collapse ran over the unquoted
+    /// text and would have truncated it to <c>No.</c>.
+    /// </summary>
+    private static string LastNameSegment(string? text)
+    {
+        var s = (text ?? "").Trim();
+        if (s.Length >= 2 && s[^1] == '"')
+        {
+            var open = s.LastIndexOf('"', s.Length - 2);
+            if (open >= 0) return s[(open + 1)..^1];
+        }
+        int dot = s.LastIndexOf('.');
+        return dot >= 0 && dot < s.Length - 1 ? s[(dot + 1)..] : Unquote(s);
+    }
+
     /// <summary>Property lookup by AL name, case-insensitive as AL itself is.</summary>
     private static NavSyntax.PropertyValueSyntax? PropValue(
         NavSyntax.PropertyListSyntax? list, string name)
@@ -88,35 +155,6 @@ public static partial class RecordPatches
     private static bool PropIs(NavSyntax.PropertyListSyntax? list, string name, string expected) =>
         string.Equals(PropValue(list, name)?.ToString()?.Trim(), expected,
             StringComparison.OrdinalIgnoreCase);
-
-    private static readonly Regex RxCalcFormula = new(
-        @"\bCalcFormula\s*=\s*([^;]+)\s*;",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    // Captures: (type) table ["."field] [where(filters)]
-    // Groups: 1=type, 2=table(quoted), 3=table(unquoted), 4=field(quoted), 5=field(unquoted), 6=where
-    //
-    // The table name alternation (quoted OR bare identifier) mirrors the field name
-    // alternation next to it — a single-word AL object name (e.g. `PageworksDSFieldConfigLine`)
-    // is legal WITHOUT quotes, exactly like a single-word field name already was handled.
-    // Before this fix the table name was quoted-only: `lookup(PageworksDSFieldConfigLine.
-    // TargetTableNo where(...))` (a genuine, common AL pattern — no spaces in the name, so no
-    // quotes needed) silently failed this regex, TryParseCalcFormula returned null, and the
-    // FlowField's NCLMetaField.CalculationFormula was left at EmptyFormula — CalcFields()
-    // became a silent no-op, leaving the field at its type default (e.g. 0) instead of the
-    // real looked-up value. Verified via ilspycmd/live trace: FlowFieldPatches.
-    // RecordImpl_CalcFieldsAsync_3 logged "formula == EmptyFormula, skipping" for exactly this
-    // field, and a runner-extras repro with a matching unquoted table name reproduced a
-    // FlowField silently resolving to 0 instead of the seeded value.
-    private static readonly Regex RxCalcFormulaParts = new(
-        @"^\s*(count|sum|lookup|exist|average|min|max)\s*\(\s*(?:""([^""]+)""|([A-Za-z_]\w*))(?:\.(?:""([^""]+)""|([A-Za-z_]\w*)))?\s*(?:where\s*\((.+)\))?\s*\)\s*$",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.Singleline);
-
-    // Captures field-reference filter: "SourceField"|Unquoted = field("ParentField"|Unquoted)
-    // Groups: 1=srcField(quoted), 2=srcField(unquoted), 3=parentField(quoted), 4=parentField(unquoted)
-    private static readonly Regex RxCalcFilter = new(
-        @"(?:""([^""]+)""|([A-Za-z_]\w*))\s*=\s*field\s*\(\s*(?:""([^""]+)""|([A-Za-z_]\w*))\s*\)",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private static void ParseAllSources()
     {
@@ -173,13 +211,8 @@ public static partial class RecordPatches
         bool isFlowField = PropIs(props, "FieldClass", "FlowField");
 
         ParsedCalcFormula? calcFormula = null;
-        if (isFlowField && PropValue(props, "CalcFormula") is { } formulaNode)
-        {
-            // Hand TryParseCalcFormula the formula's own node text in the shape its regex
-            // expects. The text now comes from the tree, so comments and neighbouring
-            // properties can no longer bleed into it.
-            calcFormula = TryParseCalcFormula($"CalcFormula = {formulaNode};");
-        }
+        if (isFlowField)
+            calcFormula = CalcFormulaFrom(PropValue(props, "CalcFormula"));
 
         // Option-type fields: OptionMembers is the comma-separated list BC's
         // NCLOptionMetadata constructor expects. Tokens are trimmed; empty entries are kept
@@ -347,29 +380,92 @@ public static partial class RecordPatches
         }
     }
 
-    internal static ParsedCalcFormula? TryParseCalcFormula(string fieldBody)
+    /// <summary>
+    /// Builds a <see cref="ParsedCalcFormula"/> from a CalcFormula property value node.
+    /// <para>AL has two shapes and the parser gives them two node types:
+    /// <c>sum/average/min/max/lookup</c> carry a qualified <c>Table.Field</c>
+    /// (<see cref="NavSyntax.FieldCalculationFormulaSyntax"/>), while <c>count/exist</c> carry a
+    /// table alone (<see cref="NavSyntax.TableCalculationFormulaSyntax"/>) and no field.</para>
+    /// </summary>
+    private static ParsedCalcFormula? CalcFormulaFrom(NavSyntax.PropertyValueSyntax? value)
     {
-        var m = RxCalcFormula.Match(fieldBody);
-        if (!m.Success) return null;
-        var formulaText = m.Groups[1].Value.Trim();
-        var pm = RxCalcFormulaParts.Match(formulaText);
-        if (!pm.Success) return null;
+        string formulaType;
+        string sourceTableName;
+        string? sourceFieldName;
+        NavSyntax.WhereExpressionSyntax? where;
+        string signText;
 
-        var formulaType = pm.Groups[1].Value;
-        var sourceTableName = pm.Groups[2].Success && pm.Groups[2].Length > 0 ? pm.Groups[2].Value
-                            : pm.Groups[3].Value;
-        var sourceFieldName = pm.Groups[4].Success && pm.Groups[4].Length > 0 ? pm.Groups[4].Value
-                            : pm.Groups[5].Success && pm.Groups[5].Length > 0 ? pm.Groups[5].Value : null;
-        var whereText = pm.Groups[6].Success ? pm.Groups[6].Value : "";
+        switch (value)
+        {
+            case NavSyntax.FieldCalculationFormulaSyntax f:
+                formulaType = f.FormulaKeywordToken.ValueText;
+                sourceTableName = Unquote(f.Field?.Left?.ToString()?.Trim() ?? "");
+                sourceFieldName = f.Field?.Right == null ? null : Unquote(f.Field.Right.ToString().Trim());
+                where = f.WhereExpression;
+                signText = f.Sign.ValueText ?? "";
+                break;
+            case NavSyntax.TableCalculationFormulaSyntax t:
+                formulaType = t.FormulaKeywordToken.ValueText;
+                sourceTableName = Unquote(t.Table?.ToString()?.Trim() ?? "");
+                sourceFieldName = null; // count/exist have no field part
+                where = t.WhereExpression;
+                signText = t.Sign.ValueText ?? "";
+                break;
+            default:
+                return null;
+        }
 
+        // A SIGNED formula (`-sum(...)`) is refused rather than parsed. ParsedCalcFormula has
+        // nowhere to carry the sign, so returning it would hand NclMetaTableBuilder a POSITIVE
+        // formula for a negative one — a wrong value, silently, which is the exact failure class
+        // this migration exists to remove. Returning null keeps the pre-existing behaviour (the
+        // old regex was anchored at the formula keyword, so a leading sign never matched and the
+        // FlowField was left at EmptyFormula). Supporting it means adding a sign to
+        // ParsedCalcFormula and honouring it downstream — its own change, with its own test.
+        if (signText.Length > 0) return null;
+
+        if (string.IsNullOrEmpty(sourceTableName)) return null;
+
+        // Only `X = field(Y)` conditions become filters. The parser gives each condition shape
+        // its own node type, so `const(...)` and `filter(...)` conditions are excluded by type
+        // rather than by a pattern that happened not to match them — same set as before, but now
+        // deliberately. (Honouring const/filter conditions would change which rows a FlowField
+        // sums; that is a semantic change needing real-BC validation, not a parser refactor.)
         var filters = new List<ParsedCalcFilter>();
-        foreach (Match fm in RxCalcFilter.Matches(whereText))
-            filters.Add(new ParsedCalcFilter(
-                fm.Groups[1].Success && fm.Groups[1].Length > 0 ? fm.Groups[1].Value : fm.Groups[2].Value,
-                fm.Groups[3].Success && fm.Groups[3].Length > 0 ? fm.Groups[3].Value : fm.Groups[4].Value));
+        if (where?.Filter != null)
+        {
+            foreach (var cond in where.Filter.Conditions)
+            {
+                if (cond is not NavSyntax.SimpleFieldExpressionSyntax sfe) continue;
+                filters.Add(new ParsedCalcFilter(
+                    Unquote(sfe.LeftHandSide?.ToString()?.Trim() ?? ""),
+                    Unquote(sfe.Identifier?.ToString()?.Trim() ?? "")));
+            }
+        }
 
         Console.Error.WriteLine($"[CalcFormula] parsed {sourceTableName}.{sourceFieldName ?? "*"} type={formulaType} filters={filters.Count}");
         return new ParsedCalcFormula(formulaType, sourceTableName, sourceFieldName, filters);
+    }
+
+    /// <summary>
+    /// Text overload, kept for <c>BcAppSymbolCache</c>, which reconstructs a CalcFormula from
+    /// <c>SymbolReference.json</c> and so has text rather than a node. The text is wrapped in a
+    /// minimal table and run through the same parser, so both callers share one implementation.
+    /// </summary>
+    internal static ParsedCalcFormula? TryParseCalcFormula(string fieldBody)
+    {
+        if (string.IsNullOrWhiteSpace(fieldBody)) return null;
+        // The wrapper id is irrelevant — nothing is registered, the tree is read and dropped.
+        var wrapped = "table 50000 __CalcFormulaProbe { fields { field(1; __F; Decimal) { "
+                    + fieldBody + " } } }";
+        foreach (var obj in ParseAlObjects(wrapped))
+        {
+            if (obj is not NavSyntax.TableSyntax table || table.Fields == null) continue;
+            foreach (var f in table.Fields.Fields)
+                if (CalcFormulaFrom(PropValue(f.PropertyList, "CalcFormula")) is { } parsed)
+                    return parsed;
+        }
+        return null;
     }
 }
 

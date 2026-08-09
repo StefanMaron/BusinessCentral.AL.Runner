@@ -14,34 +14,27 @@
 //   a registry fed from there would be empty on every warm run. `_sourceDirs`
 //   is registered on every run, warm or cold.
 //
-//   Same regex-over-raw-text strategy (and same limitations) as the sibling
-//   parsers in RecordPatches.Al*Parser.cs. Declarations are anchored to the
-//   start of a line so an `Codeunit "X"` variable declaration or a
-//   `Codeunit.Run(...)` call site cannot be mistaken for an object declaration.
-using System.Text.RegularExpressions;
+//   Parsed from BC's own AL syntax tree (#1696). The old implementation anchored
+//   each declaration regex to the start of a line so that a `Codeunit "X"` variable
+//   declaration or a `Codeunit.Run(...)` call site could not be mistaken for an
+//   object declaration; an object declaration is now a node, so that whole class of
+//   confusion — along with declarations inside comments — cannot arise.
+using NavSyntax = Microsoft.Dynamics.Nav.CodeAnalysis.Syntax;
 
 namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
-    // Object kinds handled here. Everything in this list is `<keyword> <id> <name>`;
-    // AL kinds with no object id (interface, controladdin, profile) are excluded
-    // because AllObj is keyed by (Object Type, Object ID) and a synthetic id would
-    // be a fabrication.
-    private static readonly (string Kind, Regex Rx)[] RxObjectDecls =
+    // Object kinds handled here — the ones NOT covered by the table/page/report/query/
+    // xmlport parsers. AL kinds with no object id (interface, controladdin, profile) are
+    // absent for the original reason: AllObj is keyed by (Object Type, Object ID) and a
+    // synthetic id would be a fabrication. They are also, independently, the exact set that
+    // does not derive from ApplicationObjectSyntax and so has no ObjectId to read.
+    private static readonly HashSet<string> ObjectDeclKinds = new(StringComparer.Ordinal)
     {
-        ("Codeunit",              MakeDeclRegex("codeunit")),
-        ("Enum",                  MakeDeclRegex("enum")),
-        ("EnumExtension",         MakeDeclRegex("enumextension")),
-        ("PageExtension",         MakeDeclRegex("pageextension")),
-        ("TableExtension",        MakeDeclRegex("tableextension")),
-        ("PermissionSet",         MakeDeclRegex("permissionset")),
-        ("PermissionSetExtension",MakeDeclRegex("permissionsetextension")),
+        "Codeunit", "Enum", "EnumExtension", "PageExtension",
+        "TableExtension", "PermissionSet", "PermissionSetExtension",
     };
-
-    private static Regex MakeDeclRegex(string keyword) => new(
-        @"^\s*" + keyword + @"\s+(\d+)\s+(?:""([^""]+)""|([A-Za-z_]\w*))",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.Multiline);
 
     // (kind, id) → declaration. Keyed per kind because AL id namespaces are
     // per-object-type (codeunit 50100 and enum 50100 may coexist).
@@ -59,20 +52,15 @@ public static partial class RecordPatches
 
     private static void TryParseObjectDeclFile(string text)
     {
-        text = AlCommentBlanker.Blank(text); // see AlPageParser — same reason (#1690/#1697)
-
-        foreach (var (kind, rx) in RxObjectDecls)
+        foreach (var obj in ParseAlObjects(text))
         {
-            foreach (Match m in rx.Matches(text))
-            {
-                if (!int.TryParse(m.Groups[1].Value, out int id)) continue;
-                var name = m.Groups[2].Success ? m.Groups[2].Value : m.Groups[3].Value;
-                // `enumextension`/`permissionsetextension` also match the shorter
-                // `enum`/`permissionset` keyword regexes' prefix? No — the shorter
-                // regex requires whitespace + digits right after the keyword, which
-                // "extension" does not satisfy. So no cross-kind contamination.
-                _parsedObjectDecls[(kind, id)] = new ParsedAlObjectDecl(kind, id, name);
-            }
+            // Kind comes from the node type, so the old worry about `enum` matching the
+            // prefix of `enumextension` is structurally gone: they are distinct node types.
+            if (AlObjectKindName(obj) is not string kind) continue;
+            if (!ObjectDeclKinds.Contains(kind)) continue;
+            if (ObjectIdOf(obj) is not int id) continue;
+            var name = IdentText((obj as NavSyntax.ObjectSyntax)?.Name);
+            _parsedObjectDecls[(kind, id)] = new ParsedAlObjectDecl(kind, id, name);
         }
     }
 

@@ -1,10 +1,14 @@
 // SiblingParserCommentTests — RED→GREEN guard for #1697.
 //
-// #1690 fixed comment-shadowed properties in the TABLE parser only: AlCommentBlanker was
-// applied at the top of TryParseTableFile / TryParseTableExtensionFile and nowhere else.
-// The page/report/query/xmlport/object-decl/object-caption parsers read raw text the same
-// way and have the same exposure — an ordinary comment that happens to name a property is
-// matched AS that property.
+// #1690 fixed comment-shadowed properties in the TABLE parser only, by blanking comments out
+// of the raw text before the regexes ran. The page/report/query/xmlport/object-decl/
+// object-caption parsers read raw text the same way and had the same exposure — an ordinary
+// comment that happens to name a property was matched AS that property.
+//
+// All seven parsers now run on BC's own AL syntax tree (#1696), where a comment is trivia and
+// never reaches a property value, so the comment blanker is gone entirely. These tests stay:
+// they pin the OBSERVABLE behaviour (via the accessors the runtime calls), not the mechanism,
+// and they are exactly what proves the tree upholds what the blanker used to.
 //
 // These are quieter than #1690's failure, which is what makes them worth pinning: nothing
 // throws. `SourceTable` rebinds the page to a different table and `InsertAllowed` flips a
