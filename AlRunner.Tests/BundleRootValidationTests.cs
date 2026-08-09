@@ -86,11 +86,28 @@ public sealed class BundleRootValidationTests : IDisposable
     // ── Positive direction: the missing path must be named, and the exit code must be
     // the documented 2 — never 134 and never a raw .NET stack trace. ──────────────
 
+    /// <summary>
+    /// Builds the issue's exact shape — a doubled prefix under an existing root — inside
+    /// this test's temp directory, and returns (existingRoot, missingPath).
+    /// <para>Deliberately NOT the literal repo path `tests/al-language/tests/al-language`
+    /// from the issue: the corpus really does live at that nested path, so once the
+    /// submodule is checked out (as it is in CI, and in any `--recurse-submodules` clone)
+    /// that directory EXISTS and the runner runs it. A test asserting "no such directory"
+    /// against it passes only where the submodule is missing — which is how it was written,
+    /// in a worktree that had no submodule. The shape is what matters, not the name.</para>
+    /// </summary>
+    private (string ExistingRoot, string Missing) DoubledPrefix()
+    {
+        var existingRoot = Path.Combine(_root, "tests", "al-language");
+        Directory.CreateDirectory(existingRoot);
+        return (existingRoot, Path.Combine(existingRoot, "tests", "al-language"));
+    }
+
     [Fact]
     public void NonexistentBundlePath_FailsLoudlyWithExitCode2()
     {
         // Exactly the shape from the issue: a doubled prefix under an existing root.
-        const string bad = "tests/al-language/tests/al-language";
+        var (_, bad) = DoubledPrefix();
         var (exit, stdout, stderr) = RunCli(bad);
         var all = stdout + stderr;
 
@@ -107,11 +124,12 @@ public sealed class BundleRootValidationTests : IDisposable
     [Fact]
     public void NonexistentBundlePath_NamesDeepestExistingParent()
     {
-        var (_, stdout, stderr) = RunCli("tests/al-language/tests/al-language");
+        // The line that makes a doubled prefix obvious: the user sees where the path
+        // stopped being real. See DoubledPrefix() for why this is a temp tree.
+        var (existingRoot, bad) = DoubledPrefix();
+        var (_, stdout, stderr) = RunCli(bad);
         var all = stdout + stderr;
-        Assert.Contains(
-            $"deepest existing parent: {Path.Combine(RepoRoot, "tests", "al-language")}",
-            all);
+        Assert.Contains($"deepest existing parent: {existingRoot}", all);
     }
 
     // ── Negative direction: a valid path must be completely unaffected. ───────────
