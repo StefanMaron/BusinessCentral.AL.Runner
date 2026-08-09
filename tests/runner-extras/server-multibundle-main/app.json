@@ -1,0 +1,25 @@
+{
+  "id": "67ae2d9c-efca-4003-a9d8-81c45532790f",
+  "name": "Server MultiBundle Main",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Main test app: CRUDs a table defined in the sibling dependency app.",
+  "description": "Cross-bundle half of server-multibundle. Every test performs record operations on 'SMB Item', which is defined in the DEPENDENCY app's AL source — so the run only works when the dep bundle's parsed table schema is still registered when this bundle executes. This is the regression fixture for the server-mode per-bundle reset defect, and the fixture the server-mode integration script drives over --server.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "dd5ce849-299f-40fd-9bce-40c1782276e9",
+      "name": "Server MultiBundle Dep",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [ { "from": 64350, "to": 64399 } ],
+  "runtime": "14.0",
+  "features": []
+}

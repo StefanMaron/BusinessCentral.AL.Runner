@@ -1980,6 +1980,16 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     List<ServerRunResult> RunAllBundlesForServer(string[] sourcePaths, string[]? requestPackagePaths,
         Func<Assembly, IReadOnlyList<TestResult>> runStep)
     {
+        // Drop the previous REQUEST's bundle-derived caches so a reloaded same-named
+        // bundle resolves the freshly-emitted Record/Codeunit types and starts with
+        // empty in-memory tables. Once per request, NOT per bundle: the CLI bucket
+        // loop never resets between bundles, so AddSourceDir accumulates across an
+        // app + test-app pair — resetting per bundle wiped the app bundle's parsed
+        // table schemas before the test bundle ran, and every Record op on an
+        // app-defined table died with "no NCLMetaTable for table N (AL source not
+        // parsed)" while the identical CLI invocation passed.
+        BcRuntime.ResetForNewBundleReload();
+
         if (sourcePaths.Length > 1)
         {
             var bundleList = sourcePaths.ToList();
@@ -2014,10 +2024,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     ServerRunResult RunBundleForServer(string bundleDir, string[]? requestPackagePaths,
         Func<Assembly, IReadOnlyList<TestResult>> runStep)
     {
-        // CRITICAL: drop the previous request's bundle-derived caches so a reloaded
-        // same-named bundle resolves the freshly-emitted Record/Codeunit types and
-        // starts with empty in-memory tables. See BcRuntime.ResetForNewBundleReload.
-        BcRuntime.ResetForNewBundleReload();
+        // Cache reset happens once per request in RunAllBundlesForServer, not here —
+        // see the comment there for why per-bundle resetting breaks sibling bundles.
 
         var bundleAbs = Path.GetFullPath(bundleDir);
         var bucketRoot = FindBucketRoot(bundleAbs) ?? bundleAbs;
@@ -2128,15 +2136,36 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         {
             IReadOnlyList<EmittedSource> sources;
             IReadOnlyList<string> alDiagnostics;
+            IReadOnlyList<string> excludedObjects;
             try
             {
                 var emitOutput = emitter.Emit(allPaths, moduleName);
                 sources = emitOutput.Sources;
                 alDiagnostics = emitOutput.Diagnostics;
+                excludedObjects = emitOutput.ExcludedObjects;
             }
             catch (Exception ex)
             {
                 return ServerRunResult.Failure(3, moduleName, $"EMIT-FAIL: {ex.Message.Split('\n')[0]}", fileHashes);
+            }
+            // An emit-retry exclusion means one or more AL objects are NOT in the
+            // compiled module, so any tests they declare silently vanish and the
+            // request looks green. Fail loudly with the same classification the CLI's
+            // bundled-mode EMIT-EXCLUDED guard uses (.claude/rules/loud-failures.md);
+            // without this the server path ran the surviving objects and reported
+            // exitCode 0 while e.g. a whole test codeunit was missing from the run.
+            if (excludedObjects.Count > 0)
+            {
+                var names = string.Join(", ", excludedObjects);
+                compileErrors.Add(
+                    $"EMIT-EXCLUDED: {excludedObjects.Count} object(s) dropped from the module — " +
+                    $"tests they declare are missing: [{names}]." +
+                    (alDiagnostics.Count > 0
+                        ? " The AL diagnostics that identified them follow."
+                        : " Re-run with --verbose for the AL diagnostics that identified them."));
+                foreach (var d in alDiagnostics) compileErrors.Add(d);
+                return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
+                    new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
             }
             if (sources.Count == 0)
             {
@@ -4599,7 +4628,25 @@ static IReadOnlyList<string> GetOrderedDepIds(
             bundlePkgDirs.Concat(packageCacheDirs).Distinct().ToList());
         var ordered = resolver.Resolve(roots);
         return ordered
-            .Select(d => $"{d.Manifest.AppId:N}:{d.Manifest.Version}")
+            // Id:Version alone is NOT a content identity: a sibling source app keeps
+            // its app.json version while its schema evolves during development, so a
+            // key without the winning .app's file stamp served the test bundle a
+            // stale compiled assembly after e.g. a field removal — a runtime
+            // NavNCLFieldNotFoundException where a fresh compile correctly fails.
+            // mtime+size (not a content hash) keeps big platform .apps cheap to
+            // stamp; the layered pre-pass only rewrites a synthesized sibling .app
+            // when its source actually changed, so stamps are stable across runs.
+            .Select(d =>
+            {
+                string stamp = "?";
+                try
+                {
+                    var fi = new FileInfo(d.AppPath);
+                    if (fi.Exists) stamp = $"{fi.LastWriteTimeUtc.Ticks}:{fi.Length}";
+                }
+                catch { /* unreadable path keys as "?" and simply cannot HIT */ }
+                return $"{d.Manifest.AppId:N}:{d.Manifest.Version}:{stamp}";
+            })
             .OrderBy(s => s, StringComparer.Ordinal)
             .ToList();
     }

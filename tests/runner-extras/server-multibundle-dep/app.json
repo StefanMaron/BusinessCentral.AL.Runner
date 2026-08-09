@@ -1,0 +1,18 @@
+{
+  "id": "dd5ce849-299f-40fd-9bce-40c1782276e9",
+  "name": "Server MultiBundle Dep",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Dependency app: defines the table the sibling test app CRUDs.",
+  "description": "Cross-bundle half of server-multibundle. Defines a plain table with no code of its own. The consuming test app performs record CRUD on it, so every NCLMetaTable for this table must come from THIS bundle's parsed AL source — the exact state that server mode's per-bundle cache reset used to wipe before the sibling test bundle ran.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [ { "from": 64300, "to": 64349 } ],
+  "runtime": "14.0",
+  "features": []
+}

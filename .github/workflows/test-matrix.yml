@@ -217,6 +217,19 @@ jobs:
               --strict \
               --out runner-extras-results.json
 
+      - name: Server-mode integration (multi-bundle contract)
+        # always() for the same reason as runner-extras: an independent gate.
+        # Drives a real --server daemon over stdin/stdout NDJSON against the
+        # server-multibundle fixture pair and asserts the app + test-app request
+        # shape works warm: dep-table CRUD green, then a dep schema edit MISSes
+        # the AL-output cache and fails loudly (exitCode 3, EMIT-EXCLUDED) —
+        # never a stale-cache runtime failure or a silently-green shrunken run.
+        if: ${{ always() && hashFiles('scripts/tests/server-mode-test.sh') != '' }}
+        run: |
+          scripts/tests/server-mode-test.sh \
+              --package-cache "$HOME/.al-runner/platform-apps" \
+              --package-cache "$HOME/.al-runner/test-apps"
+
       - name: Upload result artifacts
         if: always()
         uses: actions/upload-artifact@v4
