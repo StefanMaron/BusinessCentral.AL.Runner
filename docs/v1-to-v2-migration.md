@@ -108,9 +108,14 @@ The full ruleset for the new layout lives in
 git fetch
 git checkout main
 git submodule update --init --recursive
-dotnet build AlRunner.slnx -c Release
+dotnet build AlRunner.slnx -c Release -p:AllowBcArtifactDownload=true
 dotnet run --project AlRunner -c Release -- tests/al-language/tests/al-language
 ```
+
+v2 pins a different `_BCVersion` than v1, so the first v2 build usually needs artifacts
+your v1 checkout does not have. `-p:AllowBcArtifactDownload=true` permits that one fetch;
+without it the build fails loud with the explicit download command, because the runner
+never downloads implicitly. Drop the flag once the DLLs are provisioned.
 
 If you install via NuGet:
 

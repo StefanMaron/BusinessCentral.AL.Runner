@@ -49,11 +49,32 @@ git submodule update --init --recursive
 
 ### Build
 
+The build references the BC service-tier DLLs, which are not in the repo. The runner
+**never auto-downloads** them: on a fresh clone the build fails loud, naming the exact
+download command. Provision them once, either as part of the build:
+
+```bash
+dotnet build AlRunner.slnx -c Release -p:AllowBcArtifactDownload=true
+```
+
+or explicitly, ahead of the build:
+
+```bash
+dotnet run --project tools/DownloadArtifacts -- service-tier <version> <artifact-dir>
+```
+
+The version is `_BCVersion` in `AlRunner/AlRunner.csproj`, and the default artifact dir is
+`<user-home>/.local/share/al-runner/artifacts/<version>` (that same layout on Windows, under
+`%USERPROFILE%`). You do not have to look either up — the failing build prints the whole
+command, filled in, ready to paste. Set `-p:ServiceTierPath=...` to point at an artifact dir
+you already have instead.
+
+Once the DLLs are present neither provisioning target runs, and the plain build is all
+you need from then on:
+
 ```bash
 dotnet build AlRunner.slnx -c Release
 ```
-
-The build target auto-downloads the BC service-tier DLLs and the AL compiler the first time. No manual setup.
 
 ### Run the al-language corpus
 

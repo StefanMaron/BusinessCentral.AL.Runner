@@ -146,9 +146,14 @@ This dispatches the single-app compile-to-DLL path. The output DLL is bit-compat
 
 ```bash
 git clone --recurse-submodules https://github.com/StefanMaron/BusinessCentral.AL.Runner
-dotnet build AlRunner.slnx -c Release
+dotnet build AlRunner.slnx -c Release -p:AllowBcArtifactDownload=true
 dotnet run --project AlRunner -c Release -- tests/al-language/tests/al-language
 ```
+
+`-p:AllowBcArtifactDownload=true` is needed only until the BC service-tier DLLs are
+present — the runner never downloads them implicitly, so without the opt-in a fresh
+clone fails the build with the explicit download command. Later builds can drop it.
+See [CONTRIBUTING.md](CONTRIBUTING.md#dev-loop) for provisioning them as a separate step.
 
 ## CLI Flags
 

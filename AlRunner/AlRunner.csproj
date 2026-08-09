@@ -284,8 +284,10 @@
        version's artifact dir (BcArtifacts.ServiceTierDir) on demand — so the runner
        serves whichever minor the target project actually needs, from BC's own shipped
        copy, instead of a build-time-pinned one. One engine binary spans a major's minors.
-       (The 5 BC references themselves — Ncl/Types/Common/Language/CodeAnalysis — stay in
-       bin: those ARE the engine and are covered by the MAJOR-only consistency contract.)
+       (Ncl/Types/Common/Language stay in bin: those ARE the engine and are covered by the
+       MAJOR-only consistency contract. CodeAnalysis is the exception — MS stamps it with a
+       full 4-part version PER BC BUILD, so it is stripped too and served from the selected
+       artifact dir like the closure above; see Directory.Build.targets and #1700.)
 
        Cross-MAJOR still needs a matching engine build; this only relaxes the minors. -->
   <!-- StripBcAppClosureFromCopyLocal moved to the repo-root Directory.Build.targets so it
