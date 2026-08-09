@@ -18,6 +18,12 @@
 //
 // DisableParallelization makes this collection run on its own, so the parser tests get the
 // static dictionaries to themselves for the duration.
+//
+// This is a STOPGAP, and it only works for classes that remember to join. #1712 tracks the real
+// fix — make the parse entry points RETURN their result instead of publishing into a process-wide
+// dictionary — which removes the class of bug rather than fencing it off. Until then,
+// ParserStaticsIsolationGuardTests fails the build if a test class reaches the parse statics
+// without carrying [Collection(RecordPatchesSerialCollection.Name)].
 using Xunit;
 
 namespace AlRunner.Tests;
