@@ -1,6 +1,13 @@
 // AlCommentBlanker — blanks out AL comments in raw .al source before the regex-based
 // parsers run over it.
 //
+// SCOPE NOTE (#1696): the TABLE parser no longer needs this. It parses with BC's own AL
+// parser, where comments are trivia and never reach a property value in the first place.
+// The worked example below is kept because it is still the clearest statement of the bug
+// class — it just describes the table parser as it WAS. The five sibling parsers
+// (page/report/query/xmlport/object-decl/caption) are still regex-based and still depend on
+// this; it comes out when they migrate too (#1697).
+//
 // The parsers in RecordPatches.Al*Parser.cs match property names with plain regexes
 // (`\bInitValue\s*=\s*([^;]+);` and friends) against raw file text. A comment is just text
 // to a regex, so a perfectly ordinary explanatory comment gets read as a property (#1690):

@@ -1,91 +1,93 @@
-// RecordPatches.AlSourceParser — parses AL `table` declarations into ParsedTable
-// records keyed by table ID. The output is consumed by NclMetaTableBuilder to
+// RecordPatches.AlSourceParser — parses AL `table` / `tableextension` declarations into
+// ParsedTable records keyed by table ID. The output is consumed by NclMetaTableBuilder to
 // produce real NCLMetaTable instances at runtime.
 //
-// The parser uses regex over raw .al text rather than a real AL syntax tree —
-// good enough for the spike since we only need table layout (IDs, fields, PK).
+// Syntax-level extraction runs on Microsoft.Dynamics.Nav.CodeAnalysis' own AL parser — the
+// same front end BcCompiler.Emit already runs over the very same files (#1696). It replaced
+// a set of regexes over raw .al text whose failure mode was a SILENT WRONG VALUE rather than
+// a crash: `[^;]+` could not cross a semicolon inside a string literal (`InitValue =
+// 'Open; pending review'` captured `'Open`), a comment mentioning a property name was read
+// as that property (#1690), quoting was captured inconsistently (#1674), and object
+// boundaries were guessed by slicing between regex matches. A syntax tree answers all four
+// structurally: comments are trivia and simply are not in it.
+//
+// `SyntaxTree.ParseObjectText` needs only a ParseOptions — no Compilation, no reference
+// closure — so this works on every input the parser takes: real files, AL extracted from
+// dependency .app archives, and the table text NclMetaTableBuilder synthesizes.
+//
+// STILL REGEX: the CalcFormula sub-parse below. It is fed the formula's own syntax node text
+// (so it no longer sees comments or neighbouring properties), but the structural mapping onto
+// QualifiedNameSyntax / WhereExpressionSyntax is deliberately deferred — #1696 orders it last,
+// and RecordPatches.TryParseCalcFormula has an external caller in BcAppSymbolCache that hands
+// it synthesized text rather than a node.
 using System.Text.RegularExpressions;
+using NavCA = Microsoft.Dynamics.Nav.CodeAnalysis;
+using NavSyntax = Microsoft.Dynamics.Nav.CodeAnalysis.Syntax;
 
 namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
-    private static readonly Regex RxTable = new(
-        @"\btable\s+(\d+)\s+(?:""([^""]+)""|([A-Za-z_]\w*))[^{]*?\{",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    // Matches BcCompiler.Emit's options so this parse sees the same source the emit does —
+    // notably the CLEANSCHEMA1..25 preprocessor symbols, which gate real field declarations
+    // in the BaseApp. DocumentationMode.None: doc comments are trivia we never read.
+    private static readonly NavCA.ParseOptions AlParseOptions = new(
+        runtimeVersion: null!,
+        preprocessorSymbols: Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}"),
+        documentationMode: NavCA.DocumentationMode.None);
 
-    private static readonly Regex RxTableExtension = new(
-        @"\btableextension\s+(\d+)\s+(?:""([^""]+)""|([A-Za-z_]\w*))\s+extends\s+(?:""([^""]+)""|([A-Za-z_]\w*))[^{]*?\{",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.Singleline);
-
-    private static readonly Regex RxField = new(
-        @"\bfield\s*\(\s*(\d+)\s*;\s*(?:""([^""]+)""|([A-Za-z_]\w*))\s*;\s*([^)]+?)\s*\)",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    // Group 1 = key name, group 2 = comma-separated field list.
-    private static readonly Regex RxKey = new(
-        @"\bkey\s*\(\s*([^;]+)\s*;\s*([^)]+)\)",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    private static readonly Regex RxFieldClass = new(
-        @"\bFieldClass\s*=\s*FlowField\b",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    private static readonly Regex RxTableTypeTemporary = new(
-        @"\bTableType\s*=\s*Temporary\b",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    // DataPerCompany = false; — AL's default is TRUE, so only the explicit opt-out is
-    // parsed. MetaTable's own ctor default for isDataPerCompany is false, which is the
-    // opposite of AL's, and BC's RecordImplementation.ChangeCompany returns true
-    // immediately for a table that is not per-company.
-    private static readonly Regex RxDataPerCompanyFalse = new(
-        @"\bDataPerCompany\s*=\s*false\s*;",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    // OptionMembers = A,B,C; — captures the comma-joined list (whitespace trimmed
-    // per-token by the consumer). Used to populate MetaField.optionString so BC's
-    // NCLOptionMetadataNavTypeField (Field.Type field 5 of table 2000000041 and
-    // similar specialised subclasses) gets the right count.
-    private static readonly Regex RxOptionMembers = new(
-        @"\bOptionMembers\s*=\s*([^;]+);",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    // InitValue = <al-expression>; — captures the raw AL expression text up to the
-    // terminating semicolon. Used to populate MetaField.initValue (string) which BC
-    // stores as NCLMetaField.initialValueText and evaluates via
-    // ALSystemVariable.EvaluateIntoNavValue inside the NCLMetaField.InitValue
-    // getter at Init() time.
-    // Caption = 'text'; — the field's declared caption. Without it BC's
-    // NCLMetaField.CreateCaptionStrings falls back to the field NAME, so
-    // `Rec.FieldCaption(n)` and the Field virtual table's "Field Caption" both answer
-    // `NewColumnName` where AL declared `New Column Name`. AL escapes an embedded quote
-    // by doubling it, so the literal runs to the last quote before the semicolon.
-    private static readonly Regex RxCaption = new(
-        @"\bCaption\s*=\s*'((?:[^']|'')*)'\s*(?:,[^;]*)?;",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    // Field type text still yields its length by pattern (`Code[10]` → 10). The type is one
+    // token's text with no nesting, so there is nothing structural for a tree to add here.
+    private static readonly Regex RxTypeLength = new(@"\[(\d+)\]", RegexOptions.Compiled);
 
     /// <summary>
-    /// The <c>Caption = '...'</c> declared on a field body, or null when it declares none —
-    /// in which case BC's own field-name fallback is the correct answer and must stand.
-    /// Doubled single quotes are AL's escape for a literal quote.
+    /// Identifiers come off the tree with AL's quoting intact — <c>"Entry No."</c>, not
+    /// <c>Entry No.</c>. Every consumer (key resolution, tableextension merge, metatable
+    /// lookup) matches on the bare name, so the quotes come off exactly once, here.
+    /// (<c>Unquote</c> itself lives in RecordPatches.NclMetaQueryBuilder.cs — same partial
+    /// class, same rule.)
     /// </summary>
-    private static string? ParseCaption(string? fieldBody)
+    private static string IdentText(NavSyntax.IdentifierNameSyntax? id) =>
+        id == null ? "" : Unquote(id.Identifier.ValueText ?? id.Identifier.Text ?? "");
+
+    /// <summary>
+    /// The caption literal declared by <c>Caption = 'text'</c>, or null when the field
+    /// declares none — in which case BC's own field-name fallback is the correct answer and
+    /// must stand.
+    /// <para>Only the LABEL LITERAL is the caption. A label may carry trailing parts
+    /// (<c>Caption = 'It''s on', Comment='x';</c>) and the property value node's text spans
+    /// all of them, so reading the node wholesale would append <c>, Comment='x'</c> to the
+    /// caption. <see cref="NavSyntax.LabelSyntax.LabelText"/> is just the literal.
+    /// Doubled single quotes are AL's escape for an embedded quote.</para>
+    /// </summary>
+    private static string? CaptionFrom(NavSyntax.PropertyValueSyntax? value)
     {
-        if (string.IsNullOrEmpty(fieldBody)) return null;
-        var m = RxCaption.Match(fieldBody);
-        return m.Success ? m.Groups[1].Value.Replace("''", "'") : null;
+        if (value is not NavSyntax.LabelPropertyValueSyntax label) return null;
+        var text = label.Value?.LabelText?.ToString();
+        if (string.IsNullOrEmpty(text)) return null;
+        if (text.Length >= 2 && text[0] == '\'' && text[^1] == '\'') text = text[1..^1];
+        return text.Replace("''", "'");
     }
 
-    private static readonly Regex RxInitValue = new(
-        @"\bInitValue\s*=\s*([^;]+);",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    /// <summary>Property lookup by AL name, case-insensitive as AL itself is.</summary>
+    private static NavSyntax.PropertyValueSyntax? PropValue(
+        NavSyntax.PropertyListSyntax? list, string name)
+    {
+        if (list == null) return null;
+        // Properties is a list of PropertySyntaxOrEmpty: a stray `;` in a property list is
+        // legal AL and parses as an empty entry, which simply has no name to match.
+        foreach (var entry in list.Properties)
+        {
+            if (entry is not NavSyntax.PropertySyntax p) continue;
+            if (string.Equals(p.Name?.Identifier.ValueText, name, StringComparison.OrdinalIgnoreCase))
+                return p.Value;
+        }
+        return null;
+    }
 
-    // AutoIncrement = true; — detect on PK field bodies so we can wire up autoincrement
-    // semantics in the NCLMetaTable.
-    private static readonly Regex RxAutoIncrement = new(
-        @"\bAutoIncrement\s*=\s*true\b",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static bool PropIs(NavSyntax.PropertyListSyntax? list, string name, string expected) =>
+        string.Equals(PropValue(list, name)?.ToString()?.Trim(), expected,
+            StringComparison.OrdinalIgnoreCase);
 
     private static readonly Regex RxCalcFormula = new(
         @"\bCalcFormula\s*=\s*([^;]+)\s*;",
@@ -130,171 +132,156 @@ public static partial class RecordPatches
         }
     }
 
+    /// <summary>
+    /// Parses every AL object in <paramref name="text"/> with BC's own parser and returns the
+    /// object declarations. Never throws: this is fed arbitrary .al text — pages, codeunits,
+    /// AL sliced out of dependency .app archives, and synthesized table text — and a parse it
+    /// cannot make sense of must leave the caller's state untouched, not break the run.
+    /// Diagnostics are ignored on purpose: a file that fails to compile for an unrelated
+    /// reason still yields a usable table declaration, which is what the regexes did too.
+    /// </summary>
+    private static IReadOnlyList<NavCA.SyntaxNode> ParseAlObjects(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return [];
+        try
+        {
+            var tree = NavSyntax.SyntaxTree.ParseObjectText(
+                text, path: "", encoding: null!, AlParseOptions, default);
+            if (tree.GetRoot() is not NavSyntax.CompilationUnitSyntax root) return [];
+            return root.ChildNodes().ToList();
+        }
+        catch
+        {
+            // A malformed input is not a runner gap — the AL simply is not parseable, and the
+            // caller's contract is "extract what you can". Callers that need a table and do
+            // not get one already report that themselves ("AL source not parsed").
+            return [];
+        }
+    }
+
+    /// <summary>Builds a <see cref="ParsedField"/> from one <c>field(...)</c> declaration.</summary>
+    private static ParsedField? ParseFieldSyntax(NavSyntax.FieldSyntax f, bool tableLevelExtras)
+    {
+        if (f.No.Value is not int fid) return null;
+        var fname = IdentText(f.Name);
+        var ftype = f.Type?.ToString()?.Trim() ?? "";
+        int length = 0;
+        var lm = RxTypeLength.Match(ftype);
+        if (lm.Success) int.TryParse(lm.Groups[1].Value, out length);
+
+        var props = f.PropertyList;
+        bool isFlowField = PropIs(props, "FieldClass", "FlowField");
+
+        ParsedCalcFormula? calcFormula = null;
+        if (isFlowField && PropValue(props, "CalcFormula") is { } formulaNode)
+        {
+            // Hand TryParseCalcFormula the formula's own node text in the shape its regex
+            // expects. The text now comes from the tree, so comments and neighbouring
+            // properties can no longer bleed into it.
+            calcFormula = TryParseCalcFormula($"CalcFormula = {formulaNode};");
+        }
+
+        // Option-type fields: OptionMembers is the comma-separated list BC's
+        // NCLOptionMetadata constructor expects. Tokens are trimmed; empty entries are kept
+        // (BC allows blank members, and #1674 depends on that).
+        string? optionMembers = null;
+        if (ftype.Equals("Option", StringComparison.OrdinalIgnoreCase)
+            && PropValue(props, "OptionMembers") is { } om)
+        {
+            optionMembers = string.Join(",", om.ToString().Split(',').Select(s => s.Trim()));
+        }
+
+        // InitValue is passed to MetaField.initValue as RAW AL TEXT, quotes and all, because
+        // NclMetaTableBuilder does the type-aware unquoting downstream — that split is what
+        // #1674's blank-enum fix depends on. Do not "clean" it here without deleting the
+        // stripping there in the same change.
+        string? initValueText = PropValue(props, "InitValue")?.ToString()?.Trim();
+
+        bool isAutoIncrement = tableLevelExtras && PropIs(props, "AutoIncrement", "true");
+        var caption = CaptionFrom(PropValue(props, "Caption"));
+
+        return new ParsedField(fid, fname, ftype, length, isFlowField, calcFormula,
+            tableLevelExtras ? optionMembers : null, initValueText, isAutoIncrement, caption);
+    }
+
     private static void TryParseTableFile(string text)
     {
-        // Comments first: every regex below matches property names as bare text, so a
-        // comment mentioning one is otherwise read as the property itself (#1690). Blanking
-        // is length-preserving, so the slice offsets computed below are unaffected. Done
-        // here rather than in ParseAllSources because TryParseTableFile has several callers
-        // (RecordPatches.Register, BcAppFallback's decompiled source) that each need it.
-        text = AlCommentBlanker.Blank(text);
-
-        // Multiple `table N "Name" { ... }` declarations may live in one .al file.
-        // Slice the text between consecutive RxTable matches so each table only sees
-        // its own fields/keys.
-        var tableMatches = RxTable.Matches(text);
-        if (tableMatches.Count == 0) return;
-
-        // Collect all tableextension start positions so we can use them as slice boundaries.
-        var extPositions = RxTableExtension.Matches(text).Cast<Match>().Select(m => m.Index).ToArray();
-
-        for (int i = 0; i < tableMatches.Count; i++)
+        foreach (var obj in ParseAlObjects(text))
         {
-            var tableMatch = tableMatches[i];
-            int sliceStart = tableMatch.Index;
-            int nextTableIdx = (i + 1 < tableMatches.Count) ? tableMatches[i + 1].Index : text.Length;
-            // Also stop at any tableextension that follows this table block.
-            int nextExtIdx = extPositions.Where(p => p > sliceStart).Append(text.Length).Min();
-            int sliceEnd = Math.Min(nextTableIdx, nextExtIdx);
-            var slice = text.Substring(sliceStart, sliceEnd - sliceStart);
-
-            if (!int.TryParse(tableMatch.Groups[1].Value, out int tableId)) continue;
-            var tableName = tableMatch.Groups[2].Success ? tableMatch.Groups[2].Value : tableMatch.Groups[3].Value;
+            if (obj is not NavSyntax.TableSyntax table) continue;
+            if (table.ObjectId?.Value.Value is not int tableId) continue;
+            var tableName = IdentText(table.Name);
 
             var fields = new List<ParsedField>();
-            foreach (Match fm in RxField.Matches(slice))
-            {
-                if (!int.TryParse(fm.Groups[1].Value, out int fid)) continue;
-                var fname = fm.Groups[2].Success ? fm.Groups[2].Value : fm.Groups[3].Value;
-                var ftype = fm.Groups[4].Value.Trim();
-                int length = 0;
-                var lm = Regex.Match(ftype, @"\[(\d+)\]");
-                if (lm.Success) int.TryParse(lm.Groups[1].Value, out length);
+            if (table.Fields != null)
+                foreach (var f in table.Fields.Fields)
+                    if (ParseFieldSyntax(f, tableLevelExtras: true) is { } pf)
+                        fields.Add(pf);
 
-                // Extract the field body block (e.g. { FieldClass = FlowField; CalcFormula = ...; })
-                var fieldBody = ExtractFieldBody(slice, fm.Index + fm.Length);
-                bool isFlowField = fieldBody != null && RxFieldClass.IsMatch(fieldBody);
-                ParsedCalcFormula? calcFormula = null;
-                if (isFlowField && fieldBody != null)
-                    calcFormula = TryParseCalcFormula(fieldBody);
-
-                // Option-type fields: capture OptionMembers if present. The comma-
-                // separated list is what BC's NCLOptionMetadata constructor expects.
-                string? optionMembers = null;
-                if (fieldBody != null && ftype.Trim().Equals("Option", StringComparison.OrdinalIgnoreCase))
-                {
-                    var omMatch = RxOptionMembers.Match(fieldBody);
-                    if (omMatch.Success)
-                    {
-                        // Trim each comma-separated token; keep empty entries (BC allows blanks).
-                        optionMembers = string.Join(",",
-                            omMatch.Groups[1].Value.Split(',').Select(s => s.Trim()));
-                    }
-                }
-
-                // InitValue: capture raw AL expression text for fields with explicit
-                // InitValue = X; — passed verbatim to MetaField.initValue (string), then
-                // BC's NCLMetaField.InitValue getter calls ALSystemVariable.EvaluateIntoNavValue
-                // on it at Init() time.
-                string? initValueText = null;
-                bool isAutoIncrement = false;
-                if (fieldBody != null)
-                {
-                    var ivMatch = RxInitValue.Match(fieldBody);
-                    if (ivMatch.Success)
-                        initValueText = ivMatch.Groups[1].Value.Trim();
-                    isAutoIncrement = RxAutoIncrement.IsMatch(fieldBody);
-                }
-
-                var caption = ParseCaption(fieldBody);
-
-                fields.Add(new ParsedField(fid, fname, ftype, length, isFlowField, calcFormula, optionMembers, initValueText, isAutoIncrement, caption));
-            }
-
-            // Parse first key as PK; all subsequent keys are secondary.
+            // First key is the PK; all subsequent keys are secondary.
             var pkFieldIds = new List<int>();
             var secondaryKeys = new List<ParsedKey>();
-            var allKeyMatches = RxKey.Matches(slice);
             bool firstKey = true;
-            foreach (Match keyMatch in allKeyMatches)
+            if (table.Keys != null)
             {
-                var keyName = keyMatch.Groups[1].Value.Trim().Trim('"');
-                var keyFieldNames = keyMatch.Groups[2].Value
-                    .Split(',')
-                    .Select(s => s.Trim().Trim('"'))
-                    .ToList();
-                var keyFieldIds = new List<int>();
-                foreach (var kn in keyFieldNames)
+                foreach (var k in table.Keys.Keys)
                 {
-                    var f = fields.FirstOrDefault(x =>
-                        string.Equals(x.FieldName, kn, StringComparison.OrdinalIgnoreCase));
-                    if (f != null) keyFieldIds.Add(f.FieldId);
-                }
-                if (firstKey)
-                {
-                    pkFieldIds.AddRange(keyFieldIds);
-                    firstKey = false;
-                }
-                else if (keyFieldIds.Count > 0)
-                {
-                    secondaryKeys.Add(new ParsedKey(keyName, keyFieldIds));
+                    var keyName = IdentText(k.Name);
+                    var keyFieldIds = new List<int>();
+                    foreach (var kf in k.Fields)
+                    {
+                        var kn = IdentText(kf as NavSyntax.IdentifierNameSyntax);
+                        var f = fields.FirstOrDefault(x =>
+                            string.Equals(x.FieldName, kn, StringComparison.OrdinalIgnoreCase));
+                        if (f != null) keyFieldIds.Add(f.FieldId);
+                    }
+                    if (firstKey)
+                    {
+                        pkFieldIds.AddRange(keyFieldIds);
+                        firstKey = false;
+                    }
+                    else if (keyFieldIds.Count > 0)
+                    {
+                        secondaryKeys.Add(new ParsedKey(keyName, keyFieldIds));
+                    }
                 }
             }
             // Fallback: first field is PK
             if (pkFieldIds.Count == 0 && fields.Count > 0)
                 pkFieldIds.Add(fields[0].FieldId);
 
-            var isTableTypeTemporary = RxTableTypeTemporary.IsMatch(slice);
-            var dataPerCompany = !RxDataPerCompanyFalse.IsMatch(slice);
-            _parsedTables[tableId] = new ParsedTable(tableId, tableName, fields, pkFieldIds, secondaryKeys,
-                isTableTypeTemporary, dataPerCompany);
+            // DataPerCompany: AL's default is TRUE, so only the explicit opt-out is parsed.
+            // MetaTable's own ctor default for isDataPerCompany is false — the opposite of
+            // AL's — and BC's RecordImplementation.ChangeCompany returns true immediately for
+            // a table that is not per-company.
+            var isTableTypeTemporary = PropIs(table.PropertyList, "TableType", "Temporary");
+            var dataPerCompany = !PropIs(table.PropertyList, "DataPerCompany", "false");
+            _parsedTables[tableId] = new ParsedTable(tableId, tableName, fields, pkFieldIds,
+                secondaryKeys, isTableTypeTemporary, dataPerCompany);
         }
     }
 
     private static void TryParseTableExtensionFile(string text)
     {
-        text = AlCommentBlanker.Blank(text); // see TryParseTableFile — same reason (#1690)
-
-        var extMatches = RxTableExtension.Matches(text);
-        if (extMatches.Count == 0) return;
-
-        for (int i = 0; i < extMatches.Count; i++)
+        foreach (var obj in ParseAlObjects(text))
         {
-            var m = extMatches[i];
-            if (!int.TryParse(m.Groups[1].Value, out int extId)) continue;
-            var extName = m.Groups[2].Success ? m.Groups[2].Value : m.Groups[3].Value;
-            var baseName = m.Groups[4].Success ? m.Groups[4].Value : m.Groups[5].Value;
+            if (obj is not NavSyntax.TableExtensionSyntax ext) continue;
+            if (ext.ObjectId?.Value.Value is not int extId) continue;
+            var extName = IdentText(ext.Name);
+            var baseName = Unquote(ext.BaseObject?.ToString()?.Trim() ?? "");
 
-            int sliceStart = m.Index;
-            int sliceEnd = (i + 1 < extMatches.Count) ? extMatches[i + 1].Index : text.Length;
-            var slice = text.Substring(sliceStart, sliceEnd - sliceStart);
-
+            // tableLevelExtras: false keeps this path byte-identical to what it produced
+            // before — extension fields carried neither OptionMembers nor AutoIncrement.
+            // Both are plausibly wanted here, but adding them is a behaviour change that
+            // needs its own test, not a silent rider on a parser swap.
             var fields = new List<ParsedField>();
-            foreach (Match fm in RxField.Matches(slice))
-            {
-                if (!int.TryParse(fm.Groups[1].Value, out int fid)) continue;
-                var fname = fm.Groups[2].Success ? fm.Groups[2].Value : fm.Groups[3].Value;
-                var ftype = fm.Groups[4].Value.Trim();
-                int length = 0;
-                var lm = Regex.Match(ftype, @"\[(\d+)\]");
-                if (lm.Success) int.TryParse(lm.Groups[1].Value, out length);
-
-                var fieldBody = ExtractFieldBody(slice, fm.Index + fm.Length);
-                bool isFlowField = fieldBody != null && RxFieldClass.IsMatch(fieldBody);
-                ParsedCalcFormula? calcFormula = null;
-                if (isFlowField && fieldBody != null)
-                    calcFormula = TryParseCalcFormula(fieldBody);
-
-                string? initValueText = null;
-                if (fieldBody != null)
-                {
-                    var ivMatch = RxInitValue.Match(fieldBody);
-                    if (ivMatch.Success)
-                        initValueText = ivMatch.Groups[1].Value.Trim();
-                }
-
-                fields.Add(new ParsedField(fid, fname, ftype, length, isFlowField, calcFormula, OptionMembers: null, InitValueText: initValueText, Caption: ParseCaption(fieldBody)));
-            }
+            // OfType<FieldSyntax>: a tableextension's field list also holds `modify(...)`
+            // entries, which declare no new field. The regex only ever matched
+            // `field(N; Name; Type)` either, so this keeps the same set.
+            if (ext.Fields != null)
+                foreach (var f in ext.Fields.Fields.OfType<NavSyntax.FieldSyntax>())
+                    if (ParseFieldSyntax(f, tableLevelExtras: false) is { } pf)
+                        fields.Add(pf);
 
             Console.Error.WriteLine($"[TableExt] parsed extension {extId} '{extName}' extends '{baseName}' with {fields.Count} fields");
 
@@ -358,21 +345,6 @@ public static partial class RecordPatches
                     $"[TableExt] evicted stale NCLMetaTable {kvp.Key} '{baseTableName}' " +
                     $"(built before its tableextension fields were parsed)");
         }
-    }
-
-    /// <summary>Extracts the brace-balanced body of a field block starting near <paramref name="pos"/> in <paramref name="slice"/>.</summary>
-    private static string? ExtractFieldBody(string slice, int pos)
-    {
-        while (pos < slice.Length && char.IsWhiteSpace(slice[pos])) pos++;
-        if (pos >= slice.Length || slice[pos] != '{') return null;
-        int depth = 0, start = pos;
-        while (pos < slice.Length)
-        {
-            if (slice[pos] == '{') depth++;
-            else if (slice[pos] == '}') { depth--; if (depth == 0) return slice.Substring(start + 1, pos - start - 1); }
-            pos++;
-        }
-        return null;
     }
 
     internal static ParsedCalcFormula? TryParseCalcFormula(string fieldBody)
