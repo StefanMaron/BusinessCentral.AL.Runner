@@ -415,36 +415,105 @@ public static partial class RecordPatches
                 return null;
         }
 
-        // A SIGNED formula (`-sum(...)`) is refused rather than parsed. ParsedCalcFormula has
-        // nowhere to carry the sign, so returning it would hand NclMetaTableBuilder a POSITIVE
-        // formula for a negative one — a wrong value, silently, which is the exact failure class
-        // this migration exists to remove. Returning null keeps the pre-existing behaviour (the
-        // old regex was anchored at the formula keyword, so a leading sign never matched and the
-        // FlowField was left at EmptyFormula). Supporting it means adding a sign to
-        // ParsedCalcFormula and honouring it downstream — its own change, with its own test.
-        if (signText.Length > 0) return null;
+        // #1708 — the sign. `-sum(...)` is a negated formula; AL also accepts the no-op `+`.
+        // The sign is now carried on ParsedCalcFormula and honoured by NclMetaTableBuilder
+        // (MetaCalcFormula.reverseSign) and FlowFieldPatches (NegateResult), so parsing it is
+        // no longer a silent lie about the value. A sign token this code has never seen is
+        // still refused rather than guessed at.
+        bool negated;
+        if (signText.Length == 0 || signText == "+") negated = false;
+        else if (signText == "-") negated = true;
+        else
+        {
+            Console.Error.WriteLine($"[CalcFormula] REFUSED {sourceTableName}: unrecognised sign '{signText}'");
+            return null;
+        }
 
         if (string.IsNullOrEmpty(sourceTableName)) return null;
 
-        // Only `X = field(Y)` conditions become filters. The parser gives each condition shape
-        // its own node type, so `const(...)` and `filter(...)` conditions are excluded by type
-        // rather than by a pattern that happened not to match them — same set as before, but now
-        // deliberately. (Honouring const/filter conditions would change which rows a FlowField
-        // sums; that is a semantic change needing real-BC validation, not a parser refactor.)
+        // #1709 — every condition shape, selected BY NODE TYPE. Dropping `const(...)` and
+        // `filter(...)` made the FlowField aggregate rows AL had excluded: a plausible wrong
+        // number, silently (the Base Application writes 1215 const and 285 filter conditions).
         var filters = new List<ParsedCalcFilter>();
         if (where?.Filter != null)
         {
             foreach (var cond in where.Filter.Conditions)
             {
-                if (cond is not NavSyntax.SimpleFieldExpressionSyntax sfe) continue;
-                filters.Add(new ParsedCalcFilter(
-                    Unquote(sfe.LeftHandSide?.ToString()?.Trim() ?? ""),
-                    Unquote(sfe.Identifier?.ToString()?.Trim() ?? "")));
+                switch (cond)
+                {
+                    // "Document No." = field("Code")
+                    case NavSyntax.SimpleFieldExpressionSyntax sfe:
+                        filters.Add(new ParsedCalcFilter(
+                            Unquote(sfe.LeftHandSide?.ToString()?.Trim() ?? ""),
+                            ParsedCalcFilterKind.Field,
+                            ParentFieldName: Unquote(sfe.Identifier?.ToString()?.Trim() ?? "")));
+                        break;
+
+                    // Open = const(true)
+                    case NavSyntax.ConstExpressionSyntax ce:
+                        filters.Add(new ParsedCalcFilter(
+                            Unquote(ce.LeftHandSide?.ToString()?.Trim() ?? ""),
+                            ParsedCalcFilterKind.Const,
+                            Value: ConstValueText(ce.Identifier?.ToString())));
+                        break;
+
+                    // Status = filter(Open|Released)
+                    case NavSyntax.FilterExpressionSyntax fe:
+                        filters.Add(new ParsedCalcFilter(
+                            Unquote(fe.LeftHandSide?.ToString()?.Trim() ?? ""),
+                            ParsedCalcFilterKind.Filter,
+                            Value: fe.Filter?.ToString()?.Trim() ?? ""));
+                        break;
+
+                    // "Account No." = field(filter(Totaling))          → ValueIsFilter
+                    // "Posting Date" = field(upperlimit("Date Filter")) → OnlyMaxLimit
+                    //
+                    // Carried as their own kind so nothing can read them as a plain `field(X)`
+                    // link (which would apply an equality BC never wrote), but NOT applied —
+                    // see BuildMetaCalcFormula. Leaving them unapplied is what the parser has
+                    // always done; turning that into a refusal of the whole formula changes
+                    // the value of the ~105 Base Application FlowFields that use these shapes
+                    // and needs its own issue, test and service-tier validation.
+                    case NavSyntax.FieldFilterExpressionSyntax ffe:
+                        filters.Add(new ParsedCalcFilter(
+                            Unquote(ffe.LeftHandSide?.ToString()?.Trim() ?? ""),
+                            ParsedCalcFilterKind.FlowFilter));
+                        break;
+                    case NavSyntax.FieldUpperLimitExpressionSyntax ule:
+                        filters.Add(new ParsedCalcFilter(
+                            Unquote(ule.LeftHandSide?.ToString()?.Trim() ?? ""),
+                            ParsedCalcFilterKind.FlowFilter));
+                        break;
+
+                    default:
+                        // A condition shape this code has never seen. Refuse the WHOLE formula:
+                        // aggregating over only the conditions we did understand silently
+                        // widens the row set.
+                        Console.Error.WriteLine(
+                            $"[CalcFormula] REFUSED {sourceTableName}: unsupported where-condition " +
+                            $"{cond?.GetType().Name} ({cond})");
+                        return null;
+                }
             }
         }
 
-        Console.Error.WriteLine($"[CalcFormula] parsed {sourceTableName}.{sourceFieldName ?? "*"} type={formulaType} filters={filters.Count}");
-        return new ParsedCalcFormula(formulaType, sourceTableName, sourceFieldName, filters);
+        Console.Error.WriteLine($"[CalcFormula] parsed {sourceTableName}.{sourceFieldName ?? "*"} type={formulaType} negated={negated} filters={filters.Count}");
+        return new ParsedCalcFormula(formulaType, sourceTableName, sourceFieldName, filters, negated);
+    }
+
+    /// <summary>
+    /// The literal of a <c>const(...)</c> condition, as text.
+    /// <para>Quotes come off for the same reason they do on InitValue (#1674):
+    /// <c>NCLMetaFilterConst</c> evaluates this text against the SOURCE field's own type, and
+    /// an option member named <c>On Hold</c> is never matched by the 9-character
+    /// <c>"On Hold"</c>. AL's doubled-quote escape is resolved with it.</para>
+    /// </summary>
+    private static string ConstValueText(string? text)
+    {
+        var s = (text ?? "").Trim();
+        if (s.Length >= 2 && s[0] == '"' && s[^1] == '"') return s[1..^1].Replace("\"\"", "\"");
+        if (s.Length >= 2 && s[0] == '\'' && s[^1] == '\'') return s[1..^1].Replace("''", "'");
+        return s;
     }
 
     /// <summary>
@@ -471,8 +540,47 @@ public static partial class RecordPatches
 
 // ─── Data holders ────────────────────────────────────────────────────────────
 
-internal record ParsedCalcFilter(string SourceFieldName, string ParentFieldName);
-internal record ParsedCalcFormula(string FormulaType, string SourceTableName, string? SourceFieldName, List<ParsedCalcFilter> Filters);
+/// <summary>
+/// Which shape of <c>where(...)</c> condition a <see cref="ParsedCalcFilter"/> carries. AL
+/// writes four, they are NOT interchangeable, and reading one as another is a silent wrong
+/// value (#1709).
+/// </summary>
+internal enum ParsedCalcFilterKind
+{
+    /// <summary><c>"Document No." = field("No.")</c> — link to a field of the PARENT record.
+    /// Becomes a <c>MetaFilter</c> of FilterType FIELD whose filterValue is the parent field
+    /// id.</summary>
+    Field,
+    /// <summary><c>Open = const(true)</c> — compare against a literal. Becomes FilterType
+    /// CONST, filterValue = the literal's text, which <c>NCLMetaFilterConst</c> evaluates
+    /// against the SOURCE field's own type.</summary>
+    Const,
+    /// <summary><c>Status = filter(Open|Released)</c> — a filter EXPRESSION. Becomes
+    /// FilterType FILTER, filterValue = the expression text, parsed by BC's own filter parser
+    /// (<c>NCLMetaFilterExpression</c>).</summary>
+    Filter,
+    /// <summary><c>"Account No." = field(filter(Totaling))</c> and <c>"Posting Date" =
+    /// field(upperlimit("Date Filter"))</c> — the FlowFilter forms
+    /// (<c>NCLMetaFilterModes.ValueIsFilter</c> / <c>.OnlyMaxLimit</c>). Parsed so nothing can
+    /// mistake them for a plain <see cref="Field"/> link; not applied — see
+    /// <c>BuildMetaCalcFormula</c>.</summary>
+    FlowFilter,
+}
+
+/// <param name="SourceFieldName">Field of the FlowField's SOURCE table being constrained.</param>
+/// <param name="Kind">Which of AL's condition shapes this is.</param>
+/// <param name="ParentFieldName">Set only for <see cref="ParsedCalcFilterKind.Field"/>.</param>
+/// <param name="Value">Const literal / filter expression text — set for
+/// <see cref="ParsedCalcFilterKind.Const"/> and <see cref="ParsedCalcFilterKind.Filter"/>.</param>
+internal record ParsedCalcFilter(
+    string SourceFieldName,
+    ParsedCalcFilterKind Kind = ParsedCalcFilterKind.Field,
+    string? ParentFieldName = null,
+    string? Value = null);
+
+/// <param name="Negated">The formula's leading <c>-</c> (#1708), carried through to
+/// <c>MetaCalcFormula.reverseSign</c> → <c>NCLMetaCalculationFormula.NegateResult</c>.</param>
+internal record ParsedCalcFormula(string FormulaType, string SourceTableName, string? SourceFieldName, List<ParsedCalcFilter> Filters, bool Negated = false);
 
 internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null);
 internal record ParsedKey(string Name, List<int> FieldIds);

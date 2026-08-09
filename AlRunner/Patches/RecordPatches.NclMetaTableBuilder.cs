@@ -483,25 +483,59 @@ public static partial class RecordPatches
             srcFieldId = srcField.FieldId;
         }
 
-        // Build MetaFilter[] for each FIELD-type filter
+        // Build a MetaFilter per where-condition. BC turns each one into the matching
+        // NCLMetaFilter subclass on its own (NCLMetaFilterCollection.CreateFromMetaFilter):
+        // FIELD → NCLMetaFilterField, CONST → NCLMetaFilterConst, FILTER →
+        // NCLMetaFilterExpression. The const literal / filter expression is handed over as
+        // TEXT and evaluated by BC against the source field's own type, exactly as it is for
+        // a user-typed filter.
         var filterObjects = new List<object>();
         foreach (var filter in cf.Filters)
         {
             var srcFilterField = srcTable.Fields.FirstOrDefault(f =>
                 string.Equals(f.FieldName, filter.SourceFieldName, StringComparison.OrdinalIgnoreCase));
-            var parentFilterField = parentTable.Fields.FirstOrDefault(f =>
-                string.Equals(f.FieldName, filter.ParentFieldName, StringComparison.OrdinalIgnoreCase));
             if (srcFilterField == null)
             {
                 Console.Error.WriteLine($"[RecordPatches] BuildMetaCalcFormula: filter source field '{filter.SourceFieldName}' not found in '{cf.SourceTableName}'");
                 continue;
             }
-            if (parentFilterField == null)
+
+            switch (filter.Kind)
             {
-                Console.Error.WriteLine($"[RecordPatches] BuildMetaCalcFormula: filter parent field '{filter.ParentFieldName}' not found in '{parentTable.TableName}'");
-                continue;
+                case ParsedCalcFilterKind.Field:
+                    var parentFilterField = parentTable.Fields.FirstOrDefault(f =>
+                        string.Equals(f.FieldName, filter.ParentFieldName, StringComparison.OrdinalIgnoreCase));
+                    if (parentFilterField == null)
+                    {
+                        Console.Error.WriteLine($"[RecordPatches] BuildMetaCalcFormula: filter parent field '{filter.ParentFieldName}' not found in '{parentTable.TableName}'");
+                        continue;
+                    }
+                    filterObjects.Add(BuildMetaFilter(srcFilterField.FieldId, "FIELD",
+                        parentFilterField.FieldId.ToString()));
+                    break;
+
+                case ParsedCalcFilterKind.Const:
+                    filterObjects.Add(BuildMetaFilter(srcFilterField.FieldId, "CONST", filter.Value ?? ""));
+                    break;
+
+                case ParsedCalcFilterKind.Filter:
+                    filterObjects.Add(BuildMetaFilter(srcFilterField.FieldId, "FILTER", filter.Value ?? ""));
+                    break;
+
+                case ParsedCalcFilterKind.FlowFilter:
+                    // `field(filter(X))` / `field(upperlimit(X))` — MetaFilter models these as
+                    // FIELD plus valueIsFilter / onlyMaxLimit, but evaluating them means
+                    // reading the PARENT field as a filter string (or as the upper bound of
+                    // one), which FlowFieldPatches does not do. Emitting a plain FIELD filter
+                    // instead would apply an equality BC never wrote — the silent wrong value
+                    // this is all about — so the condition is left out, as it always has been,
+                    // and said out loud. Runner gap, not an AL problem.
+                    Console.Error.WriteLine(
+                        $"[RecordPatches] BuildMetaCalcFormula: RUNNER GAP — FlowFilter condition on " +
+                        $"'{cf.SourceTableName}'.'{filter.SourceFieldName}' is not applied; " +
+                        $"'{parentTable.TableName}' FlowField may aggregate more rows than AL declared");
+                    break;
             }
-            filterObjects.Add(BuildMetaFilter(srcFilterField.FieldId, parentFilterField.FieldId));
         }
 
         // Construct MetaCalcFormula(int tableId, int fieldId, string flowFieldType, bool reverseSign, ImmutableArray<MetaFilter> filters)
@@ -515,7 +549,9 @@ public static partial class RecordPatches
             if (p.Name == "tableId") { args[i] = srcTable.TableId; continue; }
             if (p.Name == "fieldId") { args[i] = srcFieldId; continue; }
             if (p.Name == "flowFieldType") { args[i] = cf.FormulaType.ToUpperInvariant(); continue; }
-            if (p.Name == "reverseSign") { args[i] = false; continue; }
+            // #1708: `CalcFormula = -sum(...)`. BC's own NCLMetaCalculationFormula.NegateResult
+            // is built from this flag, and FlowFieldPatches negates the aggregate with it.
+            if (p.Name == "reverseSign") { args[i] = cf.Negated; continue; }
             if (p.Name == "filters")
             {
                 args[i] = MakeImmutableArray(_tMetaFilter!, filterObjects.ToArray());
@@ -536,7 +572,15 @@ public static partial class RecordPatches
         }
     }
 
-    private static object BuildMetaFilter(int sourceFieldId, int parentFieldId)
+    /// <summary>
+    /// One <c>MetaFilter</c> — BC's metadata form of a single CalcFormula where-condition.
+    /// <para><paramref name="filterTypeName"/> is a <c>FilterType</c> member (FIELD / CONST /
+    /// FILTER) and <paramref name="filterValue"/> is what that type means: the parent field's
+    /// id for FIELD, the literal's text for CONST, the filter expression's text for FILTER.
+    /// This is the same shape BC's compiled table metadata carries, which is why NCL can build
+    /// the right NCLMetaFilter subclass from it without any further help.</para>
+    /// </summary>
+    private static object BuildMetaFilter(int sourceFieldId, string filterTypeName, string filterValue)
     {
         // MetaFilter(int fieldId, FilterType filterType, string filterValue, ...)
         var ctor = _tMetaFilter!.GetConstructors()
@@ -547,8 +591,8 @@ public static partial class RecordPatches
         {
             var p = ps[i];
             if (p.Name == "fieldId") { args[i] = sourceFieldId; continue; }
-            if (p.Name == "filterType") { args[i] = Enum.Parse(_tFilterType!, "FIELD"); continue; }
-            if (p.Name == "filterValue") { args[i] = parentFieldId.ToString(); continue; }
+            if (p.Name == "filterType") { args[i] = Enum.Parse(_tFilterType!, filterTypeName); continue; }
+            if (p.Name == "filterValue") { args[i] = filterValue; continue; }
             if (p.HasDefaultValue) { args[i] = p.DefaultValue; continue; }
             args[i] = p.ParameterType.IsValueType ? Activator.CreateInstance(p.ParameterType) : null;
         }

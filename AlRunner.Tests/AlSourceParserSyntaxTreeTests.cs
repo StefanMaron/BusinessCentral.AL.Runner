@@ -207,8 +207,11 @@ public class AlSourceParserSyntaxTreeTests
         var t = calcFormula.GetType();
         var filters = new List<(string, string)>();
         foreach (var f in (System.Collections.IEnumerable)t.GetProperty("Filters")!.GetValue(calcFormula)!)
+            // ParentFieldName is set only for the `field(Y)` shape now that const/filter
+            // conditions are carried too (#1709); their parent link is null. CalcFormulaSyntaxTests
+            // asserts each shape's own contract — here they read as "(source, <no parent>)".
             filters.Add(((string)f.GetType().GetProperty("SourceFieldName")!.GetValue(f)!,
-                         (string)f.GetType().GetProperty("ParentFieldName")!.GetValue(f)!));
+                         (string?)f.GetType().GetProperty("ParentFieldName")!.GetValue(f) ?? ""));
         return ((string)t.GetProperty("FormulaType")!.GetValue(calcFormula)!,
                 (string)t.GetProperty("SourceTableName")!.GetValue(calcFormula)!,
                 (string?)t.GetProperty("SourceFieldName")!.GetValue(calcFormula),
@@ -229,8 +232,10 @@ public class AlSourceParserSyntaxTreeTests
         Assert.Equal("sum", type);
         Assert.Equal("Sales Line", table);
         Assert.Equal("Amount", field);
-        // filter(...) conditions are excluded, exactly as RxCalcFilter excluded them.
-        Assert.Equal(new[] { ("Document No.", "Code") }, filters);
+        // Both conditions are carried now (#1709). The filter() one has no parent link — its
+        // own shape (kind + expression text) is asserted in CalcFormulaSyntaxTests; what this
+        // test pins is that the semicolon inside the literal did not truncate the formula.
+        Assert.Equal(new[] { ("Document No.", "Code"), ("Description", "") }, filters);
     }
 
     [Fact]
@@ -261,16 +266,21 @@ public class AlSourceParserSyntaxTreeTests
     }
 
     [Fact]
-    public void CalcFormula_SignedFormula_IsRefusedRatherThanParsedWithoutItsSign()
+    public void CalcFormula_SignedFormula_IsParsedWithItsSign()
     {
-        // Negative direction. ParsedCalcFormula cannot carry the sign, so returning a formula
-        // here would mean a FlowField silently computing +sum where AL wrote -sum. Refusing
-        // preserves the old behaviour (the anchored regex never matched a leading sign).
+        // #1708. This used to be pinned as a REFUSAL: ParsedCalcFormula had nowhere to carry
+        // the sign, so a `-sum(...)` was dropped entirely and the FlowField read back as 0.
+        // The sign now rides through to MetaCalcFormula.reverseSign →
+        // NCLMetaCalculationFormula.NegateResult, so the formula is parsed rather than lost.
         var parsed = typeof(AlRunner.Patches.RecordPatches)
             .GetMethod("TryParseCalcFormula", BindingFlags.NonPublic | BindingFlags.Static)!
-            .Invoke(null, new object[] { """CalcFormula = -sum("Sales Line".Amount);""" });
+            .Invoke(null, new object[] { """CalcFormula = -sum("Sales Line".Amount);""" })!;
 
-        Assert.Null(parsed);
+        var (type, table, field, _) = Read(parsed);
+        Assert.Equal("sum", type);
+        Assert.Equal("Sales Line", table);
+        Assert.Equal("Amount", field);
+        Assert.True((bool)parsed.GetType().GetProperty("Negated")!.GetValue(parsed)!);
     }
 
     [Fact]

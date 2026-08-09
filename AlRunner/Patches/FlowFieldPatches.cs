@@ -75,8 +75,11 @@ public static class FlowFieldPatches
     private static PropertyInfo? _pCalcFormulaFilters;
     private static PropertyInfo? _pNclMetaFilterFilterType;   // NCLMetaFilter.FilterType
     private static object? _filterTypeField;                  // NCLMetaFilterType.Field
+    private static PropertyInfo? _pNclMetaFilterExpression;   // NCLMetaFilter.Expression
+    private static MethodInfo? _mFilterExprEvaluate;          // FilterExpression.Evaluate(NavValue, ISortingRulesProvider)
     private static PropertyInfo? _pCalcFormulaSourceField;
     private static PropertyInfo? _pCalcFormulaNegateResult;
+    private static MethodInfo? _mCalcFormulaNegateValue;      // NCLMetaCalculationFormula.NegateValue(NavValue)
     private static PropertyInfo? _pCalcFormulaTableId;
     private static PropertyInfo? _pCalcFormulaFieldId;
     private static PropertyInfo? _pFilterSourceField;          // NCLMetaFilter.SourceField
@@ -200,6 +203,8 @@ public static class FlowFieldPatches
         _pCalcFormulaFilters = _tNCLMetaCalcFormula.GetProperty("Filters");
         _pCalcFormulaSourceField = _tNCLMetaCalcFormula.GetProperty("SourceField");
         _pCalcFormulaNegateResult = _tNCLMetaCalcFormula.GetProperty("NegateResult");
+        _mCalcFormulaNegateValue = _tNCLMetaCalcFormula.GetMethod("NegateValue",
+            BindingFlags.Public | BindingFlags.Instance);
         _pCalcFormulaTableId = _tNCLMetaCalcFormula.GetProperty("TableId");
         _pCalcFormulaFieldId = _tNCLMetaCalcFormula.GetProperty("FieldId");
         _fCalcFormulaEmpty = _tNCLMetaCalcFormula.GetField("EmptyFormula",
@@ -215,6 +220,14 @@ public static class FlowFieldPatches
         var tFilterTypeEnum = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetaFilterType");
         if (tFilterTypeEnum != null)
             _filterTypeField = Enum.Parse(tFilterTypeEnum, "Field");
+        // NCLMetaFilter.Expression — the FilterExpression BC builds for a Const (an equality
+        // against the literal) or an Expression (a parsed filter string) condition. Both are
+        // evaluated with FilterExpression.Evaluate, so one property covers both. #1709.
+        _pNclMetaFilterExpression = _tNCLMetaFilter.GetProperty("Expression",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        var tFilterExpr = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.FilterExpression");
+        _mFilterExprEvaluate = tFilterExpr?.GetMethod("Evaluate",
+            BindingFlags.Public | BindingFlags.Instance);
 
         // Enum values
         _cmNone   = Enum.Parse(_tNCLMetaCalcMethod, "None");
@@ -438,41 +451,70 @@ public static class FlowFieldPatches
                 catch { }
                 if (srcTtdp == null) continue;
 
-                // Resolve filters: list of (sourceFieldColumnIndex, parentFieldColumnIndex)
+                // Resolve the formula's where-conditions into row predicates.
+                //
+                // Two shapes reach here (#1709). A FIELD condition compares the source row's
+                // field against the PARENT record's field — that value is read once, below. A
+                // CONST or EXPRESSION condition (`Open = const(true)`,
+                // `Status = filter(Open|Released)`) carries its own FilterExpression, built by
+                // BC from the metadata, and is evaluated against the source row's value with
+                // BC's own FilterExpression.Evaluate — so range / alternation / `<>` semantics
+                // match real BC instead of being re-implemented here.
+                //
+                // Anything that resolves to neither is DROPPED, and dropping a condition makes
+                // the FlowField aggregate rows AL excluded, so it is reported rather than
+                // ignored.
                 var filters = _pCalcFormulaFilters!.GetValue(formula) as IEnumerable;
                 var filterPairs = new List<(int srcCol, int parentCol, NCLMetaField srcField, NCLMetaField parentField)>();
+                var filterExprs = new List<(int srcCol, NCLMetaField srcField, object expr)>();
                 if (filters != null)
                 {
                     foreach (var fObj in filters)
                     {
                         if (fObj == null) continue;
-                        if ((_tNCLMetaFilter != null && !_tNCLMetaFilter.IsInstanceOfType(fObj))
-                            && (_tNCLMetaFilterField != null && !_tNCLMetaFilterField.IsInstanceOfType(fObj)))
-                            continue;
+                        if (_tNCLMetaFilter != null && !_tNCLMetaFilter.IsInstanceOfType(fObj)) continue;
 
                         object? fSrc = null;
-                        object? fVal = null;
-                        try
+                        try { fSrc = _pFilterSourceField?.GetValue(fObj); } catch { }
+                        if (fSrc is not NCLMetaField srcFilterField)
                         {
-                            fSrc = _pFilterSourceField?.GetValue(fObj);
-                            fVal = _pFilterFieldValueField?.GetValue(fObj);
-                        }
-                        catch
-                        {
+                            Console.Error.WriteLine(
+                                $"[FlowFieldPatches] where-condition dropped: source field unresolved on " +
+                                $"{fObj.GetType().Name}; FlowField may aggregate excluded rows");
                             continue;
                         }
-                        if (fSrc == null || fVal == null) continue;
-                        if (fSrc is not NCLMetaField srcFilterField || fVal is not NCLMetaField parentFilterField)
-                            continue;
 
-                        int sCol = srcFilterField.ColumnIndex;
-                        int pCol = parentFilterField.ColumnIndex;
-                        filterPairs.Add((sCol, pCol, srcFilterField, parentFilterField));
+                        // FIELD → compare against the parent record's field.
+                        if (_tNCLMetaFilterField != null && _tNCLMetaFilterField.IsInstanceOfType(fObj))
+                        {
+                            object? fVal = null;
+                            try { fVal = _pFilterFieldValueField?.GetValue(fObj); } catch { }
+                            if (fVal is NCLMetaField parentFilterField)
+                            {
+                                filterPairs.Add((srcFilterField.ColumnIndex, parentFilterField.ColumnIndex,
+                                    srcFilterField, parentFilterField));
+                                continue;
+                            }
+                        }
+
+                        // CONST / EXPRESSION → evaluate BC's own FilterExpression per row.
+                        object? expr = null;
+                        try { expr = _pNclMetaFilterExpression?.GetValue(fObj); } catch { }
+                        if (expr != null && _mFilterExprEvaluate != null)
+                        {
+                            filterExprs.Add((srcFilterField.ColumnIndex, srcFilterField, expr));
+                            continue;
+                        }
+
+                        Console.Error.WriteLine(
+                            $"[FlowFieldPatches] where-condition dropped on field " +
+                            $"no. {srcFilterField.FieldNo} ({fObj.GetType().Name}, " +
+                            $"{_pNclMetaFilterFilterType?.GetValue(fObj)}); FlowField may aggregate excluded rows");
                     }
 
                 }
 
-                // Pre-read parent values for each filter
+                // Pre-read parent values for each field-to-field filter
                 var parentFilterValues = new NavValue?[filterPairs.Count];
                 for (int i = 0; i < filterPairs.Count; i++)
                     parentFilterValues[i] = ReadBufferFieldValue(parentBuffer, bufferIndexer, filterPairs[i].parentCol, filterPairs[i].parentField);
@@ -524,6 +566,23 @@ public static class FlowFieldPatches
                     }
                     if (!pass) continue;
 
+                    // const(...) / filter(...) conditions — BC's own filter evaluation. The
+                    // session is the ISortingRulesProvider BC passes on its real WHERE path
+                    // (it is only consulted for Text/Code collation).
+                    for (int i = 0; i < filterExprs.Count && pass; i++)
+                    {
+                        var rowVal = ReadBufferFieldValue(row, rowIndexer, filterExprs[i].srcCol, filterExprs[i].srcField);
+                        // No readable value for the constrained field means the row cannot be
+                        // shown to satisfy the condition, so it is excluded — the same answer
+                        // the field-to-field branch above gives (NavValuesEqual(null, v) is
+                        // false). Excluding is the safe direction: including would widen the
+                        // aggregate, which is the bug this condition exists to prevent.
+                        if (rowVal == null) { pass = false; break; }
+                        pass = (bool)_mFilterExprEvaluate!.Invoke(
+                            filterExprs[i].expr, new object?[] { rowVal, session })!;
+                    }
+                    if (!pass) continue;
+
                     anyMatch = true;
                     matchCount++;
 
@@ -561,7 +620,7 @@ public static class FlowFieldPatches
 
                 // Build result
                 bool negate = (bool)(_pCalcFormulaNegateResult?.GetValue(formula) ?? false);
-                NavValue? result = null;
+                NavValue? result;
                 int targetColumn = (int)_pNclMetaFieldColumnIndex!.GetValue(fieldObj)!;
 
                 if (Equals(calcMethod, _cmCount))
@@ -569,16 +628,10 @@ public static class FlowFieldPatches
                 else if (Equals(calcMethod, _cmExist))
                     result = NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, anyMatch);
                 else if (Equals(calcMethod, _cmSum))
-                {
-                    var v = negate ? -sum : sum;
-                    result = NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, CoerceSumResult(v));
-                }
+                    result = NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, CoerceSumResult(sum));
                 else if (Equals(calcMethod, _cmAverage))
-                {
-                    var v = matchCount > 0 ? sum / matchCount : 0m;
-                    if (negate) v = -v;
-                    result = NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, v);
-                }
+                    result = NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj,
+                        matchCount > 0 ? sum / matchCount : 0m);
                 else if (Equals(calcMethod, _cmMin))
                     result = minV ?? TypedDefaultForField(fieldObj) ?? NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, 0);
                 else if (Equals(calcMethod, _cmMax))
@@ -589,6 +642,22 @@ public static class FlowFieldPatches
                 {
                     Console.Error.WriteLine($"[FlowFieldPatches] unsupported CalculationMethod {calcMethod}");
                     continue;
+                }
+
+                // #1708 — `CalcFormula = -sum(...)`. The negation is BC's own
+                // NCLMetaCalculationFormula.NegateValue rather than a local `-x`, so every
+                // CalculationMethod gets the semantics BC gives it (the Base Application ships
+                // both `-sum(...)` and `-exist(...)`, and negating a Boolean is not arithmetic).
+                if (negate && result != null)
+                {
+                    if (_mCalcFormulaNegateValue == null)
+                        // Writing the POSITIVE aggregate instead would be the exact silent
+                        // wrong value #1708 is about, so this is loud rather than best-effort.
+                        AlRunner.Infrastructure.RunnerScope.ThrowNotYetImplemented(
+                            "CalcFormula = -sum(...) (NCLMetaCalculationFormula.NegateValue)",
+                            "BC's own value negation is not present on this build, so a signed " +
+                            "FlowField cannot be computed faithfully — issue #1708");
+                    result = (NavValue?)_mCalcFormulaNegateValue.Invoke(formula, new object?[] { result });
                 }
 
                 bufferIndexer.SetValue(parentBuffer, result, new object[] { targetColumn });
