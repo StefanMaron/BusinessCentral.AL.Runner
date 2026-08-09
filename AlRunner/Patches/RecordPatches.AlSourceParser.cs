@@ -197,8 +197,16 @@ public static partial class RecordPatches
         }
     }
 
-    /// <summary>Builds a <see cref="ParsedField"/> from one <c>field(...)</c> declaration.</summary>
-    private static ParsedField? ParseFieldSyntax(NavSyntax.FieldSyntax f, bool tableLevelExtras)
+    /// <summary>
+    /// Builds a <see cref="ParsedField"/> from one <c>field(...)</c> declaration.
+    /// <para>Identical for a `table` field and a `tableextension` field: AL declares them the
+    /// same way and BC gives them the same metadata. They used to differ — extension fields
+    /// were parsed without OptionMembers and without AutoIncrement (#1711), which left an
+    /// Option field added by a tableextension with no option string, so NCLOptionMetadata saw
+    /// the wrong member count (#1674's defect class), and an AutoIncrement field added by a
+    /// tableextension with no autoincrement semantics at all.</para>
+    /// </summary>
+    private static ParsedField? ParseFieldSyntax(NavSyntax.FieldSyntax f)
     {
         if (f.No.Value is not int fid) return null;
         var fname = IdentText(f.Name);
@@ -230,11 +238,11 @@ public static partial class RecordPatches
         // stripping there in the same change.
         string? initValueText = PropValue(props, "InitValue")?.ToString()?.Trim();
 
-        bool isAutoIncrement = tableLevelExtras && PropIs(props, "AutoIncrement", "true");
+        bool isAutoIncrement = PropIs(props, "AutoIncrement", "true");
         var caption = CaptionFrom(PropValue(props, "Caption"));
 
         return new ParsedField(fid, fname, ftype, length, isFlowField, calcFormula,
-            tableLevelExtras ? optionMembers : null, initValueText, isAutoIncrement, caption);
+            optionMembers, initValueText, isAutoIncrement, caption);
     }
 
     private static void TryParseTableFile(string text)
@@ -248,7 +256,7 @@ public static partial class RecordPatches
             var fields = new List<ParsedField>();
             if (table.Fields != null)
                 foreach (var f in table.Fields.Fields)
-                    if (ParseFieldSyntax(f, tableLevelExtras: true) is { } pf)
+                    if (ParseFieldSyntax(f) is { } pf)
                         fields.Add(pf);
 
             // First key is the PK; all subsequent keys are secondary.
@@ -303,17 +311,15 @@ public static partial class RecordPatches
             var extName = IdentText(ext.Name);
             var baseName = Unquote(ext.BaseObject?.ToString()?.Trim() ?? "");
 
-            // tableLevelExtras: false keeps this path byte-identical to what it produced
-            // before — extension fields carried neither OptionMembers nor AutoIncrement.
-            // Both are plausibly wanted here, but adding them is a behaviour change that
-            // needs its own test, not a silent rider on a parser swap.
+            // Extension fields are parsed exactly like base-table fields — see
+            // ParseFieldSyntax for what they used to lose (#1711).
             var fields = new List<ParsedField>();
             // OfType<FieldSyntax>: a tableextension's field list also holds `modify(...)`
             // entries, which declare no new field. The regex only ever matched
             // `field(N; Name; Type)` either, so this keeps the same set.
             if (ext.Fields != null)
                 foreach (var f in ext.Fields.Fields.OfType<NavSyntax.FieldSyntax>())
-                    if (ParseFieldSyntax(f, tableLevelExtras: false) is { } pf)
+                    if (ParseFieldSyntax(f) is { } pf)
                         fields.Add(pf);
 
             Console.Error.WriteLine($"[TableExt] parsed extension {extId} '{extName}' extends '{baseName}' with {fields.Count} fields");

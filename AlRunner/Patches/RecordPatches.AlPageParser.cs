@@ -34,13 +34,14 @@ public static partial class RecordPatches
     {
         var objects = ParseAlObjects(text);
 
-        // Pages first, then pageextensions — deliberately, because `_parsedPages` is keyed on
-        // the object id ALONE. AL gives `page` and `pageextension` separate id namespaces, so
-        // a page 50100 and a pageextension 50100 may both exist and the second one written
-        // wins. That is pre-existing behaviour (the report parser hit the same problem and was
-        // given two dictionaries; this one never was), and preserving the write order keeps
-        // this migration behaviour-preserving rather than quietly changing which entry
-        // survives. Splitting the dictionary is the real fix and belongs in its own change.
+        // Pages and pageextensions go into SEPARATE dictionaries, mirroring
+        // _parsedReports / _parsedReportExtensions. AL gives `page` and `pageextension`
+        // separate id namespaces, so a page 50100 and a pageextension 50100 may both exist —
+        // and while they shared one dictionary the extension (written second) won, bringing
+        // SourceTableName = "" and an empty control map with it. The real page's source table
+        // and every one of its control→field bindings vanished silently: GetSourceTableIdForPage
+        // answered 0 and GetPageControlFieldMap answered empty (#1710). Write order therefore
+        // no longer carries any meaning here.
         foreach (var obj in objects)
         {
             if (obj is not NavSyntax.PageSyntax p) continue;
@@ -60,14 +61,18 @@ public static partial class RecordPatches
         {
             if (obj is not NavSyntax.PageExtensionSyntax pe) continue;
             if (ObjectIdOf(pe) is not int id) continue;
-            // Extensions carry no source table and no control map, exactly as before. Their
-            // addfirst/addlast field controls ARE reachable now (same PageFieldSyntax type
-            // under PageExtensionLayoutSyntax), so populating the map is newly possible — but
-            // it would change what GetPageControlFieldMap returns for every pageextension-backed
-            // TestPage, which needs its own test rather than riding along on a parser swap.
-            _parsedPages[id] = new ParsedPage(id, IdentText(pe.Name), IsExtension: true,
-                SourceTableName: string.Empty, ControlIdToFieldName: new Dictionary<int, string>(),
-                InsertAllowed: !PropIs(pe.PropertyList, "InsertAllowed", "false"));
+            // An extension has no source table of its own — it inherits the base page's — but it
+            // DOES declare field controls, via addfirst/addlast. Those are PageFieldSyntax nodes
+            // exactly like a base page's, just hanging off PageExtensionLayoutSyntax, and they
+            // used to be dropped on the floor (#1711): every pageextension stored an empty map,
+            // so a TestPage driven through an extension-added control could not resolve it.
+            // GetPageControlFieldMap merges them into the BASE page's map, which is where a
+            // TestPage looks.
+            _parsedPageExtensions[id] = new ParsedPage(id, IdentText(pe.Name), IsExtension: true,
+                SourceTableName: string.Empty,
+                ControlIdToFieldName: ParsePageFieldBindings(id, pe.Layout),
+                InsertAllowed: !PropIs(pe.PropertyList, "InsertAllowed", "false"),
+                BaseName: Unquote(pe.BaseObject?.ToString()?.Trim() ?? ""));
         }
     }
 
@@ -80,10 +85,13 @@ public static partial class RecordPatches
         => !_parsedPages.TryGetValue(pageId, out var page) || page.InsertAllowed;
 
     /// <summary>
-    /// Whether the AL source parser has seen this page at all. Lets callers tell
+    /// Whether the AL source parser has seen this PAGE at all. Lets callers tell
     /// "the page genuinely declares no SourceTable" (BC's SourceTable==0 case, a legal
     /// AL page) apart from "we never parsed this page", which is a runner gap and must
     /// be reported loudly rather than answered with a default.
+    /// <para>A pageextension of the same number is deliberately NOT an answer here: it is a
+    /// different object in a different id namespace, and letting one stand in for a page is
+    /// what #1710 was.</para>
     /// </summary>
     internal static bool IsPageParsed(int pageId) => _parsedPages.ContainsKey(pageId);
 
@@ -107,6 +115,16 @@ public static partial class RecordPatches
         return 0;
     }
 
+    /// <summary>
+    /// Control id → source-table field number for every field control on the page, INCLUDING
+    /// the ones contributed by pageextensions that extend it.
+    /// <para>An extension's controls are keyed in the EXTENSION's own id space, because BC's
+    /// IdSpace.GetMemberId hashes the id of the object the member is DECLARED in. Verified,
+    /// not assumed: a bundle with `page 64300 "PXP Card"` and `pageextension 64301` adding
+    /// `field(NoteField; Rec."Note")` made BC ask LiveNavTestPage.GetField for control
+    /// 788108655 == GetMemberId(64301, "NoteField"); GetMemberId(64300, "NoteField") is
+    /// 321499490 and never appears.</para>
+    /// </summary>
     internal static IReadOnlyDictionary<int, int> GetPageControlFieldMap(int pageId)
     {
         if (!_parsedPages.TryGetValue(pageId, out var page) || string.IsNullOrWhiteSpace(page.SourceTableName))
@@ -116,12 +134,22 @@ public static partial class RecordPatches
         if (table == null) return new Dictionary<int, int>();
 
         var result = new Dictionary<int, int>();
-        foreach (var kvp in page.ControlIdToFieldName)
-        {
-            var field = table.Fields.FirstOrDefault(f => NamesEqual(f.FieldName, kvp.Value));
-            if (field != null) result[kvp.Key] = field.FieldId;
-        }
+        BindControls(page.ControlIdToFieldName);
+        // Only extensions of THIS page. Binding every extension's controls onto every page
+        // would fabricate bindings that the AL never declared.
+        foreach (var ext in _parsedPageExtensions.Values)
+            if (NamesEqual(ext.BaseName, page.Name))
+                BindControls(ext.ControlIdToFieldName);
         return result;
+
+        void BindControls(IReadOnlyDictionary<int, string> controls)
+        {
+            foreach (var kvp in controls)
+            {
+                var field = table.Fields.FirstOrDefault(f => NamesEqual(f.FieldName, kvp.Value));
+                if (field != null) result[kvp.Key] = field.FieldId;
+            }
+        }
     }
 
     internal static int[] GetPrimaryKeyFieldIdsForTable(int tableId)
@@ -141,9 +169,18 @@ public static partial class RecordPatches
     /// looked for the text <c>Rec.</c> anywhere after the semicolon, so
     /// <c>field(Total; Rec.Amount + 1)</c> bound the control to <c>Amount</c> — a control that is
     /// not bound to that field at all. A compound expression now yields no binding.</para>
+    /// <para><paramref name="layout"/> is a <c>PageLayoutSyntax</c> for a base page and a
+    /// <c>PageExtensionLayoutSyntax</c> for a pageextension — two unrelated node types (the
+    /// latter derives straight from SyntaxNode and holds ControlChangeBaseSyntax entries), but
+    /// the field controls under both are the SAME <c>PageFieldSyntax</c>, so one subtree walk
+    /// serves both. <c>modify(...)</c> declares no control and contributes nothing;
+    /// <c>movefirst</c>/<c>moveafter</c> only reference controls by name.</para>
+    /// <para><paramref name="declaringObjectId"/> is the object the controls are DECLARED in —
+    /// the page for a base layout, the PAGEEXTENSION for controls it adds. That is what BC's
+    /// IdSpace.GetMemberId hashes; see GetPageControlFieldMap for the live evidence.</para>
     /// </summary>
     private static Dictionary<int, string> ParsePageFieldBindings(
-        int pageId, NavSyntax.PageLayoutSyntax? layout)
+        int declaringObjectId, SyntaxNode? layout)
     {
         var result = new Dictionary<int, string>();
         if (layout == null) return result;
@@ -158,7 +195,7 @@ public static partial class RecordPatches
             var controlName = IdentText(field.Name);
             var fieldName = IdentText(access.Name as NavSyntax.IdentifierNameSyntax);
             if (controlName.Length == 0 || fieldName.Length == 0) continue;
-            result[IdSpace.GetMemberId(pageId, controlName)] = fieldName;
+            result[IdSpace.GetMemberId(declaringObjectId, controlName)] = fieldName;
         }
 
         return result;
@@ -174,4 +211,6 @@ internal record ParsedPage(
     bool IsExtension,
     string SourceTableName,
     IReadOnlyDictionary<int, string> ControlIdToFieldName,
-    bool InsertAllowed = true);
+    bool InsertAllowed = true,
+    /// <summary>The object a pageextension extends; empty for a plain page.</summary>
+    string BaseName = "");

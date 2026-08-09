@@ -68,7 +68,11 @@ public static partial class RecordPatches
             id => _metaTableCache.GetOrAdd(id, BuildNCLMetaTable), "Table");
 
         // Pages — §P, mirror via BuildNCLMetaForm using NCLMetaForm.CreateEmptyNCLMetaForm.
-        PopulateOneObjectType(arr, objectTypePage, _parsedPages.Keys.ToArray(),
+        // Pageextension ids are included alongside page ids: they used to share _parsedPages
+        // and therefore used to get a slot here. #1710's split is about which object wins a
+        // shared id, not about withdrawing the skeleton from ids only a pageextension claims.
+        PopulateOneObjectType(arr, objectTypePage,
+            _parsedPages.Keys.Concat(_parsedPageExtensions.Keys).Distinct().ToArray(),
             id => _metaFormCache.GetOrAdd(id, BuildNCLMetaForm), "Page");
 
         // Reports — §P, mirror via BuildNCLMetaReport using NCLMetaReport.CreateEmptyNCLMetaReport.

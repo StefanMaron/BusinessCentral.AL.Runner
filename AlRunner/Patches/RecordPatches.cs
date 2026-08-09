@@ -119,6 +119,7 @@ public static partial class RecordPatches
         _bcSymbolExtensionIndexBuilt = false; // re-merge BC precompiled extensions on next build
         _fieldTriggersWiredTables.Clear();
         _parsedPages.Clear();
+        _parsedPageExtensions.Clear();
         _parsedReports.Clear();
         _parsedReportExtensions.Clear();
         _parsedQueries.Clear();

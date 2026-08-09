@@ -202,8 +202,13 @@ public static partial class RecordPatches
                 // ordinal) using data captured by BcCompiler at AL emit time.
                 FixupEnumFieldOptionMetadata(built, parsed, extFields);
 
-                // Register any AutoIncrement fields so NavRecord_ALInsertAsync3 assigns counters.
-                foreach (var f in parsed.Fields)
+                // Register any AutoIncrement fields so NavRecord_ALInsertAsync3 assigns
+                // counters. `allParsed` rather than `parsed.Fields`: a tableextension may
+                // declare the AutoIncrement field, and since #1711 that property survives the
+                // parse. Registering only base-table fields would be the silent half-fix —
+                // the NCLMetaField would say autoIncrement=true while no counter ever
+                // advanced, so every Insert left the field at 0 and the second row collided.
+                foreach (var f in allParsed)
                     if (f.IsAutoIncrement)
                         AlRunner.BcRuntime.RegisterAutoIncrementField(tableId, f.FieldId);
             }

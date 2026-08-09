@@ -1,0 +1,25 @@
+{
+  "id": "b41d7e60-2c8f-4a95-9d31-6f0a7c25e8b4",
+  "name": "Runner Extras - Extension Object Metadata",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves a pageextension no longer clobbers a page of the same id, and that tableextension/pageextension fields keep the properties the parser used to drop.",
+  "description": "Issues #1710 and #1711. #1710: page and pageextension share an AL id namespace in the runner's _parsedPages, so `page 64223` and `pageextension 64223` collided — the extension was written second and brought SourceTableName = \"\" and an empty control map, erasing the real page's source table and every control binding. #1711: tableextension fields were parsed without OptionMembers (wrong NCLOptionMetadata member count, #1674's defect class) and without AutoIncrement, and pageextension field controls were not parsed at all, so a TestPage could not resolve a control added by addfirst/addlast.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "27.0.0.0",
+  "idRanges": [
+    {
+      "from": 64220,
+      "to": 64249
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

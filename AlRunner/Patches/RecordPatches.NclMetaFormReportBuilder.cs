@@ -28,6 +28,8 @@ public static partial class RecordPatches
 {
     // Parsed page/report/query/xmlport tables, mirror of _parsedTables.
     private static readonly Dictionary<int, ParsedPage> _parsedPages = new();
+    // Separate id namespace: pageextension N may legally reuse a `page` id (#1710).
+    private static readonly Dictionary<int, ParsedPage> _parsedPageExtensions = new();
     private static readonly Dictionary<int, ParsedReport> _parsedReports = new();
     // Separate id namespace: reportextension N may legally reuse a `report` id.
     private static readonly Dictionary<int, ParsedReport> _parsedReportExtensions = new();
@@ -105,7 +107,12 @@ public static partial class RecordPatches
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static object? BuildNCLMetaForm(int pageId)
     {
-        if (!_parsedPages.TryGetValue(pageId, out var parsed)) return null;
+        // Existence check only — nothing below reads the parsed object. Pageextension ids are
+        // accepted too, because they used to live in _parsedPages and therefore used to get a
+        // skeleton; #1710's split decides which object WINS a shared id, it does not withdraw
+        // the skeleton from ids only a pageextension claims.
+        if (!_parsedPages.ContainsKey(pageId) && !_parsedPageExtensions.ContainsKey(pageId))
+            return null;
         EnsureFormReportReflection();
         if (_mCreateEmptyNCLMetaForm == null) return null;
 
