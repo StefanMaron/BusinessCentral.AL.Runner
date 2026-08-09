@@ -23,6 +23,7 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+[Collection(RecordPatchesSerialCollection.Name)]
 public class AlSourceParserCommentTests
 {
     private const int TableId = 61895; // the issue's repro id

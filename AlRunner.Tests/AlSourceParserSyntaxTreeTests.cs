@@ -28,6 +28,7 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+[Collection(RecordPatchesSerialCollection.Name)]
 public class AlSourceParserSyntaxTreeTests
 {
     private const int TableId = 61896;

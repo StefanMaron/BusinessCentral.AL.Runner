@@ -18,6 +18,7 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+[Collection(RecordPatchesSerialCollection.Name)]
 public class SiblingParserCommentTests
 {
     private static readonly Type RecordPatchesType = typeof(AlRunner.Patches.RecordPatches);
