@@ -52,6 +52,12 @@ public static class BcArtifacts
         get { EnsureSelected(); return _selectedRoot!; }
     }
 
+    /// <summary>Whether a version has been selected, WITHOUT triggering the lazy
+    /// default selection. Lets early-installed resolvers decide if probing the
+    /// artifact dir is safe yet (probing before selection would silently commit
+    /// the process to latest-in-cache).</summary>
+    public static bool IsSelected => _selectedVersion != null;
+
     private static readonly object _lock = new();
 
     private static string ArtifactsRoot => Path.Combine(

@@ -38,6 +38,13 @@ public sealed class VersionAgnosticClosureTests
         "Microsoft.IdentityModel.Tokens.dll",
         "System.IdentityModel.Tokens.Jwt.dll",
         "Azure.Core.dll",
+        // The one engine reference Microsoft stamps with a full 4-part assembly version
+        // PER BC BUILD (17.0.36.40629 in 28.1.49838.50794, 17.0.40.3339 in 28.3.52162.53506)
+        // instead of the MAJOR.0.0.0 contract the other engine DLLs honour. A bin copy
+        // occupies the default ALC's slot for the simple name, so a different-build BC
+        // requesting ITS CodeAnalysis version dies with FileLoadException 0x80131621 —
+        // pinning the binary to the exact build it was compiled against.
+        "Microsoft.Dynamics.Nav.CodeAnalysis.dll",
     };
 
     [Fact]

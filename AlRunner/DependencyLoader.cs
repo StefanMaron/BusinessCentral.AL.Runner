@@ -471,6 +471,18 @@ public sealed class DependencyLoader
     /// </summary>
     public static void EnsureResolverInstalled_Public() => EnsureResolverInstalled();
 
+    /// <summary>
+    /// Install the resolver the moment this assembly loads, in EVERY host (runner,
+    /// xunit test host, server mode, future embedders). Microsoft.Dynamics.Nav.CodeAnalysis
+    /// is no longer CopyLocal'd into bin (its assembly version is stamped per BC BUILD,
+    /// which pinned the binary to one build — see Directory.Build.targets), so the FIRST
+    /// touch of a CodeAnalysis-typed member anywhere needs this handler already in place.
+    /// Safe this early because the handler resolves the artifact dir lazily per request
+    /// and never triggers version selection for non-BC assembly names.
+    /// </summary>
+    [System.Runtime.CompilerServices.ModuleInitializer]
+    internal static void InstallResolverOnModuleLoad() => EnsureResolverInstalled();
+
     private static void EnsureResolverInstalled()
     {
         if (Interlocked.Exchange(ref _resolverInstalled, 1) != 0) return;
@@ -483,8 +495,6 @@ public sealed class DependencyLoader
         // .TableProxyBuilder), it fails to load and the call NREs deep in MS code. The
         // probe below catches every Microsoft.Dynamics.Nav.* assembly request and serves
         // it from the artifact dir.
-        // Single source of truth for the artifact dir (tracks AlRunner.csproj's _BCVersion).
-        var serviceTierPath = AlRunner.Infrastructure.BcArtifacts.ServiceTierDir;
         AssemblyLoadContext.Default.Resolving += (ctx, name) =>
         {
             if (name.Name == null) return null;
@@ -495,6 +505,19 @@ public sealed class DependencyLoader
             // IdentityModel) beyond the Microsoft.Dynamics.Nav.* set; all ship in the artifact
             // dir. This handler only fires after default resolution fails, so serving BC's own
             // shipped copy is the faithful choice.
+            //
+            // The artifact dir is resolved LAZILY, per request, not captured at install time:
+            // this handler may be installed before the BC version selection has run (module
+            // initializer, test host). A request for a Microsoft.Dynamics.* assembly
+            // legitimately triggers the lazy default selection; any other name must not —
+            // probing for e.g. a satellite assembly would silently commit the process to
+            // latest-in-cache before --bc-version was parsed.
+            if (!AlRunner.Infrastructure.BcArtifacts.IsSelected
+                && !name.Name.StartsWith("Microsoft.Dynamics.", StringComparison.Ordinal))
+                return null;
+            string serviceTierPath;
+            try { serviceTierPath = AlRunner.Infrastructure.BcArtifacts.ServiceTierDir; }
+            catch { return null; } // no artifacts provisioned — let the default binder fail loud
             var probe = Path.Combine(serviceTierPath, name.Name + ".dll");
             if (File.Exists(probe))
                 return ctx.LoadFromAssemblyPath(probe);

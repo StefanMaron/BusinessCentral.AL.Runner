@@ -29,7 +29,8 @@
       <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)"
         Condition="$([System.String]::Copy('%(Filename)').StartsWith('Microsoft.Identity'))
                    OR $([System.String]::Copy('%(Filename)').StartsWith('System.IdentityModel'))
-                   OR $([System.String]::Copy('%(Filename)').StartsWith('Azure.'))" />
+                   OR $([System.String]::Copy('%(Filename)').StartsWith('Azure.'))
+                   OR '%(Filename)' == 'Microsoft.Dynamics.Nav.CodeAnalysis'" />
     </ItemGroup>
   </Target>
 
