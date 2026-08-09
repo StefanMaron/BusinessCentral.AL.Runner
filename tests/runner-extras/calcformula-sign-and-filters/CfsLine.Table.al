@@ -2,7 +2,7 @@
 /// The source table the FlowFields in "CFS Header" aggregate. The seeded rows differ in
 /// Amount, Open and Status so that each where-condition shape selects a DIFFERENT subset.
 /// </summary>
-table 64220 "CFS Line"
+table 64260 "CFS Line"
 {
     DataClassification = CustomerContent;
 

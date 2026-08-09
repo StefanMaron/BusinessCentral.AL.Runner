@@ -1,7 +1,7 @@
 /// <summary>
 /// Minimal assertion helper for this runner-extras app (own ID range).
 /// </summary>
-codeunit 64225 "CFS Assert"
+codeunit 64265 "CFS Assert"
 {
     procedure AreEqual(Expected: Decimal; Actual: Decimal; Msg: Text)
     begin

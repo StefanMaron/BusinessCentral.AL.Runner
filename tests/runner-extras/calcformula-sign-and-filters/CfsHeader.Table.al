@@ -3,7 +3,7 @@
 /// every one of them lands on a different value, so an implementation that ignored the
 /// sign, ignored the where-conditions, or returned the type default cannot satisfy them.
 /// </summary>
-table 64221 "CFS Header"
+table 64261 "CFS Header"
 {
     DataClassification = CustomerContent;
 

@@ -8,7 +8,7 @@
 // The seed rows are chosen so that every FlowField lands on a DIFFERENT value. An
 // implementation that ignores the sign, ignores the conditions, or returns the type default
 // fails at least one assertion in every test below.
-codeunit 64226 "CFS Tests"
+codeunit 64266 "CFS Tests"
 {
     Subtype = Test;
 
