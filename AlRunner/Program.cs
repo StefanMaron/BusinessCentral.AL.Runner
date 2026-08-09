@@ -323,6 +323,22 @@ if (serverMode && watchMode)
     Console.Error.WriteLine("--server and --watch are mutually exclusive (both stay warm in-process; pick one).");
     return 2;
 }
+// ── Positional bundle roots must exist (#1713) ────────────────────────────────
+// Checked HERE — at argument-parse time, before the BC artifact selection, the Cecil
+// re-exec and the ~6s patch pass — so a mistyped path costs milliseconds. Before this,
+// a nonexistent path travelled all the way into EnumerateSuitesBelow and threw a raw
+// DirectoryNotFoundException out of Main: exit 134, the code the CI matrix documents as
+// "crash", for the most ordinary user error there is. Exit 2 is the existing ladder
+// entry for "could not execute (process-level error)" and is what every other CLI usage
+// error above already returns — no new code introduced.
+{
+    var rootProblem = AlRunner.Infrastructure.BundleRootValidation.Validate(bundles);
+    if (rootProblem != null)
+    {
+        Console.Error.WriteLine(rootProblem);
+        return 2;
+    }
+}
 // --output-json: stdout must be JSON-only, matching the documented contract ("Replace
 // the normal text output with per-test JSON on stdout") and the convention --server
 // already follows. Redirect ALL human-readable progress (bundle/suite banners, [layered]
@@ -2719,7 +2735,9 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                          cut. Exit codes:");
     w.WriteLine("                            0  all tests passed");
     w.WriteLine("                            1  at least one test FAILED or ERRORED");
-    w.WriteLine("                            2  a bundle could not execute (process-level error)");
+    w.WriteLine("                            2  a bundle could not execute (process-level error;");
+    w.WriteLine("                               also a bad invocation — unknown flag, or a bundle");
+    w.WriteLine("                               path that does not exist)");
     w.WriteLine("                            3  a bundle could not compile");
     w.WriteLine("  --no-strict-exit        Always exit 0 regardless of test outcome, so callers can");
     w.WriteLine("                          parse the JSON output without the process failing the step.");
@@ -4667,6 +4685,14 @@ static IReadOnlyList<string> GetOrderedDepIds(
 
 static IEnumerable<string> EnumerateSuites(string root)
 {
+    // Defence in depth for #1713. The CLI validates the positional roots up front, but
+    // this runs again per watch-mode cycle and per bundle, and a directory can vanish
+    // between the check and the walk (a watch session while the tree is being moved, a
+    // submodule being re-checked-out). Yielding nothing lets the caller print its own
+    // loud "SKIP (no suites)" line instead of throwing DirectoryNotFoundException out
+    // of Main with exit 134 — the crash code, for a merely absent directory.
+    if (!Directory.Exists(root)) yield break;
+
     // Root first: a directory that is itself one app (app.json at its root, or a
     // src//test/ split) is ONE bucket, however many category sub-directories it
     // holds. This is the al-language corpus shape — checking the root before
@@ -4691,6 +4717,10 @@ static IEnumerable<string> EnumerateSuites(string root)
 
 static IEnumerable<string> EnumerateSuitesBelow(string dir)
 {
+    // Same guard as EnumerateSuites — this is the frame that actually threw in #1713,
+    // and it also recurses into directories that may disappear mid-walk.
+    if (!Directory.Exists(dir)) yield break;
+
     foreach (var child in Directory.EnumerateDirectories(dir))
     {
         if (LooksLikeSuite(child))
