@@ -24,8 +24,12 @@
 //   only addition is the caption.
 //
 // WHERE CAPTIONS COME FROM (two sources, neither invented)
-//   1. Objects the runner compiles itself — the Caption property read off their AL source
-//      (RecordPatches.AlObjectCaptionParser.cs).
+//   1. Objects the runner compiles itself — the Caption property read off their AL source,
+//      reached through SourceCaptionFor (RecordPatches.AlObjectCaptionParser.cs). Reports
+//      are the one kind whose Caption is parsed by their own parser instead
+//      (ParsedReport.Caption, RecordPatches.AlReportParser.cs, which needs it for the
+//      Report Metadata virtual table anyway); SourceCaptionFor routes "Report" there, so
+//      it is still one parse of the fact behind one accessor — see #1714.
 //   2. Objects in a PRECOMPILED dependency — the Caption property recorded in that .app's
 //      SymbolReference.json (BcAppSymbolCache.ObjectSymbol.Caption).
 //   An object that declares NO Caption gets its object name, because that is AL's own

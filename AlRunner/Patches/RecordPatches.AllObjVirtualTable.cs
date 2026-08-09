@@ -141,7 +141,10 @@ public static partial class RecordPatches
             yield return (kind, p.Id, p.Name, SourceCaptionFor(kind, p.Id));
         }
         foreach (var r in _parsedReports.Values)
-            yield return ("Report", r.Id, r.Name, r.Caption);
+            // SourceCaptionFor("Report", …) reads r.Caption itself — AlReportParser is the
+            // only pass that parses a report's Caption (#1714). Going through the same
+            // accessor as every other kind is what keeps that single source uniform.
+            yield return ("Report", r.Id, r.Name, SourceCaptionFor("Report", r.Id));
         foreach (var r in _parsedReportExtensions.Values)
             yield return ("ReportExtension", r.Id, r.Name, SourceCaptionFor("ReportExtension", r.Id));
         foreach (var q in _parsedQueries.Values)
