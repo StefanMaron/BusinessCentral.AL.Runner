@@ -1284,6 +1284,22 @@ public static partial class RecordPatches
                 return reportDiDa;
             }
 
+            // ── Table Metadata (2000000136) ──────────────────────────────────────────────
+            // Virtual on the service tier too: one row per table in the application. An
+            // empty store makes every lookup answer "no such table", which is what broke
+            // Base App "Page Management".GetDefaultLookupPageID on custom tables.
+            // See RecordPatches.TableMetadataVirtualTable.cs.
+            if (IsTableMetadataVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var tableMetaDa))
+                {
+                    var createdTableMeta = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    tableMetaDa = perTable.GetOrAdd(tableId, createdTableMeta);
+                }
+                PopulateTableMetadataVirtualTable(tableMetaDa, table);
+                return tableMetaDa;
+            }
+
             if (perTable.TryGetValue(tableId, out var cached))
             {
                 return cached;

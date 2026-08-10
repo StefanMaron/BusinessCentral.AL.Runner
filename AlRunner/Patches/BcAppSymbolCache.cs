@@ -24,7 +24,11 @@ internal static partial class BcAppSymbolCache
     // v8: Reports carry their per-data-item Columns and their ReferenceSourceFileName,
     //     which together let DependencyReportMetadata synthesize the runtime metadata XML
     //     a precompiled dependency's report ships no compiled form of.
-    private const int CacheVersion = 8;
+    // v9: ParsedTable gained LookupPageName / DrillDownPageName for the Table Metadata
+    // (2000000136) virtual table. A v8 payload deserialises cleanly with both null, so
+    // without this bump every cached dependency would report "declares no lookup page"
+    // for tables that plainly declare one — a silent wrong answer, not a cache miss.
+    private const int CacheVersion = 9;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
 
     internal sealed record AppSymbols(List<ParsedTable> Tables, List<EnumSymbol> Enums, List<QuerySymbol> Queries,
@@ -524,7 +528,17 @@ internal static partial class BcAppSymbolCache
         var tableProps = SymbolProperties(table);
         var isTemporary = tableProps.TryGetValue("TableType", out var tableType)
             && string.Equals(tableType, "Temporary", StringComparison.OrdinalIgnoreCase);
-        return new ParsedTable(tableId, tableName, fields, pkFieldIds, secondaryKeys, isTemporary);
+        // Page-resolution properties for the Table Metadata (2000000136) virtual table. The
+        // symbol file states these as the page's NAME, not its id, and is inconsistent about
+        // the trailing casing — Base Application 28.1 carries both "LookupPageID" and
+        // "LookupPageId" across different tables. SymbolProperties is case-insensitive, so
+        // one lookup covers both spellings; the name is resolved to an id at row-build time.
+        tableProps.TryGetValue("LookupPageId", out var lookupPageName);
+        tableProps.TryGetValue("DrillDownPageId", out var drillDownPageName);
+        return new ParsedTable(tableId, tableName, fields, pkFieldIds, secondaryKeys, isTemporary,
+            DataPerCompany: true,
+            LookupPageName: string.IsNullOrWhiteSpace(lookupPageName) ? null : lookupPageName,
+            DrillDownPageName: string.IsNullOrWhiteSpace(drillDownPageName) ? null : drillDownPageName);
     }
 
     private static EnumSymbol? TryParseEnumSymbol(JsonElement enumType)

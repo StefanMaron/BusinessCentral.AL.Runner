@@ -152,6 +152,21 @@ public static partial class RecordPatches
         return null;
     }
 
+    /// <summary>
+    /// A page-valued table property (<c>LookupPageId</c> / <c>DrillDownPageId</c>) as written:
+    /// the last name segment of a page reference (<c>Microsoft.Sales."Customer List"</c> →
+    /// <c>Customer List</c>), or the digits when the AL declared a bare id. Null when the
+    /// property is absent — "declares none", which the Table Metadata provider turns into 0
+    /// rather than a guess.
+    /// </summary>
+    private static string? PageRefText(NavSyntax.PropertyValueSyntax? value)
+    {
+        var text = value?.ToString()?.Trim();
+        if (string.IsNullOrEmpty(text)) return null;
+        var segment = LastNameSegment(text);
+        return string.IsNullOrWhiteSpace(segment) ? null : segment;
+    }
+
     private static bool PropIs(NavSyntax.PropertyListSyntax? list, string name, string expected) =>
         string.Equals(PropValue(list, name)?.ToString()?.Trim(), expected,
             StringComparison.OrdinalIgnoreCase);
@@ -297,8 +312,13 @@ public static partial class RecordPatches
             // a table that is not per-company.
             var isTableTypeTemporary = PropIs(table.PropertyList, "TableType", "Temporary");
             var dataPerCompany = !PropIs(table.PropertyList, "DataPerCompany", "false");
+            // LookupPageId / DrillDownPageId feed the Table Metadata (2000000136) virtual
+            // table. Kept as the written reference and resolved later: a page declared after
+            // this table in compile order is not in the page inventory yet.
+            var lookupPage = PageRefText(PropValue(table.PropertyList, "LookupPageId"));
+            var drillDownPage = PageRefText(PropValue(table.PropertyList, "DrillDownPageId"));
             _parsedTables[tableId] = new ParsedTable(tableId, tableName, fields, pkFieldIds,
-                secondaryKeys, isTableTypeTemporary, dataPerCompany);
+                secondaryKeys, isTableTypeTemporary, dataPerCompany, lookupPage, drillDownPage);
         }
     }
 
@@ -590,6 +610,15 @@ internal record ParsedCalcFormula(string FormulaType, string SourceTableName, st
 
 internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null);
 internal record ParsedKey(string Name, List<int> FieldIds);
+/// <param name="LookupPageName">The table's declared <c>LookupPageId</c> as WRITTEN — a page
+/// name (<c>"Customer List"</c>) or a bare id in text form. Both sources state it by name:
+/// AL source writes the reference, and a dependency's SymbolReference.json records
+/// <c>LookupPageID</c>/<c>LookupPageId</c> as the page's NAME, never its number (measured
+/// against Base Application 28.1). Resolution to an id is therefore deferred to row-build
+/// time, where the full page inventory is known. Null means the table declares none, which
+/// is not the same as 0 — see <c>RecordPatches.TableMetadataVirtualTable.cs</c>.</param>
+/// <param name="DrillDownPageName">Same, for <c>DrillDownPageId</c>.</param>
 internal record ParsedTable(int TableId, string TableName,
     List<ParsedField> Fields, List<int> PkFieldIds, List<ParsedKey>? SecondaryKeys = null,
-    bool IsTableTypeTemporary = false, bool DataPerCompany = true);
+    bool IsTableTypeTemporary = false, bool DataPerCompany = true,
+    string? LookupPageName = null, string? DrillDownPageName = null);
