@@ -42,8 +42,14 @@ If a test must assert runner-only behaviour (e.g. that a specific surface
 throws `RunnerOutOfScopeException` with reason `email-smtp`), it goes in
 `tests/runner-extras/`, not in the corpus.
 
+The converse is a hard rule too: a test asserting plain BC behaviour may **not**
+be written as a runner-local test just because that is quicker — it goes upstream
+so a real service tier can adjudicate it. See
+`bc-behavior-tests-go-upstream.md`.
+
 ## Sister rules
 
+- `bc-behavior-tests-go-upstream.md` — which repo a new test belongs in, and why
 - `precompiled-dll-respect.md` — what we may not rewrite in BC DLLs
 - `loud-failures.md` — when to throw `RunnerOutOfScopeException`
 - `no-assumption-fixes.md` — investigate before patching
