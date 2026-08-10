@@ -3,6 +3,13 @@ name: PR Check
 on:
   pull_request:
     branches: [main]
+    # 'labeled'/'unlabeled' are not in the default event set (opened, synchronize,
+    # reopened), so without them applying the bypass label below triggers no new
+    # run and the stale red X stays -- re-running the failed job just replays the
+    # pre-label payload. 'unlabeled' re-asserts the guard when the label is
+    # removed, so the bypass cannot be applied and then silently withdrawn while
+    # the check still reads green.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 jobs:
   require-tests:
