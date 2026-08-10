@@ -241,8 +241,54 @@ public static partial class RecordPatches
         bool isAutoIncrement = PropIs(props, "AutoIncrement", "true");
         var caption = CaptionFrom(PropValue(props, "Caption"));
 
+        // TableRelation: only the UNCONDITIONAL, UNFILTERED `Table` / `Table.Field` shapes
+        // are captured — those are the ones NavRecord.UpdateReferencesOnRenameAsync needs to
+        // propagate a parent Rename (#1730). A relation with an if/else arm or a where(...)
+        // filter is deliberately NOT captured: building it without its conditions would make
+        // Rename propagate rows real BC leaves alone, which is worse than the old behaviour
+        // (no propagation). Conditional/filtered relations remain a tracked gap.
+        string? relationTableName = null, relationFieldName = null;
+        bool relationValidate = !PropIs(props, "ValidateTableRelation", "false");
+        if (!isFlowField && !PropIs(props, "FieldClass", "FlowFilter")
+            && PropValue(props, "TableRelation") is NavSyntax.TableRelationPropertyValueSyntax
+                { IfExpression: null, TableFilter: null, ElseExpression: null } tr)
+        {
+            var parts = NameParts(tr.RelatedTableField);
+            // 1 part = table; 2 parts = table + field. A 3+-part (namespace-qualified) name
+            // is ambiguous without symbol resolution, so it stays uncaptured.
+            if (parts.Count is 1 or 2)
+            {
+                relationTableName = parts[0];
+                relationFieldName = parts.Count == 2 ? parts[1] : null;
+            }
+        }
+
         return new ParsedField(fid, fname, ftype, length, isFlowField, calcFormula,
-            optionMembers, initValueText, isAutoIncrement, caption);
+            optionMembers, initValueText, isAutoIncrement, caption,
+            relationTableName, relationFieldName, relationValidate);
+    }
+
+    /// <summary>Flattens a (possibly qualified) name into its unquoted identifier parts:
+    /// <c>"ALT Relation Parent"."Code"</c> → ["ALT Relation Parent", "Code"].</summary>
+    private static List<string> NameParts(NavSyntax.NameSyntax? name)
+    {
+        var parts = new List<string>();
+        void Walk(NavSyntax.NameSyntax? n)
+        {
+            switch (n)
+            {
+                case NavSyntax.QualifiedNameSyntax q:
+                    Walk(q.Left);
+                    if (q.Right != null)
+                        parts.Add(Unquote(q.Right.Identifier.ValueText ?? q.Right.Identifier.Text ?? ""));
+                    break;
+                case NavSyntax.SimpleNameSyntax s:
+                    parts.Add(Unquote(s.Identifier.ValueText ?? s.Identifier.Text ?? ""));
+                    break;
+            }
+        }
+        Walk(name);
+        return parts;
     }
 
     private static void TryParseTableFile(string text)
@@ -588,7 +634,7 @@ internal record ParsedCalcFilter(
 /// <c>MetaCalcFormula.reverseSign</c> → <c>NCLMetaCalculationFormula.NegateResult</c>.</param>
 internal record ParsedCalcFormula(string FormulaType, string SourceTableName, string? SourceFieldName, List<ParsedCalcFilter> Filters, bool Negated = false);
 
-internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null);
+internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null, string? RelationTableName = null, string? RelationFieldName = null, bool RelationValidate = true);
 internal record ParsedKey(string Name, List<int> FieldIds);
 internal record ParsedTable(int TableId, string TableName,
     List<ParsedField> Fields, List<int> PkFieldIds, List<ParsedKey>? SecondaryKeys = null,

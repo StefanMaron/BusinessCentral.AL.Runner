@@ -18,7 +18,7 @@ namespace AlRunner.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 123;
+    private const int CACHE_VERSION = 124;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -151,6 +151,10 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.NCLMetadata::GetMetaApplicationObject/4",
         "Microsoft.Dynamics.Nav.Runtime.NCLMetadata::GetMetaApplicationObject/3",
         "Microsoft.Dynamics.Nav.Runtime.NCLMetaTable::GetFieldByNo/2",
+        // Referencing-relations reverse index (rename propagation, #1730) — Cecil-forwarded
+        // to RecordPatches.NCLMetaTable_ComputeReferencingRelations over the runner's
+        // metatable cache (BC's body reads the null ObjectLoader and NREs).
+        "Microsoft.Dynamics.Nav.Runtime.NCLMetaTable::ComputeReferencingRelations/2",
         // NavSession getters
         "Microsoft.Dynamics.Nav.Runtime.NavSession::get_DataAccessSource/0",
         "Microsoft.Dynamics.Nav.Runtime.NavSession::get_Database/0",
@@ -169,7 +173,8 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.NavRecordId::get_CollationAwareStringComparer/0",
         // NavRecord no-ops
         "Microsoft.Dynamics.Nav.Runtime.NavRecord::Dispose/1",
-        "Microsoft.Dynamics.Nav.Runtime.NavRecord::UpdateReferencesOnRenameAsync/2",
+        // NavRecord::UpdateReferencesOnRenameAsync/2 is deliberately NOT here: BC's real
+        // body runs (rename propagation to validated TableRelation fields, issue #1730).
         // RecordLink / management
         "Microsoft.Dynamics.Nav.Runtime.RecordLink::MoveLinksAsync/2",
         "Microsoft.Dynamics.Nav.Runtime.NavManagementTasks::CopyCompany/2",
@@ -6241,9 +6246,8 @@ public static class NclCecilRewrite
                 Console.Error.WriteLine($"[Cecil] NavDialog: {dialogNoOps} progress-dialog method(s) → headless no-op");
             }
 
-            // ── NavRecord no-ops (Dispose / UpdateRefs) ──
-            // Dispose(bool) → NoOp2;
-            // UpdateReferencesOnRenameAsync(List,NavRecord) instance overload → ReturnValueTask3.
+            // ── NavRecord no-ops (Dispose) ──
+            // Dispose(bool) → NoOp2.
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavRecord", "Dispose", "Boolean"),
                 H(helperShims, "NoOp2"));
@@ -6251,14 +6255,26 @@ public static class NclCecilRewrite
             // `(GlobalTriggers.GetTriggersOnTable(TableID) & wanted) != 0`, which now works
             // because GetTriggersOnTable is real again. It used to be forced to false, so
             // the write pipeline skipped global-trigger dispatch entirely.
-            {
-                var navRec = nclMod.GetType(Rt + "NavRecord")!;
-                var updRefs = navRec.Methods.FirstOrDefault(m =>
-                    m.Name == "UpdateReferencesOnRenameAsync" && m.HasBody && m.HasThis
-                    && m.Parameters.Count == 2 && m.Parameters[1].ParameterType.Name == "NavRecord")
-                    ?? throw new InvalidOperationException("[Cecil] NavRecord.UpdateReferencesOnRenameAsync(List,NavRecord) not found — do not commit");
-                ReplaceBodyWithHelper(nclMod, updRefs, H(helperShims, "ReturnValueTask3"));
-            }
+            //
+            // NavRecord.UpdateReferencesOnRenameAsync(List,NavRecord) is NOT rewritten
+            // either (it was a ReturnValueTask3 no-op until issue #1730): BC's real body
+            // implements rename propagation — for every validated TableRelation pointing
+            // at the renamed table it rewrites the referencing rows via ModifyAllAsync /
+            // RenameAsync with triggers off. That path runs entirely on metaTable relation
+            // metadata and the in-memory DataAccess, both of which the runner populates,
+            // so the real body is the faithful behaviour. No-opping it silently left child
+            // rows pointing at the old key.
+            //
+            // ── NCLMetaTable.ComputeReferencingRelations(NavAppGroup,NCLMetaTable) ──
+            // The one thing that real body needs and the skeleton cannot give it: BC
+            // computes the referencing-relations reverse index over
+            // ObjectLoader.MetadataCache.GetSnapshotOfAllNonVirtualMetaTables(...), and
+            // ObjectLoader is null on runner-built meta tables (NRE). The replacement
+            // computes the identical index over the runner's metatable cache — see the
+            // equivalence note on RecordPatches.NCLMetaTable_ComputeReferencingRelations.
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NCLMetaTable", "ComputeReferencingRelations", "NavAppGroup", "NCLMetaTable"),
+                H(recordPatches, "NCLMetaTable_ComputeReferencingRelations"));
 
             // ── RecordLink.MoveLinksAsync(NavRecord,NavRecord) static → ReturnValueTask2 ──
             ReplaceBodyWithHelper(nclMod,

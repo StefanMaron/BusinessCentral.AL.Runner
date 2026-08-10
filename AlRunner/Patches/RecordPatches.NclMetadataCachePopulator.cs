@@ -356,4 +356,38 @@ public static partial class RecordPatches
         _fNCLMetaAppObjMetadataLoaded = tNclMetaAppObj?.GetField("metadataLoaded",
             BindingFlags.NonPublic | BindingFlags.Instance);
     }
+
+    /// <summary>
+    /// Cecil-rewritten body for NCLMetaTable.ComputeReferencingRelations(NavAppGroup,
+    /// NCLMetaTable) — the reverse index Rename propagation reads (#1730). BC's own body
+    /// computes the identical index over
+    /// ObjectLoader.MetadataCache.GetSnapshotOfAllNonVirtualMetaTables(...), but ObjectLoader
+    /// is null on every runner-built NCLMetaTable, so the original NREs.
+    /// <para>Observable equivalence: the snapshot BC iterates is "every table that exists in
+    /// the application"; the runner's equivalent universe is _metaTableCache —
+    /// PopulateNclMetadataCache eagerly builds every parsed table into it, and .app-fallback
+    /// tables enter it the moment anything touches them. A table absent from the cache has
+    /// never been instantiated in this run, therefore holds no rows, and BC's propagation
+    /// over it would find nothing to update anyway. Virtual tables (id ≥ 2,000,000,000) are
+    /// excluded exactly as GetSnapshotOfAllNonVirtualMetaTables excludes them.</para>
+    /// </summary>
+    public static NCLMetaFieldRelation[] NCLMetaTable_ComputeReferencingRelations(
+        object appGroup, NCLMetaTable context)
+    {
+        var result = new List<NCLMetaFieldRelation>();
+        foreach (var value in _metaTableCache.Values)
+        {
+            if (value is not NCLMetaTable child) continue;
+            if (child.TableId >= 2000000000) continue;
+            foreach (var field in child.Fields)
+            {
+                var relations = field?.FieldRelations;
+                if (relations == null || relations.Count == 0) continue;
+                foreach (var rel in relations)
+                    if (rel.SourceTableId == context.TableId)
+                        result.Add(rel);
+            }
+        }
+        return result.ToArray();
+    }
 }

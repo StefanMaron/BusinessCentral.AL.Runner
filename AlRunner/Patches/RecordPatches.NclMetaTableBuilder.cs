@@ -365,6 +365,13 @@ public static partial class RecordPatches
             ? BuildMetaCalcFormula(f.CalcFormula, parentTable)
             : null;
 
+        // TableRelation → ImmutableArray<MetaFieldRelation> (one element). NCLMetaField turns
+        // it into the NCLMetaFieldRelation that GetReferencingRelations' reverse index — and
+        // therefore Rename propagation (#1730) — is built from.
+        object? relationsObj = f.RelationTableName != null
+            ? BuildMetaFieldRelations(f.RelationTableName, f.RelationFieldName)
+            : null;
+
         for (int i = 0; i < ps.Length; i++)
         {
             var p = ps[i];
@@ -399,6 +406,20 @@ public static partial class RecordPatches
             if (p.Name == "calcFormula" && calcFormulaObj != null)
             {
                 args[i] = calcFormulaObj;
+                continue;
+            }
+            if (p.Name == "relations" && relationsObj != null)
+            {
+                args[i] = relationsObj;
+                continue;
+            }
+            // ValidateTableRelation: AL's default is true (MetaField's own null-default also
+            // resolves to true), so only the explicit opt-out needs passing. It matters even
+            // when the relation itself was not captured — the flag alone is what suppresses
+            // rename propagation on a field whose relation a tableextension adds later.
+            if (p.Name == "validateRelation" && !f.RelationValidate)
+            {
+                args[i] = (bool?)false;
                 continue;
             }
             if (p.Name == "optionString" && !string.IsNullOrEmpty(f.OptionMembers))
@@ -450,6 +471,70 @@ public static partial class RecordPatches
             args[i] = p.ParameterType.IsValueType ? Activator.CreateInstance(p.ParameterType) : null;
         }
         return ctor.Invoke(args)!;
+    }
+
+    /// <summary>
+    /// Builds the ImmutableArray&lt;MetaFieldRelation&gt; for a field's parsed TableRelation.
+    /// The parser hands over 1 or 2 name parts; two parts are AL-ambiguous between
+    /// `Table.Field` and `Namespace.Table`, so resolution tries `Table.Field` first and falls
+    /// back to treating the last part as a namespace-qualified table. Returns null (relation
+    /// dropped, pre-#1730 behaviour: no rename propagation) when nothing resolves — a name
+    /// that cannot be resolved must not guess, because fieldId 0 means "the primary key"
+    /// and would propagate renames real BC does not.
+    /// </summary>
+    private static object? BuildMetaFieldRelations(string tableName, string? fieldName)
+    {
+        if (_tMetaFieldRelation == null) return null;
+
+        ParsedTable? Resolve(string name) =>
+            _parsedTables.Values.FirstOrDefault(t =>
+                string.Equals(t.TableName, name, StringComparison.OrdinalIgnoreCase))
+            ?? TryPopulateParsedTableByName(name);
+
+        var target = Resolve(tableName);
+        int fieldId = 0;
+        if (target != null && fieldName != null)
+        {
+            var tf = target.Fields.FirstOrDefault(x =>
+                string.Equals(x.FieldName, fieldName, StringComparison.OrdinalIgnoreCase));
+            if (tf != null)
+            {
+                fieldId = tf.FieldId;
+            }
+            else
+            {
+                // `A.B` where A is a table but B is not its field — try B as the table
+                // (`Namespace.Table` reading) before giving up.
+                target = null;
+            }
+        }
+        if (target == null && fieldName != null)
+        {
+            target = Resolve(fieldName);
+            fieldId = 0;
+        }
+        if (target == null)
+        {
+            Console.Error.WriteLine(
+                $"[RecordPatches] TableRelation target '{tableName}{(fieldName != null ? "." + fieldName : "")}' did not resolve to a parsed table — relation dropped");
+            return null;
+        }
+
+        var ctor = _tMetaFieldRelation.GetConstructors()
+            .OrderByDescending(c => c.GetParameters().Length)
+            .First();
+        var ps = ctor.GetParameters();
+        var args = new object?[ps.Length];
+        for (int i = 0; i < ps.Length; i++)
+        {
+            var p = ps[i];
+            if (p.Name == "tableId") { args[i] = target.TableId; continue; }
+            if (p.Name == "tableName") { args[i] = target.TableName; continue; }
+            if (p.Name == "fieldId") { args[i] = fieldId; continue; }
+            if (p.HasDefaultValue) { args[i] = p.DefaultValue; continue; }
+            args[i] = p.ParameterType.IsValueType ? Activator.CreateInstance(p.ParameterType) : null;
+        }
+        return MakeImmutableArray(_tMetaFieldRelation, new[] { ctor.Invoke(args)! });
     }
 
     private static object? BuildMetaCalcFormula(ParsedCalcFormula cf, ParsedTable parentTable)
