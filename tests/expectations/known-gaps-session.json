@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 60877,
+    "CodeunitName": "Test TaskScheduler Behavior",
+    "Method": "TaskScheduler_CreateTask_InsideTest_ReturnsNonEmptyGuid",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1733",
+    "Note": "CreateTask fails with NavALException ('object with that ID does not exist') rather than the NavCreateScheduledTasksNotAllowedException docs/scope.md §3.6 promises, so execution is getting past the CanCreateTask gate. Deliberately NOT expect-oos: that mode requires a RunnerOutOfScopeException with a matching reason, and this throws a NavALException. Whether the end-state is in-scope (return a real task GUID) or out-of-scope (honour §3.6) is the open question on the issue."
+  }
+]
