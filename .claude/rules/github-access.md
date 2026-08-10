@@ -51,6 +51,18 @@ Any agent definition granting `Bash` for GitHub work must also grant the
 `mcp__github__*` tools it needs in its `tools:` frontmatter — otherwise the
 fallback is unavailable precisely where it is needed.
 
+**`ToolSearch` is not optional in that grant.** The `mcp__github__*` tools reach a
+subagent *deferred*: the name is visible but the schema is not, and calling one
+before loading it fails with `InputValidationError`. An agent granted the GitHub
+tools but not `ToolSearch` can see them and cannot call them. Grant `ToolSearch`
+alongside them, always.
+
+Verified end-to-end in a web session (no `gh` present): the `orchestrator` agent
+detected `gh` missing, loaded `mcp__github__list_pull_requests` via
+`ToolSearch("select:mcp__github__list_pull_requests")`, called it, and returned the
+open-PR queue — first attempt, no errors. The frontmatter grant does take effect and
+the MCP connection is inherited by subagents.
+
 ## Things `gh` gives you that the MCP tools do not
 
 - **`mergeable_state` is not a conflict check.** A PR's `base.sha` records the
