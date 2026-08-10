@@ -1,0 +1,32 @@
+{
+  "id": "c5f8d3b2-0e74-4a96-b128-3d9c7f6e2a40",
+  "name": "NavAppCallerModule Dispatch Main",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Consuming bundle of the GetCallerModuleInfo cross-app dispatch reproducer (#1722): calls into the dep and pins that the dep sees THIS bundle as its caller.",
+  "description": "Companion of navapp-callermodule-dispatch-dep. Pins both directions of NavApp.GetCallerModuleInfo() across a cross-app call: the id the dep observes must equal this bundle's own id AND must differ from the dep's own id. The second assertion is what fails on the broken build — GetCallerModuleInfo answered with the dep's own module, so a library keying state on its caller wrote it under its own id.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "b4e7c2a1-9d63-4f85-a017-2c8b6e5d1f39",
+      "name": "NavAppCallerModule Dispatch Dep",
+      "publisher": "AL Runner",
+      "version": "2.4.7.0"
+    }
+  ],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "27.0.0.0",
+  "idRanges": [
+    {
+      "from": 64290,
+      "to": 64299
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

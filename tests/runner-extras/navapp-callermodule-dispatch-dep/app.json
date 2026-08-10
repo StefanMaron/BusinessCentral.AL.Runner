@@ -1,0 +1,25 @@
+{
+  "id": "b4e7c2a1-9d63-4f85-a017-2c8b6e5d1f39",
+  "name": "NavAppCallerModule Dispatch Dep",
+  "publisher": "AL Runner",
+  "version": "2.4.7.0",
+  "brief": "Library half of the GetCallerModuleInfo cross-app dispatch reproducer (#1722): a public procedure that reports who called INTO it.",
+  "description": "RED before the fix: NavApp.GetCallerModuleInfo() called from inside this library returned THIS library's own module instead of the direct caller's, because the runner's frame walk counted the compiler-generated Codeunit<N>.OnInvoke dispatch wrapper — emitted in the callee's own assembly on the cross-app invocation path — as if it were the caller's frame. Mirrors the Microsoft 'Copilot Capability'.RegisterCapability idiom, where a shared library registers state keyed on its caller's module.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "27.0.0.0",
+  "idRanges": [
+    {
+      "from": 64280,
+      "to": 64289
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

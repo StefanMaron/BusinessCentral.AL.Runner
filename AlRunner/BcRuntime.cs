@@ -214,7 +214,8 @@ public static partial class BcRuntime
             Assembly? currentAlFrame = null;
             for (int i = 0; i < trace.FrameCount; i++)
             {
-                var type = trace.GetFrame(i)?.GetMethod()?.DeclaringType;
+                var method = trace.GetFrame(i)?.GetMethod();
+                var type = method?.DeclaringType;
                 var asm = type?.Assembly;
                 if (asm == null || !_moduleInfoByAssembly.ContainsKey(asm)) continue;
                 // The polyfill shim is compiled INTO each AL assembly, so its frames pass
@@ -224,6 +225,19 @@ public static partial class BcRuntime
                     && type.Namespace.StartsWith("AlRunnerShim", StringComparison.Ordinal)) continue;
                 // Same AL method, not a caller: fold away the emitted scope frame object.
                 if (type.Name.Contains("_Scope", StringComparison.Ordinal)) continue;
+                // #1722 — the CROSS-APP invocation path. Calling an AL procedure in another
+                // app does not land as one managed frame: the AL emit routes it through a
+                // compiler-generated `Codeunit<N>.OnInvoke` dispatcher, and that dispatcher
+                // lives in the CALLEE's own assembly, one frame above the callee's real
+                // method. It is the same AL method invocation, not a caller — exactly what
+                // `_Scope` frames are folded for — but it is a plain method on the codeunit
+                // type, so neither rule above catches it. Left unfolded it is accepted as
+                // "the immediate caller" and the walk answers with the callee's own module,
+                // making GetCallerModuleInfo indistinguishable from GetCurrentModuleInfo for
+                // every library invoked across an app boundary. `OnInvoke` is emitted by the
+                // AL compiler, never authored (AL's codeunit trigger is `OnRun`), so folding
+                // it cannot swallow a genuine AL caller frame.
+                if (method!.Name == "OnInvoke") continue;
 
                 if (currentAlFrame == null) { currentAlFrame = asm; continue; }
                 // BC breaks on the FIRST frame after the skipped one — even when it
