@@ -1433,18 +1433,14 @@ public static partial class BcRuntime
             }
         }
 
-        // ALTaskScheduler.CheckCodeUnit — calls NCLMetadata.GetMetaCodeunitById to verify the
-        // codeunit exists. We resolve codeunits via assembly-scan in CreateTarget; the metadata
-        // verification is redundant. No-op so ALCreateTaskAsync proceeds.
-        var alTaskSchedType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ALTaskScheduler");
-        if (alTaskSchedType != null && sessType != null)
-        {
-            var checkCu = alTaskSchedType.GetMethod("CheckCodeUnit",
-                BindingFlags.NonPublic | BindingFlags.Static, null,
-                new[] { sessType, typeof(int) }, null);
-            if (checkCu != null)
-                Hook(checkCu, nameof(NoOp2), "ALTaskScheduler.CheckCodeUnit");
-        }
+        // ALTaskScheduler.CheckCodeUnit / ALCanCreateTask / CanCreateTask (scope.md §3.6,
+        // #1733) are now Cecil-owned (see NclCecilRewrite.cs, CecilOwned + the ALTaskScheduler
+        // block in RewriteNcl). This JmpHook registration used to live here as a no-op for
+        // CheckCodeUnit, but JmpHook is off by default (Cecil-only) — the registration was
+        // silently dead, and BC's real CheckCodeUnit body ran and threw a codeunit-resolution
+        // error before ever reaching CanCreateTask. Deleted rather than left as a redundant
+        // Hook(...) call site (JmpHook.Apply auto-skips Cecil-owned keys anyway, but a call
+        // site with no effect either way is dead code the audit would just flag).
 
         // ALMethodScope.AssignScopeId is Cecil-owned (see NclCecilRewrite.cs, "NavMethodScope
         // cluster") — chains through Session.NCLMetadata which is null; no-op leaves scopeId =
@@ -1839,18 +1835,11 @@ public static partial class BcRuntime
             if (lockTODurGet != null) Hook(lockTODurGet, nameof(ReturnZero_0Args), "ALDatabase.get_ALLockTimeoutDuration");
         }
 
-        // ALTaskScheduler.CanCreateTask(NavSession) — checks permissions via the
-        // session that is null on skeleton. Returning true lets the task-scheduler
-        // calls proceed; ALCreateTaskAsync still NREs further in but the immediate
-        // CanCreateTask cluster is drained.
-        var alTaskSchedType_b = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ALTaskScheduler");
-        if (alTaskSchedType_b != null)
-        {
-            var canCreate = alTaskSchedType_b.GetMethod("CanCreateTask",
-                BindingFlags.NonPublic | BindingFlags.Static);
-            if (canCreate != null)
-                Hook(canCreate, nameof(ReturnTrue_OneArg), "ALTaskScheduler.CanCreateTask");
-        }
+        // ALTaskScheduler.CanCreateTask(NavSession) is Cecil-owned (see NclCecilRewrite.cs,
+        // scope.md §3.6, #1733): rewritten to return false — faithful, the runner has no
+        // scheduler. A JmpHook registration used to live here trying to make it return TRUE
+        // instead, which directly contradicted the documented/Cecil behaviour; it was always
+        // dead (JmpHook is off by default), which is exactly how it went unnoticed.
 
         // NavDialog.ALClose() / ALUpdateAsync are Cecil-owned (see NclCecilRewrite.cs).
 
@@ -1905,19 +1894,12 @@ public static partial class BcRuntime
             // was also wrong: BC's @@DBTS is strictly positive.
         }
 
-        // ALTaskScheduler.ALCreateTaskAsync — 8-arg ValueTask<Guid> static. Hook
-        // to return a fresh Guid; AL test code typically only verifies the
-        // returned id is non-zero or stores it for later cancellation.
-        if (alTaskSchedType_b != null)
-        {
-            foreach (var m in alTaskSchedType_b.GetMethods(
-                         BindingFlags.Public | BindingFlags.Static))
-            {
-                if (m.Name != "ALCreateTaskAsync") continue;
-                if (m.GetParameters().Length == 8)
-                    Hook(m, nameof(ReturnValueTaskGuid_8Args), "ALTaskScheduler.ALCreateTaskAsync");
-            }
-        }
+        // ALTaskScheduler.ALCreateTaskAsync is deliberately LEFT UNMODIFIED (see
+        // NclCecilRewrite.cs, scope.md §3.6, #1733): its real body already throws BC's own
+        // NavCreateScheduledTasksNotAllowedException once CanCreateTask/CheckCodeUnit are
+        // patched to let it reach that gate. A JmpHook registration used to live here trying
+        // to make it return a fresh Guid instead — a silent fake suppressing BC's own guard —
+        // and was always dead (JmpHook is off by default).
 
         // SessionTransactionExtensions.SetRecordConsistent / SetRecordInconsistent
         // — extension methods on NavSession that reach DataAccessSource (null on

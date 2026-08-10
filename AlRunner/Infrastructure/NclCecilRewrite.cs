@@ -289,6 +289,14 @@ public static class NclCecilRewrite
         // NavNCLDotNetCreateException (which is trappable and would be silently swallowed
         // by TryInvokeAsync → TryInitializeFromCurrentApp returns false with no OOS signal).
         "Microsoft.Dynamics.Nav.Runtime.NavDotNet::CreateDotNet/1",
+        // ALTaskScheduler cluster (scope.md §3.6, #1733) — CanCreateTask/ALCanCreateTask
+        // rewritten to return false (no scheduler headlessly) and CheckCodeUnit no-op'd so
+        // ALCreateTaskAsync's real body reaches that CanCreateTask gate instead of throwing
+        // a codeunit-resolution error first. See the RewriteNcl block below for detail.
+        "Microsoft.Dynamics.Nav.Runtime.ALTaskScheduler::ALCanCreateTask/0",
+        "Microsoft.Dynamics.Nav.Runtime.ALTaskScheduler::ALCanCreateTask/1",
+        "Microsoft.Dynamics.Nav.Runtime.ALTaskScheduler::CanCreateTask/1",
+        "Microsoft.Dynamics.Nav.Runtime.ALTaskScheduler::CheckCodeUnit/2",
     };
 
     /// <summary>
@@ -2120,6 +2128,34 @@ public static class NclCecilRewrite
                     ilc.Append(ilc.Create(OpCodes.Ret));
                     body.MaxStackSize = 1;
                     Console.Error.WriteLine($"[Cecil] Rewrote ALTaskScheduler.{m.Name} → return false");
+                }
+
+                // ALTaskScheduler.CheckCodeUnit(NavSession, int) — the ALCreateTaskAsync
+                // state machine calls this TWICE (codeunitId, then failureCodeunitId) BEFORE
+                // it ever reaches the CanCreateTask gate above (#1733). Its real body calls
+                // NCLMetadata.GetMetaCodeunitById, which does not know about a freshly
+                // compiled test bundle's own codeunits, and throws a codeunit-resolution
+                // NavALException naming the calling test codeunit itself — CanCreateTask is
+                // never reached, so the documented scope.md §3.6 contract (unguarded CreateTask
+                // hits BC's own NavCreateScheduledTasksNotAllowedException) never manifests.
+                // The runner resolves codeunits via assembly-scan elsewhere (CreateTarget), so
+                // this metadata check is redundant here; no-op lets execution fall through to
+                // the CanCreateTask gate. A JmpHook no-op for this used to live in BcRuntime.cs
+                // but JmpHook is off by default (Cecil-only) — that registration was silently
+                // dead, which is exactly how this bug presented.
+                foreach (var m in alTaskSchedulerType.Methods
+                    .Where(x => x.Name == "CheckCodeUnit"
+                                && x.ReturnType.FullName == "System.Void"
+                                && x.HasBody))
+                {
+                    var body = m.Body;
+                    body.Instructions.Clear();
+                    body.Variables.Clear();
+                    body.ExceptionHandlers.Clear();
+                    var ilc = body.GetILProcessor();
+                    ilc.Append(ilc.Create(OpCodes.Ret));
+                    body.MaxStackSize = 0;
+                    Console.Error.WriteLine($"[Cecil] Rewrote ALTaskScheduler.{m.Name} → no-op");
                 }
             }
         }

@@ -1,0 +1,19 @@
+{
+  "id": "161b28d9-22b2-418b-af40-70961b85a112",
+  "name": "Runner Extras - TaskScheduler CreateTask",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves TaskScheduler.CreateTask surfaces BC's own NavCreateScheduledTasksNotAllowedException (scope.md §3.6), not a codeunit-resolution NavALException.",
+  "description": "docs/scope.md §3.6 documents ALTaskScheduler.CanCreateTask as faithfully returning false (the headless runner cannot schedule tasks) and unguarded CreateTask hitting BC's own NavCreateScheduledTasksNotAllowedException. Before this fix, ALTaskScheduler.CheckCodeUnit's JmpHook no-op was dead (JmpHook is off by default, Cecil-only), so BC's real CheckCodeUnit body ran first and threw a codeunit-resolution NavALException naming the calling test codeunit's own id -- never reaching the documented CanCreateTask gate.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 64300,
+      "to": 64309
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "17.0",
+  "target": "Cloud"
+}
