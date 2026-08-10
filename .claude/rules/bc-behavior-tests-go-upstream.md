@@ -47,19 +47,36 @@ OOS-classification test behind in `tests/runner-extras/report-run-execution`.
 
 ## Workflow when a fix needs a BC-behaviour test
 
-1. Write the test in the **corpus repo** and validate it against a real BC
-   service tier. That run is the proof; without it the test is not admissible.
-2. Land it there, then **bump the submodule pin** in this repo (its own PR — see
-   `al-language-submodule.md`).
-3. Implement the runner fix here and show the corpus test going RED → GREEN
-   against the new pin.
+The order matters, and step 3 is the one that is never optional.
 
-**If you cannot reach a service tier**, you may not substitute a runner-local
-BC-behaviour test to unblock yourself. Say so plainly in the PR/issue and stop at
-the boundary: land the runner fix with whatever runner-specific coverage is
-legitimately available, and record the missing upstream test as follow-up. An
-unvalidated stand-in is worse than an acknowledged gap, because it looks like
-coverage.
+1. **Write the test** against the corpus repo's conventions (fixtures, `Assert`,
+   file layout) — not as a `runner-extras` bundle you intend to move later.
+2. **Verify it against real BC.** A local BC container with the BC repository is
+   a perfectly good way to do this: publish the app, run the test, confirm it
+   passes for the reason you think it does. This step exists to stop you sending
+   a broken or wrongly-asserted test upstream — it does *not* by itself put the
+   test in the corpus.
+3. **Open a pull request into
+   [`StefanMaron/BusinessCentral.AL.Language.Tests`](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests).**
+   This is the mandatory step. A test only becomes part of the corpus by being
+   merged into that repo's `main` — a test verified locally and never PR'd is
+   not published, not reviewed, and not available to anyone else.
+4. **After that PR merges, bump the submodule pin** in this repo — its own PR,
+   diff inspected first (see `al-language-submodule.md`).
+5. **Then merge the runner change here**, showing the corpus test going
+   RED → GREEN against the new pin.
+
+So a runner fix for a BC-behaviour gap is normally **two PRs in two repos, in
+that order**: corpus first, runner second. Do not merge the runner change and
+leave the upstream test as a promise — once the fix is in, nothing forces the
+test to follow, and the gap quietly becomes untested behaviour.
+
+**If you cannot verify against real BC at all** (no container, no service tier),
+you may not substitute a runner-local BC-behaviour test to unblock yourself. Say
+so plainly in the PR/issue and stop at the boundary: land the runner fix with
+whatever runner-specific coverage is legitimately available, and record the
+missing upstream test as follow-up. An unvalidated stand-in is worse than an
+acknowledged gap, because it looks like coverage.
 
 ## Not a licence to skip TDD
 
