@@ -6,7 +6,7 @@ description: Run one full work cycle — triage untriaged issues, then implement
 
 You are driving one full work cycle on the AL Runner repo. Use the `Agent` tool to dispatch sub-agents — do **not** do triage / implementation / merging yourself. Your job is the conductor's: kick things off, watch state, decide when to stop.
 
-Always pass `--repo StefanMaron/BusinessCentral.AL.Runner` on every `gh` command.
+**GitHub access:** `gh` does not exist in web/remote sessions. Detect once (`command -v gh`) and use `gh` or the `mcp__github__*` tools accordingly — see `.claude/rules/github-access.md`. The `gh` commands below are the local-CLI spelling. When `gh` is available, pass `--repo StefanMaron/BusinessCentral.AL.Runner` on every command.
 
 **Concurrency with human maintainers.** This is a public repo. The **GitHub assignee field** is the boundary: agent-owned items are assigned to `@me`; human-owned items are assigned to a maintainer's account; anything assigned to a non-`@me` user is hands-off across every phase. The sub-agents enforce this internally — your own state-reads in Step A should also filter on `--assignee @me` (or empty assignee) so you don't count human-owned work toward the queue.
 
@@ -67,7 +67,7 @@ While impls work, sweep the PR queue once:
 Agent({
   subagent_type: "orchestrator",
   description: "PR queue sanity-review and merge pass",
-  prompt: "Run one orchestrator pass per your agent definition. Sanity-read every `status: review-ready` PR against its linked issue, apply mechanical checks (CHANGELOG / coverage.yaml / SA-implementation), merge what passes, leave actionable comments on what doesn't. Handle `status: blocked` issues if any can be resolved. Do **not** triage new issues (the triager owns that). Exit after one full pass with no further actions."
+  prompt: "Run one orchestrator pass per your agent definition. Sanity-read every `status: review-ready` PR against its linked issue, apply mechanical checks (CHANGELOG / corpus-submodule edits / SA-implementation), merge what passes, leave actionable comments on what doesn't. Handle `status: blocked` issues if any can be resolved. Do **not** triage new issues (the triager owns that). Exit after one full pass with no further actions."
 })
 ```
 

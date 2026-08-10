@@ -42,7 +42,7 @@ If you are `impl-1` or `impl-2`:
 
 If you are `orchestrator`:
 
-1. **PRs first.** Find PRs labeled `status: review-ready`. CI green + no unresolved threads + no `CHANGELOG.md` in diff + no edits under `tests/al-language/` + relevant expectation entries / runner-extras tests cited in the body → approve and `gh pr merge --auto --squash`. Otherwise leave actionable review comments.
+1. **PRs first.** Find PRs labeled `status: review-ready`. CI green + no unresolved threads + no `CHANGELOG.md` in diff + no edits under `tests/al-language/` + relevant expectation entries / runner-extras tests cited in the body → approve and squash-merge (`gh pr merge --auto --squash`, or `mcp__github__merge_pull_request` with `merge_method: "squash"` — `gh` is absent in web/remote sessions, see `.claude/rules/github-access.md`). Otherwise leave actionable review comments.
 2. **Unblock.** Review `status: blocked` issues; resolve if possible.
 3. Triage of new untriaged issues is owned by the `triager` sub-agent (Opus), which runs at the start of a cycle and sets `status: ready` vs. `status: needs-input`. The orchestrator does not triage.
 

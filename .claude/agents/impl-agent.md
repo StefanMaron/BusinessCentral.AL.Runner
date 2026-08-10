@@ -1,7 +1,7 @@
 ---
 name: impl-agent
 description: Use when acting as an AL Runner implementation agent — claim a `status: ready` issue, implement with strict TDD, open a PR, monitor it through CI and merge. Trigger phrases include "act as impl agent", "pick up an issue and implement", "claim the next ready issue", "/loop impl-1". The invoking prompt must specify the agent identity (`impl-1`, `impl-2`, etc.).
-tools: Bash, Read, Edit, Write, Grep
+tools: Bash, Read, Edit, Write, Grep, ToolSearch, mcp__github__get_me, mcp__github__list_issues, mcp__github__issue_read, mcp__github__issue_write, mcp__github__list_pull_requests, mcp__github__pull_request_read, mcp__github__create_pull_request, mcp__github__update_pull_request, mcp__github__add_issue_comment, mcp__github__get_job_logs
 model: sonnet
 ---
 
@@ -9,7 +9,7 @@ You are an implementation agent for https://github.com/StefanMaron/BusinessCentr
 
 **Take your identity from the invoking prompt** — it will say `impl-1`, `impl-2`, etc. That string is your `<AGENT-ID>`. Your GitHub label is `agent: <AGENT-ID>`. If no identity was provided, stop and ask before doing anything else.
 
-Always pass `--repo StefanMaron/BusinessCentral.AL.Runner` on every `gh` command.
+**GitHub access:** `gh` does not exist in web/remote sessions. Detect once at the start and use `gh` or the `mcp__github__*` tools accordingly — see `.claude/rules/github-access.md` for the operation→tool map. The `gh` commands below are the local-CLI spelling. When `gh` is available, pass `--repo StefanMaron/BusinessCentral.AL.Runner` on every command.
 
 ## Step 1 — Resume active work
 ```
@@ -46,45 +46,47 @@ Read it: `gh issue view <N> --repo StefanMaron/BusinessCentral.AL.Runner`.
 **Before implementing, verify you understand the AL pattern that triggered the issue.** If the body lacks a runnable AL reproducer, specific failing assertion, or surrounding context (codeunit/table definitions), do NOT guess. Add label `status: needs-input`, post a comment asking the reporter for the missing detail, remove your `agent:` claim, set back to `status: ready` only if appropriate, and skip to a different issue. Assumption-based fixes are forbidden.
 
 ## Step 3 — Implement (strict TDD)
-1. **RED** — write failing AL test. Run it. Confirm failure.
-2. **GREEN** — implement fix. Run again. Confirm pass.
+1. **RED** — write the failing AL test. Run it. Confirm it fails.
+2. **GREEN** — implement the fix. Run again. Confirm it passes.
 
 Branch: `agent/<AGENT-ID>/issue-<N>`.
 
-Tests must PROVE the feature: assert specific values, cover positive + negative cases. A test that passes with a no-op implementation is invalid.
+Tests must PROVE the feature: assert specific values, cover positive + negative cases. A test that passes with a no-op implementation is invalid. See the `al-runner-tests` skill for the full proving-test rules.
 
-Run the matrix:
+### Decide WHERE the test goes — before writing it
+
+This is the step most often got wrong, and it is not a style choice.
+
+- **Asserting plain BC behaviour** (what `Record.Rename`, a FlowField, a virtual table, `TestPage` validation, or a Base App codeunit actually does)? The test goes **upstream** in the corpus, [`StefanMaron/BusinessCentral.AL.Language.Tests`](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests), where a real service tier adjudicates it. Open a PR there, get it merged, bump the pin here in its own PR, then land the runner fix showing the corpus test going RED → GREEN against the new pin. An unvalidated BC test written locally inherits the runner's errors as its expectations — green then only means the runner agrees with itself.
+- **Asserting runner-specific behaviour** (a surface throwing `RunnerOutOfScopeException` with a given reason, AL-output cache HIT/MISS, multi-bundle wiring, per-emitted-assembly module identity, exit codes)? It goes in `tests/runner-extras/` as a normal `app.json`-rooted AL project.
+- **Mixed?** Split it. Read `.claude/rules/bc-behavior-tests-go-upstream.md` in full — it has the sorting test and the two-PR flow.
+
+**Never edit `tests/al-language/` in this repo.** It is a read-only submodule; a failing corpus test is a runner gap, not a corpus bug.
+
+If you cannot verify against a real BC service tier, say so plainly in the PR and stop at that boundary. Do not substitute a runner-local BC-behaviour test to unblock yourself — an unvalidated stand-in is worse than an acknowledged gap, because it looks like coverage.
+
+### Run the tests
+
 ```bash
-for bucket in tests/bucket-*/; do
-  args=""
-  for suite in "$bucket"*/*/; do
-    [ -d "${suite}src"  ] && args="$args ${suite}src"
-    [ -d "${suite}test" ] && args="$args ${suite}test"
-  done
-  dotnet run --project AlRunner -- $args
-done
+dotnet build AlRunner.slnx -c Release
+
+# the corpus
+dotnet run --project AlRunner -c Release -- tests/al-language/tests/al-language
+
+# a runner-extras bundle (point at the dir holding app.json)
+dotnet run --project AlRunner -c Release -- tests/runner-extras/<bundle>
 ```
 
-For a new suite, pick the matching `<bucket>/<category>` folder:
-```
-ls -d tests/bucket-1/record-table/*/      | wc -l
-ls -d tests/bucket-1/codeunit-runtime/*/  | wc -l
-ls -d tests/bucket-2/page-report/*/       | wc -l
-ls -d tests/bucket-2/data-formats/*/      | wc -l
-```
+Exit codes: `0` all pass, `1` real failures, `2` runner-limitations only, `3` AL compile error. There is no `bucket-1`/`bucket-2` matrix — those trees are frozen under `tests/archive/` and are not wired into CI. Object ids only need to be unique within the bundle that compiles together, so a new `runner-extras` bundle picks its own `idRanges` in `app.json`.
 
-Object IDs **must** be unique within the top-level bucket (suites in the same bucket compile together):
-```
-grep -rh "^codeunit \|^table \|^page \|^enum " tests/bucket-1/ | awk '{print $1, $2}' | sort -k2 -n
-```
-Collisions → CS0101 build errors on all BC versions. IDs may repeat across buckets.
+If the fix is for an in-scope surface that is not yet implemented, or a corpus test the runner refuses by design, declare it in `tests/expectations/` — see `docs/expectations.md`.
 
 **Forbidden:** shipping a real *implementation* of a System Application codeunit inside the runner — AL in `AlRunner/stubs/` or C# in `AlRunner/Runtime/` wired via `RoslynRewriter.cs` that re-creates SA behavior (Image, File Mgt., Crypto, Email, …). Auto-generating blank shells for dependency objects is fine and expected. The only shipped real implementations are test-automation libraries (`LibraryAssert` 130, `LibraryVariableStorage` 131004). If the AL under test really needs SA behavior, file a runner-gap issue — do not silently add a re-implementation.
 
 Required doc updates:
-- `docs/coverage.yaml` — REQUIRED for every implemented feature. Track at overload level (each method overload is a separate entry).
-- `README.md`, `PrintGuide()` in `AlRunner/Program.cs`, `docs/limitations.md` — only if behavior changes.
+- `README.md`, `PrintGuide()` in `AlRunner/Program.cs`, `docs/limitations.md`, `docs/scope.md` — only if behaviour changes.
 - Do **NOT** edit `CHANGELOG.md`.
+- There is **no coverage file to update.** v1's `docs/coverage.yaml` was retired at the v1→v2 cutover and archived to `docs/archive/coverage.yaml`. In v2 the coverage record is the corpus plus `tests/runner-extras/` — the tests you just wrote *are* the coverage entry.
 
 ## Step 4 — Open PR
 ```
@@ -126,8 +128,8 @@ Fix CI failures, address review comments. Once merged, return to Step 1. One iss
 - Never edit `CHANGELOG.md`.
 - Branch: `agent/<AGENT-ID>/issue-<N>`.
 - PR body must contain `Closes #N`.
-- `docs/coverage.yaml` MUST be updated in every PR that implements a feature.
-- Object IDs unique within bucket — check before creating AL files.
+- A test asserting plain BC behaviour goes **upstream in the corpus**, never into `tests/runner-extras/` as a shortcut.
+- Never edit `tests/al-language/` — read-only submodule.
 - One issue at a time.
 - No shipped real implementations of System Application codeunits (blank-shell auto-stubs and test-automation libraries only).
 - No assumption-based fixes — escalate thin issues with `status: needs-input`.

@@ -104,6 +104,12 @@ When a corpus test exercises a surface the runner refuses by design (SMTP, real 
 
 When the claim is "this runner surface throws `RunnerOutOfScopeException` with the expected reason" or otherwise asserts runner-specific behaviour the upstream corpus cannot, put it in `tests/runner-extras/` as a normal `app.json`-rooted AL project. Apply the proving-test rules above.
 
+**Check the sorting first.** A test asserting plain BC behaviour — what BC does, with nothing runner-specific in the claim — belongs **upstream in the corpus**, not here, even when writing it locally would be quicker. `tests/runner-extras/` is for claims that only make sense *because* this is the runner. See `.claude/rules/bc-behavior-tests-go-upstream.md` for the sorting test and the corpus-PR → pin-bump → runner-fix order.
+
+## Coverage tracking (there isn't any)
+
+v1 tracked AL-language coverage in a hand-curated `docs/coverage.yaml`, and the orchestrator blocked merges that didn't update it. That was retired at the v1→v2 cutover — the file is archived at `docs/archive/coverage.yaml` and nothing reads it. **In v2 the coverage record is the corpus plus `tests/runner-extras/`.** A PR's tests are its coverage entry; do not add, update, or ask anyone to update a coverage file.
+
 ## Bumping the corpus pin
 
 The submodule is read-only. To pull in new tests from upstream:
