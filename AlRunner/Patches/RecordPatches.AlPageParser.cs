@@ -54,7 +54,12 @@ public static partial class RecordPatches
                 ControlIdToFieldName: ParsePageFieldBindings(id, p.Layout),
                 // AL's default when the property is absent is TRUE, so only an explicit
                 // `false` flips it. Drives ITestPage.Creatable via NavTestPageBase.New().
-                InsertAllowed: !PropIs(props, "InsertAllowed", "false"));
+                InsertAllowed: !PropIs(props, "InsertAllowed", "false"),
+                // AL's default is false — only an explicit `true` flips it. See issue #1719:
+                // a page-variable's Rec must be built temporary when this is true, or its
+                // own AL body's Rec.Copy(source, shareTable: true) refuses ("both records
+                // must be temporary").
+                SourceTableTemporary: PropIs(props, "SourceTableTemporary", "true"));
         }
 
         foreach (var obj in objects)
@@ -213,4 +218,6 @@ internal record ParsedPage(
     IReadOnlyDictionary<int, string> ControlIdToFieldName,
     bool InsertAllowed = true,
     /// <summary>The object a pageextension extends; empty for a plain page.</summary>
-    string BaseName = "");
+    string BaseName = "",
+    /// <summary>AL's <c>SourceTableTemporary</c> property; see issue #1719.</summary>
+    bool SourceTableTemporary = false);

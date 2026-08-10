@@ -481,7 +481,18 @@ public static partial class BcRuntime
     /// Replacement for NavFormHandle.CreateTarget().
     /// Same shape as NavCodeunitHandle/NavTestPageHandle — bypass NavGlobal.NCLMetadata
     /// by scanning the loaded test assembly for `Form{ID}` and constructing via the
-    /// 1-arg ITreeObject ctor.
+    /// (ITreeObject, NavRecord) ctor when the page's SourceTable is resolvable, falling
+    /// back to the 1-arg ITreeObject ctor otherwise.
+    ///
+    /// The 2-arg ctor matters for issue #1719: a plain `Page X` variable (as opposed to a
+    /// TestPage, which already goes through RunnerPageInstance/TestPageFactory) built via
+    /// the 1-arg ctor alone never gets its Rec bound — probed directly, `Rec` and the base
+    /// `SourceTable` getter both read back null, no exception — so any Base App/System App
+    /// page method that reads Rec before the page is ever "opened" (e.g. Page 700
+    /// "Error Messages".SetRecords: `Rec.Copy(TempErrorMessage, true)`) NREs inside BC's own
+    /// unmodified body before AL gets a chance to run. Binding Rec here, the same way
+    /// RunnerPageInstance already does for TestPage, is a construction-time fix in our own
+    /// dispatch — not a change to that body — per precompiled-dll-respect.md.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static object NavFormHandle_CreateTarget(object self)
@@ -497,14 +508,86 @@ public static partial class BcRuntime
         if (formType == null)
             throw new InvalidOperationException(
                 $"Page{id} is not present in the test assembly or any loaded dependency.");
-        var ctor = formType.GetConstructors()
-            .FirstOrDefault(c => c.GetParameters().Length == 1 &&
+
+        var ctors = formType.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        var twoArgCtor = ctors.FirstOrDefault(c => c.GetParameters().Length == 2
+            && typeof(Microsoft.Dynamics.Nav.Runtime.ITreeObject).IsAssignableFrom(c.GetParameters()[0].ParameterType)
+            && typeof(NavRecord).IsAssignableFrom(c.GetParameters()[1].ParameterType));
+        if (twoArgCtor != null)
+        {
+            var tableId = RecordPatches.ResolveSourceTableIdForAnyPage(id);
+            if (tableId != 0)
+            {
+                var isTemporary = RecordPatches.ResolveSourceTableTemporaryForAnyPage(id);
+                var record = TestPageFactory.TryBuildBlankRecord(self, tableId, isTemporary, out var why);
+                if (record != null)
+                {
+                    var instance = twoArgCtor.Invoke(new object?[] { self, record });
+                    BindPageSourceObjectId(instance, tableId);
+
+                    // NavForm.SetSourceTable(record, clone: false) is BC's own binding
+                    // step — it stores `record` as Rec, wires the Notify handler and
+                    // computes auto-calc fields. Reused rather than reimplemented so a
+                    // page's real construction-time behaviour runs, not our guess at it.
+                    var setSourceTable = instance.GetType().GetMethod("SetSourceTable",
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                        binder: null, types: new[] { typeof(NavRecord), typeof(bool) }, modifiers: null);
+                    try { setSourceTable?.Invoke(instance, new object?[] { record, false }); }
+                    catch (TargetInvocationException tie) when (tie.InnerException != null)
+                    {
+                        // Loud, not fatal: the instance is still usable exactly as it was
+                        // before this fix (Rec unbound) — a page method that never touches
+                        // Rec keeps working, and one that does gets the SAME NRE it always
+                        // threw, not a new, worse failure from a half-bound instance.
+                        Console.Error.WriteLine(
+                            $"[BcRuntime] Page{id}: SetSourceTable failed after binding SourceTable {tableId} "
+                            + $"({tie.InnerException.GetType().Name}: {tie.InnerException.Message}); "
+                            + "Rec stays unbound, as before this fix.");
+                    }
+                    return instance;
+                }
+                if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "1")
+                    Console.Out.WriteLine($"[NavFormHandle_CreateTarget] Page{id}: {why}; falling back to the 1-arg ctor");
+            }
+        }
+
+        var ctor = ctors.FirstOrDefault(c => c.GetParameters().Length == 1 &&
                 typeof(Microsoft.Dynamics.Nav.Runtime.ITreeObject)
                     .IsAssignableFrom(c.GetParameters()[0].ParameterType));
         if (ctor == null)
             throw new InvalidOperationException(
                 $"Page{id} has no single-arg ITreeObject constructor");
         return ctor.Invoke(new object[] { self });
+    }
+
+    /// <summary>
+    /// Stamp <c>NavForm.navSourceObject.SourceObjectId</c> to <paramref name="tableId"/>
+    /// before <c>SetSourceTable</c> validates against it.
+    ///
+    /// Real BC resolves that field via <c>NavGlobal.NCLMetadata</c> at page construction —
+    /// the same provider every other CreateTarget bypass in this file avoids because it NREs
+    /// on a skeleton meta. Left unset it stays at its CLR default (0), and
+    /// <c>SetSourceTable</c>'s own validation (`record.TableID == navSourceObject.
+    /// SourceObjectId`) then throws <c>NavNCLTableIdMismatchException</c> before Rec is ever
+    /// bound — this fills in exactly the state that provider would have supplied, using the
+    /// SAME table id already resolved from the page's own AL/SymbolReference.json (never
+    /// guessed), not a change to SetSourceTable's own logic.
+    ///
+    /// <c>NavForm.NavSourceObject</c> is a value type: a plain <c>FieldInfo.GetValue</c> +
+    /// <c>PropertyInfo.SetValue</c> mutates a boxed COPY that is never written back, so the
+    /// poke must be re-stamped onto the instance field explicitly.
+    /// </summary>
+    private static void BindPageSourceObjectId(object formInstance, int tableId)
+    {
+        var navSourceObjField = FindFieldUpHierarchy(formInstance.GetType(), "navSourceObject");
+        var navSourceObj = navSourceObjField?.GetValue(formInstance);
+        var sourceObjectIdProp = navSourceObj?.GetType().GetProperty("SourceObjectId",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (navSourceObjField == null || navSourceObj == null || sourceObjectIdProp is not { CanWrite: true })
+            return;
+        sourceObjectIdProp.SetValue(navSourceObj, tableId);
+        if (navSourceObjField.FieldType.IsValueType)
+            navSourceObjField.SetValue(formInstance, navSourceObj);
     }
 
     // One-time hook: NavReport..ctor(ITreeObject, Int32, NCLStaticMetadata) → same replacement
