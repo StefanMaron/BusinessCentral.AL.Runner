@@ -56,11 +56,34 @@ The order matters, and step 3 is the one that is never optional.
    passes for the reason you think it does. This step exists to stop you sending
    a broken or wrongly-asserted test upstream — it does *not* by itself put the
    test in the corpus.
+
+   **The corpus repo's own CI is also a real service tier**, and is the stronger
+   check of the two. `.github/workflows/ci.yml` there boots a real BC sandbox on
+   Linux (via `StefanMaron/MsDyn365Bc.On.Linux`) and runs the suite against **BC
+   27.5 and 28.1**, `fail-fast: false`. So a green PR check upstream *is* the
+   service-tier adjudication this rule demands, on two BC versions. If you have
+   no local container, opening the PR and letting CI run is a legitimate way to
+   perform step 2 — not a way to skip it.
 3. **Open a pull request into
    [`StefanMaron/BusinessCentral.AL.Language.Tests`](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests).**
    This is the mandatory step. A test only becomes part of the corpus by being
    merged into that repo's `main` — a test verified locally and never PR'd is
    not published, not reviewed, and not available to anyone else.
+
+   **Who merges it: the orchestrator, not the authoring agent.** An impl agent
+   opens the corpus PR and stops there. The orchestrator reviews it and merges
+   once both BC legs are green. This split is deliberate — an agent merging its
+   own test means the same reasoning that wrote the test also clears it, which
+   is this rule's original failure mode relocated from "unvalidated" to
+   "unreviewed". Green CI proves the test *runs and passes against real BC*; an
+   independent read is what proves it *asserts something*.
+
+   **Green CI is necessary, not sufficient.** A test that asserts a default
+   value, or that would pass against a stub returning `0` / `''` / `false`, goes
+   green just as reliably as a good one. Before merging, apply `tdd.md`'s test:
+   would this still pass if the implementation were gutted? If yes it is noise —
+   send it back rather than merge it. Both directions (positive + `asserterror`
+   with a specific expected message) still apply upstream.
 4. **After that PR merges, bump the submodule pin** in this repo — its own PR,
    diff inspected first (see `al-language-submodule.md`).
 5. **Then merge the runner change here**, showing the corpus test going
@@ -71,12 +94,18 @@ that order**: corpus first, runner second. Do not merge the runner change and
 leave the upstream test as a promise — once the fix is in, nothing forces the
 test to follow, and the gap quietly becomes untested behaviour.
 
-**If you cannot verify against real BC at all** (no container, no service tier),
-you may not substitute a runner-local BC-behaviour test to unblock yourself. Say
-so plainly in the PR/issue and stop at the boundary: land the runner fix with
-whatever runner-specific coverage is legitimately available, and record the
-missing upstream test as follow-up. An unvalidated stand-in is worse than an
-acknowledged gap, because it looks like coverage.
+**"I have no local BC container" is not that situation.** Open the corpus PR and
+let its CI adjudicate — see step 2. Having no container is the normal case for
+agents in web/remote sessions and is fully handled by the upstream workflow.
+
+**If you cannot get a verdict from real BC at all** — corpus CI is broken, both
+BC legs are failing for unrelated reasons, or the behaviour genuinely cannot be
+expressed in the corpus — you may not substitute a runner-local BC-behaviour
+test to unblock yourself. Say so plainly in the PR/issue and stop at the
+boundary: land the runner fix with whatever runner-specific coverage is
+legitimately available, and record the missing upstream test as follow-up. An
+unvalidated stand-in is worse than an acknowledged gap, because it looks like
+coverage.
 
 ## Not a licence to skip TDD
 
