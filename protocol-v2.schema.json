@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/schemas/protocol-v2.json",
   "title": "AL.Runner Server Protocol v2",
-  "description": "Newline-delimited JSON. A `runtests` request emits zero or more `test` lines, optional `progress` lines, then exactly one `summary` line. Each line is a separate JSON document. NOTE (as ported for #1641): the v2 architecture's --server loop does not emit this shape yet — it still returns one v1-compatible response line per request (see AlRunner/ServerProtocol.cs). This file is the target contract for the streaming port; the NDJSON emitter that produces it is tracked as follow-up work on #1641.",
+  "description": "Newline-delimited JSON. A `runtests` request emits zero or more `test` lines, optional `progress` lines, then exactly one `summary` line. Each line is a separate JSON document. STATUS on v2 (#1641): --server streams this shape for `runTests`, and each `test` line carries `errorKind` and `stackFrames`. Still schema-only, in separate slices: `cancelled` and the `ack`/`progress` lines (they land with the `cancel` command), and `capturedValues`/`coverage`/`alSourceFile`/`alSourceLine`, which need the Cecil instrumentation pass tracked on #1640. Absent optional fields mean 'not known', never 'empty'.",
   "definitions": {
     "AlStackFrame": {
       "type": "object",

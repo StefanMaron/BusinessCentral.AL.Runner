@@ -61,16 +61,33 @@ streams `test` lines across all of them before the one final `summary`.
 
 ```jsonc
 {"type":"test","name":"Codeunit60110.MyTest","status":"pass","durationMs":12}
-{"type":"test","name":"Codeunit60110.OtherTest","status":"fail","durationMs":3,"message":"...","stackTrace":"..."}
+{"type":"test","name":"Codeunit60110.OtherTest","status":"fail","durationMs":3,
+ "message":"NavNCLDialogException: boom","errorKind":"runtime",
+ "stackFrames":[{"name":"\"My Test CU\"(CodeUnit 60110).OtherTest","line":2,
+                 "presentationHint":"normal"}],
+ "stackTrace":"..."}
 {"type":"summary","exitCode":1,"passed":1,"failed":1,"errors":0,"total":2,
  "cached":false,"changedFiles":["XRecProbe.Table.al"],"compilationErrors":null,
  "protocolVersion":2}
 ```
 
-- `status` is `pass` | `fail` | `error`.
+- `status` is `pass` | `fail` | `error` | `skipped`.
 - `stackTrace` is the AL call stack for AL-originated errors, falling back to
   the raw C# exception for runner-internal failures (matching the normal-mode
   rule). `message`/`stackTrace` are omitted (not `null`) on a passing test.
+- `errorKind` buckets the failure so a client can vary its UI:
+  `runtime` · `setup` (thrown before any `[Test]` body ran — codeunit
+  instantiation) · `timeout` (the per-test `--test-timeout` guard fired) ·
+  `compile` · `assertion` · `unknown` (an error with no exception behind it).
+  Omitted entirely on a `pass`/`skipped` — there is no error to bucket.
+  Note: BC's `Assert` codeunits ultimately call AL `Error()`, which surfaces as
+  the same `NavNCLDialogException` as any other AL error, so assertion failures
+  currently report `runtime`; see the note in `AlRunner/ErrorClassifier.cs`.
+- `stackFrames` is `stackTrace` parsed into structured frames — same order
+  (deepest first), one object per frame, with `name`, and `line` when BC
+  supplied one. Omitted when no AL call stack was captured (a runner-internal
+  failure); never emitted as an empty array, and `source`/`column` are omitted
+  rather than invented, since BC's call-stack format carries no file path.
 - `exitCode`: `0` ok · `1` test fail · `2` exec · `3` compile (same ladder as
   normal mode).
 - `changedFiles` is only present on a cache miss (a hit means nothing changed);
@@ -80,24 +97,31 @@ streams `test` lines across all of them before the one final `summary`.
 - A bundle that fails to compile short-circuits straight to the `summary` line
   with `exitCode: 3` and `compilationErrors` set — no `test` lines for that
   bundle (there was nothing to run).
-- `errorKind` (per-test) and `cancelled` (on the summary) are defined by
-  `protocol-v2.schema.json` but not populated yet — separate follow-up slices
-  of #1641, along with the `cancel` command.
+- `cancelled` (on the summary) is defined by `protocol-v2.schema.json` but not
+  populated yet — it lands with the `cancel` command, a separate follow-up
+  slice of #1641. `capturedValues` and `coverage` need the Cecil instrumentation
+  pass tracked on #1640.
 
 A request-level problem (e.g. a missing `sourcePaths`) returns the usual single
 `{"error":"..."}` line instead of a `test`/`summary` sequence — see Errors below.
 
 ### `execute`
 
-Not yet implemented in v2. Returns a structured error rather than a silent
-fake (per `.claude/rules/loud-failures.md`):
+Runs each bundle's first `OnRun`-bearing codeunit (run-mode). Unlike `runTests`
+this is **not** streamed — one v1-shaped response line, no `type` discriminator:
 
 ```json
-{"error":"execute: inline AL execution / run-mode is not yet implemented in v2 — use 'runTests'. See docs/server-mode.md."}
+{"exitCode":0,"tests":[{"name":"Codeunit60110.OnRun","status":"pass","durationMs":7}]}
 ```
 
-v1's `execute` ran inline AL or the first codeunit's `OnRun`. v2 has no inline-AL
-execution / run-mode pipeline yet; this is tracked as a follow-up.
+v1's `execute` also accepted an inline `code` string and a `captureValues` flag.
+v2 has no inline-AL compile path and no value capture (the latter needs the
+Cecil instrumentation pass on #1640), so both fail loudly with a structured
+error rather than a silent fake, per `.claude/rules/loud-failures.md`:
+
+```json
+{"error":"execute: inline AL 'code' is not yet supported in v2 — pass 'sourcePaths' to run the bundle's OnRun codeunit. See docs/server-mode.md."}
+```
 
 ### `shutdown`
 

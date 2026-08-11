@@ -10,13 +10,14 @@ namespace AlRunner;
 /// One JSON object per line. stdin = requests, stdout = responses.
 ///   request : {command, sourcePaths[], packagePaths[], stubPaths[], code, captureValues, testIsolation}
 ///   runTests: STREAMING (protocol-v2.schema.json — see #1641) — zero or more
-///             {"type":"test", name, status, durationMs, message, stackTrace}
-///             lines, one per completed test as it finishes, followed by exactly
-///             one terminal {"type":"summary", exitCode, passed, failed, errors,
+///             {"type":"test", name, status, durationMs, message, errorKind,
+///             stackFrames, stackTrace} lines, one per completed test as it
+///             finishes, followed by exactly one terminal
+///             {"type":"summary", exitCode, passed, failed, errors,
 ///             total, cached, changedFiles|omitted, compilationErrors|omitted,
-///             protocolVersion:2} line. `errorKind`/`stackFrames` on the test
-///             event and `cancelled` on the summary are schema-defined but not
-///             yet populated — separate follow-up slices of #1641.
+///             protocolVersion:2} line. `cancelled` on the summary is
+///             schema-defined but not yet populated — it lands with the `cancel`
+///             command, a separate follow-up slice of #1641.
 ///   execute : {exitCode, tests:[{name,status,durationMs,message,stackTrace}],
 ///              messages|null, compilationErrors|null} — single response, not
 ///              streamed (matches v1: only runTests streams).
@@ -81,11 +82,18 @@ public static class ServerProtocol
     /// <summary>
     /// Serialize one protocol-v2 <c>test</c> NDJSON line for a single completed
     /// test (the streaming <c>runTests</c> shape — see #1641 / protocol-v2.schema.json's
-    /// <c>TestEvent</c>). <c>errorKind</c>/<c>stackFrames</c> are schema-defined
-    /// but not populated here — that wiring is a separate follow-up slice of #1641.
+    /// <c>TestEvent</c>), including the two structured-diagnostics fields:
+    /// <c>errorKind</c> (<see cref="ErrorClassifier"/>) and <c>stackFrames</c>
+    /// (<see cref="StackFrameMapper"/>'s parse of the captured AL call stack).
+    /// Both are OMITTED rather than emitted empty when there is nothing to say —
+    /// a pass has no error kind, and a failure with no captured AL stack has no
+    /// frames (an empty array would claim "AL stack captured, zero frames deep").
+    /// <c>capturedValues</c>/<c>alSourceFile</c>/<c>alSourceLine</c> stay
+    /// schema-only: they need the Cecil instrumentation pass tracked on #1640.
     /// </summary>
     public static string TestEvent(TestResult t)
     {
+        var frames = StackFrameMapper.Walk(t.AlCallStack);
         var payload = new
         {
             type = "test",
@@ -93,10 +101,26 @@ public static class ServerProtocol
             status = t.Outcome.ToString().ToLowerInvariant(),
             durationMs = (long)t.Duration.TotalMilliseconds,
             message = t.Message,
+            errorKind = ErrorClassifier.Classify(t)?.ToString().ToLowerInvariant(),
+            stackFrames = frames.Count > 0 ? frames.Select(ToWire) : null,
             stackTrace = (t.AlCallStack ?? t.FullException)?.TrimEnd(),
         };
         return JsonSerializer.Serialize(payload, Opts);
     }
+
+    // One AL stack frame on the wire, in protocol-v2.schema.json's `AlStackFrame`
+    // shape. `source` is only emitted when the frame actually carries a file —
+    // BC's service-tier call-stack format does not include one, so it is normally
+    // absent rather than invented (.claude/rules/loud-failures.md). Line/column are
+    // likewise null-omitted, so a frame BC gave no line for does not gain a fake 0.
+    private static object ToWire(AlStackFrame f) => new
+    {
+        name = f.Name,
+        source = f.File != null ? new { path = f.File, name = Path.GetFileName(f.File) } : null,
+        line = f.Line,
+        column = f.Column,
+        presentationHint = f.Hint.ToString().ToLowerInvariant(),
+    };
 
     /// <summary>
     /// Serialize the single terminal <c>summary</c> NDJSON line that ends a

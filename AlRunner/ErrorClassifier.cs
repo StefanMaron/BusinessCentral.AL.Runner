@@ -66,4 +66,26 @@ public static class ErrorClassifier
 
         return AlErrorKind.Runtime;
     }
+
+    /// <summary>
+    /// Classify a completed <see cref="TestResult"/> for the protocol-v2
+    /// <c>errorKind</c> field (#1641). Returns <c>null</c> when there is no error
+    /// to classify — a pass or a skip. Emitting <c>unknown</c> in those cases would
+    /// read on the wire as "this failed and we don't know why", so the field is
+    /// omitted instead.
+    ///
+    /// This is the single place that knows how a v2 <see cref="TestResult"/> maps
+    /// onto a bucket, so the CLI and the server can never drift apart:
+    ///   <see cref="TestResult.TimedOut"/> is checked first because the timeout path
+    ///   carries no exception at all (see the TestResult remarks) — without the flag
+    ///   a hung test would come out as <see cref="AlErrorKind.Unknown"/>.
+    ///   An error we raised ourselves with no exception behind it (e.g. "unsupported
+    ///   test signature") also lands on Unknown, which is the honest answer.
+    /// </summary>
+    public static AlErrorKind? Classify(TestResult result)
+    {
+        if (result.Outcome is TestOutcome.Pass or TestOutcome.Skipped) return null;
+        if (result.TimedOut) return AlErrorKind.Timeout;
+        return Classify(result.Exception, new TestExecutionContext(result.InsideTestProc));
+    }
 }

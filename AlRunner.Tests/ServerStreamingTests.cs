@@ -91,10 +91,25 @@ public class ServerStreamingTests
         var pass = events.Single(e => e.GetProperty("name").GetString()!.EndsWith("PassingTest"));
         Assert.Equal("pass", pass.GetProperty("status").GetString());
         Assert.True(pass.GetProperty("durationMs").GetInt64() >= 0);
+        // A pass carries no diagnostics fields at all (#1641).
+        Assert.False(pass.TryGetProperty("errorKind", out _));
+        Assert.False(pass.TryGetProperty("stackFrames", out _));
 
         var fail = events.Single(e => e.GetProperty("name").GetString()!.EndsWith("FailingTest"));
         Assert.Equal("fail", fail.GetProperty("status").GetString());
         Assert.Contains("streaming-probe-boom", fail.GetProperty("message").GetString());
+
+        // #1641 errorKind + stackFrames, end-to-end through the real server rather
+        // than through ServerProtocol.TestEvent alone: an AL Error() inside a [Test]
+        // body classifies as `runtime`, and the captured AL call stack arrives as
+        // ONE structured frame naming the AL object and the in-procedure line.
+        Assert.Equal("runtime", fail.GetProperty("errorKind").GetString());
+        var frames = fail.GetProperty("stackFrames");
+        Assert.Equal(1, frames.GetArrayLength());
+        Assert.Equal("\"Server Streaming Probe SX\"(CodeUnit 60200).FailingTest",
+                     frames[0].GetProperty("name").GetString());
+        Assert.Equal(2, frames[0].GetProperty("line").GetInt32());
+        Assert.Equal("normal", frames[0].GetProperty("presentationHint").GetString());
 
         // Summary carries the protocol-v2 contract and matches the streamed events.
         Assert.Equal(2, summary.GetProperty("protocolVersion").GetInt32());

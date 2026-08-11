@@ -54,12 +54,24 @@ public static class TestIsolationParser
 // reason) that string messages cannot carry. Expectation is set only when the
 // manifest reclassified this result (pass-oos / pass-known-gap / pass-divergence /
 // skipped / manifest drift); null means a plain pass/fail untouched by the manifest.
+//
+// InsideTestProc / TimedOut exist so the failure can be BUCKETED without re-deriving
+// the bucket from Message text — see ErrorClassifier.Classify(TestResult) and the
+// protocol-v2 `errorKind` field (#1641):
+//   InsideTestProc = false marks a failure raised before any [Test] body ran
+//     (codeunit instantiation) → AlErrorKind.Setup rather than Runtime.
+//   TimedOut = true marks the per-test timeout path. That path deliberately carries
+//     NO Exception (the runaway thread is abandoned, nothing is thrown back), so the
+//     flag is the only truthful signal that it was a timeout; synthesising a fake
+//     exception into Exception would corrupt the expectations classifier's input.
 public sealed record TestResult(string Codeunit, string Method, TestOutcome Outcome,
                                 string? Message, string? FullException, TimeSpan Duration,
                                 string? AlCallStack = null,
                                 string? CodeunitDisplayName = null,
                                 Exception? Exception = null,
-                                Infrastructure.ExpectationResult? Expectation = null);
+                                Infrastructure.ExpectationResult? Expectation = null,
+                                bool InsideTestProc = true,
+                                bool TimedOut = false);
 
 public sealed class TestExecutor
 {
@@ -197,9 +209,12 @@ public sealed class TestExecutor
             try { instance = InstantiateCodeunit(t); }
             catch (Exception ex)
             {
+                // InsideTestProc: false — instantiation blew up, so no [Test] body
+                // ever ran. That is what makes this a `setup` errorKind on the wire
+                // rather than a test-runtime failure (see ErrorClassifier).
                 var ctorResult = new TestResult(t.Name, "<ctor>", TestOutcome.Error,
                     Unwrap(ex).Message, ex.ToString(), TimeSpan.Zero,
-                    Exception: Unwrap(ex));
+                    Exception: Unwrap(ex), InsideTestProc: false);
                 results.Add(ctorResult);
                 onTestComplete?.Invoke(ctorResult);
                 continue;
@@ -431,7 +446,8 @@ public sealed class TestExecutor
                 PerfTrace.Log($"TestExecutor.RunOne TIMEOUT {codeunit}.{m.Name} {sw.ElapsedMilliseconds}ms");
                 var alStack = AlRunner.Infrastructure.AlCallStackCapture.CaptureCurrent();
                 return new TestResult(codeunit, m.Name, TestOutcome.Error,
-                    $"Test exceeded {(int)timeout.TotalSeconds}s timeout.", null, sw.Elapsed, alStack, displayName);
+                    $"Test exceeded {(int)timeout.TotalSeconds}s timeout.", null, sw.Elapsed, alStack, displayName,
+                    TimedOut: true);
             }
             invokeResult.Exception?.Throw();
             // The body succeeded — now BC's own check that every handler the test DECLARED was
@@ -498,10 +514,11 @@ public sealed class TestExecutor
         return thread.Join(timeout) ? (true, exception) : (false, null);
     }
 
-    private static bool IsTimeout(TestResult result)
-        => result.Outcome == TestOutcome.Error
-           && result.Message != null
-           && result.Message.StartsWith("Test exceeded ", StringComparison.Ordinal);
+    // Reads the flag the timeout path sets rather than re-deriving the verdict from
+    // the message text: the message is a v1-compatibility STRING contract (see
+    // TestTimeoutFlagTests), not a classification channel, and the same fact now has
+    // to be answered for protocol-v2's `errorKind` too. One source of truth.
+    private static bool IsTimeout(TestResult result) => result.TimedOut;
 
     private static Exception Unwrap(Exception ex)
     {
