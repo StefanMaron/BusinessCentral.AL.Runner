@@ -407,6 +407,7 @@ internal class LiveNavTestPage : MockITestPage
         // wrote its first row at line no. 0 and could not write a second one at all: the same
         // key, so the insert failed on a duplicate. It is a no-op inside BC's own guard for a
         // page that does not declare the property.
+        ProposeAutoSplitKey();
         _page?.SplitKey();
         // OnInsertRecord is the page's last word before the row exists, and its RETURN VALUE
         // is a veto — a page can refuse the insert outright. Running it and discarding the
@@ -422,6 +423,124 @@ internal class LiveNavTestPage : MockITestPage
 
     /// <summary>Abandon an in-progress new row without writing it — how Cancel closes.</summary>
     internal void DiscardPendingNewRow() { _pendingNewRow = false; _pendingModify = false; }
+
+    // BC's AutoSplitKey increment. Named NavForm.AutoSplitKeyIncrement there, and the same
+    // literal in the client's AutoKeyGenerator — both sides of the wire agree on 10000.
+    private const int AutoSplitKeyIncrement = 10000;
+
+    /// <summary>
+    /// Do the CLIENT half of AutoSplitKey: work out the key the new row should get and offer it
+    /// to BC's <c>NavForm.SplitKey()</c> as <c>AutoKeyValue</c>. SplitKey still owns the answer —
+    /// it validates the proposal against the table and falls back to its own arithmetic if the
+    /// key is taken — but without a proposal it has nothing to compute from.
+    ///
+    /// WHY THE RUNNER HAS TO DO THIS AT ALL
+    ///   SplitKey's inputs are all client-supplied: <c>AutoKeyValue</c>, and the
+    ///   <c>InsertLowerBoundBookmark</c> / <c>InsertUpperBoundBookmark</c> pair naming the rows
+    ///   the new one is being inserted between. On a service tier those come off the repeater's
+    ///   loaded rows (<c>NavRecordStateHandler.GetUpperAndLowerRowEntryBookmarks</c> and
+    ///   <c>AutoKeyGenerator.GenerateKey</c>) and travel in <c>NavRecordState</c>. This class IS
+    ///   the client, so all three were null on every insert and
+    ///   <c>CalculateAutoSplitKeyValue(null, null)</c> answered a flat 10000 — the same constant
+    ///   for every row, derived from no data at all. On an empty grid that is one interval low;
+    ///   on a grid whose rows start anywhere else it puts the new row BEFORE them (a grid holding
+    ///   a line at 50000 got 10000, not 60000).
+    ///
+    /// WHAT BC'S CLIENT COMPUTES
+    ///   <c>AutoKeyGenerator.CalculateNumericKeyValue</c> is
+    ///   <c>rangeStart + (draftRowsBefore + 1) * 10000</c>, where <c>rangeStart</c> is the key of
+    ///   the nearest NON-draft row before the insertion point (0 when there is none) and
+    ///   <c>draftRowsBefore</c> counts the unsaved rows between the two.
+    ///
+    /// WHY AN EMPTY GRID STARTS AT 20000 AND NOT 10000
+    ///   Because <c>draftRowsBefore</c> is 1 there, not 0. An insertable repeater always carries a
+    ///   trailing blank row past its data — <c>DraftLinePattern.MakeDraftLines</c> adds one as soon
+    ///   as the binding manager is filled, including when it filled with nothing — and
+    ///   <c>TestPageProxy.InsertEmptyRow</c> inserts the test's row AFTER the current one
+    ///   (<c>InsertBehavior = RowUpdateBehavior.After</c>, whatever <c>beforeCurrent</c> says). On
+    ///   an empty grid the current row is that placeholder, so the test's first row is the SECOND
+    ///   draft and takes the second interval: 0 + 2 * 10000. The placeholder itself is never
+    ///   persisted — nothing edits it — which is why no row at 10000 ever appears. On a grid that
+    ///   already has data the current row is a real one, the placeholder sits after the new row,
+    ///   and the count is 0: last + 1 * 10000. Both are measured on real BC 27.5 and 28.3 by
+    ///   corpus CU60922.
+    ///
+    /// THE RUNNER'S INSERTION POINT
+    ///   <c>InsertEmptyRow</c> here appends: there is no cursor held across a New(), so the row
+    ///   goes after the last row of the page's filtered set. So <c>rangeStart</c> is that last
+    ///   row's key, read with BC's own ALFindLast over the page's own filters, and the draft count
+    ///   is 1 exactly when the set is empty. A test that positions mid-grid and inserts would
+    ///   split an interval on real BC and append here; that is the pre-existing shape of this
+    ///   class's New(), not something this method decides.
+    /// </summary>
+    private void ProposeAutoSplitKey()
+    {
+        if (_page == null || !_page.NeedsAutoSplitKey) return;
+        _page.SetAutoKeyValue(ClientAutoKeyValue());
+    }
+
+    private object? ClientAutoKeyValue()
+    {
+        // The AutoSplitKey field is the LAST field of the primary key — BC picks it the same way
+        // inside SplitKey, so a page whose key shape the runner read differently would number a
+        // different field than BC validates.
+        var primaryKey = _record.MetaTable?.PrimaryKey;
+        if (primaryKey == null || primaryKey.KeyFieldCount == 0) return null;
+        var keyFieldNo = primaryKey.KeyFieldsList[primaryKey.KeyFieldCount - 1].FieldNo;
+
+        // Zero of the key field's own type, straight off the freshly initialised buffer. Used as
+        // the base for an empty rowset so the proposal is typed like the field: SplitKey feeds it
+        // to NavValue.CreateNavValueFromObject, which converts per the field's NCL type, and an
+        // Int32 offered for a BigInteger or Decimal key is a different value than BC's client
+        // would have sent.
+        object? rangeStart = Unwrap(_record.GetFieldValue(keyFieldNo));
+        var draftRowsBefore = 1;
+
+        // The last row of the page's filtered set — BC's non-draft row before the insertion
+        // point. Cloned with reset:false so it carries the page's filters (a subpage part's
+        // SubPageLink above all: without it this would find the last line of SOME OTHER header)
+        // and cannot disturb the cursor the page is on. Same call SplitKey's own collision
+        // fallback makes.
+        using (var probe = _record.CloneRecord(_record.Parent, reset: false, keepCompany: true))
+        {
+            if (probe.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult())
+            {
+                rangeStart = Unwrap(probe.GetFieldValue(keyFieldNo));
+                draftRowsBefore = 0;
+            }
+        }
+
+        return Advance(rangeStart, draftRowsBefore + 1);
+    }
+
+    /// <summary>
+    /// <c>value + intervals * 10000</c> in the key field's own CLR type — the arithmetic half of
+    /// <c>AutoKeyGenerator.CalculateNumericKeyValue</c> for the append case.
+    ///
+    /// Answering null means "no proposal", which is a real answer and not a failure: SplitKey then
+    /// computes the key itself. That is the right outcome for a GUID key (BC's client and SplitKey
+    /// both just mint a fresh Guid, so proposing one would add nothing), for a key type SplitKey
+    /// refuses outright (it throws, and it must be the one to throw so the AL sees BC's message),
+    /// and on overflow — where BC's client also gives up and BC's <c>ArithmeticHelper.BoundedAdd</c>
+    /// saturates instead.
+    /// </summary>
+    private static object? Advance(object? value, int intervals)
+    {
+        try
+        {
+            checked
+            {
+                return value switch
+                {
+                    int i     => i + intervals * AutoSplitKeyIncrement,
+                    long l    => l + intervals * (long)AutoSplitKeyIncrement,
+                    decimal d => d + intervals * (decimal)AutoSplitKeyIncrement,
+                    _         => (object?)null,
+                };
+            }
+        }
+        catch (OverflowException) { return null; }
+    }
 
     // The same client model as _pendingNewRow, for the other half of editing: a SetValue on an
     // EXISTING row writes into the record buffer, and the row is persisted when the cursor

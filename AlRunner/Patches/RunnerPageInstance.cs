@@ -540,6 +540,40 @@ internal sealed class RunnerPageInstance
         }
     }
 
+    /// <summary>
+    /// Whether the page declares <c>AutoSplitKey</c> — BC's own <c>NavForm.NeedAutoSplitKey</c>,
+    /// off the same metadata it reads (that property is private; <c>MasterPage</c> is public).
+    ///
+    /// SplitKey guards on this itself, so callers do not need it to decide whether to CALL
+    /// SplitKey. It exists so the client-side work that feeds SplitKey — see
+    /// <see cref="SetAutoKeyValue"/> — is skipped entirely for the pages where it would be
+    /// thrown away, which is most of them.
+    /// </summary>
+    internal bool NeedsAutoSplitKey
+        => _form is NavForm form
+           && form.MasterPage?.PageProperties?.SourceObject?.AutoSplitKey == true;
+
+    /// <summary>
+    /// Hand BC's <c>NavForm.SplitKey()</c> the key the CLIENT proposes for the row about to be
+    /// inserted — <c>NavForm.AutoKeyValue</c>, the first thing SplitKey consults.
+    ///
+    /// This is a real channel in BC's own design, not a back door. On a service tier the client
+    /// computes the new row's key itself (<c>AutoKeyGenerator.GenerateKey</c> in
+    /// Microsoft.Dynamics.Nav.Client.UI) and ships it in <c>NavRecordState.AutoKeyValues</c>;
+    /// <c>NSDataSetState.ApplyToRecordWithoutPositioning</c> lands it on
+    /// <c>NavForm.AutoKeyValue</c>, and SplitKey then VALIDATES it — takes it only if no row
+    /// already holds it, and otherwise falls back to its own bound arithmetic. The runner
+    /// replaces that client, so without this the field is always null and SplitKey computes
+    /// from bounds nobody populated.
+    ///
+    /// Pass null to clear it: a stale value from a previous insert would be offered for the
+    /// next row, and SplitKey has no way to tell it apart from a fresh proposal.
+    /// </summary>
+    internal void SetAutoKeyValue(object? value)
+    {
+        if (_form is NavForm form) form.AutoKeyValue = value;
+    }
+
     private MethodInfo? FindNavFormMethod(string name, Type[] parameterTypes)
     {
         for (var t = _form.GetType(); t != null; t = t.BaseType)
