@@ -1,13 +1,5 @@
 [
   {
-    "codeunitId": 60236,
-    "CodeunitName": "Test Rename Propagation",
-    "Method": "Record_Rename_ValidatedRelation_PropagatesToReferencingRecords",
-    "Mode": "expect-fail-known-gap",
-    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1730",
-    "Note": "Record.Rename does not rewrite the referencing field on rows whose TableRelation points at the renamed record; the child keeps the old key. The sibling assertions in this codeunit (ValidateTableRelation = false must NOT propagate, and the no-relation 'Soft Ref' control) already pass, so only the propagating case is declared here."
-  },
-  {
     "codeunitId": 60235,
     "CodeunitName": "Test xRec Page Contracts",
     "Method": "Record_Modify_FromPage_xRecHoldsPreviousValue",
