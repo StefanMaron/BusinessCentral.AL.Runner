@@ -284,7 +284,7 @@ internal class LiveNavTestPage : MockITestPage
     {
         if (_page == null) return base.GetAction(actionId);
         if (!_liveActions.TryGetValue(actionId, out var action))
-            _liveActions[actionId] = action = new LiveNavTestAction(_page, actionId);
+            _liveActions[actionId] = action = new LiveNavTestAction(this, _page, actionId);
         return action;
     }
 
@@ -400,6 +400,14 @@ internal class LiveNavTestPage : MockITestPage
     {
         if (!_pendingNewRow) return;
         _pendingNewRow = false;
+        // AutoSplitKey, in BC's own order: SplitKey, then OnInsertRecord, then the record's
+        // Insert (NavForm.SaveRecordAsync / NavForm.InsertAsync(belowXRec) both do exactly
+        // this). Skipping it left the last primary-key field at its Init() default, so a page
+        // whose whole numbering scheme is AutoSplitKey — every editable line grid in BC —
+        // wrote its first row at line no. 0 and could not write a second one at all: the same
+        // key, so the insert failed on a duplicate. It is a no-op inside BC's own guard for a
+        // page that does not declare the property.
+        _page?.SplitKey();
         // OnInsertRecord is the page's last word before the row exists, and its RETURN VALUE
         // is a veto — a page can refuse the insert outright. Running it and discarding the
         // answer would be worse than not running it: the row lands anyway, but now it also
@@ -473,6 +481,21 @@ internal class LiveNavTestPage : MockITestPage
     // Order matters at every flush point: an in-progress new row is finished by an Insert, an
     // edited existing row by a Modify, and only one of the two is ever pending.
     private void FlushRow() { FlushPendingNewRow(); FlushPendingModify(); }
+
+    /// <summary>
+    /// Persist whatever row the page is in the middle of editing — BC's NavForm.SaveRecord,
+    /// the "the cursor is leaving this row" step.
+    ///
+    /// Every OTHER leave-the-row moment in this class already does this (the four cursor
+    /// moves, Close, Dispose, the built-in OK action); invoking a page ACTION is the one that
+    /// did not, and it is the moment BC's client is most obviously at: the client sends the
+    /// edited row to the server before it runs the action, which is why an AL action reads
+    /// <c>Rec</c> as a row that exists. Without it the action ran against a row that was still
+    /// only a buffer — its AutoSplitKey field unassigned and no row of its own in the table —
+    /// so an OnAction that looked the row up, or passed its key to a posting routine, silently
+    /// found nothing.
+    /// </summary>
+    internal void SaveCurrentRow() { FlushParts(); FlushRow(); }
 
     // BC routes TestPage teardown through both Close() and Dispose() depending on whether
     // the AL test calls Close() explicitly or lets the variable go out of scope. Flush on
@@ -1087,16 +1110,29 @@ internal sealed class MockITestAction : ITestAction
 /// </summary>
 internal sealed class LiveNavTestAction : ITestAction
 {
+    private readonly LiveNavTestPage _testPage;
     private readonly RunnerPageInstance _page;
     private readonly int _actionId;
 
-    public LiveNavTestAction(RunnerPageInstance page, int actionId)
+    public LiveNavTestAction(LiveNavTestPage testPage, RunnerPageInstance page, int actionId)
     {
+        _testPage = testPage;
         _page = page;
         _actionId = actionId;
     }
 
-    public void Invoke() => _page.RaiseOnAction(_actionId);
+    /// <summary>
+    /// Save the current row, then run OnAction — BC's order, and the order matters. A real
+    /// client sends the row it is on to the server before it invokes an action, so the AL in
+    /// OnAction reads a <c>Rec</c> that exists in the table, with its AutoSplitKey field
+    /// assigned. Dispatching straight to the trigger let the action see the field values a
+    /// test had just set while the row itself was still nowhere.
+    /// </summary>
+    public void Invoke()
+    {
+        _testPage.SaveCurrentRow();
+        _page.RaiseOnAction(_actionId);
+    }
 
     public bool Visible => _page.ActionVisible(_actionId);
     public bool Enabled => _page.ActionEnabled(_actionId);
