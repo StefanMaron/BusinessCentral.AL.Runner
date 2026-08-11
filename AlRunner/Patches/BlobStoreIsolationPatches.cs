@@ -57,10 +57,12 @@
 // untouched. For a temporary provider the flag is false, nothing is detached, and
 // the aliasing real BC exhibits is preserved verbatim.
 //
-// Modify() needs no equivalent: TempTableDataProvider.Modify already stores
-// `new NavBLOB(navBLOB.GetBytes(), useContentInstance: true)` — a distinct NavBLOB
-// — so a second uncommitted write after Modify() does not reach the row. Verified
-// by probe before this patch was written, and pinned by 60940's committed controls.
+// Modify() needs no equivalent. TempTableDataProvider.Modify itself constructs no
+// NavBLOB; the construction is in TempTableDataProvider.ModifyAllTrees, which Modify
+// calls and is its only caller — and it stores
+// `new NavBLOB(navBLOB.GetBytes(), useContentInstance: true)`, a distinct NavBLOB.
+// So a second uncommitted write after Modify() does not reach the row. Verified by
+// probe before this patch was written, and pinned by 60940's committed controls.
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using Microsoft.Dynamics.Nav.Runtime;
@@ -77,9 +79,16 @@ public static class BlobStoreIsolationPatches
     private static readonly object _sentinel = new();
 
     // Set by the TempTableDataProvider.Insert prepend and read by the CloneBlobs
-    // prepend. CloneBlobs is called from exactly one place — synchronously, from
-    // inside Insert — so the value cannot be observed by any other insert, and a
-    // thread-static keeps concurrent sessions from seeing each other's flag.
+    // prepend, so it is never reset — which is safe only because CloneBlobs has
+    // exactly ONE call site in the whole of Ncl: TempTableDataProvider.Insert, called
+    // synchronously. Nothing else can observe a stale value, and every insert sets it
+    // afresh. That is measured, not assumed — the call sites were counted by scanning
+    // Microsoft.Dynamics.Nav.Ncl.dll (28.1) with Cecil, not read off a decompile.
+    //
+    // The whole patch's correctness rests on that count, so re-check it if a future BC
+    // version changes shape: a second CloneBlobs caller outside Insert would read a
+    // flag left over from an unrelated insert. Thread-static rather than static so
+    // concurrent sessions cannot see each other's latch either.
     [ThreadStatic] private static bool _currentInsertIsDatabaseBacked;
 
     private static MethodInfo? _mNavBlobDeepCopy;
