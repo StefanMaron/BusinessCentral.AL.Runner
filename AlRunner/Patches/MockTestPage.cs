@@ -1211,7 +1211,26 @@ internal sealed class LiveNavTestField : ITestField
 
     public void Lookup(NavDataSet dataSet) => Lookup();
     public void AssistEdit() { }
-    public void Drilldown() { }
+
+    /// <summary>
+    /// Run the control's OnDrillDown trigger — see RunnerPageInstance.RaiseOnDrillDown for the
+    /// full contract, including the fixed error real BC raises when no trigger is declared.
+    /// Left #57's literal no-op (`public void Drilldown() { }`), which let a test call
+    /// DrillDown(), observe nothing happened, and pass anyway — the trigger's effect (or its
+    /// documented absence-error) never ran, and the test only tripped one step later on a
+    /// missing side effect that pointed at the wrong place.
+    /// </summary>
+    public void Drilldown()
+    {
+        if (_page == null)
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage drilldown on field {_fieldNo}",
+                "testpage-drilldown — no AL page object was built for this page, so its "
+                + "OnDrillDown trigger cannot be reached. See docs/scope.md");
+
+        _page.RaiseOnDrillDown(_controlId);
+    }
+
     public void Invoke() { }
     public string ValueToString(object? value) => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
 
@@ -1312,7 +1331,8 @@ internal sealed class PageVariableTestField : ITestField
     }
     public void Lookup(NavDataSet dataSet) => Lookup();
     public void AssistEdit() { }
-    public void Drilldown() { }
+    /// <summary>Run the control's OnDrillDown trigger — see LiveNavTestField.Drilldown.</summary>
+    public void Drilldown() => _page.RaiseOnDrillDown(_controlId);
     public void Invoke() { }
     public string ValueToString(object? value) => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
     public string GetOption(int index) => string.Empty;

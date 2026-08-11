@@ -438,6 +438,27 @@ internal sealed class RunnerPageInstance
     }
 
     /// <summary>
+    /// Run the control's OnDrillDown trigger — the AL a user's drilldown click would run.
+    ///
+    /// Unlike OnLookup's TableRelation fallback (which needs a related list page the runner
+    /// cannot stand up), a control with no OnDrillDown trigger has a documented, deterministic
+    /// answer on real BC that does not depend on any UI: TestPage DrillDown() raises a fixed
+    /// platform error, "The NavDrilldownAction method is not supported." — confirmed against
+    /// real BC 27.5 and 28.3 in al-language's TestPageFieldDrillDown_Tests
+    /// (FieldDrillDownWithNoTriggerIsRefused). That is reproducible in-process with no UI, so
+    /// it is raised as a genuine AL error via NavNCLDialogException (same mechanism as
+    /// BcRuntime's DataTransfer-out-of-context message), not a RunnerOutOfScopeException —
+    /// this is not a capability the runner lacks, it is exactly what BC itself does here.
+    /// </summary>
+    internal void RaiseOnDrillDown(int controlId)
+    {
+        var trigger = FindTrigger(controlId, "_OnDrillDown", "OnDrillDown");
+        if (trigger == null)
+            throw AlRunner.BcRuntime.MakeNavDrilldownActionNotSupportedException();
+        Invoke(trigger);
+    }
+
+    /// <summary>
     /// Run the page's own OnAfterGetRecord trigger.
     ///
     /// BC fires it every time the page loads a row, and it is where a page computes the

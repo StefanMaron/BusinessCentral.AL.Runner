@@ -165,6 +165,24 @@ public static partial class BcRuntime
     [MethodImpl(MethodImplOptions.NoInlining)] public static void ThrowDataTransfer_4Args(object? a, object? b, object? c, object? d) => throw MakeDataTransferException();
     [MethodImpl(MethodImplOptions.NoInlining)] public static int ThrowDataTransferReturnInt_OneArg(object? a) => throw MakeDataTransferException();
 
+    // TestPage field DrillDown() on a control with no OnDrillDown trigger — real BC (confirmed
+    // 27.5 and 28.3, see al-language TestPageFieldDrillDown_Tests.FieldDrillDownWithNoTriggerIsRefused)
+    // raises this exact fixed platform error regardless of TableRelation/UI state, so it is
+    // reproducible faithfully in-process. Public (unlike MakeDataTransferException) because
+    // RunnerPageInstance.RaiseOnDrillDown, in a different file/class, needs it too.
+    internal static System.Exception MakeNavDrilldownActionNotSupportedException()
+    {
+        var t = System.Type.GetType(
+            "Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLDialogException, Microsoft.Dynamics.Nav.Types");
+        const string msg = "The NavDrilldownAction method is not supported.";
+        if (t != null)
+        {
+            var ctor = t.GetConstructor(new[] { typeof(string) });
+            if (ctor != null) return (System.Exception)ctor.Invoke(new object[] { msg });
+        }
+        return new System.InvalidOperationException(msg);
+    }
+
     // Replacement for NavFile.GetTenantIds(NavSession session). The real body reads
     // session.Tenant.TenantSettings.AadTenantId / session.Tenant.Id — both null on the
     // headless runner skeleton. Faithful sentinel: empty AAD GUID + the same
