@@ -439,10 +439,35 @@ internal class LiveNavTestPage : MockITestPage
         _pendingModify = false;
         // OnModifyRecord vetoes exactly as OnInsertRecord does.
         if (_page != null && !_page.RaiseOnModifyRecord()) return;
-        // ThrowError, not TrapError: a Modify that cannot be performed is something the user of
-        // a real client would be told about. Trapping it turned "this page is not positioned on
-        // a row" into an edit that appeared to succeed and quietly went nowhere.
-        _record.ALModifyAsync(DataError.ThrowError, true).GetAwaiter().GetResult();
+
+        // SystemModifiedAt/By are stamped by a Cecil prepend on NavRecord.ALModifyAsync — the
+        // CODE-driven entry point this method deliberately does NOT use (see below). Real BC
+        // stamps them in the data layer, so they move on a page write too; call the same helper
+        // the prepend calls so switching entry points does not silently freeze them.
+        BcRuntime.StampSystemFieldsOnModify(_record);
+
+        // ModifyAsync, NOT ALModifyAsync — and the difference is the whole xRec contract.
+        //
+        //   NavRecord.ALModifyAsync  (what AL `Rec.Modify()` lowers to) opens with
+        //       OldRecord.ALAssign(this)
+        //   before delegating to ModifyAsync, so a code-driven Modify deliberately makes xRec
+        //   MIRROR Rec — there is no before-image on that path (corpus CU60179
+        //   OnModify_xRec_MirrorsRecValues_WhenCalledFromCode pins exactly that).
+        //
+        //   NavForm.SaveRecordAsync — BC's own page-write path — skips that assignment and calls
+        //       SafeSourceTable.ModifyAsync(DataError.ThrowError, runApplicationTrigger: true,
+        //                                   runGlobalTrigger: true)
+        //   directly, precisely so the before-image the form snapshotted when it loaded the row
+        //   (SnapshotBeforeImage below) survives into the table's OnModify. That is why a
+        //   PAGE-driven Modify sees the PREVIOUS value in xRec (corpus CU60235
+        //   Record_Modify_FromPage_xRecHoldsPreviousValue).
+        //
+        // Same three arguments BC passes, for the same reasons: ThrowError, because a Modify
+        // that cannot be performed is something the user of a real client would be told about —
+        // trapping it turned "this page is not positioned on a row" into an edit that appeared
+        // to succeed and quietly went nowhere; and both trigger flags on, because a page write
+        // runs the table's OnModify and the global-trigger hook exactly like Rec.Modify(true).
+        _record.ModifyAsync(DataError.ThrowError, true, true).GetAwaiter().GetResult();
     }
 
     // Order matters at every flush point: an in-progress new row is finished by an Insert, an
@@ -530,9 +555,32 @@ internal class LiveNavTestPage : MockITestPage
     /// </summary>
     private bool Loaded(bool found)
     {
-        if (found) _page?.RaiseOnAfterGetRecord();
+        if (found)
+        {
+            _page?.RaiseOnAfterGetRecord();
+            SnapshotBeforeImage();
+        }
         return found;
     }
+
+    /// <summary>
+    /// Take the page's before-image of the current row — what the table's <c>OnModify</c> reads
+    /// as <c>xRec</c> when the edit is driven from a page.
+    ///
+    /// This is the tail of BC's own <c>NavForm.AfterGetRecordAsync</c> AND of
+    /// <c>NavForm.AfterGetCurrRecordAsync</c> — both end with
+    /// <c>OldRecord.ALAssign(SourceTable)</c>, and <c>NavForm.OldRecord</c> is literally
+    /// <c>SafeSourceTable.OldRecord</c>, so the target is this record's own xRec slot. Those two
+    /// are exactly the pair of triggers RaiseOnAfterGetRecord above fires, which is why the
+    /// snapshot belongs here and nowhere else: "a row became the current row" is the only moment
+    /// BC takes it, and nothing on the page-write path overwrites it (see FlushPendingModify),
+    /// so by the time OnModify runs xRec still holds the row AS FETCHED.
+    ///
+    /// Without this the page had no before-image at all: <c>ALModifyAsync</c>'s own
+    /// <c>OldRecord.ALAssign(this)</c> was the only thing that ever populated xRec, which is
+    /// what made a page-driven Modify report the NEW value as the old one.
+    /// </summary>
+    private void SnapshotBeforeImage() => _record.OldRecord.ALAssign(_record);
 
     public override object? GetBookmark() => _record.ALGetPosition();
 
