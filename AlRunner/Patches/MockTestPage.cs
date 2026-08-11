@@ -377,6 +377,11 @@ internal class LiveNavTestPage : MockITestPage
     {
         FlushPendingNewRow();   // starting a second row persists the first
 
+        // The rows around the insert decide the new row's AutoSplitKey number, and the row
+        // the cursor sits on is about to be wiped by NewRecord's ALInit — so the position is
+        // read NOW and the number computed from it at flush time (ProposeAutoSplitKey).
+        CaptureInsertPosition();
+
         // Ask the page to start the row, exactly as it would for a user: BC's NavForm.NewRecord
         // does ALInit, fills the linking fields in from the page's own filters, and raises
         // OnNewRecord. A filtered page is showing one parent's rows, so a row created on it
@@ -466,12 +471,17 @@ internal class LiveNavTestPage : MockITestPage
     ///   corpus CU60922.
     ///
     /// THE RUNNER'S INSERTION POINT
-    ///   <c>InsertEmptyRow</c> here appends: there is no cursor held across a New(), so the row
-    ///   goes after the last row of the page's filtered set. So <c>rangeStart</c> is that last
-    ///   row's key, read with BC's own ALFindLast over the page's own filters, and the draft count
-    ///   is 1 exactly when the set is empty. A test that positions mid-grid and inserts would
-    ///   split an interval on real BC and append here; that is the pre-existing shape of this
-    ///   class's New(), not something this method decides.
+    ///   The row the cursor sits on when New() is called, read by
+    ///   <see cref="CaptureInsertPosition"/> before NewRecord wipes it: <c>rangeStart</c> is
+    ///   that row's key (the last row of the filtered set when the page holds no cursor),
+    ///   <c>rangeEnd</c> is the next row of the same parent when the insert lands mid-grid,
+    ///   and the placeholder draft is counted where the measurements put it — BEFORE the
+    ///   insert on an empty grid (the 20000), AFTER it when the insert is at the end of a
+    ///   non-empty rowset. That last count is load-bearing and was measured, not derived: a
+    ///   grid holding one line at -10000 numbers the next row -6667 on real BC 27.5/28.3
+    ///   (corpus CU60929) — the range up to zero split in THREE, the trailing placeholder
+    ///   taking the third share. Mid-grid the placeholder sits beyond <c>rangeEnd</c> and
+    ///   does not participate, which the measured -1 for a -10000..10000 insert pins.
     /// </summary>
     private void ProposeAutoSplitKey()
     {
@@ -479,67 +489,196 @@ internal class LiveNavTestPage : MockITestPage
         _page.SetAutoKeyValue(ClientAutoKeyValue());
     }
 
+    // The insert position CaptureInsertPosition read at New() time, consumed at flush time.
+    // Null bounds are meaningful (no saved row on that side), so a separate flag records
+    // whether a capture happened at all.
+    private object? _insertRangeStart;
+    private object? _insertRangeEnd;
+    private int _insertDraftRowsBefore;
+    private int _insertDraftRowsAfter;
+    private bool _insertPositionCaptured;
+
+    /// <summary>
+    /// Read the rows around the insertion point — the client half of AutoSplitKey that must
+    /// run at New() time, because NewRecord's ALInit erases the cursor row it reads.
+    /// </summary>
+    private void CaptureInsertPosition()
+    {
+        _insertPositionCaptured = false;
+        if (_page == null || !_page.NeedsAutoSplitKey) return;
+        // The AutoSplitKey field is the LAST field of the primary key — BC picks it the same
+        // way inside SplitKey, so a page whose key shape the runner read differently would
+        // number a different field than BC validates.
+        var primaryKey = _record.MetaTable?.PrimaryKey;
+        if (primaryKey == null || primaryKey.KeyFieldCount == 0) return;
+        var keyFieldNo = primaryKey.KeyFieldsList[primaryKey.KeyFieldCount - 1].FieldNo;
+
+        _insertRangeStart = null;
+        _insertRangeEnd = null;
+        _insertDraftRowsBefore = 0;
+        _insertDraftRowsAfter = 0;
+
+        // Cloned with reset:false so it carries the page's filters (a subpage part's
+        // SubPageLink above all: without it this would walk the lines of SOME OTHER header)
+        // and cannot disturb the cursor the page is on.
+        using var probe = _record.CloneRecord(_record.Parent, reset: false, keepCompany: true);
+
+        // "The cursor sits on a saved row" is decided the way SplitKey itself decides it — a
+        // row with the cursor's ALRecordId exists. With no cursor row the client viewport's
+        // insert goes after the LAST row of the set (BC's own ALFindLast over the page's
+        // filters); with no rows at all the grid is empty.
+        var positioned = probe.ExistsAsync(probe.ALRecordId).AsTask().GetAwaiter().GetResult()
+            || probe.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult();
+        if (positioned)
+        {
+            _insertRangeStart = Unwrap(probe.GetFieldValue(keyFieldNo));
+            _insertRangeEnd = NextRowKeyInSequence();
+            // At the end of the rowset the trailing blank placeholder row sits AFTER the
+            // insert and shares the range; mid-grid it sits beyond rangeEnd and does not.
+            // Measured, not derived: -6667 (not -5000) after a single line at -10000.
+            _insertDraftRowsAfter = _insertRangeEnd == null ? 1 : 0;
+        }
+        else
+        {
+            // Empty grid: the placeholder is the row the insert lands AFTER, so it burns the
+            // first interval — the measured 20000 for a first line (corpus CU60922).
+            _insertDraftRowsBefore = 1;
+        }
+        _insertPositionCaptured = true;
+
+        // The next row of the SAME parent, or null when the cursor row ends its sequence —
+        // the prefix-compare mirror of NavForm.IsPositionedAtEndOfSequence: iteration is
+        // unfiltered primary-key order, so "next row belongs to another parent" shows as its
+        // other key fields changing.
+        object? NextRowKeyInSequence()
+        {
+            var prefix = new object?[primaryKey.KeyFieldCount - 1];
+            for (var i = 0; i < prefix.Length; i++)
+                prefix[i] = Unwrap(probe.GetFieldValue(primaryKey.KeyFieldsList[i].FieldNo));
+            if (probe.ALNext() <= 0) return null;
+            for (var i = 0; i < prefix.Length; i++)
+                if (!Equals(Unwrap(probe.GetFieldValue(primaryKey.KeyFieldsList[i].FieldNo)), prefix[i]))
+                    return null;
+            return Unwrap(probe.GetFieldValue(keyFieldNo));
+        }
+    }
+
     private object? ClientAutoKeyValue()
     {
-        // The AutoSplitKey field is the LAST field of the primary key — BC picks it the same way
-        // inside SplitKey, so a page whose key shape the runner read differently would number a
-        // different field than BC validates.
+        if (!_insertPositionCaptured) return null;
+        _insertPositionCaptured = false;
         var primaryKey = _record.MetaTable?.PrimaryKey;
         if (primaryKey == null || primaryKey.KeyFieldCount == 0) return null;
         var keyFieldNo = primaryKey.KeyFieldsList[primaryKey.KeyFieldCount - 1].FieldNo;
 
-        // Zero of the key field's own type, straight off the freshly initialised buffer. Used as
-        // the base for an empty rowset so the proposal is typed like the field: SplitKey feeds it
-        // to NavValue.CreateNavValueFromObject, which converts per the field's NCL type, and an
-        // Int32 offered for a BigInteger or Decimal key is a different value than BC's client
-        // would have sent.
-        object? rangeStart = Unwrap(_record.GetFieldValue(keyFieldNo));
-        var draftRowsBefore = 1;
-
-        // The last row of the page's filtered set — BC's non-draft row before the insertion
-        // point. Cloned with reset:false so it carries the page's filters (a subpage part's
-        // SubPageLink above all: without it this would find the last line of SOME OTHER header)
-        // and cannot disturb the cursor the page is on. Same call SplitKey's own collision
-        // fallback makes.
-        using (var probe = _record.CloneRecord(_record.Parent, reset: false, keepCompany: true))
+        // The key field's CLR type steers the arithmetic, read off the freshly initialised
+        // buffer so the proposal is typed like the field: SplitKey feeds it to
+        // NavValue.CreateNavValueFromObject, which converts per the field's NCL type, and an
+        // Int32 offered for a BigInteger or Decimal key is a different value than BC's
+        // client would have sent.
+        var draftRowCount = _insertDraftRowsBefore + 1 + _insertDraftRowsAfter;
+        return Unwrap(_record.GetFieldValue(keyFieldNo)) switch
         {
-            if (probe.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult())
-            {
-                rangeStart = Unwrap(probe.GetFieldValue(keyFieldNo));
-                draftRowsBefore = 0;
-            }
-        }
+            int => Box(CalculateClientAutoKey<int>(
+                (int?)_insertRangeStart, (int?)_insertRangeEnd, draftRowCount, _insertDraftRowsBefore)),
+            long => Box(CalculateClientAutoKey<long>(
+                (long?)_insertRangeStart, (long?)_insertRangeEnd, draftRowCount, _insertDraftRowsBefore)),
+            decimal => Box(CalculateClientAutoKey<decimal>(
+                (decimal?)_insertRangeStart, (decimal?)_insertRangeEnd, draftRowCount, _insertDraftRowsBefore)),
+            // GUID: BC's client and SplitKey both just mint a fresh Guid, so no proposal adds
+            // nothing. Unsupported key types: SplitKey must be the one to throw, so the AL
+            // sees BC's message.
+            _ => null,
+        };
 
-        return Advance(rangeStart, draftRowsBefore + 1);
+        static object? Box<T>(T? value) where T : struct => value.HasValue ? value.Value : null;
     }
 
     /// <summary>
-    /// <c>value + intervals * 10000</c> in the key field's own CLR type — the arithmetic half of
-    /// <c>AutoKeyGenerator.CalculateNumericKeyValue</c> for the append case.
+    /// Verbatim port of the client's <c>AutoKeyGenerator.CalculateNumericKeyValue</c>
+    /// (Microsoft.Dynamics.Nav.Client.UI.dll) — the algorithm that decides what number a new
+    /// grid row gets on a real service tier. Ported rather than invoked because constructing
+    /// the real generator needs a live client ColumnBinder; the arithmetic itself is
+    /// self-contained. Adjudicated against real BC 27.5/28.3 by corpus CU60922 and CU60929:
+    /// append, empty-grid, wide-gap cap, zero-crossing and the placeholder-in-the-divisor
+    /// cases are all pinned by measurement.
     ///
-    /// Answering null means "no proposal", which is a real answer and not a failure: SplitKey then
-    /// computes the key itself. That is the right outcome for a GUID key (BC's client and SplitKey
-    /// both just mint a fresh Guid, so proposing one would add nothing), for a key type SplitKey
-    /// refuses outright (it throws, and it must be the one to throw so the AL sees BC's message),
-    /// and on overflow — where BC's client also gives up and BC's <c>ArithmeticHelper.BoundedAdd</c>
-    /// saturates instead.
+    /// Null means "no proposal", which is a real answer and not a failure: the client raises
+    /// AutoKeyException there (key space exhausted, overflow), and SplitKey's own bound
+    /// arithmetic answers instead.
     /// </summary>
-    private static object? Advance(object? value, int intervals)
+    private static T? CalculateClientAutoKey<T>(
+        T? rangeStart, T? rangeEnd, int draftRowCount, int index)
+        where T : struct, System.Numerics.INumber<T>
     {
-        try
+        var hasStart = rangeStart.HasValue;
+        var hasEnd = rangeEnd.HasValue;
+        var isDecimal = typeof(T) == typeof(decimal);
+        checked
         {
-            checked
+            try
             {
-                return value switch
+                var inc = T.CreateChecked(AutoSplitKeyIncrement);
+                if (!hasStart && !hasEnd)
+                    return Step(T.Zero, inc, false);
+                if (hasStart && !hasEnd && rangeStart!.Value >= T.Zero)
+                    return Step(rangeStart.Value, inc, false);
+                if (hasEnd && !hasStart && rangeEnd!.Value <= T.Zero)
+                    return Step(rangeEnd.Value, -inc, false);
+
+                var slots = T.CreateChecked(draftRowCount + 1);
+                var lowerBound = hasStart ? rangeStart!.Value : T.Min(T.Zero, rangeEnd!.Value - slots);
+                var upperBound = hasEnd ? rangeEnd!.Value : T.Max(T.Zero, rangeStart!.Value + slots);
+                if (lowerBound >= upperBound) return null;
+                var crossesZero = lowerBound < T.Zero && upperBound > T.Zero;
+                if (!isDecimal && crossesZero)
                 {
-                    int i     => i + intervals * AutoSplitKeyIncrement,
-                    long l    => l + intervals * (long)AutoSplitKeyIncrement,
-                    decimal d => d + intervals * (decimal)AutoSplitKeyIncrement,
-                    _         => (object?)null,
-                };
+                    var negRoom = T.Zero - lowerBound;
+                    var posRoom = upperBound - T.Zero;
+                    if (negRoom >= slots && hasStart && !hasEnd)
+                        upperBound = T.Zero;
+                    else if (posRoom >= slots && hasEnd && !hasStart)
+                        lowerBound = T.Zero;
+                    else
+                    {
+                        var range = upperBound - lowerBound;
+                        if (range < slots + T.One)
+                        {
+                            if (!hasStart)
+                                lowerBound -= range - upperBound;
+                            else
+                            {
+                                if (hasEnd) return null;
+                                upperBound += range + lowerBound;
+                            }
+                        }
+                    }
+                }
+                var delta = T.Min(
+                    (upperBound - lowerBound - ((crossesZero && !isDecimal) ? T.One : T.Zero)) / slots,
+                    inc);
+                if (!isDecimal && delta < T.One) return null;
+                if (delta <= T.Zero) return null;
+                return Step(lowerBound, delta, crossesZero);
+            }
+            catch (OverflowException)
+            {
+                return null;
+            }
+
+            T Step(T lowerBound, T delta, bool compensateForZero)
+            {
+                var value = lowerBound + T.CreateChecked(index + 1) * delta;
+                if (compensateForZero)
+                {
+                    if (isDecimal && value == T.Zero)
+                        value -= delta / T.CreateChecked(2);
+                    else if (!isDecimal && value >= T.Zero)
+                        value += T.One;
+                }
+                return value;
             }
         }
-        catch (OverflowException) { return null; }
     }
 
     // The same client model as _pendingNewRow, for the other half of editing: a SetValue on an
