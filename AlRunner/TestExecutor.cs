@@ -233,7 +233,7 @@ public sealed class TestExecutor
             var loopSw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
-                foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+                foreach (var m in OrderTestMethodsBySourceDeclaration(t))
                 {
                     if (!IsTestMethod(m)) continue;
                     if (filter != null && !MethodMatchesFilter(t.Name, m.Name, filter)) continue;
@@ -375,6 +375,89 @@ public sealed class TestExecutor
     private static bool IsTestMethod(MethodInfo m) =>
         m.GetCustomAttributes(inherit: false)
          .Any(a => a.GetType().Name is "NavTestAttribute" or "TestAttribute");
+
+    // ── AL source declaration order ────────────────────────────────────────────
+    //
+    // BC's own AL compiler — which we must not rewrite (.claude/rules/precompiled-dll-
+    // respect.md) — does not preserve AL source order in the emitted MethodDef table: a
+    // codeunit whose AL source declares test A before test B can (and empirically does)
+    // compile to IL where B's token precedes A's, because the compiler alphabetizes
+    // members. Real BC's test framework runs [Test] procedures in AL SOURCE declaration
+    // order, not compiled-metadata order, and AL test-writing conventions assume it
+    // (Initialize() re-seeding at the top of a codeunit, an early test committing a
+    // baseline a later test relies on, etc.) — see StefanMaron/BusinessCentral.AL.Runner#1766.
+    // Running in reflection order silently reorders those dependencies and produces
+    // order-dependent divergence from real BC that has nothing to do with the (correct,
+    // already-implemented — see RecordPatches.TransactionSnapshot) asserterror rollback
+    // mechanism itself.
+    //
+    // The AL compiler still records the true declaration position even though it does not
+    // preserve it in method order: every compiled procedure gets its own nested
+    // "{MethodName}_Scope_<hash>" type carrying a SignatureSpanAttribute whose EncodedSpan
+    // holds the absolute source line the procedure's own `procedure` keyword sits on — the
+    // same metadata AlCallStackCapture already decodes for stack-trace line numbers. Sorting
+    // by that line recovers true declaration order without touching the compiler's own
+    // (unmodifiable) member ordering.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, MethodInfo[]> _sourceOrderCache = new();
+    private static Type? _signatureSpanAttrType;
+    private static bool _signatureSpanAttrTypeResolved;
+    private static readonly System.Text.RegularExpressions.Regex _scopeTypeSuffix =
+        new(@"_Scope_+\d+$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Returns <paramref name="t"/>'s public instance methods ordered by AL source
+    /// declaration line where resolvable. Falls back to reflection order for any method
+    /// whose scope type or span attribute can't be found — never worse than the previous
+    /// (pure-reflection) behaviour, only ever more faithful to real BC.
+    /// </summary>
+    private static MethodInfo[] OrderTestMethodsBySourceDeclaration(Type t) =>
+        _sourceOrderCache.GetOrAdd(t, static type =>
+        {
+            var methods = type.GetMethods(BindingFlags.Public | BindingFlags.Instance);
+            var lineByMethod = ResolveSignatureLines(type, methods);
+            if (lineByMethod.Count == 0) return methods; // nothing resolved — keep original order
+            // Stable: a method whose line we couldn't resolve keeps its relative
+            // reflection-order position, sorted after every line we DID resolve.
+            return methods
+                .Select((m, i) => (m, i, line: lineByMethod.TryGetValue(m, out var l) ? l : int.MaxValue))
+                .OrderBy(x => x.line)
+                .ThenBy(x => x.i)
+                .Select(x => x.m)
+                .ToArray();
+        });
+
+    private static Dictionary<MethodInfo, int> ResolveSignatureLines(Type codeunitType, MethodInfo[] methods)
+    {
+        var result = new Dictionary<MethodInfo, int>();
+        if (!_signatureSpanAttrTypeResolved)
+        {
+            _signatureSpanAttrTypeResolved = true;
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                _signatureSpanAttrType = asm.GetType("Microsoft.Dynamics.Nav.Runtime.SignatureSpanAttribute");
+                if (_signatureSpanAttrType != null) break;
+            }
+        }
+        var tSig = _signatureSpanAttrType;
+        var piSig = tSig?.GetProperty("EncodedSpan");
+        if (tSig == null || piSig == null) return result;
+
+        var nested = codeunitType.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic);
+        foreach (var m in methods)
+        {
+            var scopeType = nested.FirstOrDefault(nt =>
+                nt.Name.StartsWith(m.Name, StringComparison.Ordinal) &&
+                _scopeTypeSuffix.IsMatch(nt.Name[m.Name.Length..]));
+            if (scopeType == null) continue;
+            var attr = scopeType.GetCustomAttribute(tSig);
+            if (attr == null) continue;
+            var encoded = (long)(piSig.GetValue(attr) ?? 0L);
+            // SignatureSpan layout matches SourceSpan (StructLayout.Explicit, little-endian):
+            // from.line occupies bits 48-63 — see AlCallStackCapture.GetRelativeLine.
+            result[m] = (ushort)((ulong)encoded >> 48);
+        }
+        return result;
+    }
 
     // Cached reflection handle for NavApplicationObjectBase.ObjectName (same pattern as
     // AlCallStackCapture._piObjectName). Resolved lazily from the instance's runtime type

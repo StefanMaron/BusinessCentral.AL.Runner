@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 60128,
+    "CodeunitName": "Test Database Extended",
+    "Method": "Database_CurrentTransactionType_SetAfterWriteOp_Throws",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1766",
+    "Note": "Surfaced by fixing #1766 (test methods now execute in AL source declaration order instead of the AL compiler's alphabetized MethodDef order — see TestExecutor.OrderTestMethodsBySourceDeclaration). This test's own comment says the quiet part: 'After Cleanup.Initialize() performs a write, the transaction has already started' — it assumes SOME earlier write already flipped IsInWriteTransaction() true, and previously got that assumption satisfied only by accident, because the OLD alphabetized execution order happened to run Database_Commit_AfterInsert_PersistsData (which does write a row) before this test. In true declaration order this test runs second, right after RestoreInstallBaseline() wiped every ALTFixtureCleanup-covered table empty, so its own Initialize()->Cleanup.Initialize() DeleteAll finds nothing to delete and never calls the AL write entry point that flips ALDatabasePatches._inWriteTransaction. Real BC's test harness itself performs administrative writes when entering a test method (see ALDatabasePatches.cs's own faithfulness-boundary comment: 'NOT faithful for: rollback semantics ... and nested/explicit transaction scopes') that the runner's skeleton session never reproduces, so IsInWriteTransaction() can read false here even though real BC would read true. Fixing that means modelling BC's own test-entry write, not something to bolt onto the #1766 fix without risking a new silent-fake (see .claude/rules/loud-failures.md)."
+  }
+]
