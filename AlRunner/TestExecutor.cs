@@ -52,8 +52,8 @@ public static class TestIsolationParser
 // Exception is the caught exception object (null for Pass/Skipped) — kept so the
 // expectations manifest can classify typed throws (RunnerOutOfScopeException +
 // reason) that string messages cannot carry. Expectation is set only when the
-// manifest reclassified this result (pass-oos / pass-known-gap / skipped /
-// manifest drift); null means a plain pass/fail untouched by the manifest.
+// manifest reclassified this result (pass-oos / pass-known-gap / pass-divergence /
+// skipped / manifest drift); null means a plain pass/fail untouched by the manifest.
 public sealed record TestResult(string Codeunit, string Method, TestOutcome Outcome,
                                 string? Message, string? FullException, TimeSpan Duration,
                                 string? AlCallStack = null,
@@ -89,7 +89,7 @@ public sealed class TestExecutor
     /// unchanged. Non-null: skip-declared tests are never invoked, and every other
     /// result runs through <see cref="Infrastructure.ExpectationClassifier.Classify"/>
     /// here — the one chokepoint the CLI, --watch and --server paths all share — so
-    /// reclassification (pass-oos / pass-known-gap) and manifest-drift failures reach
+    /// reclassification (pass-oos / pass-known-gap / pass-divergence) and manifest-drift failures reach
     /// every counter and exit code identically. Lookup is by the codeunit's AL object
     /// name (the manifest's Microsoft-compatible CodeunitName field), falling back to
     /// the CLR type name ("CodeunitNNNN") when the display name could not be resolved.
@@ -288,12 +288,12 @@ public sealed class TestExecutor
     private static TestResult ApplyExpectation(
         TestResult raw, string displayName, Infrastructure.ExpectationEntry? entry)
     {
-        // The classifier wants the typed exception; BC's error machinery may have
-        // wrapped the RunnerOutOfScopeException on its way out, so surface it from
-        // anywhere in the chain.
-        var oos = FindOutOfScope(raw.Exception);
+        // The whole exception chain is handed to the classifier: it recognises both
+        // the typed RunnerOutOfScopeException (wherever BC's error machinery
+        // wrapped it) and the `out-of-scope: <api> — <reason>` message convention
+        // that Cecil-injected throw sites carry (#1743).
         var observed = new Infrastructure.TestOutcome(displayName, raw.Method,
-            raw.Outcome == TestOutcome.Pass, (Exception?)oos ?? raw.Exception);
+            raw.Outcome == TestOutcome.Pass, raw.Exception);
         var classified = Infrastructure.ExpectationClassifier.Classify(observed, entry);
         switch (classified.Result)
         {
@@ -302,6 +302,7 @@ public sealed class TestExecutor
                 return raw;   // no entry, no drift — untouched
             case Infrastructure.ExpectationResult.PassOos:
             case Infrastructure.ExpectationResult.PassKnownGap:
+            case Infrastructure.ExpectationResult.PassDivergence:
                 // Counts as a pass everywhere (totals, exit code, --strict), reported
                 // distinctly via Expectation so the summary can subdivide.
                 return raw with { Outcome = TestOutcome.Pass, Expectation = classified.Result };
@@ -318,16 +319,6 @@ public sealed class TestExecutor
                 throw new InvalidOperationException(
                     $"Unhandled ExpectationResult: {classified.Result}");
         }
-    }
-
-    private static Infrastructure.RunnerOutOfScopeException? FindOutOfScope(Exception? ex)
-    {
-        for (int depth = 0; ex != null && depth < 16; depth++)
-        {
-            if (ex is Infrastructure.RunnerOutOfScopeException oos) return oos;
-            ex = ex.InnerException;
-        }
-        return null;
     }
 
     private static string? NormaliseFilter(string? raw)

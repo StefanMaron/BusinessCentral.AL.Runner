@@ -27,9 +27,13 @@ against real BC and are expected to throw `RunnerOutOfScopeException` here.
 Declare those expectations in [`tests/expectations/`](../../tests/expectations/README.md)
 following the schema in [`docs/expectations.md`](../../docs/expectations.md).
 
-Three modes:
-- `expect-oos` — must throw `RunnerOutOfScopeException` with matching reason
+Four modes:
+- `expect-oos` — must raise an out-of-scope signal with a matching reason anchor,
+  either a typed `RunnerOutOfScopeException` or the documented
+  `out-of-scope: <api> — <reason>` message convention
 - `expect-fail-known-gap` — must fail; links to an open GH issue tracking the work
+- `expect-divergence` — must fail because the runner *intends* to answer
+  differently from BC; carries `Reason` + `Doc`, never an `Issue`
 - `skip` — must not run (last resort, for compile gaps)
 
 Manifest drift in either direction is loud: a test that starts passing despite

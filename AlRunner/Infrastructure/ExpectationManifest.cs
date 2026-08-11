@@ -23,10 +23,21 @@ namespace AlRunner.Infrastructure;
 
 public enum ExpectationMode
 {
-    /// <summary>Test must throw <see cref="RunnerOutOfScopeException"/> with the matching <c>Reason</c>.</summary>
+    /// <summary>
+    /// Test must raise an out-of-scope signal whose reason anchor matches
+    /// <c>Reason</c> — either a typed <see cref="RunnerOutOfScopeException"/> or
+    /// the documented <c>out-of-scope: &lt;api&gt; — &lt;reason&gt;</c> message
+    /// convention that Cecil-injected throw sites carry (#1743).
+    /// </summary>
     ExpectOos,
     /// <summary>Test must fail (any non-pass outcome); links to a GH issue tracking the work.</summary>
     ExpectFailKnownGap,
+    /// <summary>
+    /// Test must fail because the runner INTENDS to answer differently from real
+    /// BC on this surface (e.g. docs/scope.md §3.6 task scheduler). Permanent and
+    /// declared: no issue to link, a <c>Doc</c> pointer instead (#1741).
+    /// </summary>
+    ExpectDivergence,
     /// <summary>Test must not be invoked.</summary>
     Skip,
 }
@@ -39,9 +50,9 @@ public sealed record ExpectationEntry(
     string CodeunitName,
     string Method,              // "*" matches every test method in the codeunit
     ExpectationMode Mode,
-    string? Reason,             // required when Mode == ExpectOos
-    string? Issue,              // required when Mode == ExpectFailKnownGap
-    string? Doc,
+    string? Reason,             // required when Mode == ExpectOos or ExpectDivergence
+    string? Issue,              // required when Mode == ExpectFailKnownGap; forbidden for ExpectDivergence
+    string? Doc,                // required when Mode == ExpectDivergence
     string? Note,
     string SourceFile)          // the .json this entry came from, for diagnostics
 {
@@ -183,9 +194,11 @@ public sealed class ExpectationManifest
         {
             "expect-oos" => ExpectationMode.ExpectOos,
             "expect-fail-known-gap" => ExpectationMode.ExpectFailKnownGap,
+            "expect-divergence" => ExpectationMode.ExpectDivergence,
             "skip" => ExpectationMode.Skip,
             _ => throw new InvalidOperationException(
-                $"{relName}[{idx}] ({codeunitName}.{method}): unknown Mode '{modeRaw}' — must be expect-oos, expect-fail-known-gap, or skip"),
+                $"{relName}[{idx}] ({codeunitName}.{method}): unknown Mode '{modeRaw}' — must be expect-oos, "
+                + "expect-fail-known-gap, expect-divergence, or skip"),
         };
 
         if (mode == ExpectationMode.ExpectOos && string.IsNullOrWhiteSpace(reason))
@@ -194,6 +207,23 @@ public sealed class ExpectationManifest
         if (mode == ExpectationMode.ExpectFailKnownGap && string.IsNullOrWhiteSpace(issue))
             throw new InvalidOperationException(
                 $"{relName}[{idx}] ({codeunitName}.{method}): Mode=expect-fail-known-gap requires non-empty 'Issue'");
+        if (mode == ExpectationMode.ExpectDivergence)
+        {
+            // A divergence is a standing decision, not tracked work, so the entry
+            // must carry its own justification: what diverges (Reason) and where
+            // that call is written down (Doc). See docs/expectations.md.
+            if (string.IsNullOrWhiteSpace(reason))
+                throw new InvalidOperationException(
+                    $"{relName}[{idx}] ({codeunitName}.{method}): Mode=expect-divergence requires non-empty 'Reason'");
+            if (string.IsNullOrWhiteSpace(docAnchor))
+                throw new InvalidOperationException(
+                    $"{relName}[{idx}] ({codeunitName}.{method}): Mode=expect-divergence requires non-empty 'Doc' "
+                    + "pointing at the documented decision (e.g. docs/scope.md#jobs)");
+            if (!string.IsNullOrWhiteSpace(issue))
+                throw new InvalidOperationException(
+                    $"{relName}[{idx}] ({codeunitName}.{method}): Mode=expect-divergence must not carry 'Issue' — "
+                    + "an intended divergence has no open work to link. Use expect-fail-known-gap if it is a gap.");
+        }
 
         return new ExpectationEntry(
             codeunitId, codeunitName, method, mode, reason, issue, docAnchor, note, relName);
@@ -215,6 +245,8 @@ public enum ExpectationResult
     PassOos,
     /// <summary>Test failed and a known-gap entry applies; counts as pass-known-gap.</summary>
     PassKnownGap,
+    /// <summary>Test failed and a declared-divergence entry applies; counts as pass-divergence.</summary>
+    PassDivergence,
     /// <summary>Test was not invoked because a skip entry applies.</summary>
     Skipped,
     /// <summary>Manifest-vs-reality drift; the reporter prints <see cref="ClassificationDiagnostic"/>.</summary>
@@ -239,15 +271,22 @@ public static class ExpectationClassifier
     /// </summary>
     public static Classification Classify(TestOutcome outcome, ExpectationEntry? entry)
     {
+        // One definition of "this failure is out-of-scope", shared with the
+        // reporter: the typed exception OR the documented message convention that
+        // Cecil-injected throw sites carry (#1743). Null for a plain failure —
+        // an InvalidOperationException without the `out-of-scope: ` prefix is NOT
+        // an OOS signal and must never be absorbed as one.
+        var signal = outcome.Passed ? null : OutOfScopeMessage.FromException(outcome.Exception);
+
         if (entry == null)
         {
             // No manifest entry — normal pass/fail. Unexpected OOS surfaces as a
             // distinct fail with diagnostic so reviewers know to add an entry.
-            if (!outcome.Passed && outcome.Exception is RunnerOutOfScopeException oos)
+            if (signal is { } undeclared)
             {
                 return new Classification(
                     ExpectationResult.FailManifestDrift,
-                    $"Unexpected out-of-scope: {oos.Api} (reason: {oos.Reason}). "
+                    $"Unexpected out-of-scope: {undeclared.Api} (reason: {undeclared.Reason}). "
                     + "Add an expect-oos entry under tests/expectations/ or implement the surface.");
             }
             return new Classification(outcome.Passed ? ExpectationResult.Pass : ExpectationResult.Fail, null);
@@ -265,7 +304,7 @@ public static class ExpectationClassifier
                         $"Test passed cleanly but manifest declares expect-oos (reason: {entry.Reason}). "
                         + $"Remove the entry from {entry.SourceFile} — runner now supports this surface.");
 
-                if (outcome.Exception is RunnerOutOfScopeException oos)
+                if (signal is { } oos)
                 {
                     if (ReasonAnchor(oos.Reason) == ReasonAnchor(entry.Reason!))
                         return new Classification(ExpectationResult.PassOos, null);
@@ -277,9 +316,10 @@ public static class ExpectationClassifier
 
                 return new Classification(
                     ExpectationResult.FailManifestDrift,
-                    $"Expected RunnerOutOfScopeException (reason: {entry.Reason}) but runner threw "
-                    + $"{outcome.Exception?.GetType().Name ?? "<no exception>"}. "
-                    + "Either implement the surface, or replace the failure with a typed RunnerOutOfScopeException.");
+                    $"Expected an out-of-scope failure (reason: {entry.Reason}) but runner threw "
+                    + $"{outcome.Exception?.GetType().Name ?? "<no exception>"} with no out-of-scope signal. "
+                    + "Either implement the surface, or make the throw site raise RunnerOutOfScopeException "
+                    + "(or the documented 'out-of-scope: <api> — <reason>' message).");
 
             case ExpectationMode.ExpectFailKnownGap:
                 if (outcome.Passed)
@@ -289,6 +329,25 @@ public static class ExpectationClassifier
                         + $"(issue: {entry.Issue}). Remove the entry from {entry.SourceFile} "
                         + "and close the linked issue — the gap appears to be fixed.");
                 return new Classification(ExpectationResult.PassKnownGap, null);
+
+            case ExpectationMode.ExpectDivergence:
+                if (outcome.Passed)
+                    return new Classification(
+                        ExpectationResult.FailManifestDrift,
+                        $"Test passed cleanly but manifest declares expect-divergence "
+                        + $"(reason: {entry.Reason}, doc: {entry.Doc}). Remove the entry from "
+                        + $"{entry.SourceFile} — the runner no longer diverges from BC here.");
+                // A divergence is "the runner deliberately answers differently"; an
+                // out-of-scope throw is a different claim with its own mode, and
+                // conflating them would let expect-divergence quietly absorb new OOS
+                // surfaces that expect-oos is supposed to declare.
+                if (signal is { } divergedButOos)
+                    return new Classification(
+                        ExpectationResult.FailManifestDrift,
+                        $"Manifest declares expect-divergence (reason: {entry.Reason}) but the runner raised "
+                        + $"an out-of-scope signal: {divergedButOos.Api} (reason: {divergedButOos.Reason}). "
+                        + $"Declare it expect-oos in {entry.SourceFile} instead.");
+                return new Classification(ExpectationResult.PassDivergence, null);
 
             default:
                 throw new InvalidOperationException($"Unhandled ExpectationMode: {entry.Mode}");

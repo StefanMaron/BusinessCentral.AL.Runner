@@ -14,13 +14,5 @@
     "Mode": "expect-fail-known-gap",
     "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1718",
     "Note": "The CONTROL case, and it reveals #1718 is bigger than its title says. No SetTableView is called at all here, yet the data item still visits zero rows (expected STV-first,STV-second,STV-third, got ''). So Report.Run() is not iterating the data item AT ALL — the SetTableView NRE is a second, separate defect on top of that. Fixing only SetTableView will leave this half red; whoever takes #1718 needs both. Verified against real BC in corpus PR #20: both directions pass on BC 27.5 and 28.3."
-  },
-  {
-    "codeunitId": 60878,
-    "CodeunitName": "Test Report SaveAs Pdf",
-    "Method": "SaveAsPdf_RdlcLayout_ReturnsFalseWithLastErrorTextOnLinux",
-    "Mode": "expect-fail-known-gap",
-    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1743",
-    "Note": "SHOULD be expect-oos: RDLC rendering is permanently out of scope (docs/scope.md#report-rendering) and the runner does throw with exactly the right message — 'out-of-scope: report-rendering-external — RDLC layout processing requires an external renderer'. But the throw is Cecil-injected IL constructing an InvalidOperationException, not a typed RunnerOutOfScopeException, and expect-oos matches on the type. Same root cause as the HttpClient entry in known-gaps-http.json. Swap this to expect-oos (Reason: report-rendering, file oos-reports.json) the moment #1743 lands. Note the upstream test asserts a BC-on-Linux platform limitation, not Cloud SaaS behaviour — real BC SaaS renders RDLC."
   }
 ]

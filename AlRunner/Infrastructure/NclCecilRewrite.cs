@@ -4794,16 +4794,23 @@ public static class NclCecilRewrite
             int factoryRewrites = 0;
             foreach (var m in factoryT.Methods.Where(mm => mm.HasBody).ToList())
             {
+                // Message shape is the documented convention
+                //     out-of-scope: <api> — <reason> — see docs/scope.md#<anchor>
+                // (Infrastructure.OutOfScopeMessage). The <api> slot must name the
+                // BC API that was touched and the <reason> slot must LEAD with the
+                // scope.md anchor, because tests/expectations/ matches expect-oos
+                // entries on that anchor (#1743). Free-text detail goes after a
+                // further em-dash.
                 string? reason = m.Name switch
                 {
                     "GetRdlcResultSetProcessor" =>
-                        "out-of-scope: report-rendering-external — RDLC layout processing requires an external renderer — see docs/scope.md#report-rendering",
+                        "out-of-scope: ReportResultSetProcessorFactory.GetRdlcResultSetProcessor — report-rendering-external — RDLC layout processing requires an external renderer — see docs/scope.md#report-rendering",
                     "GetWordResultSetProcessor" =>
-                        "out-of-scope: report-rendering-external — Word layout merge (Aspose) requires an external renderer — see docs/scope.md#report-rendering",
+                        "out-of-scope: ReportResultSetProcessorFactory.GetWordResultSetProcessor — report-rendering-external — Word layout merge (Aspose) requires an external renderer — see docs/scope.md#report-rendering",
                     "GetExcelResultSetProcessor" =>
-                        "out-of-scope: report-rendering-external — Excel layout rendering (Aspose) requires an external renderer — see docs/scope.md#report-rendering",
+                        "out-of-scope: ReportResultSetProcessorFactory.GetExcelResultSetProcessor — report-rendering-external — Excel layout rendering (Aspose) requires an external renderer — see docs/scope.md#report-rendering",
                     "GetExcelDatasetResultSetProcessor" =>
-                        "out-of-scope: report-rendering-external — Excel dataset rendering (Aspose) requires an external renderer — see docs/scope.md#report-rendering",
+                        "out-of-scope: ReportResultSetProcessorFactory.GetExcelDatasetResultSetProcessor — report-rendering-external — Excel dataset rendering (Aspose) requires an external renderer — see docs/scope.md#report-rendering",
                     _ => null,
                 };
                 if (reason == null) continue;
@@ -4821,7 +4828,7 @@ public static class NclCecilRewrite
                 foreach (var ctor in printProcT.Methods.Where(mm => mm.IsConstructor && !mm.IsStatic && mm.HasBody).ToList())
                 {
                     ThrowBody(ctor,
-                        "out-of-scope: printing — physical/print-server printing requires an external print service — see docs/scope.md#report-rendering");
+                        "out-of-scope: ReportServerResultSetProcessor..ctor — printing — physical/print-server printing requires an external print service — see docs/scope.md#report-rendering");
                     printCtorRewrites++;
                 }
             }
@@ -4832,7 +4839,7 @@ public static class NclCecilRewrite
                 foreach (var ctor in docSvcT.Methods.Where(mm => mm.IsConstructor && !mm.IsStatic && mm.HasBody).ToList())
                 {
                     ThrowBody(ctor,
-                        "out-of-scope: document-service — document-service upload requires an external service — see docs/scope.md#report-rendering");
+                        "out-of-scope: ReportResultSetDocumentServiceDecorator..ctor — document-service — document-service upload requires an external service — see docs/scope.md#report-rendering");
                     docSvcCtorRewrites++;
                 }
             }

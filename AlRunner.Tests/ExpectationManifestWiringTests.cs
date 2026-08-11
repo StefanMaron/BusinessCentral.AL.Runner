@@ -9,10 +9,16 @@
 // These tests spawn the real CLI against Fixtures/ExpectationsBundle (one codeunit,
 // one method per classification path) plus Fixtures/ExpectationsManifest and pin the
 // contract end-to-end:
-//   - the reclassifying paths (pass-oos / pass-known-gap / skipped) reach the exit code,
-//   - both drift directions fail the run with the documented diagnostics,
+//   - the reclassifying paths (pass-oos / pass-known-gap / pass-divergence / skipped)
+//     reach the exit code,
+//   - every drift direction fails the run with the documented diagnostics,
 //   - a malformed manifest aborts startup loudly,
 //   - without a manifest, behaviour is unchanged.
+//
+// Issue #1743 widened expect-oos to also recognise the Cecil-injected
+// `out-of-scope: <api> — <reason>` message convention, and #1741 added
+// expect-divergence. Both are covered here end-to-end; the negatives that keep the
+// widened matcher honest live in ManifestDrift_EveryDirection_FailsTheRunLoudly.
 
 using System.Diagnostics;
 using System.Text;
@@ -75,11 +81,12 @@ public sealed class ExpectationManifestWiringTests
     }
 
     /// <summary>
-    /// The reclassifying paths in one run: a plain pass, a declared OOS throw, a
-    /// declared known-gap failure, and a declared skip. All four must land the run at
-    /// exit 0, with each reclassified count reported DISTINCTLY (a green run that got
-    /// there via quarantined tests must not read as an unqualified green), and the
-    /// skip-declared body must never execute.
+    /// The reclassifying paths in one run: a plain pass, a TYPED OOS throw, a
+    /// Cecil-injected message-convention OOS throw (#1743), a declared known-gap
+    /// failure, a declared intended divergence (#1741), and a declared skip. All must
+    /// land the run at exit 0, with each reclassified count reported DISTINCTLY (a
+    /// green run that got there via quarantined tests must not read as an unqualified
+    /// green), and the skip-declared body must never execute.
     /// </summary>
     [Fact]
     public void DeclaredExpectations_ReclassifyToGreen_AndReachTheExitCode()
@@ -93,8 +100,10 @@ public sealed class ExpectationManifestWiringTests
         Assert.DoesNotContain("SKIP-DECLARED TEST BODY RAN", output, StringComparison.Ordinal);
 
         // Each reclassified bucket is reported distinctly, per docs/expectations.md.
-        AssertCount(output, "pass-oos:", 1);
+        // pass-oos is 2: the typed throw AND the Cecil-injected message convention.
+        AssertCount(output, "pass-oos:", 2);
         AssertCount(output, "pass-known-gap:", 1);
+        AssertCount(output, "pass-divergence:", 1);
         AssertCount(output, "skipped:", 1);
         AssertCount(output, "  fail:", 0);
 
@@ -104,12 +113,14 @@ public sealed class ExpectationManifestWiringTests
     }
 
     /// <summary>
-    /// Both drift directions, in one run: entries whose tests now pass (expect-oos and
-    /// expect-fail-known-gap) and an OOS throw with no entry. Each must surface its
-    /// documented diagnostic and the run must exit non-zero — manifest drift is loud.
+    /// Every drift direction in one run. Three of these are the load-bearing negatives
+    /// for #1743: teaching expect-oos the message convention must NOT turn it into a
+    /// matcher that says yes to everything, so a wrong reason, a one-character-short
+    /// reason, and a failure carrying no out-of-scope signal at all must all still
+    /// fail. Plus the two #1741 divergence directions. Manifest drift is loud.
     /// </summary>
     [Fact]
-    public void ManifestDrift_BothDirections_FailTheRunLoudly()
+    public void ManifestDrift_EveryDirection_FailsTheRunLoudly()
     {
         if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not provisioned"); return; }
 
@@ -119,15 +130,32 @@ public sealed class ExpectationManifestWiringTests
         Assert.Contains("runner now supports this surface", output, StringComparison.Ordinal);
         // Direction 1b: known-gap entry whose test passes → remove the entry, close the issue.
         Assert.Contains("close the linked issue", output, StringComparison.Ordinal);
-        // Direction 2: undeclared OOS throw → add an entry.
+        // Direction 1c: divergence entry whose test passes → remove the entry.
+        Assert.Contains("no longer diverges from BC", output, StringComparison.Ordinal);
+        // Direction 2: undeclared OOS throw → add an entry. Fires for the typed throw
+        // AND for the Cecil-injected message-convention throw.
+        Assert.Contains("Unexpected out-of-scope: HttpClient.Get", output, StringComparison.Ordinal);
         Assert.Contains("Add an expect-oos entry", output, StringComparison.Ordinal);
+        // Direction 3a: declared reason does not match the thrown reason.
+        Assert.Contains("Expected OOS reason 'email-smtp' but runner threw reason 'external-http'",
+            output, StringComparison.Ordinal);
+        // Direction 3b: near-miss reason ('external-htt' is a prefix of 'external-http')
+        // must not match — anchors are compared for equality, not containment.
+        Assert.Contains("Expected OOS reason 'external-htt' but runner threw reason 'external-http'",
+            output, StringComparison.Ordinal);
+        // Direction 3c: an ordinary failure under an expect-oos entry is NOT absorbed
+        // as out-of-scope just because the entry says so.
+        Assert.Contains("no out-of-scope signal", output, StringComparison.Ordinal);
+        // Direction 4: an OOS throw under an expect-divergence entry is the wrong mode.
+        Assert.Contains("Declare it expect-oos", output, StringComparison.Ordinal);
 
-        // The three drift methods are the only failures; the green-path methods still
+        // The drift methods are the only failures; the green-path methods still
         // reclassify (drift must not disable classification for the rest of the run).
-        AssertCount(output, "pass-oos:", 1);
+        AssertCount(output, "pass-oos:", 2);
         AssertCount(output, "pass-known-gap:", 1);
+        AssertCount(output, "pass-divergence:", 1);
         AssertCount(output, "skipped:", 1);
-        AssertCount(output, "  fail:", 3);
+        AssertCount(output, "  fail:", 9);   // every Drift_* method, and nothing else
 
         Assert.True(exit == 1,
             $"manifest drift must fail the run (exit 1 = test failures). exit={exit}\n{output}");

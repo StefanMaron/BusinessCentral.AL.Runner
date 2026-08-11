@@ -2784,7 +2784,8 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                          docs/expectations.md). Defaults to ./tests/expectations");
     w.WriteLine("                          when that directory exists; otherwise off. Declared");
     w.WriteLine("                          outcomes reclassify: expect-oos -> pass-oos,");
-    w.WriteLine("                          expect-fail-known-gap -> pass-known-gap, skip -> not");
+    w.WriteLine("                          expect-fail-known-gap -> pass-known-gap,");
+    w.WriteLine("                          expect-divergence -> pass-divergence, skip -> not");
     w.WriteLine("                          invoked. Manifest drift is loud: an entry whose test now");
     w.WriteLine("                          passes, or an out-of-scope throw with no entry, fails");
     w.WriteLine("                          the run with a diagnostic naming the entry to fix.");

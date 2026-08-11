@@ -6,7 +6,16 @@
     "Mode": "expect-oos",
     "Reason": "query-join-rightouterjoin-not-implemented",
     "Doc": "docs/scope.md#queries",
-    "Note": "Fixture entry: matching reason anchor, so the OOS throw reclassifies to pass-oos."
+    "Note": "Fixture entry: matching reason anchor on a TYPED RunnerOutOfScopeException, so the OOS throw reclassifies to pass-oos."
+  },
+  {
+    "codeunitId": 60810,
+    "CodeunitName": "Expct Fixture Tests",
+    "Method": "GreenPath_MessageOosDeclared",
+    "Mode": "expect-oos",
+    "Reason": "external-http",
+    "Doc": "docs/scope.md#external-http",
+    "Note": "Fixture entry for #1743: the Cecil-injected throw carries the message convention, not the typed exception. Matching anchor → pass-oos."
   },
   {
     "codeunitId": 60810,
@@ -15,6 +24,15 @@
     "Mode": "expect-fail-known-gap",
     "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1734",
     "Note": "Fixture entry: the test fails by design, so it reclassifies to pass-known-gap."
+  },
+  {
+    "codeunitId": 60810,
+    "CodeunitName": "Expct Fixture Tests",
+    "Method": "GreenPath_DivergenceDeclared",
+    "Mode": "expect-divergence",
+    "Reason": "fixture-intended-divergence",
+    "Doc": "docs/expectations.md#mode-semantics",
+    "Note": "Fixture entry for #1741: an intended, permanent divergence from BC. Fails by design → pass-divergence. No Issue: there is no open work to link."
   },
   {
     "codeunitId": 60810,
@@ -39,5 +57,50 @@
     "Mode": "expect-fail-known-gap",
     "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1734",
     "Note": "Fixture entry: deliberately stale — the test passes, so the run must fail with 'Remove the entry … close the linked issue'."
+  },
+  {
+    "codeunitId": 60810,
+    "CodeunitName": "Expct Fixture Tests",
+    "Method": "Drift_OosEntryWrongReason",
+    "Mode": "expect-oos",
+    "Reason": "email-smtp",
+    "Doc": "docs/scope.md#email",
+    "Note": "Fixture entry: deliberately wrong reason. The runner throws external-http, so matching on the message convention must NOT make this pass."
+  },
+  {
+    "codeunitId": 60810,
+    "CodeunitName": "Expct Fixture Tests",
+    "Method": "Drift_OosEntryNearMissReason",
+    "Mode": "expect-oos",
+    "Reason": "external-htt",
+    "Doc": "docs/scope.md#external-http",
+    "Note": "Fixture entry: one character short of 'external-http'. Reason anchors are compared for equality, so a prefix must not match."
+  },
+  {
+    "codeunitId": 60810,
+    "CodeunitName": "Expct Fixture Tests",
+    "Method": "Drift_OosEntryButPlainFailure",
+    "Mode": "expect-oos",
+    "Reason": "external-http",
+    "Doc": "docs/scope.md#external-http",
+    "Note": "Fixture entry: the test fails with no out-of-scope signal at all. Must stay a failure — an ordinary exception is not an OOS throw."
+  },
+  {
+    "codeunitId": 60810,
+    "CodeunitName": "Expct Fixture Tests",
+    "Method": "Drift_DivergenceEntryButPasses",
+    "Mode": "expect-divergence",
+    "Reason": "fixture-intended-divergence",
+    "Doc": "docs/expectations.md#mode-semantics",
+    "Note": "Fixture entry: deliberately stale — the test passes, so the run must fail with 'Remove the entry … no longer diverges from BC'."
+  },
+  {
+    "codeunitId": 60810,
+    "CodeunitName": "Expct Fixture Tests",
+    "Method": "Drift_DivergenceEntryButOos",
+    "Mode": "expect-divergence",
+    "Reason": "fixture-intended-divergence",
+    "Doc": "docs/expectations.md#mode-semantics",
+    "Note": "Fixture entry: the runner raises an out-of-scope signal, which is a different claim. Must fail with 'Declare it expect-oos'."
   }
 ]

@@ -1,0 +1,11 @@
+[
+  {
+    "codeunitId": 60877,
+    "CodeunitName": "Test TaskScheduler Behavior",
+    "Method": "TaskScheduler_CreateTask_InsideTest_ReturnsNonEmptyGuid",
+    "Mode": "expect-divergence",
+    "Reason": "task-scheduler-create-task",
+    "Doc": "docs/scope.md#jobs",
+    "Note": "Real BC returns a non-empty task GUID from CreateTask inside a test. The runner has no scheduler, so ALTaskScheduler.CanCreateTask is false and BC's own body throws NavCreateScheduledTasksNotAllowedException on the unguarded path — the answer docs/scope.md §3.6 documents, and #1739 deliberately made the runner give. This is an intended, permanent divergence, not a gap: #1733 is closed and nobody is working it. Not expect-oos either — the runner does not claim the surface is unreachable, it answers as BC's own code answers when scheduling is not allowed."
+  }
+]
