@@ -906,9 +906,8 @@ public static class EventSubscriberPatches
     }
 
     /// <summary>
-    /// Adapter implementing <see cref="INavEventSubscriber"/>. The publisher dispatch path only
-    /// reads ApplicationObjectId.ObjectNumber + IsEventManualBinding off the subscriber object
-    /// (other members are consumed by manual-binding / sender-validation paths we don't take).
+    /// Adapter implementing <see cref="INavEventSubscriber"/>. The publisher dispatch path
+    /// reads ApplicationObjectId.ObjectNumber + IsEventManualBinding off the subscriber object.
     /// </summary>
     internal sealed class AlEventSubscriberAdapter : INavEventSubscriber
     {
@@ -918,11 +917,21 @@ public static class EventSubscriberPatches
             ApplicationObjectClrType = clrType;
             ApplicationObjectId = new ApplicationObjectId(ObjectType.CodeUnit, codeunitId);
             _wrapper = new NavEventSubscriberReflectionWrapper(clrType);
+            // NavEventSubscription's ctor freezes this into its status flags
+            // (NavEventSubscriptionStatus.ManualBinding), which is what makes BC's own
+            // NavEventScope.ProcessCallToTypeAndManualSubscriptionsAsync take the manual
+            // branch: dispatch once per Session.EventBindings entry matching this codeunit,
+            // on that bound instance, and not at all when nothing is bound. Hard-coding
+            // false here meant BC could never engage that branch, so Manual table-event
+            // subscribers fired unbound and the bound instance never received (issue #1749).
+            // Same classifier the codeunit-event dispatcher uses, so both paths agree on
+            // what "Manual" means.
+            IsEventManualBinding = BcRuntime.IsManualBindingCodeunitType(clrType);
         }
         public bool OriginatesFromBase => false;
         public NavEventSubscriberReflectionWrapper SubscriberReflectionWrapper => _wrapper;
         public Type ApplicationObjectClrType { get; }
         public ApplicationObjectId ApplicationObjectId { get; }
-        public bool IsEventManualBinding => false;
+        public bool IsEventManualBinding { get; }
     }
 }

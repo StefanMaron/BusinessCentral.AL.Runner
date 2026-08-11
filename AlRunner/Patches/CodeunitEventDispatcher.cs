@@ -137,8 +137,14 @@ public static partial class BcRuntime
     /// Read off [NavCodeunitOptionsAttribute] exactly like
     /// <see cref="NCLMetaCodeunit_get_IsEventManualBinding"/> (which serves BC's own
     /// BindSubscription path) so both sides agree on what "manual" is.
+    ///
+    /// The single definition of "Manual" in the runner: the codeunit-event dispatcher below
+    /// consults it directly, and the table-event path reports it out of
+    /// <c>EventSubscriberPatches.AlEventSubscriberAdapter.IsEventManualBinding</c> so BC's own
+    /// NavEventScope dispatch classifies the subscription the same way. Two answers here would
+    /// let the two paths drift on what Manual means.
     /// </summary>
-    private static bool IsManualBindingCodeunitType(Type codeunitClrType)
+    internal static bool IsManualBindingCodeunitType(Type codeunitClrType)
         => _manualBindingTypeCache.GetOrAdd(codeunitClrType, static t =>
         {
             foreach (var attr in t.GetCustomAttributes(inherit: false))
