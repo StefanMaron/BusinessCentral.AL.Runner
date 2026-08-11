@@ -743,6 +743,32 @@ public static class FlowFieldPatches
             var storedBLOB = storedIndexer?.GetValue(storedBuffer, new object[] { fieldIdx }) as NavBLOB;
             if (storedBLOB == null || storedBLOB.IsZeroOrEmpty) return;
 
+            // The stored row and the record's mutable buffer can hold the SAME NavBLOB
+            // instance. Ncl's writeable-blob path hands back the row's own NavBLOB (rather
+            // than a copy) when the field carried no value at Insert time, so a subsequent
+            // `Content.CreateOutStream(o); o.WriteText(...)` mutates that one object in
+            // place and both sides observe it. Verified by object identity: for a row
+            // inserted with an untouched BLOB, storedBLOB and navBLOB are reference-equal;
+            // for a row inserted with content already in the BLOB they are distinct.
+            //
+            // AssignFromStream(storedBLOB.GetStream()) is then a self-copy: the target is
+            // reset before the source stream — which reads from that same, now-emptied
+            // target — is drained, so the blob ends up zero-length. That is what made
+            // `Insert` → `CreateOutStream`+`Write` → `CalcFields(Blob)` read back '' while
+            // real BC keeps the uncommitted write (issue #1724).
+            //
+            // When both sides are the same object there is by definition nothing to load:
+            // the buffer already holds exactly the bytes the copy would have produced.
+            // Skipping keeps CalcFields observably equivalent to real BC for this shape,
+            // and leaves every non-aliased load (Get() → CalcFields()) on the copy path.
+            //
+            // The aliasing itself is a separate divergence — it also makes an uncommitted
+            // BLOB write visible to a second Record instance that Get()s the same row,
+            // which real BC would not do. Tracked in #1751; deliberately NOT fixed here,
+            // because deep-copying at the store boundary is a much wider behavioural
+            // change that needs its own service-tier-adjudicated corpus test first.
+            if (ReferenceEquals(storedBLOB, navBLOB)) return;
+
             navBLOB.AssignFromStream(storedBLOB.GetStream());
         }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
