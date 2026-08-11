@@ -14,6 +14,15 @@
 //   private async overload (called directly by CalcAutoCalcFieldsAsync), so neither path
 //   reaches FlowFieldsHelper.
 //
+//   #1757 adds a THIRD entry point: FlowFieldsHelper.CalcFieldsAsync itself (the 9-arg
+//   static). BC re-enters that one from inside its own code — GetFilterFromMetaFilterCollection
+//   resolves a `where(X = field("<a FlowField>"))` condition by recursively calculating the
+//   referenced FlowField, and RecordIsWithinFilteredFlowFieldsAsync calls it too — so the two
+//   record-level hooks above never see those calls. All three entry points now run the same
+//   CalcFlowFieldValuesCore, which also reproduces BC's two recursion guards (recursionLevel
+//   > 50 and FieldsAndFormulaAreSelfReferencing → NavNCLStackOverflowException) so a cyclic
+//   CalcFormula fails the way BC fails it instead of overflowing the native stack.
+//
 //   The replacement reads each FlowField's NCLMetaCalculationFormula (already populated by
 //   RecordPatches.NclMetaTableBuilder.BuildMetaCalcFormula), enumerates the source table
 //   in-memory via TempTableDataProvider.Filter (the same path used by the existing
@@ -84,6 +93,7 @@ public static class FlowFieldPatches
     private static FieldInfo? _fCalcFormulaEmpty;              // NCLMetaCalculationFormula.EmptyFormula
 
     private static MethodInfo? _mGetFilterFromMetaFilterCollection; // FlowFieldsHelper (#1716)
+    private static ConstructorInfo? _ctorFieldDictionary;      // FieldDictionary<NavValue>(Tuple<INavFieldMetadata,NavValue>[]) (#1757)
     private static ConstructorInfo? _ctorFiltersAndMarks;      // FiltersAndMarks(FilterFieldDictionary)
     private static PropertyInfo? _pTableStateFiltersAndMarks;  // TableState.FiltersAndMarks
     private static PropertyInfo? _pTableStateReadIsolation;    // TableState.ReadIsolation
@@ -241,6 +251,16 @@ public static class FlowFieldPatches
             BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
         _fRecImplSecurityFiltering = tRecImpl.GetField("securityFiltering",
             BindingFlags.NonPublic | BindingFlags.Instance);
+        // #1757 — FieldDictionary<NavValue> is the return shape BC's own
+        // FlowFieldsHelper.CalcFieldsAsync hands back to its callers, so the replacement
+        // that stands in for that method has to build a real one. The type is internal to
+        // Ncl, but both its generic argument (NavValue) and its key type
+        // (INavFieldMetadata) are public, so the item array is nameable here and only the
+        // construction needs reflection.
+        var tFieldDictionary = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.FieldDictionary`1");
+        if (tFieldDictionary != null)
+            _ctorFieldDictionary = tFieldDictionary.MakeGenericType(typeof(NavValue))
+                .GetConstructor(new[] { typeof(Tuple<INavFieldMetadata, NavValue>[]) });
         if (_mGetFilterFromMetaFilterCollection == null || _ctorFiltersAndMarks == null
             || _pTableStateFiltersAndMarks == null)
         {
@@ -393,9 +413,6 @@ public static class FlowFieldPatches
                 if (v is int i) companyToken = i;
             }
 
-            // The skeleton DAS — needed to obtain source-table TempTableDataProvider
-            var dataAccessSource = _fSessionDataAccessSource?.GetValue(session);
-
             // Buffer write helper via indexer
             var bufferType = parentBuffer.GetType();
             var bufferIndexer = bufferType.GetProperty("Item",
@@ -405,263 +422,38 @@ public static class FlowFieldPatches
                     BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             if (bufferIndexer == null) return new System.Threading.Tasks.ValueTask<bool>(false);
 
-            foreach (var fieldObj in fields)
-            {
-                if (fieldObj == null) continue;
-                var fieldClass = _pNclMetaFieldFieldClass!.GetValue(fieldObj);
-                int dbgCol = -1; try { dbgCol = (int)_pNclMetaFieldColumnIndex!.GetValue(fieldObj)!; } catch { }
-
-                // Handle BLOB fields: copy stored content from TempTableDataProvider into mutableRecordBuffer
-                if (_pNclMetaFieldFieldNclType != null && _nclTypeNavBlob != null
-                    && Equals(_pNclMetaFieldFieldNclType.GetValue(fieldObj), _nclTypeNavBlob))
+            // BLOBs first. BC excludes them from the FlowField pipeline entirely
+            // (`fieldsToCalc.Where(f => f.FieldNclType != NavNclType.NavBlob)`) and loads their
+            // content from the record's OWN DataAccess, so this stays on the RecordImplementation
+            // entry point where `self` is available — the shared core below has no `self`.
+            if (_pNclMetaFieldFieldNclType != null && _nclTypeNavBlob != null)
+                foreach (var fieldObj in fields)
                 {
-                    if (dbgCol >= 0)
-                        LoadBlobField(self, parentBuffer, bufferIndexer, dbgCol);
-                    continue;
+                    if (fieldObj == null) continue;
+                    if (!Equals(_pNclMetaFieldFieldNclType.GetValue(fieldObj), _nclTypeNavBlob)) continue;
+                    int blobColumn = -1;
+                    try { blobColumn = (int)_pNclMetaFieldColumnIndex!.GetValue(fieldObj)!; } catch { }
+                    if (blobColumn >= 0)
+                        LoadBlobField(self, parentBuffer, bufferIndexer, blobColumn);
                 }
 
-                if (!Equals(fieldClass, _fcFlowField)) continue;
+            // Then the FlowFields, through the same core BC's own
+            // FlowFieldsHelper.CalcFieldsAsync now routes to (#1757). Entering at
+            // recursionLevel 0 is what BC's RecordImplementation does — the core applies
+            // BC's own `0 → 1, n → n+1` step before handing the level to
+            // GetFilterFromMetaFilterCollection, so a formula that references another
+            // FlowField re-enters here one level deeper and BC's >50 guard still bites.
+            var calculated = new List<Tuple<INavFieldMetadata, NavValue>>();
+            CalcFlowFieldValuesCore(
+                session, companyToken, parentBuffer,
+                tableState != null ? _pTableStateFiltersAndMarks?.GetValue(tableState) : null,
+                _fRecImplSecurityFiltering?.GetValue(self),
+                tableState != null ? _pTableStateReadIsolation?.GetValue(tableState) : null,
+                fields, recursionLevel: 0, calculated);
 
-                var formula = _pNclMetaFieldCalculationFormula!.GetValue(fieldObj);
-                if (formula == null) continue;
-                if (_fCalcFormulaEmpty != null && ReferenceEquals(formula, _fCalcFormulaEmpty.GetValue(null)))
-                    continue;
-
-                var calcMethod = _pCalcFormulaCalculationMethod!.GetValue(formula);
-                if (Equals(calcMethod, _cmNone)) continue;
-
-                // Source field/table from formula IDs (avoid SourceField resolution path, which can fail
-                // on the skeleton app-group metadata lookup even for inserted records).
-                NCLMetaField? srcFieldMeta = null;
-                int srcFieldColumn = -1;
-                NCLMetaTable? srcTable = null;
-
-                var tableIdObj = _pCalcFormulaTableId?.GetValue(formula);
-                var fieldIdObj = _pCalcFormulaFieldId?.GetValue(formula);
-                int tableId = tableIdObj is int tid ? tid : 0;
-                int fieldId = fieldIdObj is int fid ? fid : 0;
-
-                if (tableId != 0)
-                    srcTable = ResolveTableById(tableId);
-
-                if (srcTable != null && fieldId != 0)
-                {
-                    try
-                    {
-                        srcFieldMeta = srcTable.GetFieldByNo(fieldId, trapError: true);
-                    }
-                    catch
-                    {
-                        srcFieldMeta = null;
-                    }
-                }
-                if (srcFieldMeta != null)
-                    srcFieldColumn = srcFieldMeta.ColumnIndex;
-
-                // Source TempTableDataProvider — call our replacement directly, NOT via reflection
-                // (MethodInfo.Invoke bypasses JmpHook and gets the original empty-store impl).
-                if (srcTable == null) continue;
-                object? srcTtdp = null;
-                try
-                {
-                    var srcDataAccess = AlRunner.Patches.RecordPatches
-                        .NavDataAccessSource_GetDataAccessForTable(dataAccessSource!, srcTable, false);
-                    if (srcDataAccess != null && _pDataAccessDataProvider != null)
-                        srcTtdp = _pDataAccessDataProvider.GetValue(srcDataAccess) ?? srcDataAccess;
-                }
-                catch { }
-                if (srcTtdp == null) continue;
-
-                // Resolve the formula's where-conditions into a FiltersAndMarks over the SOURCE
-                // table, using BC's own FlowFieldsHelper.GetFilterFromMetaFilterCollection.
-                //
-                // Nothing about condition semantics is restated here. That one method already
-                // knows how to turn every shape into a FilterExpression — FIELD (equality
-                // against the parent's value, with cross-type transfer), CONST, FILTER, and
-                // the flow-filter forms #1716 added: a FlowFilter value field contributes the
-                // CALLER's filter, `field(filter(X))` parses the parent's value as a filter
-                // expression, `field(upperlimit(X))` keeps only that filter's upper bound, and
-                // an unset/blank one contributes nothing at all. It also owns the ordering
-                // rule that a later mode-carrying condition REPLACES an earlier link on the
-                // same source field rather than ANDing with it (the "G/L Account".Totaling
-                // behaviour). Re-deriving any of that here is how it goes quietly wrong.
-                //
-                // The resulting dictionary is handed to TempTableDataProvider.Filter, so BC's
-                // RecordBufferEvaluatorVisitor — the same code every SetFilter/FindSet goes
-                // through — decides which rows match.
-                var filters = _pCalcFormulaFilters!.GetValue(formula);
-                object? srcFiltersAndMarks = _emptyFm;
-                if (filters != null)
-                {
-                    if (_mGetFilterFromMetaFilterCollection == null || _ctorFiltersAndMarks == null
-                        || _pTableStateFiltersAndMarks == null)
-                        throw new RunnerOutOfScopeException(
-                            "NCLMetaCalculationFormula.Filters",
-                            "not-yet-implemented — BC's FlowFieldsHelper.GetFilterFromMetaFilterCollection "
-                            + "is unavailable on this artifact, and guessing a CalcFormula's "
-                            + "where-conditions would silently change the aggregate (#1716)");
-
-                    // The one shape BC resolves by re-entering FlowFieldsHelper.CalcFieldsAsync
-                    // (a `field(...)` link whose VALUE field is itself a FlowField): that async
-                    // pipeline is exactly what this replacement exists to bypass, so it would
-                    // NRE on the skeleton rather than produce a value. Refuse the whole
-                    // formula instead of letting a stale buffer read stand in for it.
-                    RefuseFilterOnAFlowFieldValueField(filters, fieldObj);
-
-                    var parentFm = _pTableStateFiltersAndMarks.GetValue(tableState);
-                    var dict = _mGetFilterFromMetaFilterCollection.Invoke(null, new object?[]
-                    {
-                        session,
-                        companyToken,
-                        parentBuffer,
-                        parentFm,
-                        _fRecImplSecurityFiltering?.GetValue(self)
-                            ?? Enum.ToObject(_mGetFilterFromMetaFilterCollection.GetParameters()[4].ParameterType, 0),
-                        filters,
-                        _pTableStateReadIsolation?.GetValue(tableState)
-                            ?? Enum.ToObject(_mGetFilterFromMetaFilterCollection.GetParameters()[6].ParameterType, 0),
-                        0,
-                    });
-                    // null = every condition resolved to "no constraint" (e.g. only an unset
-                    // flow filter), which is BC's answer for "aggregate the whole table".
-                    if (dict != null)
-                        srcFiltersAndMarks = _ctorFiltersAndMarks.Invoke(new[] { dict });
-                }
-
-                // Enumerate source rows via TempTableDataProvider.Filter to mirror the runner's
-                // CalcNumeric path (company-scoped, key-ordered, current in-memory rows).
-                IEnumerable? rows = null;
-                try
-                {
-                    var sortingFields = _fTtdpPrimaryKeySortingFields?.GetValue(srcTtdp);
-                    rows = _mTtdpFilter?.Invoke(srcTtdp, new object?[]
-                    {
-                        companyToken,
-                        srcFiltersAndMarks,
-                        null,
-                        sortingFields,
-                        false
-                    }) as IEnumerable;
-                }
-                catch (Exception ex)
-                {
-                    // A throw here is BC's filter machinery rejecting the resolved conditions
-                    // (e.g. NavCSideFilterException for an upperlimit() over a non-contiguous
-                    // range). Surfacing it is the point — swallowing it would leave the
-                    // FlowField at its previous value with nothing said.
-                    var inner = ex is System.Reflection.TargetInvocationException tie
-                        ? tie.InnerException ?? ex : ex;
-                    Console.Error.WriteLine(
-                        $"[FlowFieldPatches] source-table filter failed for table {tableId}: "
-                        + $"{inner.GetType().Name}: {inner.Message}");
-                    throw inner;
-                }
-                if (rows == null)
-                {
-                    continue;
-                }
-
-                // Aggregate
-                int matchCount = 0;
-                int totalSeen = 0;
-                decimal sum = 0m;
-                NavValue? minV = null, maxV = null, lookupV = null;
-                bool anyMatch = false;
-
-                foreach (var row in rows)
-                {
-                    if (row == null) continue;
-                    totalSeen++;
-                    var rowType = row.GetType();
-                    var rowIndexer = rowType.GetProperty("Item",
-                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-                        null, typeof(NavValue), new[] { typeof(int) }, null)
-                        ?? rowType.GetProperty("Item",
-                            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                    if (rowIndexer == null) continue;
-
-                    // No per-row predicate here any more: TempTableDataProvider.Filter was
-                    // handed the resolved FiltersAndMarks above, so every row reaching this
-                    // point has already passed BC's own where-condition evaluation.
-                    anyMatch = true;
-                    matchCount++;
-
-                    if (Equals(calcMethod, _cmExist))
-                    {
-                        // Short-circuit
-                        break;
-                    }
-                    if (srcFieldColumn >= 0 && (Equals(calcMethod, _cmSum) || Equals(calcMethod, _cmAverage)
-                        || Equals(calcMethod, _cmMin) || Equals(calcMethod, _cmMax) || Equals(calcMethod, _cmLookup)))
-                    {
-                        var srcVal = ReadBufferFieldValue(row, rowIndexer, srcFieldColumn, srcFieldMeta);
-                        if (srcVal == null) continue;
-                        if (Equals(calcMethod, _cmSum) || Equals(calcMethod, _cmAverage))
-                        {
-                            try { sum = checked(sum + (decimal)srcVal.ToDecimal()); }
-                            catch { /* non-numeric — skip */ }
-                        }
-                        else if (Equals(calcMethod, _cmMin))
-                        {
-                            if (minV == null || NavValueCompare(srcVal, minV) < 0) minV = srcVal;
-                        }
-                        else if (Equals(calcMethod, _cmMax))
-                        {
-                            if (maxV == null || NavValueCompare(srcVal, maxV) > 0) maxV = srcVal;
-                        }
-                        else if (Equals(calcMethod, _cmLookup))
-                        {
-                            if (lookupV == null) lookupV = srcVal;
-                            // first match wins; could break, but we keep counting for diagnostics
-                            break;
-                        }
-                    }
-                }
-
-                // Build result
-                bool negate = (bool)(_pCalcFormulaNegateResult?.GetValue(formula) ?? false);
-                NavValue? result;
-                int targetColumn = (int)_pNclMetaFieldColumnIndex!.GetValue(fieldObj)!;
-
-                if (Equals(calcMethod, _cmCount))
-                    result = NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, matchCount);
-                else if (Equals(calcMethod, _cmExist))
-                    result = NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, anyMatch);
-                else if (Equals(calcMethod, _cmSum))
-                    result = NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, CoerceSumResult(sum));
-                else if (Equals(calcMethod, _cmAverage))
-                    result = NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj,
-                        matchCount > 0 ? sum / matchCount : 0m);
-                else if (Equals(calcMethod, _cmMin))
-                    result = minV ?? TypedDefaultForField(fieldObj) ?? NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, 0);
-                else if (Equals(calcMethod, _cmMax))
-                    result = maxV ?? TypedDefaultForField(fieldObj) ?? NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, 0);
-                else if (Equals(calcMethod, _cmLookup))
-                    result = lookupV ?? TypedDefaultForField(fieldObj) ?? NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, "");
-                else
-                {
-                    Console.Error.WriteLine($"[FlowFieldPatches] unsupported CalculationMethod {calcMethod}");
-                    continue;
-                }
-
-                // #1708 — `CalcFormula = -sum(...)`. The negation is BC's own
-                // NCLMetaCalculationFormula.NegateValue rather than a local `-x`, so every
-                // CalculationMethod gets the semantics BC gives it (the Base Application ships
-                // both `-sum(...)` and `-exist(...)`, and negating a Boolean is not arithmetic).
-                if (negate && result != null)
-                {
-                    if (_mCalcFormulaNegateValue == null)
-                        // Writing the POSITIVE aggregate instead would be the exact silent
-                        // wrong value #1708 is about, so this is loud rather than best-effort.
-                        AlRunner.Infrastructure.RunnerScope.ThrowNotYetImplemented(
-                            "CalcFormula = -sum(...) (NCLMetaCalculationFormula.NegateValue)",
-                            "BC's own value negation is not present on this build, so a signed " +
-                            "FlowField cannot be computed faithfully — issue #1708");
-                    result = (NavValue?)_mCalcFormulaNegateValue.Invoke(formula, new object?[] { result });
-                }
-
-                bufferIndexer.SetValue(parentBuffer, result, new object[] { targetColumn });
-            }
+            foreach (var item in calculated)
+                bufferIndexer.SetValue(parentBuffer, item.Item2,
+                    new object[] { ((NCLMetaField)item.Item1).ColumnIndex });
 
             return new System.Threading.Tasks.ValueTask<bool>(true);
         }
@@ -697,6 +489,388 @@ public static class FlowFieldPatches
                 return new System.Threading.Tasks.ValueTask<bool>(false);
             throw;
         }
+    }
+
+    /// <summary>
+    /// #1757 — stands in for BC's own <c>FlowFieldsHelper.CalcFieldsAsync</c> (the 9-arg
+    /// static). BC reaches it from two places the runner cannot otherwise serve:
+    /// <c>GetFilterFromMetaFilterCollection</c>'s <c>FieldClass.FlowField</c> branch, which
+    /// resolves a <c>field(&lt;FlowField&gt;)</c> where-condition by RECURSIVELY calculating
+    /// the referenced FlowField, and <c>RecordIsWithinFilteredFlowFieldsAsync</c>. Hooking it
+    /// (rather than pre-computing values into the parent buffer and pretending the value field
+    /// is <c>Normal</c>) keeps BC's own dispatch in charge: the recursion, the ordering of the
+    /// conditions and the two recursion guards are still BC's code, and every other BC caller
+    /// of this method is served too.
+    /// <para>Returns the <c>FieldDictionary&lt;NavValue&gt;</c> BC's callers index; boxed as
+    /// <c>object</c> because that type is internal to Ncl. The Cecil rewrite casts it back and
+    /// wraps it in the <c>ValueTask&lt;&gt;</c> the signature declares.</para>
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="onlyFieldsSourcedFromVirtualTables"/> is accepted and ignored, exactly as
+    /// <see cref="RecordImpl_CalcFieldsAsync_3"/> already ignores it: the runner has no
+    /// virtual-table FlowField source, so BC's virtual/non-virtual split has nothing to select
+    /// between and every requested field is computed from the in-memory store.
+    /// </remarks>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static object FlowFieldsHelper_CalcFieldsAsync(
+        object session, int companyToken, object recordBuffer, object? filtersAndMarks,
+        Array fieldsToCalc, bool onlyFieldsSourcedFromVirtualTables,
+        object? securityFiltering, object? alIsolationLevel, int recursionLevel)
+    {
+        if (_ctorFieldDictionary == null)
+            throw new RunnerOutOfScopeException(
+                "FlowFieldsHelper.CalcFieldsAsync",
+                "not-yet-implemented — FieldDictionary<NavValue> could not be constructed on "
+                + "this artifact, so a FlowField-valued CalcFormula where-condition cannot be "
+                + "resolved the way BC resolves it (#1757)");
+
+        var calculated = new List<Tuple<INavFieldMetadata, NavValue>>();
+        if (fieldsToCalc != null && fieldsToCalc.Length > 0)
+            CalcFlowFieldValuesCore(session, companyToken, recordBuffer, filtersAndMarks,
+                securityFiltering, alIsolationLevel, fieldsToCalc, recursionLevel, calculated);
+
+        // BC's callers index the result by field and would get a KeyNotFoundException for a
+        // FlowField the core declined to compute (unmaterialised CalculationFormula, missing
+        // source table, …). Name the field instead: a lookup failure three frames up inside Ncl
+        // says nothing about which formula the runner could not answer.
+        foreach (var fieldObj in fieldsToCalc ?? Array.Empty<object>())
+        {
+            if (fieldObj == null) continue;
+            if (!Equals(_pNclMetaFieldFieldClass!.GetValue(fieldObj), _fcFlowField)) continue;
+            if (calculated.Any(t => ReferenceEquals(t.Item1, fieldObj))) continue;
+            var meta = fieldObj as NCLMetaField;
+            throw new RunnerOutOfScopeException(
+                "FlowFieldsHelper.CalcFieldsAsync",
+                $"not-yet-implemented — the CalcFormula of '{meta?.FieldName}' on "
+                + $"'{meta?.Parent?.TableName}' could not be evaluated, so the value BC would "
+                + "have filtered on is unavailable; answering without it would silently change "
+                + "the aggregate (#1757)");
+        }
+
+        return _ctorFieldDictionary.Invoke(new object[] { calculated.ToArray() });
+    }
+
+    /// <summary>
+    /// The shared FlowField evaluation both entry points run: the
+    /// <see cref="RecordImpl_CalcFieldsAsync_3"/> hook (which then writes the values into the
+    /// record's buffer) and the <see cref="FlowFieldsHelper_CalcFieldsAsync"/> hook (which
+    /// returns them as a <c>FieldDictionary</c>). Everything about a formula — its
+    /// where-conditions, the source-row enumeration, the aggregation and the negation — is
+    /// evaluated once, here.
+    /// </summary>
+    private static void CalcFlowFieldValuesCore(
+        object session, int companyToken, object parentBuffer, object? parentFiltersAndMarks,
+        object? securityFiltering, object? alIsolationLevel, Array fields, int recursionLevel,
+        List<Tuple<INavFieldMetadata, NavValue>> results)
+    {
+        // ── BC's two recursion guards, in BC's order ────────────────────────────────
+        // Both live in the method chain this replacement stands in for, and both exist
+        // precisely because a `field(<FlowField>)` where-condition makes the calculation
+        // re-entrant. Dropping them would turn a self-referencing or mutually-referencing
+        // formula into a native stack overflow, which kills the process instead of failing
+        // the test — the opposite of what BC does.
+        if (recursionLevel > MaxRecursionLevel)
+            throw NewStackOverflowException();
+        if (FieldsAndFormulaAreSelfReferencing(fields))
+            throw NewStackOverflowException();
+
+        // BC's own step: the level handed DOWN to the where-condition resolution (and hence
+        // to any nested CalcFieldsAsync) is `recursionLevel != 0 ? recursionLevel + 1 : 1`.
+        // Copied rather than simplified to `recursionLevel + 1` because the two agree only
+        // for 0, and the guard above compares against the level BC would have produced.
+        int nestedRecursionLevel = recursionLevel != 0 ? checked(recursionLevel + 1) : 1;
+
+        // The skeleton DAS — needed to obtain source-table TempTableDataProvider
+        var dataAccessSource = _fSessionDataAccessSource?.GetValue(session);
+
+        foreach (var fieldObj in fields)
+        {
+            if (fieldObj == null) continue;
+            var fieldClass = _pNclMetaFieldFieldClass!.GetValue(fieldObj);
+
+            // BLOBs are not FlowFields and are loaded by the RecordImplementation entry
+            // point before this core runs (BC filters them out of its own pipeline too).
+            if (_pNclMetaFieldFieldNclType != null && _nclTypeNavBlob != null
+                && Equals(_pNclMetaFieldFieldNclType.GetValue(fieldObj), _nclTypeNavBlob))
+                continue;
+
+            if (!Equals(fieldClass, _fcFlowField)) continue;
+
+            var formula = _pNclMetaFieldCalculationFormula!.GetValue(fieldObj);
+            if (formula == null) continue;
+            if (_fCalcFormulaEmpty != null && ReferenceEquals(formula, _fCalcFormulaEmpty.GetValue(null)))
+                continue;
+
+            var calcMethod = _pCalcFormulaCalculationMethod!.GetValue(formula);
+            if (Equals(calcMethod, _cmNone)) continue;
+
+            // Source field/table from formula IDs (avoid SourceField resolution path, which can fail
+            // on the skeleton app-group metadata lookup even for inserted records).
+            NCLMetaField? srcFieldMeta = null;
+            int srcFieldColumn = -1;
+            NCLMetaTable? srcTable = null;
+
+            var tableIdObj = _pCalcFormulaTableId?.GetValue(formula);
+            var fieldIdObj = _pCalcFormulaFieldId?.GetValue(formula);
+            int tableId = tableIdObj is int tid ? tid : 0;
+            int fieldId = fieldIdObj is int fid ? fid : 0;
+
+            if (tableId != 0)
+                srcTable = ResolveTableById(tableId);
+
+            if (srcTable != null && fieldId != 0)
+            {
+                try
+                {
+                    srcFieldMeta = srcTable.GetFieldByNo(fieldId, trapError: true);
+                }
+                catch
+                {
+                    srcFieldMeta = null;
+                }
+            }
+            if (srcFieldMeta != null)
+                srcFieldColumn = srcFieldMeta.ColumnIndex;
+
+            // Source TempTableDataProvider — call our replacement directly, NOT via reflection
+            // (MethodInfo.Invoke bypasses JmpHook and gets the original empty-store impl).
+            if (srcTable == null) continue;
+            object? srcTtdp = null;
+            try
+            {
+                var srcDataAccess = AlRunner.Patches.RecordPatches
+                    .NavDataAccessSource_GetDataAccessForTable(dataAccessSource!, srcTable, false);
+                if (srcDataAccess != null && _pDataAccessDataProvider != null)
+                    srcTtdp = _pDataAccessDataProvider.GetValue(srcDataAccess) ?? srcDataAccess;
+            }
+            catch { }
+            if (srcTtdp == null) continue;
+
+            // Resolve the formula's where-conditions into a FiltersAndMarks over the SOURCE
+            // table, using BC's own FlowFieldsHelper.GetFilterFromMetaFilterCollection.
+            //
+            // Nothing about condition semantics is restated here. That one method already
+            // knows how to turn every shape into a FilterExpression — FIELD (equality
+            // against the parent's value, with cross-type transfer), CONST, FILTER, and
+            // the flow-filter forms #1716 added: a FlowFilter value field contributes the
+            // CALLER's filter, `field(filter(X))` parses the parent's value as a filter
+            // expression, `field(upperlimit(X))` keeps only that filter's upper bound, and
+            // an unset/blank one contributes nothing at all. It also owns the ordering
+            // rule that a later mode-carrying condition REPLACES an earlier link on the
+            // same source field rather than ANDing with it (the "G/L Account".Totaling
+            // behaviour). Re-deriving any of that here is how it goes quietly wrong.
+            //
+            // The resulting dictionary is handed to TempTableDataProvider.Filter, so BC's
+            // RecordBufferEvaluatorVisitor — the same code every SetFilter/FindSet goes
+            // through — decides which rows match.
+            var filters = _pCalcFormulaFilters!.GetValue(formula);
+            object? srcFiltersAndMarks = _emptyFm;
+            if (filters != null)
+            {
+                if (_mGetFilterFromMetaFilterCollection == null || _ctorFiltersAndMarks == null
+                    || _pTableStateFiltersAndMarks == null)
+                    throw new RunnerOutOfScopeException(
+                        "NCLMetaCalculationFormula.Filters",
+                        "not-yet-implemented — BC's FlowFieldsHelper.GetFilterFromMetaFilterCollection "
+                        + "is unavailable on this artifact, and guessing a CalcFormula's "
+                        + "where-conditions would silently change the aggregate (#1716)");
+
+                // #1757 — the one shape that used to be refused here: a `field(...)` link
+                // whose VALUE field is itself a FlowField. BC resolves it by recursively
+                // calling FlowFieldsHelper.CalcFieldsAsync, and that static is now hooked
+                // too (FlowFieldsHelper_CalcFieldsAsync above), so the branch below re-enters
+                // this same core one level deeper and comes back with a real value instead
+                // of NREing in the async pipeline. Passing `nestedRecursionLevel` — not a
+                // hardcoded 0 — is what keeps BC's >50 guard able to fire on a cycle.
+                object? dict;
+                try
+                {
+                    dict = _mGetFilterFromMetaFilterCollection.Invoke(null, new object?[]
+                    {
+                        session,
+                        companyToken,
+                        parentBuffer,
+                        parentFiltersAndMarks,
+                        securityFiltering
+                            ?? Enum.ToObject(_mGetFilterFromMetaFilterCollection.GetParameters()[4].ParameterType, 0),
+                        filters,
+                        alIsolationLevel
+                            ?? Enum.ToObject(_mGetFilterFromMetaFilterCollection.GetParameters()[6].ParameterType, 0),
+                        nestedRecursionLevel,
+                    });
+                }
+                catch (TargetInvocationException tie) when (tie.InnerException != null)
+                {
+                    // Reflection wraps whatever BC threw, and with #1757 this call can now
+                    // recurse back into this same core — so a cycle detected 50 levels down
+                    // would otherwise surface as 50 nested TargetInvocationExceptions whose
+                    // message is "Exception has been thrown by the target of an invocation".
+                    // AL must see BC's own error (NavNCLStackOverflowException's "…can be
+                    // caused by recursive function calls…", NavCSideFilterException for a
+                    // rejected upperlimit() range, …), so the wrapper is stripped at every
+                    // level, preserving the original stack.
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo
+                        .Throw(tie.InnerException);
+                    throw; // unreachable; satisfies definite assignment
+                }
+                // null = every condition resolved to "no constraint" (e.g. only an unset
+                // flow filter), which is BC's answer for "aggregate the whole table".
+                if (dict != null)
+                    srcFiltersAndMarks = _ctorFiltersAndMarks.Invoke(new[] { dict });
+            }
+
+            // Enumerate source rows via TempTableDataProvider.Filter to mirror the runner's
+            // CalcNumeric path (company-scoped, key-ordered, current in-memory rows).
+            IEnumerable? rows = null;
+            try
+            {
+                var sortingFields = _fTtdpPrimaryKeySortingFields?.GetValue(srcTtdp);
+                rows = _mTtdpFilter?.Invoke(srcTtdp, new object?[]
+                {
+                    companyToken,
+                    srcFiltersAndMarks,
+                    null,
+                    sortingFields,
+                    false
+                }) as IEnumerable;
+            }
+            catch (Exception ex)
+            {
+                // A throw here is BC's filter machinery rejecting the resolved conditions
+                // (e.g. NavCSideFilterException for an upperlimit() over a non-contiguous
+                // range). Surfacing it is the point — swallowing it would leave the
+                // FlowField at its previous value with nothing said.
+                var inner = ex is System.Reflection.TargetInvocationException tie
+                    ? tie.InnerException ?? ex : ex;
+                Console.Error.WriteLine(
+                    $"[FlowFieldPatches] source-table filter failed for table {tableId}: "
+                    + $"{inner.GetType().Name}: {inner.Message}");
+                throw inner;
+            }
+            if (rows == null)
+            {
+                continue;
+            }
+
+            // Aggregate
+            int matchCount = 0;
+            int totalSeen = 0;
+            decimal sum = 0m;
+            NavValue? minV = null, maxV = null, lookupV = null;
+            bool anyMatch = false;
+
+            foreach (var row in rows)
+            {
+                if (row == null) continue;
+                totalSeen++;
+                var rowType = row.GetType();
+                var rowIndexer = rowType.GetProperty("Item",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    null, typeof(NavValue), new[] { typeof(int) }, null)
+                    ?? rowType.GetProperty("Item",
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (rowIndexer == null) continue;
+
+                // No per-row predicate here any more: TempTableDataProvider.Filter was
+                // handed the resolved FiltersAndMarks above, so every row reaching this
+                // point has already passed BC's own where-condition evaluation.
+                anyMatch = true;
+                matchCount++;
+
+                if (Equals(calcMethod, _cmExist))
+                {
+                    // Short-circuit
+                    break;
+                }
+                if (srcFieldColumn >= 0 && (Equals(calcMethod, _cmSum) || Equals(calcMethod, _cmAverage)
+                    || Equals(calcMethod, _cmMin) || Equals(calcMethod, _cmMax) || Equals(calcMethod, _cmLookup)))
+                {
+                    var srcVal = ReadBufferFieldValue(row, rowIndexer, srcFieldColumn, srcFieldMeta);
+                    if (srcVal == null) continue;
+                    if (Equals(calcMethod, _cmSum) || Equals(calcMethod, _cmAverage))
+                    {
+                        try { sum = checked(sum + (decimal)srcVal.ToDecimal()); }
+                        catch { /* non-numeric — skip */ }
+                    }
+                    else if (Equals(calcMethod, _cmMin))
+                    {
+                        if (minV == null || NavValueCompare(srcVal, minV) < 0) minV = srcVal;
+                    }
+                    else if (Equals(calcMethod, _cmMax))
+                    {
+                        if (maxV == null || NavValueCompare(srcVal, maxV) > 0) maxV = srcVal;
+                    }
+                    else if (Equals(calcMethod, _cmLookup))
+                    {
+                        if (lookupV == null) lookupV = srcVal;
+                        // first match wins; could break, but we keep counting for diagnostics
+                        break;
+                    }
+                }
+            }
+
+            // Build result
+            bool negate = (bool)(_pCalcFormulaNegateResult?.GetValue(formula) ?? false);
+            NavValue? result;
+
+            if (Equals(calcMethod, _cmCount))
+                result = NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, matchCount);
+            else if (Equals(calcMethod, _cmExist))
+                result = NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, anyMatch);
+            else if (Equals(calcMethod, _cmSum))
+                result = NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, CoerceSumResult(sum));
+            else if (Equals(calcMethod, _cmAverage))
+                result = NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj,
+                    matchCount > 0 ? sum / matchCount : 0m);
+            else if (Equals(calcMethod, _cmMin))
+                result = minV ?? TypedDefaultForField(fieldObj) ?? NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, 0);
+            else if (Equals(calcMethod, _cmMax))
+                result = maxV ?? TypedDefaultForField(fieldObj) ?? NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, 0);
+            else if (Equals(calcMethod, _cmLookup))
+                result = lookupV ?? TypedDefaultForField(fieldObj) ?? NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, "");
+            else
+            {
+                Console.Error.WriteLine($"[FlowFieldPatches] unsupported CalculationMethod {calcMethod}");
+                continue;
+            }
+
+            // #1708 — `CalcFormula = -sum(...)`. The negation is BC's own
+            // NCLMetaCalculationFormula.NegateValue rather than a local `-x`, so every
+            // CalculationMethod gets the semantics BC gives it (the Base Application ships
+            // both `-sum(...)` and `-exist(...)`, and negating a Boolean is not arithmetic).
+            if (negate && result != null)
+            {
+                if (_mCalcFormulaNegateValue == null)
+                    // Writing the POSITIVE aggregate instead would be the exact silent
+                    // wrong value #1708 is about, so this is loud rather than best-effort.
+                    AlRunner.Infrastructure.RunnerScope.ThrowNotYetImplemented(
+                        "CalcFormula = -sum(...) (NCLMetaCalculationFormula.NegateValue)",
+                        "BC's own value negation is not present on this build, so a signed " +
+                        "FlowField cannot be computed faithfully — issue #1708");
+                result = (NavValue?)_mCalcFormulaNegateValue.Invoke(formula, new object?[] { result });
+            }
+
+            if (result != null)
+                results.Add(Tuple.Create((INavFieldMetadata)(NCLMetaField)fieldObj, result));
+        }
+    }
+
+    // ── BC recursion guards ──────────────────────────────────────────────────
+    // FlowFieldsHelper's own constant, and its own exception. Both guards are BC's, not the
+    // runner's: a self-referencing or mutually-referencing CalcFormula must produce exactly
+    // the error a service tier produces ("There is insufficient memory to execute this
+    // function. This can be caused by recursive function calls. …"), never a native stack
+    // overflow — which would take the whole test process down instead of failing one test.
+    private const int MaxRecursionLevel = 50;
+
+    private static Exception NewStackOverflowException()
+    {
+        // BC additionally calls session.Diagnostics.SendExceptionTag(...) before throwing.
+        // That is telemetry, not behaviour: it has no effect on the value or the error AL
+        // observes, and the skeleton session's Diagnostics is not wired up. The exception
+        // itself — type, message and the fact that it is thrown rather than trapped — is
+        // what AL sees, and that is reproduced exactly.
+        return new Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLStackOverflowException();
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
@@ -840,43 +1014,6 @@ public static class FlowFieldPatches
         catch
         {
             return null;
-        }
-    }
-
-    /// <summary>
-    /// #1716 — refuse the one <c>field(...)</c> shape whose value BC produces by recursively
-    /// calling <c>FlowFieldsHelper.CalcFieldsAsync</c>: a link whose VALUE field is itself a
-    /// FlowField on the parent table. That async pipeline is precisely what this replacement
-    /// exists to bypass (it NREs on the skeleton session), so letting
-    /// <c>GetFilterFromMetaFilterCollection</c> reach it would fail with an unrelated NRE, and
-    /// substituting whatever happens to sit in the parent buffer would compare against a value
-    /// BC would have recalculated — a plausible wrong aggregate, silently.
-    /// <para>Refusing here is the whole formula, not the condition, exactly as
-    /// <c>[CalcFormula] REFUSED</c> does at parse time: a FlowField missing one of its
-    /// where-conditions over-counts.</para>
-    /// </summary>
-    private static void RefuseFilterOnAFlowFieldValueField(object filters, object flowFieldObj)
-    {
-        if (_fcFlowField == null || _tNCLMetaFilterField == null || _pFilterFieldValueField == null)
-            return;
-        foreach (var fObj in (IEnumerable)filters)
-        {
-            if (fObj == null || !_tNCLMetaFilterField.IsInstanceOfType(fObj)) continue;
-            object? valueField;
-            try { valueField = _pFilterFieldValueField.GetValue(fObj); }
-            catch { continue; }
-            if (valueField == null) continue;
-            if (!Equals(_pNclMetaFieldFieldClass!.GetValue(valueField), _fcFlowField)) continue;
-
-            var owner = flowFieldObj as NCLMetaField;
-            var valueMeta = valueField as NCLMetaField;
-            throw new RunnerOutOfScopeException(
-                "NCLMetaCalculationFormula.Filters (field(<FlowField>) where-condition)",
-                "not-yet-implemented — resolving this condition means recursively calculating "
-                + $"'{valueMeta?.FieldName}' on '{owner?.Parent?.TableName}' through "
-                + "FlowFieldsHelper.CalcFieldsAsync, the async pipeline the runner replaces; "
-                + $"refusing the whole '{owner?.FieldName}' formula rather than aggregating "
-                + "without the condition (#1716)");
         }
     }
 

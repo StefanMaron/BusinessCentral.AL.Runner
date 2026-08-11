@@ -3289,6 +3289,109 @@ public static class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Replaced FlowFieldsHelper.FieldsAndFormulaAreSelfReferencing → FlowFieldPatches (null-safe)");
         }
 
+        // ── FlowFieldsHelper.CalcFieldsAsync (the 9-arg static) ─────────────────────
+        // #1757. Rewriting RecordImplementation.CalcFieldsAsync (above) keeps AL's own
+        // CalcFields off the broken async pipeline, but BC re-enters this STATIC from
+        // inside its own code and the record-level hooks never see those calls:
+        //
+        //   GetFilterFromMetaFilterCollection, case FieldClass.FlowField:
+        //       NavValue value = CalcFieldsAsync(session, companyToken, currentRecord,
+        //                            filtersAndMarks, new[] { nCLMetaField }, false,
+        //                            securityFiltering, alIsolationLevel, recursionLevel)
+        //                        .AsTask().GetAwaiter().GetResult()[filter.ValueField];
+        //
+        // — i.e. a `where(X = field("<a FlowField>"))` condition is resolved by RECURSIVELY
+        // calculating the referenced FlowField. RecordIsWithinFilteredFlowFieldsAsync reaches
+        // the same static. Both used to land in the async body that NREs on the skeleton
+        // session, which is why #1716 had to refuse the whole formula.
+        //
+        // Hooking the static (rather than pre-computing values into the parent buffer and
+        // presenting the value field as Normal) leaves BC's dispatch in charge: BC decides
+        // when to recurse, in what order the conditions resolve, and BC's own recursion
+        // guards still run — FlowFieldPatches reproduces both of them (recursionLevel > 50
+        // and FieldsAndFormulaAreSelfReferencing → NavNCLStackOverflowException) inside the
+        // shared core. Every other BC caller of this method is served for free.
+        //
+        // Body shape emitted:
+        //   FieldDictionary<NavValue> fd = (FieldDictionary<NavValue>)
+        //       FlowFieldPatches.FlowFieldsHelper_CalcFieldsAsync(
+        //           session, companyToken, recordBuffer, filtersAndMarks, fieldsToCalc,
+        //           onlyFieldsSourcedFromVirtualTables, (object)securityFiltering,
+        //           (object)alIsolationLevel, recursionLevel);
+        //   return new ValueTask<FieldDictionary<NavValue>>(fd);
+        //
+        // The helper takes `object` for every Ncl-internal parameter type (NavSession,
+        // IRecordBuffer, FiltersAndMarks) and returns `object`, because FieldDictionary<>,
+        // FiltersAndMarks and IRecordBuffer are all INTERNAL to Ncl and cannot be named from
+        // Runner.dll. The two enum arguments are boxed at the call site; the returned
+        // dictionary is castclass'd back here, where the real type IS nameable.
+        {
+            var ffh = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.FlowFieldsHelper")
+                ?? throw new InvalidOperationException("FlowFieldsHelper type not found");
+            var calcStatic = ffh.Methods.FirstOrDefault(x =>
+                x.Name == "CalcFieldsAsync" && x.IsStatic && x.Parameters.Count == 9)
+                ?? throw new InvalidOperationException(
+                    "FlowFieldsHelper.CalcFieldsAsync(9 args) not found — Ncl shape changed");
+
+            // ValueTask`1<FieldDictionary`1<NavValue>> — taken from the method's own signature
+            // so the generic instantiation never has to be rebuilt by hand.
+            if (calcStatic.ReturnType is not GenericInstanceType retType
+                || retType.GenericArguments.Count != 1)
+                throw new InvalidOperationException(
+                    "FlowFieldsHelper.CalcFieldsAsync return type is not ValueTask<T> — Ncl shape changed");
+            var fieldDictionaryType = retType.GenericArguments[0];
+
+            var helperMi = typeof(AlRunner.Patches.FlowFieldPatches).GetMethod(
+                nameof(AlRunner.Patches.FlowFieldPatches.FlowFieldsHelper_CalcFieldsAsync),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("FlowFieldPatches.FlowFieldsHelper_CalcFieldsAsync not found");
+            var helperRef = asm.MainModule.ImportReference(helperMi);
+
+            // ValueTask<TResult>(TResult result) — the single-arg ctor whose parameter is the
+            // type's own generic parameter (the other single-arg ctor takes Task<TResult>).
+            var vtCtorOpen = typeof(System.Threading.Tasks.ValueTask<>).GetConstructors()
+                .FirstOrDefault(c => c.GetParameters().Length == 1
+                                     && c.GetParameters()[0].ParameterType.IsGenericParameter)
+                ?? throw new InvalidOperationException("ValueTask<TResult>(TResult) ctor not found");
+            var vtCtorRef = asm.MainModule.ImportReference(vtCtorOpen);
+            var boundCtor = new MethodReference(vtCtorRef.Name, vtCtorRef.ReturnType, retType)
+            {
+                HasThis = true,
+                ExplicitThis = false,
+                CallingConvention = vtCtorRef.CallingConvention,
+            };
+            foreach (var p in vtCtorRef.Parameters)
+                boundCtor.Parameters.Add(new ParameterDefinition(p.ParameterType));
+
+            var asyncAttr = calcStatic.CustomAttributes
+                .FirstOrDefault(ca => ca.AttributeType.Name == "AsyncStateMachineAttribute");
+            if (asyncAttr != null) calcStatic.CustomAttributes.Remove(asyncAttr);
+
+            var body = calcStatic.Body;
+            body.Instructions.Clear();
+            body.Variables.Clear();
+            body.ExceptionHandlers.Clear();
+            var il = body.GetILProcessor();
+            il.Append(il.Create(OpCodes.Ldarg_0));                                  // NavSession       → object
+            il.Append(il.Create(OpCodes.Ldarg_1));                                  // int companyToken
+            il.Append(il.Create(OpCodes.Ldarg_2));                                  // IRecordBuffer    → object
+            il.Append(il.Create(OpCodes.Ldarg_3));                                  // FiltersAndMarks  → object
+            il.Append(il.Create(OpCodes.Ldarg_S, calcStatic.Parameters[4]));        // NCLMetaField[]   → Array
+            il.Append(il.Create(OpCodes.Ldarg_S, calcStatic.Parameters[5]));        // bool
+            il.Append(il.Create(OpCodes.Ldarg_S, calcStatic.Parameters[6]));        // SecurityFiltering
+            il.Append(il.Create(OpCodes.Box, calcStatic.Parameters[6].ParameterType));
+            il.Append(il.Create(OpCodes.Ldarg_S, calcStatic.Parameters[7]));        // ALIsolationLevel
+            il.Append(il.Create(OpCodes.Box, calcStatic.Parameters[7].ParameterType));
+            il.Append(il.Create(OpCodes.Ldarg_S, calcStatic.Parameters[8]));        // int recursionLevel
+            il.Append(il.Create(OpCodes.Call, helperRef));
+            il.Append(il.Create(OpCodes.Castclass, fieldDictionaryType));
+            il.Append(il.Create(OpCodes.Newobj, boundCtor));
+            il.Append(il.Create(OpCodes.Ret));
+            body.MaxStackSize = 9;
+            Console.Error.WriteLine(
+                "[Cecil] Replaced FlowFieldsHelper.CalcFieldsAsync(9) → FlowFieldPatches.FlowFieldsHelper_CalcFieldsAsync");
+        }
+
         // ── RecordImplementation.InternalFindRecordWithoutCheckingValuesAsync ─────
         // This async ValueTask method is reached heavily by precompiled MS test
         // libraries (e.g. Library - Purchase.CreateVendor → FindPaymentMethod).
