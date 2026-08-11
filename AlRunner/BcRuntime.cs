@@ -2204,20 +2204,11 @@ public static partial class BcRuntime
             }
         }
 
-        // NavRecord.GetCallerRecord(NavSession) — internal static, NREs at
-        // session.CurrentMethodScope on the headless skeleton (CurrentMethodScope
-        // is null until a real scope is pushed). The real body returns null when
-        // ApplicationObject is null, so returning null directly is the faithful
-        // fallback. Caller (ALValidateSafe) handles null by raising a regular AL
-        // error rather than NRE.
-        var navRecordTypeForCaller = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord");
-        if (navRecordTypeForCaller != null)
-        {
-            var getCallerRecord = navRecordTypeForCaller.GetMethod("GetCallerRecord",
-                BindingFlags.NonPublic | BindingFlags.Static);
-            if (getCallerRecord != null && getCallerRecord.GetParameters().Length == 1)
-                Hook(getCallerRecord, nameof(ReturnNull_OneArg), "NavRecord.GetCallerRecord");
-        }
+        // NavRecord.GetCallerRecord(NavSession) — migrated to the Cecil layer (see
+        // GetCallerRecordPatches.NavRecord_GetCallerRecord and its CecilOwned registration in
+        // NclCecilRewrite.cs). It used to be unconditionally hooked to return null here, which
+        // meant BC's nested-Validate "skip the xRec re-snapshot when the caller IS the record
+        // already being validated" optimization could never fire — see #1781.
 
         // NavFile.GetTenantIds(NavSession) — internal static, NREs at session.Tenant
         // on the skeleton. Return (Guid.Empty, "STANDALONE") to align with the

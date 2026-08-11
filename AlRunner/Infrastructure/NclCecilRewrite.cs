@@ -173,6 +173,10 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.NavRecordId::get_CollationAwareStringComparer/0",
         // NavRecord no-ops
         "Microsoft.Dynamics.Nav.Runtime.NavRecord::Dispose/1",
+        // NavRecord.GetCallerRecord(NavSession) — faithful reimplementation reading the actual
+        // tracked NavSession.CurrentMethodScope backing field (see GetCallerRecordPatches.cs
+        // and #1781: nested Validate re-snapshotting xRec because this used to be forced null).
+        "Microsoft.Dynamics.Nav.Runtime.NavRecord::GetCallerRecord/1",
         // NavRecord::UpdateReferencesOnRenameAsync/2 is deliberately NOT here: BC's real
         // body runs (rename propagation to validated TableRelation fields, issue #1730).
         // RecordLink / management
@@ -6448,6 +6452,15 @@ public static class NclCecilRewrite
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavRecord", "Dispose", "Boolean"),
                 H(helperShims, "NoOp2"));
+
+            // NavRecord.GetCallerRecord(NavSession) — faithful reimplementation (#1781: nested
+            // Validate re-snapshotting xRec because this used to be a blanket ReturnNull hook).
+            // See GetCallerRecordPatches.NavRecord_GetCallerRecord for why this reads the
+            // tracked CurrentMethodScope backing field directly instead of going through
+            // NavSession.CurrentMethodScope's own (deliberately flattened) getter.
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavRecord", "GetCallerRecord", 1),
+                H(helperShims, "NavRecord_GetCallerRecord"));
             // NavRecord.IsGlobalTriggerImplemented is NOT rewritten: BC's body is
             // `(GlobalTriggers.GetTriggersOnTable(TableID) & wanted) != 0`, which now works
             // because GetTriggersOnTable is real again. It used to be forced to false, so
