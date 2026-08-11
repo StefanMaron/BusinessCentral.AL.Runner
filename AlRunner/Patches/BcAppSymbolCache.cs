@@ -537,6 +537,12 @@ internal static partial class BcAppSymbolCache
                 var props = SymbolProperties(field);
                 var isFlowField = props.TryGetValue("FieldClass", out var fieldClass)
                     && string.Equals(fieldClass, "FlowField", StringComparison.OrdinalIgnoreCase);
+                // #1716 — carry FlowFilter through too. The ~105 Base Application FlowFields
+                // that read a flow filter reach their FlowFilter field through THIS path, and
+                // FlowFieldsHelper dispatches on the value field's FieldClass; a FlowFilter
+                // field arriving as Normal is read as a stored (always blank) value instead.
+                var isFlowFilter = props.TryGetValue("FieldClass", out var fieldClass2)
+                    && string.Equals(fieldClass2, "FlowFilter", StringComparison.OrdinalIgnoreCase);
                 ParsedCalcFormula? calcFormula = null;
                 if (isFlowField && props.TryGetValue("CalcFormula", out var calcFormulaText))
                     calcFormula = RecordPatches.TryParseCalcFormula($"CalcFormula = {calcFormulaText};");
@@ -545,7 +551,7 @@ internal static partial class BcAppSymbolCache
                 var isAutoIncrement = props.TryGetValue("AutoIncrement", out var autoIncrement)
                     && (autoIncrement == "1" || autoIncrement.Equals("true", StringComparison.OrdinalIgnoreCase));
                 fields.Add(new ParsedField(fieldId, fieldName, typeName, SymbolTypeLength(typeName), isFlowField, calcFormula,
-                    optionMembers, initValue, isAutoIncrement));
+                    optionMembers, initValue, isAutoIncrement, IsFlowFilter: isFlowFilter));
             }
         }
 

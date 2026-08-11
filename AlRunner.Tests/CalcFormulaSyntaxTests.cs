@@ -246,24 +246,64 @@ public class CalcFormulaSyntaxTests
     // ─── Negative: forms that must NOT be invented ───────────────────────────────────────
 
     [Fact]
-    public void FlowFilterCondition_IsNotMistakenForAPlainFieldLink()
+    public void FlowFilterForms_CarryTheirOwnModeFlags_NotAPlainFieldLink()
     {
-        // `field(filter(X))` and `field(upperlimit(X))` are FlowFilter forms
-        // (NCLMetaFilterModes.ValueIsFilter / .OnlyMaxLimit) which the runner does not
-        // evaluate. The danger is not that they are unsupported — it is reading them as the
-        // plain `field(X)` link, which would silently apply an equality filter BC never
-        // meant. They must be carried as their own kind, never as Field.
+        // #1716. `field(filter(X))`, `field(upperlimit(X))` and `field(upperlimit(filter(X)))`
+        // ARE field links in BC's metadata — a MetaFilter of type FIELD — but each carries a
+        // different pair of mode flags (MetaFilter.ValueIsFilter / .OnlyMaxLimit), and those
+        // flags are the whole difference between "compare against the parent's value", "parse
+        // the parent's value as a filter" and "keep only that filter's upper bound".
+        //
+        // Two ways to get this wrong, both silent: dropping the flags (the link becomes a
+        // plain equality BC never wrote) and confusing the two forms with each other. The
+        // parent field name must survive as well — without it there is nothing to read.
         try
         {
             var f = ParseFormulaRequired(
-                """sum("Sales Line".Amount where("Posting Date" = field(upperlimit("Code")), "Account No." = field(filter("Code"))))""");
+                """
+                sum("Sales Line".Amount where("Posting Date" = field(upperlimit("Code")),
+                                              "Account No." = field(filter("Code")),
+                                              "Shipment Date" = field(upperlimit(filter("Code")))))
+                """);
 
-            Assert.Equal(2, f.Filters.Count);
+            Assert.Equal(3, f.Filters.Count);
             Assert.All(f.Filters, c =>
             {
-                Assert.Equal(ParsedCalcFilterKind.FlowFilter, c.Kind);
-                Assert.Null(c.ParentFieldName);
+                Assert.Equal(ParsedCalcFilterKind.Field, c.Kind);
+                Assert.Equal("Code", c.ParentFieldName);
+                Assert.Null(c.Value);
             });
+
+            var upperLimit = f.Filters.Single(c => c.SourceFieldName == "Posting Date");
+            Assert.True(upperLimit.OnlyMaxLimit);
+            Assert.False(upperLimit.ValueIsFilter);
+
+            var valueIsFilter = f.Filters.Single(c => c.SourceFieldName == "Account No.");
+            Assert.True(valueIsFilter.ValueIsFilter);
+            Assert.False(valueIsFilter.OnlyMaxLimit);
+
+            var both = f.Filters.Single(c => c.SourceFieldName == "Shipment Date");
+            Assert.True(both.ValueIsFilter);
+            Assert.True(both.OnlyMaxLimit);
+        }
+        finally { ParsedTables.Remove(TableId); }
+    }
+
+    [Fact]
+    public void PlainFieldLink_CarriesNeitherModeFlag()
+    {
+        // The negative direction of the test above: an ordinary `field(X)` must NOT come out
+        // looking like a flow-filter form, or every existing FlowField would start reading
+        // its parent's value as a filter expression.
+        try
+        {
+            var f = ParseFormulaRequired(
+                """sum("Sales Line".Amount where("Document No." = field("Code")))""");
+
+            var c = Assert.Single(f.Filters);
+            Assert.Equal(ParsedCalcFilterKind.Field, c.Kind);
+            Assert.False(c.ValueIsFilter);
+            Assert.False(c.OnlyMaxLimit);
         }
         finally { ParsedTables.Remove(TableId); }
     }

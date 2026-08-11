@@ -133,13 +133,16 @@ internal static partial class BcAppSymbolCache
                 var props = SymbolProperties(field);
                 var isFlowField = props.TryGetValue("FieldClass", out var fieldClass)
                     && string.Equals(fieldClass, "FlowField", StringComparison.OrdinalIgnoreCase);
+                // #1716 — a tableextension may add the FlowFilter field a FlowField reads.
+                var isFlowFilter = props.TryGetValue("FieldClass", out var fieldClass2)
+                    && string.Equals(fieldClass2, "FlowFilter", StringComparison.OrdinalIgnoreCase);
                 // CalcFormula intentionally null — see doc-comment above.
                 props.TryGetValue("OptionMembers", out var optionMembers);
                 props.TryGetValue("InitValue", out var initValue);
                 var isAutoIncrement = props.TryGetValue("AutoIncrement", out var autoIncrement)
                     && (autoIncrement == "1" || autoIncrement.Equals("true", StringComparison.OrdinalIgnoreCase));
                 fields.Add(new ParsedField(fieldId, fieldName, typeName, SymbolTypeLength(typeName), isFlowField, null,
-                    optionMembers, initValue, isAutoIncrement));
+                    optionMembers, initValue, isAutoIncrement, IsFlowFilter: isFlowFilter));
             }
         }
         return new TableExtensionSymbol(extId, extName, targetTableName, fields);

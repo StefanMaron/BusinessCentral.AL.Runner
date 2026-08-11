@@ -398,9 +398,15 @@ public static partial class RecordPatches
                 if (ml != null) { args[i] = ml; continue; }
             }
             if (p.Name == "enabled") { args[i] = (bool?)true; continue; }
-            if (p.Name == "fieldClass" && f.IsFlowField && _tFieldClass != null)
+            if (p.Name == "fieldClass" && _tFieldClass != null && (f.IsFlowField || f.IsFlowFilter))
             {
-                args[i] = Enum.Parse(_tFieldClass, "FlowField");
+                // #1716 — FlowFilter must reach the metadata as FlowFilter. NCLMetaTable
+                // orders FlowFilter fields after the Normal ones (so field indexes shift,
+                // which is fine — every consumer here is metadata-driven), and both
+                // DataHelper.PassesFieldFilters and FlowFieldsHelper key their behaviour off
+                // this enum. Declaring it Normal is what made a flow filter exclude its own
+                // table's rows and made `field("Date Filter")` a blank-equality test.
+                args[i] = Enum.Parse(_tFieldClass, f.IsFlowField ? "FlowField" : "FlowFilter");
                 continue;
             }
             if (p.Name == "calcFormula" && calcFormulaObj != null)
@@ -672,8 +678,14 @@ public static partial class RecordPatches
                         Console.Error.WriteLine($"[RecordPatches] BuildMetaCalcFormula: filter parent field '{filter.ParentFieldName}' not found in '{parentTable.TableName}'");
                         continue;
                     }
+                    // #1716: the two mode flags ride along on the FIELD filter.
+                    // NCLMetaFilterField.CreateFromMetaFilter turns them into
+                    // NCLMetaFilterModes, and FlowFieldsHelper then reads the parent field as
+                    // a filter expression (ValueIsFilter) and/or keeps only the upper bound
+                    // of the resolved range (OnlyMaxLimit). Nothing here interprets them.
                     filterObjects.Add(BuildMetaFilter(srcFilterField.FieldId, "FIELD",
-                        parentFilterField.FieldId.ToString()));
+                        parentFilterField.FieldId.ToString(),
+                        filter.ValueIsFilter, filter.OnlyMaxLimit));
                     break;
 
                 case ParsedCalcFilterKind.Const:
@@ -682,20 +694,6 @@ public static partial class RecordPatches
 
                 case ParsedCalcFilterKind.Filter:
                     filterObjects.Add(BuildMetaFilter(srcFilterField.FieldId, "FILTER", filter.Value ?? ""));
-                    break;
-
-                case ParsedCalcFilterKind.FlowFilter:
-                    // `field(filter(X))` / `field(upperlimit(X))` — MetaFilter models these as
-                    // FIELD plus valueIsFilter / onlyMaxLimit, but evaluating them means
-                    // reading the PARENT field as a filter string (or as the upper bound of
-                    // one), which FlowFieldPatches does not do. Emitting a plain FIELD filter
-                    // instead would apply an equality BC never wrote — the silent wrong value
-                    // this is all about — so the condition is left out, as it always has been,
-                    // and said out loud. Runner gap, not an AL problem.
-                    Console.Error.WriteLine(
-                        $"[RecordPatches] BuildMetaCalcFormula: RUNNER GAP — FlowFilter condition on " +
-                        $"'{cf.SourceTableName}'.'{filter.SourceFieldName}' is not applied; " +
-                        $"'{parentTable.TableName}' FlowField may aggregate more rows than AL declared");
                     break;
             }
         }
@@ -741,10 +739,17 @@ public static partial class RecordPatches
     /// id for FIELD, the literal's text for CONST, the filter expression's text for FILTER.
     /// This is the same shape BC's compiled table metadata carries, which is why NCL can build
     /// the right NCLMetaFilter subclass from it without any further help.</para>
+    /// <para><paramref name="valueIsFilter"/> / <paramref name="onlyMaxLimit"/> are AL's
+    /// <c>field(filter(X))</c> and <c>field(upperlimit(X))</c> (#1716). They only ever apply
+    /// to a FIELD filter and are passed straight through to
+    /// <c>NCLMetaFilterField.CreateFromMetaFilter</c>, which is the only code that decides
+    /// what they mean.</para>
     /// </summary>
-    private static object BuildMetaFilter(int sourceFieldId, string filterTypeName, string filterValue)
+    private static object BuildMetaFilter(int sourceFieldId, string filterTypeName, string filterValue,
+        bool valueIsFilter = false, bool onlyMaxLimit = false)
     {
-        // MetaFilter(int fieldId, FilterType filterType, string filterValue, ...)
+        // MetaFilter(int fieldId, FilterType filterType, string filterValue, int filterGroup,
+        //            bool valueIsFilter, bool onlyMaxLimit)
         var ctor = _tMetaFilter!.GetConstructors()
             .OrderByDescending(c => c.GetParameters().Length).First();
         var ps = ctor.GetParameters();
@@ -755,6 +760,8 @@ public static partial class RecordPatches
             if (p.Name == "fieldId") { args[i] = sourceFieldId; continue; }
             if (p.Name == "filterType") { args[i] = Enum.Parse(_tFilterType!, filterTypeName); continue; }
             if (p.Name == "filterValue") { args[i] = filterValue; continue; }
+            if (p.Name == "valueIsFilter") { args[i] = valueIsFilter; continue; }
+            if (p.Name == "onlyMaxLimit") { args[i] = onlyMaxLimit; continue; }
             if (p.HasDefaultValue) { args[i] = p.DefaultValue; continue; }
             args[i] = p.ParameterType.IsValueType ? Activator.CreateInstance(p.ParameterType) : null;
         }

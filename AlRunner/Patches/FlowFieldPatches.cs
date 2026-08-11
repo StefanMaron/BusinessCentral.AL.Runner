@@ -75,16 +75,19 @@ public static class FlowFieldPatches
     private static PropertyInfo? _pCalcFormulaFilters;
     private static PropertyInfo? _pNclMetaFilterFilterType;   // NCLMetaFilter.FilterType
     private static object? _filterTypeField;                  // NCLMetaFilterType.Field
-    private static PropertyInfo? _pNclMetaFilterExpression;   // NCLMetaFilter.Expression
-    private static MethodInfo? _mFilterExprEvaluate;          // FilterExpression.Evaluate(NavValue, ISortingRulesProvider)
     private static PropertyInfo? _pCalcFormulaSourceField;
     private static PropertyInfo? _pCalcFormulaNegateResult;
     private static MethodInfo? _mCalcFormulaNegateValue;      // NCLMetaCalculationFormula.NegateValue(NavValue)
     private static PropertyInfo? _pCalcFormulaTableId;
     private static PropertyInfo? _pCalcFormulaFieldId;
-    private static PropertyInfo? _pFilterSourceField;          // NCLMetaFilter.SourceField
     private static PropertyInfo? _pFilterFieldValueField;      // NCLMetaFilterField.ValueField (returns INavFieldMetadata)
     private static FieldInfo? _fCalcFormulaEmpty;              // NCLMetaCalculationFormula.EmptyFormula
+
+    private static MethodInfo? _mGetFilterFromMetaFilterCollection; // FlowFieldsHelper (#1716)
+    private static ConstructorInfo? _ctorFiltersAndMarks;      // FiltersAndMarks(FilterFieldDictionary)
+    private static PropertyInfo? _pTableStateFiltersAndMarks;  // TableState.FiltersAndMarks
+    private static PropertyInfo? _pTableStateReadIsolation;    // TableState.ReadIsolation
+    private static FieldInfo? _fRecImplSecurityFiltering;      // RecordImplementation.securityFiltering
 
     // CalculationMethod enum values
     private static object? _cmNone, _cmSum, _cmCount, _cmAverage, _cmMin, _cmMax, _cmExist, _cmLookup;
@@ -211,8 +214,6 @@ public static class FlowFieldPatches
             BindingFlags.Public | BindingFlags.Static);
 
         // NCLMetaFilter / NCLMetaFilterField
-        _pFilterSourceField = _tNCLMetaFilter.GetProperty("SourceField",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
         _pFilterFieldValueField = _tNCLMetaFilterField.GetProperty("ValueField",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
         _pNclMetaFilterFilterType = _tNCLMetaFilter.GetProperty("FilterType",
@@ -220,14 +221,34 @@ public static class FlowFieldPatches
         var tFilterTypeEnum = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetaFilterType");
         if (tFilterTypeEnum != null)
             _filterTypeField = Enum.Parse(tFilterTypeEnum, "Field");
-        // NCLMetaFilter.Expression — the FilterExpression BC builds for a Const (an equality
-        // against the literal) or an Expression (a parsed filter string) condition. Both are
-        // evaluated with FilterExpression.Evaluate, so one property covers both. #1709.
-        _pNclMetaFilterExpression = _tNCLMetaFilter.GetProperty("Expression",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-        var tFilterExpr = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.FilterExpression");
-        _mFilterExprEvaluate = tFilterExpr?.GetMethod("Evaluate",
-            BindingFlags.Public | BindingFlags.Instance);
+        // #1716 — BC's own metadata→FilterFieldDictionary resolution. Everything about a
+        // where-condition (FIELD equality with type transfer, CONST, FILTER, the flow-filter
+        // forms, and the ordering rule that a later ValueIsFilter condition REPLACES an
+        // earlier link on the same source field instead of ANDing with it) lives in this one
+        // method, so the runner calls it rather than restating any of it.
+        var tFlowFieldsHelper = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.FlowFieldsHelper");
+        _mGetFilterFromMetaFilterCollection = tFlowFieldsHelper?.GetMethod(
+            "GetFilterFromMetaFilterCollection", BindingFlags.NonPublic | BindingFlags.Static);
+        var tFiltersAndMarks = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.FiltersAndMarks");
+        var tFilterFieldDictionary = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.FilterFieldDictionary");
+        if (tFiltersAndMarks != null && tFilterFieldDictionary != null)
+            _ctorFiltersAndMarks = tFiltersAndMarks.GetConstructor(
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                null, new[] { tFilterFieldDictionary }, null);
+        _pTableStateFiltersAndMarks = tTableState?.GetProperty("FiltersAndMarks",
+            BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+        _pTableStateReadIsolation = tTableState?.GetProperty("ReadIsolation",
+            BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+        _fRecImplSecurityFiltering = tRecImpl.GetField("securityFiltering",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        if (_mGetFilterFromMetaFilterCollection == null || _ctorFiltersAndMarks == null
+            || _pTableStateFiltersAndMarks == null)
+        {
+            Console.Error.WriteLine(
+                "[FlowFieldPatches] WARN: FlowFieldsHelper.GetFilterFromMetaFilterCollection / "
+                + "FiltersAndMarks(FilterFieldDictionary) / TableState.FiltersAndMarks not found — "
+                + "CalcFormula where-conditions will be REFUSED rather than guessed at (#1716)");
+        }
 
         // Enum values
         _cmNone   = Enum.Parse(_tNCLMetaCalcMethod, "None");
@@ -451,73 +472,61 @@ public static class FlowFieldPatches
                 catch { }
                 if (srcTtdp == null) continue;
 
-                // Resolve the formula's where-conditions into row predicates.
+                // Resolve the formula's where-conditions into a FiltersAndMarks over the SOURCE
+                // table, using BC's own FlowFieldsHelper.GetFilterFromMetaFilterCollection.
                 //
-                // Two shapes reach here (#1709). A FIELD condition compares the source row's
-                // field against the PARENT record's field — that value is read once, below. A
-                // CONST or EXPRESSION condition (`Open = const(true)`,
-                // `Status = filter(Open|Released)`) carries its own FilterExpression, built by
-                // BC from the metadata, and is evaluated against the source row's value with
-                // BC's own FilterExpression.Evaluate — so range / alternation / `<>` semantics
-                // match real BC instead of being re-implemented here.
+                // Nothing about condition semantics is restated here. That one method already
+                // knows how to turn every shape into a FilterExpression — FIELD (equality
+                // against the parent's value, with cross-type transfer), CONST, FILTER, and
+                // the flow-filter forms #1716 added: a FlowFilter value field contributes the
+                // CALLER's filter, `field(filter(X))` parses the parent's value as a filter
+                // expression, `field(upperlimit(X))` keeps only that filter's upper bound, and
+                // an unset/blank one contributes nothing at all. It also owns the ordering
+                // rule that a later mode-carrying condition REPLACES an earlier link on the
+                // same source field rather than ANDing with it (the "G/L Account".Totaling
+                // behaviour). Re-deriving any of that here is how it goes quietly wrong.
                 //
-                // Anything that resolves to neither is DROPPED, and dropping a condition makes
-                // the FlowField aggregate rows AL excluded, so it is reported rather than
-                // ignored.
-                var filters = _pCalcFormulaFilters!.GetValue(formula) as IEnumerable;
-                var filterPairs = new List<(int srcCol, int parentCol, NCLMetaField srcField, NCLMetaField parentField)>();
-                var filterExprs = new List<(int srcCol, NCLMetaField srcField, object expr)>();
+                // The resulting dictionary is handed to TempTableDataProvider.Filter, so BC's
+                // RecordBufferEvaluatorVisitor — the same code every SetFilter/FindSet goes
+                // through — decides which rows match.
+                var filters = _pCalcFormulaFilters!.GetValue(formula);
+                object? srcFiltersAndMarks = _emptyFm;
                 if (filters != null)
                 {
-                    foreach (var fObj in filters)
+                    if (_mGetFilterFromMetaFilterCollection == null || _ctorFiltersAndMarks == null
+                        || _pTableStateFiltersAndMarks == null)
+                        throw new RunnerOutOfScopeException(
+                            "NCLMetaCalculationFormula.Filters",
+                            "not-yet-implemented — BC's FlowFieldsHelper.GetFilterFromMetaFilterCollection "
+                            + "is unavailable on this artifact, and guessing a CalcFormula's "
+                            + "where-conditions would silently change the aggregate (#1716)");
+
+                    // The one shape BC resolves by re-entering FlowFieldsHelper.CalcFieldsAsync
+                    // (a `field(...)` link whose VALUE field is itself a FlowField): that async
+                    // pipeline is exactly what this replacement exists to bypass, so it would
+                    // NRE on the skeleton rather than produce a value. Refuse the whole
+                    // formula instead of letting a stale buffer read stand in for it.
+                    RefuseFilterOnAFlowFieldValueField(filters, fieldObj);
+
+                    var parentFm = _pTableStateFiltersAndMarks.GetValue(tableState);
+                    var dict = _mGetFilterFromMetaFilterCollection.Invoke(null, new object?[]
                     {
-                        if (fObj == null) continue;
-                        if (_tNCLMetaFilter != null && !_tNCLMetaFilter.IsInstanceOfType(fObj)) continue;
-
-                        object? fSrc = null;
-                        try { fSrc = _pFilterSourceField?.GetValue(fObj); } catch { }
-                        if (fSrc is not NCLMetaField srcFilterField)
-                        {
-                            Console.Error.WriteLine(
-                                $"[FlowFieldPatches] where-condition dropped: source field unresolved on " +
-                                $"{fObj.GetType().Name}; FlowField may aggregate excluded rows");
-                            continue;
-                        }
-
-                        // FIELD → compare against the parent record's field.
-                        if (_tNCLMetaFilterField != null && _tNCLMetaFilterField.IsInstanceOfType(fObj))
-                        {
-                            object? fVal = null;
-                            try { fVal = _pFilterFieldValueField?.GetValue(fObj); } catch { }
-                            if (fVal is NCLMetaField parentFilterField)
-                            {
-                                filterPairs.Add((srcFilterField.ColumnIndex, parentFilterField.ColumnIndex,
-                                    srcFilterField, parentFilterField));
-                                continue;
-                            }
-                        }
-
-                        // CONST / EXPRESSION → evaluate BC's own FilterExpression per row.
-                        object? expr = null;
-                        try { expr = _pNclMetaFilterExpression?.GetValue(fObj); } catch { }
-                        if (expr != null && _mFilterExprEvaluate != null)
-                        {
-                            filterExprs.Add((srcFilterField.ColumnIndex, srcFilterField, expr));
-                            continue;
-                        }
-
-                        Console.Error.WriteLine(
-                            $"[FlowFieldPatches] where-condition dropped on field " +
-                            $"no. {srcFilterField.FieldNo} ({fObj.GetType().Name}, " +
-                            $"{_pNclMetaFilterFilterType?.GetValue(fObj)}); FlowField may aggregate excluded rows");
-                    }
-
+                        session,
+                        companyToken,
+                        parentBuffer,
+                        parentFm,
+                        _fRecImplSecurityFiltering?.GetValue(self)
+                            ?? Enum.ToObject(_mGetFilterFromMetaFilterCollection.GetParameters()[4].ParameterType, 0),
+                        filters,
+                        _pTableStateReadIsolation?.GetValue(tableState)
+                            ?? Enum.ToObject(_mGetFilterFromMetaFilterCollection.GetParameters()[6].ParameterType, 0),
+                        0,
+                    });
+                    // null = every condition resolved to "no constraint" (e.g. only an unset
+                    // flow filter), which is BC's answer for "aggregate the whole table".
+                    if (dict != null)
+                        srcFiltersAndMarks = _ctorFiltersAndMarks.Invoke(new[] { dict });
                 }
-
-                // Pre-read parent values for each field-to-field filter
-                var parentFilterValues = new NavValue?[filterPairs.Count];
-                for (int i = 0; i < filterPairs.Count; i++)
-                    parentFilterValues[i] = ReadBufferFieldValue(parentBuffer, bufferIndexer, filterPairs[i].parentCol, filterPairs[i].parentField);
 
                 // Enumerate source rows via TempTableDataProvider.Filter to mirror the runner's
                 // CalcNumeric path (company-scoped, key-ordered, current in-memory rows).
@@ -528,13 +537,25 @@ public static class FlowFieldPatches
                     rows = _mTtdpFilter?.Invoke(srcTtdp, new object?[]
                     {
                         companyToken,
-                        _emptyFm,
+                        srcFiltersAndMarks,
                         null,
                         sortingFields,
                         false
                     }) as IEnumerable;
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    // A throw here is BC's filter machinery rejecting the resolved conditions
+                    // (e.g. NavCSideFilterException for an upperlimit() over a non-contiguous
+                    // range). Surfacing it is the point — swallowing it would leave the
+                    // FlowField at its previous value with nothing said.
+                    var inner = ex is System.Reflection.TargetInvocationException tie
+                        ? tie.InnerException ?? ex : ex;
+                    Console.Error.WriteLine(
+                        $"[FlowFieldPatches] source-table filter failed for table {tableId}: "
+                        + $"{inner.GetType().Name}: {inner.Message}");
+                    throw inner;
+                }
                 if (rows == null)
                 {
                     continue;
@@ -558,31 +579,10 @@ public static class FlowFieldPatches
                         ?? rowType.GetProperty("Item",
                             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
                     if (rowIndexer == null) continue;
-                    bool pass = true;
-                    for (int i = 0; i < filterPairs.Count; i++)
-                    {
-                        var rowVal = ReadBufferFieldValue(row, rowIndexer, filterPairs[i].srcCol, filterPairs[i].srcField);
-                        if (!NavValuesEqual(rowVal, parentFilterValues[i])) { pass = false; break; }
-                    }
-                    if (!pass) continue;
 
-                    // const(...) / filter(...) conditions — BC's own filter evaluation. The
-                    // session is the ISortingRulesProvider BC passes on its real WHERE path
-                    // (it is only consulted for Text/Code collation).
-                    for (int i = 0; i < filterExprs.Count && pass; i++)
-                    {
-                        var rowVal = ReadBufferFieldValue(row, rowIndexer, filterExprs[i].srcCol, filterExprs[i].srcField);
-                        // No readable value for the constrained field means the row cannot be
-                        // shown to satisfy the condition, so it is excluded — the same answer
-                        // the field-to-field branch above gives (NavValuesEqual(null, v) is
-                        // false). Excluding is the safe direction: including would widen the
-                        // aggregate, which is the bug this condition exists to prevent.
-                        if (rowVal == null) { pass = false; break; }
-                        pass = (bool)_mFilterExprEvaluate!.Invoke(
-                            filterExprs[i].expr, new object?[] { rowVal, session })!;
-                    }
-                    if (!pass) continue;
-
+                    // No per-row predicate here any more: TempTableDataProvider.Filter was
+                    // handed the resolved FiltersAndMarks above, so every row reaching this
+                    // point has already passed BC's own where-condition evaluation.
                     anyMatch = true;
                     matchCount++;
 
@@ -664,6 +664,20 @@ public static class FlowFieldPatches
             }
 
             return new System.Threading.Tasks.ValueTask<bool>(true);
+        }
+        // A runner out-of-scope signal is NOT a BC data error, so DataError.TrapError must not
+        // turn it into `false`. RunnerOutOfScopeException deliberately derives from plain
+        // Exception "so AL `asserterror` cannot swallow it"; letting the TrapError branches
+        // below swallow it instead would leave the FlowField at its previous value with only a
+        // stderr line — the silent default .claude/rules/loud-failures.md forbids.
+        catch (RunnerOutOfScopeException)
+        {
+            throw;
+        }
+        catch (TargetInvocationException tie) when (tie.InnerException is RunnerOutOfScopeException)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(tie.InnerException);
+            return default;
         }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
@@ -827,23 +841,48 @@ public static class FlowFieldPatches
         }
     }
 
-    private static bool NavValuesEqual(NavValue? a, NavValue? b)
+    /// <summary>
+    /// #1716 — refuse the one <c>field(...)</c> shape whose value BC produces by recursively
+    /// calling <c>FlowFieldsHelper.CalcFieldsAsync</c>: a link whose VALUE field is itself a
+    /// FlowField on the parent table. That async pipeline is precisely what this replacement
+    /// exists to bypass (it NREs on the skeleton session), so letting
+    /// <c>GetFilterFromMetaFilterCollection</c> reach it would fail with an unrelated NRE, and
+    /// substituting whatever happens to sit in the parent buffer would compare against a value
+    /// BC would have recalculated — a plausible wrong aggregate, silently.
+    /// <para>Refusing here is the whole formula, not the condition, exactly as
+    /// <c>[CalcFormula] REFUSED</c> does at parse time: a FlowField missing one of its
+    /// where-conditions over-counts.</para>
+    /// </summary>
+    private static void RefuseFilterOnAFlowFieldValueField(object filters, object flowFieldObj)
     {
-        if (a == null && b == null) return true;
-        if (a == null || b == null) return false;
-        // Try Equals; fall back to ToString comparison for safety.
-        try
+        if (_fcFlowField == null || _tNCLMetaFilterField == null || _pFilterFieldValueField == null)
+            return;
+        foreach (var fObj in (IEnumerable)filters)
         {
-            if (a.Equals(b)) return true;
-            // Numeric fast-path: both convertible to decimal
-            try { return a.ToDecimal().Equals(b.ToDecimal()); } catch { /* not numeric */ }
-            return string.Equals(a.ToString(), b.ToString(), StringComparison.OrdinalIgnoreCase);
-        }
-        catch
-        {
-            return false;
+            if (fObj == null || !_tNCLMetaFilterField.IsInstanceOfType(fObj)) continue;
+            object? valueField;
+            try { valueField = _pFilterFieldValueField.GetValue(fObj); }
+            catch { continue; }
+            if (valueField == null) continue;
+            if (!Equals(_pNclMetaFieldFieldClass!.GetValue(valueField), _fcFlowField)) continue;
+
+            var owner = flowFieldObj as NCLMetaField;
+            var valueMeta = valueField as NCLMetaField;
+            throw new RunnerOutOfScopeException(
+                "NCLMetaCalculationFormula.Filters (field(<FlowField>) where-condition)",
+                "not-yet-implemented — resolving this condition means recursively calculating "
+                + $"'{valueMeta?.FieldName}' on '{owner?.Parent?.TableName}' through "
+                + "FlowFieldsHelper.CalcFieldsAsync, the async pipeline the runner replaces; "
+                + $"refusing the whole '{owner?.FieldName}' formula rather than aggregating "
+                + "without the condition (#1716)");
         }
     }
+
+    // NavValuesEqual is gone with #1716: field-to-field where-conditions are no longer
+    // compared here at all. BC resolves every condition into a FilterExpression and its own
+    // RecordBufferEvaluatorVisitor decides which rows match, so the hand-rolled
+    // Equals/decimal/ToString ladder that used to stand in for BC's comparison semantics has
+    // no callers — and no chance of disagreeing with them.
 
     private static int NavValueCompare(NavValue a, NavValue b)
     {

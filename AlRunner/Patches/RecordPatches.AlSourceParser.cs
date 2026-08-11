@@ -232,6 +232,15 @@ public static partial class RecordPatches
 
         var props = f.PropertyList;
         bool isFlowField = PropIs(props, "FieldClass", "FlowField");
+        // #1716 — FlowFilter is its own FieldClass, not a Normal field that happens to be
+        // named "...Filter". BC keys two behaviours off it: DataHelper.PassesFieldFilters
+        // SKIPS filters on FlowFilter fields (so `SetRange("Date Filter", ...)` never
+        // excludes rows of the table declaring it), and FlowFieldsHelper dispatches
+        // `field(...)` where-conditions on the value field's FieldClass — FlowFilter reads
+        // the caller's FILTER, Normal reads the stored value. Leaving it Normal produced
+        // both failures at once: the parent row vanished under its own flow filter, and the
+        // FlowField compared the source column against a blank.
+        bool isFlowFilter = PropIs(props, "FieldClass", "FlowFilter");
 
         ParsedCalcFormula? calcFormula = null;
         if (isFlowField)
@@ -267,7 +276,7 @@ public static partial class RecordPatches
         // behaviour (no propagation).
         List<ParsedRelationArm>? relationArms = null;
         bool relationValidate = !PropIs(props, "ValidateTableRelation", "false");
-        if (!isFlowField && !PropIs(props, "FieldClass", "FlowFilter")
+        if (!isFlowField && !isFlowFilter
             && PropValue(props, "TableRelation") is NavSyntax.TableRelationPropertyValueSyntax tr)
         {
             relationArms = ParseRelationArms(tr, fname);
@@ -275,7 +284,7 @@ public static partial class RecordPatches
 
         return new ParsedField(fid, fname, ftype, length, isFlowField, calcFormula,
             optionMembers, initValueText, isAutoIncrement, caption,
-            relationArms, relationValidate);
+            relationArms, relationValidate, isFlowFilter);
     }
 
     /// <summary>
@@ -612,24 +621,36 @@ public static partial class RecordPatches
                             Value: fe.Filter?.ToString()?.Trim() ?? ""));
                         break;
 
-                    // "Account No." = field(filter(Totaling))          → ValueIsFilter
-                    // "Posting Date" = field(upperlimit("Date Filter")) → OnlyMaxLimit
+                    // #1716 — the three flow-filter forms. All of them are FIELD links in
+                    // BC's metadata; what distinguishes them is MetaFilter's two mode flags,
+                    // which NCLMetaFilterField.CreateFromMetaFilter turns into
+                    // NCLMetaFilterModes.ValueIsFilter / .OnlyMaxLimit. They are NOT a
+                    // separate condition kind — modelling them as one is what left them
+                    // unapplied — so they are carried as Field plus the flags.
                     //
-                    // Carried as their own kind so nothing can read them as a plain `field(X)`
-                    // link (which would apply an equality BC never wrote), but NOT applied —
-                    // see BuildMetaCalcFormula. Leaving them unapplied is what the parser has
-                    // always done; turning that into a refusal of the whole formula changes
-                    // the value of the ~105 Base Application FlowFields that use these shapes
-                    // and needs its own issue, test and service-tier validation.
+                    //   "Account No." = field(filter(Totaling))                → ValueIsFilter
+                    //   "Posting Date" = field(upperlimit("Date Filter"))      → OnlyMaxLimit
+                    //   "Posting Date" = field(upperlimit(filter("Date Filter"))) → both
                     case NavSyntax.FieldFilterExpressionSyntax ffe:
                         filters.Add(new ParsedCalcFilter(
                             Unquote(ffe.LeftHandSide?.ToString()?.Trim() ?? ""),
-                            ParsedCalcFilterKind.FlowFilter));
+                            ParsedCalcFilterKind.Field,
+                            ParentFieldName: Unquote(ffe.Identifier?.ToString()?.Trim() ?? ""),
+                            ValueIsFilter: true));
                         break;
                     case NavSyntax.FieldUpperLimitExpressionSyntax ule:
                         filters.Add(new ParsedCalcFilter(
                             Unquote(ule.LeftHandSide?.ToString()?.Trim() ?? ""),
-                            ParsedCalcFilterKind.FlowFilter));
+                            ParsedCalcFilterKind.Field,
+                            ParentFieldName: Unquote(ule.Identifier?.ToString()?.Trim() ?? ""),
+                            OnlyMaxLimit: true));
+                        break;
+                    case NavSyntax.FieldUpperLimitFilterExpressionSyntax ulf:
+                        filters.Add(new ParsedCalcFilter(
+                            Unquote(ulf.LeftHandSide?.ToString()?.Trim() ?? ""),
+                            ParsedCalcFilterKind.Field,
+                            ParentFieldName: Unquote(ulf.Identifier?.ToString()?.Trim() ?? ""),
+                            ValueIsFilter: true, OnlyMaxLimit: true));
                         break;
 
                     default:
@@ -689,8 +710,9 @@ public static partial class RecordPatches
 
 /// <summary>
 /// Which shape of <c>where(...)</c> condition a <see cref="ParsedCalcFilter"/> carries. AL
-/// writes four, they are NOT interchangeable, and reading one as another is a silent wrong
-/// value (#1709).
+/// writes three, they are NOT interchangeable, and reading one as another is a silent wrong
+/// value (#1709). The flow-filter forms are <see cref="Field"/> plus the mode flags on
+/// <see cref="ParsedCalcFilter"/>, exactly as BC's <c>MetaFilter</c> models them (#1716).
 /// </summary>
 internal enum ParsedCalcFilterKind
 {
@@ -706,12 +728,6 @@ internal enum ParsedCalcFilterKind
     /// FilterType FILTER, filterValue = the expression text, parsed by BC's own filter parser
     /// (<c>NCLMetaFilterExpression</c>).</summary>
     Filter,
-    /// <summary><c>"Account No." = field(filter(Totaling))</c> and <c>"Posting Date" =
-    /// field(upperlimit("Date Filter"))</c> — the FlowFilter forms
-    /// (<c>NCLMetaFilterModes.ValueIsFilter</c> / <c>.OnlyMaxLimit</c>). Parsed so nothing can
-    /// mistake them for a plain <see cref="Field"/> link; not applied — see
-    /// <c>BuildMetaCalcFormula</c>.</summary>
-    FlowFilter,
 }
 
 /// <param name="SourceFieldName">Field of the FlowField's SOURCE table being constrained.</param>
@@ -719,11 +735,18 @@ internal enum ParsedCalcFilterKind
 /// <param name="ParentFieldName">Set only for <see cref="ParsedCalcFilterKind.Field"/>.</param>
 /// <param name="Value">Const literal / filter expression text — set for
 /// <see cref="ParsedCalcFilterKind.Const"/> and <see cref="ParsedCalcFilterKind.Filter"/>.</param>
+/// <param name="ValueIsFilter">AL's <c>field(filter(X))</c> — the parent field's value is a
+/// filter EXPRESSION over the source field, not a value to compare against
+/// (<c>MetaFilter.ValueIsFilter</c>). #1716.</param>
+/// <param name="OnlyMaxLimit">AL's <c>field(upperlimit(X))</c> — only the upper bound of the
+/// resolved filter constrains the source field (<c>MetaFilter.OnlyMaxLimit</c>). #1716.</param>
 internal record ParsedCalcFilter(
     string SourceFieldName,
     ParsedCalcFilterKind Kind = ParsedCalcFilterKind.Field,
     string? ParentFieldName = null,
-    string? Value = null);
+    string? Value = null,
+    bool ValueIsFilter = false,
+    bool OnlyMaxLimit = false);
 
 /// <param name="Negated">The formula's leading <c>-</c> (#1708), carried through to
 /// <c>MetaCalcFormula.reverseSign</c> → <c>NCLMetaCalculationFormula.NegateResult</c>.</param>
@@ -736,7 +759,7 @@ internal record ParsedCalcFormula(string FormulaType, string SourceTableName, st
 /// restricted to Const/Filter by the parser.</summary>
 internal record ParsedRelationArm(string TableName, string? FieldName, List<ParsedCalcFilter> Conditions, List<ParsedCalcFilter> Filters);
 
-internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null, List<ParsedRelationArm>? RelationArms = null, bool RelationValidate = true);
+internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null, List<ParsedRelationArm>? RelationArms = null, bool RelationValidate = true, bool IsFlowFilter = false);
 internal record ParsedKey(string Name, List<int> FieldIds);
 /// <param name="LookupPageName">The table's declared <c>LookupPageId</c> as WRITTEN — a page
 /// name (<c>"Customer List"</c>) or a bare id in text form. Both sources state it by name:
