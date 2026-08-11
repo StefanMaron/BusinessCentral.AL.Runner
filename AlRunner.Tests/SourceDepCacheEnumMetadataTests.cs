@@ -57,12 +57,29 @@ public class SourceDepCacheEnumMetadataTests
         return Directory.Exists(stdCache) && Directory.EnumerateDirectories(stdCache).Any();
     }
 
-    private static (string output, int exit) RunRunner(string bundleDir, string alCacheDir)
+    private static (string output, int exit) RunRunner(string bundleDir, string alCacheDir, string absentPackageCache)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
         args.Append($" \"{bundleDir}\"");
         args.Append($" --cache \"{alCacheDir}\"");
+        // Pin `package caches: 0 dir(s)` — the fixture depends on NOTHING Microsoft
+        // (platform/application 1.0.0.0, no declared deps), so no package cache is
+        // needed, and passing an --package-cache path that does not exist makes the
+        // runner take the explicit-arg branch and resolve it to the empty set
+        // (ExpandPackageCacheDirs skips non-existent dirs) instead of falling back to
+        // DefaultPackageCacheDirs.
+        //
+        // Why pin it: the default set includes `<artifacts>/<version>/test-apps` and
+        // `<artifacts>/<version>/platform-apps`, which a dev machine that has ever run
+        // --auto-provision HAS and a CI runner (which downloads to ~/.al-runner/… and
+        // passes --package-cache explicitly on other steps) does NOT. That single
+        // difference decided whether this test passed: with zero package dirs the
+        // compiler's reference loader used to bail out before the source-dep
+        // *.symbols.json chain was built, so the dep was compile-invisible (AL0185) and
+        // the bundle emitted zero sources. Green locally, red on all 8 BC legs. Pinning
+        // it means the harder configuration is the one that is always tested.
+        args.Append($" --package-cache \"{absentPackageCache}\"");
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet", Arguments = args.ToString(),
@@ -89,6 +106,8 @@ public class SourceDepCacheEnumMetadataTests
         var depDir = Path.Combine(scratchRoot, "dep-app");
         var testsDir = Path.Combine(scratchRoot, "tests-app");
         var alCacheDir = Path.Combine(scratchRoot, "al-out");
+        // Deliberately NEVER created — see RunRunner.
+        var absentPackageCache = Path.Combine(scratchRoot, "no-such-package-cache");
         Directory.CreateDirectory(depDir);
         Directory.CreateDirectory(testsDir);
 
@@ -184,7 +203,17 @@ public class SourceDepCacheEnumMetadataTests
 
         // Run 1: fresh cache all round (dep MISS, bundle MISS) — must pass, and the
         // issue itself confirms this direction is never where the bug shows up.
-        var (output1, exit1) = RunRunner(testsDir, alCacheDir);
+        var (output1, exit1) = RunRunner(testsDir, alCacheDir, absentPackageCache);
+        // Guard the precondition itself: if the runner ever stops honouring an
+        // --package-cache that does not exist and silently falls back to the default
+        // dirs, this test would quietly stop covering the zero-package-cache path
+        // (the one CI actually runs) and go green for the wrong reason.
+        Assert.Contains("package caches: 0 dir(s)", output1);
+        // Name the specific regression this direction guards: with no package cache
+        // dir the compiler used to skip building the source-dep *.symbols.json loader
+        // chain entirely, so the sibling source dep was runtime-loadable but
+        // compile-invisible.
+        Assert.DoesNotContain("AL0185", output1);
         Assert.True(exit1 == 0 && output1.Contains("1P/0F/0E"),
             $"run 1 (fresh cache) must pass:\n{output1}");
 
@@ -194,7 +223,8 @@ public class SourceDepCacheEnumMetadataTests
         File.AppendAllText(testsAlPath, "\n// touched\n");
 
         // Run 2: dep HIT + bundle MISS — the exact condition from the issue.
-        var (output2, exit2) = RunRunner(testsDir, alCacheDir);
+        var (output2, exit2) = RunRunner(testsDir, alCacheDir, absentPackageCache);
+        Assert.Contains("package caches: 0 dir(s)", output2);
 
         // The exact reported defect. Never let a run that hits this pass silently —
         // the assertion below is the whole point of the RED -> GREEN cycle.
