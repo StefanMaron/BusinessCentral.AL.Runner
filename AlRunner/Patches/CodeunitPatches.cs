@@ -680,21 +680,33 @@ public static partial class BcRuntime
         // pulled from our populated SystemTenant cache (skeleton OK — NavReport.ctor
         // tolerates the cache-built skeleton entry).
         var ctors = reportType.GetConstructors();
+        object instance;
         var oneArg = ctors.FirstOrDefault(c => c.GetParameters().Length == 1 &&
             typeof(Microsoft.Dynamics.Nav.Runtime.ITreeObject)
                 .IsAssignableFrom(c.GetParameters()[0].ParameterType));
-        if (oneArg != null) return oneArg.Invoke(new object[] { self });
-        var twoArg = ctors.FirstOrDefault(c => c.GetParameters().Length == 2 &&
-            typeof(Microsoft.Dynamics.Nav.Runtime.ITreeObject)
-                .IsAssignableFrom(c.GetParameters()[0].ParameterType));
-        if (twoArg != null)
+        if (oneArg != null)
         {
+            instance = oneArg.Invoke(new object[] { self });
+        }
+        else
+        {
+            var twoArg = ctors.FirstOrDefault(c => c.GetParameters().Length == 2 &&
+                typeof(Microsoft.Dynamics.Nav.Runtime.ITreeObject)
+                    .IsAssignableFrom(c.GetParameters()[0].ParameterType));
+            if (twoArg == null)
+                throw new InvalidOperationException(
+                    $"Report{id} has no (ITreeObject) or (ITreeObject, NCLMetaReport) constructor");
             var metaParamType = twoArg.GetParameters()[1].ParameterType;
             var metaArg = LookupNclMetaForReport(id, metaParamType);
-            return twoArg.Invoke(new object?[] { self, metaArg });
+            instance = twoArg.Invoke(new object?[] { self, metaArg });
         }
-        throw new InvalidOperationException(
-            $"Report{id} has no (ITreeObject) or (ITreeObject, NCLMetaReport) constructor");
+
+        // Run the same post-construction steps BC's NCLMetaReport.CreateObjectInstance
+        // runs — this path bypasses that method, and without FinalizeDataItemLoading the
+        // report's TableViewIsSet array stays null, so AL's Report.SetTableView(Rec) NREs
+        // inside BC's own DataItemIterator.SetTableView (issue #1718).
+        AlRunner.NavReportSync.CompleteReportConstruction(instance, self, id);
+        return instance;
     }
 
     private static object? LookupNclMetaForReport(int id, Type expectedMetaType)

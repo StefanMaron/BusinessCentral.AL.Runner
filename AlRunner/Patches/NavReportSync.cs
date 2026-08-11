@@ -23,11 +23,12 @@
 //   NavNCLDialogException with the "out-of-scope:" prefix — tests rewrite
 //   those calls as `asserterror`.
 //
-// Limitations of v0:
-//   - DataItem row iteration (FindSet + OnAfterGetRecord per row) is not yet
-//     wired through. OnPreDataItem / OnPostDataItem triggers still fire once.
-//     Reports whose only data-item logic is row-iteration triggers will not
-//     execute that logic. Tracked as future work.
+// Data-item iteration:
+//   The row loop is NOT re-implemented here. InvokeDataItems drives BC's own
+//   DataItemIterator.LoopRootDataItemsAsync — the same method the SaveAs /
+//   RunReportInternalCoreAsync path uses — so DataItemTableView, DataItemLink,
+//   SetTableView filters, nested data items, MaxIteration and CurrReport.Skip /
+//   Break behave exactly as the runtime engine defines them.
 
 using System;
 using System.Collections;
@@ -49,8 +50,6 @@ public static class NavReportSync
 
     // Reflection handles cached after first use.
     private static FieldInfo? _dataItemsField;     // DataItemIterator.dataItems : List<DataItem>
-    private static PropertyInfo? _onPreDataItem;   // DataItem.OnPreDataItem : NavTrigger
-    private static PropertyInfo? _onPostDataItem;  // DataItem.OnPostDataItem : NavTrigger
     private static MethodInfo? _onPreReport;       // NavReport.OnPreReport()  (protected virtual)
     private static MethodInfo? _onPostReport;      // NavReport.OnPostReport() (protected virtual)
     private static MethodInfo? _onInitReport;      // NavReport.OnInitReport() (protected virtual)
@@ -726,37 +725,101 @@ public static class NavReportSync
         }
     }
 
+    private static MethodInfo? _applyDataItemTableView;   // DataItemIterator.ApplyDataItemTableViewAndRequestFormFilters()
+    private static MethodInfo? _loopRootDataItems;        // DataItemIterator.LoopRootDataItemsAsync()
+    private static PropertyInfo? _resultSetProcessorProp; // DataItemIterator.ResultSetProcessor
+    private static Type? _nullResultSetProcessorType;     // Runtime.NullResultSetProcessor
+
+    /// <summary>
+    /// Execute the report's data items through BC's OWN loop.
+    ///
+    /// This deliberately does not re-implement row iteration. It calls
+    /// <c>DataItemIterator.ApplyDataItemTableViewAndRequestFormFilters()</c> and then
+    /// <c>DataItemIterator.LoopRootDataItemsAsync()</c> — the exact pair
+    /// <c>ExecuteDataItemIteratorAsync</c> (the SaveAs / RunReportInternalCoreAsync path)
+    /// runs. Everything the loop implies therefore comes from the runtime engine rather
+    /// than from us: <c>SetDataItemTableView</c> copies the filters AL set through
+    /// <c>Report.SetTableView(Rec)</c> off <c>DataItem.TableViewRecord</c> onto
+    /// <c>DataItem.Record</c>, <c>SetDataItemLink</c> applies DataItemLink, and
+    /// OnPreDataItem / OnAfterGetRecord / OnPostDataItem fire per BC's ordering with
+    /// CurrReport.Skip / Break honoured.
+    ///
+    /// The one piece of state the loop needs that only the render path normally supplies
+    /// is <c>ResultSetProcessor</c> (it calls <c>SetCurrentDataSet</c> / <c>EndLevelAsync</c>
+    /// on it). We install BC's own <c>NullResultSetProcessor</c> — the instance BC's
+    /// <c>ReportResultSetProcessorFactory.CreateInstance()</c> itself returns for a report
+    /// with no layout — so no dataset is accumulated and nothing is rendered, which is the
+    /// faithful shape for the runner's non-rendering Run(). Only installed when the report
+    /// does not already carry a processor.
+    /// </summary>
     private static void InvokeDataItems(object navReport)
     {
-        if (_dataItemsField == null) return;
-        if (_dataItemsField.GetValue(navReport) is not IEnumerable items) return;
+        Type? iter = navReport.GetType();
+        while (iter != null && iter.Name != "DataItemIterator") iter = iter.BaseType;
+        if (iter == null) return;
 
-        foreach (var di in items)
-        {
-            if (di == null) continue;
-            if (_onPreDataItem == null)
-                _onPreDataItem = di.GetType().GetProperty("OnPreDataItem",
-                    BindingFlags.Instance | BindingFlags.Public);
-            if (_onPostDataItem == null)
-                _onPostDataItem = di.GetType().GetProperty("OnPostDataItem",
-                    BindingFlags.Instance | BindingFlags.Public);
+        EnsureResultSetProcessor(navReport, iter);
 
-            InvokeTrigger(_onPreDataItem, di);
-            // TODO: iterate source table and fire OnAfterGetRecord per row.
-            // For test reports without row triggers this is a no-op anyway.
-            InvokeTrigger(_onPostDataItem, di);
-        }
+        _applyDataItemTableView ??= iter.GetMethod("ApplyDataItemTableViewAndRequestFormFilters",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            null, Type.EmptyTypes, null);
+        _loopRootDataItems ??= iter.GetMethod("LoopRootDataItemsAsync",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            null, Type.EmptyTypes, null);
+        if (_loopRootDataItems == null)
+            throw new InvalidOperationException(
+                "DataItemIterator.LoopRootDataItemsAsync() not found — Ncl shape changed; do not commit");
+
+        if (_applyDataItemTableView != null)
+            Invoke(_applyDataItemTableView, navReport, Array.Empty<object?>());
+
+        AwaitValueTask(Invoke(_loopRootDataItems, navReport, Array.Empty<object?>()));
     }
 
-    private static void InvokeTrigger(PropertyInfo? prop, object dataItem)
+    /// <summary>
+    /// Give the data-item loop the <c>IResultSetProcessor</c> it writes rows into.
+    /// <c>NullResultSetProcessor</c> is BC's own discard implementation, chosen by BC's
+    /// factory for a layout-less report, so using it here is not a runner stand-in.
+    /// </summary>
+    private static void EnsureResultSetProcessor(object navReport, Type dataItemIteratorType)
     {
-        if (prop == null) return;
-        var trigger = prop.GetValue(dataItem) as Delegate;
-        if (trigger == null) return;
-        try { trigger.DynamicInvoke(); }
-        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        _resultSetProcessorProp ??= dataItemIteratorType.GetProperty("ResultSetProcessor",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        if (_resultSetProcessorProp == null) return;
+        if (_resultSetProcessorProp.GetValue(navReport) != null) return;
+
+        _nullResultSetProcessorType ??= dataItemIteratorType.Assembly
+            .GetType("Microsoft.Dynamics.Nav.Runtime.NullResultSetProcessor")
+            ?? throw new InvalidOperationException(
+                "NullResultSetProcessor not found in Ncl — Ncl shape changed; do not commit");
+
+        var setter = _resultSetProcessorProp.GetSetMethod(nonPublic: true)
+            ?? throw new InvalidOperationException(
+                "DataItemIterator.ResultSetProcessor has no setter — Ncl shape changed; do not commit");
+        setter.Invoke(navReport, new[] { Activator.CreateInstance(_nullResultSetProcessorType) });
+    }
+
+    /// <summary>
+    /// Block on a <c>ValueTask</c> returned reflectively. The report loop completes
+    /// synchronously in the runner (no real SQL round-trips), so this never actually
+    /// parks — but going through <c>AsTask().GetAwaiter().GetResult()</c> keeps the
+    /// exception unwrapping identical to BC's own sync-over-async wrappers.
+    /// </summary>
+    private static void AwaitValueTask(object? valueTask)
+    {
+        if (valueTask == null) return;
+        var asTask = valueTask.GetType().GetMethod("AsTask", Type.EmptyTypes)
+            ?? throw new InvalidOperationException(
+                $"{valueTask.GetType().FullName}.AsTask() not found — cannot await report loop");
+        var task = (System.Threading.Tasks.Task)asTask.Invoke(valueTask, null)!;
+        try
         {
-            throw tie.InnerException;
+            task.GetAwaiter().GetResult();
+        }
+        catch (AggregateException agg) when (agg.InnerException != null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo
+                .Capture(agg.InnerException).Throw();
         }
     }
 
@@ -1209,34 +1272,13 @@ public static class NavReportSync
             throw new InvalidOperationException(
                 $"Report{id} has no (ITreeObject[, NCLMetaReport]) constructor");
 
-        // The report executes on `parent` (the SaveAs session). BC's own
-        // MetadataPatches.InjectSkeletonSystemTenant deliberately seeds only
-        // NavSession.tenant, not NavSession.systemTenant (the latter was "unnecessary"
-        // for every prior path because runner record construction goes through the
-        // hooked NavRecordHandle.CreateTarget, which passes an explicit metaTable and so
-        // never reaches NavRecord..ctor's `metaTable == null` branch).
-        //
-        // Report dataitem iteration breaks that assumption: DataItemIterator.
-        // ApplyDataItemTableViewAndRequestFormFilters constructs a *bare* scratch record
-        // (`new NavRecord(dataItem.Record.Session, tableId, securityFiltering)`) to parse
-        // the DataItemTableView string. That 3-arg ctor passes metaTable == null, so
-        // NavRecord..ctor dereferences `ParentSession.NCLMetadata`
-        // (= session.SystemTenant.NCLMetadata) — which NREs when session.systemTenant is
-        // null. Seed it with the skeleton system tenant (already carrying the skeleton
-        // NCLMetadata) so the in-scope dataset spine can build its scratch records.
+        // Seed the skeleton state BEFORE the saved-settings restore, exactly as this
+        // method did before CompleteReportConstruction was factored out — the restore
+        // walk reads session/ObjectId state. Both seeds are idempotent, so the
+        // CompleteReportConstruction call below is a no-op for them.
         SeedSessionSystemTenant(parent);
-
-
-        // Seed the inherited base.ObjectId with the true report id. The compiled
-        // Report{id} ctor chain leaves NavApplicationObjectBase.objectId at
-        // ObjectNumber=0 (a known runner wiring quirk worked around elsewhere by
-        // parsing the type name). Paths such as NavReport.DetermineStandardLayoutAsync
-        // key off base.ObjectId.ObjectNumber and otherwise resolve "report 0".
         SeedObjectId(instance, id);
 
-        // Same post-steps as BC's CreateObjectInstance (extension binding is not
-        // yet wired for this path — report extensions on SaveAs TODO).
-        //
         // InitializeReportValues restores SAVED request-page values
         // (requestOptionsPage.InitializeRequestPageWithCustomValues). The runner has
         // no saved report settings store, and BC itself skips the restore when
@@ -1257,6 +1299,59 @@ public static class NavReportSync
                     // saved settings exist in the runner — equivalent to none stored.
                 }
             }
+        }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            throw tie.InnerException;
+        }
+
+        CompleteReportConstruction(instance, parent, id);
+        return instance;
+    }
+
+    /// <summary>
+    /// The post-construction steps BC's own <c>NCLMetaReport.CreateObjectInstance</c> runs
+    /// on a freshly constructed report, plus the two pieces of skeleton state that path
+    /// depends on. Idempotent, so it is safe to run from every construction entry point.
+    ///
+    /// This MUST run for EVERY report instance, however it was constructed — including the
+    /// AL-report-variable path (<c>NavReportHandle.CreateTarget</c>), which bypasses
+    /// <c>CreateObjectInstance</c> entirely. <c>FinalizeDataItemLoading</c> is what allocates
+    /// <c>DataItemIterator.TableViewIsSet</c> (<c>new bool[DataItems.Count]</c>); skipping it
+    /// leaves that array null, and BC's own <c>DataItemIterator.SetTableView</c> then NREs on
+    /// <c>TableViewIsSet[i] = true</c> the moment AL calls <c>Report.SetTableView(Rec)</c>
+    /// (issue #1718). It also builds each DataItem's parent/child links, which the data-item
+    /// loop walks.
+    /// </summary>
+    public static void CompleteReportConstruction(object instance, object? parent, int reportId)
+    {
+        // The report executes on `parent` (its owning session/handle). BC's own
+        // MetadataPatches.InjectSkeletonSystemTenant deliberately seeds only
+        // NavSession.tenant, not NavSession.systemTenant (the latter was "unnecessary"
+        // for every prior path because runner record construction goes through the
+        // hooked NavRecordHandle.CreateTarget, which passes an explicit metaTable and so
+        // never reaches NavRecord..ctor's `metaTable == null` branch).
+        //
+        // Report dataitem iteration breaks that assumption: DataItemIterator.
+        // ApplyDataItemTableViewAndRequestFormFilters constructs a *bare* scratch record
+        // (`new NavRecord(dataItem.Record.Session, tableId, securityFiltering)`) to parse
+        // the DataItemTableView string. That 3-arg ctor passes metaTable == null, so
+        // NavRecord..ctor dereferences `ParentSession.NCLMetadata`
+        // (= session.SystemTenant.NCLMetadata) — which NREs when session.systemTenant is
+        // null. Seed it with the skeleton system tenant (already carrying the skeleton
+        // NCLMetadata) so the in-scope dataset spine can build its scratch records.
+        SeedSessionSystemTenant(parent);
+        SeedSessionSystemTenant(TryGetSession(instance));
+
+        // Seed the inherited base.ObjectId with the true report id. The compiled
+        // Report{id} ctor chain leaves NavApplicationObjectBase.objectId at
+        // ObjectNumber=0 (a known runner wiring quirk worked around elsewhere by
+        // parsing the type name). Paths such as NavReport.DetermineStandardLayoutAsync
+        // key off base.ObjectId.ObjectNumber and otherwise resolve "report 0".
+        SeedObjectId(instance, reportId);
+
+        try
+        {
             // BC's MetaReport(XmlNode) ctor calls BuildDataItemTree() before the report runs;
             // report metadata that did not come through that ctor leaves each MetaDataItem's
             // ChildDataItems null (→ NRE in FindDataItemChildrenAndParent) and OwningDataItem
@@ -1271,7 +1366,32 @@ public static class NavReportSync
         {
             throw tie.InnerException;
         }
-        return instance;
+    }
+
+    private static PropertyInfo? _appObjBaseSessionProp;
+
+    /// <summary>The <c>NavApplicationObjectBase.Session</c> the object runs on, or null.</summary>
+    private static object? TryGetSession(object instance)
+    {
+        try
+        {
+            if (_appObjBaseSessionProp == null)
+            {
+                Type? t = instance.GetType();
+                while (t != null && _appObjBaseSessionProp == null)
+                {
+                    _appObjBaseSessionProp = t.GetProperty("Session",
+                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic
+                        | BindingFlags.DeclaredOnly);
+                    t = t.BaseType;
+                }
+            }
+            return _appObjBaseSessionProp?.GetValue(instance);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static PropertyInfo? _diDataItemsProp;   // DataItemIterator.DataItems (List<DataItem>)

@@ -84,7 +84,10 @@ dispatch, and report/request-page variables support a limited standalone surface
 - Report variables support `Run()`, `RunRequestPage()`, `SetTableView()`, and
   helper procedures. Report triggers execute: `OnPreReport`, `OnPreDataItem`,
   `OnAfterGetRecord` (once per row in the in-memory table), `OnPostDataItem`, and
-  `OnPostReport`. Report layout/rendering is still not available.
+  `OnPostReport`. `Run()` drives BC's own data-item loop, so `SetTableView(Rec)`
+  constrains the matching data item to the applied view, and `DataItemTableView`,
+  `DataItemLink`, nested data items and `CurrReport.Skip`/`Break` behave as the
+  runtime engine defines them. Report layout/rendering is still not available.
 
 ### No debugger infrastructure
 
