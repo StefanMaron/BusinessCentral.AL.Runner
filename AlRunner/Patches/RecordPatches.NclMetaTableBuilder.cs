@@ -414,6 +414,24 @@ public static partial class RecordPatches
                 args[i] = calcFormulaObj;
                 continue;
             }
+            // ObsoleteState / ObsoleteReason (#1780): the Field virtual table's
+            // FieldDataProvider.GetFieldRecordBuffer reads these off the NCLMetaField that
+            // CreateFromMetaTable builds from THIS MetaField — a field declared
+            // `ObsoleteState = Removed` reported `No` here for every field because the ctor
+            // args were never passed, so every field fell through to MetaField's own "No"
+            // default. Only pass the non-default member name; "No" undeclared or declared
+            // both leave the ctor's own default standing (identical either way).
+            if (p.Name == "obsoleteState" && _tObsoleteState != null
+                && !string.Equals(f.ObsoleteState, "No", StringComparison.OrdinalIgnoreCase))
+            {
+                args[i] = Enum.Parse(_tObsoleteState, f.ObsoleteState, ignoreCase: true);
+                continue;
+            }
+            if (p.Name == "obsoleteReason" && !string.IsNullOrEmpty(f.ObsoleteReason))
+            {
+                args[i] = f.ObsoleteReason;
+                continue;
+            }
             if (p.Name == "relations" && relationsObj != null)
             {
                 args[i] = relationsObj;

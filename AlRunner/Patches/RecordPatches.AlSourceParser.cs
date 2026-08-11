@@ -265,6 +265,21 @@ public static partial class RecordPatches
         bool isAutoIncrement = PropIs(props, "AutoIncrement", "true");
         var caption = CaptionFrom(PropValue(props, "Caption"));
 
+        // ObsoleteState / ObsoleteReason (#1780): the Field virtual table (2000000041) reports
+        // these via BC's own FieldDataProvider.GetFieldRecordBuffer, which reads them off the
+        // NCLMetaField that CreateFromMetaTable builds from OUR MetaField — so capturing the AL
+        // declaration here and passing it to MetaField's obsoleteState/obsoleteReason ctor
+        // params (see BuildMetaField) is the whole fix; BC's own factory does the rest.
+        // ObsoleteState is an EnumPropertyValueSyntax whose text IS the member name ("Removed",
+        // "Pending", "PendingMove", "Moved") — undeclared leaves it null, which the builder
+        // treats as the AL/BC default "No". ObsoleteReason is a plain (non-multilanguage)
+        // single-quoted string — ConstValueText's quote-stripping (shared with const(...)
+        // conditions and InitValue) applies unchanged.
+        var obsoleteStateText = PropValue(props, "ObsoleteState")?.ToString()?.Trim();
+        var obsoleteState = string.IsNullOrEmpty(obsoleteStateText) ? "No" : obsoleteStateText;
+        var obsoleteReasonRaw = PropValue(props, "ObsoleteReason")?.ToString();
+        var obsoleteReason = obsoleteReasonRaw == null ? null : ConstValueText(obsoleteReasonRaw);
+
         // TableRelation: captured as a list of ARMS — the plain `Table` / `Table.Field`
         // shape is one condition-less arm, an `if (...) ... else ...` chain is one arm per
         // link (#1737, extending #1730's unconditional capture). Each arm carries its
@@ -284,7 +299,7 @@ public static partial class RecordPatches
 
         return new ParsedField(fid, fname, ftype, length, isFlowField, calcFormula,
             optionMembers, initValueText, isAutoIncrement, caption,
-            relationArms, relationValidate, isFlowFilter);
+            relationArms, relationValidate, isFlowFilter, obsoleteState, obsoleteReason);
     }
 
     /// <summary>
@@ -759,7 +774,13 @@ internal record ParsedCalcFormula(string FormulaType, string SourceTableName, st
 /// restricted to Const/Filter by the parser.</summary>
 internal record ParsedRelationArm(string TableName, string? FieldName, List<ParsedCalcFilter> Conditions, List<ParsedCalcFilter> Filters);
 
-internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null, List<ParsedRelationArm>? RelationArms = null, bool RelationValidate = true, bool IsFlowFilter = false);
+/// <param name="ObsoleteState">The AL member name as written — "No" (also the default when
+/// the field declares no ObsoleteState at all), "Pending", "Removed", "PendingMove", or
+/// "Moved" — matching <c>Microsoft.Dynamics.Nav.Types.Metadata.ObsoleteState</c>'s member
+/// names exactly, so <c>Enum.Parse</c> in BuildMetaField needs no translation table (#1780).</param>
+/// <param name="ObsoleteReason">The declared reason text, unquoted/unescaped, or null when the
+/// field declares no ObsoleteReason (distinct from an explicit empty string).</param>
+internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null, List<ParsedRelationArm>? RelationArms = null, bool RelationValidate = true, bool IsFlowFilter = false, string ObsoleteState = "No", string? ObsoleteReason = null);
 internal record ParsedKey(string Name, List<int> FieldIds);
 /// <param name="LookupPageName">The table's declared <c>LookupPageId</c> as WRITTEN — a page
 /// name (<c>"Customer List"</c>) or a bare id in text form. Both sources state it by name:

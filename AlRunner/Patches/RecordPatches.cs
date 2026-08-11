@@ -30,6 +30,9 @@ public static partial class RecordPatches
     private static Type? _tFieldMetadataRelation;
     private static Type? _tNavType;
     private static Type? _tFieldClass;
+    // Microsoft.Dynamics.Nav.Types.Metadata.ObsoleteState — MetaField's obsoleteState ctor
+    // param type (#1780). Bound in Register() alongside the other MetaField-adjacent types.
+    private static Type? _tObsoleteState;
     private static Type? _tMetaCalcFormula;
     private static Type? _tMetaFilter;
     private static Type? _tMetaCondition;
@@ -197,6 +200,7 @@ public static partial class RecordPatches
         _tFieldMetadataRelation = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.FieldMetadataRelation")!;
         _tNavType   = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.NavType")!;
         _tFieldClass = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.FieldClass")!;
+        _tObsoleteState = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.ObsoleteState")!;
         _tMetaCalcFormula = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaCalcFormula")!;
         _tMetaFilter  = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaFilter")!;
         _tMetaCondition = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaCondition")!;
