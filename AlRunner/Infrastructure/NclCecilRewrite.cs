@@ -118,6 +118,25 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.NavReportHandle::CreateTarget/0",
         "Microsoft.Dynamics.Nav.Runtime.NavQueryHandle::CreateTarget/0",
         "Microsoft.Dynamics.Nav.Runtime.NavXmlPortHandle::CreateTarget/0",
+        // Static NavReport.Run(int, ...) / RunModal(int, ...) — #1771. No Hook(...) call site
+        // registers these anymore (the pre-fix JmpHook in ReportPatches.cs was dead code: it
+        // never fired under the default Cecil-only runtime, so the call silently fell through
+        // the Cecil-blanked `ret` body instead of throwing). Registered here anyway, matching
+        // the CreateTarget family above, so a future JmpHook re-registration against one of
+        // these methods (accidental regression, or an AL_RUNNER_ENABLE_JMPHOOK=1 diagnostic
+        // pass) is recognised as redundant rather than silently recreating the coexistence
+        // double-dispatch this bug class is named for. Keyed by param count only (Key() does
+        // not encode parameter types), so this also covers the ReportRunOptions overload of
+        // Run/1 — also Cecil-owned now (throws an "unrecognised overload shape" OOS instead of
+        // being routed to SyncStaticRun).
+        "Microsoft.Dynamics.Nav.Runtime.NavReport::Run/1",
+        "Microsoft.Dynamics.Nav.Runtime.NavReport::Run/2",
+        "Microsoft.Dynamics.Nav.Runtime.NavReport::Run/3",
+        "Microsoft.Dynamics.Nav.Runtime.NavReport::Run/4",
+        "Microsoft.Dynamics.Nav.Runtime.NavReport::RunModal/1",
+        "Microsoft.Dynamics.Nav.Runtime.NavReport::RunModal/2",
+        "Microsoft.Dynamics.Nav.Runtime.NavReport::RunModal/3",
+        "Microsoft.Dynamics.Nav.Runtime.NavReport::RunModal/4",
         // NavApplicationObjectBase..ctor keystone (Batch 4) — the 3-arg
         // (ITreeObject, ApplicationObjectId, NCLStaticMetadata) ctor.
         "Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase::.ctor/3",
@@ -4632,6 +4651,12 @@ public static class NclCecilRewrite
                     new[] { typeof(object), typeof(int), typeof(string) })
                 ?? throw new InvalidOperationException(
                     "NavReportSync.SyncRunRequestPage(object,int,string) not found — do not commit"));
+            var syncStaticRunRef = asm.MainModule.ImportReference(
+                typeof(AlRunner.NavReportSync).GetMethod(
+                    nameof(AlRunner.NavReportSync.SyncStaticRun),
+                    new[] { typeof(int), typeof(bool), typeof(bool), typeof(object) })
+                ?? throw new InvalidOperationException(
+                    "NavReportSync.SyncStaticRun(int,bool,bool,object) not found — do not commit"));
             // NavNCLDialogException is the AL Error() carrier; ctor takes (PrivacyClassification, string).
             // Resolving cross-assembly type refs here is brittle (Diagnostic enum lives in
             // Microsoft.Dynamics.Nav.Diagnostic.dll) — InvalidOperationException is caught by AL
@@ -4764,20 +4789,61 @@ public static class NclCecilRewrite
                         body.MaxStackSize = 1;
                         reportRewrites++;
                     }
-                    // Static Run() / RunModal() overloads remain as `ret`
-                    // placeholders here — separate JmpHooks in ReportPatches.cs
-                    // throw OOS (in-process construction-from-id not wired).
+                    // Static Run(id[, requestWindow[, systemPrinter[, record]]]) /
+                    // RunModal(same shapes) → NavReportSync.SyncStaticRun(id, requestWindow,
+                    // systemPrinter, record). #1771: these bodies used to be blanked to a bare
+                    // `ret`, with a separate JmpHook in ReportPatches.cs throwing an OOS
+                    // InvalidOperationException on top. That JmpHook never actually fired
+                    // under the default Cecil-only runtime (JmpHook.Apply silently skips
+                    // methods it doesn't own unless AL_RUNNER_ENABLE_JMPHOOK=1), so the call
+                    // fell straight through the `ret` — a silent no-op, not the intended
+                    // loud OOS throw. Cecil-own the body directly (like the instance
+                    // Run/RunModal rewrite above) so the redirect is real IL, not a hook that
+                    // can silently fail to bind. Missing trailing args get BC's own
+                    // documented defaults (RequestWindow=true, SystemPrinter=false) — inert
+                    // today since SyncStaticRun does not raise a dialog, but correct in case a
+                    // future implementation reads them.
+                    //
+                    // The one shape NOT handled here is the ReportRunOptions overload
+                    // (Run(ReportRunOptions) only — RunModal has no such overload): its single
+                    // parameter isn't `int`, so it falls through to the "unrecognised shape"
+                    // branch below and throws loud OOS instead of silently no-op'ing, exactly
+                    // like RunRequestPage's unknown-shape branch.
                     else if ((method.Name == "Run" || method.Name == "RunModal")
                         && method.IsStatic
                         && method.ReturnType.FullName == "System.Void")
                     {
+                        var sps = method.Parameters;
+                        bool known = sps.Count >= 1 && sps.Count <= 4
+                            && sps[0].ParameterType.FullName == "System.Int32"
+                            && (sps.Count < 2 || sps[1].ParameterType.FullName == "System.Boolean")
+                            && (sps.Count < 3 || sps[2].ParameterType.FullName == "System.Boolean")
+                            && (sps.Count < 4 || !sps[3].ParameterType.IsValueType);
+
                         var body = method.Body;
                         body.Instructions.Clear();
                         body.ExceptionHandlers.Clear();
                         body.Variables.Clear();
                         var il = body.GetILProcessor();
-                        il.Append(il.Create(OpCodes.Ret));
-                        body.MaxStackSize = 0;
+
+                        if (!known)
+                        {
+                            il.Append(il.Create(OpCodes.Ldstr,
+                                $"out-of-scope: static NavReport.{method.Name} (unrecognised overload shape)"));
+                            il.Append(il.Create(OpCodes.Newobj, ioeCtor));
+                            il.Append(il.Create(OpCodes.Throw));
+                            body.MaxStackSize = 1;
+                        }
+                        else
+                        {
+                            il.Append(il.Create(OpCodes.Ldarg_0)); // reportId
+                            il.Append(sps.Count >= 2 ? il.Create(OpCodes.Ldarg_1) : il.Create(OpCodes.Ldc_I4_1)); // requestWindow (BC default: true)
+                            il.Append(sps.Count >= 3 ? il.Create(OpCodes.Ldarg_2) : il.Create(OpCodes.Ldc_I4_0)); // systemPrinter (BC default: false)
+                            il.Append(sps.Count >= 4 ? il.Create(OpCodes.Ldarg_3) : il.Create(OpCodes.Ldnull));   // record (no filter)
+                            il.Append(il.Create(OpCodes.Call, syncStaticRunRef));
+                            il.Append(il.Create(OpCodes.Ret));
+                            body.MaxStackSize = 4;
+                        }
                         reportRewrites++;
                     }
                     // RunRequestPage (any sync overload returning string) →

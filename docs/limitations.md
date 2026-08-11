@@ -97,6 +97,15 @@ dispatch, and report/request-page variables support a limited standalone surface
   constrains the matching data item to the applied view, and `DataItemTableView`,
   `DataItemLink`, nested data items and `CurrReport.Skip`/`Break` behave as the
   runtime engine defines them. Report layout/rendering is still not available.
+- The static `Report.Run(id[, requestWindow[, systemPrinter[, record]]])` /
+  `Report.RunModal(id, ...)` forms (called on the `Report` codeunit-like object, without
+  first declaring a report variable) execute the report the same way the report-variable
+  form does — construct the report from its id, then run the same trigger lifecycle.
+  `requestWindow` / `systemPrinter` are accepted but not acted on: no dialog is ever raised
+  from `Run`/`RunModal` (request pages are handler dispatch only, see above); a report that
+  needs its request page's `[RequestPageHandler]` to fire should call the static/instance
+  `RunRequestPage()` explicitly. The `Report.Run(ReportRunOptions)` overload is not
+  implemented and throws `out-of-scope: static NavReport.Run`.
 
 ### No debugger infrastructure
 

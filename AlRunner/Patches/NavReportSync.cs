@@ -402,6 +402,60 @@ public static class NavReportSync
     }
 
     /// <summary>
+    /// Construct-and-run entry point for the static NavReport.Run / NavReport.RunModal
+    /// overloads (AL <c>Report.Run(id[, ...])</c> / <c>Report.RunModal(id[, ...])</c>).
+    /// Cecil-rewritten call site (NclCecilRewrite.cs §NavReport block).
+    ///
+    /// History (#1771): the static overload bodies used to be blanked to a bare `ret` with a
+    /// separate JmpHook (AlRunner/Patches/ReportPatches.cs) throwing an out-of-scope
+    /// InvalidOperationException. That JmpHook was dead code under the default Cecil-only
+    /// runtime (JmpHook.Apply silently skips non-Cecil-owned methods unless
+    /// AL_RUNNER_ENABLE_JMPHOOK=1 is set) — so the call fell through the `ret` and silently
+    /// did nothing: no execution, no error, a false PASS. This routes the static form through
+    /// the same construction + SyncRun path the AL-report-variable (instance) form already
+    /// uses, closing that hole for real instead of trading a silent no-op for a throw.
+    ///
+    /// There is no NavReportHandle/parent for a static-by-id call (unlike the
+    /// AL-report-variable path), so the report is built against the skeleton session — the
+    /// same approach already proven by <see cref="CreateReportForRequestPage"/> for the
+    /// static RunRequestPage overloads.
+    ///
+    /// <paramref name="requestWindow"/> / <paramref name="systemPrinter"/> are accepted for
+    /// AL-signature compatibility but not acted on: no dialog is ever raised here, matching
+    /// the existing instance-form limitation (docs/limitations.md — request pages are
+    /// handler-dispatch only via explicit RunRequestPage(), not real rendering during
+    /// Run/RunModal). <paramref name="record"/>, present on the 4-arg overloads, applies the
+    /// AL <c>SetTableView(Rec)</c> filter before the report runs — BC's own
+    /// DataItemIterator.SetTableView body is kept unmodified (see the Cecil-rewrite comment
+    /// for DataItemIterator.SetTableView) so this reuses real BC filtering logic.
+    /// </summary>
+    public static void SyncStaticRun(int reportId, bool requestWindow, bool systemPrinter, object? record)
+    {
+        var meta = GetNclMetaReportById(reportId);
+        if (meta == null)
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                $"NavReport.Run/RunModal({reportId})",
+                "not-yet-implemented — the runner could not construct report " + reportId +
+                " to run it. See docs/scope.md");
+
+        var parent = BcRuntime.SkeletonSession;
+        var instance = CreateReportInstance(meta, parent!, skipRestoreSavedReportSettings: true);
+
+        if (record != null)
+        {
+            var setTableView = instance.GetType().GetMethods(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .FirstOrDefault(m => m.Name == "SetTableView"
+                    && m.GetParameters().Length == 1
+                    && m.GetParameters()[0].ParameterType.IsInstanceOfType(record));
+            if (setTableView != null)
+                Invoke(setTableView, instance, new[] { record });
+        }
+
+        SyncRun(instance);
+    }
+
+    /// <summary>
     /// Run the report's request page so its [RequestPageHandler] fires. BC's own
     /// TestHandleModalForm does the dispatch; all this does is get the form there.
     ///
