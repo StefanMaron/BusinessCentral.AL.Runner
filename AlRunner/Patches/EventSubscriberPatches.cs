@@ -37,6 +37,17 @@ public static class EventSubscriberPatches
     private readonly record struct Key(int PublisherId, int EventTypeOrdinal);
     private readonly record struct CodeunitEventKey(int PublisherCodeunitId, string EventMethodName);
 
+    /// <summary>
+    /// Key for a manually-declared [IntegrationEvent]/[BusinessEvent] published from inside a
+    /// TABLE object's own code — i.e. a table publisher whose event method name is not one of
+    /// BC's fixed NavTriggerEventType ordinals (Insert/Modify/Delete/Rename/Validate). Those
+    /// implicit events stay on the ordinal-keyed <see cref="_byKey"/> / NavTableTriggerEventHandler
+    /// path; a custom-named event compiles to the same generic &lt;EventName&gt;_Scope +
+    /// OnRunEventAsync pattern codeunit-declared events use, so it is dispatched the same way —
+    /// see <see cref="GetTableEventSubscribers"/> and CodeunitEventDispatcher.DispatchCore.
+    /// </summary>
+    private readonly record struct TableEventKey(int PublisherTableId, string EventMethodName);
+
     private sealed record SubscriberHandle(
         Type CodeunitType,
         int CodeunitId,
@@ -54,6 +65,7 @@ public static class EventSubscriberPatches
     private static readonly object _lock = new();
     private static readonly Dictionary<Key, List<SubscriberHandle>> _byKey = new();
     private static readonly Dictionary<CodeunitEventKey, List<MethodInfo>> _byCodeunitKey = new();
+    private static readonly Dictionary<TableEventKey, List<MethodInfo>> _byTableEventKey = new();
     private static readonly List<ValidateSub> _validateSubs = new();
 
     /// <summary>
@@ -66,6 +78,19 @@ public static class EventSubscriberPatches
         lock (_lock)
         {
             return _byCodeunitKey.TryGetValue(new CodeunitEventKey(publisherCodeunitId, eventMethodName), out var l) ? l : null;
+        }
+    }
+
+    /// <summary>
+    /// Look up subscribers to a manually-declared table-published event, keyed by
+    /// (publisherTableId, eventMethodName). See <see cref="TableEventKey"/>.
+    /// </summary>
+    public static IReadOnlyList<MethodInfo>? GetTableEventSubscribers(int publisherTableId, string eventMethodName)
+    {
+        EnsureRegistryFresh();
+        lock (_lock)
+        {
+            return _byTableEventKey.TryGetValue(new TableEventKey(publisherTableId, eventMethodName), out var l) ? l : null;
         }
     }
     private static readonly HashSet<MethodInfo> _injectedSubscriberMethods = new();
@@ -169,10 +194,12 @@ public static class EventSubscriberPatches
         DoInject(_publisherLookup);
         DoInjectValidate(_publisherLookup);
         SeedCodeunitEventScopeSentinels();
+        SeedTableEventScopeSentinels();
     }
 
     private static readonly HashSet<Type> _seededScopeTypes = new();
     private static readonly Dictionary<int, Type?> _codeunitTypeCache = new();
+    private static readonly Dictionary<int, Type?> _tableTypeCache = new();
     private static object? _sentinelNavEventScope;
 
     /// <summary>
@@ -188,7 +215,49 @@ public static class EventSubscriberPatches
     /// </summary>
     private static void SeedCodeunitEventScopeSentinels()
     {
-        if (_byCodeunitKey.Count == 0) return;
+        SeedEventScopeSentinelsFor(
+            _byCodeunitKey.Keys.Select(k => (k.PublisherCodeunitId, k.EventMethodName)),
+            _byCodeunitKey.Count,
+            FindCodeunitClrType,
+            "Codeunit");
+    }
+
+    /// <summary>
+    /// Same as <see cref="SeedCodeunitEventScopeSentinels"/>, for manually-declared events
+    /// published from a TABLE object's own code (<see cref="_byTableEventKey"/>, issue #1770).
+    /// The publisher's <c>Record&lt;N&gt;+&lt;EventName&gt;_Scope</c> class carries the exact
+    /// same static <c>γeventScope</c> + <c>OnRunEventAsync</c> shape as a codeunit publisher's —
+    /// only the declaring-type name prefix differs (<c>Record</c>, not <c>Codeunit</c> — see
+    /// <see cref="FindTableClrType"/>) — so the seeding mechanics are identical.
+    /// </summary>
+    private static void SeedTableEventScopeSentinels()
+    {
+        SeedEventScopeSentinelsFor(
+            _byTableEventKey.Keys.Select(k => (k.PublisherTableId, k.EventMethodName)),
+            _byTableEventKey.Count,
+            FindTableClrType,
+            "Table");
+    }
+
+    /// <summary>
+    /// For each (publisherId, eventMethodName) with subscribers, find the publisher's
+    /// <c>&lt;PublisherKindLabel&gt;&lt;N&gt;+&lt;EventName&gt;_Scope</c> and seed its static
+    /// <c>γeventScope</c> field with a structurally-valid sentinel <see cref="NavEventScope"/>.
+    /// The sentinel has a non-null <c>lockObject</c> and an empty (not null)
+    /// <c>registeredSubscriptions</c> array — JIT-inlined code in BC's machinery can read both
+    /// safely without crashing.
+    ///
+    /// Bypasses the AL publisher's early-exit
+    /// <c>if (γeventScope == null &amp;&amp; !recorder) return</c> without forcing the recorder
+    /// (which has widespread cascading side effects we cannot satisfy on the skeleton runtime).
+    /// </summary>
+    private static void SeedEventScopeSentinelsFor(
+        IEnumerable<(int PublisherId, string EventMethodName)> keys,
+        int totalKeyCount,
+        Func<int, Type?> resolveClrType,
+        string publisherKindLabel)
+    {
+        if (totalKeyCount == 0) return;
         if (_tNavEventScope == null || _tNavEventSubscription == null) return;
 
         if (_sentinelNavEventScope == null)
@@ -217,25 +286,36 @@ public static class EventSubscriberPatches
         bool diagLogged = false;
         lock (_lock)
         {
-            foreach (var key in _byCodeunitKey.Keys)
+            bool dbg = Environment.GetEnvironmentVariable("ALRUNNER_SEED_DEBUG") == "1";
+            foreach (var (publisherId, eventMethodName) in keys)
             {
-                var cuType = FindCodeunitClrType(key.PublisherCodeunitId);
-                if (cuType == null) { missing++; if (!diagLogged) { diagLogged = true; Console.Error.WriteLine($"[Subscribers] seed-miss: Codeunit{key.PublisherCodeunitId} type not found"); } continue; }
-                var scopeType = cuType.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic)
-                    .FirstOrDefault(t => t.Name == key.EventMethodName + "_Scope");
-                if (scopeType == null) { missing++; continue; }
+                var clrType = resolveClrType(publisherId);
+                if (clrType == null) { missing++; if (!diagLogged) { diagLogged = true; Console.Error.WriteLine($"[Subscribers] seed-miss: {publisherKindLabel}{publisherId} type not found"); } continue; }
+                var scopeType = clrType.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic)
+                    .FirstOrDefault(t => t.Name == eventMethodName + "_Scope");
+                if (scopeType == null)
+                {
+                    missing++;
+                    if (dbg) Console.Error.WriteLine($"[SeedDebug] {publisherKindLabel}{publisherId}: no nested type '{eventMethodName}_Scope' — have [{string.Join(",", clrType.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic).Select(t => t.Name))}]");
+                    continue;
+                }
                 if (_seededScopeTypes.Contains(scopeType)) continue;
                 // Match the Greek-gamma field by suffix — the IL gamma codepoint differs from
                 // a C# source-literal "γ" so GetField("γeventScope") returns null. EndsWith works.
                 var fld = scopeType.GetFields(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static)
                     .FirstOrDefault(f => f.Name.EndsWith("eventScope", StringComparison.Ordinal) && f.FieldType == _tNavEventScope);
-                if (fld == null) { missing++; continue; }
-                try { fld.SetValue(null, _sentinelNavEventScope); _seededScopeTypes.Add(scopeType); seeded++; }
+                if (fld == null)
+                {
+                    missing++;
+                    if (dbg) Console.Error.WriteLine($"[SeedDebug] {publisherKindLabel}{publisherId}.{eventMethodName}: no eventScope field — have [{string.Join(",", scopeType.GetFields(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static).Select(f => f.Name + ":" + f.FieldType.Name))}]");
+                    continue;
+                }
+                try { fld.SetValue(null, _sentinelNavEventScope); _seededScopeTypes.Add(scopeType); seeded++; if (dbg) Console.Error.WriteLine($"[SeedDebug] {publisherKindLabel}{publisherId}.{eventMethodName}: seeded OK"); }
                 catch (Exception ex) { Console.Error.WriteLine($"[Subscribers] failed seed on {scopeType.FullName}: {ex.Message}"); missing++; }
             }
         }
         if (seeded > 0)
-            Console.Error.WriteLine($"[Subscribers] γeventScope seeded: seeded={seeded} missing={missing} total-keys={_byCodeunitKey.Count}");
+            Console.Error.WriteLine($"[Subscribers] γeventScope seeded ({publisherKindLabel}): seeded={seeded} missing={missing} total-keys={totalKeyCount}");
     }
 
     /// <summary>
@@ -253,8 +333,10 @@ public static class EventSubscriberPatches
         {
             _byKey.Clear();
             _byCodeunitKey.Clear();
+            _byTableEventKey.Clear();
             _validateSubs.Clear();
             _codeunitTypeCache.Clear();
+            _tableTypeCache.Clear();
             _injectedSubscriberMethods.Clear();
             _seededScopeTypes.Clear();
             _lastScannedCount = 0;
@@ -262,10 +344,21 @@ public static class EventSubscriberPatches
         AlRunner.BcRuntime.ResetManualBindingCacheForReload();
     }
 
-    private static Type? FindCodeunitClrType(int codeunitId)
+    private static Type? FindCodeunitClrType(int codeunitId) =>
+        FindClrType(_codeunitTypeCache, "Codeunit", codeunitId);
+
+    // A table object's OWN code (triggers, local procedures, and any manually-declared
+    // [IntegrationEvent]/[BusinessEvent] on it) compiles to a class named "Record<N>", not
+    // "Table<N>" — "Table<N>" is a separate metadata-only class. Empirically confirmed via
+    // reflection over the emitted test assembly (issue #1770): searching for "Table<N>" here
+    // silently finds nothing, which is exactly the kind of miss loud-failures.md warns about.
+    private static Type? FindTableClrType(int tableId) =>
+        FindClrType(_tableTypeCache, "Record", tableId);
+
+    private static Type? FindClrType(Dictionary<int, Type?> cache, string namePrefix, int objectId)
     {
-        if (_codeunitTypeCache.TryGetValue(codeunitId, out var cached)) return cached;
-        var name = "Codeunit" + codeunitId;
+        if (cache.TryGetValue(objectId, out var cached)) return cached;
+        var name = namePrefix + objectId;
         Type? found = null;
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
@@ -279,7 +372,7 @@ public static class EventSubscriberPatches
             try { var t = asm.GetType("Microsoft.Dynamics.Nav.BusinessApplication." + name); if (t != null) { found = t; break; } }
             catch { }
         }
-        _codeunitTypeCache[codeunitId] = found;
+        cache[objectId] = found;
         return found;
     }
 
@@ -613,7 +706,24 @@ public static class EventSubscriberPatches
                                 added++;
                                 continue;
                             }
-                            if (ord == 0) continue;
+                            if (ord == 0)
+                            {
+                                // Not one of BC's 8 implicit trigger-event names — a manually-
+                                // declared [IntegrationEvent]/[BusinessEvent] raised from inside
+                                // the table's own code (issue #1770). It cannot go through
+                                // NavTableTriggerEventHandler (ordinal-keyed, fixed set); dispatch
+                                // it via the same universal <EventName>_Scope path codeunit
+                                // publishers use — see GetTableEventSubscribers.
+                                var tkey = new TableEventKey(publisherId, methodName);
+                                if (!_byTableEventKey.TryGetValue(tkey, out var tlst))
+                                    _byTableEventKey[tkey] = tlst = new List<MethodInfo>();
+                                if (!tlst.Contains(m))
+                                {
+                                    tlst.Add(m);
+                                    added++;
+                                }
+                                continue;
+                            }
                             var key = new Key(publisherId, ord);
                             if (!_byKey.TryGetValue(key, out var lst))
                                 _byKey[key] = lst = new List<SubscriberHandle>();
