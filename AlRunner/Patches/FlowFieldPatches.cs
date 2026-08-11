@@ -902,29 +902,59 @@ public static class FlowFieldPatches
     {
         try
         {
-            // Step 1: ensure a writable NavBLOB is in changedValues (mirrors GetWriteableBlobOnField...)
+            // Step 1a: data access + primary-key lookup, done ahead of the placeholder
+            // sizing in Step 1b below so the ineligibility check (#1765 / corpus 60944)
+            // can influence how the placeholder is sized. Unlike the original ordering,
+            // this must NOT early-return before Step 1b runs — Step 1b's placeholder
+            // creation happened unconditionally before this lookup existed, and callers
+            // (RecordImpl_CalcFieldsAsync_3) rely on `parentBuffer[fieldIdx]` always
+            // ending up a non-null NavBLOB after this method returns, found-or-not.
+            var dataAccess = _fRecImplDataAccess?.GetValue(self);
+            var dataProvider = dataAccess != null ? _pDataAccessDataProvider?.GetValue(dataAccess) : null;
+            var canLookUp = dataProvider != null && _mTtdpTryGetValue != null && _mMutableBufferGetRecordId != null;
+            object? storedBuffer = null;
+            if (canLookUp)
+            {
+                var recordId = _mMutableBufferGetRecordId!.Invoke(parentBuffer, null);
+                var tryGetArgs = new object?[] { recordId, null };
+                if (_mTtdpTryGetValue!.Invoke(dataProvider, tryGetArgs) is true)
+                    storedBuffer = tryGetArgs[1];
+            }
+
+            // Issue #1765 / corpus 60944: a temporary record's BLOB carried over by a
+            // Rename() (not freshly dirtied by it) is lost on real BC — HasValue() reads
+            // false after Get()+CalcFields() on the renamed row, even though the same
+            // value round-trips fine without the Rename in between (60940). Ncl's own
+            // store still faithfully holds the bytes (see BlobStoreIsolationPatches.
+            // OnModifyAllTrees), so reproduce the loss here rather than reloading it —
+            // matching what real BC's temporary JIT-load actually returns after a
+            // rename. Checked by (row, field index), not by the BLOB value object: see
+            // the comment above OnModifyAllTrees for why value-object identity fails —
+            // Get()'s own Find()-based read materialises a DIFFERENT NavBLOB instance
+            // for this record's own buffer than the one the tree returns.
+            var ineligible = BlobStoreIsolationPatches.IsFieldIneligibleForCalcFieldsReload(storedBuffer, fieldIdx);
+
+            // Step 1b: ensure a writable NavBLOB is in changedValues (mirrors GetWriteableBlobOnField...)
             var navBLOB = _mMutableBufferGetChangedFieldValue?.Invoke(parentBuffer, new object[] { fieldIdx }) as NavBLOB;
             if (navBLOB == null)
             {
-                var original = _mMutableBufferGetOriginalValue?.Invoke(parentBuffer, new object[] { fieldIdx }) as NavBLOB;
+                // A marked field must present as absent altogether — real BC's
+                // HasValue() reads false, not "present but unloaded" — so size the
+                // placeholder as zero-length (NavBLOB.Default()) rather than from
+                // `original.ALLength`, which alone makes ALHasValue true (GetLength()
+                // falls back to sizeWhenNoContents when contents is null — see
+                // Microsoft.Dynamics.Nav.Runtime.NavBLOB) regardless of whether the
+                // byte-copy below ever runs.
+                var original = ineligible
+                    ? null
+                    : _mMutableBufferGetOriginalValue?.Invoke(parentBuffer, new object[] { fieldIdx }) as NavBLOB;
                 navBLOB = original != null ? new NavBLOB(original.ALLength) : NavBLOB.Default();
                 bufferIndexer.SetValue(parentBuffer, navBLOB, new object[] { fieldIdx });
             }
 
-            // Step 2: get the TempTableDataProvider for the current record's table
-            var dataAccess = _fRecImplDataAccess?.GetValue(self);
-            var dataProvider = dataAccess != null ? _pDataAccessDataProvider?.GetValue(dataAccess) : null;
-            if (dataProvider == null || _mTtdpTryGetValue == null || _mMutableBufferGetRecordId == null) return;
+            if (!canLookUp || ineligible || storedBuffer == null) return;
 
-            // Step 3: look up the stored TempTableRecordBuffer by primary key
-            var recordId = _mMutableBufferGetRecordId.Invoke(parentBuffer, null);
-            var tryGetArgs = new object?[] { recordId, null };
-            if (_mTtdpTryGetValue.Invoke(dataProvider, tryGetArgs) is not true) return;
-
-            var storedBuffer = tryGetArgs[1];
-            if (storedBuffer == null) return;
-
-            // Step 4: copy blob data from stored buffer into the writable NavBLOB
+            // Step 2: copy blob data from stored buffer into the writable NavBLOB
             var storedIndexer = storedBuffer.GetType().GetProperty("Item",
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
                 null, typeof(NavValue), new[] { typeof(int) }, null);

@@ -6344,6 +6344,22 @@ public static class NclCecilRewrite
                     ByParams(Rt + "TempTableRecordBuffer", "CloneBlobs", "MutableRecordBuffer"),
                     H(blobIsolation, "DetachStoredBlobs"),
                     argSlots: 1); // `this` — the freshly stored row
+
+                // ── Rename store-aliasing boundary for `temporary` records (issue #1765) ──
+                // A temporary record's BLOB committed with Modify() is LOST across a
+                // subsequent Rename() on real BC (corpus 60944, green on BC 27.5/28.3) —
+                // the mirror-image surprise to the leak fixed above. Rename() routes
+                // through this SAME ModifyAllTrees (RecordImplementation.RenameRecordAsync
+                // calls dataAccess.ModifyAsync, same as a plain Modify), so one more
+                // prepend here marks the renamed row's carried-over (non-dirty) BLOB as
+                // ineligible for FlowFieldPatches.LoadBlobField's by-key CalcFields
+                // reload — see BlobStoreIsolationPatches.OnModifyAllTrees for the full
+                // reasoning and why the database-backed shape is untouched.
+                PrependStaticCall(nclMod,
+                    ByParams(Rt + "TempTableDataProvider", "ModifyAllTrees",
+                        "MutableRecordBuffer", "TempTableRecordBuffer", "TempTableRecordBuffer", "Boolean"),
+                    H(blobIsolation, "OnModifyAllTrees"),
+                    argSlots: 4); // `this`, mutableRecordBuffer, workTableBuffer, storedTableBuffer
             }
 
             // ── TempTableDataProvider.Find / FindFromPosition (query column projection) ──
