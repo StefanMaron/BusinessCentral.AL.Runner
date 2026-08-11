@@ -268,6 +268,14 @@ public sealed class DependencyLoader
         // access to its page-variable-bound controls fails only on warm runs.
         var pageMetadataSidecar = Path.Combine(cacheDir, cacheKey + ".page-metadata.json");
         var xmlPortMetadataSidecar = Path.Combine(cacheDir, cacheKey + ".xmlport-metadata.json");
+        // Sidecar for this dep's enum metadata (AlEnumMetadataRegistry) — see issue
+        // #1731. Without it, a HIT here (dep skips emit) combined with a bundle
+        // recompile (which only registers ITS OWN sources' enums) left this dep's
+        // enums completely unregistered for the rest of the process: enum-to-interface
+        // dispatch (ALCompiler_ToInterfaceFromOption) and option evaluation on a dep
+        // enum then failed with a blank enum name / empty option list. Mirrors the
+        // bundle-level `.enum-registry.json` sidecar (Program.cs SaveEnumRegistrySidecar).
+        var enumRegistrySidecar = Path.Combine(cacheDir, cacheKey + ".enum-registry.json");
         if (File.Exists(cachedDll))
         {
             try
@@ -284,8 +292,11 @@ public sealed class DependencyLoader
                     AlPageMetadataRegistry.LoadSidecar(pageMetadataSidecar);
                 if (File.Exists(xmlPortMetadataSidecar))
                     AlXmlPortMetadataRegistry.LoadSidecar(xmlPortMetadataSidecar);
+                int replayedEnums = 0;
+                if (File.Exists(enumRegistrySidecar))
+                    replayedEnums = AlEnumMetadataRegistry.LoadSidecar(enumRegistrySidecar);
                 Console.Error.WriteLine(
-                    $"[deps] source-cache HIT: {m.Name} v{m.Version} key={cacheKey[..12]} ({cachedBytes.Length} bytes, {replayedReports} report-metadata entries)");
+                    $"[deps] source-cache HIT: {m.Name} v{m.Version} key={cacheKey[..12]} ({cachedBytes.Length} bytes, {replayedReports} report-metadata entries, {replayedEnums} enum-registry entries)");
                 return Assembly.Load(cachedBytes);
             }
             catch (Exception ex)
@@ -330,6 +341,7 @@ public sealed class DependencyLoader
         var reportIdsBeforeEmit = new HashSet<int>(AlReportMetadataRegistry.Ids);
         var pageIdsBeforeEmit = new HashSet<int>(AlPageMetadataRegistry.Ids);
         var xmlPortIdsBeforeEmit = new HashSet<int>(AlXmlPortMetadataRegistry.Ids);
+        var enumIdsBeforeEmit = new HashSet<int>(AlEnumMetadataRegistry.Ids);
         // Scope _currentAppId to the dep's own identity for the duration of this compile.
         // GetSharedReferences uses _currentAppId to exclude the "current app" from its
         // reference specs. Without this, the dep's resolved spec (from _resolvedDeps of
@@ -387,8 +399,10 @@ public sealed class DependencyLoader
                 AlPageMetadataRegistry.Ids.Where(i => !pageIdsBeforeEmit.Contains(i)).ToArray());
             AlXmlPortMetadataRegistry.SaveSidecar(xmlPortMetadataSidecar,
                 AlXmlPortMetadataRegistry.Ids.Where(i => !xmlPortIdsBeforeEmit.Contains(i)).ToArray());
+            int enumSidecarCount = AlEnumMetadataRegistry.SaveSidecar(enumRegistrySidecar,
+                AlEnumMetadataRegistry.Ids.Where(i => !enumIdsBeforeEmit.Contains(i)));
             Console.Error.WriteLine(
-                $"[deps] source-cache WROTE: {m.Name} v{m.Version} key={cacheKey[..12]} ({compile.AssemblyBytes!.Length} bytes, {sidecarCount} report-metadata entries)");
+                $"[deps] source-cache WROTE: {m.Name} v{m.Version} key={cacheKey[..12]} ({compile.AssemblyBytes!.Length} bytes, {sidecarCount} report-metadata entries, {enumSidecarCount} enum-registry entries)");
         }
         catch (Exception ex)
         {

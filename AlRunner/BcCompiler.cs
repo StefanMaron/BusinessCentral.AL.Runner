@@ -783,10 +783,6 @@ public sealed class BcCompiler
             var loaderSig = ComputeLoaderSignature(loaderScanDirs, _extraSymbolDirs, _resolvedDeps, _currentAppId);
             if (_refLoader == null || loaderSig != _loaderSignature)
             {
-                if (loaderScanDirs.Count == 0) return (null, Array.Empty<NavCA.SymbolReferenceSpecification>());
-
-                _refLoader = NavSymRef.ReferenceLoaderFactory.CreateReferenceLoader(loaderScanDirs);
-
                 // Chain JSON-symbols loaders for any `*.symbols.json` in the package dirs
                 // (written by EmitDepSymbols for source dependencies we compiled ourselves).
                 // The standard scanner only reads a .app's SymbolReference.json, which a
@@ -800,19 +796,48 @@ public sealed class BcCompiler
                 // because they may contain synthetic .app files with no SymbolReference.json
                 // (written by RunLayeredPrePass). If such an .app ends up in the .app scanner,
                 // BC reports AL1023 "package not valid" for every compilation.
+                //
+                // This block is built BEFORE the .app scanner and independently of it: with
+                // no package-cache dir at all (a bundle whose only dependency is a SIBLING
+                // SOURCE app — no .alpackages, no ~/.bcartifacts.cache, no provisioned
+                // test-apps/platform-apps dir; exactly CI's `package caches: 0 dir(s)`), the
+                // old `loaderScanDirs.Count == 0` early-return bailed out here and the
+                // source dep's freshly written *.symbols.json was never consulted. The dep
+                // loaded fine at RUNTIME and was invisible at COMPILE time — AL0185
+                // "Codeunit 'X' is missing", after which BC's emitter crashes on the
+                // now-unresolved local variable type ("Unexpected value 'None' of type
+                // NavTypeKind") and the whole bundle emits zero sources.
                 var jsonScanDirs = packageDirs.ToList();
                 if (_extraSymbolDirs != null)
                     foreach (var d in _extraSymbolDirs)
                         if (Directory.Exists(d) && !jsonScanDirs.Contains(d, StringComparer.OrdinalIgnoreCase))
                             jsonScanDirs.Add(d);
 
-                _cachedJsonLoaders = jsonScanDirs
+                var jsonLoaders = jsonScanDirs
                     .Select(d => new JsonSymbolReferenceLoader(d))
                     .Where(l => l.HasAny)
                     .ToList();
-                if (_cachedJsonLoaders.Count > 0)
-                    _refLoader = new CompositeSymbolReferenceLoader(
-                        _cachedJsonLoaders.Cast<NavCA.ISymbolReferenceLoader>().Append(_refLoader).ToList());
+
+                // Nothing to serve references from at all — same no-op result as before.
+                // (Deliberately leaves _refLoader / _loaderSignature untouched, as the
+                // original early-return did.)
+                if (loaderScanDirs.Count == 0 && jsonLoaders.Count == 0)
+                    return (null, Array.Empty<NavCA.SymbolReferenceSpecification>());
+
+                _cachedJsonLoaders = jsonLoaders;
+                NavCA.ISymbolReferenceLoader? packageLoader = loaderScanDirs.Count > 0
+                    ? NavSymRef.ReferenceLoaderFactory.CreateReferenceLoader(loaderScanDirs)
+                    : null;
+                if (jsonLoaders.Count > 0)
+                {
+                    var chain = jsonLoaders.Cast<NavCA.ISymbolReferenceLoader>().ToList();
+                    if (packageLoader != null) chain.Add(packageLoader);
+                    _refLoader = new CompositeSymbolReferenceLoader(chain);
+                }
+                else
+                {
+                    _refLoader = packageLoader!;
+                }
 
                 // Pre-warm the loader's internal package caches SEQUENTIALLY before the
                 // compiler's parallel reference-loading runs. BC's ReferenceManager fans

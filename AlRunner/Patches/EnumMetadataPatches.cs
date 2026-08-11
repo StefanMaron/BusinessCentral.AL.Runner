@@ -196,6 +196,107 @@ public static class AlEnumMetadataRegistry
         return result.OrderBy(e => e.Id).ToList();
     }
 
+    /// <summary>Every enum id currently registered (base ids ∪ enumextension target
+    /// ids) — used by <see cref="DependencyLoader"/> to snapshot "before this dep's
+    /// emit" / "after this dep's emit" sets so a source-dep compile can persist only
+    /// the entries IT contributed to its own cache sidecar (issue #1731's fix).</summary>
+    public static int[] Ids
+    {
+        get
+        {
+            var ids = new HashSet<int>(_byId.Keys);
+            ids.UnionWith(_extByTargetId.Keys);
+            return ids.ToArray();
+        }
+    }
+
+    /// <summary>
+    /// Serialize the given enum ids' MERGED entries (base + enumextension values
+    /// already flattened by <see cref="TryGet"/>) to a sidecar file. Mirrors
+    /// Program.cs's bundle-level <c>SaveEnumRegistrySidecar</c> (schema v3), but
+    /// scoped to <paramref name="onlyIds"/> so the dependency-loader's per-dep
+    /// cache sidecar does not leak sibling-app/bundle entries into its own file —
+    /// same convention as <see cref="AlReportMetadataRegistry.SaveSidecar(string, IEnumerable{int})"/>.
+    /// Returns the number of entries written.
+    /// </summary>
+    public static int SaveSidecar(string path, IEnumerable<int> onlyIds)
+    {
+        var idSet = new HashSet<int>(onlyIds);
+        var entries = new List<Entry>(idSet.Count);
+        foreach (var id in idSet)
+            if (TryGet(id, out var merged))
+                entries.Add(merged);
+        entries = entries.OrderBy(e => e.Id).ToList();
+
+        var dto = new
+        {
+            enums = entries.Select(e => new
+            {
+                id = e.Id,
+                name = e.Name,
+                options = e.Options,
+                indexes = e.Indexes,
+                implementations = e.Implementations,
+            }).ToArray(),
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(dto);
+        File.WriteAllText(path, json);
+        return entries.Count;
+    }
+
+    /// <summary>
+    /// Replay entries from a sidecar written by <see cref="SaveSidecar"/>. Each
+    /// entry is already the merged base+extension set, so replay uses plain
+    /// <see cref="Register"/> (never <see cref="RegisterExtension"/>) — matching
+    /// how Program.cs's bundle-level sidecar replay works. Throws on corrupt JSON;
+    /// callers treat that as a cache MISS and rebuild. Returns replayed entry count.
+    /// </summary>
+    public static int LoadSidecar(string path)
+    {
+        var json = File.ReadAllText(path);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        if (!doc.RootElement.TryGetProperty("enums", out var arr)
+            || arr.ValueKind != System.Text.Json.JsonValueKind.Array)
+            throw new InvalidDataException("enum-registry.json: missing 'enums' array");
+        int count = 0;
+        foreach (var e in arr.EnumerateArray())
+        {
+            int id = e.GetProperty("id").GetInt32();
+            string name = e.GetProperty("name").GetString() ?? string.Empty;
+            var optsEl = e.GetProperty("options");
+            var idxEl = e.GetProperty("indexes");
+            var opts = new string[optsEl.GetArrayLength()];
+            int oi = 0;
+            foreach (var o in optsEl.EnumerateArray()) opts[oi++] = o.GetString() ?? string.Empty;
+            var idxs = new int[idxEl.GetArrayLength()];
+            int ii = 0;
+            foreach (var x in idxEl.EnumerateArray()) idxs[ii++] = x.GetInt32();
+            int[][] implementations = Array.Empty<int[]>();
+            if (e.TryGetProperty("implementations", out var implEl)
+                && implEl.ValueKind == System.Text.Json.JsonValueKind.Array
+                && implEl.GetArrayLength() == opts.Length)
+            {
+                implementations = new int[implEl.GetArrayLength()][];
+                int vi = 0;
+                foreach (var valueImplEl in implEl.EnumerateArray())
+                {
+                    if (valueImplEl.ValueKind != System.Text.Json.JsonValueKind.Array)
+                    {
+                        implementations = Array.Empty<int[]>();
+                        break;
+                    }
+                    var ids = new int[valueImplEl.GetArrayLength()];
+                    int idi = 0;
+                    foreach (var implId in valueImplEl.EnumerateArray())
+                        ids[idi++] = implId.GetInt32();
+                    implementations[vi++] = ids;
+                }
+            }
+            Register(id, name, opts, idxs, implementations);
+            count++;
+        }
+        return count;
+    }
 }
 
 /// <summary>
