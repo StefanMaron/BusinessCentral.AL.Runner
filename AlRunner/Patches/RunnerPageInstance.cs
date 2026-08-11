@@ -508,6 +508,51 @@ internal sealed class RunnerPageInstance
            is not false;
 
     /// <summary>
+    /// Assign the page's <c>AutoSplitKey</c> field on the row about to be inserted — BC's own
+    /// <c>NavForm.SplitKey()</c>, called at exactly the point BC calls it
+    /// (<c>SaveRecordAsync</c> / <c>InsertAsync(belowXRec)</c>: SplitKey, then OnInsertRecord,
+    /// then the record's Insert).
+    ///
+    /// Reused rather than reimplemented, and the detail is why. SplitKey is not "last line no.
+    /// + 10000": it reads <c>MasterPage.PageProperties.SourceObject.AutoSplitKey</c> to decide
+    /// whether to act at all, takes the LAST field of the primary key, refuses a key field that
+    /// is not GUID/Integer/BigInteger/Decimal, leaves a value the AL already set alone, splits
+    /// the interval when the row is being inserted BETWEEN two existing ones, and falls back to
+    /// "after the last row in the filtered set" when the computed key collides. Every one of
+    /// those is observable from AL, and a hand-rolled version gets the easy case right while
+    /// silently answering the rest differently.
+    ///
+    /// A page with no AutoSplitKey is a no-op inside BC's own guard, so this is safe to call
+    /// unconditionally — the runner does not need to duplicate the property lookup.
+    /// </summary>
+    internal void SplitKey()
+    {
+        var splitKey = FindNavFormMethod("SplitKey", Type.EmptyTypes)
+            ?? throw new InvalidOperationException(
+                "NavForm.SplitKey not found on " + _form.GetType().FullName + " — BC page shape changed");
+        try { splitKey.Invoke(_form, Array.Empty<object>()); }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            // BC throws NavNCLNotSupportedTypeException here for a page whose last primary-key
+            // field is not a splittable type. That is the page's own error and belongs to the
+            // AL test unwrapped, exactly like an Error() raised in a trigger.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+        }
+    }
+
+    private MethodInfo? FindNavFormMethod(string name, Type[] parameterTypes)
+    {
+        for (var t = _form.GetType(); t != null; t = t.BaseType)
+        {
+            var mi = t.GetMethod(name,
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly,
+                binder: null, types: parameterTypes, modifiers: null);
+            if (mi != null) return mi;
+        }
+        return null;
+    }
+
+    /// <summary>
     /// Start a new row the way the page itself would: BC's own NavForm.NewRecord, which does
     /// ALInit, then InitializeFieldsFromFilters (so the row arrives already carrying the page's
     /// filters — the header a subpage's line belongs to), then raises OnNewRecord.

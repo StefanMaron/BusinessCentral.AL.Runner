@@ -76,7 +76,11 @@ dispatch, and report/request-page variables support a limited standalone surface
 - Field `Visible`, `Enabled`, and `Editable` are not evaluated against real page metadata.
 - `TestPage` methods like `GoToRecord`, `Next`, `New`, `GetPart`, and filter reads are
   mock-backed rather than UI-backed.
-- `TestPage` action `Invoke()` dispatches the compiled `OnAction` trigger for custom actions; field `Visible`/`Enabled`/`Editable` are not evaluated against real page metadata.
+- `TestPage` action `Invoke()` saves the row the page is on and then dispatches the
+  compiled `OnAction` trigger, the same order a real client uses — so `OnAction` reads a
+  `Rec` that is already in the table, with the page's `AutoSplitKey` field assigned
+  (BC's own `NavForm.SplitKey`, in 10000 increments). A plain `SetValue` still does not
+  save: the row is written when something leaves it (a cursor move, an action, or close).
 - `Page.Run()` is a no-op. `Page.RunModal()` dispatches to `[ModalPageHandler]` if
   registered, otherwise throws.
 - Request pages can be handled via `[RequestPageHandler]`, but this is handler dispatch
