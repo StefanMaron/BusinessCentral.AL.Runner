@@ -60,6 +60,30 @@ public static partial class RecordPatches
     internal static NCLMetaTable? GetOrBuildNCLMetaTable(int tableId)
         => (NCLMetaTable?)_metaTableCache.GetOrAdd(tableId, BuildNCLMetaTable);
 
+    /// <summary>
+    /// The field's AL-declared Caption, straight from the parsed table source — the same
+    /// <see cref="ParsedField.Caption"/> this builder feeds into NCLMetaField's captionML at
+    /// construction (see BuildMetaField below). Deliberately bypasses NCLMetaField's own
+    /// FieldCaption getter: that getter is JmpHooked (see
+    /// RecordPatches.NCLMetaField_get_FieldCaption / BcRuntime's session-free FieldCaption
+    /// patch) to unconditionally answer the field's NAME, because its real implementation
+    /// dereferences session/language-provider state the skeleton runtime never populates —
+    /// and that hook cannot tell "no declared Caption" apart from "declared Caption we chose
+    /// not to read", so nothing downstream of it can answer that question either. TestPage
+    /// field Caption() (#1777) needs the real answer, so it reads the parse-time source
+    /// directly instead of going through the hook.
+    /// Null means the field declares no Caption (or the table was never parsed at all —
+    /// e.g. a base-app table not pulled through TryPopulateParsedTableFromBcApps yet).
+    /// </summary>
+    internal static string? TryGetParsedFieldCaption(int tableId, int fieldNo)
+    {
+        if (!_parsedTables.TryGetValue(tableId, out var parsed)) return null;
+        foreach (var f in parsed.Fields)
+            if (f.FieldId == fieldNo)
+                return string.IsNullOrEmpty(f.Caption) ? null : f.Caption;
+        return null;
+    }
+
     private static NCLMetaTable? BuildNCLMetaTable(int tableId)
     {
         if (!_parsedTables.TryGetValue(tableId, out var parsed))

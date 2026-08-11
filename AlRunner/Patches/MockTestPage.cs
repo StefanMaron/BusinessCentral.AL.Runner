@@ -72,7 +72,7 @@ internal class MockITestPage : ITestPage
     public int        ValidationErrorCount => 0;
     public virtual FormResult FormResult   => FormResult.OK;
     public string     Name                 => string.Empty;
-    public string     Caption              => string.Empty;
+    public virtual string Caption          => string.Empty;
     public virtual int PageId            => 0;
     public virtual Guid FormHandle         => Guid.Empty;
     public virtual bool Creatable          => false;
@@ -153,6 +153,13 @@ internal class LiveNavTestPage : MockITestPage
     // A constant true made every `CurrPage.Editable(false)` invisible to the test that was
     // written to check it.
     public override bool RuntimeEditable => _staticEditable;
+
+    // TestPage.Caption() (#1776). The base mock answered a constant empty string, which was
+    // wrong for BOTH of a page's caption sources: the static `Caption = '…'` property AND a
+    // runtime `CurrPage.Caption := '…'` assignment made from OnOpenPage. Both write the same
+    // underlying NavForm.PageCaption — reading it here is what makes a single accessor answer
+    // correctly whether or not the page ever touched CurrPage.Caption at all.
+    public override string Caption => _page?.PageCaption ?? string.Empty;
 
     /// <summary>
     /// The subpage part hosted by <paramref name="controlId"/>, driven live over its own
@@ -1168,7 +1175,20 @@ internal sealed class LiveNavTestField : ITestField
         => _page != null && _controlId != 0 ? _page.TryGetOptionCaptions(_controlId) : null;
 
     public string Name => Caption;
-    public string Caption => TryGetMetaFieldName() ?? $"Field {_fieldNo}";
+
+    // TestPage field Caption() (#1777). BC's own precedence, control-declared wins over the
+    // source field's Caption, which wins over the field's bare name:
+    //   1. the control's own Caption (field(Foo; Rec.Foo) { Caption = '…'; }) — page metadata
+    //      that only exists when this field is bound to a live control, not a bare NavRecord.
+    //   2. the source table field's declared Caption (field(2; Foo; Text[30]) { Caption = '…'; })
+    //      — read straight from the parse-time metadata, bypassing NCLMetaField.FieldCaption
+    //      (JmpHooked to always answer the field NAME; see TryGetParsedFieldCaption).
+    //   3. the field's technical name, BC's own fallback when neither is declared.
+    public string Caption
+        => (_page != null && _controlId != 0 ? _page.TryGetControlCaption(_controlId) : null)
+           ?? TryGetMetaFieldCaption()
+           ?? TryGetMetaFieldName()
+           ?? $"Field {_fieldNo}";
     public NavType FieldType => TryGetMetaFieldType() ?? NavType.Text;
     public int ValidationErrorCount => 0;
     public long LastUsedValidationErrorId => 0;
@@ -1226,6 +1246,14 @@ internal sealed class LiveNavTestField : ITestField
     private string? TryGetMetaFieldName()
     {
         return _record.MetaTable.TryGetFieldByNo(_fieldNo, out var field) ? field.FieldName : null;
+    }
+
+    // The source field's own declared Caption — see RecordPatches.TryGetParsedFieldCaption
+    // for why this cannot go through NCLMetaField.FieldCaption.
+    private string? TryGetMetaFieldCaption()
+    {
+        var tableId = _record.MetaTable.TableId;
+        return tableId != 0 ? RecordPatches.TryGetParsedFieldCaption(tableId, _fieldNo) : null;
     }
 
     private NavType? TryGetMetaFieldType()

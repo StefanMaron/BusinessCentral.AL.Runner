@@ -62,6 +62,32 @@ internal sealed class RunnerPageInstance
             .GetValue(_form) is true;
 
     /// <summary>
+    /// The page's real caption. Read off BC's own NavForm.PageCaption rather than a constant:
+    /// InitializeFromMetadata seeds it from the page's static Caption property, and
+    /// <c>CurrPage.Caption := '…'</c> (a plain property setter the AL compiler emits onto the
+    /// SAME field) overwrites it at runtime. One read site therefore answers both — a runner
+    /// that only modelled the static case would go right on issue #1776's first repro and
+    /// wrong on its second, which is exactly the split that shipped: TestPage.Caption()
+    /// answered empty for both, because nothing read this property at all.
+    /// </summary>
+    internal string PageCaption
+        => _form.GetType()
+            .GetProperty("PageCaption", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
+            .GetValue(_form) as string ?? string.Empty;
+
+    /// <summary>
+    /// The control's own declared Caption (<c>field(Foo; Rec.Foo) { Caption = '…'; }</c>), or
+    /// null when the control declares none. This is the FIRST source in the client's caption
+    /// precedence — it wins over the source field's own Caption, which is why callers must
+    /// check this before falling back to field metadata (see issue #1777).
+    /// </summary>
+    internal string? TryGetControlCaption(int controlId)
+    {
+        var caption = ControlDefinition(controlId)?.Caption;
+        return string.IsNullOrEmpty(caption) ? null : caption;
+    }
+
+    /// <summary>
     /// Build and initialise the AL page object for <paramref name="pageId"/>, bound to
     /// <paramref name="record"/>. Returns null when the page has no compiled type or no
     /// real metadata — never a half-initialised instance, because a page whose source
