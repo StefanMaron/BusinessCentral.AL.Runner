@@ -42,7 +42,18 @@ internal static partial class BcAppSymbolCache
     // payload deserialises with Captions null, which AlEnumOptionMetadata already treats
     // as "no captions captured" (falls back to member name for every value) — silently
     // wrong for any dependency enum whose Caption differs from its name, not a cache miss.
-    private const int CacheVersion = 12;
+    // v13: PageSymbol gained PageType/Caption/Editable/InsertAllowed/ModifyAllowed/
+    // DeleteAllowed/CardPageName and its field-control tree (Controls), feeding the "Page
+    // Metadata" (2000000138) and "Page Control Field" (2000000192) virtual tables for a
+    // page that lives in a precompiled dependency .app (issues #1769 / #1779). A v12
+    // payload deserialises with PageType null / Controls empty / CardPageName null, which
+    // the Page Metadata provider would read as "declares no PageType" (defaults to Card,
+    // right only by coincidence) and "declares no CardPageId" (CardPageID = 0, which is
+    // exactly the value Base App "Page Management".GetDefaultCardPageID uses to decide a
+    // table has no card page at all — a real behavioral divergence, not a display nit),
+    // and the Page Control Field provider would read as "no controls" — silent wrong
+    // answers, not a cache miss, hence the bump.
+    private const int CacheVersion = 13;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
 
     internal sealed record AppSymbols(List<ParsedTable> Tables, List<EnumSymbol> Enums, List<QuerySymbol> Queries,
@@ -58,7 +69,35 @@ internal static partial class BcAppSymbolCache
     /// BOTH sides temporary, so a page whose SourceTable is declared temporary needs its
     /// bound Rec built temporary too, not just any record of the right table.
     /// </summary>
-    internal sealed record PageSymbol(int Id, string Name, int SourceTableId, bool SourceTableTemporary);
+    internal sealed record PageSymbol(
+        int Id, string Name, int SourceTableId, bool SourceTableTemporary,
+        // Everything below feeds the "Page Metadata" (2000000138) virtual table (#1769).
+        // AL defaults: PageType = Card (MS docs), Editable/InsertAllowed/ModifyAllowed/
+        // DeleteAllowed = true, all only when the symbol file states nothing to the contrary.
+        string PageType = "Card", string? Caption = null,
+        bool Editable = true, bool InsertAllowed = true, bool ModifyAllowed = true, bool DeleteAllowed = true,
+        // Field controls with a real SourceExpression, feeding "Page Control Field"
+        // (2000000192) (#1779). Unlike the source-parsed path (Rec.-bound only, see
+        // RecordPatches.AlPageParser.cs), the symbol file states EVERY field control's
+        // SourceExpression verbatim, Rec.-bound or not — see TryParsePageSymbol.
+        List<PageControlSymbol>? Controls = null,
+        // AL's CardPageId property, stated by the symbol file as the target page's NAME
+        // (verified: Base Application 28.1's "Customer List" carries
+        // CardPageID = "Customer Card", not a numeric id) — resolved against the run's page
+        // inventory at Page Metadata row-build time, same as the source-parsed path.
+        string? CardPageName = null);
+
+    /// <summary>
+    /// One field control of a precompiled dependency page, as SymbolReference.json states
+    /// it. <c>SourceExpression</c>/<c>Visible</c>/<c>Editable</c>/<c>Enabled</c> are the raw
+    /// property text the compiler recorded — e.g. Base Application's Customer Card control
+    /// "No." carries <c>Visible = "NoFieldVisible"</c> (a global Boolean variable name, not
+    /// a literal), which is exactly what the real "Page Control Field" table's Text columns
+    /// hold for a control whose Visible is driven by code rather than a constant.
+    /// </summary>
+    internal sealed record PageControlSymbol(
+        int Id, string Name, string SourceExpression,
+        string? VisibleExpr, string? EditableExpr, string? EnabledExpr, int Sequence);
 
     /// <summary>
     /// A precompiled dependency's report, as far as SymbolReference.json states it. Feeds
@@ -341,10 +380,69 @@ internal static partial class BcAppSymbolCache
 
         var props = SymbolProperties(page);
         int sourceTableId = props.TryGetValue("SourceTable", out var st) && int.TryParse(st, out var stId) ? stId : 0;
-        bool sourceTableTemporary = props.TryGetValue("SourceTableTemporary", out var stt)
-            && (stt == "1" || string.Equals(stt, "true", StringComparison.OrdinalIgnoreCase));
-        return new PageSymbol(pageId, name!, sourceTableId, sourceTableTemporary);
+        bool sourceTableTemporary = SymbolBool(props, "SourceTableTemporary");
+
+        props.TryGetValue("PageType", out var pageType);
+        props.TryGetValue("Caption", out var caption);
+        // SymbolProperties is case-insensitive, covering both "CardPageID" (observed on
+        // Base Application 28.1) and any "CardPageId" spelling — same tolerance Table
+        // Metadata already applies to LookupPageId/LookupPageID.
+        props.TryGetValue("CardPageId", out var cardPageName);
+        // AL defaults for these four: true, only an explicit "false"/"0" flips them — same
+        // rule ParsePageControls uses for the source-parsed path.
+        bool editable = !SymbolBoolFalse(props, "Editable");
+        bool insertAllowed = !SymbolBoolFalse(props, "InsertAllowed");
+        bool modifyAllowed = !SymbolBoolFalse(props, "ModifyAllowed");
+        bool deleteAllowed = !SymbolBoolFalse(props, "DeleteAllowed");
+
+        var controls = new List<PageControlSymbol>();
+        int seq = 0;
+        if (page.TryGetProperty("Controls", out var controlsArr) && controlsArr.ValueKind == JsonValueKind.Array)
+            foreach (var c in controlsArr.EnumerateArray())
+                CollectPageControlSymbols(c, controls, ref seq);
+
+        return new PageSymbol(pageId, name!, sourceTableId, sourceTableTemporary,
+            string.IsNullOrWhiteSpace(pageType) ? "Card" : pageType!, caption,
+            editable, insertAllowed, modifyAllowed, deleteAllowed, controls,
+            string.IsNullOrWhiteSpace(cardPageName) ? null : cardPageName);
     }
+
+    /// <summary>
+    /// Recursively collect every "Kind 8" field control (identified by having a
+    /// <c>SourceExpression</c> property, NOT a hardcoded Kind number — verified against
+    /// Base Application 28.1: every one of its 36890 <c>SourceExpression</c>-bearing
+    /// controls is Kind 8, and no other Kind ever carries one) out of a page's <c>Controls</c>
+    /// tree, which nests group/repeater/cuegroup/etc. the same way a report's data items nest.
+    /// Sequence is assigned here, depth-first in document order — the same order a real page
+    /// renders its controls.
+    /// </summary>
+    private static void CollectPageControlSymbols(JsonElement control, List<PageControlSymbol> into, ref int sequence)
+    {
+        var props = SymbolProperties(control);
+        if (props.TryGetValue("SourceExpression", out var srcExpr))
+        {
+            var name = control.TryGetProperty("Name", out var n) ? n.GetString() : null;
+            int id = control.TryGetProperty("Id", out var idProp) && idProp.TryGetInt32(out var idv) ? idv : 0;
+            if (!string.IsNullOrEmpty(name) && id != 0)
+            {
+                sequence++;
+                props.TryGetValue("Visible", out var visible);
+                props.TryGetValue("Editable", out var editable);
+                props.TryGetValue("Enabled", out var enabled);
+                into.Add(new PageControlSymbol(id, name!, srcExpr, visible, editable, enabled, sequence));
+            }
+        }
+
+        if (control.TryGetProperty("Controls", out var children) && children.ValueKind == JsonValueKind.Array)
+            foreach (var child in children.EnumerateArray())
+                CollectPageControlSymbols(child, into, ref sequence);
+    }
+
+    private static bool SymbolBool(Dictionary<string, string> props, string name)
+        => props.TryGetValue(name, out var v) && (v == "1" || string.Equals(v, "true", StringComparison.OrdinalIgnoreCase));
+
+    private static bool SymbolBoolFalse(Dictionary<string, string> props, string name)
+        => props.TryGetValue(name, out var v) && (v == "0" || string.Equals(v, "false", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Parse one entry of a SymbolReference.json <c>Reports</c> array into the subset the

@@ -13,6 +13,11 @@
 // friends, so any of those following a page put the NEXT object's body inside this page's
 // slice, where SourceTable / InsertAllowed / field(...) could all match against it. Object
 // extent is now structural.
+//
+// PageType / per-control Visible/Editable/Enabled/SourceExpression are ALSO captured now
+// (issues #1769 / #1779) — they feed the "Page Metadata" (2000000138) and "Page Control
+// Field" (2000000192) virtual tables. See RecordPatches.PageMetadataVirtualTable.cs and
+// RecordPatches.PageControlFieldVirtualTable.cs.
 using Microsoft.Dynamics.Nav.CodeAnalysis;
 using NavSyntax = Microsoft.Dynamics.Nav.CodeAnalysis.Syntax;
 
@@ -47,11 +52,13 @@ public static partial class RecordPatches
             if (obj is not NavSyntax.PageSyntax p) continue;
             if (ObjectIdOf(p) is not int id) continue;
             var props = p.PropertyList;
+            var (fieldMap, controls) = ParsePageControls(id, p.Layout);
+            var pageTypeText = Unquote(PropValue(props, "PageType")?.ToString()?.Trim() ?? "");
             _parsedPages[id] = new ParsedPage(id, IdentText(p.Name), IsExtension: false,
                 // Absent SourceTable is the empty string, not null — callers distinguish
                 // "declares none" from "never parsed" via IsPageParsed.
                 SourceTableName: Unquote(PropValue(props, "SourceTable")?.ToString()?.Trim() ?? ""),
-                ControlIdToFieldName: ParsePageFieldBindings(id, p.Layout),
+                ControlIdToFieldName: fieldMap,
                 // AL's default when the property is absent is TRUE, so only an explicit
                 // `false` flips it. Drives ITestPage.Creatable via NavTestPageBase.New().
                 InsertAllowed: !PropIs(props, "InsertAllowed", "false"),
@@ -59,7 +66,20 @@ public static partial class RecordPatches
                 // a page-variable's Rec must be built temporary when this is true, or its
                 // own AL body's Rec.Copy(source, shareTable: true) refuses ("both records
                 // must be temporary").
-                SourceTableTemporary: PropIs(props, "SourceTableTemporary", "true"));
+                SourceTableTemporary: PropIs(props, "SourceTableTemporary", "true"),
+                // MS docs: PageType defaults to Card when the property is absent.
+                PageType: pageTypeText.Length > 0 ? pageTypeText : "Card",
+                Editable: !PropIs(props, "Editable", "false"),
+                ModifyAllowed: !PropIs(props, "ModifyAllowed", "false"),
+                DeleteAllowed: !PropIs(props, "DeleteAllowed", "false"),
+                Controls: controls,
+                // Page reference stated BY NAME, resolved against the run's own page
+                // inventory at Page Metadata row-build time — same deferred-resolution rule
+                // Table Metadata uses for LookupPageId/DrillDownPageId. Null means "declares
+                // none", which Page Metadata reports as CardPageID = 0 (a real, meaningful
+                // value: Base App "Page Management".GetDefaultCardPageID reads it to decide
+                // whether a table has a card page at all).
+                CardPageName: PageRefText(PropValue(props, "CardPageId")));
         }
 
         foreach (var obj in objects)
@@ -73,11 +93,13 @@ public static partial class RecordPatches
             // so a TestPage driven through an extension-added control could not resolve it.
             // GetPageControlFieldMap merges them into the BASE page's map, which is where a
             // TestPage looks.
+            var (extFieldMap, extControls) = ParsePageControls(id, pe.Layout);
             _parsedPageExtensions[id] = new ParsedPage(id, IdentText(pe.Name), IsExtension: true,
                 SourceTableName: string.Empty,
-                ControlIdToFieldName: ParsePageFieldBindings(id, pe.Layout),
+                ControlIdToFieldName: extFieldMap,
                 InsertAllowed: !PropIs(pe.PropertyList, "InsertAllowed", "false"),
-                BaseName: Unquote(pe.BaseObject?.ToString()?.Trim() ?? ""));
+                BaseName: Unquote(pe.BaseObject?.ToString()?.Trim() ?? ""),
+                Controls: extControls);
         }
     }
 
@@ -157,58 +179,125 @@ public static partial class RecordPatches
         }
     }
 
+    /// <summary>
+    /// Every field control of a SOURCE-PARSED page, base plus matching pageextensions,
+    /// for the "Page Control Field" (2000000192) virtual table. Same base+extension merge
+    /// rule as <see cref="GetPageControlFieldMap"/> (only extensions of THIS page), same
+    /// Rec.-bound-only scope as <see cref="ParsePageControls"/> — see that method's remarks.
+    /// <para>Sequence is assigned here, at merge time, 1-based in enumeration order (base
+    /// page controls first, then each matching extension's, in registration order) — never
+    /// trusted from the per-object parse pass, since a base page and an extension each start
+    /// their own local layout walk at 1 and merging them naively would produce duplicate
+    /// Sequence values.</para>
+    /// </summary>
+    internal static List<PageControlRow> GetSourceParsedPageControlRows(int pageId)
+    {
+        var result = new List<PageControlRow>();
+        if (!_parsedPages.TryGetValue(pageId, out var page)) return result;
+
+        int seq = 0;
+        void AddAll(IReadOnlyList<PageControlRow> controls)
+        {
+            foreach (var c in controls)
+                result.Add(c with { Sequence = ++seq });
+        }
+
+        AddAll(page.Controls);
+        foreach (var ext in _parsedPageExtensions.Values)
+            if (NamesEqual(ext.BaseName, page.Name))
+                AddAll(ext.Controls);
+        return result;
+    }
+
     internal static int[] GetPrimaryKeyFieldIdsForTable(int tableId)
         => _parsedTables.TryGetValue(tableId, out var table)
             ? table.PkFieldIds.ToArray()
             : Array.Empty<int>();
 
     /// <summary>
-    /// Maps each <c>field(Control; Rec.Field)</c> control of a page's layout to the table field
-    /// it binds, keyed by the control's member id.
+    /// Every field control of one page layout (a base page's <c>layout</c> or a
+    /// pageextension's <c>layout</c>/<c>addfirst</c>/<c>addlast</c> block), plus the
+    /// Rec.-bound subset of them as a control-id → field-name map (for
+    /// <see cref="GetPageControlFieldMap"/>, unchanged from before this method existed).
     /// <para>Field controls are collected from the whole layout subtree at once, which covers
     /// arbitrary <c>area</c> / <c>group</c> / <c>cuegroup</c> / <c>repeater</c> nesting. Scoping
     /// to <c>Layout</c> also means the <c>actions</c> section cannot contribute (an action is a
     /// structurally different node), and a <c>part(...)</c> is a leaf here — the page it
     /// references is a separate object with its own tree, so its fields can never leak in.</para>
-    /// <para>Only a source expression that is exactly <c>Rec.Something</c> counts. The old regex
-    /// looked for the text <c>Rec.</c> anywhere after the semicolon, so
-    /// <c>field(Total; Rec.Amount + 1)</c> bound the control to <c>Amount</c> — a control that is
-    /// not bound to that field at all. A compound expression now yields no binding.</para>
-    /// <para><paramref name="layout"/> is a <c>PageLayoutSyntax</c> for a base page and a
-    /// <c>PageExtensionLayoutSyntax</c> for a pageextension — two unrelated node types (the
-    /// latter derives straight from SyntaxNode and holds ControlChangeBaseSyntax entries), but
-    /// the field controls under both are the SAME <c>PageFieldSyntax</c>, so one subtree walk
-    /// serves both. <c>modify(...)</c> declares no control and contributes nothing;
-    /// <c>movefirst</c>/<c>moveafter</c> only reference controls by name.</para>
+    /// <para><b>Scope limitation, deliberate:</b> a control only becomes a
+    /// <see cref="PageControlRow"/> when its source expression is exactly <c>Rec.Something</c>.
+    /// A field control bound to anything else (a compound expression, a local/global variable)
+    /// is omitted entirely rather than guessed at — same "omit, never fabricate" rule the
+    /// Table/Report Metadata providers use for a page/table/report they cannot resolve.
+    /// <c>modify(...)</c> property overrides on an inherited control (pageextension) are NOT
+    /// applied here either: the row reflects the control's own declaring object, not any
+    /// extension that later modifies its Visible/Editable. Real BC would show the overridden
+    /// value; this is a known, narrower gap than what existed before (no rows at all).</para>
     /// <para><paramref name="declaringObjectId"/> is the object the controls are DECLARED in —
     /// the page for a base layout, the PAGEEXTENSION for controls it adds. That is what BC's
     /// IdSpace.GetMemberId hashes; see GetPageControlFieldMap for the live evidence.</para>
     /// </summary>
-    private static Dictionary<int, string> ParsePageFieldBindings(
+    private static (Dictionary<int, string> FieldMap, List<PageControlRow> Controls) ParsePageControls(
         int declaringObjectId, SyntaxNode? layout)
     {
-        var result = new Dictionary<int, string>();
-        if (layout == null) return result;
+        var fieldMap = new Dictionary<int, string>();
+        var controls = new List<PageControlRow>();
+        if (layout == null) return (fieldMap, controls);
 
+        int seq = 0;
         foreach (var field in layout.DescendantNodes().OfType<NavSyntax.PageFieldSyntax>())
         {
-            if (field.Expression is not NavSyntax.MemberAccessExpressionSyntax access) continue;
-            if (access.Expression is not NavSyntax.IdentifierNameSyntax receiver) continue;
-            if (!string.Equals(Unquote(receiver.Identifier.ValueText ?? ""), "Rec",
-                    StringComparison.OrdinalIgnoreCase)) continue;
-
             var controlName = IdentText(field.Name);
-            var fieldName = IdentText(access.Name as NavSyntax.IdentifierNameSyntax);
-            if (controlName.Length == 0 || fieldName.Length == 0) continue;
-            result[IdSpace.GetMemberId(declaringObjectId, controlName)] = fieldName;
+            if (controlName.Length == 0) continue;
+
+            string fieldName = string.Empty;
+            if (field.Expression is NavSyntax.MemberAccessExpressionSyntax access
+                && access.Expression is NavSyntax.IdentifierNameSyntax receiver
+                && string.Equals(Unquote(receiver.Identifier.ValueText ?? ""), "Rec",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                // Only a source expression that is exactly Rec.Something counts. The old regex
+                // looked for the text "Rec." anywhere after the semicolon, so
+                // `field(Total; Rec.Amount + 1)` bound the control to Amount — a control that
+                // is not bound to that field at all. A compound expression yields no binding.
+                fieldName = IdentText(access.Name as NavSyntax.IdentifierNameSyntax);
+            }
+            if (fieldName.Length == 0) continue;   // scope limitation — see remarks above
+
+            var controlId = IdSpace.GetMemberId(declaringObjectId, controlName);
+            fieldMap[controlId] = fieldName;
+
+            seq++;
+            controls.Add(new PageControlRow(
+                controlId, controlName, fieldName,
+                SourceExpressionText: field.Expression?.ToString()?.Trim() ?? string.Empty,
+                VisibleExpr: PropValue(field.PropertyList, "Visible")?.ToString()?.Trim(),
+                EditableExpr: PropValue(field.PropertyList, "Editable")?.ToString()?.Trim(),
+                EnabledExpr: PropValue(field.PropertyList, "Enabled")?.ToString()?.Trim(),
+                Sequence: seq));
         }
 
-        return result;
+        return (fieldMap, controls);
     }
 
     private static bool NamesEqual(string left, string right)
         => string.Equals(left.Replace(" ", ""), right.Replace(" ", ""), StringComparison.OrdinalIgnoreCase);
 }
+
+/// <summary>
+/// One field control resolved from a page's (or pageextension's) layout — the Rec.-bound
+/// subset only, see <see cref="RecordPatches"/>.ParsePageControls remarks. Feeds the
+/// "Page Control Field" (2000000192) virtual table.
+/// </summary>
+internal sealed record PageControlRow(
+    int ControlId,
+    string ControlName,
+    string FieldName,
+    string SourceExpressionText,
+    string? VisibleExpr,
+    string? EditableExpr,
+    string? EnabledExpr,
+    int Sequence);
 
 internal record ParsedPage(
     int Id,
@@ -220,4 +309,23 @@ internal record ParsedPage(
     /// <summary>The object a pageextension extends; empty for a plain page.</summary>
     string BaseName = "",
     /// <summary>AL's <c>SourceTableTemporary</c> property; see issue #1719.</summary>
-    bool SourceTableTemporary = false);
+    bool SourceTableTemporary = false,
+    /// <summary>AL's <c>PageType</c> property; MS docs default is "Card". Feeds the
+    /// "Page Metadata" (2000000138) virtual table (#1769).</summary>
+    string PageType = "Card",
+    bool Editable = true,
+    bool ModifyAllowed = true,
+    bool DeleteAllowed = true,
+    /// <summary>Rec.-bound field controls of this page's OWN layout (excludes extensions);
+    /// see <see cref="RecordPatches"/>.GetSourceParsedPageControlRows for the merged view.</summary>
+    IReadOnlyList<PageControlRow>? Controls = null,
+    /// <summary>AL's <c>CardPageId</c> property, as the last name segment of the page
+    /// reference (unresolved — see <see cref="RecordPatches"/>.PageMetadataVirtualTable.cs).
+    /// Null when the page declares none.</summary>
+    string? CardPageName = null)
+{
+    // Positional records can't give a collection parameter a literal default that isn't a
+    // constant, so a null Controls (constructed via the shorter historical call sites/tests,
+    // if any ever appear) is normalized to empty rather than NRE-ing every consumer.
+    public IReadOnlyList<PageControlRow> Controls { get; init; } = Controls ?? Array.Empty<PageControlRow>();
+}

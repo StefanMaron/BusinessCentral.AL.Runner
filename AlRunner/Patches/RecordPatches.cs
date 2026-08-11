@@ -1319,6 +1319,40 @@ public static partial class RecordPatches
                 return tableMetaDa;
             }
 
+            // ── Page Metadata (2000000138) ───────────────────────────────────────────────
+            // Virtual on the service tier too: one row per page in the application. An
+            // empty store makes every lookup answer "no such page", which is what broke
+            // Base App "Page Management".GetDefaultCardPageID's SourceTable+PageType scan
+            // fallback for tables declaring no LookupPageId. See
+            // RecordPatches.PageMetadataVirtualTable.cs (#1769).
+            if (IsPageMetadataVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var pageMetaDa))
+                {
+                    var createdPageMeta = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    pageMetaDa = perTable.GetOrAdd(tableId, createdPageMeta);
+                }
+                PopulatePageMetadataVirtualTable(pageMetaDa, table);
+                return pageMetaDa;
+            }
+
+            // ── Page Control Field (2000000192) ──────────────────────────────────────────
+            // Virtual on the service tier too: one row per field control declared on a
+            // page, INCLUDING controls declared Visible = false. An empty store made every
+            // filtered query answer "no rows" silently (no error), so a test asserting a
+            // control is absent would have passed against a broken provider too. See
+            // RecordPatches.PageControlFieldVirtualTable.cs (#1779).
+            if (IsPageControlFieldVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var pageControlFieldDa))
+                {
+                    var createdPageControlField = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    pageControlFieldDa = perTable.GetOrAdd(tableId, createdPageControlField);
+                }
+                PopulatePageControlFieldVirtualTable(pageControlFieldDa, table);
+                return pageControlFieldDa;
+            }
+
             if (perTable.TryGetValue(tableId, out var cached))
             {
                 return cached;
