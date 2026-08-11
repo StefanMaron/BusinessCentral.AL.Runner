@@ -19,6 +19,39 @@ public static partial class BcRuntime
     private static int _dispatchCount;
     private static int _dispatchFiredCount;
 
+    internal const string PublisherKindCodeunit = "Codeunit";
+    internal const string PublisherKindTable = "Record";
+
+    /// <summary>
+    /// Decode a publisher scope's declaring-type name into (kind, publisherId) —
+    /// e.g. <c>"Codeunit50041"</c> → <c>(PublisherKindCodeunit, 50041)</c>,
+    /// <c>"Record60976"</c> → <c>(PublisherKindTable, 60976)</c>. Any other prefix
+    /// (Page/Report/Query/XmlPort/…) returns false — those publisher kinds are not
+    /// registered by <c>EventSubscriberPatches.EnsureRegistryFresh</c> at all yet.
+    ///
+    /// Extracted as a pure, unit-testable seam (see DispatchObserveAsyncResultTests.cs for the
+    /// established pattern of pinning dispatcher behavior at a seam that can't be reached from
+    /// first-party AL). Issue #1770 was exactly a miss in this decode: only the "Codeunit"
+    /// prefix was recognized, so a table object's OWN code — which compiles to a class named
+    /// "Record&lt;N&gt;", not "Table&lt;N&gt;" — never matched, and a manually-declared
+    /// [IntegrationEvent] raised from inside a table's trigger silently never dispatched.
+    /// </summary>
+    internal static bool TryDecodeEventPublisherDeclType(string declTypeName, out string publisherKind, out int publisherId)
+    {
+        foreach (var prefix in new[] { PublisherKindCodeunit, PublisherKindTable })
+        {
+            if (declTypeName.StartsWith(prefix, StringComparison.Ordinal)
+                && int.TryParse(declTypeName.AsSpan(prefix.Length), out publisherId))
+            {
+                publisherKind = prefix;
+                return true;
+            }
+        }
+        publisherKind = "";
+        publisherId = 0;
+        return false;
+    }
+
     /// <summary>
     /// Entry point called from the Cecil-rewritten NavMethodScope.OnRunEventAsync.
     /// Returns default ValueTask — synchronous execution model.
@@ -80,21 +113,13 @@ public static partial class BcRuntime
         if (us < 0) return;
         string eventMethodName = scopeName.Substring(0, us);
 
-        IReadOnlyList<MethodInfo>? subs;
-        if (declName.StartsWith("Codeunit", StringComparison.Ordinal)
-            && int.TryParse(declName.AsSpan("Codeunit".Length), out int codeunitId))
+        if (!TryDecodeEventPublisherDeclType(declName, out var publisherKind, out int publisherId)) return;
+        IReadOnlyList<MethodInfo>? subs = publisherKind switch
         {
-            subs = EventSubscriberPatches.GetCodeunitSubscribers(codeunitId, eventMethodName);
-        }
-        else if (declName.StartsWith("Record", StringComparison.Ordinal)
-            && int.TryParse(declName.AsSpan("Record".Length), out int tableId))
-        {
-            subs = EventSubscriberPatches.GetTableEventSubscribers(tableId, eventMethodName);
-        }
-        else
-        {
-            return;
-        }
+            PublisherKindCodeunit => EventSubscriberPatches.GetCodeunitSubscribers(publisherId, eventMethodName),
+            PublisherKindTable => EventSubscriberPatches.GetTableEventSubscribers(publisherId, eventMethodName),
+            _ => null,
+        };
         if (subs == null || subs.Count == 0) return;
         Interlocked.Increment(ref _dispatchFiredCount);
         if (!_firstFireLogged) { _firstFireLogged = true; Console.Error.WriteLine($"[Dispatch] first FIRE: {declName}.{eventMethodName} → {subs.Count} subs"); }
