@@ -1,0 +1,34 @@
+[
+  {
+    "codeunitId": 60929,
+    "CodeunitName": "ASK Range Tests",
+    "Method": "TestPage_New_BetweenLines50000And70000_LandsAt60000",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1767",
+    "Note": "A New() with the cursor mid-grid must insert BETWEEN the cursor row and its successor (real BC lands 60000 between 50000 and 70000, measured on 27.5/28.3 by corpus PR #29). The runner's proposal (#1760) reads only the LAST row of the filtered set, so the insert appends instead."
+  },
+  {
+    "codeunitId": 60929,
+    "CodeunitName": "ASK Range Tests",
+    "Method": "TestPage_New_BetweenLines10000And90000_StepsOneIncrementTo20000",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1767",
+    "Note": "Same mid-grid gap as the entry above, with the discriminating wide gap: real BC steps one capped 10000 interval above the lower line (20000), not the midpoint (50000). The runner appends after 90000 instead."
+  },
+  {
+    "codeunitId": 60929,
+    "CodeunitName": "ASK Range Tests",
+    "Method": "TestPage_New_AfterSingleNegativeLine_LandsAtMinus6667",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1767",
+    "Note": "Appending after a single line at -10000 must land at -6667 on real BC: the range up to zero splits in three, the grid's trailing blank placeholder row counting as a row after an end-of-rowset insert. The runner's append arithmetic (-10000 + 10000) answers 0."
+  },
+  {
+    "codeunitId": 60929,
+    "CodeunitName": "ASK Range Tests",
+    "Method": "TestPage_New_BetweenMinus10000And10000_LandsAtMinusOne",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1767",
+    "Note": "An insert between -10000 and 10000 must land at -1 on real BC: a zero-crossing range reserves zero itself and steps (range-1)/2 above the lower bound. The runner appends after 10000 instead. The BigInteger/Decimal cases of this codeunit already pass - #1760's append arithmetic is typed."
+  }
+]
