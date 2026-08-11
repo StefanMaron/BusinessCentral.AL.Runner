@@ -256,31 +256,106 @@ public static partial class RecordPatches
         bool isAutoIncrement = PropIs(props, "AutoIncrement", "true");
         var caption = CaptionFrom(PropValue(props, "Caption"));
 
-        // TableRelation: only the UNCONDITIONAL, UNFILTERED `Table` / `Table.Field` shapes
-        // are captured — those are the ones NavRecord.UpdateReferencesOnRenameAsync needs to
-        // propagate a parent Rename (#1730). A relation with an if/else arm or a where(...)
-        // filter is deliberately NOT captured: building it without its conditions would make
-        // Rename propagate rows real BC leaves alone, which is worse than the old behaviour
-        // (no propagation). Conditional/filtered relations remain a tracked gap.
-        string? relationTableName = null, relationFieldName = null;
+        // TableRelation: captured as a list of ARMS — the plain `Table` / `Table.Field`
+        // shape is one condition-less arm, an `if (...) ... else ...` chain is one arm per
+        // link (#1737, extending #1730's unconditional capture). Each arm carries its
+        // if-conditions (fields of THIS table) and its where(...) filters (fields of the
+        // related table); NavRecord.UpdateReferencesOnRenameAsync evaluates both exactly as
+        // real BC does. A shape this code cannot carry faithfully refuses the WHOLE
+        // relation: half-capturing (an arm without its conditions) would make Rename
+        // rewrite rows real BC leaves alone — a silent wrong write, worse than the old
+        // behaviour (no propagation).
+        List<ParsedRelationArm>? relationArms = null;
         bool relationValidate = !PropIs(props, "ValidateTableRelation", "false");
         if (!isFlowField && !PropIs(props, "FieldClass", "FlowFilter")
-            && PropValue(props, "TableRelation") is NavSyntax.TableRelationPropertyValueSyntax
-                { IfExpression: null, TableFilter: null, ElseExpression: null } tr)
+            && PropValue(props, "TableRelation") is NavSyntax.TableRelationPropertyValueSyntax tr)
         {
-            var parts = NameParts(tr.RelatedTableField);
-            // 1 part = table; 2 parts = table + field. A 3+-part (namespace-qualified) name
-            // is ambiguous without symbol resolution, so it stays uncaptured.
-            if (parts.Count is 1 or 2)
-            {
-                relationTableName = parts[0];
-                relationFieldName = parts.Count == 2 ? parts[1] : null;
-            }
+            relationArms = ParseRelationArms(tr, fname);
         }
 
         return new ParsedField(fid, fname, ftype, length, isFlowField, calcFormula,
             optionMembers, initValueText, isAutoIncrement, caption,
-            relationTableName, relationFieldName, relationValidate);
+            relationArms, relationValidate);
+    }
+
+    /// <summary>
+    /// Walks a TableRelation's if/else chain into its arms. Each link of the chain is a
+    /// <c>TableRelationPropertyValueSyntax</c>; the terminal <c>else</c> (and the plain,
+    /// unconditional shape) is simply a link with no <c>IfExpression</c> — which is also
+    /// exactly how real BC treats it: the else arm carries NO condition, not the complement
+    /// of the earlier arms' conditions (verified against a real service tier; see corpus
+    /// codeunit 60239, Record_Rename_ConditionalRelation_ElseTableRename_UpdatesIfArmRowsToo).
+    /// Returns null — refusing the whole relation — on any arm this representation cannot
+    /// carry faithfully.
+    /// </summary>
+    private static List<ParsedRelationArm>? ParseRelationArms(
+        NavSyntax.TableRelationPropertyValueSyntax tr, string fieldName)
+    {
+        var arms = new List<ParsedRelationArm>();
+        for (var node = tr; node != null; node = node.ElseExpression?.ElseTableRelationCondition)
+        {
+            var parts = NameParts(node.RelatedTableField);
+            // 1 part = table; 2 parts = table + field. A 3+-part (namespace-qualified) name
+            // is ambiguous without symbol resolution, so the relation stays uncaptured.
+            if (parts.Count is not (1 or 2))
+            {
+                Console.Error.WriteLine(
+                    $"[TableRelation] REFUSED {fieldName}: {parts.Count}-part related-table name '{node.RelatedTableField}'");
+                return null;
+            }
+            var conditions = RelationConditionList(node.IfExpression?.IfTableRelationCondition, fieldName);
+            var filters = RelationConditionList(node.TableFilter?.Filter, fieldName);
+            if (conditions == null || filters == null) return null;
+            arms.Add(new ParsedRelationArm(parts[0], parts.Count == 2 ? parts[1] : null,
+                conditions, filters));
+        }
+        return arms;
+    }
+
+    /// <summary>
+    /// The conditions of an <c>if (...)</c> arm, or the entries of a <c>where(...)</c>
+    /// filter — the same <c>TableFilterExpressionSyntax</c> node, and the same shapes as a
+    /// CalcFormula's where, so they reuse <see cref="ParsedCalcFilter"/>. Only
+    /// <c>const(...)</c> and <c>filter(...)</c> are carried: they are what
+    /// <c>MetaCondition</c>/<c>MetaFilter</c> hold as evaluable text. A <c>field(...)</c>
+    /// link (and the FlowFilter forms) reads ANOTHER field of the referencing row at
+    /// evaluation time; emitting it as const/filter text would apply a comparison BC never
+    /// wrote, so it refuses the whole relation instead (null) — those shapes remain a
+    /// tracked gap, dropped as loudly as they were silently before #1737.
+    /// </summary>
+    private static List<ParsedCalcFilter>? RelationConditionList(
+        NavSyntax.TableFilterExpressionSyntax? filter, string fieldName)
+    {
+        var list = new List<ParsedCalcFilter>();
+        if (filter == null) return list;
+        foreach (var cond in filter.Conditions)
+        {
+            switch (cond)
+            {
+                // Kind = const(A)
+                case NavSyntax.ConstExpressionSyntax ce:
+                    list.Add(new ParsedCalcFilter(
+                        Unquote(ce.LeftHandSide?.ToString()?.Trim() ?? ""),
+                        ParsedCalcFilterKind.Const,
+                        Value: ConstValueText(ce.Identifier?.ToString())));
+                    break;
+
+                // Status = filter(Open|Released)
+                case NavSyntax.FilterExpressionSyntax fe:
+                    list.Add(new ParsedCalcFilter(
+                        Unquote(fe.LeftHandSide?.ToString()?.Trim() ?? ""),
+                        ParsedCalcFilterKind.Filter,
+                        Value: fe.Filter?.ToString()?.Trim() ?? ""));
+                    break;
+
+                default:
+                    Console.Error.WriteLine(
+                        $"[TableRelation] REFUSED {fieldName}: unsupported condition " +
+                        $"{cond?.GetType().Name} ({cond})");
+                    return null;
+            }
+        }
+        return list;
     }
 
     /// <summary>Flattens a (possibly qualified) name into its unquoted identifier parts:
@@ -654,7 +729,14 @@ internal record ParsedCalcFilter(
 /// <c>MetaCalcFormula.reverseSign</c> → <c>NCLMetaCalculationFormula.NegateResult</c>.</param>
 internal record ParsedCalcFormula(string FormulaType, string SourceTableName, string? SourceFieldName, List<ParsedCalcFilter> Filters, bool Negated = false);
 
-internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null, string? RelationTableName = null, string? RelationFieldName = null, bool RelationValidate = true);
+/// <summary>One arm of a field's TableRelation — the plain shape is a single arm with no
+/// conditions. <paramref name="Conditions"/> constrain fields of the REFERENCING table (the
+/// one declaring the relation); <paramref name="Filters"/> (from <c>where(...)</c>) constrain
+/// fields of the related source table. Both reuse the <see cref="ParsedCalcFilter"/> shapes,
+/// restricted to Const/Filter by the parser.</summary>
+internal record ParsedRelationArm(string TableName, string? FieldName, List<ParsedCalcFilter> Conditions, List<ParsedCalcFilter> Filters);
+
+internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null, List<ParsedRelationArm>? RelationArms = null, bool RelationValidate = true);
 internal record ParsedKey(string Name, List<int> FieldIds);
 /// <param name="LookupPageName">The table's declared <c>LookupPageId</c> as WRITTEN — a page
 /// name (<c>"Customer List"</c>) or a bare id in text form. Both sources state it by name:

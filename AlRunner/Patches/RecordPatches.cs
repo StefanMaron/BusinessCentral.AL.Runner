@@ -32,6 +32,7 @@ public static partial class RecordPatches
     private static Type? _tFieldClass;
     private static Type? _tMetaCalcFormula;
     private static Type? _tMetaFilter;
+    private static Type? _tMetaCondition;
     private static Type? _tMetaFieldRelation;
     private static Type? _tFilterType;
     private static Type? _tNCLMetaTable;
@@ -198,6 +199,7 @@ public static partial class RecordPatches
         _tFieldClass = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.FieldClass")!;
         _tMetaCalcFormula = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaCalcFormula")!;
         _tMetaFilter  = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaFilter")!;
+        _tMetaCondition = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaCondition")!;
         _tMetaFieldRelation = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaFieldRelation")!;
         _tFilterType  = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.FilterType")!;
 

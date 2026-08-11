@@ -365,11 +365,11 @@ public static partial class RecordPatches
             ? BuildMetaCalcFormula(f.CalcFormula, parentTable)
             : null;
 
-        // TableRelation → ImmutableArray<MetaFieldRelation> (one element). NCLMetaField turns
-        // it into the NCLMetaFieldRelation that GetReferencingRelations' reverse index — and
-        // therefore Rename propagation (#1730) — is built from.
-        object? relationsObj = f.RelationTableName != null
-            ? BuildMetaFieldRelations(f.RelationTableName, f.RelationFieldName)
+        // TableRelation → ImmutableArray<MetaFieldRelation>, one element per arm. NCLMetaField
+        // turns each into the NCLMetaFieldRelation that GetReferencingRelations' reverse
+        // index — and therefore Rename propagation (#1730, #1737) — is built from.
+        object? relationsObj = f.RelationArms is { Count: > 0 }
+            ? BuildMetaFieldRelations(f.RelationArms, parentTable, f.FieldName)
             : null;
 
         for (int i = 0; i < ps.Length; i++)
@@ -474,67 +474,139 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// Builds the ImmutableArray&lt;MetaFieldRelation&gt; for a field's parsed TableRelation.
-    /// The parser hands over 1 or 2 name parts; two parts are AL-ambiguous between
+    /// Builds the ImmutableArray&lt;MetaFieldRelation&gt; for a field's parsed TableRelation —
+    /// one element per arm of an if/else chain (#1737); the plain shape is one condition-less
+    /// arm. If-conditions become MetaConditions keyed on the REFERENCING table's fields,
+    /// where() entries become MetaFilters keyed on the related table's fields; NavRecord's
+    /// own UpdateReferencesOnRenameAsync then evaluates both exactly as real BC does —
+    /// including the container-verified asymmetry that an else arm carries no conditions.
+    /// The parser hands each arm 1 or 2 name parts; two parts are AL-ambiguous between
     /// `Table.Field` and `Namespace.Table`, so resolution tries `Table.Field` first and falls
-    /// back to treating the last part as a namespace-qualified table. Returns null (relation
-    /// dropped, pre-#1730 behaviour: no rename propagation) when nothing resolves — a name
-    /// that cannot be resolved must not guess, because fieldId 0 means "the primary key"
-    /// and would propagate renames real BC does not.
+    /// back to treating the last part as a namespace-qualified table. Any name — table,
+    /// condition field, or filter field — that does not resolve refuses the WHOLE relation
+    /// (null, pre-#1730 behaviour: no propagation) rather than guessing: fieldId 0 means
+    /// "the primary key", and a half-built arm would propagate renames real BC does not.
     /// </summary>
-    private static object? BuildMetaFieldRelations(string tableName, string? fieldName)
+    private static object? BuildMetaFieldRelations(
+        List<ParsedRelationArm> arms, ParsedTable? referencingTable, string forFieldName)
     {
-        if (_tMetaFieldRelation == null) return null;
+        if (_tMetaFieldRelation == null || _tMetaFilter == null || _tMetaCondition == null
+            || _tFilterType == null)
+            return null;
 
         ParsedTable? Resolve(string name) =>
             _parsedTables.Values.FirstOrDefault(t =>
                 string.Equals(t.TableName, name, StringComparison.OrdinalIgnoreCase))
             ?? TryPopulateParsedTableByName(name);
 
-        var target = Resolve(tableName);
-        int fieldId = 0;
-        if (target != null && fieldName != null)
+        var relationObjects = new List<object>();
+        foreach (var arm in arms)
         {
-            var tf = target.Fields.FirstOrDefault(x =>
-                string.Equals(x.FieldName, fieldName, StringComparison.OrdinalIgnoreCase));
-            if (tf != null)
+            var target = Resolve(arm.TableName);
+            int fieldId = 0;
+            if (target != null && arm.FieldName != null)
             {
-                fieldId = tf.FieldId;
+                var tf = target.Fields.FirstOrDefault(x =>
+                    string.Equals(x.FieldName, arm.FieldName, StringComparison.OrdinalIgnoreCase));
+                if (tf != null)
+                {
+                    fieldId = tf.FieldId;
+                }
+                else
+                {
+                    // `A.B` where A is a table but B is not its field — try B as the table
+                    // (`Namespace.Table` reading) before giving up.
+                    target = null;
+                }
             }
-            else
+            if (target == null && arm.FieldName != null)
             {
-                // `A.B` where A is a table but B is not its field — try B as the table
-                // (`Namespace.Table` reading) before giving up.
-                target = null;
+                target = Resolve(arm.FieldName);
+                fieldId = 0;
             }
-        }
-        if (target == null && fieldName != null)
-        {
-            target = Resolve(fieldName);
-            fieldId = 0;
-        }
-        if (target == null)
-        {
-            Console.Error.WriteLine(
-                $"[RecordPatches] TableRelation target '{tableName}{(fieldName != null ? "." + fieldName : "")}' did not resolve to a parsed table — relation dropped");
-            return null;
-        }
+            if (target == null)
+            {
+                Console.Error.WriteLine(
+                    $"[RecordPatches] TableRelation target '{arm.TableName}{(arm.FieldName != null ? "." + arm.FieldName : "")}' did not resolve to a parsed table — relation dropped");
+                return null;
+            }
 
-        var ctor = _tMetaFieldRelation.GetConstructors()
-            .OrderByDescending(c => c.GetParameters().Length)
-            .First();
+            var conditionObjects = new List<object>();
+            foreach (var c in arm.Conditions)
+            {
+                var localField = referencingTable?.Fields.FirstOrDefault(x =>
+                    string.Equals(x.FieldName, c.SourceFieldName, StringComparison.OrdinalIgnoreCase));
+                if (localField == null)
+                {
+                    Console.Error.WriteLine(
+                        $"[RecordPatches] TableRelation on '{forFieldName}': condition field '{c.SourceFieldName}' not found on '{referencingTable?.TableName}' — relation dropped");
+                    return null;
+                }
+                conditionObjects.Add(BuildMetaCondition(localField.FieldId,
+                    c.Kind == ParsedCalcFilterKind.Const ? "CONST" : "FILTER", c.Value ?? ""));
+            }
+
+            var filterObjects = new List<object>();
+            foreach (var w in arm.Filters)
+            {
+                var srcField = target.Fields.FirstOrDefault(x =>
+                    string.Equals(x.FieldName, w.SourceFieldName, StringComparison.OrdinalIgnoreCase));
+                if (srcField == null)
+                {
+                    Console.Error.WriteLine(
+                        $"[RecordPatches] TableRelation on '{forFieldName}': where() field '{w.SourceFieldName}' not found on '{target.TableName}' — relation dropped");
+                    return null;
+                }
+                filterObjects.Add(BuildMetaFilter(srcField.FieldId,
+                    w.Kind == ParsedCalcFilterKind.Const ? "CONST" : "FILTER", w.Value ?? ""));
+            }
+
+            var ctor = _tMetaFieldRelation.GetConstructors()
+                .OrderByDescending(c => c.GetParameters().Length)
+                .First(c => c.GetParameters().Any(p => p.Name == "tableId"));
+            var ps = ctor.GetParameters();
+            var args = new object?[ps.Length];
+            for (int i = 0; i < ps.Length; i++)
+            {
+                var p = ps[i];
+                if (p.Name == "tableId") { args[i] = target.TableId; continue; }
+                if (p.Name == "tableName") { args[i] = target.TableName; continue; }
+                if (p.Name == "fieldId") { args[i] = fieldId; continue; }
+                if (p.Name == "filters") { args[i] = MakeImmutableArray(_tMetaFilter!, filterObjects.ToArray()); continue; }
+                if (p.Name == "conditions") { args[i] = MakeImmutableArray(_tMetaCondition!, conditionObjects.ToArray()); continue; }
+                if (p.HasDefaultValue) { args[i] = p.DefaultValue; continue; }
+                args[i] = p.ParameterType.IsValueType ? Activator.CreateInstance(p.ParameterType) : null;
+            }
+            relationObjects.Add(ctor.Invoke(args)!);
+        }
+        return MakeImmutableArray(_tMetaFieldRelation, relationObjects.ToArray());
+    }
+
+    /// <summary>
+    /// One <c>MetaCondition</c> — the metadata form of a single <c>if (...)</c> arm
+    /// condition on a TableRelation. Mirrors <see cref="BuildMetaFilter"/>: the type name is
+    /// a <c>FilterType</c> member (CONST / FILTER — FIELD is not a condition shape, BC's own
+    /// NCLMetaFilter.CreateFromMetaCondition throws on it), and the value is the literal /
+    /// filter-expression TEXT, which NCLMetaFilterConst / NCLMetaFilterExpression evaluate
+    /// against the referencing field's own type exactly as for a user-typed filter.
+    /// </summary>
+    private static object BuildMetaCondition(int fieldId, string conditionTypeName, string conditionValue)
+    {
+        // MetaCondition(int fieldId, FilterType conditionType, string conditionValue)
+        var ctor = _tMetaCondition!.GetConstructors()
+            .First(c => c.GetParameters().Any(p => p.Name == "fieldId"));
         var ps = ctor.GetParameters();
         var args = new object?[ps.Length];
         for (int i = 0; i < ps.Length; i++)
         {
             var p = ps[i];
-            if (p.Name == "tableId") { args[i] = target.TableId; continue; }
-            if (p.Name == "tableName") { args[i] = target.TableName; continue; }
             if (p.Name == "fieldId") { args[i] = fieldId; continue; }
+            if (p.Name == "conditionType") { args[i] = Enum.Parse(_tFilterType!, conditionTypeName); continue; }
+            if (p.Name == "conditionValue") { args[i] = conditionValue; continue; }
             if (p.HasDefaultValue) { args[i] = p.DefaultValue; continue; }
             args[i] = p.ParameterType.IsValueType ? Activator.CreateInstance(p.ParameterType) : null;
         }
-        return MakeImmutableArray(_tMetaFieldRelation, new[] { ctor.Invoke(args)! });
+        return ctor.Invoke(args)!;
     }
 
     private static object? BuildMetaCalcFormula(ParsedCalcFormula cf, ParsedTable parentTable)
