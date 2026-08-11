@@ -7,4 +7,4 @@
 # in its own app.json, so no BC 26 provisioning can satisfy it and the leg cannot
 # go green regardless of runner capability. The corpus is a read-only upstream
 # submodule, so that floor is not ours to lower. See docs/limitations.md.
-27.0 27.3 27.5 28.0 28.1
+27.0 27.3 27.5 28.0 28.1 28.2 28.3 28.4
