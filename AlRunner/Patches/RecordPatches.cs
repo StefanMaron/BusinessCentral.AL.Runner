@@ -1133,6 +1133,21 @@ public static partial class RecordPatches
 
     public static object NavDataAccessSource_GetDataAccessForTable(object self, NCLMetaTable table, bool isTemporary)
     {
+        var dataAccess = GetDataAccessForTableCore(self, table, isTemporary);
+
+        // Both branches below land on a TempTableDataProvider, so the provider alone
+        // cannot say whether it is standing in for SQL or genuinely serving a
+        // `temporary` record — and the two shapes disagree about whether an
+        // uncommitted BLOB write reaches the stored row (corpus 60940, issue #1751).
+        // This is the one place that still knows, so record it here.
+        if (!isTemporary)
+            BlobStoreIsolationPatches.MarkDatabaseBacked(dataAccess);
+
+        return dataAccess;
+    }
+
+    private static object GetDataAccessForTableCore(object self, NCLMetaTable table, bool isTemporary)
+    {
         try
         {
             if (isTemporary)

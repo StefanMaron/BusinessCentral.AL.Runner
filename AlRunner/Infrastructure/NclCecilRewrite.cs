@@ -6192,6 +6192,35 @@ public static class NclCecilRewrite
                 ByParams(Rt + "TempTableDataProvider", "CalcNumeric", "CalcNumericProviderRequest"),
                 H(recordPatches, "TempTableDataProvider_CalcNumeric"));
 
+            // ── BLOB store isolation for database-backed tables (issue #1751) ──────
+            // Ncl's TempTableDataProvider.Insert copies the record's NavBLOB into the
+            // stored row BY REFERENCE and only CloneBlobs()es the dirty ones, so a BLOB
+            // that carried no value at Insert stays shared with the record variable —
+            // and a later `CreateOutStream`+write with no Modify() mutates the stored
+            // row. Real BC does exactly this for a `temporary` record and the opposite
+            // for a database-backed one (corpus 60940, green on BC 27.5 and 28.3), so
+            // the runner cannot simply always copy: every runner table is backed by
+            // this same provider.
+            //
+            // Two prepends. The first latches which kind of provider this insert is
+            // for; the second detaches the stored row's BLOBs when it is the SQL
+            // stand-in. Both leave the original bodies intact, so the dirty-BLOB clone
+            // Ncl already performs is unchanged. See Patches/BlobStoreIsolationPatches.cs.
+            {
+                var blobIsolation = typeof(AlRunner.Patches.BlobStoreIsolationPatches);
+
+                PrependStaticCall(nclMod,
+                    ByParams(Rt + "TempTableDataProvider", "Insert",
+                        "Int32", "MutableRecordBuffer", "InsertOptions", "ReadOnlyRecordBuffer&"),
+                    H(blobIsolation, "OnBeforeStoreInsert"),
+                    argSlots: 1); // `this` — the provider
+
+                PrependStaticCall(nclMod,
+                    ByParams(Rt + "TempTableRecordBuffer", "CloneBlobs", "MutableRecordBuffer"),
+                    H(blobIsolation, "DetachStoredBlobs"),
+                    argSlots: 1); // `this` — the freshly stored row
+            }
+
             // ── TempTableDataProvider.Find / FindFromPosition (query column projection) ──
             // Single-dataitem query reads route through GetDataAccessForQuery → the same
             // in-memory TempTableDataProvider that holds the inserted rows. The provider is
@@ -7009,6 +7038,46 @@ public static class NclCecilRewrite
             ?? throw new InvalidOperationException(
                 $"[Cecil] BcRuntime.{bcRuntimeHelperName} not found");
         ReplaceBodyWithHelper(module, target, helperMi);
+    }
+
+    /// <summary>
+    /// Emit `ldarg.0..argSlots-1; call helper;` BEFORE <paramref name="target"/>'s existing
+    /// first instruction, leaving the original body — and every branch target in it —
+    /// untouched. Use when the patch is an observer/side-effect that must run first and
+    /// BC's own behaviour must still happen (as opposed to ReplaceBodyWithHelper, which
+    /// discards the body entirely).
+    ///
+    /// The helper must return void and take exactly <paramref name="argSlots"/> reference-typed
+    /// parameters, taken from the front of the IL arg list (slot 0 is `this` on an instance
+    /// method). No boxing is emitted, so only reference-typed slots may be forwarded.
+    /// </summary>
+    private static void PrependStaticCall(
+        ModuleDefinition module, MethodDefinition target, MethodInfo helperMi, int argSlots)
+    {
+        if (helperMi.ReturnType != typeof(void))
+            throw new InvalidOperationException(
+                $"[Cecil] prepend helper {helperMi.DeclaringType?.Name}.{helperMi.Name} must return void");
+        if (helperMi.GetParameters().Length != argSlots)
+            throw new InvalidOperationException(
+                $"[Cecil] prepend helper {helperMi.DeclaringType?.Name}.{helperMi.Name} takes "
+                + $"{helperMi.GetParameters().Length} parameter(s) but {argSlots} arg slot(s) were requested");
+        int available = target.Parameters.Count + (target.HasThis ? 1 : 0);
+        if (argSlots > available)
+            throw new InvalidOperationException(
+                $"[Cecil] {target.DeclaringType.Name}.{target.Name} has only {available} arg slot(s), "
+                + $"{argSlots} requested — Ncl shape changed; do not commit");
+
+        var helperRef = module.ImportReference(helperMi);
+        var body = target.Body;
+        var il = body.GetILProcessor();
+        var first = body.Instructions[0];
+        for (int i = 0; i < argSlots; i++)
+            il.InsertBefore(first, il.Create(OpCodes.Ldarg, i));
+        il.InsertBefore(first, il.Create(OpCodes.Call, helperRef));
+        if (body.MaxStackSize < argSlots) body.MaxStackSize = argSlots;
+        Console.Error.WriteLine(
+            $"[Cecil] Prepended {helperMi.DeclaringType?.Name}.{helperMi.Name} to "
+            + $"{target.DeclaringType.Name}.{target.Name}");
     }
 
     /// <summary>

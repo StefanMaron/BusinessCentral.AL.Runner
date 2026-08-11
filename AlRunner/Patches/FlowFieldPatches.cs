@@ -776,11 +776,13 @@ public static class FlowFieldPatches
             // Skipping keeps CalcFields observably equivalent to real BC for this shape,
             // and leaves every non-aliased load (Get() → CalcFields()) on the copy path.
             //
-            // The aliasing itself is a separate divergence — it also makes an uncommitted
-            // BLOB write visible to a second Record instance that Get()s the same row,
-            // which real BC would not do. Tracked in #1751; deliberately NOT fixed here,
-            // because deep-copying at the store boundary is a much wider behavioural
-            // change that needs its own service-tier-adjudicated corpus test first.
+            // Since #1751 the aliasing only ever happens for a `temporary` record, which
+            // is exactly the shape real BC aliases too: corpus 60940 pins that a temporary
+            // row DOES observe an uncommitted BLOB write while a database-backed row does
+            // not. BlobStoreIsolationPatches detaches the stored BLOB at Insert for
+            // database-backed providers only, so this guard is now the temporary path's
+            // guard — and it stays correct for exactly the reason above: when both sides
+            // are the same object the buffer already holds the bytes a copy would produce.
             if (ReferenceEquals(storedBLOB, navBLOB)) return;
 
             navBLOB.AssignFromStream(storedBLOB.GetStream());
