@@ -1112,6 +1112,15 @@ public static partial class RecordPatches
         // a test's writes are rolled back on completion.
         AlRunner.Patches.TenantStoragePatches.ResetForTest();
 
+        // MediaSet membership store — per-test reset matches BC semantics: a MediaSet
+        // field's "Media Set" rows are as much part of the per-test transaction as any
+        // other row, so they must not survive into the next test. See MediaSetPatches
+        // file header (LIFETIME) for why this store needs an explicit reset instead of
+        // relying on GC (the fix for #1773 keys it on a real, durable Guid rather than a
+        // transient NavRecord instance, which is exactly what makes it durable — and
+        // exactly why it needs this reset).
+        AlRunner.Patches.MediaSetPatches.ResetForTest();
+
         // Write-transaction state behind Database.IsInWriteTransaction(). A test that
         // writes without committing must not leave the next test believing it started
         // inside a transaction — BC's per-test rollback ends the transaction either way.

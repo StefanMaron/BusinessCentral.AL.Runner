@@ -1754,6 +1754,28 @@ public static class NclCecilRewrite
                     mediaSetRewrote++;
                 }
 
+                // AddMediaToSetAsync(NavSession, Guid setId, Guid mediaId) → ValueTask<Guid>
+                //
+                // The shared internal helper every AL-facing import path (ImportStream's
+                // NavStream-based ALImport overloads chief among them — see #1773 / the
+                // MediaSetPatches file header) funnels through to add a media id to the set.
+                // Its real body reaches an undeclared "Media Set" platform table via
+                // NavSession.GetGlobalRecordInstance + ALGetAsync/ALInsertAsync, silently
+                // discarding the insert's success/failure — so the membership never lands
+                // anywhere our ALInsert/get_ALCount/ALItem patches above can see, even
+                // though the real body's earlier content-storage step (into the ALREADY
+                // real/declared Media/TenantMedia tables) succeeds. This was NOT previously
+                // intercepted — only the file-based ALImport overloads were — which is why
+                // ImportStream returned a real, non-null MediaId while Count() stayed 0.
+                var mAddToSet = navMediaSetCecilType.Methods.FirstOrDefault(m =>
+                    m.Name == "AddMediaToSetAsync" && m.HasBody && m.Parameters.Count == 3);
+                if (mAddToSet != null)
+                {
+                    var h = patchTypeMi.GetMethod(nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_AddMediaToSetAsync), BindingFlags.Public | BindingFlags.Static)!;
+                    ReplaceBodyWithHelper(asm.MainModule, mAddToSet, h);
+                    mediaSetRewrote++;
+                }
+
                 Console.Error.WriteLine($"[Cecil] Batch 5: rewrote {mediaSetRewrote} NavMediaSet method(s) → MediaSetPatches helpers");
             }
             else
