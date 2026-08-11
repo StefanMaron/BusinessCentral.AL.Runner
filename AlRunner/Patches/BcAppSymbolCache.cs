@@ -37,7 +37,12 @@ internal static partial class BcAppSymbolCache
     // "Error Messages") would silently get a NON-temporary Rec, and its own body's
     // Rec.Copy(source, shareTable: true) would throw NavNCLArgumentException — a correctness
     // regression, not a cache miss.
-    private const int CacheVersion = 11;
+    // v12: EnumSymbol gained Captions (issue #1775 — Format(<enum value>) on a
+    // dependency's enum must return the declared Caption, not the member name). A v11
+    // payload deserialises with Captions null, which AlEnumOptionMetadata already treats
+    // as "no captions captured" (falls back to member name for every value) — silently
+    // wrong for any dependency enum whose Caption differs from its name, not a cache miss.
+    private const int CacheVersion = 12;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
 
     internal sealed record AppSymbols(List<ParsedTable> Tables, List<EnumSymbol> Enums, List<QuerySymbol> Queries,
@@ -117,7 +122,11 @@ internal static partial class BcAppSymbolCache
         ("PermissionSets", "PermissionSet"),
         ("PermissionSetExtensions", "PermissionSetExtension"),
     };
-    internal sealed record EnumSymbol(int Id, string Name, List<string> Options, List<int> Indexes, List<List<int>> Implementations);
+    // Captions[i] is value i's declared Caption text, or null when it declares none
+    // (issue #1775 — Format(<enum value>) must return the Caption, not the member
+    // name, for enums coming from a prebuilt dependency .app too, not just enums
+    // compiled from this bundle's own source).
+    internal sealed record EnumSymbol(int Id, string Name, List<string> Options, List<int> Indexes, List<List<int>> Implementations, List<string?>? Captions = null);
 
     // Parsed query SymbolReference.json shape. A query is a tree of dataitems; the root
     // dataitem(s) live under the query's "Elements", nested dataitems under "DataItems".
@@ -617,6 +626,7 @@ internal static partial class BcAppSymbolCache
         var options = new List<string>();
         var indexes = new List<int>();
         var implementations = new List<List<int>>();
+        var captions = new List<string?>();
         var nextOrdinal = 0;
         foreach (var value in values.EnumerateArray())
         {
@@ -639,9 +649,16 @@ internal static partial class BcAppSymbolCache
                 }
             }
             implementations.Add(implementationIds);
+            // Issue #1775 — a value's declared Caption, same SymbolProperties read the
+            // report/query/field Caption capture already uses elsewhere in this file.
+            // Missing/empty means "declares none"; the consumer (AlEnumOptionMetadata.
+            // GetCaptionFromIndex) falls back to the member name for that case.
+            captions.Add(props.TryGetValue("Caption", out var captionText) && !string.IsNullOrEmpty(captionText)
+                ? captionText
+                : null);
             nextOrdinal = ordinal + 1;
         }
-        return new EnumSymbol(id, name, options, indexes, implementations);
+        return new EnumSymbol(id, name, options, indexes, implementations, captions);
     }
 
     private static Dictionary<string, string> SymbolProperties(JsonElement element)

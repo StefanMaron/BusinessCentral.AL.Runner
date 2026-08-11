@@ -1757,39 +1757,43 @@ public sealed class BcCompiler
             var src = System.Text.Encoding.UTF8.GetString(code);
             Captured.Add(new EmittedSource(symbol.Name, src));
 
-            // Capture (id, name, options[], indexes[]) for AL enum types so the
-            // runtime NCLEnumMetadata.Create(int) hook can return real
-            // GetNames()/GetOrdinals() data instead of NCLOptionMetadata.Default
-            // (which throws NavNCLNotSupportedOperationException). Enum
-            // extensions also flow through here as IEnumExtensionTypeSymbol;
-            // both expose Values via the IEnumBaseTypeSymbol interface. Per BC's
-            // own SourceEnumExtensionTypeSymbol.LazyGetEnumValues, an
-            // extension's Values NEVER includes the base enum's values — only
-            // its own declared ones — so an extension must be registered
-            // against the base enum's Id (via its Target), not merged as if it
-            // were the base (issue #1625: registering both under the same
-            // dictionary slot made whichever AddApplicationObject call fired
-            // last silently clobber the other instead of merging).
+            // Capture (id, name, options[], indexes[], captions[]) for AL enum types so
+            // the runtime NCLEnumMetadata.Create(int) hook can return real
+            // GetNames()/GetOrdinals()/GetCaptionFromIndex() data instead of
+            // NCLOptionMetadata.Default (which throws
+            // NavNCLNotSupportedOperationException) or forwarding captions to the
+            // member name (issue #1775 — Format(<enum value>) returned the AL
+            // identifier instead of the declared Caption). Enum extensions also flow
+            // through here as IEnumExtensionTypeSymbol; both expose Values via the
+            // IEnumBaseTypeSymbol interface. Per BC's own
+            // SourceEnumExtensionTypeSymbol.LazyGetEnumValues, an extension's Values
+            // NEVER includes the base enum's values — only its own declared ones — so
+            // an extension must be registered against the base enum's Id (via its
+            // Target), not merged as if it were the base (issue #1625: registering
+            // both under the same dictionary slot made whichever AddApplicationObject
+            // call fired last silently clobber the other instead of merging).
             if (symbol is NavCA.IEnumBaseTypeSymbol enumSym)
             {
                 var values = enumSym.Values;
                 var options = new string[values.Length];
                 var indexes = new int[values.Length];
                 var implementations = new int[values.Length][];
+                var captions = new string?[values.Length];
                 for (int i = 0; i < values.Length; i++)
                 {
                     options[i] = values[i].Name ?? string.Empty;
                     indexes[i] = values[i].Ordinal;
                     implementations[i] = ReadEnumValueImplementations(values[i]);
+                    captions[i] = ReadEnumValueCaption(values[i]);
                 }
                 if (symbol is NavCA.IEnumExtensionTypeSymbol enumExtSym
                     && enumExtSym.Target is NavCA.ISymbolWithId targetSym)
                 {
-                    AlEnumMetadataRegistry.RegisterExtension(targetSym.Id, enumSym.Name, options, indexes, implementations);
+                    AlEnumMetadataRegistry.RegisterExtension(targetSym.Id, enumSym.Name, options, indexes, implementations, captions);
                 }
                 else
                 {
-                    AlEnumMetadataRegistry.Register(enumSym.Id, enumSym.Name, options, indexes, implementations);
+                    AlEnumMetadataRegistry.Register(enumSym.Id, enumSym.Name, options, indexes, implementations, captions);
                 }
             }
             // Capture the per-report runtime metadata XML the emit pipeline hands us
@@ -2030,6 +2034,33 @@ public sealed class BcCompiler
             catch
             {
                 return Array.Empty<int>();
+            }
+        }
+
+        /// <summary>
+        /// Read one AL enum value's declared <c>Caption</c> text (issue #1775 —
+        /// <c>Format(&lt;enum value&gt;)</c> and <c>FieldRef.GetEnumValueCaptionFromOrdinalValue</c>
+        /// both returned the AL member name instead of this).
+        ///
+        /// Same symbol-level idiom as <see cref="ReadEnumValueImplementations"/>:
+        /// <c>IEnumValueSymbol.GetProperty(PropertyKind)</c> resolves the property off
+        /// the value's own PropertyList. Null return means "the value declares no
+        /// Caption at all" (distinct from an EMPTY declared caption, <c>Caption = '';</c>
+        /// — both currently resolve to the same observable string via
+        /// <see cref="AlRunner.AlEnumOptionMetadata.GetCaptionFromIndex"/>'s
+        /// <c>?? member name</c> fallback, but the null is preserved here so a future
+        /// consumer that needs to tell them apart can).
+        /// </summary>
+        private static string? ReadEnumValueCaption(NavCA.IEnumValueSymbol value)
+        {
+            try
+            {
+                var caption = value.GetProperty(NavCA.PropertyKind.Caption);
+                return string.IsNullOrEmpty(caption?.ValueText) ? null : caption!.ValueText;
+            }
+            catch
+            {
+                return null;
             }
         }
 
